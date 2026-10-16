@@ -153,6 +153,8 @@ pub struct Facts {
     pub edit_linked: bool,
     /// Voice is enabled: "Call" works (LLAvatarActions::canCall).
     pub voice: bool,
+    /// The avatar's voice row, when they are in our voice channel.
+    pub voice_volume: Option<menu::VoiceVolume>,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +210,12 @@ pub enum CtxAction {
     StopAnimations,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
+    /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
+    /// LLSpeakerVolumeStorage).
+    SetVoiceVolume(Uuid, f32),
+    /// Block / unblock only a resident's voice (LLAvatarActions::
+    /// toggleMuteVoice: LLMute::flagVoiceChat).
+    ToggleVoiceMute(Uuid),
     /// "Create landmark" where the agent is (About Land's Landmark).
     CreateLandmark,
     /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).
@@ -360,8 +368,12 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
     let mut open = true;
     let entries = entries::world_menu(&m.target, f, m.point);
     let hovered = if use_pie {
+        let voice = match m.target {
+            Target::Avatar { id, own: false, .. } => f.voice_volume.map(|v| (id, v)),
+            _ => None,
+        };
         let mut radial = m;
-        let hovered = pie::show(ctx, p, &mut radial, &entries, &mut open);
+        let hovered = pie::show(ctx, p, &mut radial, &entries, voice, &mut open);
         *menu = Some(radial);
         hovered
     } else {
@@ -370,6 +382,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
             m.pie_input_frame = None;
         }
         menu::popup_at(ctx, egui::Id::new("world_context_menu"), m.pos, &mut open, p, |ui| {
+            if let Target::Avatar { id, own: false, .. } = m.target {
+                voice_row(ui, p, id, f.voice_volume);
+            }
             entries::draw_list(ui, p, &entries);
         })
     };
@@ -400,8 +415,44 @@ pub enum AvatarList {
     Name,
 }
 
+/// A resident's voice row, only while they are in our voice channel and are
+/// not us: LLInspectAvatar::updateVolumeSlider hides the slider and the mute
+/// button otherwise, and a greyed row in every menu of everyone out of voice
+/// would only push the entries down. The inspector held them; Aurora puts
+/// them at the top of every menu of the resident.
+pub fn voice_volume_of(world: &World, id: Uuid) -> Option<menu::VoiceVolume> {
+    if id == world.agent_id || id.is_nil() || !world.calls.hears(&id) {
+        return None;
+    }
+    let name = world.legacy_name(&id).unwrap_or_else(|| world.social.name_of(&id));
+    Some(menu::VoiceVolume {
+        volume: world.calls.volume(&id),
+        muted: world.voice_blocked(&id),
+        can_mute: !crate::world::mutes::is_linden(&name),
+    })
+}
+
+/// The voice row and a separator under it.
+fn voice_row(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: Option<menu::VoiceVolume>) {
+    let Some(voice) = voice else {
+        return;
+    };
+    voice_edit(ui, p, id, voice);
+    menu::separator(ui, p);
+}
+
+/// The voice row alone, its changes handed to the app.
+fn voice_edit(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
+    match menu::voice_volume(ui, p, voice) {
+        Some(menu::VoiceEdit::Volume(v)) => request(ui.ctx(), CtxAction::SetVoiceVolume(id, v)),
+        Some(menu::VoiceEdit::ToggleMute) => request(ui.ctx(), CtxAction::ToggleVoiceMute(id)),
+        None => {}
+    }
+}
+
 /// Right-click menu of an avatar name in a list. Our own name gets only
-/// the profile.
+/// the profile; a resident in our voice channel gets their voice volume
+/// first.
 pub fn avatar_list_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, kind: AvatarList) {
     avatar_menu_reporting(ui, p, world, id, kind, None);
 }
@@ -428,6 +479,7 @@ fn avatar_menu_reporting(
         }
         return;
     }
+    voice_row(ui, p, id, voice_volume_of(world, id));
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let blocked = world.is_avatar_blocked(&id);
     let here = avatar_position(world, &id).is_some();
@@ -922,6 +974,140 @@ mod tests {
                 assert!(requests.is_empty());
             }
         }
+    }
+
+    fn voice_world() -> (World, Uuid) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let tess = Uuid::from_u128(2);
+        world.social.names.insert(tess, "Tess Touch".into());
+        (world, tess)
+    }
+
+    #[test]
+    fn only_a_resident_in_our_voice_channel_gets_the_voice_row() {
+        use crate::world::mutes::{MuteType, flag};
+        let (mut world, tess) = voice_world();
+        assert_eq!(voice_volume_of(&world, tess), None, "out of voice: no row");
+        world.calls.voice_peers.extend([tess, world.agent_id]);
+        assert_eq!(voice_volume_of(&world, world.agent_id), None, "never ourselves");
+        assert_eq!(
+            voice_volume_of(&world, tess),
+            Some(menu::VoiceVolume {
+                volume: 0.5,
+                muted: false,
+                can_mute: true,
+            })
+        );
+        world.calls.set_volume(tess, 0.8);
+        assert_eq!(voice_volume_of(&world, tess).map(|v| v.volume), Some(0.8));
+        // the voice flag of the block list mutes them; a full block too
+        world
+            .block_flags(tess, "Tess Touch", MuteType::Agent, flag::VOICE_CHAT)
+            .expect("voice block");
+        assert_eq!(voice_volume_of(&world, tess).map(|v| v.muted), Some(true));
+        // a Linden's voice cannot be muted from the row
+        let oz = Uuid::from_u128(3);
+        world.social.names.insert(oz, "Oz Linden".into());
+        world.calls.voice_peers.insert(oz);
+        assert_eq!(voice_volume_of(&world, oz).map(|v| v.can_mute), Some(false));
+    }
+
+    #[test]
+    fn the_voice_percentage_puts_the_volume_as_sent_at_100() {
+        assert_eq!(menu::volume_percent(0.0), 0);
+        assert_eq!(menu::volume_percent(0.5), 100);
+        assert_eq!(menu::volume_percent(0.8), 160);
+        assert_eq!(menu::volume_percent(1.0), 200);
+        assert_eq!(menu::volume_percent(3.0), 200);
+    }
+
+    /// The rectangle of a text painted this frame.
+    fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<egui::Rect> {
+        fn find(shape: &egui::epaint::Shape, text: &str) -> Option<egui::Rect> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == text => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+                egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                _ => None,
+            }
+        }
+        shapes.iter().find_map(|s| find(&s.shape, text))
+    }
+
+    #[test]
+    fn the_voice_row_tops_the_menu_and_its_clicks_keep_a_more_menu_open() {
+        let (mut world, tess) = voice_world();
+        world.calls.voice_peers.insert(tess);
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let popup = std::cell::Cell::new(egui::Id::NULL);
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    // a "more" button's menu, closed by any click like a stock menu button
+                    let resp = ui.allocate_response(egui::vec2(40.0, 20.0), egui::Sense::click());
+                    popup.set(egui::Popup::default_response_id(&resp));
+                    menu::dropdown(&resp, &p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                        avatar_list_menu(ui, &p, &world, tess, AvatarList::Nearby)
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        frame(Vec::new());
+        egui::Popup::open_id(&ctx, popup.get());
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let output = frame(Vec::new());
+        let percent = text_rect(&output.shapes, "100 %").expect("voice row percentage");
+        let profile = text_rect(&output.shapes, aurora_i18n::tr!("common-view-profile")).expect("profile row");
+        assert!(percent.bottom() <= profile.top(), "the voice row comes first");
+        let click = |frame: &mut dyn FnMut(Vec<egui::Event>) -> egui::FullOutput, pos: egui::Pos2| {
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+        };
+        // a click near the start of the slider (where the labels start): a lower volume
+        click(&mut frame, egui::pos2(profile.left() + 12.0, percent.center().y));
+        let requests = take_requests(&ctx);
+        assert!(
+            !requests.is_empty()
+                && requests
+                    .iter()
+                    .all(|r| matches!(r, CtxAction::SetVoiceVolume(id, v) if *id == tess && *v < 0.5)),
+            "{requests:?}"
+        );
+        assert!(egui::Popup::is_id_open(&ctx, popup.get()), "the slider leaves the menu open");
+        // the mute button, right of the percentage
+        click(&mut frame, egui::pos2(percent.right() + 16.0, percent.center().y));
+        let requests = take_requests(&ctx);
+        assert!(
+            matches!(&requests[..], [CtxAction::ToggleVoiceMute(id)] if *id == tess),
+            "{requests:?}"
+        );
+        assert!(egui::Popup::is_id_open(&ctx, popup.get()), "the mute button leaves the menu open");
+        // an entry still closes it
+        click(&mut frame, profile.center());
+        assert!(matches!(&take_requests(&ctx)[..], [CtxAction::Profile(id)] if *id == tess));
+        frame(Vec::new());
+        assert!(!egui::Popup::is_id_open(&ctx, popup.get()));
     }
 
     const MINE: u32 = flags::OBJECT_YOU_OWNER | flags::OBJECT_ANY_OWNER | flags::OBJECT_MODIFY | flags::OBJECT_COPY;

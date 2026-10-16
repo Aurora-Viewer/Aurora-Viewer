@@ -1726,6 +1726,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
+| `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
@@ -1779,6 +1780,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
   window. A payment only moves the demo balance (no L$, no request sent).
   `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
+  `empty`: no amount typed (the field's "0" hint, in the figures' size).
   `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
@@ -2572,6 +2574,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
+- **`AURORA_DEMO_PARCEL_NAME=<text>`**: the parcel name shown by the
+  place island and its menu, over the demo's own (and over
+  `AURORA_DEMO_BARS`'s long one); `\n` stands for a line break. To check
+  how odd names sit beside the region: accents, emoji, other scripts,
+  letters from a fallback font, a trailing line break. The parcel's name
+  and the region text must share one baseline.
 - **`AURORA_DEMO_BARS=<words>`**: the states of the top and bottom bars
   for the comparisons with the bars mockup, for this run only (nothing is
   saved), with the mockup's long parcel name and, with the islands, its
@@ -3094,6 +3102,19 @@ offline; the files and snapshots uploaded in demo stay offline.
   and close one by one, and only the rows in sight are drawn; `-open`
   expands them all. With `AURORA_PROFILE=1`, `ui` stays under 1 ms (it was
   about 17 ms, all open, before the tab used the result tree).
+- `big[:<items>]`: a long-time resident's inventory, 30,000 items by
+  default in about a tenth as many folders, five levels deep (store
+  brands, products, extras, fit packs) and a loose folder of 2,000 objects,
+  open with the first top folder, three of its brands and their products.
+  Options after commas: `recent` (Recent tab), `search=<text>`,
+  `toggle=<s>` (opens and closes the window every `s` seconds, to compare
+  closed and open in one run; each change is logged as
+  `demo inventory window open=…`) and `churn=<ms>` (one item changes every
+  `ms` milliseconds, like the server's inventory updates). With
+  `AURORA_PROFILE=1` and `AURORA_FPS_LIMIT=120`, read `u_inventory`: in the
+  dev build, the window open costs about 0.4 ms per frame (12.9 ms before
+  only the rows in sight were laid out) and no slow frame when it opens; an
+  update costs one frame of about 6 ms.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker`: the five reference panels.
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
@@ -3266,9 +3287,11 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
-| `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
+| `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
+| `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -3282,10 +3305,22 @@ What the inventory must show with these scenarios:
   both name tags neutral, `off` shows the red struck-through microphone.
   `cycle` chains 4 s of speech, 3 s of listening, 2 s out of voice. Without
   this variable, our outline follows the real microphone when its button /
-  push-to-talk is active and voice is enabled. No saved setting is changed.
-  With the name plates (default style), the outline is green in the voice
-  channel and a tight green halo follows the level; out of voice, the plate
-  has neither a coloured outline nor a badge.
+  push-to-talk is active and voice is enabled (`AURORA_DEMO_TALK=1` turns
+  the microphone on; its meter is turned into the voice server's scale, so
+  a voice reads as loud as on the grid). No saved setting is changed.
+  With the name plates (default style), a speaking plate gets a ring that
+  follows the level: a whisper is a faint hairline hugging the plate with
+  almost no glow, a normal voice a green ring a few points away over a soft
+  glow, a shout a thick bright ring pushed out with a wide glow, sliding
+  through amber to red from -18 dBFS (RMS over 300 ms) to -12; normal
+  speech at a sane microphone gain reads -30 to -24 and stays green. Out of
+  voice, the plate has neither a coloured outline nor a badge. `sweep`
+  keeps our own plate on the real microphone and, with
+  `AURORA_DEMO_TAGS=voice`, makes Tess speak over the white wall, her voice
+  going whisper → normal → shout → normal every eight seconds, next to
+  Orion's normal voice over the dark scene: look at the ring on both
+  backgrounds, through the whole range, and at the start and end of speech
+  (never a jump).
 - **`AURORA_DEMO_CALL`**: the demo has no voice server; `demo_calls.rs`
   answers ChatSessionRequest (a channel for every call) and stands in for
   the voice session: the call connects after 1.5 s and the others talk in
@@ -3324,13 +3359,13 @@ What the inventory must show with these scenarios:
   - `voice`: Nova out of the voice channel (no microphone badge);
     Tess in the channel, silent (green microphone badge, no outline) and
     without a profile picture (the icon stays); Orion, a friend, is speaking
-    (green outline and halo that follows the level, microphone, green heart
+    (green ring that follows the level, microphone, green heart
     and triangle badges: he is shown as too complex;
     his name is in ink like everyone's unless Preferences › Colors › "Color
     the names by relation" is on); Lune
     is typing (three animated dots) and has no display name (two lines); La
     Brume is blocked (dimmed plate, name in italics, forbidden badge, no
-    status dot). Farther away, Sol is speaking (green outline) and Iris is
+    status dot). Farther away, Sol is speaking (a tighter ring) and Iris is
     typing; beyond, Vega is in the channel and Atlas is not (the far pill
     has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
@@ -3366,6 +3401,33 @@ What the inventory must show with these scenarios:
   - To be combined with `AURORA_DEMO_VOICE` for our own plate and that of
     Loup Violet (blocked in the demo), and with `AURORA_NAME_TAGS=classic`
     to compare with the classic name tags.
+- **`AURORA_DEMO_VOICE_MENU`**: at frame 600, opens the world menu on the
+  nearest name plate of a resident in our voice channel whose voice is not
+  blocked (with `AURORA_DEMO_TAGS=voice`: Orion, the speaking friend).
+  Its first row is the resident's voice: speaker, volume slider, percentage
+  (100 % = as they send it, 200 % at the end) and the voice mute button.
+  `louder` sets their volume to 160 % first, `muted` blocks their voice
+  first (the slider greyed at 0 %, the button lit). Capture at frame 620 or
+  later with `AURORA_FPS_LIMIT=60`; `AURORA_DEMO_PIE=1` shows the same row
+  in a panel under the pie menu. The list menus of the same residents get
+  the row too, opened with `AURORA_DEMO_POINTER` (right click `,r` at
+  frame 302, capture at frame 345): with `AURORA_DEMO_PEOPLE=rows`,
+  `150,439,r` is Nova in People › Near you (in voice) and `150,304,r` Lune
+  (out of voice: no row); with `AURORA_DEMO_PEOPLE=friends`, `150,240,r` is
+  Nova in Friends and `688,237,l` the "…" menu of her sheet. With
+  `AURORA_DEMO_CALL=group` and `AURORA_DEMO_CONV=aurora`, the menu of a
+  participant's name in the conversation has it once the call is connected
+  (`…;764,616,r` as the seventh point, capture at frame 720). Positions are
+  window pixels at the default capture size; the residents out of voice
+  never get the row.
+- **`AURORA_VOICE_LEVEL_LOG`**: once a second, a `voice level (own plate,
+  loudest over 1 s)` line with the loudest raw level of our own plate (and
+  its dBFS, the microphone meter's value), whether we spoke, the smoothed
+  level, the red threshold and the color reached. Our own plate must be
+  shown (Preferences, "Show my own name"); in demo with `AURORA_DEMO_TALK=1`
+  and without `AURORA_DEMO_VOICE` (or with `sweep`), it follows the real
+  microphone. On the grid it also confirms the scale of the levels against
+  what the other residents' plates show.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes

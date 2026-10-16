@@ -5325,6 +5325,8 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
 /// Offline voice: the other avatar talks in bursts; our own outline follows
 /// the transmitted microphone. AURORA_DEMO_VOICE exercises both tags without
 /// microphone input: speaking / loud / listening / off / cycle (4 s / 3 s / 2 s).
+/// `sweep` keeps the real microphone here and makes a plate of the name
+/// plates scene go from a whisper to a shout (`demo::tags::voice`).
 pub fn voice_levels(
     t: f64,
     me: Uuid,
@@ -5367,12 +5369,24 @@ pub fn voice_levels(
     let mine = if synthetic {
         level
     } else if talking {
-        mic_level
+        participant_level(mic_level)
     } else {
         0.0
     };
     m.insert(me, (mine, mine > aurora_voice::SPEAKING_AUDIO_LEVEL));
     m
+}
+
+/// The microphone meter's level (the tuning scale of `MicCapture::level`:
+/// 0.8 at full scale, 0.01 a decibel) on the participant scale our own
+/// level has on the grid (`0.18 + 0.005 × dB` of a 16-bit RMS, about 0.63
+/// at full scale, aurora_voice::transmit), both over the same 300 ms: the
+/// demo's own tag then lights up, and turns red, at the same loudness.
+fn participant_level(tuning: f32) -> f32 {
+    if tuning <= 0.0 {
+        return 0.0;
+    }
+    crate::ui::nameplate::level_at_dbfs((tuning - 0.8) * 100.0).max(0.0)
 }
 
 #[cfg(test)]
@@ -5383,7 +5397,28 @@ mod voice_tests {
     fn own_demo_tag_respects_voice_and_transmission() {
         assert!(voice_levels(1.0, DEMO_AGENT, false, true, 0.6, None).is_empty());
         assert_eq!(voice_levels(1.0, DEMO_AGENT, true, false, 0.6, None)[&DEMO_AGENT], (0.0, false));
-        assert_eq!(voice_levels(1.0, DEMO_AGENT, true, true, 0.6, None)[&DEMO_AGENT], (0.6, true));
+        let (level, speaking) = voice_levels(1.0, DEMO_AGENT, true, true, 0.6, None)[&DEMO_AGENT];
+        assert!((level - participant_level(0.6)).abs() < 1e-6 && speaking, "{level}");
+    }
+
+    #[test]
+    fn a_real_shout_on_the_microphone_turns_our_plate_red_and_normal_speech_does_not() {
+        use crate::ui::nameplate::overdrive;
+        // the meter at full scale is the participant level at full scale
+        assert!((participant_level(0.8) - 0.6315).abs() < 1e-4);
+        // the meter's levels (0.01 a dB, 0.8 at full scale) of a voice
+        let at = |dbfs: f32| participant_level(0.8 + dbfs / 100.0);
+        let speaking = |dbfs: f32| at(dbfs) > aurora_voice::SPEAKING_AUDIO_LEVEL;
+        // silence and room noise: no voice; a whisper speaks
+        assert_eq!(participant_level(0.0), 0.0);
+        assert!(!speaking(-70.0) && speaking(-45.0));
+        // normal speech, even raised: green
+        for dbfs in [-30.0, -27.0, -24.0, -20.0] {
+            assert_eq!(overdrive(at(dbfs)), 0.0, "{dbfs} dBFS");
+        }
+        // a shout turns red on the way, a hard shout fully
+        assert!(overdrive(at(-15.0)) > 0.4, "{}", overdrive(at(-15.0)));
+        assert_eq!(overdrive(at(-11.0)), 1.0);
     }
 
     #[test]

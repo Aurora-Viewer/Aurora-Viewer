@@ -169,6 +169,13 @@ world-drop path with inventory rows and library swatches. A dedicated handle
 in each material preview supplies the same cargo without consuming the
 3D scene's orbit gesture.
 
+`ui/inventory/rows.rs` lists the plain inventory tree (Inventory tab and
+folder windows) as flat rows, rebuilt only when the inventory, the sort or an
+open folder changes, and lays out only the rows in sight; it keeps each
+window's open folders (the main window's with the UI layout). Searches,
+filters and the other tabs use the flattened result tree of
+`ui/inventory/view.rs`, drawn the same way.
+
 `ui/inventory/drag.rs` snapshots the full Ctrl/Shift selection at drag start
 and moves it through `world/inventory/actions.rs::move_selection`. A separate
 batch payload prevents single-item world, attachment and editor targets from

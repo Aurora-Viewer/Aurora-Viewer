@@ -209,10 +209,12 @@ struct Query {
 pub struct ViewCache {
     version: Option<(Uuid, Uuid, u64, Sort)>,
     entries: Vec<Entry>,
-    children: HashMap<Uuid, Vec<Uuid>>,
-    result_children: HashMap<Uuid, Vec<Uuid>>,
-    folders: HashSet<Uuid>,
+    children: IdMap<Vec<Uuid>>,
+    result_children: IdMap<Vec<Uuid>>,
+    folders: IdSet,
     revision: u64,
+    /// Bumped by every rebuild of the sorted entries (`prepare`).
+    built: u64,
     query: Option<Query>,
     pub results: Vec<Uuid>,
 }
@@ -223,36 +225,24 @@ impl ViewCache {
         if self.version == Some(version) {
             return;
         }
-        // A folder has no server creation date. Firestorm uses its newest
-        // descendant. A guarded ancestor walk also handles malformed cycles.
-        let mut dates: HashMap<Uuid, i64> = HashMap::new();
-        for item in inv.items.values() {
-            let mut parent = item.parent;
-            let mut seen = HashSet::new();
-            while seen.insert(parent) {
-                let Some(folder) = inv.folders.get(&parent) else {
-                    break;
-                };
-                dates
-                    .entry(parent)
-                    .and_modify(|d| *d = (*d).max(item.created_at))
-                    .or_insert(item.created_at);
-                parent = folder.info.parent;
+        // Trash and outfits by folder, once each; an item is where its folder is.
+        let roots = |kinds: &[i32]| kinds.iter().filter_map(|kind| rules::system(inv, *kind)).collect::<Vec<_>>();
+        let trash = within(inv, &roots(&[14]));
+        let outfits = within(inv, &roots(&[46, 48]));
+        let metadata = |id: Uuid, parent, name, desc, date, group, folder: bool| {
+            let at = if folder { id } else { parent };
+            Entry {
+                id,
+                parent,
+                name,
+                desc,
+                date,
+                group,
+                folder,
+                trash: trash.contains(&at),
+                outfit: outfits.contains(&at),
+                library: rules::library(inv, id),
             }
-        }
-        let trash = rules::system(inv, 14);
-        let outfits = [rules::system(inv, 46), rules::system(inv, 48)];
-        let metadata = |id: Uuid, parent, name, desc, date, group, folder| Entry {
-            id,
-            parent,
-            name,
-            desc,
-            date,
-            group,
-            folder,
-            trash: trash.is_some_and(|root| rules::under(inv, id, root)),
-            outfit: outfits.iter().flatten().any(|root| rules::under(inv, id, *root)),
-            library: rules::library(inv, id),
         };
         self.entries = inv
             .folders
@@ -271,12 +261,13 @@ impl ViewCache {
                 } else {
                     2
                 };
+                // dated below, from their items
                 metadata(
                     *id,
                     f.info.parent,
                     folder_name(inv, *id).to_lowercase(),
                     String::new(),
-                    dates.get(id).copied().unwrap_or(0),
+                    0,
                     group,
                     true,
                 )
@@ -293,9 +284,39 @@ impl ViewCache {
                 )
             }))
             .collect();
+        // A folder has no server creation date: the Legacy Viewer uses its
+        // newest descendant. Each folder's newest item climbs its ancestors
+        // until one is already as new (they are then all as new above it).
+        // The bound also stops malformed parent cycles.
+        let mut newest: IdMap<i64> = IdMap::default();
+        for entry in self.entries.iter().filter(|e| !e.folder && inv.folders.contains_key(&e.parent)) {
+            newest
+                .entry(entry.parent)
+                .and_modify(|d| *d = (*d).max(entry.date))
+                .or_insert(entry.date);
+        }
+        let mut dates: IdMap<i64> = IdMap::default();
+        for (folder, date) in newest {
+            let mut id = folder;
+            for _ in 0..=inv.folders.len() {
+                let Some(f) = inv.folders.get(&id) else { break };
+                match dates.get_mut(&id) {
+                    Some(d) if *d >= date => break,
+                    Some(d) => *d = date,
+                    None => {
+                        dates.insert(id, date);
+                    }
+                }
+                id = f.info.parent;
+            }
+        }
+        for entry in self.entries.iter_mut().filter(|e| e.folder) {
+            entry.date = dates.get(&entry.id).copied().unwrap_or(0);
+        }
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
         self.folders = inv.folders.keys().copied().collect();
-        self.children.clear();
+        // Keep the lists' memory: a folder gone keeps an empty list.
+        self.children.values_mut().for_each(Vec::clear);
         for entry in &self.entries {
             self.children.entry(entry.parent).or_default().push(entry.id);
         }
@@ -307,17 +328,27 @@ impl ViewCache {
             root.push(inv.lib_root);
         }
         self.version = Some(version);
+        self.built = self.built.wrapping_add(1);
         self.query = None;
     }
 
+    /// Changes whenever the sorted children change (see `prepare`).
+    pub fn built(&self) -> u64 {
+        self.built
+    }
+
+    #[cfg(test)]
     pub fn children(&self, parent: Uuid, prefs: &InventoryPreferences, lib_root: Uuid) -> Vec<Uuid> {
+        self.children_iter(parent, prefs.show_library, lib_root).collect()
+    }
+
+    pub fn children_iter(&self, parent: Uuid, show_library: bool, lib_root: Uuid) -> impl Iterator<Item = Uuid> + '_ {
         self.children
             .get(&parent)
             .into_iter()
             .flatten()
-            .filter(|id| prefs.show_library || **id != lib_root)
+            .filter(move |id| show_library || **id != lib_root)
             .copied()
-            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -369,14 +400,21 @@ impl ViewCache {
         if self.query.as_ref() == Some(&query) {
             return;
         }
+        // The scope by folder, once (`rules::under` for each entry walked its
+        // ancestors again); an item is where its folder is.
+        let scope = if root == inv.root {
+            within(inv, &[inv.root, inv.lib_root])
+        } else {
+            within(inv, &[root])
+        };
         self.results = self
             .entries
             .par_iter()
             .filter(|e| {
-                if root == inv.root && !rules::under(inv, e.id, inv.root) && !rules::under(inv, e.id, inv.lib_root) {
+                if !scope.contains(if e.folder { &e.id } else { &e.parent }) {
                     return false;
                 }
-                if e.id == root || e.id == inv.lib_root || (root != inv.root && !rules::under(inv, e.id, root)) {
+                if e.id == root || e.id == inv.lib_root {
                     return false;
                 }
                 if (!query.trash && e.trash) || (!query.library && e.library) || (!query.outfits && e.outfit) {
@@ -452,12 +490,11 @@ impl ViewCache {
             .collect();
         // Every matching item retains its real ancestors. Folder visibility
         // is independent of whether the folder itself passes item filters.
-        let mut included = HashSet::new();
+        // A walk stops at an ancestor already in: the ones above it are too.
+        let mut included = IdSet::default();
         for id in &self.results {
             let mut parent = *id;
-            let mut seen = HashSet::new();
-            while parent != root && seen.insert(parent) {
-                included.insert(parent);
+            while parent != root && included.insert(parent) {
                 if parent == inv.lib_root && root == inv.root {
                     break;
                 }
@@ -581,6 +618,70 @@ impl TreeState {
         }
         self.key = None;
     }
+}
+
+/// The view's maps by inventory id: no protection against chosen keys is
+/// needed, so the halves are folded with FxHasher's multiply and finished
+/// with MurmurHash3's mixer (synthetic ids differ only in a few bytes), for a
+/// fraction of SipHash's cost (a third of a rebuild went to hashing).
+#[derive(Default, Clone, Copy)]
+struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.0 = (self.0.rotate_left(5) ^ u64::from_le_bytes(word)).wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+    }
+
+    fn finish(&self) -> u64 {
+        let mut h = self.0;
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        h ^ (h >> 33)
+    }
+}
+
+type IdMap<V> = HashMap<Uuid, V, std::hash::BuildHasherDefault<IdHasher>>;
+type IdSet = HashSet<Uuid, std::hash::BuildHasherDefault<IdHasher>>;
+
+/// The folders under one of `roots` (`rules::under`, the roots included),
+/// each ancestor chain walked once.
+fn within(inv: &Inventory, roots: &[Uuid]) -> IdSet {
+    let mut known: IdMap<bool> = IdMap::default();
+    known.reserve(inv.folders.len());
+    let mut path = Vec::new();
+    for start in inv.folders.keys() {
+        let mut id = *start;
+        let found = loop {
+            if roots.contains(&id) {
+                break true;
+            }
+            if let Some(found) = known.get(&id) {
+                break *found;
+            }
+            if path.contains(&id) {
+                break false;
+            }
+            path.push(id);
+            match rules::parent(inv, id) {
+                Some(parent) => id = parent,
+                None => break false,
+            }
+        };
+        for id in path.drain(..) {
+            known.insert(id, found);
+        }
+    }
+    known
+        .into_iter()
+        .filter_map(|(id, found)| found.then_some(id))
+        .chain(roots.iter().copied())
+        .collect()
 }
 
 fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
@@ -779,6 +880,39 @@ mod tests {
         let root = cache.children(inv.root, &prefs, inv.lib_root);
         assert!(root.iter().position(|n| *n == id(6)) < root.iter().position(|n| *n == id(2)));
         assert!(natural_cmp("folder 2", "folder 10").is_lt());
+    }
+
+    #[test]
+    fn folder_dates_climb_past_older_branches_and_stop_on_parent_cycles() {
+        let (mut inv, _) = fixture();
+        // 2 > 7 > 8: an old item deep down, a newer one in 7, the newest in 8.
+        folder(&mut inv, 7, id(2), -1, "nested");
+        folder(&mut inv, 8, id(7), -1, "deeper");
+        inv.add_items(vec![item(13, id(8), "deep", 900), item(14, id(7), "middle", 50)]);
+        // 30 <-> 31, a malformed cycle, with an item.
+        folder(&mut inv, 30, id(31), -1, "cycle a");
+        folder(&mut inv, 31, id(30), -1, "cycle b");
+        inv.add_items(vec![item(15, id(30), "in a cycle", 70)]);
+        let mut cache = ViewCache::default();
+        cache.prepare(&inv, Sort::default());
+        let date = |n| cache.entries.iter().find(|e| e.id == id(n)).map(|e| e.date);
+        assert_eq!([date(2), date(7), date(8)], [Some(900); 3]);
+        assert_eq!(date(1), Some(900), "the root holds the newest of all");
+        assert_eq!([date(30), date(31)], [Some(70); 2]);
+        assert_eq!(date(4), Some(0), "an empty folder has no date");
+    }
+
+    #[test]
+    fn scope_sets_follow_parents_like_under_including_cycles() {
+        let (mut inv, _) = fixture();
+        folder(&mut inv, 7, id(2), -1, "nested");
+        folder(&mut inv, 30, id(31), -1, "cycle a");
+        folder(&mut inv, 31, id(30), -1, "cycle b");
+        let set = within(&inv, &[id(2)]);
+        for n in inv.folders.keys() {
+            assert_eq!(set.contains(n), rules::under(&inv, *n, id(2)), "{n}");
+        }
+        assert!(set.contains(&id(7)) && !set.contains(&id(30)));
     }
 
     #[test]

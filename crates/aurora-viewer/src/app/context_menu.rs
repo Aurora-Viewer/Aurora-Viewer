@@ -149,6 +149,7 @@ impl App {
                 f.render = self.settings.render_exception(id);
                 f.blocked = w.is_avatar_blocked(id);
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
+                f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
             }
             _ => {}
         }
@@ -320,6 +321,22 @@ impl App {
             CtxAction::ToggleBlock(id) => {
                 let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
                 if let Err(e) = self.world.toggle_block_avatar(id, &name) {
+                    self.world.system_message(e);
+                }
+            }
+            // the volumes of the call's participants: applied live, saved
+            // once the slider rests
+            CtxAction::SetVoiceVolume(id, v) => {
+                self.world.calls.set_volume(id, v);
+                self.volumes_save_at = Some(Instant::now() + std::time::Duration::from_millis(500));
+            }
+            // LLInspectAvatar::onClickMuteVolume: only the voice flag
+            CtxAction::ToggleVoiceMute(id) => {
+                use crate::world::mutes::{MuteType, flag};
+                let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
+                if self.world.voice_blocked(&id) {
+                    self.world.unblock(id, &name, flag::VOICE_CHAT);
+                } else if let Err(e) = self.world.block_flags(id, &name, MuteType::Agent, flag::VOICE_CHAT) {
                     self.world.system_message(e);
                 }
             }
