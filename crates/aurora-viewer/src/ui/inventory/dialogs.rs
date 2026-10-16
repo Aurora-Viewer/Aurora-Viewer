@@ -1143,24 +1143,43 @@ mod tests {
             let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
             let editor = if view == View::Markdown { editor.with("markdown") } else { editor };
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with("demo_rect"))).is_none() {
-                assert!(std::time::Instant::now() < deadline, "Markdown worker did not finish");
-                std::thread::sleep(std::time::Duration::from_millis(1));
+            loop {
+                // The previous preview stays visible while parsing the edited
+                // draft. Its cached rectangle alone cannot prove that the next
+                // click will hit the attachment's current position.
+                let current = view == View::Classic
+                    || st
+                        .notecard_markdown
+                        .get(&ctx, &draft)
+                        .is_some_and(|rendered| rendered.source == draft);
                 document_frame(&ctx, &inv, &mut st, vec![]);
+                if current && ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with("demo_rect"))).is_some() {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "{view:?}: current Markdown preview did not finish"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
             assert_eq!(st.preview_text, Some(Ok(draft.clone())));
             assert!(st.preview_dirty);
             let attachment = ctx
                 .data_mut(|data| data.get_temp::<egui::Rect>(editor.with(("demo_attachment", '\u{100000}'))))
                 .expect("attachment in every view");
-            assert!(matches!(
-                &click_document(&ctx, &inv, &mut st, attachment.center())[..],
-                [InvAction::Embedded {
-                    marker: '\u{100000}',
-                    copy: false,
-                    ..
-                }]
-            ));
+            let actions = click_document(&ctx, &inv, &mut st, attachment.center());
+            assert!(
+                matches!(
+                    &actions[..],
+                    [InvAction::Embedded {
+                        marker: '\u{100000}',
+                        copy: false,
+                        ..
+                    }]
+                ),
+                "{view:?}: attachment click at {attachment:?} emitted {} actions",
+                actions.len()
+            );
             // Markdown uses its own immutable buffer and selection indices;
             // saving while focused there must still emit the complete source.
             ctx.memory_mut(|m| m.request_focus(editor));
