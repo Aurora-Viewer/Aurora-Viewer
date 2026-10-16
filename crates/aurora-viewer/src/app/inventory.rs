@@ -6,6 +6,35 @@ use crate::world::inventory::actions as rules;
 use uuid::Uuid;
 
 impl App {
+    /// `AURORA_DEMO_INVENTORY=big,toggle=…,churn=…`: open and close the
+    /// window, and change one item now and then, once in the world.
+    pub(super) fn demo_big_inventory(&mut self, big: &crate::world::inventory::demo::Big) {
+        use std::sync::OnceLock;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static START: OnceLock<Instant> = OnceLock::new();
+        static CHURNS: AtomicU64 = AtomicU64::new(0);
+        if !matches!(self.screen, Screen::World) {
+            return;
+        }
+        let elapsed = START.get_or_init(Instant::now).elapsed();
+        if big.toggle > 0.0 {
+            let open = ((elapsed.as_secs_f32() / big.toggle) as u64).is_multiple_of(2);
+            if open != self.panels.inventory {
+                log::info!("demo inventory window open={open}");
+                self.panels.inventory = open;
+            }
+        }
+        if let Some(due) = (elapsed.as_millis() as u64).checked_div(big.churn_ms)
+            && CHURNS.swap(due, Ordering::Relaxed) != due
+        {
+            let id = Uuid::from_u128(21_000_000 + u128::from(due % 2_000));
+            if let Some(mut item) = self.world.inventory.items.get(&id).cloned() {
+                item.desc = format!("Update {due}");
+                self.world.inventory.server_updated(Vec::new(), vec![item]);
+            }
+        }
+    }
+
     fn take_task_inventory(&mut self, mut request: crate::build::task_inventory::TransferRequest) {
         use crate::build::task_inventory::{self, TransferKind};
         // Both object inventory windows receive the same TaskInventory events.

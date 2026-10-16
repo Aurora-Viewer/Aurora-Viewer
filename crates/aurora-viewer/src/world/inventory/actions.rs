@@ -66,6 +66,12 @@ pub fn destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool
     inv.folders.contains_key(&id) && mutable(inv, id, protected) && !in_type(inv, id, 14) && !in_type(inv, id, 48) && !in_type(inv, id, 53)
 }
 pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
+    // Most rows are no link: answer them without the cycle guard's set
+    // (it allocates, and every visible row asks, for its permissions and
+    // its worn label).
+    if inv.folders.contains_key(&id) || inv.items.get(&id).is_some_and(|it| !matches!(it.asset_type, 24 | 25)) {
+        return Some(id);
+    }
     let mut seen = HashSet::new();
     while seen.insert(id) {
         if inv.folders.contains_key(&id) {

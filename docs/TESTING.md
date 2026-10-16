@@ -3091,6 +3091,19 @@ offline; the files and snapshots uploaded in demo stay offline.
   and close one by one, and only the rows in sight are drawn; `-open`
   expands them all. With `AURORA_PROFILE=1`, `ui` stays under 1 ms (it was
   about 17 ms, all open, before the tab used the result tree).
+- `big[:<items>]`: a long-time resident's inventory, 30,000 items by
+  default in about a tenth as many folders, five levels deep (store
+  brands, products, extras, fit packs) and a loose folder of 2,000 objects,
+  open with the first top folder, three of its brands and their products.
+  Options after commas: `recent` (Recent tab), `search=<text>`,
+  `toggle=<s>` (opens and closes the window every `s` seconds, to compare
+  closed and open in one run; each change is logged as
+  `demo inventory window open=…`) and `churn=<ms>` (one item changes every
+  `ms` milliseconds, like the server's inventory updates). With
+  `AURORA_PROFILE=1` and `AURORA_FPS_LIMIT=120`, read `u_inventory`: in the
+  dev build, the window open costs about 0.4 ms per frame (12.9 ms before
+  only the rows in sight were laid out) and no slow frame when it opens; an
+  update costs one frame of about 6 ms.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker`: the five reference panels.
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
