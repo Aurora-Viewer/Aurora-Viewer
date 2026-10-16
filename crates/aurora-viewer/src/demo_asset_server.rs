@@ -14,8 +14,9 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// A request head is not read past this (nothing the fetcher sends comes
@@ -26,6 +27,52 @@ const MAX_HEAD: usize = 16 * 1024;
 /// of the request's `<kind>_id=` parameter) and its id. None: a 404.
 pub type Resolve = Arc<dyn Fn(&str, &Uuid) -> Option<PathBuf> + Send + Sync>;
 
+/// The link the server stands for: each reply leaves `delay` after its
+/// request, and with a bandwidth the bodies of all the connections share
+/// it, one after the other, as on a link held by its throughput. Counts the
+/// bytes sent, per kind of asset.
+pub struct Link {
+    delay: Duration,
+    bytes_per_second: Option<f64>,
+    /// When the shared pipe is free again.
+    free_at: Mutex<Instant>,
+    sent: [AtomicU64; 3],
+}
+
+impl Link {
+    /// `mbps`: megabits a second (None: no limit but the round trip).
+    pub fn new(delay: Duration, mbps: Option<f64>) -> Arc<Link> {
+        Arc::new(Link {
+            delay,
+            bytes_per_second: mbps.filter(|m| *m > 0.0).map(|m| m * 1e6 / 8.0),
+            free_at: Mutex::new(Instant::now()),
+            sent: Default::default(),
+        })
+    }
+
+    /// Bytes of bodies sent for a kind (`texture`, `mesh`, `animatn`).
+    pub fn sent(&self, kind: &str) -> u64 {
+        KINDS.iter().position(|k| *k == kind).map_or(0, |i| self.sent[i].load(Ordering::Relaxed))
+    }
+
+    /// Wait for the body's turn through the pipe, and its time in it.
+    fn pass(&self, kind: Option<&str>, len: usize) {
+        if let Some(i) = kind.and_then(|kind| KINDS.iter().position(|k| *k == kind)) {
+            self.sent[i].fetch_add(len as u64, Ordering::Relaxed);
+        }
+        let Some(rate) = self.bytes_per_second else {
+            return;
+        };
+        let done = {
+            let mut free_at = self.free_at.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let start = (*free_at).max(Instant::now());
+            *free_at = start + Duration::from_secs_f64(len as f64 / rate);
+            *free_at
+        };
+        std::thread::sleep(done.saturating_duration_since(Instant::now()));
+    }
+}
+
 /// Starts the server for `files`: texture `id` is the file `index(id)`
 /// (cycled). Returns its base URL, the `ViewerAsset` capability of the
 /// demo's region.
@@ -35,20 +82,20 @@ pub fn start(files: Arc<Vec<PathBuf>>, delay: Duration, index: fn(&Uuid) -> Opti
             let i = index(id).filter(|_| kind == "texture")?;
             files.get(i as usize % files.len().max(1)).cloned()
         }),
-        delay,
+        Link::new(delay, None),
     )
 }
 
 /// Starts the server for any kind of asset, found by `resolve`.
-pub fn start_assets(resolve: Resolve, delay: Duration) -> std::io::Result<String> {
+pub fn start_assets(resolve: Resolve, link: Arc<Link>) -> std::io::Result<String> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let url = format!("http://{}/", listener.local_addr()?);
     std::thread::Builder::new().name("demo-assets".into()).spawn(move || {
         for stream in listener.incoming().flatten() {
-            let resolve = resolve.clone();
+            let (resolve, link) = (resolve.clone(), link.clone());
             let spawned = std::thread::Builder::new()
                 .name("demo-assets-connection".into())
-                .spawn(move || serve(stream, &resolve, delay));
+                .spawn(move || serve(stream, &resolve, &link));
             if let Err(e) = spawned {
                 log::warn!("demo asset server: connection not served ({e})");
             }
@@ -58,7 +105,7 @@ pub fn start_assets(resolve: Resolve, delay: Duration) -> std::io::Result<String
 }
 
 /// One connection: requests answered one after the other until it closes.
-fn serve(stream: TcpStream, resolve: &Resolve, delay: Duration) {
+fn serve(stream: TcpStream, resolve: &Resolve, link: &Link) {
     let _ = stream.set_nodelay(true);
     let Ok(mut out) = stream.try_clone() else {
         return;
@@ -76,12 +123,14 @@ fn serve(stream: TcpStream, resolve: &Resolve, delay: Duration) {
                 Ok(_) => {}
             }
         }
-        std::thread::sleep(delay);
-        let file = parse_request(&head).and_then(|(kind, id, range)| Some((std::fs::read(resolve(kind, &id)?).ok()?, range)));
+        std::thread::sleep(link.delay);
+        let asked = parse_request(&head);
+        let file = asked.and_then(|(kind, id, range)| Some((std::fs::read(resolve(kind, &id)?).ok()?, range)));
         let (status, headers, body) = match &file {
             Some((data, range)) => reply(data, *range),
             None => ("404 Not Found", String::new(), &[][..]),
         };
+        link.pass(asked.map(|(kind, _, _)| kind), body.len());
         let head = format!(
             "HTTP/1.1 {status}\r\nContent-Type: image/x-j2c\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\n{headers}\r\n",
             body.len()

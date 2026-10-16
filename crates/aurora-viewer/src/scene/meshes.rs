@@ -1,13 +1,24 @@
 //! Mesh assets, downloaded by parts, and GLTF material assets.
 //!
-//! A mesh is no longer downloaded whole (every level of detail and its
-//! physics, in one request): its header first, then only the blocks that
-//! are drawn, a level of detail and the skin, by byte ranges. Port of the
-//! requests of LLMeshRepoThread (indra/newview/llmeshrepository.cpp,
-//! originally LGPL 2.1): `fetchMeshHeader` asks for the first 4,096 bytes
-//! (`MESH_HEADER_SIZE`, the blocks that fit in them come with them),
-//! `fetchMeshLOD` and `fetchMeshSkinInfo` the range of one block. Two
-//! missing blocks close to each other are asked for in one request. The
+//! A mesh drawn below its high level of detail is no longer downloaded
+//! whole (every level and its physics, in one request): its header first,
+//! then only the blocks that are drawn, a level of detail and the skin, by
+//! byte ranges. Port of the requests of LLMeshRepoThread
+//! (indra/newview/llmeshrepository.cpp, originally LGPL 2.1):
+//! `fetchMeshHeader` asks for the first 4,096 bytes (`MESH_HEADER_SIZE`,
+//! the blocks that fit in them come with them), `fetchMeshLOD` and
+//! `fetchMeshSkinInfo` the range of one block. Two missing blocks close to
+//! each other are asked for in one request.
+//!
+//! **Different from Firestorm, deliberately:** a mesh first wanted at its
+//! high level is still downloaded whole, in one request. The blocks of an
+//! asset go from the coarsest level to the finest, then the physics and the
+//! skin; the high level is three quarters of the bytes of all meshes and
+//! the header's 4,096 bytes usually hold the two coarsest levels. Measured
+//! on 3,000 cached assets: to show the lowest, low or medium level, the
+//! header first then the block takes 1.3 to 1.9 requests for 3 to 22 % of
+//! the bytes; to show the high level, 1.9 requests for 80 % of them, one
+//! more round trip before what is near is drawn, for a fifth of its bytes. The
 //! bytes are parsed by jobs (header, skin): the main thread only keeps
 //! them, it no longer copies a whole asset nor parses it in a frame. What
 //! is held is kept in the disk cache (`mesh_bytes.rs`).
@@ -535,8 +546,10 @@ impl MeshStreamer {
                 };
                 if e.stage == Stage::ToFetch {
                     // the header first (fetchMeshHeader), or the whole asset
-                    // when the header is larger than that
-                    let range = (!e.whole).then_some((0, HEADER_BYTES));
+                    // when its high level is wanted (see above) or its
+                    // header is larger than that
+                    let high = e.wanted_lods.contains(&3);
+                    let range = (!e.whole && !high).then_some((0, HEADER_BYTES));
                     let key = FETCH_KIND_MESH | self.next_key;
                     self.next_key += 1;
                     self.by_key.insert(key, id);

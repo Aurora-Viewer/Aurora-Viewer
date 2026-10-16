@@ -1,5 +1,5 @@
-//! AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]: an
-//! arrival in a busy region, to measure what the loading shows first.
+//! AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>]:
+//! an arrival in a busy region, to measure what the loading shows first.
 //!
 //! `n` objects (1,200 by default) arrive all around our avatar, the nearest
 //! first and about 600 a second as a simulator sends them, from 3 to 120 m
@@ -7,7 +7,8 @@
 //! own texture. Sixteen avatars stand nearby, each playing two animations.
 //! Every asset is downloaded from the local asset server
 //! (demo_asset_server.rs, on this machine only), which answers each request
-//! after `net` milliseconds (200 by default): the textures (`.j2c`), meshes
+//! after `net` milliseconds (200 by default), the bodies sharing `bw`
+//! megabits a second when given (a link held by its throughput): the textures (`.j2c`), meshes
 //! (`.mesh`, static ones) and animations (`.anim`) are the files of
 //! `<folder>`'s `tex`, `mesh` and `anim` subfolders, under ids proper to the
 //! run, so no disk cache holds them. `turn` seconds after the first objects
@@ -28,7 +29,7 @@ use aurora_prim::ExtraParams;
 use aurora_prim::params::*;
 use glam::{Quat, Vec2, Vec3};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -115,11 +116,10 @@ struct Placed {
     full_id: Uuid,
 }
 
-/// Bytes and requests the server answered, per kind.
+/// Requests the server answered, per kind.
 #[derive(Default)]
 struct Served {
     requests: [AtomicU32; 3],
-    bytes: [AtomicU64; 3],
 }
 
 struct Run {
@@ -135,10 +135,13 @@ struct Run {
     told: [usize; 3],
     done: bool,
     served: Arc<Served>,
+    link: Arc<super::asset_server::Link>,
 }
 
 pub struct ArrivalDemo {
     delay: Duration,
+    /// `bw=`: the link's bandwidth in megabits a second.
+    mbps: Option<f64>,
     n: u32,
     turn: Duration,
     files: Arc<OnceLock<Files>>,
@@ -187,6 +190,7 @@ impl ArrivalDemo {
         }
         Some(ArrivalDemo {
             delay: Duration::from_millis(option(&value, "net").unwrap_or(200)),
+            mbps: option(&value, "bw"),
             n,
             turn: Duration::from_secs_f32(option::<f32>(&value, "turn").unwrap_or(3.0).max(0.0)),
             files,
@@ -217,14 +221,11 @@ impl ArrivalDemo {
                 };
                 let path = list.get(i as usize % list.len())?.clone();
                 served.requests[slot].fetch_add(1, Ordering::Relaxed);
-                // (a texture is asked for by ranges: its bytes are in `texture load:`)
-                if slot > 0 {
-                    served.bytes[slot].fetch_add(std::fs::metadata(&path).map_or(0, |m| m.len()), Ordering::Relaxed);
-                }
                 Some(path)
             })
         };
-        let url = match super::asset_server::start_assets(resolve, self.delay) {
+        let link = super::asset_server::Link::new(self.delay, self.mbps);
+        let url = match super::asset_server::start_assets(resolve, link.clone()) {
             Ok(url) => url,
             Err(e) => {
                 log::warn!("demo arrival: no local asset server ({e})");
@@ -303,12 +304,13 @@ impl ArrivalDemo {
         }
         let meshes = objects.iter().filter(|o| o.mesh.is_some()).count();
         log::info!(
-            "demo arrival: {} objects ({} meshes), {} animations on {} avatars, {} ms a request, turn after {:.1} s",
+            "demo arrival: {} objects ({} meshes), {} animations on {} avatars, {} ms a request, {}, turn after {:.1} s",
             n,
             meshes,
             anims.len(),
             AVATARS,
             self.delay.as_millis(),
+            self.mbps.map_or("no bandwidth limit".to_owned(), |m| format!("{m} Mb/s")),
             self.turn.as_secs_f32()
         );
         Some(Run {
@@ -324,6 +326,7 @@ impl ArrivalDemo {
             told: [0; 3],
             done: false,
             served,
+            link,
         })
     }
 
@@ -444,14 +447,15 @@ impl ArrivalDemo {
         if run.told.iter().all(|t| *t == STEPS.len()) && run.sent == run.order.len() {
             run.done = true;
             let s = &run.served;
-            let mb = |slot: usize| s.bytes[slot].load(Ordering::Relaxed) as f32 / 1e6;
+            let mb = |kind: &str| run.link.sent(kind) as f32 / 1e6;
             log::info!(
-                "demo arrival: done after {elapsed:.2} s; served {} texture requests, {} mesh requests ({:.1} MB), {} animation requests ({:.2} MB)",
+                "demo arrival: done after {elapsed:.2} s; served {} texture requests ({:.1} MB), {} mesh requests ({:.1} MB), {} animation requests ({:.2} MB)",
                 s.requests[0].load(Ordering::Relaxed),
+                mb("texture"),
                 s.requests[1].load(Ordering::Relaxed),
-                mb(1),
+                mb("mesh"),
                 s.requests[2].load(Ordering::Relaxed),
-                mb(2),
+                mb("animatn"),
             );
         }
     }

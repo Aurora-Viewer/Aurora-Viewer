@@ -1392,7 +1392,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
-| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
+| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1538,7 +1538,7 @@ To check with these scenarios:
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
-- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]`**:
+- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>]`**:
   an arrival in a busy region, to measure what the loading shows first.
   `n` objects (1,200 by default) arrive all around our avatar, the nearest
   first and 600 a second, from 3 to 120 m away and larger with the
@@ -1546,7 +1546,11 @@ To check with these scenarios:
   avatars stand nearby, each playing two animations. Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
-  (200 by default; about 70 for the asset hosts on a good link): the files
+  (200 by default; about 70 for the asset hosts on a good link); with
+  `bw=`, the bodies of all its connections share that many megabits a
+  second, one after the other, as on a link held by its throughput (about
+  100 on a home link measured on Agni, where 24 requests at a time fill
+  it): without it only the round trip limits the downloads. The files
   are those of the `tex` (`.j2c`), `mesh` (`.mesh`, static ones only) and
   `anim` (`.anim`) subfolders of `<folder>`, only read, under ids proper
   to the run so that no disk cache holds them (the run's files are left
