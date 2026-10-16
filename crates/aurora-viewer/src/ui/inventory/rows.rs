@@ -19,7 +19,9 @@ pub const ROW_HEIGHT: f32 = 20.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Folder { open: bool },
+    Folder {
+        open: bool,
+    },
     Item,
     /// "Empty" or "Loading folder" under an open folder without children.
     Empty,
@@ -458,7 +460,10 @@ mod tests {
         tree.prepare(&view, &inv, inv.root, true, true);
         assert_eq!(tree.order, [1, 10, 20, 3].map(id));
         tree.prepare(&view, &inv, id(10), false, true);
-        assert_eq!(listed(&tree), [(11, 0, Kind::Folder { open: false }), (100, 0, Kind::Item), (101, 0, Kind::Item)]);
+        assert_eq!(
+            listed(&tree),
+            [(11, 0, Kind::Folder { open: false }), (100, 0, Kind::Item), (101, 0, Kind::Item)]
+        );
         assert_eq!(tree.listed_open, [id(10)]);
     }
 

@@ -574,7 +574,16 @@ pub fn seed_big(inv: &mut Inventory, agent: Uuid, items: usize) -> Vec<Uuid> {
     ];
     const HOUSE: [&str; 8] = ["Atelier", "Works", "Design", "Studio", "Lab", "Forge", "House", "Craft"];
     const PRODUCT: [&str; 10] = [
-        "Jacket", "Dress", "Sofa", "Lamp", "Boots", "Bob", "Pose pack", "Gazebo", "Wood set", "HUD",
+        "Jacket",
+        "Dress",
+        "Sofa",
+        "Lamp",
+        "Boots",
+        "Bob",
+        "Pose pack",
+        "Gazebo",
+        "Wood set",
+        "HUD",
     ];
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -682,12 +691,24 @@ pub fn seed_big(inv: &mut Inventory, agent: Uuid, items: usize) -> Vec<Uuid> {
                 n,
                 if n % 5 == 0 { " (wear me)" } else { "" }
             ),
-            desc: if n % 4 == 0 { format!("Version {}.{}", n % 9, n % 7) } else { String::new() },
+            desc: if n % 4 == 0 {
+                format!("Version {}.{}", n % 9, n % 7)
+            } else {
+                String::new()
+            },
             asset_type,
             inv_type,
-            flags: if asset_type == 6 && n % 9 == 0 { crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS } else { 0 },
+            flags: if asset_type == 6 && n % 9 == 0 {
+                crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS
+            } else {
+                0
+            },
             owner: agent,
-            creator: if n % 10 == 0 { agent } else { Uuid::from_u128(30_000_000 + (n % 400) as u128) },
+            creator: if n % 10 == 0 {
+                agent
+            } else {
+                Uuid::from_u128(30_000_000 + (n % 400) as u128)
+            },
             created_at: if n % 100 == 0 {
                 now - (n as i64 * 37) % 86_000
             } else {

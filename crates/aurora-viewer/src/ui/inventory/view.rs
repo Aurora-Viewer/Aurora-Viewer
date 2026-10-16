@@ -262,7 +262,15 @@ impl ViewCache {
                     2
                 };
                 // dated below, from their items
-                metadata(*id, f.info.parent, folder_name(inv, *id).to_lowercase(), String::new(), 0, group, true)
+                metadata(
+                    *id,
+                    f.info.parent,
+                    folder_name(inv, *id).to_lowercase(),
+                    String::new(),
+                    0,
+                    group,
+                    true,
+                )
             })
             .chain(inv.items.par_iter().map(|(id, it)| {
                 metadata(
