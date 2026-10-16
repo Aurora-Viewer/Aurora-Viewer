@@ -433,6 +433,9 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
+    /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
+    /// off here, on in the Legacy Viewer's own settings).
+    pub friends_online_in_chat: bool,
     /// Where those toasts stand with Aurora's notification center.
     pub presence_position: PresencePosition,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
@@ -567,6 +570,11 @@ pub struct Settings {
     /// chat. Firestorm's `LetterKeysAffectsMovementNotFocusChatBar`, on by
     /// default.
     pub letter_keys_move: bool,
+    /// Avatars that walk backwards are drawn stepping back instead of
+    /// turning around to face where they go (only on this screen). The
+    /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
+    /// default.
+    pub walk_backwards_without_turning: bool,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in Firestorm.
     pub double_click: crate::autopilot::DoubleClick,
@@ -1050,6 +1058,7 @@ impl Default for Settings {
             send_typing_state: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
+            friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
             toast_im: true,
             toast_group_im: false,
@@ -1100,6 +1109,7 @@ impl Default for Settings {
             arrows_strafe: false,
             arrow_keys_always_move: true,
             letter_keys_move: true,
+            walk_backwards_without_turning: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             lookat: Default::default(),
             former_look_at: None,

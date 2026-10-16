@@ -242,6 +242,19 @@ impl H {
         self.settle();
     }
 
+    fn history_key(&mut self, key: egui::Key, modifiers: egui::Modifiers) {
+        self.frame(history_events(key, modifiers));
+        self.settle();
+    }
+
+    fn bar_frame(&mut self, events: Vec<egui::Event>) -> Option<super::OutgoingChat> {
+        let mut sent = None;
+        self.frames.run(events, |ui| {
+            sent = super::bar(ui, &crate::theme::Theme::default().palette(), &mut self.st, &self.gestures, 400.0);
+        });
+        sent
+    }
+
     fn take(&mut self) -> Vec<ConvAction> {
         std::mem::take(&mut self.actions)
     }
@@ -289,6 +302,111 @@ impl H {
             since: std::time::Instant::now(),
         });
         self.settle();
+    }
+}
+
+fn history_events(key: egui::Key, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+    vec![
+        egui::Event::ModifiersChanged(modifiers),
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        },
+    ]
+}
+
+#[test]
+fn input_history_is_separate_for_local_private_group_and_conference_in_every_style() {
+    for style in ALL {
+        let mut h = H::new(style);
+        let conversations = [None, Some(JANE), Some(BOB), Some(GROUP), Some(MEETING)];
+        for (n, conversation) in conversations.into_iter().enumerate() {
+            h.open(conversation);
+            h.type_text(&format!("first {n}"));
+            h.enter(egui::Modifiers::NONE);
+            h.type_text(&format!("latest {n}"));
+            let send = if style.workspace() {
+                control_id("box-send")
+            } else {
+                classic_id("send")
+            };
+            h.press(send);
+            assert!(h.st.draft_mut(conversation).is_empty(), "{style:?} {conversation:?}");
+        }
+        for (n, conversation) in conversations.into_iter().enumerate() {
+            h.open(conversation);
+            h.type_text(&format!("draft {n}"));
+            h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
+            assert_eq!(h.st.draft_mut(conversation), &format!("latest {n}"), "{style:?}");
+            h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
+            assert_eq!(h.st.draft_mut(conversation), &format!("first {n}"), "{style:?}");
+            h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
+            assert_eq!(h.st.draft_mut(conversation), &format!("first {n}"), "{style:?}");
+            h.history_key(egui::Key::ArrowDown, egui::Modifiers::CTRL);
+            h.history_key(egui::Key::ArrowDown, egui::Modifiers::CTRL);
+            assert_eq!(h.st.draft_mut(conversation), &format!("draft {n}"), "{style:?}");
+        }
+        // Closing one conversation discards only its recall, as its editor
+        // is destroyed in the Legacy Viewer; opening it starts afresh.
+        h.st.forget(JANE);
+        h.open(Some(JANE));
+        h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
+        assert!(h.st.draft_mut(Some(JANE)).is_empty());
+        h.open(Some(GROUP));
+        h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
+        assert_eq!(h.st.draft_mut(Some(GROUP)), "latest 3");
+    }
+}
+
+#[test]
+fn input_history_is_shared_both_ways_between_local_fields_in_every_style() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.focus_request = true;
+        for _ in 0..3 {
+            h.bar_frame(Vec::new());
+        }
+        h.bar_frame(vec![egui::Event::Text("/42 café 🙂".into())]);
+        let sent = h
+            .bar_frame(history_events(egui::Key::Enter, egui::Modifiers::CTRL))
+            .expect("bar sends");
+        assert_eq!(sent.channel, 42);
+        assert_eq!(sent.message, "café 🙂");
+        assert_eq!(sent.chat_type, aurora_net::ChatType::Shout);
+        h.open(None);
+        h.history_key(egui::Key::ArrowUp, egui::Modifiers::CTRL);
+        assert_eq!(h.st.draft_mut(None), "/42 café 🙂", "{style:?}");
+        h.history_key(egui::Key::ArrowDown, egui::Modifiers::CTRL);
+        h.type_text("from the window");
+        h.enter(egui::Modifiers::NONE);
+        h.st.focus_request = true;
+        for _ in 0..3 {
+            h.bar_frame(Vec::new());
+        }
+        h.bar_frame(vec![egui::Event::Text("bar draft".into())]);
+        for modifiers in [
+            egui::Modifiers::NONE,
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+            egui::Modifiers::ALT,
+        ] {
+            h.bar_frame(history_events(egui::Key::ArrowUp, modifiers));
+            assert_eq!(h.st.input, "bar draft", "{style:?}");
+        }
+        h.bar_frame(history_events(egui::Key::ArrowUp, egui::Modifiers::CTRL));
+        assert_eq!(h.st.input, "from the window", "{style:?}");
+        let range = egui::TextEdit::load_state(&h.frames.ctx, super::bar_input_id())
+            .and_then(|s| s.cursor.char_range())
+            .expect("recalled cursor");
+        assert!(range.is_empty());
+        assert_eq!(range.primary.index.0, h.st.input.chars().count());
+        h.bar_frame(history_events(egui::Key::ArrowUp, egui::Modifiers::CTRL));
+        assert_eq!(h.st.input, "/42 café 🙂", "{style:?}");
+        h.bar_frame(history_events(egui::Key::ArrowDown, egui::Modifiers::CTRL));
+        h.bar_frame(history_events(egui::Key::ArrowDown, egui::Modifiers::CTRL));
+        assert_eq!(h.st.input, "bar draft", "{style:?}");
     }
 }
 

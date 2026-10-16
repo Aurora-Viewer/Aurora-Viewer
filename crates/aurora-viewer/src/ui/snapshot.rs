@@ -789,6 +789,7 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
                         .logarithmic(true)
                         .prefix("f/")
                         .fixed_decimals(1)
+                        .clamping(egui::SliderClamping::Edits)
                         .custom_parser(aurora_i18n::parse_number),
                 );
             });
@@ -814,6 +815,7 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
                             .logarithmic(true)
                             .suffix(" m")
                             .fixed_decimals(1)
+                            .clamping(egui::SliderClamping::Edits)
                             .custom_parser(aurora_i18n::parse_number),
                     );
                 });
@@ -848,9 +850,11 @@ fn light_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::Ph
             // (the value and the reset button after it)
             ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(40.0);
             let mut value = l.exposure.unwrap_or(exposure);
+            // (shown, the sky's exposure must not turn into a fixed one)
             let slider = egui::Slider::new(&mut value, EXPOSURE)
                 .logarithmic(true)
                 .fixed_decimals(2)
+                .clamping(egui::SliderClamping::Edits)
                 .custom_parser(aurora_i18n::parse_number);
             if ui.add(slider).changed() {
                 l.exposure = Some(value);
@@ -1147,10 +1151,14 @@ fn focal(ui: &mut egui::Ui, p: &Palette, fov: &mut f32, default_fov: f32) -> boo
         ui.spacing_mut().slider_width = 110.0;
         if ui
             .add(
+                // clamped and rounded only when the user moves it: egui's
+                // default rounds the shown value back into `mm` (60° is
+                // 20.8 mm, shown 21), which changed the view on opening
                 egui::Slider::new(&mut mm, FOCAL_RANGE)
                     .logarithmic(true)
                     .suffix(" mm")
-                    .fixed_decimals(0),
+                    .fixed_decimals(0)
+                    .clamping(egui::SliderClamping::Edits),
             )
             .changed()
         {
@@ -1309,5 +1317,35 @@ mod tests {
         // wider than the screen: bands above and below
         let wide = fit(screen, 3.0);
         assert_eq!(outside(screen, wide).len(), 2);
+    }
+
+    #[test]
+    fn showing_the_focal_length_leaves_the_field_of_view_alone() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        // 60° is 20.8 mm: the slider shows 21 mm, and must not write it back
+        for start in [crate::camera::DEFAULT_FOV, 0.7, 1.31] {
+            let mut fov = start;
+            let mut changed = false;
+            for _ in 0..2 {
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    changed |= focal(ui, &p, &mut fov, crate::camera::DEFAULT_FOV)
+                });
+                output.textures_delta.clear();
+            }
+            assert!(!changed, "opening the window changed the focal length");
+            assert_eq!(fov, start);
+        }
+        // the sky's exposure (1.234 shown 1.23) is not taken over either
+        let mut light = crate::snapshot::light::PhotoLight::default();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                light_rows(ui, &p, &mut light, 1.234, &mut Vec::new())
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(light.exposure, None);
     }
 }

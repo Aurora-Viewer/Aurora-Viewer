@@ -9,6 +9,7 @@
 //! also every 0.1 s, like LLManipScale).
 
 pub mod align;
+pub mod anim_pause;
 pub mod contents;
 pub mod costs;
 mod cycle;

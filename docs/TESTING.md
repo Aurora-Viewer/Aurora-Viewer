@@ -1098,7 +1098,7 @@ Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited |
 
 ### Details
 
@@ -1160,7 +1160,7 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|inspect|inventory|library|sound`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -1195,6 +1195,12 @@ access to a grid.
 - `sound`: a sound item playing the demo chime, double-clicked at frame
   700: it plays in the world at our position (LLSoundBridgeAction), where
   "Open" shows its preview. The log writes `demo sound trigger: …`.
+- `freeze`: our avatar dances from frame 600, the object is right-clicked
+  at 700 and edited at 740, and the build window closes at 1100: the
+  dance stands still from the right click to the close, then goes on from
+  the same pose (LLSelectMgr::pauseAssociatedAvatars). The log writes
+  `demo worn freeze: frame … paused=… head=…` at frames 690, 720, 900,
+  1099, 1130 and 1200: the head stays put between 720 and 1099.
 
 The steps are counted in frames: capture with `AURORA_FPS_LIMIT=60`,
 around frames 720 (menu), 770 (edit, inspect), 850 (move), 680, 800,
@@ -1911,7 +1917,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -2131,6 +2137,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=search-selection|search-selection-keyboard`**:
+  search for item 1490 in a 1,500-item folder, select its real row at frames
+  650–651, then clear the query using the field's cross at 720–721 or
+  Ctrl+A / Backspace at 730–731. Capture at 680 and 820: the selection stays
+  highlighted, its parent folder opens and the full inventory scrolls to
+  it. At frame 800 the log reports the empty query, selection and visibility.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, with `AURORA_DEMO_INVENTORY=1`:
   double-click on the real title bar of the inventory at frames 660–665; `1`
   keeps the bar collapsed, `restore` expands it at frames 1000–1005,
@@ -2278,7 +2290,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   scenario). The Conversations button of the bottom bar shows the unread
   IMs and group chats in the red counter (5 at frame 1000), not the nearby
   chat lines.
-  The friends announced at login get no toast, only their chat line. `1` opens the bell list at frame 1100: only the
+  The friends announced at login get no toast; their nearby chat line only
+  shows with Preferences › Chat › Toasts › "Friends online / offline in
+  nearby chat" (off by default). `1` opens the bell list at frame 1100: only the
   two conversations are listed, never the presence notices. `click` (window
   closed) and `minimized` (window minimized at start) click the first IM
   card at frame 1250: the Conversations window opens or expands, comes to
@@ -2591,6 +2605,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
   (the other `AURORA_DEMO_CONV` scenarios show the window in the saved
   style, Aurora by default).
+  Sent-message recall: send two messages, then type an unfinished draft.
+  Ctrl+Up walks back through sent messages; Ctrl+Down walks forward and
+  restores the draft. Repeat in a private IM, a group and a conference:
+  each has its own list. With `aurora:local`, send from the bottom chat bar
+  and recall in the nearby conversation, then send from the conversation
+  and recall in the bar. The entries are shared; their drafts and browsing
+  remain independent. Check all four chat styles, repeated Ctrl+Up at the
+  oldest entry, consecutive duplicate sends, channel prefixes and emoji.
+  No count limit or disk persistence; closing an IM/group/conference
+  discards its recall, while hiding Conversations keeps it.
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user

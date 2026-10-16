@@ -1,6 +1,6 @@
 //! Firestorm inventory view menu and finder options, presented with Aurora widgets.
 use super::view::{Age, Creator, Filters, InventoryPreferences, Links, SearchField, types};
-use super::{InventoryUi, Palette};
+use super::{Inventory, InventoryUi, Palette};
 use crate::ui::widgets::{Floater, flat_button, switch, underlined_button};
 use egui::{RichText, Vec2};
 
@@ -138,7 +138,8 @@ fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     }
 }
 
-pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
+pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
+    let searching = !st.search.trim().is_empty();
     ui.horizontal(|ui| {
         let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
         let field_width = (ui.available_width() - selector_width - ui.spacing().item_spacing.x).max(40.0);
@@ -148,7 +149,8 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut 
         } else {
             aurora_i18n::tr!("common-clear")
         };
-        let (_, cleared) = super::tree::search_field(ui, p, &mut st.search, hint, field_width, clear_shown, tip);
+        let (field, cleared) = super::tree::search_field(ui, p, &mut st.search, hint, field_width, clear_shown, tip);
+        super::clipboard::demo_search(&field, st);
         if cleared {
             if st.links_filter.take().is_some() {
                 if let Some(filters) = st.saved_filters.take() {
@@ -186,6 +188,12 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut 
                 "ui-inventory-controls-case-insensitive-search-combines-terms-quotes-search-for-an"
             ));
     });
+    if searching
+        && st.search.trim().is_empty()
+        && let Some(id) = st.selected.filter(|id| st.selection.contains(id))
+    {
+        st.reveal_item(inv, id);
+    }
 }
 
 pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
