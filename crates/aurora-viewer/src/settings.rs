@@ -433,6 +433,9 @@ pub struct Settings {
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
+    /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
+    /// off here, on in the Legacy Viewer's own settings).
+    pub friends_online_in_chat: bool,
     /// Where those toasts stand with Aurora's notification center.
     pub presence_position: PresencePosition,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
@@ -1049,6 +1052,7 @@ impl Default for Settings {
             send_typing_state: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
+            friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
             toast_im: true,
             toast_group_im: false,

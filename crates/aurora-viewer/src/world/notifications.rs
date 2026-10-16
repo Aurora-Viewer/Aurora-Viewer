@@ -325,11 +325,16 @@ pub enum Response {
     Open,
 }
 
-/// Which toasts the preferences allow (Preferences › Chat › Toasts).
+/// Which toasts the preferences allow (Preferences › Chat › Toasts), and
+/// whether the friends' online / offline notices also go to nearby chat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToastPrefs {
     /// Friends online / offline (ChatOnlineNotification).
     pub presence: bool,
+    /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat).
+    /// Off by default, where the Legacy Viewer's own settings turn it on:
+    /// the toast already says it, and the lines crowd nearby chat at login.
+    pub presence_in_chat: bool,
     /// Messages of IMs and conferences (EnableIMChatPopups).
     pub im: bool,
     /// Messages of group chats (EnableGroupChatPopups).
@@ -340,6 +345,7 @@ impl Default for ToastPrefs {
     fn default() -> Self {
         ToastPrefs {
             presence: true,
+            presence_in_chat: false,
             im: true,
             group_im: false,
         }

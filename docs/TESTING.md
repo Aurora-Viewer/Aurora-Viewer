@@ -2290,7 +2290,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   scenario). The Conversations button of the bottom bar shows the unread
   IMs and group chats in the red counter (5 at frame 1000), not the nearby
   chat lines.
-  The friends announced at login get no toast, only their chat line. `1` opens the bell list at frame 1100: only the
+  The friends announced at login get no toast; their nearby chat line only
+  shows with Preferences › Chat › Toasts › "Friends online / offline in
+  nearby chat" (off by default). `1` opens the bell list at frame 1100: only the
   two conversations are listed, never the presence notices. `click` (window
   closed) and `minimized` (window minimized at start) click the first IM
   card at frame 1250: the Conversations window opens or expands, comes to

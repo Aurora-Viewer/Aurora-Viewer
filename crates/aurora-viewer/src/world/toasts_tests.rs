@@ -115,8 +115,8 @@ fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
     assert_eq!(w.notifications.listed().count(), 0);
     w.notifications.mark_all_read();
     assert_eq!(w.notifications.listed().count(), 0);
-    // the line of nearby chat stays (OnlineOfflinetoNearbyChat)
-    assert!(w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe")));
+    // and no line of nearby chat by default (OnlineOfflinetoNearbyChat off)
+    assert!(!w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe")));
     // going offline: a toast that opens nothing
     w.social.set_online(&[JANE], false);
     w.flush_online_notices();
@@ -128,6 +128,7 @@ fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
 #[test]
 fn friends_announced_during_login_get_no_toast_but_keep_their_line() {
     let mut w = world();
+    w.notifications.toasts.presence_in_chat = true;
     w.notifications.started = false;
     w.social.form_friendship(JANE);
     w.social.form_friendship(TOM);
@@ -143,6 +144,25 @@ fn friends_announced_during_login_get_no_toast_but_keep_their_line() {
     let toasts: Vec<_> = w.notifications.list.iter().filter(|n| n.kind == Kind::Presence).collect();
     assert_eq!(toasts.len(), 1);
     assert!(matches!(toasts[0].data, Data::Presence { who: TOM, online: true }));
+}
+
+#[test]
+fn the_nearby_chat_line_of_a_friend_follows_its_own_preference() {
+    // off by default, the toast on by default: they do not depend on each other
+    let d = crate::settings::Settings::default();
+    assert!(d.toast_friends_online && !d.friends_online_in_chat);
+    assert!(ToastPrefs::default().presence && !ToastPrefs::default().presence_in_chat);
+    for (toast, in_chat) in [(true, false), (true, true), (false, true), (false, false)] {
+        let mut w = world();
+        w.notifications.toasts.presence = toast;
+        w.notifications.toasts.presence_in_chat = in_chat;
+        w.social.form_friendship(JANE);
+        w.social.set_online(&[JANE], true);
+        w.flush_online_notices();
+        let line = w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe"));
+        let toast_shown = w.notifications.list.iter().any(|n| n.kind == Kind::Presence);
+        assert_eq!((toast_shown, line), (toast, in_chat), "toast {toast}, in chat {in_chat}");
+    }
 }
 
 #[test]

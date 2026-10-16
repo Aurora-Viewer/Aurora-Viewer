@@ -3530,6 +3530,7 @@ impl App {
         let dnd = w.status.dnd;
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
+            presence_in_chat: self.settings.friends_online_in_chat,
             im: self.settings.toast_im,
             // AURORA_DEMO_TOASTS shows a group message too (off by default)
             group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
