@@ -3,8 +3,8 @@
 //! do not (the blur, the picture, the icons): each change of texture is a
 //! draw of its own.
 
-use super::mesh::{self, Border, Glow, Outline};
-use super::{Badge, Badges, Content, Halo, Layout, Level, Metrics, Picture, Presence, Role, SCALE, SubLine, Tag, TextSize};
+use super::mesh::{self, Border, Glow, Outline, Ring};
+use super::{Badge, Badges, Content, GlowStyle, Halo, Layout, Level, Metrics, Picture, Presence, Role, SCALE, SubLine, Tag, TextSize};
 use crate::theme::Palette;
 use egui::epaint::TextShape;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
@@ -123,6 +123,9 @@ impl<K: PartialEq> Built<K> {
 struct SurfaceKey {
     size: Vec2,
     halo: Option<Halo>,
+    style: GlowStyle,
+    /// The clock, for the looks that move by themselves; 0 otherwise.
+    time: f32,
     glass: f32,
     far: f32,
     pixels_per_point: f32,
@@ -266,9 +269,17 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
         env.painter
             .add(aurora_render::glass_region(rect.shrink(0.5), radius, st.glass * alpha, GLASS_SHADE));
     }
+    let style = super::glow_style(env.now);
     let key = SurfaceKey {
         size: rect.size(),
         halo: st.halo,
+        style,
+        // only the ripples move by themselves
+        time: if st.halo.is_some() && style == GlowStyle::Ripple {
+            env.now as f32
+        } else {
+            0.0
+        },
         glass: st.glass,
         far,
         pixels_per_point: env.pixels_per_point,
@@ -281,33 +292,155 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
             spread: 0.0,
             color: p.navy.gamma_multiply(0.35),
         };
-        let mut lights = [shadow; 2];
-        let mut count = 1;
-        if let Some(halo) = key.halo {
-            lights[1] = Glow {
-                offset: Vec2::ZERO,
-                blur: halo.blur,
-                spread: halo.spread,
-                color: p.success.gamma_multiply(halo.alpha),
-            };
-            count = 2;
-        }
         let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
         let plain = p.ink.gamma_multiply(lerp(BORDER, far));
-        let border = match key.halo {
-            // only while the avatar speaks (the human's choice: no outline
-            // for a silent participant): the border and one more pixel
-            // around it, turning green with the halo's gate
-            Some(halo) => Border::Around(plain.lerp_to_gamma(p.success, halo.gate), s),
-            None => Border::Inside(plain, 1.0),
-        };
+        let voice = key.halo.map(|halo| voice_light(p, key.style, halo, plain, key.size.y, key.time));
+        let mut lights = [shadow; 1 + MAX_LIGHTS];
+        let mut count = 1;
+        for g in voice.iter().flat_map(|v| v.lights()) {
+            lights[count] = *g;
+            count += 1;
+        }
+        // no outline for a silent participant (the human's choice)
+        let border = voice.as_ref().map_or(Border::Inside(plain, 1.0), |v| v.border);
         let mut plate = Mesh::default();
         let at_origin = Rect::from_min_size(Pos2::ZERO, rect.size());
         let fill = env.tint.gamma_multiply(opacity);
-        mesh::plate(&mut plate, at_origin, env.pixels_per_point, fill, border, &lights[..count]);
+        let rings = voice.as_ref().map_or(&[][..], |v| v.rings());
+        mesh::plate(&mut plate, at_origin, env.pixels_per_point, fill, border, &lights[..count], rings);
         plate
     });
     surface.emit(env.painter, rect.min.to_vec2(), alpha);
+}
+
+/// Lights and rings a speaking plate may add.
+const MAX_LIGHTS: usize = 3;
+const MAX_RINGS: usize = 2;
+
+/// What the voice adds to a plate: lights around it (drawn in order, the
+/// last on top), its border, and rings over the lights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct VoiceLight {
+    lights: [Glow; MAX_LIGHTS],
+    lit: usize,
+    rings: [Ring; MAX_RINGS],
+    ringed: usize,
+    pub border: Border,
+}
+
+impl VoiceLight {
+    fn new(lights: &[Glow], border: Border, rings: &[Ring]) -> VoiceLight {
+        let none = Glow {
+            offset: Vec2::ZERO,
+            blur: 0.0,
+            spread: 0.0,
+            color: Color32::TRANSPARENT,
+        };
+        let no_ring = Ring {
+            gap: 0.0,
+            width: 0.0,
+            color: Color32::TRANSPARENT,
+        };
+        let mut v = VoiceLight {
+            lights: [none; MAX_LIGHTS],
+            lit: lights.len().min(MAX_LIGHTS),
+            rings: [no_ring; MAX_RINGS],
+            ringed: rings.len().min(MAX_RINGS),
+            border,
+        };
+        v.lights[..v.lit].copy_from_slice(&lights[..v.lit]);
+        v.rings[..v.ringed].copy_from_slice(&rings[..v.ringed]);
+        v
+    }
+
+    pub fn lights(&self) -> &[Glow] {
+        &self.lights[..self.lit]
+    }
+
+    pub fn rings(&self) -> &[Ring] {
+        &self.rings[..self.ringed]
+    }
+}
+
+/// Seconds between two ripples of `GlowStyle::Ripple`, and how far they go
+/// (mockup pixels).
+const RIPPLE_PERIOD: f64 = 1.5;
+const RIPPLE_REACH: f32 = 18.0;
+
+/// The voice's light on a plate `height` points high, whose border is
+/// `plain` when silent, in the look `style`; `time` (seconds) moves the
+/// ripples. Palette colors only: the green of the microphone badge, lit
+/// toward the ink at the voice's peaks.
+pub(super) fn voice_light(p: &Palette, style: GlowStyle, halo: Halo, plain: Color32, height: f32, time: f32) -> VoiceLight {
+    let (l, g) = (halo.level.clamp(0.0, 1.0), halo.gate.clamp(0.0, 1.0));
+    // mockup pixels to points, a little tighter around the smaller plates
+    let k = SCALE * (height / Metrics::of(Level::Full, SCALE).height).clamp(0.55, 1.0);
+    let glow = |blur: f32, spread: f32, color: Color32| Glow {
+        offset: Vec2::ZERO,
+        blur: blur * k,
+        spread: spread * k,
+        color,
+    };
+    let green = |alpha: f32| p.success.gamma_multiply(alpha);
+    // a little brighter at the voice's peaks, still green enough to show
+    // over a white wall
+    let lit = p.success.lerp_to_gamma(p.ink, 0.2 * l);
+    // the border and one more pixel around it, lit with the gate, a little
+    // wider as the voice rises
+    let outline = Border::Around(plain.lerp_to_gamma(lit, g), SCALE * (1.0 + 0.5 * l));
+    let rim = glow(2.0 + 1.5 * l, 0.5 + l, green(g * (0.6 + 0.4 * l)));
+    match style {
+        GlowStyle::Thin => VoiceLight::new(
+            // the mockup's `.speak.thin` rule, at the same size on every plate
+            &[Glow {
+                offset: Vec2::ZERO,
+                blur: (3.0 + 11.0 * l) * SCALE,
+                spread: 2.0 * l * SCALE,
+                color: green(g * (0.30 + 0.55 * l)),
+            }],
+            Border::Around(plain.lerp_to_gamma(p.success, g), SCALE),
+            &[],
+        ),
+        GlowStyle::Aura => VoiceLight::new(
+            &[glow(12.0 + 14.0 * l, 1.0 + 3.0 * l, green(g * (0.36 + 0.44 * l))), rim],
+            outline,
+            &[],
+        ),
+        GlowStyle::Ring => {
+            // closes in on the plate as the voice starts, opens with its level
+            let gap = 2.5 + 1.5 * l + 4.0 * (1.0 - g);
+            let width = 1.8 + 0.6 * l;
+            VoiceLight::new(
+                &[glow(8.0 + 12.0 * l, gap + width, green(g * (0.18 + 0.3 * l)))],
+                // a touch of the ring's green on the plate's own edge
+                Border::Around(plain.lerp_to_gamma(lit, 0.4 * g), SCALE),
+                &[Ring {
+                    gap: gap * k,
+                    width: width * k,
+                    color: lit.gamma_multiply(g * (0.85 + 0.15 * l)),
+                }],
+            )
+        }
+        GlowStyle::Ripple => {
+            let ripple = |i: usize| {
+                let phase = (time as f64 / RIPPLE_PERIOD + i as f64 * 0.5).rem_euclid(1.0) as f32;
+                // eased out: quick off the plate, slow as it fades; born
+                // faint, so that it never pops on the plate's edge
+                let out = 1.0 - (1.0 - phase) * (1.0 - phase);
+                let born = (phase / 0.2).min(1.0);
+                Ring {
+                    gap: (2.0 + RIPPLE_REACH * out) * k,
+                    width: (2.0 - phase) * k,
+                    color: lit.gamma_multiply(g * (0.35 + 0.5 * l) * born * (1.0 - phase) * (1.0 - phase)),
+                }
+            };
+            VoiceLight::new(
+                &[glow(6.0 + 6.0 * l, 0.5, green(g * (0.16 + 0.24 * l))), rim],
+                outline,
+                &[ripple(0), ripple(1)],
+            )
+        }
+    }
 }
 
 const WHOLE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));

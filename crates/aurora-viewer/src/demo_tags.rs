@@ -376,7 +376,13 @@ pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
     levels.insert(SOL, talk(1.3));
     levels.insert(VEGA, (0.0, false));
     if !status_set(mode, time) {
-        levels.insert(TESS, (0.0, false));
+        // AURORA_DEMO_VOICE_GLOW: Tess speaks too, over the white wall
+        let tess = if crate::ui::nameplate::glow_demo() {
+            talk(2.6)
+        } else {
+            (0.0, false)
+        };
+        levels.insert(TESS, tess);
         levels.insert(ORION, talk(0.0));
     }
 }

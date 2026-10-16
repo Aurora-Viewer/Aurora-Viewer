@@ -3258,6 +3258,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_VOICE_GLOW=thin`, `aura`, `ring`, `ripple` or `cycle` | Temporary: look of a speaking name plate, to compare the variants |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -3273,7 +3274,7 @@ What the inventory must show with these scenarios:
   this variable, our outline follows the real microphone when its button /
   push-to-talk is active and voice is enabled. No saved setting is changed.
   With the name plates (default style), the outline is green in the voice
-  channel and a tight green halo follows the level; out of voice, the plate
+  channel and a green light follows the level (`AURORA_DEMO_VOICE_GLOW`); out of voice, the plate
   has neither a coloured outline nor a badge.
 - **`AURORA_DEMO_CALL`**: the demo has no voice server; `demo_calls.rs`
   answers ChatSessionRequest (a channel for every call) and stands in for
@@ -3355,6 +3356,16 @@ What the inventory must show with these scenarios:
   - To be combined with `AURORA_DEMO_VOICE` for our own plate and that of
     Loup Violet (blocked in the demo), and with `AURORA_NAME_TAGS=classic`
     to compare with the classic name tags.
+- **`AURORA_DEMO_VOICE_GLOW`** (temporary, until one look is chosen): the
+  light of a speaking plate. `thin` is the first tight halo; `aura` a green
+  rim that widens with the voice and a wide bloom breathing with it; `ring`
+  (the default) a thin green ring a few points from the plate over a soft
+  glow, closing in when the voice starts; `ripple` the rim and rings rising
+  from the plate. `cycle` goes from one to the next every four seconds.
+  With `AURORA_DEMO_TAGS=voice`, Tess speaks too, over the white wall,
+  next to Orion over the dark scene; add `AURORA_DEMO_VOICE=speaking` for
+  our own plate. Look at the plates on both backgrounds, at a whisper and
+  at a loud level, and at the start and end of speech (never a jump).
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes

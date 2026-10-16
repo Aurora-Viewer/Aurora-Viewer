@@ -488,29 +488,65 @@ impl VoiceEnvelope {
     }
 
     /// The halo to draw now; None when silent.
-    pub fn halo(&self, scale: f32) -> Option<Halo> {
-        (self.gate > 0.0).then(|| {
-            let l = self.level;
-            // the mockup's `.speak.thin` rule
-            Halo {
-                blur: (3.0 + 11.0 * l) * scale,
-                spread: 2.0 * l * scale,
-                alpha: self.gate * (0.30 + 0.55 * l),
-                gate: self.gate,
-            }
+    pub fn halo(&self) -> Option<Halo> {
+        (self.gate > 0.0).then_some(Halo {
+            level: self.level,
+            gate: self.gate,
         })
     }
 }
 
-/// A tight glow around the plate, in points, and the green outline that
-/// comes and goes with it.
+/// How loud a speaking plate shines: the smoothed level and the gate, both
+/// 0..1. `paint::voice_light` turns it into lights for the plate's size.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Halo {
-    pub blur: f32,
-    pub spread: f32,
-    pub alpha: f32,
-    /// 0..1: how far the outline has turned green.
+    pub level: f32,
+    /// 0..1: how far the plate has lit up (the outline turned green).
     pub gate: f32,
+}
+
+/// The look of a speaking plate. Temporary: the variants are compared live
+/// with AURORA_DEMO_VOICE_GLOW before one of them stays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlowStyle {
+    /// The tight green halo the plates had first.
+    Thin,
+    /// A crisp green rim on the plate's edge, wider with the voice, and a
+    /// wide bloom that breathes with it.
+    Aura,
+    /// A thin green ring a few points away from the plate, over a soft
+    /// glow: it closes in when the voice starts and opens with its level.
+    #[default]
+    Ring,
+    /// The lit rim, and rings rising from the plate as the voice goes on.
+    Ripple,
+}
+
+const GLOW_STYLES: [GlowStyle; 4] = [GlowStyle::Thin, GlowStyle::Aura, GlowStyle::Ring, GlowStyle::Ripple];
+/// Seconds each look lasts with AURORA_DEMO_VOICE_GLOW=cycle.
+const GLOW_CYCLE: f64 = 4.0;
+
+/// The look of the speaking plates at `now` (seconds of the interface's
+/// clock): AURORA_DEMO_VOICE_GLOW=thin|aura|ring|ripple, or `cycle` to go
+/// from one to the next; the default otherwise.
+pub fn glow_style(now: f64) -> GlowStyle {
+    static CHOSEN: std::sync::OnceLock<Option<Option<GlowStyle>>> = std::sync::OnceLock::new();
+    let chosen = CHOSEN.get_or_init(|| {
+        let name = std::env::var("AURORA_DEMO_VOICE_GLOW").ok()?;
+        Some(GLOW_STYLES.into_iter().find(|s| format!("{s:?}").eq_ignore_ascii_case(name.trim())))
+    });
+    match chosen {
+        None => GlowStyle::default(),
+        Some(Some(style)) => *style,
+        Some(None) => GLOW_STYLES[(now / GLOW_CYCLE).max(0.0) as usize % GLOW_STYLES.len()],
+    }
+}
+
+/// Is AURORA_DEMO_VOICE_GLOW set? The demo then makes a plate speak over
+/// the white wall too.
+pub fn glow_demo() -> bool {
+    static SET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SET.get_or_init(|| std::env::var_os("AURORA_DEMO_VOICE_GLOW").is_some())
 }
 
 /// One of the three typing dots at `time` seconds: (opacity, lift in mockup
@@ -699,7 +735,7 @@ impl Plates {
                 level: entry.level,
                 from: (progress < 1.0).then_some(entry.from),
                 progress: progress * progress * (3.0 - 2.0 * progress),
-                halo: entry.voice.halo(SCALE),
+                halo: entry.voice.halo(),
                 glass: entry.glass,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
