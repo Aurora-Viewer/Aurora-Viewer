@@ -326,11 +326,7 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
             );
         }
     }
-    painter.galley(
-        egui::pos2(rect.left() + PAD + ICON + PAD, rect.center().y - galley.size().y * 0.5),
-        galley,
-        ink,
-    );
+    super::widgets::paint_row_text(painter, galley, rect.left() + PAD + ICON + PAD, rect.center().y, ink);
     let end_rect = egui::Rect::from_center_size(rect.right_center() - Vec2::new(PAD + 6.0, 0.0), Vec2::splat(12.0));
     match end {
         End::None | End::Check(false) => {}
@@ -338,7 +334,7 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
         End::Check(true) => paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim }),
         End::Keys(_) => {
             if let Some(keys) = keys {
-                let pos = egui::pos2(rect.right() - PAD - keys.size().x, rect.center().y - keys.size().y * 0.5);
+                let pos = super::widgets::row_text_origin(painter, &keys, rect.right() - PAD - keys.size().x, rect.center().y);
                 painter.galley(pos, keys, p.muted);
             }
         }
@@ -711,11 +707,7 @@ fn info_line(
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
     let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(icon_size));
     paint_icon(ui.painter(), icon, icon_rect, icon_color);
-    ui.painter().galley(
-        egui::pos2(rect.left() + PAD + ICON + PAD, rect.center().y - galley.size().y * 0.5),
-        galley,
-        color,
-    );
+    super::widgets::paint_row_text(ui.painter(), galley, rect.left() + PAD + ICON + PAD, rect.center().y, color);
     resp
 }
 

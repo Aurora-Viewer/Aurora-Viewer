@@ -106,11 +106,7 @@ pub(super) fn show(
                 // (the job is built before the fonts are taken: it reads them)
                 let job = typing_job(ui.ctx(), p, &text, &names, line.width() - 26.0);
                 let galley = ui.painter().layout_job(job);
-                ui.painter().galley(
-                    egui::pos2(line.left() + 26.0, line.center().y - galley.size().y * 0.5),
-                    galley,
-                    p.muted,
-                );
+                crate::ui::widgets::paint_row_text(ui.painter(), galley, line.left() + 26.0, line.center().y, p.muted);
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(60));
             }
             // ---- the box

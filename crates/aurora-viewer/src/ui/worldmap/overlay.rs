@@ -549,7 +549,8 @@ impl PillFace<'_> {
             let galley = painter.layout_no_wrap(self.label.to_owned(), pill_font(ui), ink);
             x += 5.0;
             let w = galley.size().x;
-            painter.galley(pos2(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
+            let at = crate::ui::widgets::row_text_origin(painter, &galley, x, rect.center().y);
+            painter.galley(at, galley, ink);
             x += w;
         }
         if !self.badges.is_empty() {

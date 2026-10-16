@@ -100,9 +100,11 @@ pub fn navigation(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selec
         (rect.width() - 42.0).max(1.0),
         egui::FontId::proportional(12.0),
     );
-    ui.painter().galley(
-        rect.left_center() + egui::vec2(34.0, -galley.size().y / 2.0),
+    super::paint_row_text(
+        ui.painter(),
         galley,
+        rect.left() + 34.0,
+        rect.center().y,
         if selected { p.ink } else { p.muted },
     );
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
@@ -150,10 +152,9 @@ pub fn navigation_wrapped(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &st
             if selected { p.violet_pale } else { p.muted },
         );
     }
-    ui.painter()
-        .galley(rect.left_center() + egui::vec2(34.0, -galley.size().y / 2.0), galley, ink);
+    super::paint_row_text(ui.painter(), galley, rect.left() + 34.0, rect.center().y, ink);
     if let Some(g) = count_g {
-        let pos = rect.right_center() - egui::vec2(9.0 + g.size().x, g.size().y / 2.0);
+        let pos = super::row_text_origin(ui.painter(), &g, rect.right() - 9.0 - g.size().x, rect.center().y);
         ui.painter().galley(pos, g, p.muted_dim);
     }
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
@@ -276,7 +277,7 @@ fn section<R>(
                 if hot { p.ink } else { p.muted },
             );
         }
-        let text = egui::pos2(rect.left() + indent, rect.center().y - galley.size().y / 2.0);
+        let text = super::row_text_origin(ui.painter(), &galley, rect.left() + indent, rect.center().y);
         ui.painter().galley(text, galley, p.ink);
     }
     let body = state.show_body_indented(&header, ui, body).map(|r| r.inner);

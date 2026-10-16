@@ -298,7 +298,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
             paint_strike(ui.painter(), ir, if resp.hovered() { p.raised } else { bg }, col);
         }
         if let Some(g) = label {
-            let pos = egui::pos2(ir.right() + 2.0, rect.center().y - g.size().y / 2.0);
+            let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, ir.right() + 2.0, rect.center().y);
             ui.painter().galley(pos, g, col);
         }
         let resp = resp.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()));

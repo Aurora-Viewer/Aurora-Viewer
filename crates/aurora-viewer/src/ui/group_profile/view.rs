@@ -255,8 +255,8 @@ pub(super) fn badge_with(
             Rect::from_center_size(Pos2::new(rect.left() + 8.0 + lead / 2.0, rect.center().y), Vec2::splat(lead)),
         );
     }
-    let pos = Pos2::new(rect.left() + 8.0 + lead + gap, rect.center().y - galley.size().y / 2.0);
-    ui.painter().galley(pos.round(), galley, ink);
+    let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 8.0 + lead + gap, rect.center().y);
+    ui.painter().galley(pos, galley, ink);
     resp
 }
 
@@ -531,11 +531,8 @@ fn see_in_people(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
     let color = if resp.hovered() { p.violet_pale } else { p.violet_light };
     let w = galley.size().x;
-    ui.painter().galley(
-        Pos2::new(rect.left() + 2.0, rect.center().y - galley.size().y / 2.0).round(),
-        galley,
-        color,
-    );
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 2.0, rect.center().y);
+    ui.painter().galley(at, galley, color);
     if let Some(t) = crate::ui::icons::global("chevron-right") {
         let r = Rect::from_center_size(Pos2::new(rect.left() + 2.0 + w + 4.0 + 6.0, rect.center().y), Vec2::splat(12.0));
         ui.painter()
@@ -623,18 +620,21 @@ fn tab_button(
     }
     x += 15.0 + 5.0;
     let w = galley.size().x;
-    ui.painter()
-        .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, x, rect.center().y);
+    ui.painter().galley(at, galley, ink);
     if let Some(g) = count {
-        let pos = Pos2::new(x + w + 5.0 + pad, rect.center().y - g.size().y / 2.0);
         if accent {
+            // an unread count: its digits in the middle of their pill
             let pill = Rect::from_min_size(
                 Pos2::new(x + w + 5.0, rect.center().y - 8.0),
                 Vec2::new(g.size().x + pad * 2.0, 16.0),
             );
             ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
+            crate::ui::widgets::paint_ink_centered(ui.painter(), g, pill.center(), count_ink);
+        } else {
+            let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, x + w + 5.0, rect.center().y);
+            ui.painter().galley(pos, g, count_ink);
         }
-        ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
     match why {
@@ -764,11 +764,8 @@ fn admin_tab(ui: &mut egui::Ui, p: &Palette, selected: bool) -> egui::Response {
         ui.painter()
             .image(t.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), p.amber);
     }
-    ui.painter().galley(
-        Pos2::new(rect.left() + 32.0, rect.center().y - galley.size().y / 2.0).round(),
-        galley,
-        p.amber,
-    );
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 32.0, rect.center().y);
+    ui.painter().galley(at, galley, p.amber);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -855,7 +852,7 @@ pub fn role_chip(ui: &mut egui::Ui, p: &Palette, text: &str, chip: Chip) -> egui
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, ink);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 12.0, 16.0), Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-    let pos = Pos2::new(rect.left() + 6.0, rect.center().y - galley.size().y / 2.0);
-    ui.painter().galley(pos.round(), galley, ink);
+    let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 6.0, rect.center().y);
+    ui.painter().galley(pos, galley, ink);
     resp
 }

@@ -660,8 +660,9 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                         "0".to_owned()
                     };
                     let galley = ui.painter().layout_no_wrap(text, FontId::proportional(12.5), p.muted);
-                    let pos = Pos2::new(x + widths[col] - 8.0 - galley.size().x, row.center().y - galley.size().y / 2.0);
-                    ui.painter().galley(pos.round(), galley, p.muted);
+                    let pos =
+                        crate::ui::widgets::row_text_origin(ui.painter(), &galley, x + widths[col] - 8.0 - galley.size().x, row.center().y);
+                    ui.painter().galley(pos, galley, p.muted);
                 }
             }
         });
