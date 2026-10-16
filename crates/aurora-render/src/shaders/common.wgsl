@@ -1273,7 +1273,8 @@ fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, map: vec3<f32>) -> 
 // (noise map) then blurs: each tap is above the plane over a known share of
 // the turn, so the mean stands for both.
 fn normal_map_occlusion(n: vec3<f32>, nm: vec3<f32>, p: vec3<f32>, view_z: f32) -> f32 {
-    if (frame.misc.x < 0.5 || in_reflection_pass()) {
+    // (misc.x 2: GTAO, whose occlusion is not that kernel's)
+    if (frame.misc.x < 0.5 || frame.misc.x > 1.5 || in_reflection_pass()) {
         return 0.0;
     }
     // surface offset of one pixel right and of one pixel down (in the plane

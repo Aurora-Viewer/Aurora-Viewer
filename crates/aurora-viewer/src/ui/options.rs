@@ -1450,6 +1450,48 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-ao-method"),
+                    aurora_i18n::tr!("ui-options-ao-method-help"),
+                    |ui| {
+                        let names = [aurora_i18n::tr!("ui-options-ao-legacy"), "GTAO"];
+                        let mut changed = false;
+                        ui.add_enabled_ui(s.ssao > 0, |ui| {
+                            egui::ComboBox::from_id_salt("ao_method")
+                                .width(SLIDER_W)
+                                .selected_text(names[s.ao_method.min(1) as usize])
+                                .show_ui(ui, |ui| {
+                                    changed |= ui.selectable_value(&mut s.ao_method, 0, names[0]).changed();
+                                    changed |= ui.selectable_value(&mut s.ao_method, 1, names[1]).changed();
+                                });
+                        });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-gtao-quality"),
+                    aurora_i18n::tr!("ui-options-gtao-quality-help"),
+                    |ui| {
+                        ui.add_enabled_ui(s.ssao > 0 && s.ao_method == 1, |ui| {
+                            stepped(
+                                ui,
+                                p,
+                                &mut s.gtao_quality,
+                                &[
+                                    aurora_i18n::tr!("ui-options-low"),
+                                    aurora_i18n::tr!("common-medium"),
+                                    aurora_i18n::tr!("ui-options-high"),
+                                    aurora_i18n::tr!("ui-options-ultra"),
+                                ],
+                            )
+                        })
+                        .inner
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("common-time-of-day"),
                     aurora_i18n::tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
                     |ui| {

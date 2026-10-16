@@ -2,7 +2,8 @@
 //!
 //! 1. cascaded sun shadows
 //! 2. single-sample depth prepass (shared by SSAO, water, SSR, particles, TAA)
-//! 3. SSAO at half resolution (optional)
+//! 3. ambient occlusion (optional): the Legacy SSAO at half resolution, or
+//!    GTAO in compute (gtao.rs)
 //! 4. planar reflections: water and the nearest mirror (optional, reduced resolution)
 //! 5. scene pass A: sky, terrain, opaque and masked geometry (MSAA, HDR);
 //!    with MSAA, first a depth prepass of its multisampled depth
@@ -676,6 +677,11 @@ struct Targets {
     gbuf: Option<wgpu::TextureView>,
     /// SSAO raw and blurred (half resolution).
     ao: Option<(wgpu::TextureView, wgpu::TextureView, u32, u32)>,
+    /// GTAO's targets (gtao.rs), when its method is chosen or `AURORA_AO`
+    /// keeps both ready.
+    gtao: Option<crate::gtao::Targets>,
+    /// The frame groups bind GTAO's occlusion rather than the Legacy one.
+    gtao_shown: bool,
     water_refl: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
     post_bind_group: wgpu::BindGroup,
@@ -758,6 +764,8 @@ struct GpuTimer {
     last_shadow_parts: Option<[f32; 5]>,
     /// Last times of the depth prepasses (ms), in [`GPU_DEPTH`] order.
     last_depth: Option<[f32; 2]>,
+    /// Last time of the ambient occlusion (ms).
+    last_ssao: Option<f32>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -940,6 +948,7 @@ impl GpuTimer {
             last_elements: None,
             last_shadow_parts: None,
             last_depth: None,
+            last_ssao: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
         }
@@ -966,6 +975,7 @@ impl GpuTimer {
                             self.last_shadow_parts = Some(GPU_SHADOW_PARTS.map(|(a, b)| ms(a, b)));
                             let d = GPU_DEPTH.map(|(a, b)| ms(a, b));
                             self.last_depth = Some(d);
+                            self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
                                 times[0] = ms(0, 1);
@@ -1182,6 +1192,7 @@ pub(crate) struct Backend {
     gbuf_layout: wgpu::BindGroupLayout,
     pipelines: Pipelines,
     ssao: Ssao,
+    gtao: crate::gtao::Gtao,
     frame_buffer: wgpu::Buffer,
     refl_buffers: [wgpu::Buffer; 7],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
@@ -2254,6 +2265,7 @@ impl Backend {
             settings.ssr,
         );
         let ssao = Self::make_ssao(&device);
+        let gtao = crate::gtao::Gtao::new(&device);
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, &post_layout, format);
         let targets = Self::make_targets(
@@ -2262,6 +2274,7 @@ impl Backend {
             &post_sampler,
             &post_buffer,
             &glow.views[1],
+            &gtao,
             config.width,
             config.height,
             msaa_samples,
@@ -2320,6 +2333,7 @@ impl Backend {
             gbuf_layout,
             pipelines,
             ssao,
+            gtao,
             frame_buffer,
             refl_buffers,
             hud_depth: None,
@@ -2959,6 +2973,7 @@ impl Backend {
         post_sampler: &wgpu::Sampler,
         post_buffer: &wgpu::Buffer,
         glow_view: &wgpu::TextureView,
+        gtao: &crate::gtao::Gtao,
         width: u32,
         height: u32,
         samples: u32,
@@ -2989,7 +3004,9 @@ impl Backend {
         } else {
             (None, None)
         };
-        let ao = (s.ssao > 0).then(|| {
+        let ao_override = crate::gtao::Override::from_env();
+        let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
+        let ao = (s.ssao > 0 && legacy_ao).then(|| {
             let (hw, hh) = (w.div_ceil(2), h.div_ceil(2));
             (
                 make_view(device, "ssao", hw, hh, AO_FORMAT, 1, sampled).1,
@@ -3010,6 +3027,9 @@ impl Backend {
                 }
             })
         };
+        let gtao = (s.ssao > 0 && gtao_ao).then(|| gtao.targets(device, &depth_ss, w, h, ao_override.level(s.ao_method)));
+        // the method shown first; `AURORA_AO=alt` switches it each second
+        let gtao_shown = gtao.is_some() && !legacy_ao;
         let water_refl = refl("water reflection", s.water_reflection_scale);
         let mirror = refl("mirror", s.mirror_scale);
         let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3045,6 +3065,8 @@ impl Backend {
             gbuf_msaa,
             gbuf,
             ao,
+            gtao,
+            gtao_shown,
             water_refl,
             mirror,
             post_bind_group,
@@ -3130,7 +3152,12 @@ impl Backend {
                 ],
             })
         };
-        let ao = t.ao.as_ref().map(|a| &a.1).unwrap_or(&dummies.white);
+        let ao = if t.gtao_shown {
+            t.gtao.as_ref().map(|g| &g.result)
+        } else {
+            t.ao.as_ref().map(|a| &a.1)
+        }
+        .unwrap_or(&dummies.white);
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         FrameGroups {
@@ -3204,6 +3231,31 @@ impl Backend {
         }
     }
 
+    /// The occlusion method of this frame: `AURORA_AO=alt` switches it each
+    /// second, which binds the other result to the frame groups.
+    fn show_ao_method(&mut self) {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+        let gtao = crate::gtao::Override::from_env().gtao_now(self.settings.ao_method, secs);
+        let t = &self.targets;
+        let show = t.gtao.is_some() && (gtao || t.ao.is_none());
+        if show != t.gtao_shown {
+            self.targets.gtao_shown = show;
+            self.groups = Self::make_frame_groups(
+                &self.device,
+                &self.frame_layout,
+                &self.frame_buffer,
+                &self.refl_buffers,
+                &self.shadow_view,
+                &self.shadow_sampler,
+                &self.lin_clamp,
+                &self.dummies,
+                &self.targets,
+                &self.probes,
+            );
+        }
+    }
+
     /// Recreate every bind group that references size- or setting-dependent targets.
     fn rebuild_bind_groups(&mut self) {
         self.groups = Self::make_frame_groups(
@@ -3264,6 +3316,7 @@ impl Backend {
             &self.post_sampler,
             &self.post_buffer,
             &self.glow.views[1],
+            &self.gtao,
             self.config.width,
             self.config.height,
             self.msaa_samples,
@@ -3321,6 +3374,7 @@ impl Backend {
         let targets_dirty = pipelines_dirty
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
+            || s.ao_method != self.settings.ao_method
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
@@ -3991,9 +4045,18 @@ impl Backend {
         let do_water_refl = self.targets.water_refl.is_some() && !lists.water.is_empty() && !underwater;
         let mirror = f.mirror.filter(|_| self.targets.mirror.is_some());
 
+        self.show_ao_method();
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.misc = [
-            if self.targets.ao.is_some() { 1.0 } else { 0.0 },
+            // 2: GTAO's occlusion, without the normal map part the Legacy
+            // pass misses (normal_map_occlusion, common.wgsl)
+            if self.targets.gtao_shown {
+                2.0
+            } else if self.targets.ao.is_some() {
+                1.0
+            } else {
+                0.0
+            },
             if self.settings.ssr { 1.0 } else { 0.0 },
             if do_water_refl { 1.0 } else { 0.0 },
             0.0,
@@ -4211,7 +4274,9 @@ impl Backend {
             },
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
-        if self.targets.ao.is_some() {
+        if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
+            self.gtao.write(&self.queue, t, f.proj);
+        } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {
                 view_proj: unjittered_vp.to_cols_array_2d(),
@@ -4819,7 +4884,9 @@ impl Backend {
         prof.mark("prepass");
         mark(&mut encoder, MARK_DEPTH_END);
         // ---- SSAO
-        if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
+        if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
+            self.gtao.encode(&mut encoder, t);
+        } else if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
             for (view, pipe, bg, label) in [
                 (raw, &self.ssao.ssao, bg_ssao, "ssao"),
                 (blurred, &self.ssao.blur, bg_blur, "ssao blur"),
@@ -5800,6 +5867,7 @@ impl Backend {
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
+        stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {

@@ -11,6 +11,7 @@ mod dof;
 mod drawn_pick;
 pub mod frame_priority;
 pub mod gpu_cull;
+mod gtao;
 mod helpers;
 pub mod hud;
 mod label_depth;
@@ -145,6 +146,11 @@ mod shader_tests {
     #[test]
     fn ssao_shader_is_valid() {
         validate(include_str!("shaders/ssao.wgsl"));
+    }
+
+    #[test]
+    fn gtao_shader_is_valid() {
+        validate(include_str!("shaders/gtao.wgsl"));
     }
 
     #[test]
