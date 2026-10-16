@@ -52,7 +52,10 @@ impl Link {
 
     /// Bytes of bodies sent for a kind (`texture`, `mesh`, `animatn`).
     pub fn sent(&self, kind: &str) -> u64 {
-        KINDS.iter().position(|k| *k == kind).map_or(0, |i| self.sent[i].load(Ordering::Relaxed))
+        KINDS
+            .iter()
+            .position(|k| *k == kind)
+            .map_or(0, |i| self.sent[i].load(Ordering::Relaxed))
     }
 
     /// Wait for the body's turn through the pipe, and its time in it.

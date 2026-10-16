@@ -146,7 +146,10 @@ impl Input {
             };
             {
                 let data = scene.meshes.view(&id);
-                let skin = data.as_ref().and_then(|m| m.skin.clone()).filter(|skin| !skin.joint_names.is_empty());
+                let skin = data
+                    .as_ref()
+                    .and_then(|m| m.skin.clone())
+                    .filter(|skin| !skin.joint_names.is_empty());
                 let rigid = skin.is_none().then(|| Rigid::capture(world, index)).flatten();
                 let mut mesh_hash = std::collections::hash_map::DefaultHasher::new();
                 id.hash(&mut mesh_hash);

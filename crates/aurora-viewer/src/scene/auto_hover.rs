@@ -72,14 +72,8 @@ impl Default for AutoHover {
 }
 
 enum Surface {
-    Mesh {
-        mesh: MeshView,
-        rigid: Option<Mat4>,
-    },
-    Geometry {
-        geom: Arc<GpuGeom>,
-        model: Mat4,
-    },
+    Mesh { mesh: Box<MeshView>, rigid: Option<Mat4> },
+    Geometry { geom: Arc<GpuGeom>, model: Mat4 },
 }
 
 struct Estimate {
@@ -240,7 +234,7 @@ impl Scene {
                             let own_rig = skin.is_some() && Self::skeleton_owner(world, idx).is_some_and(|s| s.0 == world.agent_id);
                             if own_rig || (skin.is_none() && on_foot) {
                                 surfaces.push(Surface::Mesh {
-                                    mesh,
+                                    mesh: Box::new(mesh),
                                     rigid: (!own_rig).then(|| model * Mat4::from_scale(object.visual_scale())),
                                 });
                             }
@@ -727,7 +721,7 @@ mod tests {
             }),
             ground: foot,
             surfaces: vec![Surface::Mesh {
-                mesh: mesh.unwrap(),
+                mesh: Box::new(mesh.unwrap()),
                 rigid: None,
             }],
         };
@@ -1011,7 +1005,7 @@ mod tests {
             lib,
             ground: 0.0,
             surfaces: vec![Surface::Mesh {
-                mesh: MeshView {
+                mesh: Box::new(MeshView {
                     header: aurora_assets::MeshHeader {
                         header_size: 0,
                         lods: [Some((0, 4)); 4],
@@ -1021,7 +1015,7 @@ mod tests {
                     },
                     bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),
                     skin: None,
-                },
+                }),
                 rigid: Some(Mat4::IDENTITY),
             }],
         };
