@@ -218,8 +218,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         aurora_i18n::tr!("ui-context-refresh-textures"),
         CtxAction::RefreshTextures(id),
     );
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    derender_items(ui, id, aurora_i18n::tr!("ui-context-derender"), true);
     ui.todo("arrow-back-up", aurora_i18n::tr!("ui-context-return"));
     ui.item_if("hand-grab", aurora_i18n::tr!("ui-context-take"), o.take, CtxAction::Take(id));
     ui.item_if(
@@ -312,8 +311,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::Inspect(f.object.id),
     );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    derender_items(
+        ui,
+        f.object.id,
+        aurora_i18n::tr!("ui-context-derender-temporarily"),
+        !f.object.id.is_nil(),
+    );
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     ui.item_if(
         "refresh",
@@ -337,11 +340,21 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         !f.friend,
         CtxAction::AddFriend(id),
     );
-    ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    contact_set_entries(ui, f, id);
     ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "id-filled",
+        aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        CtxAction::GiveCallingCard(id),
+    );
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
-    ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "users-plus",
+        aurora_i18n::tr!("ui-context-invite-to-group"),
+        CtxAction::InviteToGroup(id),
+    );
     ui.item(
         "send-filled",
         aurora_i18n::tr!("common-offer-teleport"),
@@ -392,10 +405,16 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ] {
         ui.check(icon, label, f.render == mode, true, CtxAction::SetRender(id, mode));
     }
-    ui.todo("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"));
+    // the Inspect window on everything the avatar wears (each worn
+    // object's own menu inspects that one, menu_attachment_other.xml)
+    ui.item_if(
+        "zoom-scan-filled",
+        aurora_i18n::tr!("ui-context-inspect-2"),
+        f.worn,
+        CtxAction::InspectAvatar(id),
+    );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    derender_items(ui, id, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     ui.item(
         "refresh",
@@ -403,7 +422,16 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         CtxAction::RefreshAvatarTextures(id),
     );
     ui.separator();
-    ui.todo("sparkles-filled", aurora_i18n::tr!("common-block-particles"));
+    // only the particle flag of their block list entry, checked while it
+    // is on (the block list's "Block particles", LLMute::flagParticles);
+    // the Legacy Viewer's "Block Particle Owner" needs a clicked particle
+    ui.check(
+        "sparkles-filled",
+        aurora_i18n::tr!("common-block-particles"),
+        f.particles_blocked,
+        true,
+        CtxAction::ToggleParticleMute(id),
+    );
 }
 
 /// menu_attachment_other.xml: the avatar's entries, then those of the
@@ -419,11 +447,21 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         !f.friend,
         CtxAction::AddFriend(id),
     );
-    ui.todo("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"));
+    contact_set_entries(ui, f, id);
     ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "id-filled",
+        aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        CtxAction::GiveCallingCard(id),
+    );
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
-    ui.todo("users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+    // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "users-plus",
+        aurora_i18n::tr!("ui-context-invite-to-group"),
+        CtxAction::InviteToGroup(id),
+    );
     ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
     ui.separator();
     reset_skeleton_items(ui, id);
@@ -476,8 +514,8 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         CtxAction::Inspect(attachment),
     );
     ui.todo("code", aurora_i18n::tr!("ui-context-script-info"));
-    ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender-temporarily"));
-    ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
+    // the worn object, not its wearer (the selection's root)
+    derender_items(ui, attachment, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
     // the attachment's textures (Object.TexRefresh), not the avatar's bakes
     ui.item(
@@ -486,6 +524,19 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         CtxAction::RefreshTextures(attachment),
     );
     save_as_submenu(ui);
+}
+
+/// Object.Derender / Object.DerenderPermanent (derenderObject on the
+/// selection's root: the linkset, the worn object or the avatar), enabled
+/// like the Legacy Viewer's (Object.EnableDerender: always without RLVa).
+fn derender_items(ui: &mut Builder, id: Uuid, temporary: &str, enabled: bool) {
+    ui.item_if("eye-off", temporary, enabled, CtxAction::Derender { id, permanent: false });
+    ui.item_if(
+        "eye-closed",
+        aurora_i18n::tr!("ui-context-derender-blacklist"),
+        enabled,
+        CtxAction::Derender { id, permanent: true },
+    );
 }
 
 /// "Save as" (Export Menu): the export has its own task and
@@ -577,6 +628,30 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
         // Avatar › Avatar Health › "Force Appearance Update (Rebake)" in
         // Firestorm's menu bar, next to the resets here (Ctrl+Alt+R)
         ui.item("reload", aurora_i18n::tr!("ui-context-rebake"), CtxAction::Rebake);
+    });
+}
+
+/// "Add to contact set" (Avatar.AddToContactSet): the sets of
+/// FSFloaterAddToContactSet's list in a submenu, then its "+"
+/// (AddNewContactSet), as `contact_set_submenu` of the lists.
+fn contact_set_entries(ui: &mut Builder, f: &Facts, id: Uuid) {
+    ui.submenu("users-group", aurora_i18n::tr!("ui-context-add-to-contact-set"), true, |ui| {
+        if f.contact_sets.is_empty() {
+            ui.disabled("users-group", aurora_i18n::tr!("ui-contacts-no-contact-sets"));
+        }
+        for set in &f.contact_sets {
+            let add = crate::ui::contacts::SetEdit::Add {
+                set: set.clone(),
+                ids: vec![id],
+            };
+            ui.item("users-group", set, CtxAction::ContactSet(add));
+        }
+        ui.separator();
+        ui.item(
+            "plus",
+            aurora_i18n::tr!("ui-context-new-contact-set"),
+            CtxAction::NewContactSet(vec![id]),
+        );
     });
 }
 
@@ -673,7 +748,7 @@ mod tests {
             let mut keys = vec![
                 "common-view-profile",
                 "common-become-friends",
-                "ui-context-add-to-contact-set",
+                "ui-context-add-to-contact-set>",
                 "ui-context-send-im",
                 "ui-context-give-my-calling-card",
                 "common-voice-call",
@@ -718,6 +793,58 @@ mod tests {
             attachment: None,
         };
         assert_ne!(labels(&world_menu(&avatar, &f, Vec3::ZERO)), expected(true));
+    }
+
+    #[test]
+    fn inspect_and_derender_act_on_the_avatar_or_on_the_worn_object() {
+        let find = |entries: Vec<Entry>, key: &'static str, permanent: bool| {
+            entries
+                .into_iter()
+                .find(|e| {
+                    e.label == aurora_i18n::text(key)
+                        && match &e.kind {
+                            Kind::Action(CtxAction::Derender { permanent: p, .. }) => *p == permanent,
+                            _ => true,
+                        }
+                })
+                .expect("entry")
+        };
+        let (avatar, worn) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let on_avatar = Target::Avatar {
+            id: avatar,
+            own: false,
+            attachment: None,
+        };
+        // "Inspect" lists what the avatar wears: greyed when it wears nothing in view
+        let inspect = |f: &Facts| find(world_menu(&on_avatar, f, Vec3::ZERO), "ui-context-inspect-2", false);
+        assert!(!inspect(&Facts::default()).enabled);
+        let wearing = Facts {
+            worn: true,
+            ..Facts::default()
+        };
+        assert!(matches!(inspect(&wearing).kind, Kind::Action(CtxAction::InspectAvatar(id)) if id == avatar));
+        // the two derender entries, always enabled (Object.Derender)
+        for (key, permanent) in [("ui-context-derender-temporarily", false), ("ui-context-derender-blacklist", true)] {
+            let e = find(world_menu(&on_avatar, &wearing, Vec3::ZERO), key, permanent);
+            assert!(e.enabled);
+            assert!(matches!(e.kind, Kind::Action(CtxAction::Derender { id, permanent: p }) if id == avatar && p == permanent));
+            // on a worn object: that object, not its wearer
+            let on_worn = Target::Avatar {
+                id: avatar,
+                own: false,
+                attachment: Some(worn),
+            };
+            let e = find(world_menu(&on_worn, &wearing, Vec3::ZERO), key, permanent);
+            assert!(matches!(e.kind, Kind::Action(CtxAction::Derender { id, .. }) if id == worn));
+        }
+        // our own worn object: greyed until its prim is known
+        let key = ObjKey { region: 1, local_id: 3 };
+        let ours = find(
+            world_menu(&Target::Attachment { key }, &Facts::default(), Vec3::ZERO),
+            "ui-context-derender-temporarily",
+            false,
+        );
+        assert!(!ours.enabled);
     }
 
     #[test]
@@ -804,5 +931,74 @@ mod tests {
             seated: true,
             ..Facts::default()
         }));
+    }
+
+    #[test]
+    fn a_residents_menus_invite_add_to_contact_sets_and_block_particles() {
+        let id = Uuid::from_u128(7);
+        let find = |entries: Vec<Entry>, key: &'static str| {
+            entries
+                .into_iter()
+                .find(|e| e.label == aurora_i18n::text(key))
+                .unwrap_or_else(|| panic!("{key} missing"))
+        };
+        for attachment in [None, Some(Uuid::from_u128(8))] {
+            let target = Target::Avatar {
+                id,
+                own: false,
+                attachment,
+            };
+            let f = Facts {
+                contact_sets: vec!["Family".into(), "Work".into()],
+                ..Facts::default()
+            };
+            // "Invite to group": enabled, the group picker for them
+            let invite = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-invite-to-group");
+            assert!(invite.enabled);
+            assert!(matches!(invite.kind, Kind::Action(CtxAction::InviteToGroup(i)) if i == id));
+            // "Give my calling card": enabled, OfferCallingCard to them
+            let card = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-give-my-calling-card");
+            assert!(card.enabled);
+            assert!(matches!(card.kind, Kind::Action(CtxAction::GiveCallingCard(i)) if i == id));
+            // "Add to contact set": each set, then a new one
+            let sets = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-add-to-contact-set");
+            let Kind::Submenu(rows) = sets.kind else {
+                panic!("not a submenu");
+            };
+            let labels: Vec<&str> = rows.iter().map(|e| e.label.as_str()).collect();
+            assert_eq!(labels, ["Family", "Work", "", aurora_i18n::tr!("ui-context-new-contact-set")]);
+            assert!(matches!(
+                &rows[1].kind,
+                Kind::Action(CtxAction::ContactSet(crate::ui::contacts::SetEdit::Add { set, ids })) if set == "Work" && ids == &[id]
+            ));
+            assert!(matches!(&rows[3].kind, Kind::Action(CtxAction::NewContactSet(ids)) if ids == &[id]));
+            // no set yet: a greyed line, and still "New contact set…"
+            let none = find(world_menu(&target, &Facts::default(), Vec3::ZERO), "ui-context-add-to-contact-set");
+            let Kind::Submenu(rows) = none.kind else {
+                panic!("not a submenu");
+            };
+            assert!(!rows[0].enabled);
+            assert!(matches!(
+                rows.last().map(|e| &e.kind),
+                Some(Kind::Action(CtxAction::NewContactSet(_)))
+            ));
+        }
+        // "Block particles" of the avatar's menu: checked while their
+        // particles are blocked
+        let target = Target::Avatar {
+            id,
+            own: false,
+            attachment: None,
+        };
+        for blocked in [false, true] {
+            let f = Facts {
+                particles_blocked: blocked,
+                ..Facts::default()
+            };
+            let row = find(world_menu(&target, &f, Vec3::ZERO), "common-block-particles");
+            assert!(row.enabled);
+            assert_eq!(row.checked, Some(blocked));
+            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleParticleMute(i)) if i == id));
+        }
     }
 }

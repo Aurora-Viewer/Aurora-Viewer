@@ -217,6 +217,12 @@ impl ParticleManager {
             let blocked = idx
                 .and_then(|i| world.objects.get(i))
                 .is_some_and(|o| world.particles_blocked(&o.owner_id));
+            if blocked {
+                // what they already sent goes at once: the Legacy Viewer
+                // lets it live out its age, which a block from the menu
+                // should not wait for
+                s.ps.clear_particles();
+            }
             if blocked || pos.distance(eye) > draw_distance {
                 let mut none = 0;
                 s.ps.update(dt, &ctx, &mut none);

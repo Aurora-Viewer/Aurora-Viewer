@@ -85,6 +85,10 @@ pub mod search;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
+/// A resident's "Invite to group", "Add to contact set" and "Block
+/// particles" (AURORA_DEMO_SOCIAL_MENU).
+#[path = "demo_social_menu.rs"]
+pub mod social_menu;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
@@ -191,6 +195,12 @@ fn shape(path: u8, profile: u8, sy: u8, hollow: u16, cut_end: u16) -> aurora_pri
         ..Default::default()
     }
     .to_params()
+}
+
+/// The hat Violet Wolf wears (AURORA_DEMO_DERENDER=hat): `prim`'s id of
+/// local id 9100.
+pub fn wolf_hat() -> Uuid {
+    Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | 9100)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1625,6 +1635,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = search::reply(cmd) {
         return events;
     }
+    if let Some(events) = social_menu::reply(cmd) {
+        return events;
+    }
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go
@@ -1832,10 +1845,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             );
             // The animesh fixture needs its wearer visible in full, and
             // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click
-            // fixtures need the same visible, unblocked wearer.
+            // and derender fixtures need the same visible, unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
+                || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
+                || social_menu::step().is_some()
             {
                 text.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
@@ -3527,6 +3542,10 @@ pub fn events() -> Vec<NetEvent> {
             "",
         );
         o.particles = aurora_net::objects::ParticleUpdate::Set(fountain_particles());
+        // AURORA_DEMO_SOCIAL_MENU: the wolf's, for "Block particles"
+        if social_menu::step().is_some() {
+            o.owner_id = social_menu::RESIDENT;
+        }
         add(o);
         id += 1;
     }

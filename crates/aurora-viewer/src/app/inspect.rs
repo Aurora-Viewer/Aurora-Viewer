@@ -26,6 +26,19 @@ impl App {
         self.inspect_wire(true);
     }
 
+    /// "Inspect" of an avatar's menu: every object it wears, one linkset
+    /// each, in the window LLFloaterInspect gives the selection of one
+    /// worn object (menu_attachment_other.xml).
+    pub(super) fn inspect_avatar(&mut self, id: Uuid) {
+        let roots = worn_roots(&self.world, &id);
+        if roots.is_empty() {
+            return;
+        }
+        self.inspect_wire(false);
+        self.inspect_ui.inspect(roots);
+        self.inspect_wire(true);
+    }
+
     /// The window was closed: its prims are no longer selected.
     pub(super) fn inspect_closed(&mut self) {
         self.inspect_wire(false);
@@ -172,4 +185,19 @@ impl App {
         totals.textures = textures.len() as u32;
         (rows, totals)
     }
+}
+
+/// The root prims of what avatar `id` wears, as the world has them.
+pub(super) fn worn_roots(world: &crate::world::World, id: &Uuid) -> Vec<Uuid> {
+    let Some(avatar) = world.objects.index_of_uuid(id).and_then(|i| world.objects.get(i)) else {
+        return Vec::new();
+    };
+    world
+        .objects
+        .children_of(&avatar.key)
+        .iter()
+        .filter_map(|&i| world.objects.get(i))
+        .filter(|o| !o.is_avatar())
+        .map(|o| o.full_id)
+        .collect()
 }

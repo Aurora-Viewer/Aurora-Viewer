@@ -414,8 +414,8 @@ pub struct Settings {
     /// on the empty bar gives it back to the world (the Legacy Viewer's
     /// CloseChatOnReturn off). Off by default: the bar lets go after sending.
     pub chat_keep_focus: bool,
-    /// Show Contacts in Conversations (Preferences > Chat, off by default).
-    /// Unlike Firestorm's always-present entry, this is optional at the human's request.
+    /// Show Contacts in Conversations (Preferences > Chat, on by default as
+    /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
     /// Tell the resident of a conversation that we are typing
     /// (FSSendTypingState, on by default; Preferences > Chat).
@@ -982,7 +982,7 @@ impl Default for Settings {
             chat_timestamps: true,
             show_chat_channel: false,
             chat_keep_focus: false,
-            show_contacts_tab: false,
+            show_contacts_tab: true,
             send_typing_state: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
@@ -1403,6 +1403,11 @@ impl Settings {
             self.camera.disable_constraints = true;
             self.camera.ignore_sim_constraints = true;
         }
+        if self.settings_version < 15 {
+            // new default: Contacts shown in Conversations (every file wrote
+            // the old "hidden" default)
+            self.show_contacts_tab = true;
+        }
         if self.settings_version < 16 && self.font == crate::ui::fonts::NOTO {
             // Inter is the default interface font again: every file wrote
             // the former default, Noto Sans (version 3 had moved Inter to it)
@@ -1802,10 +1807,12 @@ mod tests {
     }
 
     #[test]
-    fn contacts_tab_is_hidden_by_default_and_survives_reload() {
-        assert!(!Settings::default().show_contacts_tab);
-        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
-        assert!(!old.show_contacts_tab);
+    fn contacts_tab_is_shown_by_default_and_survives_reload() {
+        assert!(Settings::default().show_contacts_tab);
+        // the earlier files all wrote "hidden": shown once, then kept
+        let old: Settings =
+            serde_json::from_str(r#"{"settings_version": 14, "show_contacts_tab": false}"#).expect("synthetic old settings");
+        assert!(old.sanitized().show_contacts_tab);
         for show_contacts_tab in [false, true] {
             let original = Settings {
                 show_contacts_tab,
@@ -2151,6 +2158,22 @@ mod tests {
             };
             assert_eq!(old.sanitized().font, now, "version {version}, {font}");
         }
+    }
+
+    /// A file written before both defaults changed (version 14) gets both:
+    /// the Contacts tab of version 15 and the Inter font of version 16.
+    #[test]
+    fn a_version_14_file_gets_the_contacts_tab_and_inter() {
+        let old = Settings {
+            settings_version: 14,
+            font: "Noto Sans".into(),
+            show_contacts_tab: false,
+            ..Settings::default()
+        };
+        let now = old.sanitized();
+        assert!(now.show_contacts_tab);
+        assert_eq!(now.font, "Inter");
+        assert_eq!(now.settings_version, SETTINGS_VERSION);
     }
 
     #[test]

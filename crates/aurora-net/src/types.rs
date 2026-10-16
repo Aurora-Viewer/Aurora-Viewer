@@ -345,6 +345,18 @@ pub enum NetEvent {
     },
     /// A friend ended the friendship (TerminateFriendship from the simulator).
     FriendshipTerminated(Uuid),
+    /// A resident offers their calling card (process_offer_callingcard):
+    /// who, the transaction, and the region whose simulator gets the answer.
+    CallingCardOffered {
+        from: Uuid,
+        transaction: Uuid,
+        handle: RegionHandle,
+    },
+    /// Our calling card was accepted or declined (AcceptCallingCard /
+    /// DeclineCallingCard from the simulator).
+    CallingCardAnswered {
+        accepted: bool,
+    },
     /// First message of a group / conference chat session (ChatterBoxInvitation).
     SessionInvite(crate::social::SessionInvite),
     /// Reply to a session we started (ChatterBoxSessionStartReply).
@@ -1301,6 +1313,21 @@ pub enum NetCommand {
     },
     DeclineFriendship {
         transaction: Uuid,
+    },
+    /// Give our calling card to an avatar, through the simulator of the
+    /// region they are in (LLAvatarGiveCard: OfferCallingCard).
+    OfferCallingCard {
+        handle: RegionHandle,
+        dest: Uuid,
+        transaction: Uuid,
+    },
+    /// Answer a calling card offer, to the simulator that brought it
+    /// (callingcard_offer_callback): accepted into `folder` (the Calling
+    /// Cards folder), or declined (`None`).
+    AnswerCallingCard {
+        handle: RegionHandle,
+        transaction: Uuid,
+        folder: Option<Uuid>,
     },
     ScriptDialogReply {
         object_id: Uuid,

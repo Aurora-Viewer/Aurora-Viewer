@@ -116,6 +116,10 @@ pub enum GroupAction {
     },
     /// InviteGroupRequest: (invitee, role) pairs.
     Invite { group: Uuid, invites: Vec<(Uuid, Uuid)> },
+    /// The invitation opened from a resident's menu
+    /// (LLFloaterGroupInvite::showForGroup, request_update): our groups and
+    /// this group's data asked again.
+    ReloadForInvite(Uuid),
     /// "Call" (LLGroupActions::startCall), once group voice is there
     /// (`Env::group_calls`).
     Call(Uuid),
@@ -308,10 +312,28 @@ impl GroupProfileUi {
 
     pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env) -> Vec<GroupAction> {
         let mut actions = self.create.show(ctx, c, env);
-        let Some(id) = self.shown() else {
+        // "Invite to group" of a resident's menu: the group picker, and the
+        // chosen group's data asked again
+        self.invite.group_picker(ctx, c.p, c.world);
+        if let Some(group) = self.invite.take_reload() {
+            actions.push(GroupAction::ReloadForInvite(group));
+        }
+        if let Some(id) = self.shown() {
+            self.profile_window(ctx, c, env, id, &mut actions);
+        } else {
             self.confirm = None;
-            return actions;
-        };
+        }
+        // the invitation is a window of its own (LLFloaterGroupInvite), with
+        // or without the group's profile
+        if let Some(group) = self.invite.target() {
+            let v = view::View::of(c.world, group);
+            self.invite.show(ctx, c, env.avatar_pics, &v, &mut actions);
+        }
+        actions
+    }
+
+    /// The profile window on group `id`.
+    fn profile_window(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env, id: Uuid, actions: &mut Vec<GroupAction>) {
         if std::mem::take(&mut self.raise) {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)));
         }
@@ -333,17 +355,15 @@ impl GroupProfileUi {
                 size,
             );
             floater.min_size = Vec2::new(320.0, 300.0);
-            floater.show(ctx, c.p, &mut open, |ui| self.classic(ui, c, &v, &mut actions));
+            floater.show(ctx, c.p, &mut open, |ui| self.classic(ui, c, &v, actions));
         } else {
             let size = Vec2::new(960.0, 840.0);
             let mut floater = Floater::new(WINDOW, v.name.clone(), screen.center() - size * 0.5, size);
             floater.min_size = Vec2::new(640.0, 460.0);
-            floater.show(ctx, c.p, &mut open, |ui| self.aurora(ui, c, env, &v, &mut actions));
+            floater.show(ctx, c.p, &mut open, |ui| self.aurora(ui, c, env, &v, actions));
         }
         self.open = open;
-        self.confirm_dialog(ctx, c.p, &mut actions);
-        self.invite.show(ctx, c, env.avatar_pics, &v, &mut actions);
-        actions
+        self.confirm_dialog(ctx, c.p, actions);
     }
 
     /// The resident picker of the invitation window (it searches the

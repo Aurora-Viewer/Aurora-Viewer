@@ -1137,6 +1137,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
+| `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
@@ -1199,6 +1200,22 @@ To check with these scenarios:
   at frame 700 (the log shows `skeleton reset: <id>`). Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=650` (deformed) or
   `780` (reset).
+- **`AURORA_DEMO_DERENDER`**: the avatar in front of the start position
+  (Violet Wolf, unblocked for the scenario) wears a hat and an orb. At
+  frame 700 its menu opens (`menu`: Inspect, Derender temporarily and
+  Derender & blacklist enabled, Script information greyed: it needs the
+  LSL bridge). `inspect` chooses "Inspect" at frame 740: the Inspect
+  window lists the hat and the orb. `avatar` chooses "Derender
+  temporarily" at frame 740: the avatar, its hat, orb and name plate
+  vanish; the Asset blacklist window opens at frame 800 with the resident,
+  and "Clear temporary" at frame 900 brings everything back. `hat` opens
+  the menu of the hat and chooses "Derender & blacklist": only the hat
+  vanishes; the window lists it as a permanent object (written to the demo
+  account's `asset_blacklist.xml`), removed at frame 900, which brings it
+  back. By hand: blacklist something, quit and relaunch the demo: it stays
+  away until removed in World › Asset blacklist. Screenshots with
+  `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_CAMERA=close,830,330,40` (on the
+  avatar) and `AURORA_CAPTURE_FRAMES=720,780,830,950`.
 
 ## Rendering and environment
 
@@ -1763,6 +1780,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
+| `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -2903,6 +2921,31 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
+- **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles|card|card-offer`**:
+  a resident's "Invite to group", "Add to contact set", "Block
+  particles" and "Give my calling card", on the wolf (unblocked for the scenario, owner of the
+  plaza's fountain, and our abilities in "Aurora Builders" an officer's).
+  Capture with `AURORA_FPS_LIMIT=60` (and `AURORA_DEMO_PIE=0` for the list
+  menu). `menu`: the wolf's world menu at frame 600, from its name plate
+  (capture 680); add `AURORA_DEMO_POINTER="886,344,s"` (default window)
+  and capture 720 to see the submenu: each contact set, then "New contact
+  set…". `picker`: "Invite to group" at frame 600, the groups where we may
+  invite (only "Aurora Builders", in bold as the active group, OK greyed
+  until one is chosen; capture 680). `invite`: the picker answered at frame
+  640: "Invite to Aurora Builders" with the wolf in the list and the roles
+  (capture 780), without the group's profile. `new-set`: "New contact
+  set…" at frame 600, its name asked (capture 680); `new-set-done`: named
+  "Pack" at frame 640, People › Contact sets on it with the wolf (capture
+  780). The scenario keeps the contact sets in memory: the demo account's
+  file is left as it was. `particles`: capture 690 shows the fountain's
+  particles; "Block particles" at frame 700 makes them go at once, and the
+  menu opened at frame 720 shows the entry checked (capture 780); the log
+  says `demo social menu: particles of … blocked: true`. `card`: "Give my
+  calling card" at frame 600: "You have offered a calling card to …", then
+  the demo server accepts it, "Your calling card was accepted." (capture
+  640). `card-offer`: the wolf offers us his calling card at frame 600,
+  Accept / Decline (capture 640); the answer is logged as `demo social
+  menu: calling card accepted|declined`.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
