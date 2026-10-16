@@ -2,7 +2,7 @@
 
 <!-- 2 or 3 simple sentences, from the user's point of view. -->
 
-## Firestorm origin
+## Legacy Viewer origin
 
 <!-- Yes / no. If yes: files and functions followed
      (e.g. indra/llcharacter/llmotioncontroller.cpp, updateMotionsByType). -->

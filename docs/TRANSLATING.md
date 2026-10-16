@@ -12,7 +12,7 @@ OS. Regional variants use the exact catalogue if it exists, then the one of
 the main language. An unavailable language or a missing message uses
 English. The language and its visibility to scripts are sent to the
 simulator through `UpdateAgentLanguage`, after login, a region change or a
-change to the preferences, following Firestorm's `LLAgentLanguage::update`.
+change to the preferences, following the Legacy Viewer's `LLAgentLanguage::update`.
 
 A new text uses an explicit key and both translations in the same PR:
 
