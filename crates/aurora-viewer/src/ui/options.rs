@@ -1122,6 +1122,15 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
             aurora_i18n::tr!("ui-options-toast-friends-online-hint"),
             |ui| toggle(ui, p, &mut s.toast_friends_online),
         );
+        // OnlineOfflinetoNearbyChat, beside its toast as in the Legacy
+        // Viewer's "Notify me when my friends log in or out"
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-friends-online-in-chat"),
+            aurora_i18n::tr!("ui-options-friends-online-in-chat-hint"),
+            |ui| toggle(ui, p, &mut s.friends_online_in_chat),
+        );
         // where they stand with Aurora's center; Firestorm's toasts keep
         // them in their own stack (top right, like its notification channel)
         c |= row(

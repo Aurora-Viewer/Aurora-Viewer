@@ -3045,9 +3045,11 @@ impl World {
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
                 self.notifications.push_presence(id, n.clone(), online);
             }
-            // the line of nearby chat stays: Firestorm's own skin sends the
-            // notices there (OnlineOfflinetoNearbyChat)
-            self.system_message(n);
+            // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
+            // asked for: the toast already says it
+            if self.notifications.toasts.presence_in_chat {
+                self.system_message(n);
+            }
         }
     }
 
