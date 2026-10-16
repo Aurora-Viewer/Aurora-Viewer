@@ -329,8 +329,10 @@ impl Own {
     }
 }
 
-/// Look-at targets: ours, and the last one each avatar sent (they never
-/// expire locally, as in LLHUDManager).
+/// Look-at targets: ours, and the last one each avatar sent. A received one
+/// has no timeout (LLHUDEffectLookAt::unpackData never sets mKillTime: its
+/// sender's own timeout sends "none"); it lasts as long as its avatar is in
+/// the world (`forget`).
 pub struct LookAts {
     pub own: Own,
     pub remote: HashMap<Uuid, Target>,
@@ -369,6 +371,22 @@ impl LookAts {
         );
     }
 
+    /// LLHUDEffectLookAt::update once objects left the world (`exists`
+    /// tells which are still in it): the look-at of an avatar that is gone
+    /// dies with it (markDead: killed, out of view, logged off, its region
+    /// closed), and a target object that is gone clears the look-at
+    /// (clearLookAtTarget: "none", the head stops following it), ours too,
+    /// without telling the others. Run where objects are removed, not each
+    /// frame.
+    pub fn forget(&mut self, exists: impl Fn(&Uuid) -> bool) {
+        self.remote.retain(|source, _| exists(source));
+        for t in self.remote.values_mut().chain(std::iter::once(&mut self.own.target)) {
+            if t.object.is_some_and(|o| !exists(&o)) {
+                *t = Target::NONE;
+            }
+        }
+    }
+
     /// LLAgent::heardChat: half the time, look at whoever spoke before.
     pub fn heard_chat(&mut self, speaker: Uuid, coin: bool) {
         if coin && let Some(prev) = self.last_chatter {
@@ -401,6 +419,35 @@ mod tests {
         assert_eq!(o.target.kind, FREELOOK);
         o.update(t0 + Duration::from_secs_f32(2.5));
         assert_eq!(o.target.kind, NONE);
+    }
+
+    #[test]
+    fn a_look_at_lasts_as_long_as_its_avatar_and_its_target() {
+        let (gone, stays, prim, me) = (Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(7), Uuid::from_u128(1));
+        let mut l = LookAts::default();
+        let at = |object| Target {
+            kind: FOCUS,
+            object,
+            offset: DVec3::X,
+        };
+        l.receive(Uuid::from_u128(20), gone, me, [0.0; 3], CONVERSATION);
+        l.receive(Uuid::from_u128(30), stays, prim, [1.0, 0.0, 0.0], FOCUS);
+        let point = Uuid::from_u128(4);
+        l.receive(Uuid::from_u128(40), point, Uuid::nil(), [1.0, 0.0, 0.0], FOCUS);
+        l.own.set(FOCUS, Some(prim), DVec3::X, Instant::now());
+        // a received look-at has no timeout of its own
+        assert_eq!(l.remote.len(), 3);
+        // its source gone, it goes (markDead); toward an object gone, it
+        // becomes "none" (clearLookAtTarget), ours too; a global point stays
+        l.forget(|id| ![gone, prim].contains(id));
+        assert!(!l.remote.contains_key(&gone));
+        assert_eq!(l.remote.get(&stays), Some(&Target::NONE));
+        assert_eq!(l.remote.get(&point), Some(&at(None)));
+        assert_eq!(l.own.target, Target::NONE);
+        // nothing gone: nothing changes
+        l.receive(Uuid::from_u128(30), stays, me, [0.0; 3], FOCUS);
+        l.forget(|_| true);
+        assert_eq!(l.remote.get(&stays).map(|t| t.object), Some(Some(me)));
     }
 
     #[test]

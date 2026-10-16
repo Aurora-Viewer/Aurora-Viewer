@@ -595,6 +595,14 @@ impl World {
         self.move_rekeyed();
         self.gltf_overrides.retain(|k, _| k.region != handle);
         self.derender.forget_region(handle);
+        self.forget_gone_look_ats();
+    }
+
+    /// The look-ats of the avatars and toward the objects that just left
+    /// the store (`lookat::LookAts::forget`).
+    pub(crate) fn forget_gone_look_ats(&mut self) {
+        let objects = &self.objects;
+        self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
     }
 
     /// What is stored by object key follows the objects that changed key
@@ -666,6 +674,7 @@ impl World {
             self.release_linkset_camera(i, true);
             self.objects.remove_idx(i);
         }
+        self.forget_gone_look_ats();
         self.left_behind_since = None;
     }
 
@@ -1645,6 +1654,7 @@ impl World {
                     // a cache hit replays the cached ones, a full update comes with them
                     self.gltf_overrides.remove(&key);
                 }
+                self.forget_gone_look_ats();
                 if land_changed {
                     self.land.objects_changed(handle, Instant::now());
                 }
@@ -2454,7 +2464,14 @@ impl World {
                 kind,
                 ..
             } => {
-                if source != self.agent_id {
+                // LLHUDEffectLookAt::unpackData: only from an avatar in the
+                // world (an effect without its source dies at once)
+                let known = self
+                    .objects
+                    .index_of_uuid(&source)
+                    .and_then(|i| self.objects.get(i))
+                    .is_some_and(|o| o.is_avatar());
+                if source != self.agent_id && known {
                     self.look_at.receive(effect, source, target, offset, kind);
                 }
                 None
@@ -4707,6 +4724,94 @@ mod motion_tests {
         });
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
         assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
+    }
+
+    /// Another avatar in `handle`, made from ours.
+    fn other_avatar(world: &mut World, avatar: &aurora_net::objects::ObjectUpdate, handle: RegionHandle, local_id: u32) -> Uuid {
+        let mut other = avatar.clone();
+        other.local_id = local_id;
+        other.full_id = Uuid::from_u128(0xD00D_0000 + u128::from(local_id));
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![other.clone()],
+        });
+        other.full_id
+    }
+
+    /// `source` looks at `target` (its eyes when it is an avatar).
+    fn look_at(world: &mut World, source: Uuid, target: Uuid) {
+        world.apply(NetEvent::LookAt {
+            effect: Uuid::from_u128(0xEFFE_C700 + source.as_u128()),
+            source,
+            target,
+            offset: [0.0; 3],
+            kind: lookat::CONVERSATION,
+            duration: lookat::MAX_TIMEOUT,
+        });
+    }
+
+    #[test]
+    fn a_look_at_goes_with_its_avatar() {
+        // issue #482: the mark of an avatar that logged off stayed on our head
+        let (mut world, avatar, _, here, _) = worn_fixture();
+        let me = world.agent_id;
+        let other = other_avatar(&mut world, &avatar, here, 950);
+        let stays = other_avatar(&mut world, &avatar, here, 951);
+        look_at(&mut world, other, me);
+        look_at(&mut world, stays, me);
+        assert_eq!(world.look_at.remote.len(), 2);
+        // the simulator kills it (logged off, gone out of view)
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![950],
+        });
+        assert!(!world.look_at.remote.contains_key(&other));
+        assert_eq!(world.look_at.remote.get(&stays).map(|t| t.object), Some(Some(me)));
+        // an effect from an avatar that is not in the world is dropped
+        look_at(&mut world, other, me);
+        assert!(!world.look_at.remote.contains_key(&other));
+    }
+
+    #[test]
+    fn a_look_at_toward_an_object_that_goes_is_cleared() {
+        let (mut world, avatar, worn, here, _) = worn_fixture();
+        let other = other_avatar(&mut world, &avatar, here, 950);
+        let p = prim(&worn, 900, 0);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![p.clone()],
+        });
+        look_at(&mut world, other, p.full_id);
+        world
+            .look_at
+            .own
+            .set(lookat::FOCUS, Some(p.full_id), glam::DVec3::ZERO, Instant::now());
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![900],
+        });
+        // clearLookAtTarget: the avatar stays, its look-at is "none"
+        assert_eq!(world.look_at.remote.get(&other), Some(&lookat::Target::NONE));
+        assert_eq!(world.look_at.own.target, lookat::Target::NONE);
+    }
+
+    #[test]
+    fn look_ats_go_with_the_region_left_or_closed() {
+        let (mut world, avatar, _, here, there) = worn_fixture();
+        let me = world.agent_id;
+        let near = other_avatar(&mut world, &avatar, there, 960);
+        let far_one = other_avatar(&mut world, &avatar, here, 950);
+        look_at(&mut world, near, me);
+        look_at(&mut world, far_one, me);
+        // a neighbour's simulator closes its circuit
+        world.apply(NetEvent::RegionRemoved { handle: there });
+        assert!(!world.look_at.remote.contains_key(&near));
+        assert!(world.look_at.remote.contains_key(&far_one));
+        // a teleport far away: the region left is parked, out of view, and
+        // the mark of an avatar there does not follow us
+        teleport_to(&mut world, far_from(here));
+        assert!(world.parked.contains_key(&here));
+        assert!(world.look_at.remote.is_empty());
     }
 
     /// The region west of `here`.
