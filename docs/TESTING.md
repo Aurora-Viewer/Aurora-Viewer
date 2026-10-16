@@ -1778,6 +1778,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
   window. A payment only moves the demo balance (no L$, no request sent).
   `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
+  `empty`: no amount typed (the field's "0" hint, in the figures' size).
   `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
