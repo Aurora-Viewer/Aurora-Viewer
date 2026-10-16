@@ -157,6 +157,7 @@ pub(super) fn show(
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                             Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                         };
+                        let nav = crate::ui::emoji::codes::keys(ui, conv_input);
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
                                 .hint_text(hint)
@@ -165,6 +166,7 @@ pub(super) fn show(
                                 .min_size(egui::vec2(field_w, BUTTON))
                                 .vertical_align(egui::Align::Center)
                         });
+                        crate::ui::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
                         if local {
                             completion::complete(ui, &mut output, &mut draft, gestures);
                             if roomy {
@@ -189,10 +191,12 @@ pub(super) fn show(
                     .show(ui.ctx(), |ui| {
                         crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                             ui.set_width(300.0);
-                            if let Some(c) = emoji.picker(ui, p, icons) {
+                            let picked = emoji.picker(ui, p, icons);
+                            if let Some(c) = picked.chosen {
                                 draft.push(c);
                                 close = !ui.input(|i| i.modifiers.shift);
                             }
+                            close |= picked.escape;
                         });
                     });
                 if close {

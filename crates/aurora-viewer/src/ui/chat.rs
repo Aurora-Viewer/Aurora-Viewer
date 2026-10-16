@@ -2039,6 +2039,7 @@ pub fn show(
                         // leave exactly the send button + spacing (else the row overflows
                         // and the resizable window grows every frame)
                         let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+                        let nav = super::emoji::codes::keys(ui, conv_input);
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
                                 .hint_text(hint)
@@ -2046,6 +2047,7 @@ pub fn show(
                                 .min_size(egui::vec2(field_w, INPUT_H))
                                 .vertical_align(egui::Align::Center)
                         });
+                        super::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
                         if st.selected.is_none() {
                             completion::complete(ui, &mut output, &mut draft, gestures);
                         }
@@ -2076,10 +2078,12 @@ pub fn show(
                         .show(ui.ctx(), |ui| {
                             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                                 ui.set_width(300.0);
-                                if let Some(c) = emoji.picker(ui, p, icons) {
+                                let picked = emoji.picker(ui, p, icons);
+                                if let Some(c) = picked.chosen {
                                     draft.push(c);
                                     close = !ui.input(|i| i.modifiers.shift);
                                 }
+                                close |= picked.escape;
                             });
                         });
                     if close {
@@ -2530,12 +2534,17 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
 /// The "Nearby chat" input bar; returns a message to send.
 pub fn bar(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, gestures: &crate::gestures::Manager, width: f32) -> Option<OutgoingChat> {
     ui.label(RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.0).color(p.muted));
-    bar_input(ui, st, gestures, None, |edit| edit.desired_width(width))
+    bar_input(ui, p, st, gestures, None, |edit| edit.desired_width(width))
 }
 
 /// `build`, then the chat field's id (the app gives it the keyboard).
 fn identified(build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>) -> impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_> {
-    move |edit| build(edit.id(egui::Id::new("nearby_chat_input")))
+    move |edit| build(edit.id(bar_input_id()))
+}
+
+/// The id of the local chat's field (`bar_input`).
+pub(crate) fn bar_input_id() -> egui::Id {
+    egui::Id::new("nearby_chat_input")
 }
 
 /// The text cursor of a field after the last character: the keyboard given
@@ -2554,6 +2563,7 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 /// its own frame (`build` dresses the field) and shows emoji pictures.
 pub(crate) fn bar_input(
     ui: &mut egui::Ui,
+    p: &Palette,
     st: &mut ChatUi,
     gestures: &crate::gestures::Manager,
     emoji: Option<&mut super::emoji::Emoji>,
@@ -2563,10 +2573,13 @@ pub(crate) fn bar_input(
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
     let build = identified(build);
-    let mut output = match emoji {
+    let nav = super::emoji::codes::keys(ui, bar_input_id());
+    let mut emoji = emoji;
+    let mut output = match emoji.as_deref_mut() {
         Some(emoji) => emoji.text_field(ui, &mut st.input, build),
         None => build(egui::TextEdit::singleline(&mut st.input)).show(ui),
     };
+    super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
     completion::complete(ui, &mut output, &mut st.input, gestures);
     let resp = output
         .response

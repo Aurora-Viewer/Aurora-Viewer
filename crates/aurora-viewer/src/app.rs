@@ -372,6 +372,10 @@ pub struct App {
     /// Window moved / resized: its normal geometry is recorded once settled.
     geom_changed: Option<Instant>,
     frame_start: Instant,
+    /// A Windows Alt code being typed in a text field (alt_codes.rs), and
+    /// the characters it gave, for egui's next frame.
+    alt_codes: crate::alt_codes::AltCodes,
+    alt_text: Vec<String>,
     people_ui: ui::people::PeopleUi,
     /// People's friends tab as Conversations › Contacts shows it: its own
     /// filter, selection and sheet.
@@ -848,6 +852,8 @@ impl App {
             tp_dest: None,
             geom_changed: None,
             frame_start: Instant::now(),
+            alt_codes: Default::default(),
+            alt_text: Vec::new(),
             people_ui: Default::default(),
             contacts_people_ui: Default::default(),
             radar: Default::default(),
@@ -4275,6 +4281,36 @@ impl App {
             && crate::keybinds::chat_bar_moves(code, self.ctrl, self.chat_ui.input.is_empty(), self.settings.arrow_keys_always_move)
     }
 
+    /// A Windows Alt code typed in a text field (alt_codes.rs): true for one
+    /// of its digits, which neither the field nor the viewer's shortcuts
+    /// see. Left Alt's release hands the character to egui's next frame.
+    /// Outside a text field, Alt and the numpad keep their shortcuts.
+    fn alt_code_key(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput { event: ke, .. } = event else {
+            return false;
+        };
+        let PhysicalKey::Code(code) = ke.physical_key else {
+            return false;
+        };
+        let pressed = ke.state == ElementState::Pressed;
+        if code == KeyCode::AltLeft {
+            if pressed {
+                if !ke.repeat {
+                    self.alt_codes.alt_pressed();
+                }
+            } else if let Some(text) = self.alt_codes.alt_released(ke.text.as_deref())
+                && self.egui_ctx.egui_wants_keyboard_input()
+            {
+                self.alt_text.push(text);
+            }
+            return false;
+        }
+        if !pressed || !self.alt_codes.active() || !self.egui_ctx.egui_wants_keyboard_input() {
+            return false;
+        }
+        self.alt_codes.key_pressed(code, ke.repeat)
+    }
+
     fn update_move_input(&mut self, typing: bool, dt: f32) {
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
@@ -4928,6 +4964,11 @@ impl App {
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
+        }
+        // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
+        // the demo's start has settled (it takes it back at the start)
+        if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
+            self.chat_ui.conv_focus_request = true;
         }
         if self.demo
             && self.frame_count == 800
@@ -5899,6 +5940,7 @@ impl App {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
         if self.demo && self.capture.is_some() {
             raw.events.extend(self.login_form.motion.demo_events(self.frame_count));
@@ -5909,6 +5951,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
+                || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -11607,6 +11650,15 @@ impl ApplicationHandler for App {
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
             }
+            // AURORA_DEMO_EMOJI_CODES=<text>: the conversation window open, its
+            // input holding <text> with the keyboard and the caret at the
+            // end: a `:code` of two letters or more there opens the emoji
+            // suggestions (`ui/emoji/codes.rs`)
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_CODES") {
+                self.panels.chat = true;
+                *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
+                self.chat_ui.conv_focus_request = true;
+            }
             // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
             // its lines selected (Ctrl+A, or across three lines)
             if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_SELECT") {
@@ -11775,6 +11827,11 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // the digits of a Windows Alt code typed in a text field are kept
+        // from it (alt_codes.rs); the character comes at Alt's release
+        if self.alt_code_key(&event) {
+            return;
+        }
         // a movement key the chat bar hands to the avatar never reaches its
         // text (LLViewerWindow::handleKey returns before the focused field)
         let chat_pass = matches!(
@@ -11829,6 +11886,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.alt_codes.reset();
                 self.gesture_state.manager.release(None);
                 self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
@@ -11855,12 +11913,15 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
-                    // The color dialog owns Escape before camera shortcuts.
-                    // egui already received the event above.
+                    // The color dialog and an emoji picker own Escape before
+                    // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
                     if pressed
                         && code == KeyCode::Escape
-                        && (self.build.ui.color_picker.is_open() || self.script_editors.color_open() || eyedropper)
+                        && (self.build.ui.color_picker.is_open()
+                            || self.script_editors.color_open()
+                            || eyedropper
+                            || ui::emoji::picker_open(&self.egui_ctx))
                     {
                         return;
                     }
@@ -11900,7 +11961,7 @@ impl ApplicationHandler for App {
                         self.gesture_state.manager.release(Some(key));
                     }
                     if pressed
-                        && !ke.repeat
+                        && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()
                         && !self.alt

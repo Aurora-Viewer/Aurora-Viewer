@@ -48,42 +48,13 @@ fn single_char(s: &str) -> Option<char> {
     it.next().is_none().then_some(c)
 }
 
-/// Replace `:shortcode:` (GitHub / gemoji names, e.g. `:hearts:`, `:smile:`) by the emoji.
+pub mod codes;
+
+/// Replace `:shortcode:` (GitHub / gemoji names, e.g. `:hearts:`, `:smile:`)
+/// by the emoji, by the rules of the chat fields ([`codes::expand`]: not
+/// inside a word, a time or a link).
 pub fn expand_shortcodes(text: &str) -> String {
-    if !text.contains(':') {
-        return text.to_owned();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find(':') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        match after.find(':') {
-            Some(end)
-                if end > 0
-                    && after[..end]
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+' || c == '-') =>
-            {
-                match emojis::get_by_shortcode(&after[..end]) {
-                    Some(e) => {
-                        out.push_str(e.as_str());
-                        rest = &after[end + 1..];
-                    }
-                    None => {
-                        out.push(':');
-                        rest = after;
-                    }
-                }
-            }
-            _ => {
-                out.push(':');
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+    codes::expand(text)
 }
 
 enum Glyph {
@@ -99,6 +70,30 @@ pub struct Emoji {
     pub tab: usize,
     /// Picker search text.
     pub query: String,
+    /// The egui pass that last drew the picker: a picker not drawn in the
+    /// pass before was just opened, and its search takes the keyboard.
+    shown_pass: Option<u64>,
+}
+
+/// What the picker did this pass: an emoji chosen, or Escape pressed (the
+/// caller closes it and gives the keyboard back to its field).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Picked {
+    pub chosen: Option<char>,
+    pub escape: bool,
+}
+
+/// The picker's search field.
+const SEARCH_ID: &str = "emoji_picker_search";
+/// Set to the pass number by every pass that draws a picker
+/// ([`picker_open`]).
+const OPEN_ID: &str = "emoji_picker_open";
+
+/// A picker was drawn in the last pass: Escape is its own, not the camera's
+/// (the window events come before the pass that would consume the key).
+pub fn picker_open(ctx: &egui::Context) -> bool {
+    let shown: Option<u64> = ctx.data(|d| d.get_temp(egui::Id::new(OPEN_ID)));
+    shown.is_some_and(|p| p + 1 >= ctx.cumulative_pass_nr())
 }
 
 /// The font is part of the executable (10.7 MB): no folder of the
@@ -175,6 +170,7 @@ impl Emoji {
             lists,
             tab: 0,
             query: String::new(),
+            shown_pass: None,
         }
     }
 
@@ -367,15 +363,23 @@ impl Emoji {
         out
     }
 
-    /// Emoji picker grid; returns the chosen emoji.
-    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons) -> Option<char> {
+    /// Emoji picker grid. Opened, its search takes the keyboard (typing
+    /// filters at once) and keeps it while nothing else has it; Escape is
+    /// taken here, before the search field or anything after the picker sees
+    /// it, and returned for the caller to close the picker.
+    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons) -> Picked {
+        let pass = ui.ctx().cumulative_pass_nr();
+        let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
+        self.shown_pass = Some(pass);
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(OPEN_ID), pass));
+        let escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         if !self.available() {
             ui.label(
                 egui::RichText::new(aurora_i18n::tr!("ui-emoji-noto-emoji-font-not-found"))
                     .size(12.0)
                     .color(p.muted),
             );
-            return None;
+            return Picked { chosen: None, escape };
         }
         let mut chosen = None;
         ui.horizontal(|ui| {
@@ -402,11 +406,17 @@ impl Emoji {
                 }
             }
         });
-        ui.add(
+        let search = ui.add(
             egui::TextEdit::singleline(&mut self.query)
+                .id(egui::Id::new(SEARCH_ID))
                 .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
                 .desired_width(f32::INFINITY),
         );
+        // (a click on a tab or a picture leaves the keyboard nowhere: back
+        // to the search, so typing still filters)
+        if opened || ui.ctx().memory(|m| m.focused().is_none()) {
+            search.request_focus();
+        }
         crate::ui::widgets::divider(ui, p);
         let q = self.query.trim().trim_matches(':').to_lowercase();
         let list: Vec<char> = if q.is_empty() {
@@ -468,6 +478,71 @@ impl Emoji {
                     });
                 }
             });
-        chosen
+        Picked { chosen, escape }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::Frames;
+
+    fn escape() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Opened, the picker's search has the keyboard and what is typed
+    /// filters; Escape is the picker's alone (nothing drawn after it sees
+    /// the key) and the search keeps its text; opened again, the search takes
+    /// the keyboard again.
+    #[test]
+    fn the_search_takes_the_keyboard_and_escape_is_the_pickers() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = Emoji::load();
+        let field = egui::Id::new("field");
+        let mut text = String::new();
+        let mut frame = |frames: &mut Frames, emoji: &mut Emoji, open: bool, events: Vec<egui::Event>| {
+            let mut picked = Picked::default();
+            let mut seen_after = false;
+            frames.run(events, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(field));
+                if open {
+                    picked = emoji.picker(ui, &p, &icons);
+                }
+                seen_after = ui.input(|i| i.key_pressed(egui::Key::Escape));
+            });
+            (picked, seen_after)
+        };
+        frames.ctx.memory_mut(|m| m.request_focus(field));
+        frame(&mut frames, &mut emoji, false, vec![]);
+        // opened: the search has the keyboard and typing filters
+        frame(&mut frames, &mut emoji, true, vec![]);
+        frame(&mut frames, &mut emoji, true, vec![]);
+        assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::new(SEARCH_ID))));
+        assert!(picker_open(&frames.ctx));
+        frame(&mut frames, &mut emoji, true, vec![egui::Event::Text("heart".into())]);
+        assert_eq!(emoji.query, "heart");
+        // Escape: returned, consumed, the search unchanged
+        let (picked, seen_after) = frame(&mut frames, &mut emoji, true, vec![escape()]);
+        assert!(picked.escape && picked.chosen.is_none());
+        assert!(!seen_after, "Escape reached what is drawn after the picker");
+        assert_eq!(emoji.query, "heart");
+        // closed, then opened again: the keyboard goes to the search again
+        frames.ctx.memory_mut(|m| m.request_focus(field));
+        frame(&mut frames, &mut emoji, false, vec![]);
+        frame(&mut frames, &mut emoji, false, vec![]);
+        assert!(!picker_open(&frames.ctx));
+        assert!(frames.ctx.memory(|m| m.has_focus(field)));
+        frame(&mut frames, &mut emoji, true, vec![]);
+        frame(&mut frames, &mut emoji, true, vec![]);
+        assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::new(SEARCH_ID))));
     }
 }
