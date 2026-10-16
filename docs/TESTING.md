@@ -1744,6 +1744,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
+| `AURORA_DEMO_TEXT_RENDER=<variant>` | Text rendering variant (hinting, sub-pixel binning, stroke weight), or `cycle` |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
@@ -2197,6 +2198,22 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_TEXT_RENDER=<variant>|cycle[,scale=<zoom>][,font=<name>]`**:
+  temporary comparison of the ways epaint rasterizes the interface text
+  (`demo_text_render.rs`), to choose one. `default` is egui's dark theme
+  as today; `nobin` draws each glyph at a whole pixel (no sub-pixel
+  binning); `light`, `crisp`, `crisp-nobin`, `mono` change the hinting
+  target of every face (FreeType "light", horizontal grid-fitting, 1-bit
+  hinting); `nohint` turns hinting off; `gamma-0.75`, `linear` and
+  `gamma-0.4` change the curve from glyph coverage to alpha (lighter or
+  heavier strokes); `nobin-gamma-0.75` combines two. `cycle` shows each in
+  turn every 4 s. `scale` is the interface zoom of the launch (as
+  Preferences' UI scale, not saved), `font` an embedded font of the launch
+  (`Inter`, `Noto Sans`, `Roboto`). A glass card in the bottom left corner
+  names the variant and shows light text on glass and dark text on light
+  and violet surfaces at 11 to 14 points, regular and semi-bold; the
+  rest of the interface uses the variant too. The log says
+  `text rendering: <variant>` at each change.
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
   at frame 701 on the first conversation of that kind in the list (the
