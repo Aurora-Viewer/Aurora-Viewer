@@ -1,4 +1,4 @@
-//! Read-only counterparts of Firestorm getZOffsets/getScriptInfo
+//! Read-only counterparts of getZOffsets/getScriptInfo in the Legacy Viewer
 //! (fsradar.cpp and fs_resources/EBEDD1D2-*.lsltxt, originally LGPL 2.1).
 //! They never consume the movement sequence or refresh its watchdog.
 use super::{Endpoint, http, transport_failure, valid_url};
@@ -14,6 +14,7 @@ const MAX_REPLY: usize = 4096;
 pub enum Query {
     Altitudes(Vec<Uuid>),
     ScriptInfo(Uuid),
+    ObjectInfo(Uuid),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -34,10 +35,38 @@ pub struct ScriptInfo {
     pub character_seconds: f64,
 }
 
+/// Extended llGetObjectDetails report, including the basic script statistics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectInfo {
+    pub scripts: ScriptInfo,
+    pub description: String,
+    pub root: Uuid,
+    pub prims: u32,
+    pub land_impact: u32,
+    pub inventory: u32,
+    pub velocity: [f64; 3],
+    pub position: [f64; 3],
+    pub rotation: [f64; 4],
+    pub rotation_degrees: [f64; 3],
+    pub angular_velocity: [f64; 3],
+    pub creator: Uuid,
+    pub owner: Uuid,
+    pub previous_owner: Uuid,
+    pub rezzer: Uuid,
+    pub group: Uuid,
+    pub created: String,
+    pub rezzed: String,
+    pub pathfinding: i8,
+    pub attachment_point: u8,
+    pub temporary_attachment: bool,
+    pub observer_position: [f64; 3],
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
     Altitudes(Vec<Altitude>),
     ScriptInfo(ScriptInfo),
+    ObjectInfo(Box<ObjectInfo>),
 }
 
 impl Query {
@@ -49,7 +78,7 @@ impl Query {
                     && ids.iter().all(|id| !id.is_nil())
                     && ids.iter().collect::<HashSet<_>>().len() == ids.len()
             }
-            Self::ScriptInfo(id) => !id.is_nil(),
+            Self::ScriptInfo(id) | Self::ObjectInfo(id) => !id.is_nil(),
         }
     }
     fn body(&self, token: Uuid) -> String {
@@ -59,6 +88,7 @@ impl Query {
                 ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",")
             ),
             Self::ScriptInfo(id) => format!("query|{token}|scripts|{id}"),
+            Self::ObjectInfo(id) => format!("query|{token}|object|{id}"),
         }
     }
     pub fn decode(&self, bytes: &[u8]) -> Option<Reply> {
@@ -84,14 +114,13 @@ impl Query {
                 }
                 Some(Reply::Altitudes(out))
             }
-            Self::ScriptInfo(object) => {
-                if values.len() != 7 || Uuid::parse_str(values[0].as_str()?).ok()? != *object {
+            Self::ScriptInfo(object) | Self::ObjectInfo(object) => {
+                let extended = matches!(self, Self::ObjectInfo(_));
+                let expected = if extended { 28 } else { 7 };
+                if values.len() != expected || Uuid::parse_str(values[0].as_str()?).ok()? != *object {
                     return None;
                 }
-                let name = String::from_utf8(STANDARD.decode(values[1].as_str()?).ok()?).ok()?;
-                if name.len() > 256 {
-                    return None;
-                }
+                let name = text(&values[1], 256)?;
                 let integer = |i: usize| u32::try_from(values[i].as_u64()?).ok().filter(|v| *v <= i32::MAX as u32);
                 let time = |i: usize| values[i].as_f64().filter(|v| v.is_finite() && (0.0..=3600.0).contains(v));
                 let running = integer(2)?;
@@ -99,18 +128,72 @@ impl Query {
                 if running > total {
                     return None;
                 }
-                Some(Reply::ScriptInfo(ScriptInfo {
+                let scripts = ScriptInfo {
                     object: *object,
-                    name: name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect(),
+                    name,
                     running,
                     total,
                     memory: integer(4)?,
                     cpu_seconds: time(5)?,
                     character_seconds: time(6)?,
-                }))
+                };
+                if !extended {
+                    return Some(Reply::ScriptInfo(scripts));
+                }
+                let id = |i: usize| Uuid::parse_str(values[i].as_str()?).ok();
+                let timestamp = |i: usize| {
+                    let value = values[i].as_str()?;
+                    (value.len() <= 64 && value.chars().all(|c| c.is_ascii_digit() || "-:.TZ+".contains(c))).then(|| value.to_owned())
+                };
+                Some(Reply::ObjectInfo(Box::new(ObjectInfo {
+                    scripts,
+                    description: text(&values[7], 256)?,
+                    root: id(8)?,
+                    prims: integer(9)?,
+                    land_impact: integer(10)?,
+                    inventory: integer(11)?,
+                    velocity: components(&values[12])?,
+                    position: components(&values[13])?,
+                    rotation: components(&values[14])?,
+                    angular_velocity: components(&values[15])?,
+                    creator: id(16)?,
+                    owner: id(17)?,
+                    previous_owner: id(18)?,
+                    rezzer: id(19)?,
+                    group: id(20)?,
+                    created: timestamp(21)?,
+                    rezzed: timestamp(22)?,
+                    pathfinding: i8::try_from(values[23].as_i64()?).ok().filter(|v| (-1..=6).contains(v))?,
+                    attachment_point: u8::try_from(integer(24)?).ok()?,
+                    temporary_attachment: match integer(25)? {
+                        0 => false,
+                        1 => true,
+                        _ => return None,
+                    },
+                    observer_position: components(&values[26])?,
+                    rotation_degrees: components(&values[27])?,
+                })))
             }
         }
     }
+}
+
+fn text(value: &Value, limit: usize) -> Option<String> {
+    let decoded = String::from_utf8(STANDARD.decode(value.as_str()?).ok()?).ok()?;
+    (decoded.len() <= limit).then(|| decoded.chars().map(|c| if c.is_control() { ' ' } else { c }).collect())
+}
+
+fn components<const N: usize>(value: &Value) -> Option<[f64; N]> {
+    let value = value.as_str()?.strip_prefix('<')?.strip_suffix('>')?;
+    let mut parts = value.split(',');
+    let mut result = [0.0_f64; N];
+    for component in &mut result {
+        *component = parts.next()?.trim().parse().ok()?;
+        if !component.is_finite() || component.abs() > 1_000_000.0 {
+            return None;
+        }
+    }
+    parts.next().is_none().then_some(result)
 }
 
 pub async fn send(endpoint: Endpoint, query: Query) -> Result<Reply, String> {
@@ -163,6 +246,11 @@ mod tests {
         assert!(body.starts_with("query|") && body.len() <= 1536);
         assert!(!body.contains("lock|") && !body.contains("https://"));
         assert!(!Query::ScriptInfo(Uuid::nil()).valid());
+        assert!(!Query::ObjectInfo(Uuid::nil()).valid());
+        assert_eq!(
+            Query::ObjectInfo(id(1)).body(id(100)),
+            format!("query|{}|object|{}", id(100), id(1))
+        );
     }
     #[test]
     fn altitude_replies_require_requested_unique_finite_samples_and_allow_partial_absence() {
@@ -208,6 +296,100 @@ mod tests {
             let mut bad_value = value.clone();
             bad_value[index] = bad;
             assert!(query.decode(bad_value.to_string().as_bytes()).is_none(), "field {index}");
+        }
+    }
+    fn object_reply() -> Value {
+        json!([
+            id(1).to_string(),
+            STANDARD.encode("[3], |\nÉtoile"),
+            2,
+            3,
+            196608,
+            0.00125,
+            0.0002,
+            STANDARD.encode("Description, |\n[true]"),
+            id(2).to_string(),
+            3,
+            2,
+            5,
+            "<1.5, -2.0, 0.0>",
+            "<128.0, 130.0, 26.0>",
+            "<0.0, 0.0, 0.6, 0.8>",
+            "<0.0, 0.0, 1.0>",
+            id(3).to_string(),
+            Uuid::nil().to_string(),
+            id(4).to_string(),
+            id(5).to_string(),
+            id(6).to_string(),
+            "2026-10-17T10:00:00.123456Z",
+            "2026-10-17T11:00:00Z",
+            -1,
+            31,
+            1,
+            "<128.0, 126.0, 26.0>",
+            "<0.0, 0.0, 73.739795>"
+        ])
+    }
+    #[test]
+    fn object_info_preserves_extended_metrics_null_owners_and_attachment_pathfinding() {
+        let value = object_reply();
+        let Some(Reply::ObjectInfo(info)) = Query::ObjectInfo(id(1)).decode(value.to_string().as_bytes()) else {
+            panic!("extended object info")
+        };
+        assert_eq!(info.scripts.name, "[3], | Étoile");
+        assert_eq!(info.description, "Description, | [true]");
+        assert_eq!(info.root, id(2));
+        assert_eq!((info.prims, info.land_impact, info.inventory), (3, 2, 5));
+        assert_eq!(info.velocity, [1.5, -2.0, 0.0]);
+        assert_eq!(info.position, [128.0, 130.0, 26.0]);
+        assert_eq!(info.rotation, [0.0, 0.0, 0.6, 0.8]);
+        assert_eq!(info.rotation_degrees, [0.0, 0.0, 73.739795]);
+        assert_eq!(info.angular_velocity, [0.0, 0.0, 1.0]);
+        assert_eq!(
+            (info.creator, info.owner, info.previous_owner, info.rezzer, info.group),
+            (id(3), Uuid::nil(), id(4), id(5), id(6))
+        );
+        assert_eq!(info.created, "2026-10-17T10:00:00.123456Z");
+        assert_eq!(info.rezzed, "2026-10-17T11:00:00Z");
+        assert_eq!((info.pathfinding, info.attachment_point, info.temporary_attachment), (-1, 31, true));
+        assert_eq!(info.observer_position, [128.0, 126.0, 26.0]);
+        assert!(Query::ScriptInfo(id(1)).decode(value.to_string().as_bytes()).is_none());
+        let mut absent_dates = value;
+        absent_dates[21] = json!("");
+        absent_dates[22] = json!("");
+        assert!(Query::ObjectInfo(id(1)).decode(absent_dates.to_string().as_bytes()).is_some());
+    }
+    #[test]
+    fn object_info_rejects_mismatched_truncated_and_malformed_external_fields() {
+        let query = Query::ObjectInfo(id(1));
+        for (index, bad) in [
+            (0, json!(id(2).to_string())),
+            (7, json!("bad base64")),
+            (7, json!(STANDARD.encode("x".repeat(257)))),
+            (8, json!("not a key")),
+            (9, json!(-1)),
+            (10, json!(1.5)),
+            (11, json!(2147483648_u64)),
+            (12, json!("<NaN, 0, 0>")),
+            (13, json!("<1, 2>")),
+            (14, json!("<0, 0, 0, 1, 2>")),
+            (15, json!("<0, inf, 0>")),
+            (16, json!("bad key")),
+            (21, json!("2026\nHTTP body")),
+            (23, json!(-2)),
+            (24, json!(256)),
+            (25, json!(2)),
+            (26, json!("<0, 0, 1e100>")),
+            (27, json!("0, 0, 90")),
+        ] {
+            let mut value = object_reply();
+            value[index] = bad;
+            assert!(query.decode(value.to_string().as_bytes()).is_none(), "field {index}");
+        }
+        let value = object_reply();
+        for count in 0..28 {
+            let bytes = serde_json::to_vec(&value.as_array().expect("array")[..count]).expect("synthetic JSON");
+            assert!(query.decode(&bytes).is_none(), "truncated at {count}");
         }
     }
     #[tokio::test]

@@ -1,7 +1,7 @@
-// Aurora LSL Bridge v1.20. Movelock physics follow Firestorm's movelockMe
+// Aurora LSL Bridge v1.21. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 string FOLDER = "__FOLDER__";
-string VERSION = "1.20";
+string VERSION = "1.21";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -570,7 +570,7 @@ initialize() {
     llRequestPermissions(gOwner, PERMISSION_TAKE_CONTROLS | PERMISSION_TRACK_CAMERA);
     requestURL();
 }
-// Read-only Firestorm getZOffsets/getScriptInfo equivalents. Authentication
+// Read-only Legacy Viewer getZOffsets/getScriptInfo equivalents. Authentication
 // is shared with control requests, but these never touch motor state or timers.
 query(key request, string kind, string targets) {
     if (kind == "altitudes") {
@@ -591,15 +591,25 @@ query(key request, string kind, string targets) {
             }
         }
         llHTTPResponse(request, 200, llList2Json(JSON_ARRAY, output));
-    } else if (kind == "scripts") {
+    } else if (kind == "scripts" || kind == "object") {
         key object = (key)targets;
         if (object == NULL_KEY) { llHTTPResponse(request, 400, "invalid"); return; }
-        list details = llGetObjectDetails(object, [OBJECT_NAME, OBJECT_RUNNING_SCRIPT_COUNT,
-            OBJECT_TOTAL_SCRIPT_COUNT, OBJECT_SCRIPT_MEMORY, OBJECT_SCRIPT_TIME, OBJECT_CHARACTER_TIME]);
-        if (llGetListLength(details) != 6) { llHTTPResponse(request, 404, "unavailable"); return; }
-        // Match Firestorm's base64 name field: numeric/JSON-shaped names
+        list fields = [OBJECT_NAME, OBJECT_RUNNING_SCRIPT_COUNT, OBJECT_TOTAL_SCRIPT_COUNT,
+            OBJECT_SCRIPT_MEMORY, OBJECT_SCRIPT_TIME, OBJECT_CHARACTER_TIME];
+        integer extended = kind == "object";
+        if (extended) fields += [OBJECT_DESC, OBJECT_ROOT, OBJECT_PRIM_COUNT, OBJECT_PRIM_EQUIVALENCE,
+            OBJECT_TOTAL_INVENTORY_COUNT, OBJECT_VELOCITY, OBJECT_POS, OBJECT_ROT, OBJECT_OMEGA,
+            OBJECT_CREATOR, OBJECT_OWNER, OBJECT_LAST_OWNER_ID, OBJECT_REZZER_KEY, OBJECT_GROUP,
+            OBJECT_CREATION_TIME, OBJECT_REZ_TIME, OBJECT_PATHFINDING_TYPE, OBJECT_ATTACHED_POINT, OBJECT_TEMP_ATTACHED];
+        list details = llGetObjectDetails(object, fields);
+        if (llGetListLength(details) != llGetListLength(fields)) { llHTTPResponse(request, 404, "unavailable"); return; }
+        // Match the reference's base64 name field: numeric/JSON-shaped names
         // must remain text rather than llList2Json's embedded JSON values.
         details = llListReplaceList(details, [llStringToBase64(llList2String(details, 0))], 0, 0);
+        if (extended) {
+            details = llListReplaceList(details, [llStringToBase64(llList2String(details, 6))], 6, 6);
+            details += [llGetPos(), RAD_TO_DEG * llRot2Euler(llList2Rot(details, 13))];
+        }
         llHTTPResponse(request, 200, llList2Json(JSON_ARRAY, [(string)object] + details));
     } else llHTTPResponse(request, 400, "invalid");
 }
