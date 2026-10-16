@@ -301,6 +301,12 @@ pub struct Controller {
     /// (skeleton space).
     posed: LookJoints<(Quat, Vec3)>,
     last_eval: Option<Instant>,
+    /// Animations paused since then (LLCharacter::requestPause): their
+    /// clock stands still, and they go on from the same point once resumed.
+    paused_at: Option<Instant>,
+    /// Head and eye joint states of the last frame, held during a pause
+    /// (LLMotionController::updateIdleActiveMotions does not run them).
+    held_procedural: Vec<(usize, f32, Quat)>,
 }
 
 /// Joints of LLHeadRotMotion and LLEyeMotion.
@@ -540,6 +546,38 @@ impl Controller {
         }
     }
 
+    /// Pause or resume every motion (LLCharacter::requestPause, released with
+    /// the last LLPauseRequestHandle; LLMotionController::pauseAllMotions):
+    /// the pose stands still and, once resumed, each motion goes on from the
+    /// point it had reached, as the frozen animation time of the Legacy
+    /// Viewer does. An import preview drives its own clock and is never paused.
+    pub fn set_paused(&mut self, paused: bool, now: Instant) {
+        let paused = paused && self.preview_start.is_none();
+        match (self.paused_at, paused) {
+            (None, true) => self.paused_at = Some(now),
+            (Some(at), false) => {
+                self.paused_at = None;
+                self.shift(now.saturating_duration_since(at));
+            }
+            _ => {}
+        }
+    }
+
+    /// Move every time kept by the motions forward by the length of a pause.
+    fn shift(&mut self, d: Duration) {
+        for m in &mut self.motions {
+            m.activation += d;
+            m.continuous_activation += d;
+            m.stop = m.stop.map(|s| s + d);
+        }
+        let pr = &mut self.procedural;
+        for fade in [&mut pr.head, &mut pr.eyes] {
+            fade.change = fade.change.map(|c| c + d);
+        }
+        pr.jitter_at = pr.jitter_at.map(|t| t + d);
+        self.last_eval = self.last_eval.map(|t| t + d);
+    }
+
     /// Skeleton-space position of the head as posed last frame.
     pub fn head_pos(&self) -> Option<Vec3> {
         self.posed.head.map(|h| h.1)
@@ -661,6 +699,8 @@ impl Controller {
     /// LLMotionController::updateMotionsByType -> requestStopMotion.
     pub fn sync(&mut self, playing: &[PlayingAnimation], now: Instant, mut get: impl FnMut(&Uuid) -> Option<Arc<BoundAnim>>) -> Vec<Uuid> {
         let mut completed = Vec::new();
+        let frozen = self.paused_at;
+        let now = frozen.unwrap_or(now);
         let preview = self.preview_start;
         let activation = |id| {
             preview
@@ -675,6 +715,11 @@ impl Controller {
             {
                 m.stop_at(now);
             }
+        }
+        if frozen.is_some() {
+            // a motion stopped during a pause goes at once
+            // (LLMotionController::stopMotionLocally: stop_immediate || mPaused)
+            self.motions.retain(|m| m.stop != Some(now));
         }
         self.signals.retain(|id, _| playing.iter().any(|p| p.id == *id));
         // start the new ones, once loaded (updateLoadingMotions: activated
@@ -749,6 +794,7 @@ impl Controller {
     /// space, feet at z = 0); meshes multiply them by their inverse binds.
     /// `base`: the avatar's rest skeleton (None = default).
     pub fn evaluate(&mut self, rig: &Rig, now: Instant, base: Option<&SkeletonBase>, out: &mut [[[f32; 4]; 4]]) {
+        let now = self.paused_at.unwrap_or(now);
         let n = rig.len().min(out.len());
         if self.rot.len() != rig.len() {
             self.rot = rig.local_rot.clone();
@@ -796,7 +842,15 @@ impl Controller {
         }
         // head and eye motions, started with the avatar (startDefaultMotions)
         let lj = LookJoints::of(rig);
-        let procedural = if self.control { Vec::new() } else { self.procedural(&lj, now) };
+        let procedural = if self.control {
+            Vec::new()
+        } else if self.paused_at.is_some() {
+            self.held_procedural.clone()
+        } else {
+            let p = self.procedural(&lj, now);
+            self.held_procedural.clone_from(&p);
+            p
+        };
         for (j, w, r) in procedural {
             if let Some(s) = states.get_mut(j) {
                 let at = s.iter().position(|o| MEDIUM_PRIORITY > o.0).unwrap_or(s.len());
@@ -1159,6 +1213,86 @@ mod tests {
     fn rig() -> Rig {
         let xml = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/character/avatar_skeleton.xml")).expect("skeleton");
         Rig::new(&Skeleton::parse(&xml).expect("parse"))
+    }
+
+    /// The elbow swings from 0 to 1 rad and back over 2 s, in a loop.
+    fn swing(rig: &Rig) -> Arc<BoundAnim> {
+        let key = |time: f32, angle: f32| aurora_assets::anim::RotKey {
+            time,
+            rotation: Quat::from_rotation_z(angle),
+        };
+        let anim = Animation {
+            base_priority: 2,
+            duration: 2.0,
+            emote_name: String::new(),
+            loop_in: 0.0,
+            loop_out: 2.0,
+            looping: true,
+            ease_in: 0.0,
+            ease_out: 0.0,
+            hand_pose: 0,
+            joints: vec![aurora_assets::JointMotion {
+                joint_name: "mElbowLeft".into(),
+                priority: -1,
+                rot_keys: vec![key(0.0, 0.0), key(1.0, 1.0), key(2.0, 0.0)],
+                pos_keys: Vec::new(),
+            }],
+        };
+        Arc::new(BoundAnim::bind(anim, rig))
+    }
+
+    /// LLCharacter::requestPause: the pose stands still for the whole pause,
+    /// then the motion goes on from where it was, without jumping ahead.
+    #[test]
+    fn a_paused_avatar_holds_its_pose_and_resumes_where_it_stopped() {
+        let rig = rig();
+        let elbow = rig.names["mElbowLeft"];
+        let a = swing(&rig);
+        let id = Uuid::from_u128(7);
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let mut angle = |c: &mut Controller, t: Instant| {
+            c.sync(&[signal(id, 1, t0)], t, |_| Some(a.clone()));
+            c.evaluate(&rig, t, None, &mut out);
+            let (axis, angle) = c.rot[elbow].to_axis_angle();
+            angle * axis.z.signum()
+        };
+        assert!(angle(&mut c, at(0.0)).abs() < 1e-3);
+        assert!((angle(&mut c, at(0.5)) - 0.5).abs() < 1e-3);
+        c.set_paused(true, at(0.5));
+        assert!(c.paused_at.is_some());
+        for s in [0.75, 1.0, 2.5] {
+            let held = angle(&mut c, at(s));
+            assert!((held - 0.5).abs() < 1e-3, "{s}: {held}");
+        }
+        // resumed 2.5 s later: from 0.5 rad on, not 2.5 s further in the loop
+        c.set_paused(false, at(3.0));
+        assert!(c.paused_at.is_none());
+        assert!((angle(&mut c, at(3.0)) - 0.5).abs() < 1e-3);
+        assert!((angle(&mut c, at(3.25)) - 0.75).abs() < 1e-3);
+    }
+
+    /// LLMotionController::stopMotionLocally stops at once while paused; a
+    /// motion that starts during the pause waits for its end to play.
+    #[test]
+    fn motions_stopped_during_a_pause_go_at_once_and_new_ones_wait() {
+        let rig = rig();
+        let a = swing(&rig);
+        let (old, new) = (Uuid::from_u128(8), Uuid::from_u128(9));
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        let mut c = Controller::default();
+        c.sync(&[signal(old, 1, t0)], at(0.0), |_| Some(a.clone()));
+        c.set_paused(true, at(0.5));
+        c.sync(&[signal(new, 2, at(1.0))], at(1.0), |_| Some(a.clone()));
+        assert_eq!(c.motions.iter().map(|m| m.id).collect::<Vec<_>>(), [new]);
+        // the new motion starts where the pause froze the clock
+        c.set_paused(false, at(4.0));
+        let m = &c.motions[0];
+        assert_eq!(m.activation, at(4.0));
+        assert!((m.local_time(at(4.5)) - 0.5).abs() < 1e-6);
     }
 
     #[test]

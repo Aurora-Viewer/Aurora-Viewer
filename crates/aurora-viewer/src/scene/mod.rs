@@ -611,6 +611,9 @@ pub struct Scene {
     /// Bundled swimming fallback for our own rendering only. Its private ID
     /// is never sent in AgentAnimation; remote viewers receive a real asset.
     pub movement_preview: Option<crate::world::PlayingAnimation>,
+    /// Skeletons whose animations are paused while something they carry is
+    /// selected (build/anim_pause.rs), set by the app each frame.
+    pub paused_skeletons: HashSet<Uuid>,
     /// Avatar rendering complexity by avatar id (complexity.rs).
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
@@ -1021,6 +1024,7 @@ impl Scene {
             banlines: banlines::BanLines::default(),
             particles: particles::ParticleManager::default(),
             movement_preview: None,
+            paused_skeletons: HashSet::new(),
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             sets: SyncSets::default(),
@@ -3962,6 +3966,7 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_paused(self.paused_skeletons.contains(&owner), now);
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
