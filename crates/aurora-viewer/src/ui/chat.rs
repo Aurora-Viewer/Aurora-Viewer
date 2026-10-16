@@ -1142,9 +1142,8 @@ fn select_lines(
 ) -> ToField {
     // the lines' own area: egui also hands them a pointer a few points off
     // (interact_radius), on the strip between them and the field, which
-    // stays neutral (normal cursor, no selection, no keyboard)
+    // stays neutral (no selection, no keyboard)
     let area = content.rect.intersect(ui.clip_rect());
-    let pointer_in = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| area.contains(p));
     let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
     let pressed = ui.input(|i| i.pointer.primary_pressed());
     if pressed && pressed_in && content.is_pointer_button_down_on() {
@@ -1181,9 +1180,8 @@ fn select_lines(
     if content.clicked() && content.interact_pointer_pos().is_some_and(|p| area.contains(p)) {
         sel.clear();
     }
-    if (content.hovered() && pointer_in) || (content.dragged() && pressed_in) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-    }
+    // (no text cursor over the lines, though a drag selects them: the
+    // arrow, the hand on links and names; the human's choice of 2026-10-16)
     if content.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         sel.clear();
     }
@@ -1392,6 +1390,12 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
+            if let Rows::Thread(th) = &mut rows {
+                let first = clock.first;
+                thread::message_menu(ui, &env, th, &content, &drawn, |seq| {
+                    seq.checked_sub(first).and_then(|i| lines.get(i as usize))
+                });
+            }
             shift
         });
     if out.inner != 0.0 {
@@ -3084,7 +3088,8 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(from), button(from, true)]);
         for k in 1..=4 {
             let at = from + (to - from) * (k as f32 / 4.0);
-            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+            let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+            assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "the arrow while selecting");
         }
         let (texts, _) = frame(&mut st, vec![button(to, false)]);
         assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
@@ -3153,9 +3158,9 @@ mod tests {
         // (in the workspace: the line of who is typing, above the box)
         let strip = egui::pos2(field.center().x, field.top() - if style.workspace() { 10.0 } else { 2.0 });
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(strip)]);
-        assert_ne!(out.cursor_icon, egui::CursorIcon::Text, "a normal cursor on the strip");
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "a normal cursor on the strip");
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(from)]);
-        assert_eq!(out.cursor_icon, egui::CursorIcon::Text, "the text cursor on the lines");
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "the arrow on the lines, no text cursor");
         frame(&mut st, vec![egui::Event::PointerMoved(strip), button(strip, true)]);
         for k in 1..=4 {
             let at = strip + (from - strip) * (k as f32 / 4.0);

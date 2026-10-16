@@ -1,8 +1,8 @@
-//! Aurora's workspace through real egui frames: the column, the toolbar of
+//! Aurora's workspace through real egui frames: the column, the menu of
 //! a line, the members' panel, the rail and the window that stays in place.
 
 use super::super::sidebar::{Kind, Pinned, entry_id};
-use super::super::{ChatUi, ConvAction, show, thread};
+use super::super::{ChatUi, ConvAction, show};
 use crate::settings::ChatStyle;
 use crate::ui::widgets::elide_tests::{Frames, painted};
 use crate::world::{ChatKind, ChatLine, Origin, World};
@@ -159,20 +159,26 @@ fn the_column_shows_and_closes_conversations() {
     assert_eq!(h.st.selected, None, "without showing it");
 }
 
-/// The toolbar of a message under the pointer: Quote puts "> text" in the
-/// field, which takes the keyboard.
+/// The right-click menu of a message: Quote puts "> text" in the field,
+/// which takes the keyboard.
 #[test]
-fn a_line_is_quoted_from_its_toolbar() {
+fn a_line_is_quoted_from_its_menu() {
     let mut h = Harness::new(ChatStyle::Aurora);
     h.st.selected = Some(JANE);
     let texts = h.settle();
     // the line (the column's sub-line says it too, further left)
     let text = last(&texts, "hello from Jane");
+    let button = |pressed| egui::Event::PointerButton {
+        pos: text.center(),
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: Default::default(),
+    };
     h.frame(vec![egui::Event::PointerMoved(text.center())]);
-    h.frame(Vec::new());
-    let jane = h.world.social.ims.iter().find(|s| s.other == JANE).expect("Jane's conversation");
-    let quote = h.rect(thread::tool_id("quote", &jane.lines[0].clone()));
-    h.click(quote.center());
+    h.frame(vec![button(true)]);
+    h.frame(vec![button(false)]);
+    let texts = h.settle();
+    h.click(last(&texts, aurora_i18n::tr!("ui-chat-quote-message")).center());
     h.settle();
     assert_eq!(h.st.draft_mut(Some(JANE)), "> hello from Jane ");
     assert!(h.frames.ctx.memory(|m| m.has_focus(egui::Id::new(("conv_input", Some(JANE))))));

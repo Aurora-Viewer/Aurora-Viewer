@@ -2360,7 +2360,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   its icon). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
-  validated mockups (variant A, and B with `compact`); the column's entries, the hover toolbar and the head's buttons all act
+  validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
   (the other `AURORA_DEMO_CONV` scenarios show the window in the saved
   style, Aurora by default).
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of

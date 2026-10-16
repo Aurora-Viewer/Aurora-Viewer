@@ -5,7 +5,7 @@
 use super::members::member_id;
 use super::sidebar::{Pinned, control_id, entry_id, search_id};
 use super::stage::person_id;
-use super::{ChatUi, ConvAction, Start, classic_id, compose::Volume, show, thread};
+use super::{ChatUi, ConvAction, Start, classic_id, compose::Volume, show};
 use crate::settings::ChatStyle;
 use crate::ui::widgets::elide_tests::{Frames, Text};
 use crate::world::calls::{CallMember, InviteAnswer, PendingInvite};
@@ -194,14 +194,32 @@ impl H {
 
     /// Press the last text `source` painted (a menu row, a word button).
     fn press_text(&mut self, source: &str) {
-        let rect = self
-            .texts
+        let rect = self.text_rect(source);
+        self.at(rect.center());
+    }
+
+    /// Where the last text `source` is painted.
+    fn text_rect(&self, source: &str) -> egui::Rect {
+        self.texts
             .iter()
             .rev()
             .find(|t| t.source == source)
             .unwrap_or_else(|| panic!("{source:?} is not painted"))
-            .rect;
-        self.at(rect.center());
+            .rect
+    }
+
+    /// A right click at `pos`.
+    fn right_click(&mut self, pos: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(vec![egui::Event::PointerMoved(pos)]);
+        self.frame(vec![button(true)]);
+        self.frame(vec![button(false)]);
+        self.settle();
     }
 
     fn painted(&self, source: &str) -> bool {
@@ -432,26 +450,35 @@ fn the_head_acts() {
     }
 }
 
-/// The toolbar of a line under the pointer: copy, profile, its menu.
+/// A message under the pointer: no buttons, the arrow (no text cursor); its
+/// right click copies it, quotes it in the field, and holds its author's
+/// menu (the profile among them).
 #[test]
-fn the_line_toolbar_acts() {
+fn the_message_menu_acts() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
         let mut h = H::new(style);
         h.open(Some(JANE));
         let text = h.texts.iter().rev().find(|t| t.source == "hello from Jane").expect("the line").rect;
         h.frame(vec![egui::Event::PointerMoved(text.center())]);
-        h.frame(Vec::new());
+        let out = h.frame_out(Vec::new());
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "{style:?}: the arrow over a message");
         let jane = h.world.social.ims.iter().find(|s| s.other == JANE).expect("Jane").lines[0].clone();
-        let copy = h.shown(thread::tool_id("copy", &jane)).expect("copy");
+        for salt in ["copy", "quote", "profile", "more"] {
+            let id = egui::Id::new(("thread_tool", salt, jane.time, jane.source, jane.text.as_str()));
+            assert!(h.shown(id).is_none(), "{style:?}: no {salt} button");
+        }
+        // copy
+        h.right_click(text.center());
+        let row = h.text_rect(aurora_i18n::tr!("ui-chat-copy-message"));
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers: Default::default(),
         };
-        h.frame(vec![egui::Event::PointerMoved(copy.center())]);
-        h.frame(vec![button(copy.center(), true)]);
-        let out = h.frame_out(vec![button(copy.center(), false)]);
+        h.frame(vec![egui::Event::PointerMoved(row.center())]);
+        h.frame(vec![button(row.center(), true)]);
+        let out = h.frame_out(vec![button(row.center(), false)]);
         assert!(
             out.commands
                 .iter()
@@ -459,17 +486,12 @@ fn the_line_toolbar_acts() {
             "{style:?}: copy"
         );
         h.settle();
-        h.frame(vec![egui::Event::PointerMoved(text.center())]);
-        h.frame(Vec::new());
-        h.press(thread::tool_id("profile", &jane));
-        assert_eq!(
-            crate::ui::profile::take_open_request(&h.frames.ctx),
-            Some(JANE),
-            "{style:?}: profile"
-        );
-        h.frame(vec![egui::Event::PointerMoved(text.center())]);
-        h.frame(Vec::new());
-        h.press(thread::tool_id("more", &jane));
+        // quote
+        h.right_click(text.center());
+        h.press_text(aurora_i18n::tr!("ui-chat-quote-message"));
+        assert_eq!(h.st.draft_mut(Some(JANE)), "> hello from Jane ", "{style:?}: quote");
+        // the author's menu
+        h.right_click(text.center());
         assert!(h.painted(aurora_i18n::tr!("common-view-profile")), "{style:?}: the author's menu");
     }
 }
