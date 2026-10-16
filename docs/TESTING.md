@@ -1700,7 +1700,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOW_EDGES=<l\|r\|b…>` | Screen edges the windows may cross for the run |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
-| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged or swept in and out |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
@@ -1734,6 +1734,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
@@ -1746,6 +1747,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
+| `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2017,7 +2019,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   in place. `detach` attaches first, then moves People with Alt held:
   Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
-- **`AURORA_DEMO_RESIZE=corner|edge|drag[,<window>]`**: from frame 600,
+- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real
   window (`corner`), 1 point inside its right edge, halfway down
   (`edge`), or presses that corner and holds it 40 × 30 further out until
@@ -2028,7 +2030,19 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and the outline of the edges that move lights up in `violet_light`
   (the bottom and right ones for the corner, the right one alone for the
   edge), with the system resize cursor. Capture with
-  `AURORA_FPS_LIMIT=60` at frame 780.
+  `AURORA_FPS_LIMIT=60` at frame 780. `sweep` presses the corner and drags
+  it 500 points in by frame 700 (down to the window's minimum), then 900
+  points out by frame 900, a few points a frame; `sweep-h` does the same
+  on the height (400 in, 600 out); `sweep-fast` drags it 520 points in
+  and back out in 24 frames (about 45 points a frame), five times, then
+  rests at its start; released at frame 1000. With
+  `AURORA_DEMO_CONV=aurora:group` and `AURORA_CAPTURE_FRAMES` listing
+  frames (every 10 from 600 to 900, and runs of consecutive ones), what to
+  look for in the Conversations window: nothing jumps at a frame; around
+  600 points the column eases to the rail and back (back only past 640),
+  the members' panel eases in or out with its room (out only 40 points
+  under it), the head's buttons and the field follow the window's edge on
+  the same frame.
 - **`AURORA_DEMO_NOTIF=1`**: the "Aurora lantern" offer is from a
   resident: the object is already in the inventory (Objects folder) when
   the offer arrives. "Keep", or closing the offer in the list, leaves it
@@ -2184,6 +2198,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
+  `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
+  at frame 701 on the first conversation of that kind in the list (the
+  workspace's column or the tabs) opens its menu: capture at frame 780 with
+  `AURORA_FPS_LIMIT=60`. `im` (`AURORA_DEMO_CONV=aurora`): Close and Voice
+  call, the resident's menu of a name, then Invite to group, Show on map,
+  Share and Pay; `group` (`aurora` or `bubbles:group`): Close, Voice call,
+  the transcript, Group profile, Activate group (greyed for the active
+  one), Stop receiving its chat, Leave group; `conference`
+  (`aurora:conference`): Close, Hang up during its call, the transcript;
+  `local`: the transcript only. The transcript rows are greyed in the demo
+  (no transcript folder).
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
@@ -2333,6 +2359,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
+- **`AURORA_DEMO_CHAT_LINES=1|legacy`**: nearby chat said at the arrival,
+  shown above the chat bar with the Conversations window closed: two lines
+  of one resident, an emote, an object's line, a long line with a link, a
+  shout (only the 6 most recent lines show, as always). `1`: Aurora's cards
+  (Preferences › Aurora › Nearby chat lines), one per sender in a row, the
+  picture, the name, the time if shown, SHOUTS / WHISPERS / IM after the
+  name, the lines under it, each fading on its own; `legacy`: the Legacy
+  Viewer's one-line look for the session (nothing saved). Check them over a
+  dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
+  name, the picture and the links clickable, the world clickable around.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the
@@ -2352,14 +2388,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   demo does not save.
 - **`AURORA_DEMO_CONV=aurora[:flag…]`**: the Conversations window in
   Aurora's workspace (the default style), alone on screen (People and the
-  inventory closed), 960 x 560 px. Flags, joined by `:`: `im` (default:
+  inventory closed), 960 x 560 px. The column holds two groups: Northern
+  Wolves shows its insignia, Aurora Builders (none) the group glyph. Flags, joined by `:`: `im` (default:
   the friend's conversation over two days, the last three lines unread
   under the red "New" line, the friend typing), `busy` (Tess in do not
   disturb), `group` (Aurora Builders with its members' panel: MOD tag,
   an amber bar on the message that names us, a place link), `local` (the
   nearby chat: object tag and box, shout and whisper tags, our emote in
-  violet italics, notices with an icon, someone typing, the channel chip
-  and Whisper / Say / Shout); `compact` for the Compact style (one row
+  violet italics, notices with an icon, someone typing, the volume's
+  menu, Whisper / Say / Shout, at the left of the field; the channel chip
+  is hidden as by default); `compact` for the Compact style (one row
   per message, time, name and tags); `medium` (700 px), `narrow` (460
   px: the column becomes a rail of pictures) or a width in points;
   `call-incoming` (Tess calls: the banner and the pulsing entry),
@@ -2369,10 +2407,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   with Join, the green call button), `call-away` (in the group's call
   with the nearby chat shown: the column's call panel), `call-incoming-group`
   (Nova's group call ringing: Join / Ignore), `call-p2p` (our call to Tess),
-  `conference` (a voice conference with Tess and Nova). The calls are those of
+  `conference` (a voice conference with Tess and Nova), `new` (the menu of
+  the "new conversation" button beside the column's search field open:
+  Private message, Group chat, Conference), `volume` (with `local`: the
+  volume's menu open, above the field; with `narrow` the button keeps
+  its icon), `channel` (the "/0" channel chip shown, as Preferences ›
+  Chat › Show the channel selector does). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
-  validated mockups (variant A, and B with `compact`); the column's entries, the hover toolbar and the head's buttons all act
+  validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
   (the other `AURORA_DEMO_CONV` scenarios show the window in the saved
   style, Aurora by default).
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
@@ -2637,9 +2680,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     date marker at each change of day, then the new message in its
     normal colours; the file `Nova Example.txt` receives this message.
   - `find`: the same, then Ctrl+F (pointer over the window) and a word typed at
-    frame 300. What to see: the
-    search bar under the lines, "5 / 5", the matches on an amber
-    background and an amber stroke in front of the line of the current match.
+    frame 300 (the field empty at frame 303). What to see: the find field in
+    the head's row in place of the picture and the names, "5 / 5" and the
+    arrows inside it, the messages at their full height, the matches on an
+    amber background and an amber stroke along the current match's message
+    only (from its author's row to its last line, not the day and "New"
+    lines above it). `find:none` types a word that is not there ("No match"
+    in the warning colour, the arrows greyed), `find:legacy` the same in the
+    Legacy style (a cross at the field's end), `find:narrow` a window
+    narrow enough for the rail.
   - `history`: the History window on a file of 19,950 messages
     (page 200 / 200, the most recent); `history:find` types Ctrl+F and a
     word in it: counter "9976 / 9976" once the whole file has been gone

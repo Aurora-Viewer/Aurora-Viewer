@@ -4,6 +4,8 @@ mod bubbles;
 mod call;
 mod completion;
 mod compose;
+mod console;
+mod conv_menu;
 mod find;
 mod head;
 mod header;
@@ -59,8 +61,14 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV_SELECT`: a selection to make once lines are shown
     /// ("all", or "part" of three lines).
     pub demo_select: Option<String>,
+    /// `AURORA_DEMO_CONV_MENU=local|im|group|conference`: the conversation
+    /// of the list whose right-click menu the demo opens.
+    pub demo_menu: Option<String>,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
+    /// Textures the conversation wants by id (the groups' insignias), drawn
+    /// from the app's UI images.
+    pub wanted_images: HashSet<uuid::Uuid>,
     /// Names to resolve (mentions) — taken by the app.
     pub wanted_names: HashSet<uuid::Uuid>,
     /// Participants of the group / conference session shown.
@@ -78,6 +86,26 @@ pub struct ChatUi {
     /// A demo scenario's style, which the settings do not keep, until the
     /// preferences choose another.
     pub demo_style: Option<crate::settings::ChatStyle>,
+    /// `AURORA_DEMO_CONV=aurora:new`: open the menu of the column's "new
+    /// conversation" button once it is drawn.
+    pub demo_new_menu: bool,
+    /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
+    /// chat's volume once it is drawn.
+    pub demo_volume_menu: bool,
+    /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
+    /// without changing the preferences.
+    pub demo_channel: bool,
+    /// The workspace's layout last frame (None before the first): the
+    /// column as a rail, room for the members' panel. A threshold crossed
+    /// back needs a margin past it (`workspace::rail_now`), so a window
+    /// resized around one does not flip at every point.
+    layout_rail: Option<bool>,
+    layout_members_room: Option<bool>,
+    /// The workspace's width last frame, and whether this frame's change of
+    /// it comes from a drag of the window's edge: the layout then follows
+    /// the edge at once, without easing (`workspace::ease`).
+    layout_width: Option<f32>,
+    layout_dragged: bool,
     /// `style` was given once: a change after it is the preferences'.
     style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.
@@ -90,6 +118,9 @@ pub struct ChatUi {
     /// The times of the lines are shown (Preferences › Chat), given every
     /// frame by the app.
     pub timestamps: bool,
+    /// The nearby chat's field shows its channel selector (Preferences ›
+    /// Chat, off by default), given every frame by the app.
+    pub show_channel: bool,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
@@ -106,11 +137,8 @@ pub struct ChatUi {
     pub members_open: bool,
     /// The stage of the call is reduced to its strip.
     pub stage_mini: bool,
-    /// Where the "New" line of each conversation sits: its first unread
-    /// line when it was opened, until it is left.
-    first_unread: HashMap<Option<uuid::Uuid>, u64>,
-    /// The conversation shown at the last frame.
-    shown: Option<Option<uuid::Uuid>>,
+    /// Where the "New" line of each conversation sits.
+    new_lines: workspace::NewLines,
     /// The search field of the column.
     side_filter: String,
     /// The nearby chat's volume: whisper, say or shout.
@@ -143,6 +171,12 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// A demo scene's lines, given while its conversation is in sight,
+    /// count as arrived while away: their "New" line shows.
+    pub fn demo_lines_unseen(&mut self) {
+        self.new_lines.forget();
+    }
+
     /// Show a conversation, its entry brought into the view of the list.
     pub fn open(&mut self, conversation: uuid::Uuid) {
         self.selected = Some(conversation);
@@ -453,6 +487,18 @@ fn pic_side(size: f32) -> f32 {
     size + 3.0
 }
 
+/// How a chat line is laid out: the full-width bar's "Name: text", the
+/// islands' pill (name in semi-bold, no colon), or the body alone under the
+/// head of a card (`console.rs`: the name, the time and the volume are in
+/// the head; an emote keeps its name, which is part of its sentence).
+#[derive(Clone, Copy)]
+enum JobLook<'a> {
+    Line,
+    Pill(&'a egui::FontFamily),
+    Body,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn line_job(
     line: &crate::world::ChatLine,
     p: &Palette,
@@ -461,8 +507,13 @@ fn line_job(
     width: f32,
     size: f32,
     times: bool,
-    pill: Option<&egui::FontFamily>,
+    look: JobLook<'_>,
 ) -> BubbleJob {
+    let pill = match look {
+        JobLook::Pill(family) => Some(family),
+        _ => None,
+    };
+    let body_only = matches!(look, JobLook::Body);
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
@@ -470,7 +521,7 @@ fn line_job(
         font_id: egui::FontId::proportional(size - 3.0),
         ..Default::default()
     };
-    if times {
+    if times && !body_only {
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
@@ -489,13 +540,14 @@ fn line_job(
     let text_fmt = egui::TextFormat {
         color: col,
         font_id: egui::FontId::proportional(size),
-        italics: emote || (pill.is_some() && line.kind.is_notice()),
+        italics: emote || ((pill.is_some() || body_only) && line.kind.is_notice()),
         ..Default::default()
     };
     // (before the name, after it, body)
     let (before, after, body) = match line.kind {
         ChatKind::System | ChatKind::Invite(_) => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
+        _ if body_only => ("", "", &line.text[..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
         ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
         ChatKind::Local(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
@@ -511,7 +563,9 @@ fn line_job(
     };
     let mut sender = None;
     let mut name = None;
-    if !line.kind.is_notice() {
+    // the body of a card: no name, except an emote's, in its own colour
+    let name_fmt = if body_only { text_fmt.clone() } else { name_fmt };
+    if !line.kind.is_notice() && (!body_only || emote) {
         job.append(before, 0.0, name_fmt.clone());
         let who = match line.kind {
             ChatKind::Object(_) | ChatKind::ObjectIm => Some(Sender::Object),
@@ -519,8 +573,8 @@ fn line_job(
             _ => None,
         };
         // room for the picture, painted over it once laid out (none in a
-        // pill)
-        let who = who.filter(|_| pill.is_none());
+        // pill nor in a card, whose head has it)
+        let who = who.filter(|_| pill.is_none() && !body_only);
         let lead = if who.is_some() { pic_side(size) + 4.0 } else { 0.0 };
         sender = who.map(|w| (job.text.chars().count(), w));
         let start = job.text.chars().count();
@@ -596,6 +650,8 @@ pub enum ConvAction {
     OpenPeople(u8),
     /// From the "Contacts" tab.
     Contacts(super::contacts::ContactsAction),
+    /// From the "Contacts" tab in Aurora's look: People's friends tab.
+    People(super::people::PeopleAction),
     /// Show the torn-off Contacts window (its entry in the list).
     OpenContacts,
     /// Block / unblock the avatar of a 1:1 conversation.
@@ -641,8 +697,6 @@ pub enum ConvAction {
     },
     /// Open the inventory, to drag what to give from it.
     OpenInventory,
-    /// Play one of our active gestures.
-    PlayGesture(uuid::Uuid),
     /// The audio output of the call ("" = the system's default).
     SetOutputDevice(String),
     /// List the audio outputs again (their menu opens).
@@ -1284,9 +1338,8 @@ fn select_lines(
 ) -> ToField {
     // the lines' own area: egui also hands them a pointer a few points off
     // (interact_radius), on the strip between them and the field, which
-    // stays neutral (normal cursor, no selection, no keyboard)
+    // stays neutral (no selection, no keyboard)
     let area = content.rect.intersect(ui.clip_rect());
-    let pointer_in = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| area.contains(p));
     let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
     let pressed = ui.input(|i| i.pointer.primary_pressed());
     if pressed && pressed_in && content.is_pointer_button_down_on() {
@@ -1323,9 +1376,8 @@ fn select_lines(
     if content.clicked() && content.interact_pointer_pos().is_some_and(|p| area.contains(p)) {
         sel.clear();
     }
-    if (content.hovered() && pointer_in) || (content.dragged() && pressed_in) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-    }
+    // (no text cursor over the lines, though a drag selects them: the
+    // arrow, the hand on links and names; the human's choice of 2026-10-16)
     if content.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         sel.clear();
     }
@@ -1446,8 +1498,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     }
     let (layout, first_unread) = match &rows {
         Rows::Classic(_) => (view::Layout::Classic, None),
-        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.first_unread.get(&st.selected).copied()),
-        Rows::Thread(_) => (view::Layout::Aurora, st.first_unread.get(&st.selected).copied()),
+        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.new_lines.at(st.selected)),
+        Rows::Thread(_) => (view::Layout::Aurora, st.new_lines.at(st.selected)),
     };
     let mut to_field = ToField::Nothing;
     let (lines, clock) = match st.selected {
@@ -1506,6 +1558,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     return;
                 };
                 let mark = mark.filter(|_| row.hit);
+                find::forget_message(ui.ctx());
                 let mut draw = |ui: &mut egui::Ui| match &mut rows {
                     Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
                     Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
@@ -1533,6 +1586,12 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
+            if let Rows::Thread(th) = &mut rows {
+                let first = clock.first;
+                thread::message_menu(ui, &env, th, &content, &drawn, |seq| {
+                    seq.checked_sub(first).and_then(|i| lines.get(i as usize))
+                });
+            }
             shift
         });
     if out.inner != 0.0 {
@@ -1582,6 +1641,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     if let Some((year, month, day)) = look.marker {
         date_marker(ui, p, year, month, day);
     }
+    // (the current match's marker starts under the date)
+    find::note_message(ui, ui.cursor().top(), None);
     if let ChatKind::Invite(invite) = line.kind {
         invite_card::draw_line(ui, env, line, invite);
         return;
@@ -1895,9 +1956,13 @@ pub fn show(
     contacts: &mut super::contacts::ContactsUi,
     contacts_settings: &mut super::contacts::ContactsSettings,
     show_contacts_tab: bool,
+    // People's friends tab, the workspace's Contacts tab in Aurora's look of
+    // People (None: the contact list as it is)
+    friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let mut actions = Vec::new();
+    let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
         st.open(f);
@@ -1928,6 +1993,13 @@ pub fn show(
     if style.workspace() {
         floater = floater.flush_body();
     }
+    // about the least the window lays out without overflowing (the
+    // workspace's rail, head, 60 points of messages and field; the Legacy
+    // style's tabs and field): smaller, it grew back to its content during
+    // a resize and the messages, laid out for the smaller size first,
+    // hopped for a frame
+    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    floater.min_size = floater.min_size.max(least);
     floater.show(ctx, p, open, |ui| {
         if style.workspace() {
             let env = workspace::Env {
@@ -1940,6 +2012,7 @@ pub fn show(
                 contacts: &mut *contacts,
                 contacts_settings: &mut *contacts_settings,
                 show_contacts_tab,
+                friends: friends.take(),
                 docked,
                 compact: style == crate::settings::ChatStyle::Compact,
             };
@@ -1968,7 +2041,7 @@ pub fn show(
                     }
                 }
                 let local_shown = st.selected.is_none() && !st.contacts;
-                if list_entry(
+                let local = list_entry(
                     ui,
                     p,
                     aurora_i18n::tr!("common-nearby-chat"),
@@ -1978,9 +2051,10 @@ pub fn show(
                     if local_shown { 0 } else { world.chat_unread },
                     None,
                 )
-                .resp
-                .clicked()
-                {
+                .resp;
+                conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
+                conv_menu::attach(&local, p, world, &mut actions, None);
+                if local.clicked() {
                     st.select_tab(None);
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
@@ -2011,6 +2085,8 @@ pub fn show(
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
                         }
+                        conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
+                        conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         if entry.close {
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
@@ -2107,26 +2183,19 @@ pub fn show(
                     ui.add_space(4.0);
                 }
                 let input_h = INPUT_H;
-                // Ctrl+F opens the find bar of the conversation shown, when
-                // the keyboard is in this window, or nowhere with the
-                // pointer over it
+                // Ctrl+F opens the find field of the conversation shown (in
+                // the head's row), when the keyboard is in this window, or
+                // nowhere with the pointer over it
                 // each conversation's own field (cursor, undo), like its draft
                 let conv_input = egui::Id::new(("conv_input", st.selected));
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
                     search.open_find();
                 }
-                // exactly what the find bar takes under the lines (a row
-                // that overflows makes the resizable window grow every frame)
-                let find_h = if search.find.is_some() {
-                    find::BAR_H + 4.0 + ui.spacing().item_spacing.y
-                } else {
-                    0.0
-                };
                 // exactly what the input row takes under them: the spacing after
                 // the lines, the 4 points before the row and the row itself (a
                 // row that overflows makes the resizable window grow every frame)
-                let lines_h = (ui.available_height() - input_h - find_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
+                let lines_h = (ui.available_height() - input_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
                 let mut to_field = ToField::Nothing;
                 egui::Frame::new()
                     .fill(p.field)
@@ -2146,21 +2215,12 @@ pub fn show(
                         };
                         to_field = conversation_lines(ui, p, lines, st, Rows::Classic(style));
                     });
-                let search = st.searches.entry(st.selected).or_default();
-                let view = st.views.entry(st.selected).or_default();
                 match to_field {
                     ToField::Nothing => {}
                     ToField::Focus => st.conv_focus_request = true,
                     ToField::Text(t) => {
                         st.drafts.entry(st.selected).or_default().push_str(&t);
                         st.conv_focus_request = true;
-                    }
-                }
-                if let Some(f) = search.find.as_mut() {
-                    ui.add_space(4.0);
-                    if find::bar(ui, p, f, view) {
-                        search.find = None;
-                        ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                     }
                 }
                 let strip_top = ui.min_rect().bottom();
@@ -2376,7 +2436,9 @@ fn bubble_sender(
 
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
-/// `want_names` / `wanted_pics`.
+/// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
+/// (`console.rs`), else the Legacy Viewer's one-line look (pills over the
+/// islands when `pills`).
 #[allow(clippy::too_many_arguments)]
 pub fn toasts(
     ctx: &egui::Context,
@@ -2389,7 +2451,12 @@ pub fn toasts(
     seconds: f32,
     times: bool,
     pills: bool,
+    cards: bool,
 ) {
+    if cards {
+        console::cards(ctx, p, world, pics, want_names, wanted_pics, bottom, seconds, times);
+        return;
+    }
     let now = std::time::SystemTime::now();
     let recent: Vec<_> = world
         .chat
@@ -2442,7 +2509,16 @@ pub fn toasts(
                             badges,
                             sender,
                             name,
-                        } = line_job(line, p, world, want_names, 540.0, size, times, family.as_ref());
+                        } = line_job(
+                            line,
+                            p,
+                            world,
+                            want_names,
+                            540.0,
+                            size,
+                            times,
+                            family.as_ref().map_or(JobLook::Line, JobLook::Pill),
+                        );
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
@@ -2459,29 +2535,6 @@ pub fn toasts(
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
                             bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
                         }
-                        // link badges over their invisible glyph
-                        for (at, badge) in badges {
-                            let Some(g) = range_rects(&galley, rect.min, at..at + 1).first().copied() else {
-                                continue;
-                            };
-                            let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
-                            match badge {
-                                LinkBadge::Web(url) => paint_link_badge(painter, p, b, &url, alpha),
-                                LinkBadge::Rating(access) => {
-                                    let mut faded = painter.clone();
-                                    faded.multiply_opacity(alpha);
-                                    let name = super::bars::maturity_name(access);
-                                    let radius = super::widgets::inner_radius(ui.visuals());
-                                    super::widgets::paint_maturity_badge(&faded, p, name, b.shrink(1.0), radius);
-                                }
-                            }
-                        }
-                        // the regions of the places shown, asked if unknown
-                        for (_, link) in &line_links {
-                            if let Link::Place(_, place) = link {
-                                super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
-                            }
-                        }
                         // the islands' pills: the sender's name acts like the
                         // conversations' (Firestorm's toast links it)
                         if pills
@@ -2491,11 +2544,7 @@ pub fn toasts(
                             names.push((r, line));
                         }
                         let col = color_for(line.kind, p).gamma_multiply(alpha);
-                        for (range, link) in line_links {
-                            for r in range_rects(&galley, rect.min, range) {
-                                links.push((r, link.clone(), col));
-                            }
-                        }
+                        line_extras(ui, p, world, &galley, rect.min, size, alpha, badges, line_links, col, &mut links);
                     });
                 if glass && let Some(slot) = slot {
                     let rect = bubble.response.rect;
@@ -2513,9 +2562,61 @@ pub fn toasts(
     }
 }
 
+/// What a laid-out chat line carries besides its text: the badge of each
+/// link painted over its invisible glyph, the regions of the places shown
+/// asked when unknown, and each link's rects (`links`), for their click
+/// areas (`bubble_link`). Shared by the pills and the cards (`console.rs`).
+#[allow(clippy::too_many_arguments)]
+fn line_extras(
+    ui: &egui::Ui,
+    p: &Palette,
+    world: &World,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    size: f32,
+    alpha: f32,
+    badges: Vec<(usize, LinkBadge)>,
+    line_links: Vec<(std::ops::Range<usize>, Link)>,
+    col: Color32,
+    links: &mut Vec<(egui::Rect, Link, Color32)>,
+) {
+    let painter = ui.painter();
+    for (at, badge) in badges {
+        let Some(g) = range_rects(galley, origin, at..at + 1).first().copied() else {
+            continue;
+        };
+        let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
+        match badge {
+            LinkBadge::Web(url) => paint_link_badge(painter, p, b, &url, alpha),
+            LinkBadge::Rating(access) => {
+                let mut faded = painter.clone();
+                faded.multiply_opacity(alpha);
+                let name = super::bars::maturity_name(access);
+                let radius = super::widgets::inner_radius(ui.visuals());
+                super::widgets::paint_maturity_badge(&faded, p, name, b.shrink(1.0), radius);
+            }
+        }
+    }
+    for (_, link) in &line_links {
+        if let Link::Place(_, place) = link {
+            super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
+        }
+    }
+    for (range, link) in line_links {
+        for r in range_rects(galley, origin, range) {
+            links.push((r, link.clone(), col));
+        }
+    }
+}
+
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
-/// at frame 700 (its profile opens).
+/// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
+/// on a conversation of the list (`conv_menu`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let menu = conv_menu::demo_events(ctx, frame);
+    if !menu.is_empty() {
+        return menu;
+    }
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();
     }
@@ -2944,7 +3045,19 @@ mod tests {
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
         };
-        let job = |l: &crate::world::ChatLine, pill| line_job(l, &p, &world, &mut HashSet::new(), 540.0, 12.0, false, pill).job;
+        let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
+            line_job(
+                l,
+                &p,
+                &world,
+                &mut HashSet::new(),
+                540.0,
+                12.0,
+                false,
+                pill.map_or(JobLook::Line, JobLook::Pill),
+            )
+            .job
+        };
         let said = line(ChatKind::Local(ChatType::Normal), "Orion Exemple", "Bienvenue");
         let pill = job(&said, Some(&family));
         assert_eq!(pill.text, "Orion ExempleBienvenue");
@@ -3036,6 +3149,7 @@ mod tests {
                         20.0,
                         false,
                         true,
+                        false,
                     )
                 },
             );
@@ -3126,6 +3240,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             });
@@ -3201,6 +3316,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             });
@@ -3278,6 +3394,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             })
@@ -3306,7 +3423,8 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(from), button(from, true)]);
         for k in 1..=4 {
             let at = from + (to - from) * (k as f32 / 4.0);
-            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+            let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+            assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "the arrow while selecting");
         }
         let (texts, _) = frame(&mut st, vec![button(to, false)]);
         assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
@@ -3375,9 +3493,9 @@ mod tests {
         // (in the workspace: the line of who is typing, above the box)
         let strip = egui::pos2(field.center().x, field.top() - if style.workspace() { 10.0 } else { 2.0 });
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(strip)]);
-        assert_ne!(out.cursor_icon, egui::CursorIcon::Text, "a normal cursor on the strip");
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "a normal cursor on the strip");
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(from)]);
-        assert_eq!(out.cursor_icon, egui::CursorIcon::Text, "the text cursor on the lines");
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "the arrow on the lines, no text cursor");
         frame(&mut st, vec![egui::Event::PointerMoved(strip), button(strip, true)]);
         for k in 1..=4 {
             let at = strip + (from - strip) * (k as f32 / 4.0);
@@ -3433,6 +3551,7 @@ mod tests {
                         &mut contacts,
                         &mut contacts_settings,
                         visible,
+                        None,
                         &mut open,
                     );
                 });

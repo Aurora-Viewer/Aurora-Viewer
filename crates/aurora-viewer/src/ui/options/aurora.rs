@@ -46,6 +46,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_pay_window = !aurora;
     s.classic_controls = !aurora;
     s.classic_restart_alert = !aurora;
+    s.classic_chat_lines = !aurora;
     s.predict_own_motion = aurora;
 }
 
@@ -386,6 +387,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
         c |= look_choice(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-aurora-chat-lines"),
+            aurora_i18n::tr!("ui-options-aurora-chat-lines-help"),
+            aurora_i18n::tr!("ui-options-aurora-chat-lines-cards"),
+            aurora_i18n::tr!("ui-options-aurora-chat-lines-classic"),
+            &mut s.classic_chat_lines,
+        );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-aurora-name-tags"),
             aurora_i18n::tr!("ui-options-aurora-name-tags-help"),
             aurora_i18n::tr!("ui-options-aurora-plates"),
@@ -651,6 +662,7 @@ mod tests {
         assert!(s.classic_pay_window);
         assert!(s.classic_controls, "Firestorm's two control windows");
         assert!(s.classic_restart_alert, "Firestorm's yellow restart box");
+        assert!(s.classic_chat_lines, "the Legacy Viewer's one-line chat lines");
         assert!(!s.predict_own_motion, "the avatar waits for the simulator");
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
@@ -676,6 +688,7 @@ mod tests {
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);
+        assert!(!s.classic_chat_lines && !fresh.classic_chat_lines, "the cards are the default");
         assert!(s.predict_own_motion, "Aurora's movement");
         assert!(!fresh.predict_own_motion, "Firestorm's movement until tried on the grid");
         assert!(s.plates_friends_only_full);

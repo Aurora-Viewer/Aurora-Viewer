@@ -40,9 +40,11 @@ pub(super) fn show(
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
     conversation: Uuid,
+    // WIDTH, or less while the panel eases in or out with the window's size
+    width: f32,
     height: f32,
 ) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(WIDTH, height), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     // the mockup's `.members`: the bar's colour at 55 %, a hairline at its left
     ui.painter().rect_filled(rect, 0.0, p.bar.gamma_multiply(0.55));
     ui.painter().vline(
@@ -50,11 +52,15 @@ pub(super) fn show(
         rect.y_range(),
         egui::Stroke::new(1.0, p.ink.gamma_multiply(0.05)),
     );
+    // its content keeps the panel's whole width, cut at the window's edge
+    // while the panel eases: the names do not re-wrap as it moves
+    let full = egui::Rect::from_min_size(rect.min, egui::vec2(WIDTH, height));
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(8.0, 4.0)))
+            .max_rect(full.shrink2(egui::vec2(8.0, 4.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
+    child.set_clip_rect(rect.intersect(child.clip_rect()));
     let ui = &mut child;
     let info = world.groups.sessions.get(&conversation);
     let call = world.call_of(&conversation);

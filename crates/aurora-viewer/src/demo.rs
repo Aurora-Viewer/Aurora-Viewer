@@ -714,6 +714,61 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
+/// `AURORA_DEMO_CHAT_LINES=1|legacy`: nearby chat said at the arrival, to
+/// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
+/// one resident, an emote, an object's line, a long line with a link, a
+/// shout. `legacy` shows them as the Legacy Viewer's lines for the session
+/// (nothing is saved). Some(true) for `legacy`.
+pub fn chat_lines_scenario() -> Option<bool> {
+    match std::env::var("AURORA_DEMO_CHAT_LINES").ok()?.as_str() {
+        "legacy" => Some(true),
+        "" | "0" => None,
+        _ => Some(false),
+    }
+}
+
+pub fn chat_lines_events() -> Vec<NetEvent> {
+    let object = Uuid::from_u128(0xC4A7_0000_0000_0000_0000_0000_0000_0001);
+    let nova = aurora_i18n::tr!("demo-nova-example");
+    let orion = aurora_i18n::tr!("demo-orion-example");
+    let say = |from: Uuid, name: &str, text: &str, object: bool, chat_type| {
+        NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: name.into(),
+            source_id: from,
+            owner_id: Uuid::nil(),
+            source_type: if object {
+                aurora_net::ChatSourceType::Object
+            } else {
+                aurora_net::ChatSourceType::Agent
+            },
+            chat_type,
+            position: Vec3::ZERO,
+            message: text.into(),
+        })
+    };
+    let normal = aurora_net::ChatType::Normal;
+    vec![
+        say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
+        say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-2"), false, normal),
+        say(DEMO_FRIEND, orion, aurora_i18n::tr!("demo-chat-lines-emote"), false, normal),
+        say(
+            object,
+            aurora_i18n::tr!("common-demo-hud"),
+            aurora_i18n::tr!("demo-bubbles-local-3"),
+            true,
+            normal,
+        ),
+        say(DEMO_FRIEND, orion, aurora_i18n::tr!("demo-chat-lines-long"), false, normal),
+        say(
+            DEMO_NOVA,
+            nova,
+            aurora_i18n::tr!("demo-chat-lines-shout"),
+            false,
+            aurora_net::ChatType::Shout,
+        ),
+    ]
+}
+
 /// The lines said before the scenario starts (yesterday's among them) and
 /// ours: they are written in the conversations as they would have been.
 pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
@@ -777,7 +832,10 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
 /// `call-ongoing` (Nova's group call, which we let ring), `call-away` (in
 /// the group's call with the nearby chat shown: the column's call panel),
 /// `call-incoming-group` (Nova's group call ringing), `call-p2p` (our call
-/// to Tess), `conference` (a voice conference with Tess and Nova).
+/// to Tess), `conference` (a voice conference with Tess and Nova), `new`
+/// (the menu of the column's "new conversation" button open), `volume`
+/// (the menu of the nearby chat's volume open, with `local`), `channel`
+/// (its channel selector shown, as the preferences can).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -786,6 +844,12 @@ pub struct AuroraScene {
     pub call: Option<AuroraCall>,
     /// `call-away`: the nearby chat shown once the call is connected.
     pub away: bool,
+    /// `new`: the menu of the column's "new conversation" button open.
+    pub new_menu: bool,
+    /// `volume`: the menu of the nearby chat's volume open.
+    pub volume_menu: bool,
+    /// `channel`: the nearby chat's channel selector shown.
+    pub channel: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -817,6 +881,9 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         compact: false,
         call: None,
         away: false,
+        new_menu: false,
+        volume_menu: false,
+        channel: false,
     };
     let mut away = false;
     for flag in flags {
@@ -835,6 +902,9 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "call-incoming-group" => scene.call = Some(AuroraCall::IncomingGroup),
             "call-p2p" => scene.call = Some(AuroraCall::P2p),
             "conference" => scene.call = Some(AuroraCall::Conference),
+            "new" => scene.new_menu = true,
+            "volume" => scene.volume_menu = true,
+            "channel" => scene.channel = true,
             "call-away" => {
                 scene.call = Some(AuroraCall::InCall);
                 away = true;
@@ -869,8 +939,8 @@ pub fn aurora_conversation(scene: AuroraScene) -> Option<Uuid> {
 }
 
 /// The scene's lines beyond the bubbles scenario's: the group's afternoon
-/// (an emote, a place, a mention of us) and a few private conversations for
-/// the column; the last ones of the conversation shown are unread, for its
+/// (an emote, a place, a mention of us), a few private conversations and a
+/// second group's for the column; the last ones of the conversation shown are unread, for its
 /// "New" line.
 pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     use crate::world::{ChatKind, ChatLine, Origin};
@@ -932,6 +1002,21 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
             DEMO_TESS,
             ChatKind::Im,
             aurora_i18n::tr!("demo-aurora-tess"),
+        ),
+    );
+    // a second group, with its insignia (Aurora Builders has none)
+    let wolves = world.groups.sessions.entry(DEMO_GROUP2).or_default();
+    wolves.name = aurora_i18n::tr!("demo-northern-wolves").to_owned();
+    wolves.group = true;
+    wolves.active = true;
+    world.conversation_line(
+        DEMO_GROUP2,
+        line(
+            ago(95),
+            &names(DEMO_LOUP),
+            DEMO_LOUP,
+            ChatKind::Im,
+            aurora_i18n::tr!("demo-aurora-wolves"),
         ),
     );
     // unread: the group's last line, and the friend's last two
@@ -1788,7 +1873,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     contribution: group::MY_CONTRIBUTION,
                     ..g(DEMO_GROUP1, "Aurora Builders", true)
                 },
-                g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
+                // the one with an insignia (its search profile's): the
+                // lists show it, the others the group glyph
+                aurora_net::GroupMembership {
+                    insignia: TEX_SNAPSHOT,
+                    ..g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false)
+                },
                 aurora_net::GroupMembership {
                     list_in_profile: false,
                     ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
@@ -3857,6 +3947,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if bubbles_scenario().is_some() {
         ev.extend(bubbles_events());
+    }
+    if chat_lines_scenario().is_some() {
+        ev.extend(chat_lines_events());
     }
     if aurora_scenario().is_some() {
         ev.extend(aurora_events());

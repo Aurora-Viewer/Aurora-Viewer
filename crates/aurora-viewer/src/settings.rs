@@ -406,12 +406,16 @@ pub struct Settings {
     pub font: String,
     pub font_scale: f32,
     pub chat_timestamps: bool,
+    /// The channel selector of the nearby chat's field (FSShowChatChannel,
+    /// off by default; Preferences > Chat). "/n" before the text works
+    /// without it.
+    pub show_chat_channel: bool,
     /// The local chat bar keeps the keyboard after a message is sent; Enter
     /// on the empty bar gives it back to the world (the Legacy Viewer's
     /// CloseChatOnReturn off). Off by default: the bar lets go after sending.
     pub chat_keep_focus: bool,
-    /// Show Contacts in Conversations (Preferences > Chat, off by default).
-    /// Unlike Firestorm's always-present entry, this is optional at the human's request.
+    /// Show Contacts in Conversations (Preferences > Chat, on by default as
+    /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
     /// Tell the resident of a conversation that we are typing
     /// (FSSendTypingState, on by default; Preferences > Chat).
@@ -497,6 +501,10 @@ pub struct Settings {
     /// Firestorm's yellow region restart box (floater_region_restarting.xml)
     /// instead of the alert card of `ui/region_restart.rs`.
     pub classic_restart_alert: bool,
+    /// The Legacy Viewer's one-line nearby chat lines above the chat bar
+    /// instead of the cards grouped by sender, with their picture
+    /// (`ui/chat/console.rs`).
+    pub classic_chat_lines: bool,
     /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
     /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
     /// fade slowly. Off, the default until it has been tried on the grid:
@@ -674,7 +682,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 14;
+const SETTINGS_VERSION: u32 = 15;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -972,8 +980,9 @@ impl Default for Settings {
             font: "Noto Sans".into(),
             font_scale: 1.0,
             chat_timestamps: true,
+            show_chat_channel: false,
             chat_keep_focus: false,
-            show_contacts_tab: false,
+            show_contacts_tab: true,
             send_typing_state: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
@@ -1005,6 +1014,7 @@ impl Default for Settings {
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
+            classic_chat_lines: false,
             predict_own_motion: false,
             region_restart: Default::default(),
             reduce_motion: false,
@@ -1393,6 +1403,11 @@ impl Settings {
             self.camera.disable_constraints = true;
             self.camera.ignore_sim_constraints = true;
         }
+        if self.settings_version < 15 {
+            // new default: Contacts shown in Conversations (every file wrote
+            // the old "hidden" default)
+            self.show_contacts_tab = true;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1771,10 +1786,28 @@ mod tests {
     }
 
     #[test]
-    fn contacts_tab_is_hidden_by_default_and_survives_reload() {
-        assert!(!Settings::default().show_contacts_tab);
+    fn chat_channel_selector_is_hidden_by_default_and_survives_reload() {
+        assert!(!Settings::default().show_chat_channel);
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
-        assert!(!old.show_contacts_tab);
+        assert!(!old.show_chat_channel);
+        for show_chat_channel in [false, true] {
+            let original = Settings {
+                show_chat_channel,
+                ..Settings::default()
+            };
+            let saved = serde_json::to_vec(&original).expect("serialize synthetic channel preference");
+            let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic channel preference");
+            assert_eq!(loaded.sanitized().show_chat_channel, show_chat_channel);
+        }
+    }
+
+    #[test]
+    fn contacts_tab_is_shown_by_default_and_survives_reload() {
+        assert!(Settings::default().show_contacts_tab);
+        // the earlier files all wrote "hidden": shown once, then kept
+        let old: Settings =
+            serde_json::from_str(r#"{"settings_version": 14, "show_contacts_tab": false}"#).expect("synthetic old settings");
+        assert!(old.sanitized().show_contacts_tab);
         for show_contacts_tab in [false, true] {
             let original = Settings {
                 show_contacts_tab,

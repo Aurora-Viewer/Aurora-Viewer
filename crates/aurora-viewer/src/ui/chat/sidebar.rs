@@ -21,6 +21,8 @@ pub(super) const WIDTH: f32 = 232.0;
 pub(super) const RAIL: f32 = 58.0;
 const ENTRY_H: f32 = 44.0;
 const PIC: f32 = 32.0;
+/// The glyph on an entry's square (nearby chat, a group without insignia).
+const GLYPH: f32 = 17.0;
 
 /// Who a conversation is with, for the column.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -40,6 +42,36 @@ pub(super) fn kind(world: &World, id: &Uuid) -> Kind {
     }
 }
 
+/// The insignia of a group conversation's group: our membership's, else
+/// the group profile the viewer last received (a group we are not in);
+/// None when it has none, the `users-group` glyph then.
+pub(super) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
+    let set = |i: Uuid| (!i.is_nil()).then_some(i);
+    world
+        .groups
+        .group(id)
+        .and_then(|g| set(g.insignia))
+        .or_else(|| world.search.groups.get(id).and_then(|g| set(g.insignia)))
+}
+
+/// A group's picture over the square `rect`: its insignia cropped square on
+/// the theme's radius, else the `users-group` glyph (of side `glyph`) on a
+/// raised square, as People › Groups draws it.
+pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
+    match insignia {
+        Some(t) => crate::ui::widgets::square_picture(ui, rect, t),
+        None => {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+            super::thread::paint_icon(
+                ui.painter(),
+                "users-group",
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(glyph)),
+                p.muted,
+            );
+        }
+    }
+}
+
 /// The id of a control of the workspace by its name ("panel-mic",
 /// "head-call"…): the same every frame, for the tests to reach it.
 pub(super) fn control_id(name: &str) -> egui::Id {
@@ -53,9 +85,8 @@ pub(super) fn search_id() -> egui::Id {
 
 /// The search field of the column (the mockup's `.search`): a filled
 /// box with its magnifier, no outline.
-fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String) {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, SEARCH_H), egui::Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field);
     let glass = egui::Rect::from_center_size(egui::pos2(rect.left() + 15.0, rect.center().y), egui::Vec2::splat(13.0));
     super::thread::paint_icon(ui.painter(), "search-filled", glass, p.muted_dim);
@@ -82,6 +113,50 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String) {
     );
 }
 
+/// Height of the search field, and the side of the button beside it.
+const SEARCH_H: f32 = 30.0;
+
+/// The one button that starts a conversation, beside the search field (the
+/// sections lost their "+" with the empty ones, the human's choice of
+/// 2026-10-16): a private message or a conference (the resident picker),
+/// or the chat of one of our groups.
+fn new_conversation(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>) {
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(SEARCH_H), egui::Sense::hover());
+    let resp = ui.interact(rect, control_id("new-conversation"), egui::Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let face = if resp.hovered() || open { p.raised } else { p.field };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
+    super::thread::paint_icon(
+        ui.painter(),
+        "plus",
+        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)),
+        if resp.hovered() || open { p.ink } else { p.muted },
+    );
+    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-chat-new-conversation"));
+    if std::mem::take(&mut st.demo_new_menu) {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+    crate::ui::menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        if crate::ui::menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-chat-start-private")) {
+            st.start_picker(super::Start::Im);
+        }
+        crate::ui::menu::submenu(ui, p, "users-group", aurora_i18n::tr!("ui-chat-start-group"), true, |ui| {
+            let groups = world.groups.sorted();
+            if groups.is_empty() {
+                crate::ui::menu::info(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-chat-no-groups"));
+            }
+            for g in groups {
+                if crate::ui::menu::item(ui, p, "users-group", &g.name) {
+                    actions.push(ConvAction::StartGroupChat(g.id));
+                }
+            }
+        });
+        if crate::ui::menu::item(ui, p, "users", aurora_i18n::tr!("ui-chat-start-conference")) {
+            st.start_picker(super::Start::Conference);
+        }
+    });
+}
+
 /// What an entry of the column is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Pinned {
@@ -99,8 +174,8 @@ pub(super) fn entry_id(entry: Pinned) -> egui::Id {
 enum Icon<'a> {
     /// A resident: their picture and status.
     Avatar(Option<&'a egui::TextureHandle>, presence::Status),
-    /// A group: its initials on the accent.
-    Group(&'a str),
+    /// A group: its insignia, once loaded (none: the group glyph).
+    Group(Option<&'a egui::TextureHandle>),
     /// A Tabler icon on a tinted square (nearby chat, Contacts, a conference).
     Glyph(&'static str, Color32),
 }
@@ -125,21 +200,33 @@ struct Picked {
     close: bool,
 }
 
+/// What the Contacts entry's second line says: the friends online (the tab
+/// shows People's friends) or what the contact list holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ContactsSub {
+    Friends,
+    Lists,
+}
+
 /// The column (or rail). `height`: what the window gives it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
     pics: &HashMap<Uuid, egui::TextureHandle>,
+    // textures by id (the groups' insignias)
+    images: &HashMap<Uuid, egui::TextureHandle>,
     world: &World,
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
     show_contacts_tab: bool,
+    contacts_sub: ContactsSub,
     docked: bool,
     rail: bool,
+    // RAIL or WIDTH, or on its way from one to the other
+    width: f32,
     height: f32,
 ) {
-    let width = if rail { RAIL } else { WIDTH };
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     // the mockup's `.side`: the bar's colour at 75 %, a hairline at its
     // right, its bottom left corner the window's
@@ -159,11 +246,19 @@ pub(super) fn show(
             .max_rect(column.shrink2(egui::vec2(6.0, 0.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
+    // (while its width eases, nothing spills over the messages)
+    child.set_clip_rect(column.intersect(child.clip_rect()));
     let ui = &mut child;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
     if !rail {
-        search_box(ui, p, &mut st.side_filter);
+        let row = egui::vec2(ui.available_width(), SEARCH_H);
+        ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let width = (ui.available_width() - SEARCH_H - 4.0).max(40.0);
+            search_box(ui, p, &mut st.side_filter, width);
+            new_conversation(ui, p, world, st, actions);
+        });
         ui.add_space(4.0);
     }
     let filter = st.side_filter.trim().to_lowercase();
@@ -181,7 +276,13 @@ pub(super) fn show(
                 let e = Entry {
                     icon: Icon::Glyph("users", p.violet_pale),
                     name: aurora_i18n::tr!("common-contacts"),
-                    sub: Some(aurora_i18n::tr!("ui-chat-contacts-sub").to_owned()),
+                    sub: Some(match contacts_sub {
+                        ContactsSub::Friends => aurora_i18n::tr!(
+                            "ui-chat-contacts-friends-sub",
+                            online = world.social.friends.iter().filter(|f| f.online).count() as i64
+                        ),
+                        ContactsSub::Lists => aurora_i18n::tr!("ui-chat-contacts-sub").to_owned(),
+                    }),
                     sub_icon: None,
                     current: st.contacts,
                     unread: 0,
@@ -212,7 +313,10 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                 };
-                if entry(ui, p, &e, rail, entry_id(Pinned::Local)).resp.clicked() {
+                let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
+                super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
+                super::conv_menu::attach(&picked.resp, p, world, actions, None);
+                if picked.resp.clicked() {
                     st.select_tab(None);
                 }
             }
@@ -230,17 +334,25 @@ pub(super) fn show(
                     .map(|(id, unread)| (id, unread, entry_name(world, &id, section)))
                     .filter(|(_, _, name)| matches(name))
                     .collect();
-                section_head(ui, p, world, st, actions, section, rail);
+                // a section without a conversation is not drawn at all: no
+                // head, no space (the human's choice of 2026-10-16)
+                if titled.is_empty() {
+                    continue;
+                }
+                section_head(ui, p, section, rail);
                 for (id, unread, name) in titled {
                     if section == Kind::Private {
                         st.wanted_pics.insert(id);
                     }
                     let current = st.selected == Some(id) && !st.contacts;
                     let status = presence::of(world, &id);
-                    let initials = crate::ui::widgets::initials(&name);
+                    let insignia = if section == Kind::Group { group_insignia(world, &id) } else { None };
+                    if let Some(i) = insignia {
+                        st.wanted_images.insert(i);
+                    }
                     let icon = match section {
                         Kind::Private => Icon::Avatar(pics.get(&id), status),
-                        Kind::Group => Icon::Group(&initials),
+                        Kind::Group => Icon::Group(insignia.and_then(|i| images.get(&i))),
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
                     let (sub, sub_icon) = sub_line(p, world, id, section, status);
@@ -260,6 +372,8 @@ pub(super) fn show(
                         picked.resp.scroll_to_me(None);
                         st.reveal = None;
                     }
+                    super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
+                    super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
                     if picked.close {
                         actions.push(ConvAction::Close(id));
                     } else if picked.resp.clicked() {
@@ -418,10 +532,9 @@ fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
     world.session_title(id)
 }
 
-/// The head of a section, with its "+": start an IM (the resident picker),
-/// a group's chat (the list of our groups), a conference (several
-/// residents).
-fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, section: Kind, rail: bool) {
+/// The head of a section (a conversation is started from the button beside
+/// the search field, `new_conversation`).
+fn section_head(ui: &mut egui::Ui, p: &Palette, section: Kind, rail: bool) {
     if rail {
         ui.add_space(6.0);
         let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -433,60 +546,12 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, 
         ui.add_space(4.0);
         return;
     }
-    let (title, tip) = match section {
-        Kind::Private => (aurora_i18n::tr!("ui-chat-section-private"), aurora_i18n::tr!("ui-chat-new-im")),
-        Kind::Group => (
-            aurora_i18n::tr!("ui-chat-section-groups"),
-            aurora_i18n::tr!("ui-chat-new-group-chat"),
-        ),
-        Kind::Conference => (
-            aurora_i18n::tr!("ui-chat-section-conferences"),
-            aurora_i18n::tr!("ui-chat-new-conference"),
-        ),
+    let title = match section {
+        Kind::Private => aurora_i18n::tr!("ui-chat-section-private"),
+        Kind::Group => aurora_i18n::tr!("ui-chat-section-groups"),
+        Kind::Conference => aurora_i18n::tr!("ui-chat-section-conferences"),
     };
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.add_space(6.0);
-        ui.label(section_title(ui, p, title));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(4.0);
-            let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(18.0), egui::Sense::hover());
-            let resp = ui.interact(rect, control_id(&format!("section-add-{section:?}")), egui::Sense::click());
-            super::thread::paint_icon(
-                ui.painter(),
-                "plus",
-                rect.shrink(2.0),
-                if resp.hovered() { p.ink } else { p.muted_dim },
-            );
-            let resp = resp.on_hover_text(tip);
-            match section {
-                Kind::Private => {
-                    if resp.clicked() {
-                        st.start_picker(super::Start::Im);
-                    }
-                }
-                Kind::Conference => {
-                    if resp.clicked() {
-                        st.start_picker(super::Start::Conference);
-                    }
-                }
-                Kind::Group => {
-                    crate::ui::menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                        let groups = world.groups.sorted();
-                        if groups.is_empty() {
-                            crate::ui::menu::info(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-chat-no-groups"));
-                        }
-                        for g in groups {
-                            if crate::ui::menu::item(ui, p, "users-group", &g.name) {
-                                actions.push(ConvAction::StartGroupChat(g.id));
-                            }
-                        }
-                    });
-                }
-            }
-        });
-    });
-    ui.add_space(2.0);
+    plain_head(ui, p, title);
 }
 
 fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {
@@ -610,7 +675,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
 }
 
 /// The picture of an entry: a resident's with its status, a group's
-/// initials on the accent, a glyph on a tinted square.
+/// insignia, a glyph on a tinted square.
 fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
     let radius = ui.visuals().window_corner_radius;
     match icon {
@@ -620,22 +685,13 @@ fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui
                 presence::paint_dot(ui.painter(), p, rect, *status, ring);
             }
         }
-        Icon::Group(initials) => {
-            ui.painter().rect_filled(rect, radius, p.violet);
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                initials,
-                egui::FontId::proportional(12.0),
-                p.on_accent,
-            );
-        }
+        Icon::Group(insignia) => paint_group_picture(ui, p, rect, *insignia, GLYPH),
         Icon::Glyph(glyph, color) => {
             ui.painter().rect_filled(rect, radius, color.gamma_multiply(0.16));
             super::thread::paint_icon(
                 ui.painter(),
                 glyph,
-                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(17.0)),
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(GLYPH)),
                 *color,
             );
         }
@@ -809,4 +865,43 @@ pub(super) fn square_button(
         if off { p.danger } else { p.ink },
     );
     resp.on_hover_text(tip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn membership(id: Uuid, insignia: Uuid) -> aurora_net::GroupMembership {
+        aurora_net::GroupMembership {
+            id,
+            name: "Group".into(),
+            insignia,
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        }
+    }
+
+    /// A group conversation gets its group's insignia (ours, else the group
+    /// profile the viewer has), the `users-group` glyph without one.
+    #[test]
+    fn group_entry_takes_the_insignia_or_the_glyph() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (with, without, outside, unknown) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        let (picture, seen) = (Uuid::from_u128(0x10), Uuid::from_u128(0x11));
+        world.groups.groups = vec![membership(with, picture), membership(without, Uuid::nil())];
+        world.search.groups.insert(
+            outside,
+            aurora_net::search::GroupProfile {
+                id: outside,
+                insignia: seen,
+                ..Default::default()
+            },
+        );
+        assert_eq!(group_insignia(&world, &with), Some(picture));
+        assert_eq!(group_insignia(&world, &without), None, "a nil insignia: the glyph");
+        assert_eq!(group_insignia(&world, &outside), Some(seen), "a group we are not in: its profile's");
+        assert_eq!(group_insignia(&world, &unknown), None);
+    }
 }

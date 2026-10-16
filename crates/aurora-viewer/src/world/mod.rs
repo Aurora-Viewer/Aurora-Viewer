@@ -17,6 +17,7 @@ pub mod env_select;
 pub mod estate;
 pub mod experiences;
 pub mod favorites;
+pub mod flying_at_exit;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -908,6 +909,23 @@ impl World {
         self.objects.expire_corrections(now);
     }
 
+    /// A region that blocks flying lands our avatar when it arrives there or
+    /// when the region's flags change (process_agent_movement_complete and
+    /// process_region_info, indra/newview/llviewermessage.cpp): a flight
+    /// restored at login, or carried into a no-fly region, ends.
+    fn land_if_fly_blocked(&mut self, handle: RegionHandle) {
+        let blocked = Some(handle) == self.main_region
+            && self
+                .regions
+                .get(&handle)
+                .and_then(|r| r.info.as_ref())
+                .is_some_and(|i| i.region_flags & aurora_net::region_flags::BLOCK_FLY != 0);
+        if blocked && self.agent.flying {
+            log::info!("region {handle:x} blocks flying: landing");
+            self.agent.flying = false;
+        }
+    }
+
     /// LLViewerObject::interpolateLinearMotion terrain and visible-region
     /// constraints. The default Firestorm crossing fix is disabled, so known
     /// neighboring regions do not impose a separate prediction time limit.
@@ -1479,6 +1497,7 @@ impl World {
                 self.arrived_once = true;
                 self.teleporting = false;
                 self.park_far_regions();
+                self.land_if_fly_blocked(handle);
                 Some(NetEvent::AgentMovementComplete { handle, position, look_at })
             }
             NetEvent::ObjectUpdates { handle, objects } => {
@@ -2121,6 +2140,7 @@ impl World {
                         Arc::make_mut(info).region_flags = flags;
                     }
                 }
+                self.land_if_fly_blocked(handle);
                 None
             }
             NetEvent::Land(ev) => {
@@ -3836,6 +3856,42 @@ mod motion_tests {
         });
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn a_region_that_blocks_flying_lands_a_restored_flight() {
+        let (mut world, handle) = teleport_fixture();
+        let arrive = |world: &mut World| {
+            world.apply(NetEvent::AgentMovementComplete {
+                handle,
+                position: Vec3::new(128.0, 128.0, 40.0),
+                look_at: Vec3::X,
+            });
+        };
+        // the region as its handshake describes it, flying allowed
+        let mut info = crate::demo::events()
+            .into_iter()
+            .find_map(|e| match e {
+                NetEvent::RegionHandshake(info) => Some((*info).clone()),
+                _ => None,
+            })
+            .expect("demo handshake");
+        info.handle = handle;
+        world.apply(NetEvent::RegionHandshake(Arc::new(info.clone())));
+        // the flight of the last session, restored at login
+        world.agent.flying = true;
+        arrive(&mut world);
+        assert!(world.agent.flying, "flying allowed: the flight goes on");
+        let flags = info.region_flags | aurora_net::region_flags::BLOCK_FLY;
+        world.apply(NetEvent::RegionFlags {
+            handle,
+            flags,
+            max_tasks: 15_000,
+        });
+        assert!(!world.agent.flying, "the region now blocks flying: landed");
+        world.agent.flying = true;
+        arrive(&mut world);
+        assert!(!world.agent.flying, "an arrival in a no-fly region lands");
     }
 
     #[test]
