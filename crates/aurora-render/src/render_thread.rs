@@ -296,6 +296,7 @@ impl Drop for Host {
 /// The render thread's loop; returns the backend when the owner closes.
 fn run(mut backend: Backend, worker: Worker<Job, Done>) -> Backend {
     while let Some((job, idle)) = worker.next() {
+        crate::frame_priority::apply();
         let done = match job {
             Job::Frame(packet) => {
                 let t = Instant::now();

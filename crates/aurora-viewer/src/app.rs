@@ -506,6 +506,11 @@ pub struct App {
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
+    /// Geometry each region needed at its last visit: the arena grows to
+    /// it behind the loading screen.
+    geometry_needs: crate::scene::geometry_need::GeometryNeeds,
+    /// AURORA_DEMO_TURN: fast camera turns.
+    turn_demo: Option<crate::demo::turn::TurnDemo>,
     /// Detail levels of the objects around the camera, while the debug
     /// overlay shows them.
     lod_infos: Vec<crate::scene::LodInfo>,
@@ -698,6 +703,7 @@ impl App {
         net.set_object_cache_dir(Some(cache.join("objects")));
         net.set_bandwidth(bandwidth_kbps(&settings));
         let cache_root = cache.clone();
+        let geometry_needs = crate::scene::geometry_need::GeometryNeeds::load(&cache);
         let egui_ctx = egui::Context::default();
         ui::colors::set(&settings.colors);
         // before the skin's palette is built and applied
@@ -965,6 +971,8 @@ impl App {
             tex_refresh_demo: None,
             experience_demo: None,
             geometry_demo: None,
+            geometry_needs,
+            turn_demo: None,
             lod_infos: Vec::new(),
             place_groups: Default::default(),
             land_ui: Default::default(),
@@ -3596,6 +3604,34 @@ impl App {
         }
     }
 
+    /// The geometry arena's use noted for the agent's region, and the arena
+    /// grown to what the region needs while a loading or teleport screen
+    /// (`covered`) hides what that costs (scene/geometry_need.rs).
+    fn grow_geometry_ahead(&mut self, renderer: &mut Renderer, covered: bool) {
+        let Some(region) = self.world.main_region else {
+            return;
+        };
+        let geometry = &renderer.geometry;
+        let (v, i) = geometry.used();
+        let used = (v.min(u32::MAX as u64) as u32, i.min(u32::MAX as u64) as u32);
+        let capacity = geometry.capacity();
+        self.geometry_needs.note(region, used);
+        if let Some((vertices, indices)) = self.geometry_needs.wanted(region, used, capacity, covered)
+            && renderer.grow_geometry_ahead(vertices, indices)
+        {
+            log::info!(
+                "geometry arena grown ahead behind the loading screen: {} → {} vertices, {} → {} indices",
+                capacity.0,
+                renderer.geometry.capacity().0,
+                capacity.1,
+                renderer.geometry.capacity().1
+            );
+        }
+        if self.geometry_needs.unsaved() {
+            self.geometry_needs.save(false);
+        }
+    }
+
     fn request_exit(&mut self) {
         self.exit_prompt.request();
         self.down.clear();
@@ -5088,6 +5124,7 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        aurora_render::frame_priority::apply();
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
@@ -5454,6 +5491,7 @@ impl App {
             // behind a loading or teleport screen, whose frames show nothing
             let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
             self.scene.sync_budget = if covered { Duration::from_millis(8) } else { results_budget };
+            self.grow_geometry_ahead(&mut gfx.renderer, covered);
             self.scene.process_results(&mut gfx.renderer, &self.net, results_budget);
             self.frame_profile.lap(Lap::Results);
             if self.demo
@@ -7033,6 +7071,9 @@ impl App {
         if let (Some(demo), Some(g)) = (&mut self.geometry_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut g.renderer);
         }
+        if let Some(demo) = &mut self.turn_demo {
+            self.world.agent.yaw += demo.tick(self.frame_count);
+        }
         if let (Some(demo), Some(g)) = (&mut self.stream_demo, &mut self.gfx) {
             let pending = self.scene.stats.geom_pending;
             demo.tick(
@@ -7600,6 +7641,13 @@ impl App {
             // AURORA_PROBE_WALK=alt: the whole probe list walked one second in three
             if aurora_render::probes::ProbeWalk::from_env() == aurora_render::probes::ProbeWalk::Alternate {
                 let old = self.frame_profile.probe_walk_list();
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_FRAME_PRIORITY=alt: the frame's threads at normal
+            // priority one second in three
+            if aurora_render::frame_priority::PriorityMode::from_env() == aurora_render::frame_priority::PriorityMode::Alternate {
+                let old = self.sync_alt.is_multiple_of(3);
+                aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
@@ -11868,6 +11916,7 @@ impl ApplicationHandler for App {
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
+            self.turn_demo = crate::demo::turn::TurnDemo::from_env();
             if let Some(n) = crate::demo::texture_stress_count() {
                 if let Some(g) = &mut self.gfx {
                     self.scene.textures.install_demo_stress(&mut g.renderer, 0..n);

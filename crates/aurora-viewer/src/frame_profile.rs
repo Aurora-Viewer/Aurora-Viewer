@@ -696,6 +696,28 @@ fn slow_frames(frames: &[f32]) -> usize {
     frames.iter().filter(|&&f| f > median * SLOW_FACTOR).count()
 }
 
+/// The frame times of the period by whole millisecond, the empty ones left
+/// out (`ft=8:118,9:1,14:1`: 118 frames of 8 to 9 ms…; 99 holds everything
+/// from 99 ms on). Unlike `p95` and `max`, they add up over a run: its
+/// p99 and p99.9 and its frames over 10 ms come from the sum.
+fn frame_histogram(frames: &[f32]) -> String {
+    let mut counts = std::collections::BTreeMap::<u32, u32>::new();
+    for &f in frames {
+        *counts.entry((f.max(0.0) as u32).min(99)).or_default() += 1;
+    }
+    let mut out = String::new();
+    for (ms, n) in counts {
+        if !out.is_empty() {
+            out.push(',');
+        }
+        let _ = write!(out, "{ms}:{n}");
+    }
+    if out.is_empty() {
+        out.push('-');
+    }
+    out
+}
+
 /// One line: averages per frame over the period (times in ms); renderer
 /// steps prefixed with `r_`, streaming parts with `s_`, the parts of the
 /// frame parameters with `p_`, interface parts with `u_` (followed by the
@@ -714,10 +736,11 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let frame_avg = p.frame_ms.iter().sum::<f32>() / n;
     let max = p.frame_ms.iter().copied().fold(0.0f32, f32::max);
     let mut out = format!(
-        "fps={:.1} frame={frame_avg:.2} p95={:.2} max={max:.2} slow={} |",
+        "fps={:.1} frame={frame_avg:.2} p95={:.2} max={max:.2} slow={} ft={} |",
         p.frames as f32 / elapsed.as_secs_f32().max(1e-3),
         p95(&p.frame_ms),
-        slow_frames(&p.frame_ms)
+        slow_frames(&p.frame_ms),
+        frame_histogram(&p.frame_ms)
     );
     for (lap, ms) in Lap::ALL.iter().zip(p.laps) {
         let _ = write!(out, " {}={:.2}", lap.key(), avg(ms));
@@ -1141,6 +1164,14 @@ mod tests {
         assert_eq!(slow_frames(&v), 2);
         assert_eq!(slow_frames(&[6.4; 10]), 0);
         assert_eq!(slow_frames(&[]), 0);
+    }
+
+    #[test]
+    fn frame_histogram_counts_by_whole_millisecond() {
+        let mut v = vec![8.3; 118];
+        v.extend([9.99, 14.2, 250.0, 120.0]);
+        assert_eq!(frame_histogram(&v), "8:118,9:1,14:1,99:2");
+        assert_eq!(frame_histogram(&[]), "-");
     }
 
     #[test]
