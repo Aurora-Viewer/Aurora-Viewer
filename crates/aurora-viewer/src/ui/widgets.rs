@@ -34,6 +34,13 @@ pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,
 };
 
+/// Whether UI owns a world-pointer event at `pos` (logical points). Resize
+/// grips consume the press outside their window too, as LLResizeHandle and
+/// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
+pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+}
+
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
@@ -136,9 +143,42 @@ fn title_in_reach(
     (asked.is_some() || kept != pos).then_some(kept)
 }
 
+/// Two compact increment buttons beside numeric fields (LLSpinCtrl).
+/// Uses theme faces and Tabler glyphs, and inherits disabled state.
+pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
+    let mut step = 0;
+    ui.allocate_ui_with_layout(Vec2::new(13.0, height), egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.set_max_width(13.0);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for (direction, name, label) in [
+            (1, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
+            (-1, "caret-down-filled", aurora_i18n::tr!("numeric-decrease")),
+        ] {
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::click());
+            let visuals = ui.style().interact(&response);
+            ui.painter().rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
+            if let Some(icon) = super::icons::global(name) {
+                ui.painter().image(
+                    icon.id(),
+                    egui::Rect::from_center_size(rect.center(), Vec2::splat(9.0)),
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    visuals.fg_stroke.color,
+                );
+            }
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+            if response.on_hover_text(label).clicked() {
+                step = direction;
+            }
+        }
+    });
+    step
+}
+
 pub struct Floater<'a> {
     pub id: &'a str,
     pub title: String,
+    /// Optional compact state row within the title bar: glyph, label, theme role.
+    pub header_status: Vec<(&'static str, String, Color32)>,
     pub default_pos: egui::Pos2,
     pub default_size: Vec2,
     pub min_size: Vec2,
@@ -175,6 +215,7 @@ impl<'a> Floater<'a> {
         Floater {
             id,
             title: title.into(),
+            header_status: Vec::new(),
             default_pos: pos,
             default_size: size,
             min_size: Vec2::new(220.0, 120.0),
@@ -462,7 +503,7 @@ impl<'a> Floater<'a> {
                 if framed_header.is_some() {
                     ui.spacing_mut().interact_size.y = 20.0;
                 }
-                ui.horizontal(|ui| {
+                let title_row = ui.horizontal(|ui| {
                     ui.set_min_height(if framed_header.is_some() { 20.0 } else { 28.0 });
                     let title = RichText::new(&self.title).size(14.0).strong().color(p.ink);
                     // a fixed floater is as wide as its title; a resizable one
@@ -515,7 +556,20 @@ impl<'a> Floater<'a> {
                             });
                         }
                     });
-                })
+                });
+                if !self.header_status.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
+                        for (name, label, color) in &self.header_status {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 3.0;
+                                glyph(ui, name, *color, 11.0);
+                                ui.label(RichText::new(label).size(9.0).color(*color));
+                            });
+                        }
+                    });
+                }
+                title_row
             };
             let flush = self.flush_body;
             let header = if flush {

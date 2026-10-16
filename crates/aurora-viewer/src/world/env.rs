@@ -55,8 +55,33 @@ fn exp3(v: Vec3) -> Vec3 {
     Vec3::new(v.x.exp(), v.y.exp(), v.z.exp())
 }
 
-/// Local time of day presets (Firestorm World > Environment):
-/// 1 sunrise, 2 noon, 3 sunset, 4 midnight (sun below the horizon, moon up).
+/// Number of local time of day presets (`Panels::time_of_day` 1..=5).
+pub const TIME_OF_DAY_PRESETS: u8 = 5;
+
+/// The presets in the order of the Legacy Viewer's World > Environment menu
+/// (Sunrise, Midday, Midday (Legacy), Sunset, Midnight); their numbers stay
+/// those saved in the settings.
+pub const TIME_OF_DAY_ORDER: [u8; 5] = [1, 2, 5, 3, 4];
+
+/// The library sky of a time of day preset (LLEnvironment::KNOWN_SKY_*,
+/// llenvironment.cpp), which World > Environment applies with
+/// setManualEnvironment(ENV_LOCAL, KNOWN_SKY_*): 1 sunrise, 2 midday,
+/// 3 sunset, 4 midnight, 5 the legacy midday.
+pub fn time_of_day_sky(preset: u8) -> Option<uuid::Uuid> {
+    let id = match preset {
+        1 => 0x01e41537_ff51_2f1f_8ef7_17e4df760bfb,
+        2 => 0xc46226b4_0e43_5a56_9708_d27ca1df3292,
+        3 => 0x084e26cd_a900_28e8_08d0_64a9de5c15e2,
+        4 => 0x8a01b97a_cb20_c1ea_ac63_f7ea84ad0090,
+        5 => 0x6c83e853_e7f8_cad7_8ee6_5f31c453721c,
+        _ => return None,
+    };
+    Some(uuid::Uuid::from_u128(id))
+}
+
+/// Sun of a time of day preset for the built-in sky shown when its library
+/// sky cannot be fetched (and in the offline demo): 1 sunrise, 2 and 5
+/// noon, 3 sunset, 4 midnight (sun below the horizon, moon up).
 pub fn time_of_day_sun(preset: u8) -> Vec3 {
     match preset {
         1 => Vec3::new(1.0, 0.15, 0.08).normalize(),

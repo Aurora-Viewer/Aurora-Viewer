@@ -254,15 +254,16 @@ impl BuildTool {
                 Original::Diffuse(_) => {}
                 Original::Legacy(original) => {
                     let current = self.face_legacy(env, world, idx, saved.face, &te);
-                    let mut material = current.clone().unwrap_or_default();
-                    let old = original.clone().unwrap_or_default();
+                    let default = super::texture::default_legacy(env, &te);
+                    let mut material = current.clone().unwrap_or_else(|| default.clone());
+                    let old = original.clone().unwrap_or_else(|| default.clone());
                     if session.target == PickTarget::Normal {
                         material.normal_map = old.normal_map;
                     } else {
                         material.specular_map = old.specular_map;
                     }
                     // Remove a preview-created material, keeping unrelated edits.
-                    let material = if original.is_none() && material == LegacyMaterial::default() {
+                    let material = if original.is_none() && material == default {
                         None
                     } else {
                         Some(material)
@@ -353,6 +354,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         tool.ui.texture_edit = Some(Session::capture(tool, world, env, target));
     }
     tool.ui.picker.allow_local = matches!(tool.ui.pick_target, Some(PickTarget::Diffuse | PickTarget::PbrMaterial));
+    tool.ui.picker.prepare_material_preview(ctx, env.scene);
     let accepted = tool.ui.picker.show(ctx, p, world, env.images);
     if let Some(id) = accepted {
         tool.preview_texture(world, env, id);
@@ -508,6 +510,8 @@ mod tests {
             for i in 0..10 {
                 positions = frame(&ctx, tool, world, env, i as f64 / 60.0, vec![]);
             }
+            click(&ctx, tool, world, env, 0.5, positions[aurora_i18n::tr!("picker-local-tab")]);
+            positions = frame(&ctx, tool, world, env, 0.75, vec![]);
             tool.out.clear();
             click(&ctx, tool, world, env, 1.0, positions["Local fixture"]);
             assert!(tool.ui.picker.open);
@@ -684,6 +688,16 @@ mod tests {
             tool.cancel_texture_picker(world, env);
             let o = world.objects.get(idx).unwrap();
             assert!(tool.face_legacy(env, world, idx, 0, &o.te.as_ref().unwrap().faces[0]).is_none());
+            open(tool, world, env, PickTarget::Specular);
+            tool.preview_texture(world, env, Uuid::from_u128(905));
+            for pending in tool.ui.legacy_pending.values_mut() {
+                pending.1.as_mut().unwrap().normal_st[0] = 2.5;
+            }
+            tool.cancel_texture_picker(world, env);
+            let o = world.objects.get(idx).unwrap();
+            let material = tool.face_legacy(env, world, idx, 0, &o.te.as_ref().unwrap().faces[0]).unwrap();
+            assert!(material.normal_map.is_nil() && material.specular_map.is_nil());
+            assert_eq!(material.normal_st[0], 2.5);
         });
     }
 

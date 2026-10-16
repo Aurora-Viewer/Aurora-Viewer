@@ -1457,10 +1457,10 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let mut changed = false;
                         egui::ComboBox::from_id_salt("tod")
                             .width(SLIDER_W)
-                            .selected_text(names[s.time_of_day.min(4) as usize])
+                            .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
                             .show_ui(ui, |ui| {
-                                for (i, n) in names.iter().enumerate() {
-                                    changed |= ui.selectable_value(&mut s.time_of_day, i as u8, *n).changed();
+                                for i in std::iter::once(0).chain(crate::world::env::TIME_OF_DAY_ORDER) {
+                                    changed |= ui.selectable_value(&mut s.time_of_day, i, names[i as usize]).changed();
                                 }
                             });
                         changed

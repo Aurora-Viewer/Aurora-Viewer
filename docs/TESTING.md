@@ -81,7 +81,7 @@ viewer's process closes. For a test with human intervention, keep the title
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
-| `AURORA_DEMO_TOD=0..4` | Time of day |
+| `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
@@ -704,18 +704,26 @@ the two selected faces, materials unchanged after the fade.
 
 `faces-picker,object:99620` selects a face at 625 and opens its texture
 picker at 635, with a very long name in a "Project textures" subfolder.
-Capture at 660 then 960: the window keeps its initial width of 530 points,
-without growing on its own. The list keeps the folders, the names are
-truncated and their tooltip shows the whole text. The splitter adjusts the
-room given to the names, the preview stays bounded and the controls are
-grouped at the bottom. The collapsible "Local files" folder comes before the
-inventory in the diffuse texture and PBR material pickers. It lists the
+Capture at 660 then 960: the 320 × 720-point picker (limited to the work area) stays bounded without
+growing on its own. The selected preview sits above Inventory/Local/Aurora
+Library tabs and a virtual folder list. Rows use texture/material icons;
+only the selected resource requests a preview. Folder roots can be closed
+and stay closed across inventory updates. Presets form two rows beneath the
+list (Default/Blank, Transparent/None), followed by a BOM selector for textures
+and the validated, vertically centered UUID. BOM shows its placeholder until
+selected, then the bake's name; it applies the canonical magic UUID. Local contains the collapsible
+"Local files" folder in diffuse texture and PBR material pickers. It lists the
 local previews already loaded, textures or materials depending on the choice
 requested, and follows the search filter. A click applies the local preview;
 "OK" keeps it, "Cancel" restores it. To show the synthetic local files,
 combine this scenario with `AURORA_DEMO_IMPORTS=local`.
 `faces-picker-material,object:99620` opens the same picker for a PBR
-material: only the local material must be listed. These files appear without
+material, with the demo's tiled PBR material selected: the preview is a GPU-rendered
+sphere with the material's maps, while list rows remain icons. Drag the sphere
+with the left mouse button to orbit it without moving the picker or changing
+the selected material; use the wheel to zoom and double-click to reset the view.
+Only local materials
+must be listed in Local. These files appear without
 having been applied to an object beforehand. The import window closes when
 the picker opens to clear the view.
 
@@ -908,9 +916,17 @@ release; the camera must then be stopped. Combine with
 this variable to check the initial focus on the avatar. The HUDs and enabled
 following keep their behaviour.
 
-**`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|media]|contents`**
+**`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script (General separates object information from Rights); `+weights`, `+grid`, `+media`, `+permissions`
 also open these windows.
+
+Use `faces-ready,object:99620` with `texture:bp-normal` or `texture:bp-specular`
+to inspect and edit UV transforms before assigning either map. Assign a map
+afterwards: its prepared scale, offset and rotation must remain. In every
+edit section, three coordinate icons beside Edit linked parts select World /
+Local / Reference directly, with exactly one highlighted. Choosing Reference
+uses the selection when no grid reference exists; switching sections and
+clicking the active icon retain the mode.
 
 Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
 section to open a task item in the same properties panel as agent inventory
@@ -4680,3 +4696,13 @@ AO interface integration validation (2026-10-16): scripts and formatting pass; C
 Human acceptance (2026-10-16): the maintainer approved the integrated AO interface and requested merging the bridge/AO branch. This approval does not add automated or observed grid coverage beyond the cases documented above. The movement helpers remain explicitly EXPERIMENTAL; simulator-specific animation transitions, manual migration and persisted group editing remain follow-up checks.
 
 Merge validation after main integration (2026-10-16, PR #493): PowerShell parsing, formatting and workspace/all-target Clippy pass; the full unfiltered workspace test run reports 3,210 passed, zero failures and 24 ignored. The previously excluded transparent-mesh GPU test now passes on this combined source. Bridge reception preserves the original datagram timestamp, with a buffered-motion regression; the toolbar catalogue lists each new feature once and retains the legacy move_lock alias. Shortcut coverage preserves the newer Ctrl+Space library binding when jump is rebound to Space. Object-menu regression expectations now recognize bridge script information as available. Public protocol capability names have two narrow, explained Gitleaks annotations. LSL lint reports zero errors/warnings; deterministic actual-source evaluations retain 15 quiet-discovery cases, 81 run cases, 50 passage cases and water/surface-return ownership and bounds checks; these are not Havok simulations.
+
+Construction inspector proposal (2026-10-16): use the General, Transform,
+Materials and Create demos to inspect title permission states, numeric step
+buttons, inline material options, shared rez-under-land-group, and the vertical
+coordinate column. On the grid, the human checks both picker resource types,
+all three sources, collapse/reopen, UUID acceptance/rejection and cancellation.
+Link two independent objects and wait for simulator confirmation: one root,
+child-colored outlines, one whole-object selection and consistent bounds.
+Compare linked-prim navigation with script-side link numbers, especially for
+pre-existing linksets; UDP ObjectUpdate carries ParentID but no link number.

@@ -15,6 +15,7 @@ pub(super) struct Tree {
     pub state: view::TreeState,
     known_generation: Option<u64>,
     known_folders: HashSet<Uuid>,
+    initialized_roots: HashSet<Uuid>,
     reveal: Option<Uuid>,
     reveal_generation: Option<u64>,
     scan_generation: Option<u64>,
@@ -29,7 +30,12 @@ impl Tree {
         self.scan_generation = None;
     }
 
+    #[cfg(test)]
     pub fn prepare(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str) {
+        self.prepare_root(inv, agent, materials, query, inv.root);
+    }
+
+    pub fn prepare_root(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str, root: Uuid) {
         self.fetch(inv);
         let prefs = InventoryPreferences {
             sort: view::Sort {
@@ -47,7 +53,7 @@ impl Tree {
             ..Default::default()
         };
         self.view
-            .search(inv, inv.root, query, &prefs, &filters, 0, None, &Facts::default(), agent, 0);
+            .search(inv, root, query, &prefs, &filters, 0, None, &Facts::default(), agent, 0);
         if self.known_generation != Some(inv.generation) {
             // The initial tree opens the selected texture's ancestors only.
             // Search has separate expansion state so clearing it restores
@@ -57,7 +63,9 @@ impl Tree {
             self.known_folders.extend(inv.folders.keys().copied());
             self.known_generation = Some(inv.generation);
         }
-        self.state.expand_folder(inv.root, 0);
+        if self.initialized_roots.insert(root) {
+            self.state.expand_folder(root, 0);
+        }
         if let Some(asset) = self.reveal
             && self.reveal_generation != Some(inv.generation)
         {
@@ -78,8 +86,7 @@ impl Tree {
                 self.reveal = None;
             }
         }
-        self.state
-            .prepare(&self.view, inv.root, usize::from(!query.trim().is_empty()), true);
+        self.state.prepare(&self.view, root, usize::from(!query.trim().is_empty()), true);
     }
 
     fn fetch(&mut self, inv: &mut Inventory) {
@@ -229,6 +236,23 @@ mod tests {
         tree.prepare(&mut inv, id(99), true, "");
         assert!(rows(&tree).contains(&id(5)));
         assert!(!rows(&tree).contains(&id(15)));
+    }
+
+    #[test]
+    fn inventory_root_stays_collapsed_across_frames_and_inventory_updates() {
+        let mut inv = fixture();
+        let mut tree = Tree::default();
+        tree.opened(id(110));
+        tree.prepare(&mut inv, id(99), false, "");
+        tree.state.toggle(inv.root, 0);
+        for _ in 0..3 {
+            tree.prepare(&mut inv, id(99), false, "");
+            assert_eq!(rows(&tree), vec![inv.root]);
+            inv.generation += 1;
+        }
+        tree.state.toggle(inv.root, 0);
+        tree.prepare(&mut inv, id(99), false, "");
+        assert!(rows(&tree).contains(&id(10)));
     }
 
     #[test]

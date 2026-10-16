@@ -108,7 +108,7 @@ fn a_worn_object_moves_without_the_modify_right_but_its_parts_need_it() {
     tool.set_transform(&mut world, &s, Some(Vec3::new(0.0, 0.1, 0.2)), None, None, true);
     assert_eq!(world.objects.get(child).unwrap().position, before);
     assert!(tool.out.is_empty());
-    world.objects.get_mut(child).unwrap().update_flags |= OBJECT_MODIFY;
+    world.objects.get_mut(root).unwrap().update_flags |= OBJECT_MODIFY;
     tool.set_transform(&mut world, &s, Some(Vec3::new(0.0, 0.1, 0.2)), None, None, true);
     assert!(
         world

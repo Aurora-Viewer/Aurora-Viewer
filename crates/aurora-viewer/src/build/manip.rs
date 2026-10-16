@@ -338,6 +338,10 @@ impl Manip {
         out: &mut Vec<BuildCmd>,
     ) {
         if let Some(mut d) = self.drag.take() {
+            if !d.movers.iter().all(|m| super::can_transform(world, m.idx, d.linked, d.mode)) {
+                self.hover = None;
+                return;
+            }
             // Following the object must not feed camera motion back into a
             // held cursor, continuously moving/stretching it without input.
             let drag_cam = if s.follow_edit_object && cam.hud.is_none() {
@@ -350,7 +354,7 @@ impl Manip {
             self.drag = Some(d);
             return;
         }
-        self.hover = if over_ui || sel.is_empty() {
+        self.hover = if over_ui || !can_transform_selection(world, sel, linked, mode) {
             None
         } else {
             frame(world, s, sel, linked, now, self.grid_ref.as_ref()).and_then(|f| self.pick(cam, &f, mode, cursor))
@@ -372,6 +376,9 @@ impl Manip {
         cursor: (f32, f32),
         now: Instant,
     ) -> bool {
+        if !can_transform_selection(world, sel, linked, mode) {
+            return false;
+        }
         let Some(f) = frame(world, s, sel, linked, now, self.grid_ref.as_ref()) else {
             return false;
         };
@@ -487,7 +494,7 @@ impl Manip {
         let Some(d) = self.drag.take() else {
             return;
         };
-        if !d.started || !d.changed {
+        if !d.started || !d.changed || !d.movers.iter().all(|m| super::can_transform(world, m.idx, d.linked, d.mode)) {
             return;
         }
         let _ = s;
@@ -498,7 +505,7 @@ impl Manip {
 
     #[allow(clippy::too_many_arguments)]
     pub fn draw(&self, p: &mut Painter3d, world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, mode: EditMode, now: Instant) {
-        if !mode.is_manip() {
+        if !mode.is_manip() || !can_transform_selection(world, sel, linked, mode) {
             return;
         }
         let Some(mut f) = frame(world, s, sel, linked, now, self.grid_ref.as_ref()) else {
@@ -1115,6 +1122,16 @@ fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
 
 // ---- dragging
 
+fn can_transform_selection(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode) -> bool {
+    !sel.is_empty()
+        && sel.iter().all(|key| {
+            world
+                .objects
+                .index_of(key)
+                .is_some_and(|idx| super::can_transform(world, idx, linked, mode))
+        })
+}
+
 fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now: Instant) -> Vec<Mover> {
     let prims: Vec<usize> = sel.iter().filter_map(|k| world.objects.index_of(k)).collect();
     let selected: std::collections::HashSet<usize> = prims.iter().copied().collect();
@@ -1123,14 +1140,8 @@ fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now:
         let (Some(o), Some((pos, rot, _))) = (world.objects.get(idx), Scene::object_transform(world, idx, now, 0)) else {
             continue;
         };
-        // what we wear moves without the modify right (FLAGS_OBJECT_MOVE)
-        if super::select_type(world, idx) != super::SelectType::World {
-            let flags = world.objects.get(super::root_of(world, idx)).map_or(0, |o| o.update_flags);
-            if flags & crate::ui::context::flags::OBJECT_MOVE == 0
-                || ((linked || mode == EditMode::Stretch) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
-            {
-                continue;
-            }
+        if !super::can_transform(world, idx, linked, mode) {
+            continue;
         }
         let Some(region_off) = world.region_offset(o.key.region) else {
             continue;
@@ -1664,6 +1675,85 @@ fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn world_drag_refuses_denied_or_mixed_selection_and_rechecks_revoked_permissions() {
+        use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+        let mut world = hud_world();
+        for event in crate::demo::face_selection_events(false) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99620)).unwrap();
+        let other = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
+        let key = world.objects.get(idx).unwrap().key;
+        let other_key = world.objects.get(other).unwrap().key;
+        let now = Instant::now();
+        let settings = BuildSettings {
+            snap: false,
+            ..Default::default()
+        };
+        let bounds = bounds_of(&world, &[key], false, now).unwrap();
+        let center = bounds.center;
+        let eye = center + Vec3::new(4.0, -6.0, 3.0);
+        let fov = 60f32.to_radians();
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+        let cam = Cam::new(
+            eye,
+            center,
+            projection * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z),
+            fov,
+            1280.0,
+            720.0,
+            1.0,
+        );
+        let start = cam.project_px(center + Vec3::X * cam.meters_for_pixels(center, 45.0)).unwrap();
+        let mut manip = Manip::default();
+        let mut out = Vec::new();
+        let before = world.objects.get(idx).unwrap().position;
+        for flags in [0, OBJECT_MODIFY] {
+            world.objects.get_mut(idx).unwrap().update_flags = flags;
+            manip.update(
+                &mut world,
+                &settings,
+                &cam,
+                &[key],
+                false,
+                EditMode::Move,
+                start,
+                false,
+                Mods::default(),
+                now,
+                &mut out,
+            );
+            assert!(manip.hover.is_none());
+            assert!(!manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Move, start, now));
+        }
+        // Shared editing rights are effective even when the owner is someone else.
+        world.objects.get_mut(idx).unwrap().update_flags = OBJECT_MOVE;
+        world.objects.get_mut(idx).unwrap().owner_id = uuid::Uuid::new_v4();
+        world.objects.get_mut(other).unwrap().update_flags = 0;
+        assert!(!manip.try_grab(&mut world, &settings, &cam, &[key, other_key], false, EditMode::Move, start, now));
+        assert!(!manip.try_grab(&mut world, &settings, &cam, &[key], true, EditMode::Move, start, now));
+        assert!(manip.try_grab(&mut world, &settings, &cam, &[key], false, EditMode::Move, start, now));
+        world.objects.get_mut(idx).unwrap().update_flags = 0;
+        manip.update(
+            &mut world,
+            &settings,
+            &cam,
+            &[key],
+            false,
+            EditMode::Move,
+            (start.0 + 50.0, start.1),
+            false,
+            Mods::default(),
+            now,
+            &mut out,
+        );
+        manip.release(&mut world, &settings, false, &mut out);
+        assert!(manip.drag.is_none());
+        assert_eq!(world.objects.get(idx).unwrap().position, before);
+        assert!(out.is_empty());
+    }
 
     #[test]
     fn snap_axis_choice_avoids_view_direction() {
