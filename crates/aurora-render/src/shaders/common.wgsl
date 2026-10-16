@@ -64,7 +64,7 @@ struct Frame {
     sky_moon: vec4<f32>,        // moon dir, moon scale
     sky_misc: vec4<f32>,        // dome offset, dome radius, moon brightness, star brightness
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
-    sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier
+    sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
     sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
@@ -1126,7 +1126,9 @@ fn mirror_weight(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     return smoothstep(0.8, 0.95, dot(n, frame.mirror_plane.xyz));
 }
 
-fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v: vec3<f32>,
+// `mat_ao`: the material's own occlusion (ORM red), which pbrIbl applies to
+// the image based diffuse and specular alike (deferredUtil.glsl).
+fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: vec3<f32>, v: vec3<f32>,
              world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>) -> vec3<f32> {
     let roughness = clamp(roughness_in, 0.04, 1.0);
     let a = roughness * roughness;
@@ -1196,14 +1198,14 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v:
             occl = ao;
         }
     }
-    col += diffuse_color * amb * ao;
+    col += diffuse_color * amb * ao * mat_ao;
     let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
     if (mw > 0.0) {
         let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
         env = mix(env, m, mw);
         occl = mix(occl, 1.0, mw);
     }
-    col += env * env_brdf(f0, roughness, nv) * occl;
+    col += env * env_brdf(f0, roughness, nv) * occl * mat_ao;
     return col;
 }
 
@@ -1732,7 +1734,7 @@ fn ll_pbr_diffuse_color(base: vec3<f32>, metallic: f32) -> vec3<f32> {
 // recombined like Blinn-Phong ones, plus the image based specular (pbrIbl),
 // before softenLightF's final_scale. The local lights are separate
 // (ll_classic_pbr_local), as LL adds them in another pass.
-fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
+fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
     let roughness = clamp(roughness_in, 0.04, 1.0);
     let ra = roughness * roughness;
     let f0 = mix(vec3<f32>(0.04), base, metallic);
@@ -1769,8 +1771,9 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, n: vec3<f32
         env = mix(env, m, mw);
     }
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
-    // SSAO darkens the irradiance alone (adjustIrradiance)
-    col += env * env_brdf(f0, roughness, nv);
+    // SSAO darkens the irradiance alone (adjustIrradiance). The classic
+    // ambient (finalAmbient) does not take that occlusion.
+    col += env * env_brdf(f0, roughness, nv) * mat_ao;
     return col;
 }
 

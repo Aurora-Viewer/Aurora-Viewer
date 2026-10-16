@@ -441,6 +441,10 @@ struct Material {
     unlit: f32,
     // ambient occlusion of the normal map's relief (normal_map_occlusion)
     occlusion: f32,
+    // PBR: the material's own occlusion, the red of its packed
+    // occlusion-roughness-metal map (softenLightF.glsl: ao = orm.r), 1 for
+    // any other face
+    ao: f32,
 };
 
 fn eval_material(in: VsOut, front: bool) -> Material {
@@ -469,6 +473,9 @@ fn eval_material(in: VsOut, front: bool) -> Material {
     // glTF: G = roughness, B = metallic
     m.metallic = clamp(rec.params.y * mr_s.b, 0.0, 1.0);
     m.roughness = clamp(rec.params.z * mr_s.g, 0.03, 1.0);
+    // a PBR face without a metallic-roughness map reads the white texture:
+    // no occlusion. AURORA_PBR_OCCLUSION=0 (sky_ll.z = 0) leaves it out.
+    m.ao = select(1.0, mr_s.r, (rec.flags.x & FLAG_PBR) != 0u && frame.sky_ll.z > 0.5);
     // TE glow is not emissive: it only feeds the glow pass (fs_glow)
     m.emissive = rec.emissive.rgb * srgb_to_linear(em_s.rgb);
     m.legacy_spec = vec4<f32>(0.0);
@@ -668,7 +675,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
         if ((rec.flags.x & FLAG_PBR) != 0u) {
-            col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy, a);
+            col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, a);
             col = (col + m.emissive) * ll_final_scale()
                 + ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
@@ -682,7 +689,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         let sh = max(shadow_factor(in.world_pos, m.n, in.view_depth), m.unlit);
-        col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
+        col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
                                frame.sun_color.rgb / PI, 1.0 / PI)
