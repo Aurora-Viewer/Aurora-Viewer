@@ -285,7 +285,7 @@ impl Inspector {
 }
 
 #[test]
-fn coordinate_menu_is_available_beside_linked_parts_in_every_edit_section() {
+fn coordinate_icons_select_one_mode_beside_linked_parts_in_every_edit_section() {
     let mut inspector = Inspector::new();
     let click = |inspector: &mut Inspector, point| {
         inspector.show(vec![egui::Event::PointerMoved(point)]);
@@ -303,18 +303,14 @@ fn coordinate_menu_is_available_beside_linked_parts_in_every_edit_section() {
         for _ in 0..3 {
             inspector.show(vec![]);
         }
-        for (mode, label) in [
-            (1, aurora_i18n::tr!("build-compact-local")),
-            (2, aurora_i18n::tr!("build-compact-reference")),
-            (0, aurora_i18n::tr!("build-compact-world")),
-        ] {
+        for mode in [1, 2, 0] {
             let (rect, texts) = inspector.show(vec![]);
             let linked = texts
                 .iter()
                 .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
                 .unwrap()
                 .1;
-            let point = egui::pos2(rect.right() - 19.0, linked.center().y);
+            let point = egui::pos2(rect.right() - 24.0 - (2 - mode) as f32 * 35.0, linked.center().y);
             let face = texts
                 .iter()
                 .find(|(text, _)| text == aurora_i18n::tr!("build-compact-select-face"))
@@ -322,29 +318,19 @@ fn coordinate_menu_is_available_beside_linked_parts_in_every_edit_section() {
                 .1;
             assert!(
                 face.top() > linked.bottom(),
-                "Face selection must leave room for the coordinate icon"
+                "Face selection must leave room for the coordinate icons"
             );
-            assert!(linked.right() < point.x - 11.0, "Linked editing overlaps the coordinate icon");
+            assert!(
+                linked.right() < rect.right() - 110.0,
+                "Linked editing overlaps the coordinate icons"
+            );
             click(&mut inspector, point);
-            let (_, texts) = inspector.show(vec![]);
-            for choice in [
-                aurora_i18n::tr!("build-compact-world"),
-                aurora_i18n::tr!("build-compact-local"),
-                aurora_i18n::tr!("build-compact-reference"),
-            ] {
-                assert!(
-                    texts.iter().any(|(text, _)| text == choice),
-                    "Missing coordinate choice in section {section}"
-                );
-            }
-            let item = texts.iter().find(|(text, _)| text == label).unwrap().1;
-            click(&mut inspector, item.center());
-            assert_eq!(inspector.settings.grid_mode, mode);
+            assert_eq!(inspector.settings.grid_mode, mode, "Coordinate icon in section {section}");
             if mode == 2 {
                 assert_eq!(inspector.tool.grid_objects, inspector.tool.selection);
             }
-            let (_, texts) = inspector.show(vec![]);
-            assert!(!texts.iter().any(|(text, _)| text == label), "Coordinate menu did not close");
+            click(&mut inspector, point);
+            assert_eq!(inspector.settings.grid_mode, mode, "Clicking the active mode must keep it selected");
         }
     }
 }

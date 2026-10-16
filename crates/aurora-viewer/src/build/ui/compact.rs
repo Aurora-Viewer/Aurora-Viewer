@@ -4,7 +4,7 @@
 use super::{Env, common, contents, features, general, object, replace, texture, tools};
 use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool};
 use crate::theme::Palette;
-use crate::ui::{icons, menu};
+use crate::ui::icons;
 use crate::world::World;
 use egui::{RichText, Stroke, Vec2};
 use glam::Vec3;
@@ -267,33 +267,39 @@ fn rail_button(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, active: 
     response.on_hover_text(title).clicked()
 }
 
-fn grid_mode_button(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
+fn grid_mode_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
     let choices = [
         (0u8, "world-filled", aurora_i18n::tr!("build-compact-world")),
         (1, "box", aurora_i18n::tr!("build-compact-local")),
         (2, "focus-centered", aurora_i18n::tr!("build-compact-reference")),
     ];
-    let (_, icon, label) = choices.iter().find(|(mode, _, _)| *mode == s.grid_mode).unwrap_or(&choices[0]);
-    let title = aurora_i18n::tr!("build-compact-grid-mode", mode = *label);
-    let response = crate::ui::widgets::action_button(ui, p, "", "", crate::ui::widgets::ActionKind::Flat, Vec2::new(32.0, 28.0));
-    glyph(
-        ui,
-        egui::Rect::from_center_size(response.rect.center(), Vec2::splat(22.0)),
-        icon,
-        p.ink,
-    );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
-    let response = response.on_hover_text(title);
-    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-        for (mode, icon, label) in choices {
-            if menu::check(ui, p, icon, label, s.grid_mode == mode, true) {
-                s.grid_mode = mode;
-                if mode == 2 && tool.grid_objects.is_empty() {
-                    tool.use_selection_for_grid(world, s);
-                }
+    ui.spacing_mut().item_spacing.x = 3.0;
+    // The parent lays out right to left; keep World / Local / Reference visible in that order.
+    for (mode, icon, label) in choices.into_iter().rev() {
+        let active = s.grid_mode == mode;
+        let kind = if active {
+            crate::ui::widgets::ActionKind::Primary
+        } else {
+            crate::ui::widgets::ActionKind::Flat
+        };
+        let response = crate::ui::widgets::action_button(ui, p, "", "", kind, Vec2::new(32.0, 28.0));
+        glyph(
+            ui,
+            egui::Rect::from_center_size(response.rect.center(), Vec2::splat(22.0)),
+            icon,
+            if active { p.on_accent } else { p.muted },
+        );
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, label));
+        if response
+            .on_hover_text(aurora_i18n::tr!("build-compact-grid-mode", mode = label))
+            .clicked()
+        {
+            s.grid_mode = mode;
+            if mode == 2 && tool.grid_objects.is_empty() {
+                tool.use_selection_for_grid(world, s);
             }
         }
-    });
+    }
 }
 
 fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
@@ -317,7 +323,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                 tool.set_edit_linked(world, s, linked);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                grid_mode_button(ui, p, tool, world, s);
+                grid_mode_buttons(ui, p, tool, world, s);
             });
         });
         ui.horizontal(|ui| {

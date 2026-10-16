@@ -915,9 +915,10 @@ also open these windows.
 Use `faces-ready,object:99620` with `texture:bp-normal` or `texture:bp-specular`
 to inspect and edit UV transforms before assigning either map. Assign a map
 afterwards: its prepared scale, offset and rotation must remain. In every
-edit section, the coordinate icon beside Edit linked parts opens the World /
-Local / Reference menu; choosing Reference uses the selection when no grid
-reference exists, and switching sections retains the mode.
+edit section, three coordinate icons beside Edit linked parts select World /
+Local / Reference directly, with exactly one highlighted. Choosing Reference
+uses the selection when no grid reference exists; switching sections and
+clicking the active icon retain the mode.
 
 Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
 section to open a task item in the same properties panel as agent inventory
