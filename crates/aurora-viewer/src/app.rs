@@ -11528,7 +11528,7 @@ impl ApplicationHandler for App {
                     } else {
                         self.inventory_ui.demo_menu = Some(id);
                     }
-                } else if !configured_view {
+                } else if !configured_view && crate::world::inventory::demo::big().is_none() {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in
