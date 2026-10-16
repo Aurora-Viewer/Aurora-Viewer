@@ -143,6 +143,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
             ui,
             p,
             pics,
+            images,
             world,
             st,
             actions,
@@ -176,7 +177,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
                 });
                 return;
             }
-            pane(ui, p, icons, emoji, pics, gestures, world, st, actions, compact, rail, h);
+            pane(ui, p, icons, emoji, pics, images, gestures, world, st, actions, compact, rail, h);
         });
     });
 }
@@ -213,6 +214,7 @@ fn pane(
     icons: &crate::ui::icons::Icons,
     emoji: &mut crate::ui::emoji::Emoji,
     pics: &HashMap<Uuid, egui::TextureHandle>,
+    images: &HashMap<Uuid, egui::TextureHandle>,
     gestures: &crate::gestures::Manager,
     world: &mut World,
     st: &mut ChatUi,
@@ -246,7 +248,7 @@ fn pane(
     );
     {
         let w: &World = world;
-        head::show(ui, p, pics, w, st, actions, members_room);
+        head::show(ui, p, pics, images, w, st, actions, members_room);
         stage::show(ui, p, pics, w, st, actions);
     }
     // the filter field, while the filter is on (the "…" menu)

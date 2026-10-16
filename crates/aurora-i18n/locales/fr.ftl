@@ -4258,6 +4258,7 @@ demo-aurora-group-5 = je prends les lumières 💡
 demo-aurora-mention = Hey { $name }, tu passes au build ce soir ?
 demo-aurora-loup = du coup, il y a moyen de le faire ressembler à la maquette ?
 demo-aurora-tess = je file, à plus tard
+demo-aurora-wolves = Rando au lever de lune samedi, qui vient ? 🌕
 demo-aurora-local-shout = regardez le ciel vers la scène !
 demo-aurora-local-whisper = je file, à plus tard
 demo-aurora-local-emote = /me salue tout le monde

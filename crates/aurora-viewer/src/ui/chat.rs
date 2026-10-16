@@ -57,6 +57,9 @@ pub struct ChatUi {
     pub demo_select: Option<String>,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
+    /// Textures the conversation wants by id (the groups' insignias), drawn
+    /// from the app's UI images.
+    pub wanted_images: HashSet<uuid::Uuid>,
     /// Names to resolve (mentions) — taken by the app.
     pub wanted_names: HashSet<uuid::Uuid>,
     /// Participants of the group / conference session shown.

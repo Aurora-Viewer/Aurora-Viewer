@@ -91,6 +91,8 @@ pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
     pics: &HashMap<Uuid, egui::TextureHandle>,
+    // textures by id (a group's insignia)
+    images: &HashMap<Uuid, egui::TextureHandle>,
     world: &World,
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
@@ -127,14 +129,11 @@ pub(super) fn show(
             }
         }
         (None, Some(sidebar::Kind::Group)) => {
-            ui.painter().rect_filled(pic, radius, p.violet.gamma_multiply(0.3));
-            ui.painter().text(
-                pic.center(),
-                egui::Align2::CENTER_CENTER,
-                crate::ui::widgets::initials(&who.title),
-                egui::FontId::proportional(12.0),
-                p.violet_pale,
-            );
+            let insignia = st.selected.and_then(|id| sidebar::group_insignia(world, &id));
+            if let Some(i) = insignia {
+                st.wanted_images.insert(i);
+            }
+            sidebar::paint_group_picture(ui, p, pic, insignia.and_then(|i| images.get(&i)), PIC - 16.0);
         }
         (None, Some(_)) => {
             ui.painter().rect_filled(pic, radius, p.raised);

@@ -21,6 +21,8 @@ pub(super) const WIDTH: f32 = 232.0;
 pub(super) const RAIL: f32 = 58.0;
 const ENTRY_H: f32 = 44.0;
 const PIC: f32 = 32.0;
+/// The glyph on an entry's square (nearby chat, a group without insignia).
+const GLYPH: f32 = 17.0;
 
 /// Who a conversation is with, for the column.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -37,6 +39,36 @@ pub(super) fn kind(world: &World, id: &Uuid) -> Kind {
         Some(_) => Kind::Conference,
         None if world.groups.is_member(id) => Kind::Group,
         None => Kind::Private,
+    }
+}
+
+/// The insignia of a group conversation's group: our membership's, else
+/// the group profile the viewer last received (a group we are not in);
+/// None when it has none, the `users-group` glyph then.
+pub(super) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
+    let set = |i: Uuid| (!i.is_nil()).then_some(i);
+    world
+        .groups
+        .group(id)
+        .and_then(|g| set(g.insignia))
+        .or_else(|| world.search.groups.get(id).and_then(|g| set(g.insignia)))
+}
+
+/// A group's picture over the square `rect`: its insignia cropped square on
+/// the theme's radius, else the `users-group` glyph (of side `glyph`) on a
+/// raised square, as People › Groups draws it.
+pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
+    match insignia {
+        Some(t) => crate::ui::widgets::square_picture(ui, rect, t),
+        None => {
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+            super::thread::paint_icon(
+                ui.painter(),
+                "users-group",
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(glyph)),
+                p.muted,
+            );
+        }
     }
 }
 
@@ -142,8 +174,8 @@ pub(super) fn entry_id(entry: Pinned) -> egui::Id {
 enum Icon<'a> {
     /// A resident: their picture and status.
     Avatar(Option<&'a egui::TextureHandle>, presence::Status),
-    /// A group: its initials on the accent.
-    Group(&'a str),
+    /// A group: its insignia, once loaded (none: the group glyph).
+    Group(Option<&'a egui::TextureHandle>),
     /// A Tabler icon on a tinted square (nearby chat, Contacts, a conference).
     Glyph(&'static str, Color32),
 }
@@ -182,6 +214,8 @@ pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
     pics: &HashMap<Uuid, egui::TextureHandle>,
+    // textures by id (the groups' insignias)
+    images: &HashMap<Uuid, egui::TextureHandle>,
     world: &World,
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
@@ -309,10 +343,13 @@ pub(super) fn show(
                     }
                     let current = st.selected == Some(id) && !st.contacts;
                     let status = presence::of(world, &id);
-                    let initials = crate::ui::widgets::initials(&name);
+                    let insignia = if section == Kind::Group { group_insignia(world, &id) } else { None };
+                    if let Some(i) = insignia {
+                        st.wanted_images.insert(i);
+                    }
                     let icon = match section {
                         Kind::Private => Icon::Avatar(pics.get(&id), status),
-                        Kind::Group => Icon::Group(&initials),
+                        Kind::Group => Icon::Group(insignia.and_then(|i| images.get(&i))),
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
                     let (sub, sub_icon) = sub_line(p, world, id, section, status);
@@ -633,7 +670,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
 }
 
 /// The picture of an entry: a resident's with its status, a group's
-/// initials on the accent, a glyph on a tinted square.
+/// insignia, a glyph on a tinted square.
 fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
     let radius = ui.visuals().window_corner_radius;
     match icon {
@@ -643,22 +680,13 @@ fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui
                 presence::paint_dot(ui.painter(), p, rect, *status, ring);
             }
         }
-        Icon::Group(initials) => {
-            ui.painter().rect_filled(rect, radius, p.violet);
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                initials,
-                egui::FontId::proportional(12.0),
-                p.on_accent,
-            );
-        }
+        Icon::Group(insignia) => paint_group_picture(ui, p, rect, *insignia, GLYPH),
         Icon::Glyph(glyph, color) => {
             ui.painter().rect_filled(rect, radius, color.gamma_multiply(0.16));
             super::thread::paint_icon(
                 ui.painter(),
                 glyph,
-                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(17.0)),
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(GLYPH)),
                 *color,
             );
         }
@@ -832,4 +860,43 @@ pub(super) fn square_button(
         if off { p.danger } else { p.ink },
     );
     resp.on_hover_text(tip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn membership(id: Uuid, insignia: Uuid) -> aurora_net::GroupMembership {
+        aurora_net::GroupMembership {
+            id,
+            name: "Group".into(),
+            insignia,
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        }
+    }
+
+    /// A group conversation gets its group's insignia (ours, else the group
+    /// profile the viewer has), the `users-group` glyph without one.
+    #[test]
+    fn group_entry_takes_the_insignia_or_the_glyph() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (with, without, outside, unknown) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        let (picture, seen) = (Uuid::from_u128(0x10), Uuid::from_u128(0x11));
+        world.groups.groups = vec![membership(with, picture), membership(without, Uuid::nil())];
+        world.search.groups.insert(
+            outside,
+            aurora_net::search::GroupProfile {
+                id: outside,
+                insignia: seen,
+                ..Default::default()
+            },
+        );
+        assert_eq!(group_insignia(&world, &with), Some(picture));
+        assert_eq!(group_insignia(&world, &without), None, "a nil insignia: the glyph");
+        assert_eq!(group_insignia(&world, &outside), Some(seen), "a group we are not in: its profile's");
+        assert_eq!(group_insignia(&world, &unknown), None);
+    }
 }

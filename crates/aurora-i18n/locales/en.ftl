@@ -4253,6 +4253,7 @@ demo-aurora-group-5 = I'll take the lights 💡
 demo-aurora-mention = Hey { $name }, are you coming to the build tonight?
 demo-aurora-loup = however, is there a chance to make it look like the mockup?
 demo-aurora-tess = I'm off, see you later
+demo-aurora-wolves = Moonrise hike on Saturday, who's in? 🌕
 demo-aurora-local-shout = look at the sky towards the stage!
 demo-aurora-local-whisper = I'm off, see you later
 demo-aurora-local-emote = /me waves at everyone

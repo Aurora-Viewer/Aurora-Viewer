@@ -2361,7 +2361,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   demo does not save.
 - **`AURORA_DEMO_CONV=aurora[:flag…]`**: the Conversations window in
   Aurora's workspace (the default style), alone on screen (People and the
-  inventory closed), 960 x 560 px. Flags, joined by `:`: `im` (default:
+  inventory closed), 960 x 560 px. The column holds two groups: Northern
+  Wolves shows its insignia, Aurora Builders (none) the group glyph. Flags, joined by `:`: `im` (default:
   the friend's conversation over two days, the last three lines unread
   under the red "New" line, the friend typing), `busy` (Tess in do not
   disturb), `group` (Aurora Builders with its members' panel: MOD tag,

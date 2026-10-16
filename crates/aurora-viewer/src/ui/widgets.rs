@@ -2169,6 +2169,17 @@ fn square_crop(w: usize, h: usize) -> egui::Rect {
     egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(u, v))
 }
 
+/// A picture cropped square over `rect`, its corners the theme's (a
+/// group's insignia in the Conversations window).
+pub fn square_picture(ui: &egui::Ui, rect: egui::Rect, t: &egui::TextureHandle) {
+    let [w, h] = t.size();
+    egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), rect.size()))
+        .uv(square_crop(w, h))
+        .tint(PICTURE_TINT)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .paint_at(ui, rect);
+}
+
 /// `avatar_picture` in a disc: the residents of the Conversations window,
 /// round like the pictures of the name plates (docs/BRANDING.md: only these
 /// and the name plates are round).

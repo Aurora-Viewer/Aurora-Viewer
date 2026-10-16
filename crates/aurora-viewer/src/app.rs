@@ -4723,6 +4723,7 @@ impl App {
         images.extend(self.region_ui.wanted_images.drain());
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
+        images.extend(self.chat_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
         images.extend(self.contacts_people_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());

@@ -880,8 +880,8 @@ pub fn aurora_conversation(scene: AuroraScene) -> Option<Uuid> {
 }
 
 /// The scene's lines beyond the bubbles scenario's: the group's afternoon
-/// (an emote, a place, a mention of us) and a few private conversations for
-/// the column; the last ones of the conversation shown are unread, for its
+/// (an emote, a place, a mention of us), a few private conversations and a
+/// second group's for the column; the last ones of the conversation shown are unread, for its
 /// "New" line.
 pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     use crate::world::{ChatKind, ChatLine, Origin};
@@ -943,6 +943,21 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
             DEMO_TESS,
             ChatKind::Im,
             aurora_i18n::tr!("demo-aurora-tess"),
+        ),
+    );
+    // a second group, with its insignia (Aurora Builders has none)
+    let wolves = world.groups.sessions.entry(DEMO_GROUP2).or_default();
+    wolves.name = aurora_i18n::tr!("demo-northern-wolves").to_owned();
+    wolves.group = true;
+    wolves.active = true;
+    world.conversation_line(
+        DEMO_GROUP2,
+        line(
+            ago(95),
+            &names(DEMO_LOUP),
+            DEMO_LOUP,
+            ChatKind::Im,
+            aurora_i18n::tr!("demo-aurora-wolves"),
         ),
     );
     // unread: the group's last line, and the friend's last two
@@ -1795,7 +1810,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     contribution: group::MY_CONTRIBUTION,
                     ..g(DEMO_GROUP1, "Aurora Builders", true)
                 },
-                g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false),
+                // the one with an insignia (its search profile's): the
+                // lists show it, the others the group glyph
+                aurora_net::GroupMembership {
+                    insignia: TEX_SNAPSHOT,
+                    ..g(DEMO_GROUP2, aurora_i18n::tr!("demo-northern-wolves"), false)
+                },
                 aurora_net::GroupMembership {
                     list_in_profile: false,
                     ..g(DEMO_GROUP3, aurora_i18n::tr!("common-plaza-market"), true)
