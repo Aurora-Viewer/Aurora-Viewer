@@ -9,6 +9,7 @@ pub mod avatar;
 pub mod banlines;
 pub mod complexity;
 pub mod drawn;
+pub mod fetch_priority;
 mod flexible;
 pub mod hover;
 pub mod hud;
@@ -724,6 +725,15 @@ pub struct Scene {
     skin_binds: skin_binds::SkinBinds,
 }
 
+/// What an object asks of its mesh's download (`MeshStreamer::need`).
+#[derive(Clone, Copy)]
+struct MeshNeed {
+    /// Its size on screen, in pixels (`CullView::pixel_size`).
+    px: f32,
+    /// Worn by our avatar, or a HUD.
+    own: bool,
+}
+
 /// Camera data used for culling and LOD.
 #[derive(Clone, Copy)]
 pub struct CullView {
@@ -1123,6 +1133,8 @@ impl Scene {
                 && !(0..4).any(|lod| self.geoms.contains_key(&GeomKey::Mesh { id, lod }))
             {
                 self.skin_binds.release(&id);
+                // no object wants it any more: a download still waiting goes
+                self.meshes.unwant(&id);
             }
         }
         self.geom_trash.empty(&self.jobs);
@@ -1134,8 +1146,12 @@ impl Scene {
     }
 
     /// Ensure a geometry is (being) built. Returns true when ready.
-    fn request_geom(&mut self, key: GeomKey, obj: &Object) -> bool {
+    fn request_geom(&mut self, key: GeomKey, obj: &Object, need: MeshNeed) -> bool {
         if let Some(e) = self.geoms.get(&key) {
+            if let (GeomKey::Mesh { id, .. }, GeomState::Pending) = (key, &e.state) {
+                // (another user of a mesh still downloading: it may be nearer)
+                self.meshes.need(id, need.px, need.own);
+            }
             return matches!(e.state, GeomState::Ready(_));
         }
         match key {
@@ -1176,6 +1192,7 @@ impl Scene {
             }
             GeomKey::Mesh { id, lod } => {
                 self.meshes.want(id, lod);
+                self.meshes.need(id, need.px, need.own);
             }
             // (uploaded by `ensure_avatar_parts`, built by `avatar_morph`)
             GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => {}
@@ -2357,7 +2374,17 @@ impl Scene {
             return;
         };
         let wanted = Self::object_geom_key(o, lod);
-        let owner_avatar = Self::wearer_avatar(world, idx).map(|(_, i)| i);
+        let wearer = Self::wearer_avatar(world, idx);
+        let owner_avatar = wearer.map(|(_, i)| i);
+        // what its mesh is asked for at: its size on screen, and ours first
+        let need = MeshNeed {
+            px: if hud {
+                f32::MAX
+            } else {
+                lod_radius / lod_dist.max(0.1) * view.screen_height / view.tan_half_fov.max(1e-6)
+            },
+            own: hud || wearer.is_some_and(|(id, _)| id == world.agent_id),
+        };
         let g = &mut self.gpu[idx];
         g.hud = hud;
         g.owner_avatar = owner_avatar;
@@ -2387,7 +2414,7 @@ impl Scene {
             // need an Object reference for building: re-borrow
             let obj = world.objects.get(idx);
             let ready = match obj {
-                Some(obj) => self.request_geom(k, obj),
+                Some(obj) => self.request_geom(k, obj, need),
                 None => false,
             };
             if ready {
@@ -3602,6 +3629,7 @@ impl Scene {
         let t = Instant::now();
         let va = world.viewer_asset_url();
         let va = va.as_deref();
+        self.textures.set_agent(&world.agent_id);
         self.textures.update(&self.jobs, &net.fetcher, va);
         let t = self.parts.lap(Part::TexUpdate, t);
         let rig = self.avatar_lib.rig.clone();

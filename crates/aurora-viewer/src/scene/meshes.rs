@@ -1,10 +1,11 @@
 //! Mesh and GLTF material asset streaming (whole-asset fetch + disk cache).
 
 use super::GeomKey;
+use super::fetch_priority::{self, urgent};
 use super::jobs::{JobResult, Jobs, mesh_to_faces};
 use aurora_assets::material::PbrOverride;
 use aurora_assets::{MeshHeader, PbrMaterial, SkinInfo};
-use aurora_net::{FetchRequest, FetchResult, Fetcher};
+use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::StagingPool;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -20,7 +21,7 @@ struct MeshEntry {
     data: Option<Arc<Vec<u8>>>,
     header: Option<MeshHeader>,
     skin: Option<Arc<SkinInfo>>,
-    state: u8, // 0 new, 1 cache check, 2 fetching, 3 ready, 4 failed
+    state: u8, // 0 new, 1 cache check, 2 fetching, 3 ready, 4 failed, 5 to fetch, 6 not wanted
     retry_at: Option<Instant>,
     failures: u32,
     /// The asset server does not have it, or what it sent is not a mesh:
@@ -30,6 +31,23 @@ struct MeshEntry {
     building: HashSet<u8>,
     /// Listed in `MeshStreamer::todo`.
     queued: bool,
+    /// Size on screen of its largest user, in pixels, and whether one is
+    /// ours (`MeshStreamer::need`): the rank of its download.
+    px: f32,
+    own: bool,
+    /// Its download under way, and the rank it was last given.
+    fetch_key: u64,
+    sent: f32,
+}
+
+impl MeshEntry {
+    fn lane(&self) -> (Lane, f32) {
+        if self.own {
+            (Lane::Urgent, urgent::OWN)
+        } else {
+            (Lane::Bulk, fetch_priority::mesh(self.px))
+        }
+    }
 }
 
 impl MeshEntry {
@@ -63,6 +81,10 @@ pub struct MeshStreamer {
     todo: Vec<Uuid>,
     by_key: HashMap<u64, Uuid>,
     next_key: u64,
+    /// Downloads to rank again, or to drop (no object wants them any more),
+    /// told to the fetcher at the next `update`.
+    moved: Vec<(u64, f32)>,
+    dropped: Vec<u64>,
     cache_dir: PathBuf,
     pub fetching: usize,
     /// Failures written to the log (the first ones, then one in 50).
@@ -82,6 +104,8 @@ impl MeshStreamer {
             todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
+            moved: Vec::new(),
+            dropped: Vec::new(),
             cache_dir,
             fetching: 0,
             logged_failures: 0,
@@ -94,7 +118,58 @@ impl MeshStreamer {
     pub fn want(&mut self, id: Uuid, lod: u8) {
         let e = self.entries.entry(id).or_default();
         e.wanted_lods.insert(lod);
+        if e.state == 6 {
+            e.state = 5;
+        }
         Self::attend(&mut self.todo, id, e);
+    }
+
+    /// An object using a mesh covers `px` pixels on screen (`own`: worn by
+    /// our avatar). A download still waiting moves up to the nearest user;
+    /// ours go in the urgent lane.
+    pub fn need(&mut self, id: Uuid, px: f32, own: bool) {
+        let Some(e) = self.entries.get_mut(&id) else {
+            return;
+        };
+        if px <= e.px && (e.own || !own) {
+            return;
+        }
+        let was = e.lane();
+        e.px = e.px.max(px);
+        e.own |= own;
+        let (lane, priority) = e.lane();
+        if e.state == 2 && e.fetch_key != 0 {
+            if lane != was.0 {
+                // (a new request under the same key replaces the waiting one)
+                self.moved.push((e.fetch_key, f32::NAN));
+            } else if fetch_priority::changed(e.sent, priority) {
+                e.sent = priority;
+                self.moved.push((e.fetch_key, priority));
+            }
+        }
+    }
+
+    /// No object uses the mesh any more (the scene let all its geometries
+    /// go). A download still waiting for a slot is dropped, as Firestorm
+    /// drops pending mesh requests whose volumes are gone; one already
+    /// sent ends, and is ignored. Wanted again, it starts over.
+    pub fn unwant(&mut self, id: &Uuid) {
+        let Some(e) = self.entries.get_mut(id) else {
+            return;
+        };
+        e.wanted_lods.clear();
+        e.px = 0.0;
+        e.own = false;
+        match e.state {
+            2 => {
+                self.by_key.remove(&e.fetch_key);
+                self.dropped.push(e.fetch_key);
+                e.fetch_key = 0;
+                e.state = 6;
+            }
+            5 => e.state = 6,
+            _ => {}
+        }
     }
 
     /// List a mesh for `update`, once.
@@ -213,6 +288,24 @@ impl MeshStreamer {
 
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>, rig: &Arc<super::anim::Rig>) {
         let now = Instant::now();
+        for key in self.dropped.drain(..) {
+            fetcher.cancel(key);
+        }
+        for (key, priority) in self.moved.drain(..) {
+            match self.by_key.get(&key).and_then(|id| self.entries.get_mut(id)) {
+                // (to the other lane: asked again under its key)
+                Some(e) if priority.is_nan() => {
+                    if let Some(base) = viewer_asset {
+                        let (lane, priority) = e.lane();
+                        e.sent = priority;
+                        let id = self.by_key[&key];
+                        fetcher.request(Self::request(key, base, &id, lane, priority));
+                    }
+                }
+                Some(_) => fetcher.reprioritise(key, priority),
+                None => {}
+            }
+        }
         let mut todo = std::mem::take(&mut self.todo);
         for id in todo.drain(..) {
             let Some(e) = self.entries.get_mut(&id) else {
@@ -248,14 +341,10 @@ impl MeshStreamer {
                     self.next_key += 1;
                     self.by_key.insert(key, id);
                     e.state = 2;
-                    fetcher.request(FetchRequest {
-                        key,
-                        url: super::textures::asset_url(base, "mesh_id", &id),
-                        range: None,
-                        // geometry first: texture priorities (pixel area) would starve it
-                        priority: 1e12,
-                        accept: "application/vnd.ll.mesh",
-                    });
+                    e.fetch_key = key;
+                    let (lane, priority) = e.lane();
+                    e.sent = priority;
+                    fetcher.request(Self::request(key, base, &id, lane, priority));
                 }
                 if e.state == 3 && !e.wanted_lods.is_empty() {
                     let (Some(data), Some(header)) = (e.data.clone(), e.header.clone()) else {
@@ -285,6 +374,17 @@ impl MeshStreamer {
         }
         // one entry per download under way
         self.fetching = self.by_key.len();
+    }
+
+    fn request(key: u64, base: &str, id: &Uuid, lane: Lane, priority: f32) -> FetchRequest {
+        FetchRequest {
+            key,
+            url: super::textures::asset_url(base, "mesh_id", id),
+            range: None,
+            priority,
+            lane,
+            accept: "application/vnd.ll.mesh",
+        }
     }
 
     fn accept_data(&mut self, id: Uuid, data: Vec<u8>) -> bool {
@@ -322,6 +422,9 @@ impl MeshStreamer {
         let Some(id) = self.by_key.remove(&r.key) else {
             return;
         };
+        if let Some(e) = self.entries.get_mut(&id) {
+            e.fetch_key = 0;
+        }
         match r.data {
             Ok(data) if !data.is_empty() => {
                 let copy = data.clone();
@@ -694,7 +797,8 @@ impl MaterialStreamer {
                                 key,
                                 url: super::textures::asset_url(base, "material_id", &id),
                                 range: None,
-                                priority: 9e11,
+                                priority: urgent::MATERIAL,
+                                lane: Lane::Urgent,
                                 accept: "*/*",
                             });
                         }
@@ -833,6 +937,8 @@ mod tests {
             todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
+            moved: Vec::new(),
+            dropped: Vec::new(),
             cache_dir: PathBuf::new(),
             fetching: 0,
             logged_failures: 0,
@@ -861,6 +967,39 @@ mod tests {
     }
 
     const CAP: Option<&str> = Some("https://assets.example/cap");
+
+    #[test]
+    fn a_mesh_download_follows_its_nearest_user_and_goes_with_the_last() {
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(5);
+        let key = mesh_fetching(&mut s, id);
+        s.need(id, 40.0, false);
+        if let Some(e) = s.entries.get_mut(&id) {
+            e.fetch_key = key;
+            e.sent = fetch_priority::mesh(40.0);
+        }
+        // a user a little nearer: not worth telling the fetcher
+        s.need(id, 50.0, false);
+        assert!(s.moved.is_empty());
+        // one much nearer: ranked again; a farther one changes nothing
+        s.need(id, 400.0, false);
+        s.need(id, 10.0, false);
+        assert_eq!(s.moved, [(key, fetch_priority::mesh(400.0))]);
+        // worn by us: asked again in the urgent lane
+        s.need(id, 10.0, true);
+        assert_eq!(s.entries[&id].lane(), (Lane::Urgent, urgent::OWN));
+        assert!(s.moved[1].1.is_nan());
+        // no object wants it any more: the waiting download goes
+        s.unwant(&id);
+        assert_eq!(s.dropped, [key]);
+        assert_eq!(s.entries[&id].state, 6);
+        assert!(!s.by_key.contains_key(&key));
+        assert!(!s.entries[&id].has_work());
+        // wanted again: downloaded again, at its new rank
+        s.want(id, 1);
+        assert_eq!(s.entries[&id].state, 5);
+        assert_eq!(s.entries[&id].lane(), (Lane::Bulk, fetch_priority::mesh(0.0)));
+    }
 
     #[test]
     fn update_only_visits_the_meshes_that_have_work() {

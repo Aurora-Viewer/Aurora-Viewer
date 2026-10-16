@@ -2,10 +2,11 @@
 //! bones), animation asset streaming and per-avatar pose evaluation into
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
+use super::fetch_priority::urgent;
 use super::jobs::Jobs;
 use crate::world::PlayingAnimation;
 use aurora_assets::{Animation, Skeleton};
-use aurora_net::{FetchRequest, FetchResult, Fetcher};
+use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -993,7 +994,9 @@ impl AnimStreamer {
                     key,
                     url: super::textures::asset_url(base, "animatn_id", id),
                     range: None,
-                    priority: 8e11,
+                    // (an avatar stands still until it arrives)
+                    priority: urgent::ANIMATION,
+                    lane: Lane::Urgent,
                     accept: "*/*",
                 });
             }

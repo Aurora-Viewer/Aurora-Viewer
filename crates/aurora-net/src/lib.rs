@@ -34,7 +34,7 @@ pub mod throttle;
 pub mod types;
 pub mod xmlrpc;
 
-pub use fetch::{FetchRequest, FetchResult, Fetcher};
+pub use fetch::{FetchRequest, FetchResult, Fetcher, Lane};
 pub use login::{LoginRequest, LoginResponse, StartLocation};
 pub use profile::{AvatarProfile, ClassifiedInfo, ParcelSummary, PickInfo, ProfileGroup};
 pub use social::{CallMethod, GroupMembership, HistoryLine, MuteListSource, SessionAgent, SessionInvite, SessionMethod, VoiceInvite};

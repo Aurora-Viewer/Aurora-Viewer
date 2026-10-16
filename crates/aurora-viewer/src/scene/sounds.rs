@@ -9,10 +9,11 @@
 //! cached on disk and decoded off the main thread.
 
 use super::Scene;
+use super::fetch_priority::urgent;
 use super::jobs::{JobResult, Jobs};
 use crate::world::World;
 use aurora_audio::{AudioEngine, Channel, SoundClip};
-use aurora_net::fetch::{FetchRequest, FetchResult, Fetcher};
+use aurora_net::fetch::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_net::objects::AttachedSound;
 use glam::Vec3;
 use std::collections::HashMap;
@@ -393,7 +394,8 @@ impl SoundManager {
                     url: super::textures::asset_url(base, "sound_id", id),
                     range: None,
                     // sounds are small and late ones are useless
-                    priority: 9e11,
+                    priority: urgent::SOUND,
+                    lane: Lane::Urgent,
                     accept: "*/*",
                 });
             }
