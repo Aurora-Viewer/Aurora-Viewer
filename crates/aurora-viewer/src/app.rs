@@ -1494,17 +1494,24 @@ impl App {
                 self.on_app_event(NetEvent::OutfitUpdated { request: *request, result });
                 return;
             }
+            // the demo backpack comes back with its prims; other outfit
+            // objects are invisible placeholders
             if let NetCommand::RezAttachments(items) = &cmd {
                 self.world.apply(NetEvent::ObjectUpdates {
                     handle: self.world.main_region.unwrap_or_default(),
-                    objects: items.iter().map(crate::demo::outfit_attachment).collect(),
+                    objects: items
+                        .iter()
+                        .flat_map(|item| crate::demo::worn::rez(item).unwrap_or_else(|| vec![crate::demo::outfit_attachment(item)]))
+                        .collect(),
                 });
                 return;
             }
+            // DetachAttachmentIntoInv names the item: the simulator kills the
+            // object worn from it, whatever its object id
             if let NetCommand::DetachAttachments(items) = &cmd {
                 let local_ids = items
                     .iter()
-                    .filter_map(|id| self.world.objects.index_of_uuid(id))
+                    .filter_map(|id| self.world.worn_attachment(id))
                     .filter_map(|idx| self.world.objects.get(idx))
                     .map(|o| o.key.local_id)
                     .collect();
