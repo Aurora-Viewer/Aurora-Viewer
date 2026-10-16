@@ -242,7 +242,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
         return light_tiles_checked(debug_view(hazed, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
-    let col = shade_pbr(albedo, 0.0, 0.92, n, v, in.world_pos, sh, in.clip.xy);
+    let col = shade_pbr(albedo, 0.0, 0.92, 1.0, n, v, in.world_pos, sh, in.clip.xy);
     return light_tiles_checked(debug_view(apply_fog(col, in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 

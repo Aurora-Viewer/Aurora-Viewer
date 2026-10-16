@@ -12,9 +12,13 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_WORN") else {
             return;
         };
-        let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move"), mode == "inspect");
+        let freeze = mode == "freeze";
+        let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
         if !(edit || inspect || mode == "menu") {
             return;
+        }
+        if freeze {
+            self.demo_worn_freeze_steps();
         }
         let key = ObjKey {
             region: self.world.main_region.unwrap_or_default(),
@@ -68,6 +72,38 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// AURORA_DEMO_WORN=freeze: our avatar dances, the worn object is
+    /// right-clicked (700) and edited (740), and the build window closes at
+    /// 1100: the dance stands still in between (anim_pause.rs).
+    fn demo_worn_freeze_steps(&mut self) {
+        let agent = self.world.agent_id;
+        match self.frame_count {
+            600 => {
+                let rig = self.scene.avatar_lib.rig.clone();
+                self.scene.anims.insert(
+                    crate::demo::CROWD_DANCE_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::crowd_dance_animation(), &rig)),
+                );
+                self.world.apply(NetEvent::AvatarAnimations {
+                    sources: Vec::new(),
+                    avatar: agent,
+                    anims: vec![(crate::demo::CROWD_DANCE_ANIM, 1)],
+                });
+            }
+            1100 => self.build.close(&mut self.world, &mut self.settings.build),
+            _ => {}
+        }
+        if matches!(self.frame_count, 690 | 720 | 900 | 1099 | 1130 | 1200) {
+            log::info!(
+                "demo worn freeze: frame {} paused={} selection={} head={:.3?}",
+                self.frame_count,
+                self.scene.paused_skeletons.contains(&agent),
+                self.build.selection.len(),
+                self.scene.head_world(&self.world, &agent, Instant::now())
+            );
         }
     }
 }

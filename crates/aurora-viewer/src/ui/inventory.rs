@@ -400,6 +400,13 @@ impl InventoryUi {
         self.selected = Some(id);
         self.selection.clear();
         self.selection.insert(id);
+        self.reveal_item(inv, id);
+    }
+
+    /// LLPanelMainInventory::onClearSearch / LLOpenFoldersWithSelection
+    /// (indra/newview/llpanelmaininventory.cpp): reopen the selected path
+    /// without replacing the selection or the window's current tab/filters.
+    fn reveal_item(&mut self, inv: &Inventory, id: Uuid) {
         self.reveal = Some(id);
         self.reveal_path.clear();
         let mut parent = rules::parent(inv, id);
@@ -696,7 +703,7 @@ fn folder_window_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
+    controls::search(ui, p, inv, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
     ui.add_space(3.0);
     let q = st.search.trim().to_lowercase();
     let filtered = !q.is_empty() || st.links_filter.is_some() || st.filters.active();
@@ -892,7 +899,11 @@ fn search_scroll(
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     tree_spacing(ui);
     let total = st.result_tree.rows.len();
-    let scroll = list_scroll(ui, height);
+    let mut scroll = list_scroll(ui, height);
+    if let Some(index) = st.reveal.and_then(|id| st.result_tree.order.iter().position(|row| *row == id)) {
+        let pitch = rows::ROW_HEIGHT + ui.spacing().item_spacing.y;
+        scroll = scroll.vertical_scroll_offset((index as f32 * pitch - height / 2.0).max(0.0));
+    }
     let mut out = if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
@@ -1080,7 +1091,7 @@ fn inventory_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
+    controls::search(ui, p, inv, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
     ui.add_space(3.0);
     let mut tab_ids = vec![0];
     let mut labels = vec![(aurora_i18n::tr!("common-inventory"), true)];
@@ -1878,7 +1889,7 @@ mod tests {
             },
             |ui| {
                 controls::toolbar(ui, &palette, &mut st, &mut prefs);
-                controls::search(ui, &palette, &mut st, &mut prefs, "Rechercher ici");
+                controls::search(ui, &palette, &Inventory::default(), &mut st, &mut prefs, "Rechercher ici");
             },
         ));
         let position = |label| {
@@ -1908,6 +1919,177 @@ mod tests {
     }
 
     #[test]
+    fn clearing_search_reveals_the_selection_in_large_inventory_trees() {
+        for folder_window in [false, true] {
+            for keep_filter in [false, true] {
+                for (target, keyboard) in [(100, false), (21, true)] {
+                    let id = Uuid::from_u128;
+                    let ctx = egui::Context::default();
+                    crate::theme::Theme::default().apply(&ctx, 1.0);
+                    let palette = crate::theme::Theme::default().palette();
+                    let mut inv = Inventory {
+                        root: id(1),
+                        ..Default::default()
+                    };
+                    let mut folders: Vec<_> = [(1, 0, "Inventory"), (20, 1, "Z parent"), (21, 20, "Needle folder")]
+                        .into_iter()
+                        .map(|(n, parent, name)| aurora_net::inventory::InvFolder {
+                            id: id(n),
+                            parent: id(parent),
+                            name: name.into(),
+                            type_default: -1,
+                            ..Default::default()
+                        })
+                        .collect();
+                    folders.extend((1000..1200).map(|n| aurora_net::inventory::InvFolder {
+                        id: id(n),
+                        parent: inv.root,
+                        name: format!("A folder {n}"),
+                        type_default: -1,
+                        ..Default::default()
+                    }));
+                    inv.created_folders(folders);
+                    for folder in inv.folders.values_mut() {
+                        folder.state = FetchState::Fetched;
+                    }
+                    let item = |n, parent, name| aurora_net::inventory::InvItem {
+                        id: id(n),
+                        parent: id(parent),
+                        name,
+                        asset_type: 6,
+                        inv_type: 6,
+                        ..Default::default()
+                    };
+                    let mut items: Vec<_> = (1000..1200).map(|n| item(n + 10000, n, format!("Filler {n}"))).collect();
+                    items.push(item(100, 21, "Needle item".into()));
+                    inv.add_items(items);
+                    let mut st = InventoryUi {
+                        search: "Needle".into(),
+                        filters_initialized: true,
+                        ..Default::default()
+                    };
+                    let mut prefs = InventoryPreferences::default();
+                    if keep_filter {
+                        st.filters.types = 1 << 6;
+                    }
+                    let mut field = egui::Rect::NOTHING;
+                    let mut time = 0.0;
+                    let mut frame = |st: &mut InventoryUi, events| {
+                        time += 0.05;
+                        st.visible.clear();
+                        let output = headless_output(ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(440.0, 420.0))),
+                                time: Some(time),
+                                events,
+                                ..Default::default()
+                            },
+                            |ui| {
+                                if folder_window {
+                                    folder_window_contents(
+                                        ui,
+                                        &palette,
+                                        &Icons::default(),
+                                        &mut inv,
+                                        id(1),
+                                        st,
+                                        &mut prefs,
+                                        &Facts::default(),
+                                        &mut vec![],
+                                    );
+                                } else {
+                                    inventory_contents(
+                                        ui,
+                                        &palette,
+                                        &Icons::default(),
+                                        &mut inv,
+                                        st,
+                                        &mut prefs,
+                                        &Facts::default(),
+                                        &mut vec![],
+                                    );
+                                }
+                            },
+                        ));
+                        if let Some(rect) = output
+                            .shapes
+                            .iter()
+                            .filter_map(|shape| match &shape.shape {
+                                egui::Shape::Rect(rect) if rect.fill == palette.field && rect.rect.height() < 40.0 => Some(rect.rect),
+                                _ => None,
+                            })
+                            .max_by(|a, b| a.width().total_cmp(&b.width()))
+                        {
+                            field = rect;
+                        }
+                        field
+                    };
+                    let pointer = |pos, pressed| {
+                        vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ]
+                    };
+                    frame(&mut st, vec![]);
+                    let field = frame(&mut st, vec![]);
+                    assert!(st.visible.contains(&id(target)), "search exposes the target");
+                    let row = ctx
+                        .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_drag_row", st.ui_id, id(target)))))
+                        .expect("target row");
+                    frame(&mut st, pointer(row.center(), true));
+                    frame(&mut st, pointer(row.center(), false));
+                    assert_eq!(st.selected, Some(id(target)));
+                    if keyboard {
+                        frame(&mut st, pointer(field.left_center() + Vec2::new(15.0, 0.0), true));
+                        frame(&mut st, pointer(field.left_center() + Vec2::new(15.0, 0.0), false));
+                        let key = |key, modifiers| egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: true,
+                            repeat: false,
+                            modifiers,
+                        };
+                        frame(
+                            &mut st,
+                            vec![
+                                key(egui::Key::A, egui::Modifiers::COMMAND),
+                                key(egui::Key::Backspace, egui::Modifiers::NONE),
+                            ],
+                        );
+                    } else {
+                        let clear = field.right_center() - Vec2::new(14.0, 0.0);
+                        frame(&mut st, pointer(clear, true));
+                        frame(&mut st, pointer(clear, false));
+                    }
+                    for _ in 0..5 {
+                        frame(&mut st, vec![]);
+                    }
+                    assert!(st.search.is_empty());
+                    assert_eq!(st.filters.active(), keep_filter && keyboard);
+                    assert_eq!(st.selection, HashSet::from([id(target)]));
+                    assert!(
+                        st.visible.contains(&id(target)),
+                        "the selected row is drawn after clearing ({folder_window}, {keep_filter}, {target})"
+                    );
+                    assert!(st.visible.len() < 20, "revealing keeps virtual drawing");
+                    assert!(st.reveal.is_none(), "the reveal completes once");
+                    if !st.result_view() {
+                        assert!(st.plain.is_open(id(20)));
+                    }
+                    if !keep_filter && target == 21 {
+                        assert!(!st.plain.is_open(id(21)), "a selected folder stays expandable");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn typing_and_clearing_keep_inventory_search_layout_stable() {
         for width in [234.0, 350.0, 440.0] {
             let ctx = egui::Context::default();
@@ -1924,7 +2106,7 @@ mod tests {
                     },
                     |ui| {
                         controls::toolbar(ui, &palette, st, prefs);
-                        controls::search(ui, &palette, st, prefs, "Chercher");
+                        controls::search(ui, &palette, &Inventory::default(), st, prefs, "Chercher");
                         ui.label("below_controls");
                     },
                 ))

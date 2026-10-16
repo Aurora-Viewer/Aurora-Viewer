@@ -47,6 +47,10 @@ pub struct Input {
     /// Our avatar in mouselook: the camera's look direction.
     pub mouselook_at: Option<Vec3>,
     pub flying: bool,
+    /// Walking backwards keeps the facing (Preferences › Controls "Walk
+    /// backward without turning around", only while the walk animation is
+    /// signalled, as `FSDisableTurningAroundWhenWalkingBackwards`).
+    pub step_back: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -80,9 +84,13 @@ impl Body {
             v if v == Vec3::ZERO => self.rotation * Vec3::X,
             v => v,
         };
-        let vel_dir = i.velocity.normalize_or_zero();
-        // Firestorm default (FSDisableTurningAroundWhenWalkingBackwards off):
-        // walking backwards turns the avatar around to face where it goes
+        let mut vel_dir = i.velocity.normalize_or_zero();
+        // by default walking backwards turns the avatar around to face where
+        // it goes; with the option a walk more than 120° from the facing is
+        // drawn as a step back
+        if i.step_back && vel_dir.dot(prim) < -0.5 {
+            vel_dir = -vel_dir;
+        }
         let mut fwd = prim.lerp(vel_dir, clamp_rescale(speed, 0.5, 2.0, 0.0, 1.0));
         if let Some(at) = i.mouselook_at {
             if i.flying {
@@ -161,6 +169,7 @@ mod tests {
             in_air: false,
             mouselook_at: None,
             flying: false,
+            step_back: false,
         };
         let mut b = Body::new(Vec3::X);
         // standing: a 30° camera turn does not move the body
@@ -185,11 +194,29 @@ mod tests {
             in_air: false,
             mouselook_at: None,
             flying: false,
+            step_back: false,
         };
         for _ in 0..240 {
             b.update(&back, 1.0 / 60.0);
         }
         assert!(yaw(b.rotation).abs() > 170.0, "{}", yaw(b.rotation));
+        // the same with "walk backward without turning around": the body
+        // keeps facing forward, and a walk to the side still turns it
+        let mut b = Body::new(Vec3::X);
+        let step_back = Input { step_back: true, ..back };
+        for _ in 0..240 {
+            b.update(&step_back, 1.0 / 60.0);
+        }
+        assert!(yaw(b.rotation).abs() < 3.0, "{}", yaw(b.rotation));
+        let mut b = Body::new(Vec3::X);
+        let side_step = Input {
+            velocity: Vec3::new(0.0, 3.0, 0.0),
+            ..step_back
+        };
+        for _ in 0..240 {
+            b.update(&side_step, 1.0 / 60.0);
+        }
+        assert!((yaw(b.rotation) - 90.0).abs() < 3.0, "{}", yaw(b.rotation));
         // strafing left: faces left
         let mut b = Body::new(Vec3::X);
         let side = Input {

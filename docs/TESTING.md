@@ -1098,7 +1098,7 @@ Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited |
 
 ### Details
 
@@ -1160,7 +1160,7 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|inspect|inventory|library|sound`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -1195,6 +1195,12 @@ access to a grid.
 - `sound`: a sound item playing the demo chime, double-clicked at frame
   700: it plays in the world at our position (LLSoundBridgeAction), where
   "Open" shows its preview. The log writes `demo sound trigger: …`.
+- `freeze`: our avatar dances from frame 600, the object is right-clicked
+  at 700 and edited at 740, and the build window closes at 1100: the
+  dance stands still from the right click to the close, then goes on from
+  the same pose (LLSelectMgr::pauseAssociatedAvatars). The log writes
+  `demo worn freeze: frame … paused=… head=…` at frames 690, 720, 900,
+  1099, 1130 and 1200: the head stays put between 720 and 1099.
 
 The steps are counted in frames: capture with `AURORA_FPS_LIMIT=60`,
 around frames 720 (menu), 770 (edit, inspect), 850 (move), 680, 800,
@@ -1332,6 +1338,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
+| `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1368,6 +1375,16 @@ To check with these scenarios:
   number of objects).
 - **`AURORA_DEMO_PLANAR=1`**: the tiles must line up from one slab
   to the next.
+- **`AURORA_DEMO_PBR_METAL=1`**: three white metal spheres (PBR, metallic 1,
+  roughness 0.05, 0.3 and 0.6) and a polished slab ahead of the start
+  position. A white metal has no colour of its own: the polished one
+  mirrors the place and the sky, the rough ones their blur. Compare
+  with the sky behind them: the metal is as blue as the sky it reflects,
+  no more (`AURORA_DEMO_SKY=1,37` for a paler sky). Left of the spheres, a
+  polished metal cube whose packed map (occlusion, roughness, metal) has
+  an occlusion of 0 but for a disc on each face: the cube is dark and only
+  reflects the sky in the discs, as in the Legacy Viewer
+  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three).
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
@@ -1900,7 +1917,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -2120,6 +2137,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=search-selection|search-selection-keyboard`**:
+  search for item 1490 in a 1,500-item folder, select its real row at frames
+  650–651, then clear the query using the field's cross at 720–721 or
+  Ctrl+A / Backspace at 730–731. Capture at 680 and 820: the selection stays
+  highlighted, its parent folder opens and the full inventory scrolls to
+  it. At frame 800 the log reports the empty query, selection and visibility.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, with `AURORA_DEMO_INVENTORY=1`:
   double-click on the real title bar of the inventory at frames 660–665; `1`
   keeps the bar collapsed, `restore` expands it at frames 1000–1005,
@@ -3739,6 +3762,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
+| `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3814,6 +3838,15 @@ What the inventory must show with these scenarios:
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
 
+- **`AURORA_PBR_OCCLUSION=0|alt`**: by default the reflection of a PBR
+  face (and, on skies that are not classic, its ambient light) is
+  multiplied by the occlusion of its material, the red channel of its
+  packed occlusion-roughness-metal map, as the Legacy Viewer's `pbrIbl`
+  (`ao = orm.r`). A face without that map reads white: no change. `0`
+  leaves the occlusion out, as before; `alt` leaves it out one second in
+  three, without `AURORA_PROFILE`, to see the difference
+  (`AURORA_DEMO_PBR_METAL=1`: the cube left of the spheres turns from dark
+  with bright discs to an even mirror).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
