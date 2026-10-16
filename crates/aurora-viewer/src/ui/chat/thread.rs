@@ -7,15 +7,17 @@
 //!   a following line shows in the gutter under the pointer.
 //! - Compact: one row per message, `time · name · text`, no pictures.
 //!
-//! Both: the row under the pointer is tinted and carries a toolbar (copy,
-//! quote, the author's profile, the author's menu); a message that names us
-//! is marked with an amber bar; an emote is in italics, a shout and a
+//! Both: the row under the pointer is tinted, without buttons (the human's
+//! choice of 2026-10-16): a right click on a message copies or quotes it
+//! and holds its author's menu (`message_menu`), a click on the picture or
+//! the name opens the profile; a message that names us is marked with an
+//! amber bar; an emote is in italics, a shout and a
 //! whisper say so with a tag; the conversation's days and its "New" line
 //! are separators; notices are discreet rows with an icon; invitation cards
 //! stay in the thread. The texts are the classic lines' (`chat_text_marked`:
 //! links, places, mentions, emoji, find highlights, selection).
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, presence, sender_name, view};
+use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, ChatLine, Origin};
@@ -29,8 +31,7 @@ const AVATAR: f32 = 36.0;
 /// The time column of the compact rows.
 const TIME_W: f32 = 40.0;
 const TEXT: f32 = 13.5;
-/// Room kept at the right of a row (its toolbar sits there under the
-/// pointer).
+/// Room kept at the right of a row.
 const RIGHT: f32 = 14.0;
 /// Space above the head of a group (roomy) or a row (compact).
 const GROUP_GAP: f32 = 12.0;
@@ -49,7 +50,7 @@ pub(super) struct Thread<'a> {
     pub out: &'a mut Vec<ThreadAction>,
 }
 
-/// What a row's toolbar asks of the conversation.
+/// What a message's menu asks of the conversation.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum ThreadAction {
     /// "> text" for the field.
@@ -99,6 +100,8 @@ pub(super) fn draw(
     } else {
         roomy_row(ui, env, th, line, head, &name, &who, mark, width)
     };
+    // (the current match's marker: this message, not the lines above it)
+    super::find::note_message(ui, top, Some(rect.bottom()));
     let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(left + width, rect.bottom() + ROW_GAP));
     ui.add_space(ROW_GAP);
     if !painted {
@@ -117,21 +120,18 @@ pub(super) fn draw(
         ui.painter()
             .set(behind, egui::epaint::RectShape::filled(rect, radius, p.raised.gamma_multiply(0.35)));
     }
-    if hovered {
-        if !th.compact && !head {
-            // the time of a following line, in the gutter
-            let t = hhmm(line.time);
-            if th.times && !t.is_empty() {
-                ui.painter().text(
-                    egui::pos2(left + GUTTER * 0.5, rect.top() + 11.0),
-                    egui::Align2::CENTER_CENTER,
-                    t,
-                    egui::FontId::proportional(10.0),
-                    p.muted_dim,
-                );
-            }
+    if hovered && !th.compact && !head {
+        // the time of a following line, in the gutter
+        let t = hhmm(line.time);
+        if th.times && !t.is_empty() {
+            ui.painter().text(
+                egui::pos2(left + GUTTER * 0.5, rect.top() + 11.0),
+                egui::Align2::CENTER_CENTER,
+                t,
+                egui::FontId::proportional(10.0),
+                p.muted_dim,
+            );
         }
-        toolbar(ui, env, th, line, &name, &who, rect);
     }
 }
 
@@ -370,8 +370,10 @@ fn compact_row(
     row.response.rect
 }
 
-/// The picture at the head of a group: the avatar's with its status, a box
-/// for an object, initials for a history line; clickable to the profile.
+/// The picture at the head of a group: the avatar's, a box for an object,
+/// initials for a history line; clickable to the profile. No status dot:
+/// the head and the column already show it (the human's choice of
+/// 2026-10-16), and a dot on every group of a busy chat said it again.
 fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, who: &Who, rect: egui::Rect) {
     let p = env.p;
     if who.object {
@@ -386,10 +388,6 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
     crate::ui::widgets::avatar_disc(ui, p, rect, pic, name, who.logged);
     if who.avatar.is_nil() {
         return;
-    }
-    let status = presence::of(env.world, &who.avatar);
-    if status != presence::Status::Unknown {
-        presence::paint_dot(ui.painter(), p, rect, status, p.field);
     }
     let r = ui.interact(rect, ui.id().with(("thread_pic", line.time, line.source)), egui::Sense::click());
     line_name_menu(&r, p, env.world, who.avatar, line);
@@ -418,7 +416,8 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
     let p = env.p;
     let tone = history_tone(p, line.origin).unwrap_or(p.muted);
     ui.add_space(4.0);
-    ui.horizontal_top(|ui| {
+    let top = ui.cursor().top();
+    let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let lead = if th.compact {
             4.0 + if th.times { TIME_W + 6.0 } else { 0.0 }
@@ -438,6 +437,7 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
             chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &line.text, 12.0, tone, false, mark);
         });
     });
+    super::find::note_message(ui, top, Some(row.response.rect.bottom()));
     ui.add_space(4.0);
 }
 
@@ -486,61 +486,47 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
     ui.add_space(2.0);
 }
 
-/// The toolbar of the row under the pointer, at its top right: copy the
-/// line, quote it in the field, the author's profile, the author's menu.
-fn toolbar(ui: &mut egui::Ui, env: &mut LineEnv, th: &mut Thread, line: &ChatLine, name: &str, who: &Who, row: egui::Rect) {
-    let p = env.p;
-    const B: f32 = 24.0;
-    let person = !who.avatar.is_nil();
-    let n = if person { 4.0 } else { 2.0 };
-    let bar = egui::Rect::from_min_size(
-        egui::pos2(row.right() - RIGHT - B * n - 4.0, row.top() + 2.0),
-        egui::vec2(B * n + 4.0, B + 4.0),
-    );
-    let radius = ui.visuals().widgets.inactive.corner_radius;
-    ui.painter().rect_filled(bar, radius, p.panel);
-    let mut x = bar.left() + 2.0;
-    let mut button = |ui: &mut egui::Ui, icon: &str, tip: &str, salt: &str| {
-        let rect = egui::Rect::from_min_size(egui::pos2(x, bar.top() + 2.0), egui::Vec2::splat(B));
-        x += B;
-        let r = ui.interact(rect, tool_id(salt, line), egui::Sense::click());
-        if r.hovered() {
-            ui.painter().rect_filled(rect, radius, p.raised);
-        }
-        paint_icon(
-            ui.painter(),
-            icon,
-            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)),
-            if r.hovered() { p.ink } else { p.muted },
-        );
-        r.on_hover_text(tip)
+/// The right-click menu of a message (`drawn`: the rows painted this frame,
+/// `line_of`: a row's line by its number): copy it, quote it in the field,
+/// then its author's menu (a resident's: the profile, an IM, …).
+pub(super) fn message_menu<'l>(
+    ui: &egui::Ui,
+    env: &LineEnv,
+    th: &mut Thread,
+    content: &egui::Response,
+    drawn: &[super::select::Row],
+    line_of: impl Fn(u64) -> Option<&'l ChatLine>,
+) {
+    let key = content.id.with("message_menu");
+    if content.secondary_clicked() {
+        let seq = content
+            .interact_pointer_pos()
+            .and_then(|pos| drawn.iter().find(|r| r.rect.contains(pos)))
+            .map(|r| r.seq);
+        ui.ctx().data_mut(|d| d.insert_temp(key, seq));
+    }
+    let Some(line) = ui.ctx().data(|d| d.get_temp::<Option<u64>>(key)).flatten().and_then(line_of) else {
+        return;
     };
-    let (text, _, _) = body(env, line, name);
-    let shown = super::shown_text(env.world, line, name);
-    if button(ui, "copy-filled", aurora_i18n::tr!("ui-chat-copy-message"), "copy").clicked() {
-        let prefix = super::copy_prefix(line, name);
-        ui.ctx().copy_text(format!("{prefix}{shown}"));
-    }
-    if button(ui, "quote-filled", aurora_i18n::tr!("ui-chat-quote-message"), "quote").clicked() {
-        // the field holds one line: the quote, then the answer after it
-        let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        th.out.push(ThreadAction::Quote(format!("> {one_line} ")));
-    }
-    if person {
-        if button(ui, "user-filled", aurora_i18n::tr!("common-view-profile"), "profile").clicked() {
-            crate::ui::profile::request_open(ui.ctx(), who.avatar);
+    let p = env.p;
+    let name = sender_name(env.world, env.own_name, line);
+    let who = Who::of(env, line);
+    crate::ui::menu::context_menu(content, p, |ui| {
+        if crate::ui::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ui-chat-copy-message")) {
+            let prefix = super::copy_prefix(line, &name);
+            ui.ctx().copy_text(format!("{prefix}{}", super::shown_text(env.world, line, &name)));
         }
-        let more = button(ui, "dots-filled", aurora_i18n::tr!("ui-chat-more"), "more");
-        crate::ui::menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        if crate::ui::menu::item(ui, p, "quote-filled", aurora_i18n::tr!("ui-chat-quote-message")) {
+            let (text, _, _) = body(env, line, &name);
+            // the field holds one line: the quote, then the answer after it
+            let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            th.out.push(ThreadAction::Quote(format!("> {one_line} ")));
+        }
+        if !who.avatar.is_nil() {
+            crate::ui::menu::separator(ui, p);
             crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
-        });
-    }
-}
-
-/// The id of a button of a line's toolbar ("copy", "quote", "profile",
-/// "more").
-pub(super) fn tool_id(salt: &str, line: &ChatLine) -> egui::Id {
-    egui::Id::new(("thread_tool", salt, line.time, line.source, line.text.as_str()))
+        }
+    });
 }
 
 /// The message names us: an explicit mention, or our display or user name

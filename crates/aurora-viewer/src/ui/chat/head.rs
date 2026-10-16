@@ -91,6 +91,8 @@ pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
     pics: &HashMap<Uuid, egui::TextureHandle>,
+    // textures by id (a group's insignia)
+    images: &HashMap<Uuid, egui::TextureHandle>,
     world: &World,
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
@@ -106,7 +108,10 @@ pub(super) fn show(
     );
     let pic = egui::Rect::from_min_size(egui::pos2(rect.left() + 12.0, rect.center().y - PIC * 0.5), egui::Vec2::splat(PIC));
     let radius = ui.visuals().window_corner_radius;
+    // while finding, the field takes the picture's and the names' place
+    let finding = st.searches.get(&st.selected).is_some_and(|s| s.find.is_some());
     match (who.avatar, who.kind) {
+        _ if finding => {}
         (Some(a), _) => {
             st.wanted_pics.insert(a);
             crate::ui::widgets::avatar_disc(ui, p, pic, pics.get(&a), &who.title, false);
@@ -124,14 +129,11 @@ pub(super) fn show(
             }
         }
         (None, Some(sidebar::Kind::Group)) => {
-            ui.painter().rect_filled(pic, radius, p.violet.gamma_multiply(0.3));
-            ui.painter().text(
-                pic.center(),
-                egui::Align2::CENTER_CENTER,
-                crate::ui::widgets::initials(&who.title),
-                egui::FontId::proportional(12.0),
-                p.violet_pale,
-            );
+            let insignia = st.selected.and_then(|id| sidebar::group_insignia(world, &id));
+            if let Some(i) = insignia {
+                st.wanted_images.insert(i);
+            }
+            sidebar::paint_group_picture(ui, p, pic, insignia.and_then(|i| images.get(&i)), PIC - 16.0);
         }
         (None, Some(_)) => {
             ui.painter().rect_filled(pic, radius, p.raised);
@@ -156,7 +158,6 @@ pub(super) fn show(
         header::more_items(ui, p, world, st, actions, group, true);
     });
     // find
-    let finding = st.searches.get(&selected).is_some_and(|s| s.find.is_some());
     let find_tip = aurora_i18n::tr!("ui-chat-find-in-conversation");
     if tool(ui, p, slot(), "search-filled", find_tip, Tone::active(finding)).clicked() {
         let search = st.searches.entry(selected).or_default();
@@ -212,6 +213,24 @@ pub(super) fn show(
     }
     if let Some(other) = selected {
         call_tool(ui, p, slot(), world, st, actions, other);
+    }
+    if finding {
+        // the field, from the picture's left to the actions, as tall as them
+        let field = egui::Rect::from_x_y_ranges(
+            pic.left()..=x - 6.0,
+            (rect.center().y - TOOL * 0.5)..=(rect.center().y + TOOL * 0.5),
+        );
+        let ChatUi { searches, views, .. } = st;
+        let view = views.entry(selected).or_default();
+        if let Some(search) = searches.get_mut(&selected)
+            && let Some(f) = search.find.as_mut()
+            && find::field(ui, p, field, p.bar, f, view, false)
+        {
+            // the head comes back, the keyboard goes to the message field
+            search.find = None;
+            ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new(("conv_input", selected))));
+        }
+        return;
     }
     // the names, up to the actions
     let text_left = pic.right() + 10.0;
