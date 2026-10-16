@@ -474,6 +474,7 @@ impl super::World {
         log::info!("derender {by}: {} objects out of the world", kept.len());
         self.objects.remove_idx(idx);
         self.derender.hide(by, kept);
+        self.forget_gone_look_ats();
         unseated
     }
 

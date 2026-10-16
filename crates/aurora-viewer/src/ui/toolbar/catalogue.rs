@@ -47,6 +47,7 @@ pub const COMMANDS: &[Command] = commands![
     "performance", "Command_Performance_Icon", "common-performance", true;
     "sit", "groundsit", "extra-sit-on-ground-stand-up", true;
     "ao", "AO", "ao-title", true;
+    "movement", "swimming", "movement-title", true;
     "preferences", "Command_Preferences_Icon", "common-preferences", true;
     "fly", "plane-tilt-filled", "extra-fly-land-f", true;
     "home", "home-filled", "common-go-home", true;
@@ -89,7 +90,7 @@ pub const COMMANDS: &[Command] = commands![
     "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
     "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", false;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
-    "move_lock", "lock-filled", "toolbar-command-move-lock", false;
+    "movelock", "lock-filled", "movelock-title", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", false;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
     "group_titles", "tags-filled", "toolbar-command-group-titles", false;
@@ -114,6 +115,8 @@ impl Command {
 
 /// The catalogue's entry of a command.
 pub fn find(id: &str) -> Option<&'static Command> {
+    // Preserve saved Firestorm-command layouts without listing two lock buttons.
+    let id = if id == "move_lock" { "movelock" } else { id };
     COMMANDS.iter().find(|c| c.id == id)
 }
 

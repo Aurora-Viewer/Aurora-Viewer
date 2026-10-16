@@ -2003,6 +2003,20 @@ impl Session<'_> {
                 options,
                 source,
             } => self.save_script(request, target, handle, options, source),
+            NetCommand::Bridge { request, command } => {
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = crate::bridge::send(command).await;
+                    let _ = events.send(NetEvent::BridgeReply { request, result });
+                });
+            }
+            NetCommand::BridgeQuery { request, endpoint, query } => {
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    let result = crate::bridge::query::send(endpoint, query).await;
+                    let _ = events.send(NetEvent::BridgeQueryReply { request, result });
+                });
+            }
             NetCommand::SaveWearable {
                 request,
                 item,

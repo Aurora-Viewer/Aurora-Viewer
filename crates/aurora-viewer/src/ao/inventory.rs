@@ -1,7 +1,9 @@
 //! AOEngine::{tick, update, reloadStateAnimations, parseNotecard, saveSet,
-//! saveState, addAnimation}: Firestorm's #Firestorm/#AO folders and links.
+//! saveState, addAnimation}: Aurora-owned AO folders using Firestorm's format.
 
 use super::*;
+
+pub mod editor;
 use crate::world::inventory::{FetchState, Inventory, actions};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{Mutation, Operation};
@@ -17,6 +19,7 @@ pub struct Catalog {
     pub missing: Vec<Uuid>,
     generation: Option<u64>,
     waiting: Vec<(Uuid, FetchState)>,
+    firestorm: bool,
 }
 
 pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
@@ -89,6 +92,14 @@ fn members(inv: &Inventory, folder: Uuid, missing: &mut Vec<Uuid>) -> Vec<Animat
 }
 
 impl Catalog {
+    pub fn swimming_ready(&self, selected: Uuid) -> bool {
+        !self.firestorm
+            && !self.loading
+            && !self.failed
+            && self
+                .selected(selected)
+                .is_some_and(|set| set.swimming_slots() == State::SWIMMING.len())
+    }
     pub fn invalidate(&mut self) {
         self.generation = None;
     }
@@ -96,6 +107,20 @@ impl Catalog {
     /// Only rebuild after inventory events. Keep a previously loaded set
     /// during partial fetches, so loading another folder never stops the AO.
     pub fn refresh(&mut self, inv: &mut Inventory) {
+        self.refresh_source(inv, false);
+    }
+
+    pub(super) fn refresh_firestorm(&mut self, inv: &mut Inventory) {
+        self.refresh_source(inv, true);
+    }
+
+    fn refresh_source(&mut self, inv: &mut Inventory, firestorm: bool) {
+        if self.firestorm != firestorm {
+            *self = Self {
+                firestorm,
+                ..Default::default()
+            };
+        }
         if self.generation == Some(inv.generation)
             && self
                 .waiting
@@ -109,13 +134,13 @@ impl Catalog {
         self.failed = false;
         self.missing.clear();
         self.loading = !fetch(inv, inv.root, &mut self.waiting, &mut self.failed);
-        let Some(fs) = child(inv, inv.root, "#Firestorm") else {
+        let Some(fs) = child(inv, inv.root, if firestorm { "#Firestorm" } else { "#Aurora" }) else {
             self.root = None;
             self.sets.clear();
             return;
         };
         self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
-        self.root = child(inv, fs, "#AO");
+        self.root = child(inv, fs, if firestorm { "#AO" } else { "AO" });
         let Some(root) = self.root else {
             self.sets.clear();
             return;
@@ -150,6 +175,11 @@ impl Catalog {
                 let Some(state) = State::parse(params[0]) else {
                     continue;
                 };
+                // Firestorm swimming mappings are intentionally not imported.
+                // Do not even fetch their contents or unresolved originals.
+                if firestorm && state.swimming() {
+                    continue;
+                }
                 let mut config = StateConfig {
                     folder: folder_id,
                     cycle: Cycle::parse(&params),
@@ -203,7 +233,12 @@ impl Catalog {
                         .then_with(|| a.name.cmp(&b.name))
                         .then_with(|| a.id.cmp(&b.id))
                 });
-                config.tracks.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+                config.tracks.sort_by(|a, b| {
+                    editor::folder_order(inv, a.id)
+                        .cmp(&editor::folder_order(inv, b.id))
+                        .then_with(|| a.name.cmp(&b.name))
+                        .then_with(|| a.id.cmp(&b.id))
+                });
                 set.states.insert(state, config);
             }
             if complete {
@@ -229,7 +264,9 @@ impl Catalog {
     }
 
     pub fn reload(&mut self, inv: &mut Inventory) {
-        let root = self.root;
+        let root = self
+            .root
+            .or_else(|| child(inv, inv.root, "#Firestorm").and_then(|fs| child(inv, fs, "#AO")));
         let ids: Vec<_> = inv
             .folders
             .keys()
@@ -241,7 +278,7 @@ impl Catalog {
                 f.state = FetchState::Unknown;
             }
         }
-        for name in ["#Firestorm", "#AO"] {
+        for name in ["#Aurora", "AO", "#Firestorm", "#AO"] {
             let ids: Vec<_> = inv
                 .folders
                 .values()
@@ -311,16 +348,22 @@ fn finish(mut change: Mutation) -> Mutation {
 /// Refresh lists contain parents, so they alone cannot protect an element
 /// being renamed or removed. Check operation targets and destinations too.
 pub fn editable(inv: &Inventory, change: &Mutation, protected: &HashSet<Uuid>) -> bool {
+    // AO startup and subsequent edits can read/link Firestorm originals, but
+    // can never write into, rename, move or remove any part of its inventory.
+    let firestorm = child(inv, inv.root, "#Firestorm");
     change
         .operations
         .iter()
-        .map(|op| match op {
-            Operation::Folder { parent, .. } | Operation::Links { parent, .. } => *parent,
-            Operation::Patch { id, .. } | Operation::Delete { id, .. } | Operation::Purge(id) => *id,
+        .flat_map(|op| match op {
+            Operation::Folder { parent, .. } | Operation::Links { parent, .. } => [Some(*parent), None],
+            Operation::Patch { id, body, .. } => [Some(*id), body.as_map().and_then(|m| m.get("parent_id")).map(|p| p.as_uuid())],
+            Operation::Delete { id, .. } | Operation::Purge(id) => [Some(*id), None],
         })
+        .flatten()
+        .chain(change.copies.iter().map(|copy| copy.parent))
         .chain(change.refresh.iter().copied())
         .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
-        .all(|id| actions::mutable(inv, id, protected))
+        .all(|id| !firestorm.is_some_and(|fs| actions::under(inv, id, fs)) && actions::mutable(inv, id, protected))
 }
 
 /// Build the entire parent-before-child mutation before sending it. AIS
@@ -331,18 +374,24 @@ pub fn create(inv: &Inventory, catalog: &Catalog, set: &Set) -> Result<(Mutation
         return Err(aurora_i18n::tr!("ao-name-or-loading").into());
     }
     let mut change = Mutation::default();
-    let fs = child(inv, inv.root, "#Firestorm").unwrap_or_else(|| folder(&mut change, inv.root, "#Firestorm".into()));
-    let root = catalog.root.unwrap_or_else(|| folder(&mut change, fs, "#AO".into()));
-    let id = folder(&mut change, root, set.folder_name());
+    let fs = child(inv, inv.root, "#Aurora").unwrap_or_else(|| folder(&mut change, inv.root, "#Aurora".into()));
+    let root = catalog.root.unwrap_or_else(|| folder(&mut change, fs, "AO".into()));
+    let id = append_set(&mut change, root, set)?;
+    Ok((finish(change), id))
+}
+
+fn append_set(change: &mut Mutation, root: Uuid, set: &Set) -> Result<Uuid, String> {
+    valid_name(&set.name)?;
+    let id = folder(change, root, set.folder_name());
     for state in State::ALL {
         let Some(config) = set.states.get(&state) else {
             continue;
         };
-        let parent = folder(&mut change, id, format!("{}{}", state.name(), config.cycle.suffix()));
+        let parent = folder(change, id, format!("{}{}", state.name(), config.cycle.suffix()));
         for (order, step) in config.steps.iter().enumerate() {
             if step.group {
-                let group = folder(&mut change, parent, format!("{}:OR{order}", valid_name(&step.name)?));
-                links(&mut change, group, &step.members);
+                let group = folder(change, parent, format!("{}:OR{order}", valid_name(&step.name)?));
+                links(change, group, &step.members);
             } else if let Some(a) = step.members.first() {
                 change.operations.push(Operation::Links {
                     parent,
@@ -356,19 +405,48 @@ pub fn create(inv: &Inventory, catalog: &Catalog, set: &Set) -> Result<(Mutation
                 });
             }
         }
-        for track in &config.tracks {
+        for (order, track) in config.tracks.iter().enumerate() {
             let parent = folder(
-                &mut change,
+                change,
                 parent,
-                format!("{}:TR{}", valid_name(&track.name)?, track.cycle.suffix()),
+                format!("{}:TR:OR{order}{}", valid_name(&track.name)?, track.cycle.suffix()),
             );
-            links(&mut change, parent, &track.members);
+            links(change, parent, &track.members);
         }
     }
     if change.operations.len() > 2048 {
         return Err(aurora_i18n::tr!("ao-too-large").into());
     }
-    Ok((finish(change), id))
+    Ok(id)
+}
+
+/// Publish only after every set/link was acknowledged. A partially failed
+/// import stays separate and is never blindly replayed over user AO data.
+pub(super) fn reconstruct(inv: &Inventory, source: &Catalog, selected: Uuid) -> Result<(Mutation, Option<Uuid>), String> {
+    let brand = child(inv, inv.root, "#Aurora").ok_or(aurora_i18n::tr!("ao-name-or-loading"))?;
+    if child(inv, brand, "AO").is_some() || child(inv, brand, "AO (Firestorm import)").is_some() {
+        return Err(aurora_i18n::tr!("ao-bootstrap-interrupted").into());
+    }
+    let mut change = Mutation::default();
+    let root = folder(&mut change, brand, "AO (Firestorm import)".into());
+    let preferred = source.selected(selected).map(|s| s.id);
+    let mut select = None;
+    for set in &source.sets {
+        let id = append_set(&mut change, root, set)?;
+        if Some(set.id) == preferred {
+            select = Some(id);
+        }
+    }
+    change.operations.push(Operation::Patch {
+        id: root,
+        folder: true,
+        body: llsd_map! { "name" => "AO" },
+    });
+    change.refresh.push(brand);
+    if change.operations.len() > 2048 {
+        return Err(aurora_i18n::tr!("ao-too-large").into());
+    }
+    Ok((finish(change), select))
 }
 
 pub fn save_set(inv: &Inventory, set: &Set) -> Result<Mutation, String> {
@@ -385,6 +463,9 @@ pub fn save_cycle(inv: &Inventory, state: State, config: &StateConfig) -> Result
 }
 
 pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Option<Uuid>) -> Result<Mutation, String> {
+    if state.swimming() {
+        return set_swimming(inv, set, state, item);
+    }
     let a = animation(inv, item).ok_or(aurora_i18n::tr!("ao-not-animation"))?;
     let mut change = Mutation::default();
     let config = set.states.get(&state);
@@ -424,38 +505,19 @@ pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Opti
     Ok(finish(change))
 }
 
-pub fn new_container(inv: &Inventory, set: &Set, state: State, name: &str, track: bool) -> Result<Mutation, String> {
+/// Replace only Aurora's slot links; original animations remain read-only.
+pub fn set_swimming(inv: &Inventory, set: &Set, state: State, item: Uuid) -> Result<Mutation, String> {
+    let a = animation(inv, item)
+        .filter(|_| state.swimming())
+        .ok_or(aurora_i18n::tr!("ao-not-animation"))?;
     let mut change = Mutation::default();
-    let config = set.states.get(&state);
-    let name = valid_name(name)?;
-    if config.is_some_and(|c| c.steps.iter().any(|s| s.group && s.name == name) || c.tracks.iter().any(|t| t.name == name)) {
-        return Err(aurora_i18n::tr!("ao-name-or-loading").into());
+    if let Some(old) = set.states.get(&state) {
+        let removed = remove(inv, old.folder)?;
+        change.operations.extend(removed.operations);
+        change.refresh.extend(removed.refresh);
     }
-    if let Some(config) = config {
-        normalize_steps(inv, &mut change, &config.steps)?;
-    }
-    let parent = config
-        .map(|c| c.folder)
-        .unwrap_or_else(|| folder(&mut change, set.id, state.name().into()));
-    let suffix = if track {
-        ":TR".into()
-    } else {
-        format!(":OR{}", config.map_or(0, |c| c.steps.len()))
-    };
-    folder(&mut change, parent, format!("{name}{suffix}"));
-    Ok(finish(change))
-}
-
-pub fn order(inv: &Inventory, config: &StateConfig, index: usize, down: bool) -> Result<Mutation, String> {
-    let mut steps = config.steps.clone();
-    let other = if down { index.checked_add(1) } else { index.checked_sub(1) }.filter(|i| *i < steps.len());
-    let Some(other) = other.filter(|_| index < steps.len()) else {
-        return Err(aurora_i18n::tr!("ao-not-found").into());
-    };
-    steps.swap(index, other);
-    let mut change = Mutation::default();
-    normalize_steps(inv, &mut change, &steps)?;
-    change.refresh.push(config.folder);
+    let parent = folder(&mut change, set.id, state.name().into());
+    links(&mut change, parent, &[a]);
     Ok(finish(change))
 }
 
@@ -480,18 +542,6 @@ fn normalize_members(inv: &Inventory, change: &mut Mutation, members: &[Animatio
         change.refresh.extend(patch.refresh);
     }
     Ok(())
-}
-
-pub fn member_order(inv: &Inventory, members: &[Animation], index: usize, down: bool) -> Result<Mutation, String> {
-    let mut members = members.to_vec();
-    let other = if down { index.checked_add(1) } else { index.checked_sub(1) }.filter(|i| *i < members.len());
-    let Some(other) = other.filter(|_| index < members.len()) else {
-        return Err(aurora_i18n::tr!("ao-not-found").into());
-    };
-    members.swap(index, other);
-    let mut change = Mutation::default();
-    normalize_members(inv, &mut change, &members)?;
-    Ok(finish(change))
 }
 
 /// Link deletion never deletes the original asset. Folders are moved to

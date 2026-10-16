@@ -150,6 +150,8 @@ pub struct RadarSettings {
     pub draw_leave: bool,
     pub region_enter: bool,
     pub region_leave: bool,
+    /// FSRadarEnhanceByBridge: fill missing coarse altitudes through our bridge.
+    pub enhance_by_bridge: bool,
     /// RadarAvatarAgeAlert, with RadarAvatarAgeAlertValue (days).
     pub age_alert: bool,
     pub age_alert_days: u32,
@@ -179,6 +181,7 @@ impl Default for RadarSettings {
             draw_leave: false,
             region_enter: false,
             region_leave: false,
+            enhance_by_bridge: true,
             age_alert: false,
             age_alert_days: 7,
             // nearest first: who is around matters more than the alphabet
@@ -640,6 +643,7 @@ pub(super) fn tool_menu(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, e
 /// Options of the list (menu_fs_radar_options.xml). `blocked` asks for the
 /// block list.
 pub(super) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut RadarSettings, blocked: &mut bool) {
+    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-bridge"), &mut s.enhance_by_bridge);
     menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-minimap"), &mut s.show_minimap);
     menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-limit-range"), &mut s.limit_range);
     ui.horizontal(|ui| {
@@ -920,5 +924,21 @@ mod tests {
         profile.hide_age = Some(false);
         profile.born = None;
         assert_eq!(age_days(&profile, 13.5 * day), None);
+    }
+}
+
+#[cfg(test)]
+mod bridge_settings_tests {
+    use super::*;
+    #[test]
+    fn bridge_enhancement_migrates_as_enabled_and_preserves_an_explicit_opt_out() {
+        let defaults: RadarSettings = serde_json::from_str("{}").expect("old radar settings");
+        assert!(defaults.enhance_by_bridge);
+        let settings = RadarSettings {
+            enhance_by_bridge: false,
+            ..defaults
+        };
+        let restored: RadarSettings = serde_json::from_str(&serde_json::to_string(&settings).expect("save")).expect("reload");
+        assert!(!restored.enhance_by_bridge);
     }
 }

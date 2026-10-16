@@ -417,6 +417,9 @@ fn toolbar(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData, st: &mut People
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let resp = super::rows::gear(ui, p, aurora_i18n::tr!("people-alerts-options"));
+        if std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "radar") {
+            egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+        }
         menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             radar::options_menu(ui, p, data.settings, blocked);
         });
