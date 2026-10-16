@@ -419,7 +419,7 @@ pub(super) fn preview(
     drag_inventory: &Inventory,
     st: &mut InventoryUi,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
-    prefs: &InventoryPreferences,
+    prefs: &mut InventoryPreferences,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
@@ -433,9 +433,14 @@ pub(super) fn preview(
         animation(ctx, p, inv, st, it, prefs, actions);
         return;
     }
+    let mut view = if it.asset_type == 7 {
+        *st.notecard_view.get_or_insert(prefs.notecard_view)
+    } else {
+        Default::default()
+    };
     let editable = st.preview_can_edit && crate::world::inventory::preview::can_edit(inv, id);
     if it.asset_type == 7
-        && st.notecard_view != super::markdown::View::Markdown
+        && view != super::markdown::View::Markdown
         && !st.save_pending
         && let (Some(source), Some(Ok(text))) = (&mut st.preview_source, &st.preview_text)
     {
@@ -516,10 +521,12 @@ pub(super) fn preview(
                 }
             }
         } else {
-            if it.asset_type == 7 && st.notecard_view.choose(ui, p) {
+            if it.asset_type == 7 && view.choose(ui, p) {
+                st.notecard_view = Some(view);
+                prefs.notecard_view = view;
                 let editor = egui::Id::new(("inventory_document_text", st.ui_id, id));
                 ctx.memory_mut(|m| {
-                    m.request_focus(if st.notecard_view == super::markdown::View::Markdown {
+                    m.request_focus(if view == super::markdown::View::Markdown {
                         editor.with("markdown")
                     } else {
                         editor
@@ -569,12 +576,12 @@ pub(super) fn preview(
                             st.preview_source.as_mut(),
                             editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
                             editor_size,
-                            st.notecard_view,
+                            view,
                             &mut st.notecard_markdown,
                         );
                     } else {
                         egui::ScrollArea::both()
-                            .id_salt(("inventory_document_scroll", st.ui_id, id, st.notecard_view as usize))
+                            .id_salt(("inventory_document_scroll", st.ui_id, id, view as usize))
                             .max_height(if documents { editor_size.y } else { 300.0 })
                             .auto_shrink(if documents { [false, false] } else { [true, true] })
                             .show(ui, |ui| {
@@ -850,6 +857,16 @@ mod tests {
         st: &mut InventoryUi,
         events: Vec<egui::Event>,
     ) -> (egui::FullOutput, Vec<InvAction>) {
+        document_frame_with_preferences(ctx, inv, st, &mut InventoryPreferences::default(), events)
+    }
+
+    fn document_frame_with_preferences(
+        ctx: &egui::Context,
+        inv: &Inventory,
+        st: &mut InventoryUi,
+        prefs: &mut InventoryPreferences,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Vec<InvAction>) {
         let mut actions = Vec::new();
         let output = ctx.run_ui(
             egui::RawInput {
@@ -866,7 +883,7 @@ mod tests {
                     &Icons::default(),
                     inv,
                     st,
-                    &InventoryPreferences::default(),
+                    prefs,
                     &Facts {
                         agent: Uuid::from_u128(2),
                         worn: Default::default(),
@@ -880,17 +897,7 @@ mod tests {
                     &Default::default(),
                     &mut actions,
                 );
-                preview(
-                    ctx,
-                    &p,
-                    &Icons::default(),
-                    inv,
-                    inv,
-                    st,
-                    &Default::default(),
-                    &InventoryPreferences::default(),
-                    &mut actions,
-                );
+                preview(ctx, &p, &Icons::default(), inv, inv, st, &Default::default(), prefs, &mut actions);
             },
         );
         (headless_output(output), actions)
@@ -985,6 +992,96 @@ mod tests {
     }
 
     #[test]
+    fn notecard_view_choices_seed_new_windows_without_overwriting_open_drafts() {
+        use super::super::NotecardView;
+
+        let ctx = egui::Context::default();
+        let (inv, mut st) = note_fixture();
+        let mut prefs = InventoryPreferences::default();
+        for _ in 0..5 {
+            document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![]);
+        }
+        assert_eq!(st.notecard_view, Some(NotecardView::Classic));
+        let draft = "# Brouillon **Été 🐺**";
+        st.preview_text = Some(Ok(draft.into()));
+        st.document_changed();
+
+        for (view, label) in [
+            (NotecardView::Markdown, aurora_i18n::tr!("notecard-view-markdown")),
+            (NotecardView::Classic, aurora_i18n::tr!("notecard-view-classic")),
+            (NotecardView::Edit, aurora_i18n::tr!("notecard-view-source")),
+        ] {
+            let (output, _) = document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![]);
+            let pos = label_center(&output, label);
+            for pressed in [true, false] {
+                document_frame_with_preferences(
+                    &ctx,
+                    &inv,
+                    &mut st,
+                    &mut prefs,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                );
+            }
+            assert_eq!(prefs.notecard_view, view, "the explicit tab choice updates the shared preference");
+            assert_eq!(st.notecard_view, Some(view));
+            assert_eq!(st.preview_text, Some(Ok(draft.into())));
+            assert!(st.preview_dirty);
+
+            // Both new inventory windows and object documents use this entry
+            // point. No constructor-specific default may hide the preference.
+            let fresh_ctx = egui::Context::default();
+            let mut inventory = InventoryUi::default();
+            let item = st.preview.expect("item");
+            inventory.open_document(&fresh_ctx, item, 7);
+            let new_note = &mut inventory.windows[0].state;
+            new_note.load_document(7, true, &Ok(b"New note".to_vec()));
+            let mut object_note = InventoryUi::document(item);
+            object_note.load_document(7, true, &Ok(b"Object note".to_vec()));
+            let mut output = fresh_ctx.run_ui(egui::RawInput::default(), |ui| {
+                for note in [&mut **new_note, &mut object_note] {
+                    show_document(
+                        ui.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        &Icons::default(),
+                        &inv,
+                        note,
+                        &inv,
+                        &Default::default(),
+                        &mut prefs,
+                    );
+                }
+            });
+            output.textures_delta.clear();
+            assert_eq!(new_note.notecard_view, Some(view));
+            assert_eq!(object_note.notecard_view, Some(view));
+            // Painting an older window must not turn its local mode into a
+            // new global choice. Only a user tab change does that.
+            prefs.notecard_view = if view == NotecardView::Edit {
+                NotecardView::Classic
+            } else {
+                NotecardView::Edit
+            };
+            let last_choice = prefs.notecard_view;
+            document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![]);
+            assert_eq!(prefs.notecard_view, last_choice);
+            assert_eq!(st.notecard_view, Some(view));
+            assert_eq!(st.preview_text, Some(Ok(draft.into())));
+
+            object_note.reset_document();
+            document_frame_with_preferences(&fresh_ctx, &inv, &mut object_note, &mut prefs, vec![]);
+            assert_eq!(object_note.notecard_view, Some(last_choice));
+        }
+    }
+
+    #[test]
     fn notecard_view_switches_save_the_source_and_attachments_and_keep_failed_drafts() {
         use super::super::markdown::View;
         use aurora_net::inventory::notecard::Notecard;
@@ -999,7 +1096,7 @@ mod tests {
             st.load_document(7, true, &Ok(crate::world::inventory::demo::note_asset(true)));
             let original = st.preview_source.clone().expect("note");
             let draft = format!("# Été 🐺\n\n**Source** *unchanged*\n\n{}", original.text);
-            st.notecard_view = View::Edit;
+            st.notecard_view = Some(View::Edit);
             for _ in 0..5 {
                 document_frame(&ctx, &inv, &mut st, vec![]);
             }
@@ -1028,7 +1125,7 @@ mod tests {
             let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
             let pos = label_center(&output, label);
             click_document(&ctx, &inv, &mut st, pos);
-            assert_eq!(st.notecard_view, view);
+            assert_eq!(st.notecard_view, Some(view));
             let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
             let editor = if view == View::Markdown { editor.with("markdown") } else { editor };
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -1084,13 +1181,13 @@ mod tests {
                 );
             }
             assert!(st.finish_content_save(request, Some("offline failure")));
-            assert_eq!(st.notecard_view, view);
+            assert_eq!(st.notecard_view, Some(view));
             assert_eq!(st.preview_text, Some(Ok(draft.clone())));
             assert!(st.preview_dirty && !st.save_pending);
             let request = Uuid::new_v4();
             st.start_content_save(request, 7, draft, false).expect("retry");
             assert!(st.finish_content_save(request, None));
-            assert_eq!(st.notecard_view, view);
+            assert_eq!(st.notecard_view, Some(view));
             assert!(!st.preview_dirty);
         }
     }
@@ -1102,7 +1199,7 @@ mod tests {
             let ctx = egui::Context::default();
             let (inv, mut st) = note_fixture();
             st.load_document(7, true, &Ok(crate::world::inventory::demo::note_asset(true)));
-            st.notecard_view = view;
+            st.notecard_view = Some(view);
             let original = st.preview_text.clone();
             let preview = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item"))).with("markdown");
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -1134,7 +1231,7 @@ mod tests {
         let card = aurora_net::inventory::notecard::Notecard::decode(&crate::world::inventory::demo::note_asset(true)).expect("card");
         let original = "Été 🐺\n\u{100000}\n\u{100001}\n\u{100002}";
         st.load_document(7, true, &Ok(card.encode(original).expect("asset")));
-        st.notecard_view = super::super::markdown::View::Edit;
+        st.notecard_view = Some(super::super::markdown::View::Edit);
         let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
         for _ in 0..5 {
             document_frame(&ctx, &inv, &mut st, vec![]);
@@ -1215,7 +1312,7 @@ mod tests {
             let (inv, mut st) = note_fixture();
             st.load_document(7, pending, &Ok(b"Source".to_vec()));
             st.save_pending = pending;
-            st.notecard_view = super::super::markdown::View::Edit;
+            st.notecard_view = Some(super::super::markdown::View::Edit);
             for _ in 0..5 {
                 document_frame(&ctx, &inv, &mut st, vec![]);
             }
@@ -1250,7 +1347,7 @@ mod tests {
                 if long {
                     text.push_str(&"\nMore text".repeat(100));
                 }
-                st.notecard_view = super::super::markdown::View::Edit;
+                st.notecard_view = Some(super::super::markdown::View::Edit);
                 let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
                 let panes = [editor, editor.with("markdown")];
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -1305,7 +1402,7 @@ mod tests {
         let ctx = egui::Context::default();
         let (inv, mut st) = note_fixture();
         st.load_document(7, true, &Ok(b"# Before\n\nBody".to_vec()));
-        st.notecard_view = super::super::markdown::View::Edit;
+        st.notecard_view = Some(super::super::markdown::View::Edit);
         let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
         let preview = editor.with("markdown");
         let wait_for = |st: &mut InventoryUi, expected: &str| {
@@ -1371,7 +1468,7 @@ mod tests {
             let ctx = egui::Context::default();
             let (inv, mut st) = note_fixture();
             st.load_document(7, false, &Ok(b"# Read only\n**Source**".to_vec()));
-            st.notecard_view = view;
+            st.notecard_view = Some(view);
             let original = st.preview_text.clone();
             for _ in 0..8 {
                 document_frame(&ctx, &inv, &mut st, vec![]);

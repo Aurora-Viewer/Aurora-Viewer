@@ -11,7 +11,7 @@ use crate::theme::Palette;
 
 mod formatting;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum View {
     #[default]
     Classic,

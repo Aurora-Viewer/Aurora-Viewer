@@ -2960,6 +2960,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   code and links. Images show their alt text as a link without downloading.
   Newlines before and after embedded-item rows must remain newlines in both
   Markdown views; items written on the same source line must stay inline.
+  `note-remember` opens this same sample using the saved preference instead
+  of forcing a view. With no saved choice, Classic is selected. Choose
+  Markdown, open another inventory or object note, then restart the demo:
+  newly opened notes must still use Markdown. Repeat with Classic and Edit.
+  Merely displaying an older window must not replace the last explicit
+  choice, and switching views must preserve any unsaved source/attachments.
+  Demo settings stay separate from the normal viewer's settings.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal

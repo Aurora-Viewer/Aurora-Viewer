@@ -101,6 +101,10 @@ text with embedded inventory. CommonMark is parsed once per source change on
 the worker pool and displayed as a selectable, read-only rich text editor.
 Edit places the raw source on the left and its live Markdown preview on the
 right, with independent scroll areas and a common save footer.
+`InventoryPreferences::notecard_view` persists the last explicit tab choice
+for inventory and object notes. New document windows inherit it on first
+display; existing windows retain their own mode and draft. Old settings
+without the preference start in Classic.
 `ui/inventory/markdown/formatting.rs` adds the Edit toolbar and syntax help;
 formatting transforms the source selection, preserves Unicode and embedded
 markers, and records one native undo step per action. The latest

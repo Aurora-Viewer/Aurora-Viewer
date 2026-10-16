@@ -8,13 +8,16 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY") else {
         return Vec::new();
     };
-    if matches!(mode.as_str(), "note-markdown" | "note-source" | "note-classic" | "note-format") {
-        if frame < 600 {
-            st.notecard_view = match mode.as_str() {
+    if matches!(
+        mode.as_str(),
+        "note-markdown" | "note-source" | "note-classic" | "note-format" | "note-remember"
+    ) {
+        if frame < 600 && mode != "note-remember" {
+            st.notecard_view = Some(match mode.as_str() {
                 "note-markdown" => super::markdown::View::Markdown,
                 "note-source" | "note-format" => super::markdown::View::Edit,
                 _ => super::markdown::View::Classic,
-            };
+            });
         }
         if frame == 610
             && let Some(item) = st.preview
@@ -377,6 +380,7 @@ mod tests {
                                 &mut w.state,
                                 &inv,
                                 &Default::default(),
+                                &mut InventoryPreferences::default(),
                             );
                         }
                     },

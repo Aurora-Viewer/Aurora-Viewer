@@ -19,6 +19,7 @@ mod document;
 pub(crate) mod drag;
 mod embedded;
 mod markdown;
+pub use markdown::View as NotecardView;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
@@ -48,9 +49,9 @@ pub fn show_document(
     st: &mut InventoryUi,
     drag_inventory: &Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    prefs: &mut InventoryPreferences,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
-    let prefs = InventoryPreferences::default();
     let facts = Facts {
         agent: Uuid::nil(),
         worn: Default::default(),
@@ -61,8 +62,8 @@ pub fn show_document(
         touchable: Default::default(),
         names: Default::default(),
     };
-    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, &prefs, &mut actions);
-    dialogs::show(ctx, p, icons, inv, st, &prefs, &facts, images, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, prefs, &mut actions);
+    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     actions
 }
 
@@ -313,7 +314,8 @@ pub struct InventoryUi {
     pub preview_dirty: bool,
     pub save_pending: bool,
     pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
-    pub notecard_view: markdown::View,
+    /// Seeded from the shared preference on first display, then kept per window.
+    pub notecard_view: Option<NotecardView>,
     notecard_markdown: markdown::Cache,
     pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
