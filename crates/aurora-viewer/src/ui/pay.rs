@@ -837,6 +837,7 @@ impl PayUi {
         if let Some(payee) = self.payee.as_mut() {
             match mode {
                 "short" => payee.amount = "1500".into(),
+                "empty" => payee.amount.clear(),
                 "confirm" => {
                     payee.amount = "500".into();
                     payee.stage = Stage::Confirm(500);
@@ -936,11 +937,14 @@ fn amount_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, focus: &mut b
                 let cur_w = 26.0;
                 ui.add_space(((ui.available_width() - digits_w - cur_w) / 2.0).max(0.0));
                 ui.label(RichText::new("L$").size(18.0).strong().color(p.muted));
+                // the hint in the figures' font: egui lays a hint out in the
+                // body text style, not in the field's `font` (a small "0"
+                // above the baseline of "L$")
                 let response = ui.add(
                     egui::TextEdit::singleline(text)
-                        .font(font)
+                        .font(font.clone())
                         .text_color(p.ink)
-                        .hint_text(RichText::new("0").color(p.muted_dim))
+                        .hint_text(RichText::new("0").font(font).color(p.muted_dim))
                         .frame(egui::Frame::NONE)
                         .char_limit(AMOUNT_DIGITS)
                         .desired_width(digits_w),

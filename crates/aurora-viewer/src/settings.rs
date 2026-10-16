@@ -406,6 +406,10 @@ pub struct Settings {
     pub font: String,
     pub font_scale: f32,
     pub chat_timestamps: bool,
+    /// The local chat bar keeps the keyboard after a message is sent; Enter
+    /// on the empty bar gives it back to the world (the Legacy Viewer's
+    /// CloseChatOnReturn off). Off by default: the bar lets go after sending.
+    pub chat_keep_focus: bool,
     /// Show Contacts in Conversations (Preferences > Chat, off by default).
     /// Unlike Firestorm's always-present entry, this is optional at the human's request.
     pub show_contacts_tab: bool,
@@ -968,6 +972,7 @@ impl Default for Settings {
             font: "Noto Sans".into(),
             font_scale: 1.0,
             chat_timestamps: true,
+            chat_keep_focus: false,
             show_contacts_tab: false,
             send_typing_state: true,
             chat_toast_seconds: 20.0,
