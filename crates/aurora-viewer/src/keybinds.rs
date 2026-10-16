@@ -1381,6 +1381,9 @@ mod passage_tests {
         assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::KeyE), Mods::default()));
         keys.set(Action::Up, 0, k(KeyCode::Space));
         keys.set(Action::Up, 1, None);
+        assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::Space), ctrl));
+        assert_eq!(keys.triggered(&Input::key(KeyCode::Space), ctrl), Some(Action::TextureLibrary));
+        keys.set(Action::TextureLibrary, 0, None);
         assert!(keys.pass_wall_triggered(&Input::key(KeyCode::Space), ctrl));
         assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::PageUp), ctrl));
         keys.set(Action::Inventory, 0, kmod(KeyCode::Space, true, false));

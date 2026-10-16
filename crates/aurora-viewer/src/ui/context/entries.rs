@@ -1116,12 +1116,11 @@ mod tests {
             .map(|e| e.label)
             .collect();
         // the PBR material editor, the object profile, the pathfinding
-        // windows and the exporters are windows of their own; script info
-        // waits for its own task
+        // windows and the exporters are windows of their own. Script info
+        // is available through the Aurora bridge.
         let expected = tr(&[
             "ui-context-edit-pbr-material",
             "common-profile",
-            "ui-context-script-information",
             "ui-context-show-in-region-objects",
             "ui-context-show-in-characters",
             "common-save-as",
