@@ -13,6 +13,15 @@
 # Firestorm sources: cloned next to the repository, never inside it
 /phoenix-firestorm/
 
+# Cache folders the scene's streamers create where the tests run (the
+# crate's folder): never sources
+/crates/aurora-viewer/anim/
+/crates/aurora-viewer/mat/
+/crates/aurora-viewer/mesh/
+/crates/aurora-viewer/settings/
+/crates/aurora-viewer/sound/
+/crates/aurora-viewer/tex/
+
 # Logs, captures, local settings
 *.log
 *.png.tmp
