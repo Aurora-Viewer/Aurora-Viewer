@@ -836,6 +836,7 @@ impl Renderer {
                     ..Default::default()
                 },
                 gpu_depth: self.last_stats.gpu_depth,
+                gpu_ssao: self.last_stats.gpu_ssao,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,

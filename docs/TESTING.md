@@ -3775,6 +3775,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
+| `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3859,6 +3860,23 @@ What the inventory must show with these scenarios:
   three, without `AURORA_PROFILE`, to see the difference
   (`AURORA_DEMO_PBR_METAL=1`: the cube left of the spheres turns from dark
   with bright discs to an even mirror).
+- **`AURORA_AO=legacy|gtao|alt[:<0-3>]`**: the ambient occlusion method of
+  Preferences › Graphics for this launch, without changing the saved
+  setting: `legacy` the Legacy Viewer's screen-space occlusion
+  (ssao.wgsl), `gtao` ground-truth ambient occlusion (gtao.rs, after
+  Intel's XeGTAO), `alt` the two by turns, one second each, both kept
+  ready (GTAO on odd seconds). `:0` to `:3` choose GTAO's quality (low at
+  half resolution, medium, high, ultra); without it, that of the settings
+  (high when they choose Legacy). The occlusion still needs the setting on
+  (Ambient occlusion: Low or High). To compare, `AURORA_DEMO_DEBUG=ao`
+  shows the occlusion alone: the Legacy one is soft with wide halos and
+  the relief of normal maps, GTAO's is sharp in the folds of the avatars,
+  under objects and in corners. On classic skies the shading only lets the
+  occlusion darken the ambient part of the light (adjustIrradiance), so the
+  image itself changes little; on other skies it darkens the whole ambient
+  light. `g_ssao` of `perf summary` is its GPU time (demo crowd of 40,
+  2560 × 1369, RTX 4090: Legacy low about 0.08 to 0.15 ms, GTAO low 0.10,
+  medium 0.24, high 0.31, ultra 0.57 ms).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
@@ -4394,6 +4412,8 @@ thread.
   - `g_depth_msaa`: with MSAA, the prepass of the multisampled depth from
     which the scene pass starts (0 outside MSAA), also counted in
     `g_shadows_depth`;
+  - `g_ssao`: the ambient occlusion alone, Legacy or GTAO (`AURORA_AO`),
+    also counted in `g_effects`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn

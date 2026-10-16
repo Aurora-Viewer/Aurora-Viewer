@@ -610,8 +610,14 @@ pub struct Settings {
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
     pub max_avatars: u32,
-    /// Ambient occlusion: 0 off, 1 low, 2 high.
+    /// Ambient occlusion: 0 off, 1 low, 2 high (the levels of the Legacy
+    /// method).
     pub ssao: u8,
+    /// How the ambient occlusion is computed: 0 Legacy (the Legacy Viewer's
+    /// screen-space occlusion), 1 GTAO.
+    pub ao_method: u8,
+    /// GTAO quality: 0 low, 1 medium, 2 high, 3 ultra.
+    pub gtao_quality: u8,
     /// Water reflections: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
     pub water_reflections: u8,
     /// Mirrors: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
@@ -1119,6 +1125,8 @@ impl Default for Settings {
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
+            ao_method: 0,
+            gtao_quality: 2,
             water_reflections: 1,
             reflection_probes: 3,
             probe_count: 32,
@@ -1509,6 +1517,8 @@ impl Settings {
         self.render_exceptions
             .retain(|(id, m)| uuid::Uuid::parse_str(id).is_ok() && (1..=2).contains(m));
         self.ssao = self.ssao.min(2);
+        self.ao_method = self.ao_method.min(1);
+        self.gtao_quality = self.gtao_quality.min(3);
         self.water_reflections = self.water_reflections.min(4);
         self.mirrors = self.mirrors.min(4);
         self.anisotropy = match self.anisotropy {
@@ -1673,7 +1683,7 @@ impl Settings {
     }
 
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
-        use aurora_render::{AntiAliasing, Tonemapper};
+        use aurora_render::{AntiAliasing, AoMethod, Tonemapper};
         aurora_render::RenderSettings {
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
@@ -1691,6 +1701,13 @@ impl Settings {
             },
             shadow_resolution: self.shadow_params().0,
             ssao: self.ssao,
+            ao_method: if self.ao_method == 1 {
+                AoMethod::Gtao {
+                    quality: self.gtao_quality,
+                }
+            } else {
+                AoMethod::Legacy
+            },
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 64),

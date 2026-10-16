@@ -592,6 +592,16 @@ pub enum Tonemapper {
 }
 
 /// Quality settings applied with `Renderer::apply_settings`.
+/// The ambient occlusion method (Preferences › Graphics).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AoMethod {
+    /// The Legacy Viewer's screen-space occlusion (ssao.wgsl), its two
+    /// levels from `ssao`.
+    Legacy,
+    /// Ground-truth ambient occlusion (gtao.rs), quality 0 low … 3 ultra.
+    Gtao { quality: u8 },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
     pub aa: AntiAliasing,
@@ -600,6 +610,8 @@ pub struct RenderSettings {
     pub shadow_resolution: u32,
     /// Screen-space ambient occlusion: 0 off, 1 low, 2 high.
     pub ssao: u8,
+    /// How the occlusion `ssao` turns on is computed.
+    pub ao_method: AoMethod,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -625,6 +637,7 @@ impl Default for RenderSettings {
             tonemapper: Tonemapper::KhronosNeutral,
             shadow_resolution: 2048,
             ssao: 1,
+            ao_method: AoMethod::Legacy,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
@@ -1024,6 +1037,9 @@ pub struct RenderStats {
     /// occlusion culling, and with MSAA the prepass of the multisampled
     /// depth the scene pass starts from (0 otherwise).
     pub gpu_depth: Option<[f32; 2]>,
+    /// GPU time of the ambient occlusion alone (ms), part of
+    /// [`GpuElement::Effects`]: the Legacy pass or GTAO's.
+    pub gpu_ssao: Option<f32>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
