@@ -141,6 +141,83 @@ fn animation_wait_needs_server_start_then_stop_and_stop_owns_only_its_animations
     assert_eq!(m.stop(id), [Effect::Animation(anim, false)]);
 }
 
+/// A hotkey pressed again and again plays its gesture at each press, as in
+/// the Legacy Viewer (LLGestureMgr::triggerGesture): a press while it still
+/// plays starts it over, the animation asked again with no stop before it;
+/// only a step waiting for the key's release holds the key back.
+#[test]
+fn a_repeated_hotkey_plays_the_gesture_at_each_press() {
+    let mut m = Manager::default();
+    let now = Instant::now();
+    let id = Uuid::from_u128(1);
+    let anim = Uuid::from_u128(3);
+    let dance = Gesture {
+        key: 0xa2,
+        steps: vec![
+            Step::Animation {
+                name: String::new(),
+                asset: anim,
+                flags: 0,
+            },
+            Step::Wait {
+                seconds: 3.0,
+                flags: WAIT_TIME,
+            },
+            chat("ta-da"),
+        ],
+        ..Default::default()
+    };
+    m.entries.insert(
+        id,
+        Entry {
+            asset: Uuid::nil(),
+            definition: dance.clone(),
+        },
+    );
+    m.active.insert(id);
+    // first press: the animation starts, the gesture waits its 3 s
+    assert_eq!(m.key_trigger(0xa2, 0), Some(id));
+    m.play(id, dance.clone(), Some(0xa2));
+    assert_eq!(m.tick(now, &BTreeSet::new()), [Effect::Animation(anim, true)]);
+    // pressed again while it plays (its release not seen yet): played again
+    assert_eq!(m.key_trigger(0xa2, 0), Some(id), "the press was held back while the gesture played");
+    m.play(id, dance.clone(), Some(0xa2));
+    assert_eq!(
+        m.tick(now + Duration::from_millis(100), &BTreeSet::from([anim])),
+        [Effect::Animation(anim, true)],
+        "a restart asks the animation again, without stopping it first"
+    );
+    // a step that waits for the key's release holds the key until then
+    let hold = Gesture {
+        key: 0xa2,
+        steps: vec![
+            Step::Wait {
+                seconds: 5.0,
+                flags: WAIT_RELEASE | WAIT_TIME,
+            },
+            chat("released"),
+        ],
+        ..Default::default()
+    };
+    m.entries.insert(
+        id,
+        Entry {
+            asset: Uuid::nil(),
+            definition: hold.clone(),
+        },
+    );
+    m.play(id, hold, Some(0xa2));
+    assert!(m.tick(now, &BTreeSet::new()).is_empty());
+    assert_eq!(m.key_trigger(0xa2, 0), None);
+    m.release(Some(0xa2));
+    assert_eq!(m.tick(now, &BTreeSet::new()), [Effect::Chat("released".into())]);
+    assert_eq!(m.key_trigger(0xa2, 0), Some(id));
+    // a held key repeats into gestures, except F1 to F12 (LLViewerInput::handleKey)
+    assert!(Manager::repeat_triggers(b'G'));
+    assert!(!Manager::repeat_triggers(0xa2));
+    assert!(!Manager::repeat_triggers(0xac));
+}
+
 #[test]
 fn animation_wait_timeout_and_key_release() {
     let mut m = Manager::default();

@@ -33,6 +33,10 @@ struct Playing {
     observed: BTreeSet<Uuid>,
     key: Option<u8>,
     released: bool,
+    /// At a step that waits for its key to be released
+    /// (LLMultiGesture::mWaitingKeyRelease): the only time a press of that
+    /// key does not play the gesture again.
+    waiting_release: bool,
 }
 
 pub struct Manager {
@@ -68,11 +72,15 @@ impl Manager {
         !self.playing.is_empty()
     }
 
-    pub fn play(&mut self, item: Uuid, definition: Gesture, key: Option<u8>) -> Vec<Effect> {
+    /// LLGestureMgr::playGesture: a gesture played again while it plays
+    /// starts over from its first step (LLMultiGesture::reset), with no stop
+    /// of the animations it started: their start is simply asked again.
+    /// Stopping them first made each press of a repeated hotkey stop and
+    /// restart them.
+    pub fn play(&mut self, item: Uuid, definition: Gesture, key: Option<u8>) {
         if !self.enabled {
-            return Vec::new();
+            return;
         }
-        let stopped = self.stop(item);
         self.playing.insert(
             item,
             Playing {
@@ -83,9 +91,9 @@ impl Manager {
                 observed: BTreeSet::new(),
                 key,
                 released: false,
+                waiting_release: false,
             },
         );
-        stopped
     }
 
     pub fn stop(&mut self, item: Uuid) -> Vec<Effect> {
@@ -115,6 +123,9 @@ impl Manager {
         Some(ids[(self.random >> 32) as usize % ids.len()])
     }
 
+    /// LLGestureMgr::triggerGesture: every press plays the gesture again,
+    /// except while it waits for its key to be released. Holding the key
+    /// back a whole playback made a repeated hotkey look like a cooldown.
     pub fn key_trigger(&mut self, key: u8, mask: u32) -> Option<Uuid> {
         if !self.enabled || key == KEY_NONE {
             return None;
@@ -127,10 +138,16 @@ impl Manager {
                 self.entries
                     .get(id)
                     .is_some_and(|e| e.definition.key == key && e.definition.mask == mask)
-                    && !self.playing.get(id).is_some_and(|p| p.key == Some(key) && !p.released)
+                    && !self.playing.get(id).is_some_and(|p| p.waiting_release)
             })
             .collect();
         self.choose(&matching)
+    }
+
+    /// LLViewerInput::handleKey: a key held down repeats, and its repeats
+    /// trigger gestures too, except the function keys F1 to F12.
+    pub fn repeat_triggers(key: u8) -> bool {
+        !(0xa1..=0xac).contains(&key)
     }
 
     /// LLGestureMgr::matchPrefix: exact triggers win, otherwise complete only
@@ -265,7 +282,8 @@ impl Manager {
                         let began = *p.wait.get_or_insert(now);
                         let elapsed = now.saturating_duration_since(began);
                         let waiting = if flags & WAIT_RELEASE != 0 && p.key.is_some() {
-                            !p.released && elapsed < Duration::from_secs(600)
+                            p.waiting_release = !p.released && elapsed < Duration::from_secs(600);
+                            p.waiting_release
                         } else if flags & WAIT_TIME != 0 {
                             elapsed.as_secs_f64() < f64::from(*seconds)
                         } else if flags & WAIT_ANIMATIONS != 0 {
@@ -280,6 +298,7 @@ impl Manager {
                 }
                 p.step += 1;
                 p.wait = None;
+                p.waiting_release = false;
             }
         });
         effects
