@@ -16,8 +16,8 @@
 //! asset go from the coarsest level to the finest, then the physics and the
 //! skin, and the high level is three quarters of the bytes of all meshes:
 //! the start of the asset holds the header and the coarser levels.
-//! Measured on 3,000 cached assets, requests and bytes against the whole
-//! assets in one request each: to show the lowest or low level, the first
+//! Measured on a local set of 3,000 mesh assets, requests and bytes against
+//! the whole assets in one request each: to show the lowest or low level, the first
 //! 4 KiB then what is missing take 1.28 and 1.46 requests for 3 and 6 % of
 //! the bytes, the first 8 KiB 1.24 and 1.33 for 6 and 8 %; the medium
 //! level, 1.85 requests for 22 % with 4 KiB, 1.35 for 32 % with 32 KiB; the
