@@ -30,6 +30,33 @@ const HYSTERESIS: f32 = 40.0;
 /// of jumping 170 or 210 points in one frame.
 const LAYOUT_EASE: f32 = 0.15;
 
+/// A width easing to `target` in `LAYOUT_EASE`, linearly. It moves on the
+/// frame its target changes, a frame's step already: egui's
+/// `animate_value_with_time` gives the old value then, so while the window
+/// was dragged narrower past a threshold the messages lost both the window's
+/// step and none of the column's, and wrapped again for that one frame.
+fn ease(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
+    let (now, dt) = ctx.input(|i| (i.time, f64::from(i.stable_dt.min(0.1))));
+    // (from, to, start)
+    let Some((from, to, start)) = ctx.data(|d| d.get_temp::<(f32, f32, f64)>(id)) else {
+        ctx.data_mut(|d| d.insert_temp(id, (target, target, now)));
+        return target;
+    };
+    let at = |from: f32, to: f32, start: f64| from + (to - from) * ((now - start) / f64::from(LAYOUT_EASE)).clamp(0.0, 1.0) as f32;
+    let (from, start) = if to == target {
+        (from, start)
+    } else {
+        let here = at(from, to, start);
+        ctx.data_mut(|d| d.insert_temp(id, (here, target, now - dt)));
+        (here, now - dt)
+    };
+    let value = at(from, target, start);
+    if value != target {
+        ctx.request_repaint();
+    }
+    value
+}
+
 /// The column is a rail at this window width, given what it was last frame.
 fn rail_now(was: Option<bool>, width: f32) -> bool {
     match was {
@@ -85,10 +112,10 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     let h = size.y.max(160.0);
     let rail_wanted = rail_now(st.layout_rail, size.x);
     st.layout_rail = Some(rail_wanted);
-    let column = ui.ctx().animate_value_with_time(
+    let column = ease(
+        ui.ctx(),
         ui.id().with("column_width"),
         if rail_wanted { sidebar::RAIL } else { sidebar::WIDTH },
-        LAYOUT_EASE,
     );
     // the entries take the rail's look once the column is closer to it
     let rail = column < (sidebar::RAIL + sidebar::WIDTH) / 2.0;
@@ -203,10 +230,10 @@ fn pane(
     st.layout_members_room = Some(members_room);
     // the panel's width eases to its new one when the room comes or goes
     // with the window's size; the head's button shows or hides it at once
-    let room_w = ui.ctx().animate_value_with_time(
+    let room_w = ease(
+        ui.ctx(),
         ui.id().with("members_width"),
         if members_room { members::WIDTH } else { 0.0 },
-        LAYOUT_EASE,
     );
     {
         let w: &World = world;

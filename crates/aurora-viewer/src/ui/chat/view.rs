@@ -12,7 +12,12 @@
 //!   viewport first, so that scrolling meets measured rows.
 //! - When a row above the viewport changes height, what is in sight must
 //!   not move: the frame draws with the old scroll origin and the offset is
-//!   corrected for the next one (`show` returns that correction).
+//!   corrected for the next one (`show` returns that correction). At the
+//!   end of the conversation the rows stand against the bottom in the same
+//!   frame: the scroll area follows the end only a frame later, and a
+//!   resize, which wraps every row again, made the messages jump for one
+//!   frame at each line a row gained or lost (the human's report of
+//!   2026-10-16).
 //! - Rows are numbered by `LineClock`, so heights survive lines added at
 //!   either end and lines dropped by the bound.
 
@@ -116,6 +121,9 @@ pub struct View {
     /// Heights of another width, used as estimates.
     estimates: HashMap<u64, f32>,
     total: f32,
+    /// The content's height at the last `show`: the scroll area's, whose
+    /// end it sticks to.
+    shown_height: f32,
     unmeasured: usize,
     /// Rows matching the find text, as indices of `rows`.
     hits: Vec<usize>,
@@ -423,15 +431,32 @@ impl View {
     ) -> (f32, egui::Response) {
         let width = self.width;
         // at the end of the conversation the scroll area follows its growth
-        // by itself (stick to bottom): no correction to add then
-        let at_end = viewport.bottom() >= self.total - 1.0;
+        // by itself (stick to bottom), a frame late: the rows are placed
+        // against the bottom here instead, no correction to add
+        let at_end = viewport.bottom() >= self.shown_height - 1.0;
         let target = self.scroll_to.take().filter(|&t| t < self.rows.len());
+        let anchored = at_end && target.is_none();
 
         // ---- heights that must be exact before anything is placed: the
         // rows in sight (laid out this frame anyway) and, around a row to
         // bring in sight, a viewport's height on each side. Then the others,
         // outward from the viewport, within the frame's budget.
         let mut shift_above = 0.0;
+        if anchored && self.unmeasured > 0 {
+            // the rows a viewport's height up from the end: exact, as the
+            // rows above them no longer place them
+            let (mut i, mut up, mut dirty_from) = (self.rows.len(), 0.0, usize::MAX);
+            while i > 0 && up < viewport.height() {
+                i -= 1;
+                if self.measure(ui, first, i, draw) != 0.0 {
+                    dirty_from = i;
+                }
+                up += self.rows[i].h;
+            }
+            if dirty_from != usize::MAX {
+                self.reflow(dirty_from);
+            }
+        }
         if self.unmeasured > 0 {
             let started = Instant::now();
             let top = self.rows.partition_point(|r| r.y + r.h <= viewport.top());
@@ -498,8 +523,16 @@ impl View {
         } else {
             0.0
         };
-        let base = rect.top() + lift - shift_above;
-        let (view_top, view_bottom) = (viewport.top() + shift_above, viewport.bottom() + shift_above);
+        self.shown_height = height;
+        let (base, view_top) = if anchored {
+            // the viewport's top once at the end, where the scroll area
+            // will be at the next frame
+            let top = height - viewport.height();
+            (rect.top() + lift + viewport.top() - top, self.total - viewport.height())
+        } else {
+            (rect.top() + lift - shift_above, viewport.top() + shift_above)
+        };
+        let view_bottom = view_top + viewport.height();
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
             // at once: an animated scroll would run over the corrections of
             // the offset made while rows are measured
@@ -736,5 +769,60 @@ mod tests {
         view.width = 0.0;
         assert!(sync(&mut view, &lines, clock, "", ""));
         assert_eq!(view.unmeasured, 103);
+    }
+
+    /// At the end of a conversation, a resize that wraps a message in sight
+    /// again leaves the last one against the bottom on that very frame: the
+    /// scroll area follows the end a frame late, the messages jumped for
+    /// one frame at each line a row gained or lost (the human's report of
+    /// 2026-10-16).
+    #[test]
+    fn a_resize_keeps_the_end_in_place() {
+        let lines: VecDeque<ChatLine> = (0..40).map(|i| line("Jane", &format!("line {i}"), i * 600)).collect();
+        let clock = LineClock::default();
+        let mut view = View::default();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let mut bottoms = Vec::new();
+        for width in [400.0, 400.0, 400.0, 300.0, 300.0, 400.0, 300.0, 250.0, 400.0, 400.0] {
+            let mut last = None;
+            frames.run(Vec::new(), |ui| {
+                ui.set_max_width(width);
+                let out = egui::ScrollArea::vertical()
+                    .id_salt("resize")
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .max_height(300.0)
+                    .min_scrolled_height(300.0)
+                    .show_viewport(ui, |ui, viewport| {
+                        let source = Source {
+                            lines: &lines,
+                            clock,
+                            filter: "",
+                            find: "",
+                            layout: Layout::Aurora,
+                            first_unread: None,
+                        };
+                        view.sync(&source, width);
+                        let (shift, _) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                            // a message in sight wraps on two lines when narrow
+                            let narrow = ui.max_rect().width() < 350.0;
+                            let h = if row.line == 37 && narrow { 40.0 } else { 20.0 };
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.max_rect().width(), h), egui::Sense::hover());
+                            if painted && row.line == 39 {
+                                last = Some(rect.bottom());
+                            }
+                        });
+                        shift
+                    });
+                if out.inner != 0.0 {
+                    let mut state = out.state;
+                    state.offset.y += out.inner;
+                    state.store(ui.ctx(), out.id);
+                }
+            });
+            bottoms.push(last.expect("the last message is drawn"));
+        }
+        let first = bottoms[1];
+        assert!(bottoms[1..].iter().all(|b| (b - first).abs() < 0.5), "{bottoms:?}");
     }
 }
