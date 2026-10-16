@@ -36,7 +36,7 @@ pub struct Link {
     bytes_per_second: Option<f64>,
     /// When the shared pipe is free again.
     free_at: Mutex<Instant>,
-    sent: [AtomicU64; 3],
+    sent: [AtomicU64; 4],
 }
 
 impl Link {
@@ -150,7 +150,7 @@ type Range = (u64, Option<u64>);
 
 /// Kinds of asset served, as the `<kind>_id=` parameters of the
 /// ViewerAsset capability name them.
-const KINDS: [&str; 3] = ["texture", "mesh", "animatn"];
+const KINDS: [&str; 4] = ["texture", "mesh", "animatn", "material"];
 
 /// The asset asked for (kind, id) and its range, from the head of a request
 /// (`GET /?texture_id=<id> HTTP/1.1` and its header lines).
@@ -210,6 +210,8 @@ mod tests {
         let head = format!("GET /?animatn_id={id} HTTP/1.1\r\n\r\n");
         assert_eq!(parse_request(&head), Some(("animatn", id, None)));
         assert_eq!(parse_request("GET /?mesh_id=1 HTTP/1.1\r\n\r\n"), None);
+        let head = format!("GET /?material_id={id} HTTP/1.1\r\n\r\n");
+        assert_eq!(parse_request(&head), Some(("material", id, None)));
         assert_eq!(parse_request(&format!("GET /?sound_id={id} HTTP/1.1\r\n\r\n")), None);
         assert_eq!(parse_request("POST / HTTP/1.1\r\n\r\n"), None);
     }
