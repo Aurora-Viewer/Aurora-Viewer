@@ -130,6 +130,18 @@ pub struct BuildSettings {
 #[cfg(test)]
 mod worn_tests;
 
+/// LLManipTranslate / Rotate / Scale::canAffectSelection (Firestorm): the
+/// simulator's effective flags apply before any local transform. Moving a
+/// whole no-modify object is allowed; linked edits and stretching need Modify.
+/// LLViewerObject::permMove / permModify inherit the root's effective flags.
+pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) -> bool {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let Some(root) = world.objects.get(root_of(world, idx)) else {
+        return false;
+    };
+    root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
 /// LLSelectMgr::highlightObjectAndFamily for the objects of ForceObjectSelect:
 /// each one's linkset, its root first.
 fn land_highlighted(world: &World) -> Vec<(usize, bool)> {
@@ -199,7 +211,7 @@ mod hud_tests {
         tool.set_transform(&mut world, &settings, Some(position), None, None, true);
         assert_eq!(world.objects.get(child).unwrap().position, before);
         assert!(tool.out.is_empty());
-        world.objects.get_mut(child).unwrap().update_flags |= OBJECT_MODIFY;
+        world.objects.get_mut(root).unwrap().update_flags |= OBJECT_MODIFY;
         tool.set_transform(&mut world, &settings, Some(position), None, None, true);
         assert!(world.objects.get(child).unwrap().position.abs_diff_eq(position, 1e-5));
         assert_eq!(tool.out.len(), 1);
@@ -1829,6 +1841,10 @@ impl BuildTool {
     ) {
         let Some(key) = self.selection.first().copied() else { return };
         let Some(idx) = world.objects.index_of(&key) else { return };
+        let mode = if size.is_some() { EditMode::Stretch } else { EditMode::Move };
+        if !can_transform(world, idx, s.edit_linked, mode) {
+            return;
+        }
         let now = Instant::now();
         let Some((wp, wr, _)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
             return;
@@ -1846,14 +1862,6 @@ impl BuildTool {
                 p
             }
         });
-        if local {
-            let flags = world.objects.get(root_of(world, idx)).map_or(0, |o| o.update_flags);
-            if flags & crate::ui::context::flags::OBJECT_MOVE == 0
-                || ((s.edit_linked || size.is_some()) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
-            {
-                return;
-            }
-        }
         let Some(off) = world.region_offset(o.key.region) else { return };
         let parent = edit_parent(world, idx, now);
         let position_scale = world.hud_position_scale(idx);

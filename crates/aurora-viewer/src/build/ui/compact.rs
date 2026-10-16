@@ -4,7 +4,7 @@
 use super::{Env, common, contents, features, general, object, replace, texture, tools};
 use crate::build::{BuildSettings, BuildTool, EditMode, Mods, Tool};
 use crate::theme::Palette;
-use crate::ui::icons;
+use crate::ui::{icons, menu};
 use crate::world::World;
 use egui::{RichText, Stroke, Vec2};
 use glam::Vec3;
@@ -206,17 +206,6 @@ pub(super) fn manipulation(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
                 if icon_button(ui, p, "grid-pattern-filled", aurora_i18n::tr!("build-compact-grid-options"), true).clicked() {
                     tool.ui.grid_options_open = !tool.ui.grid_options_open;
                 }
-                let items = [
-                    (aurora_i18n::tr!("build-compact-world"), 0u8),
-                    (aurora_i18n::tr!("build-compact-local"), 1),
-                    (aurora_i18n::tr!("build-compact-reference"), 2),
-                ];
-                if let Some(mode) = common::combo(ui, "compact_grid", Some(s.grid_mode), &items, 83.0, true) {
-                    s.grid_mode = mode;
-                    if mode == 2 && tool.grid_objects.is_empty() {
-                        tool.use_selection_for_grid(world, s);
-                    }
-                }
             });
         });
     });
@@ -278,11 +267,33 @@ fn rail_button(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, active: 
     response.on_hover_text(title).clicked()
 }
 
+fn grid_mode_button(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &mut BuildSettings) {
+    let choices = [
+        (0u8, "world-filled", aurora_i18n::tr!("build-compact-world")),
+        (1, "box", aurora_i18n::tr!("build-compact-local")),
+        (2, "focus-centered", aurora_i18n::tr!("build-compact-reference")),
+    ];
+    let (_, icon, label) = choices.iter().find(|(mode, _, _)| *mode == s.grid_mode).unwrap_or(&choices[0]);
+    let title = aurora_i18n::tr!("build-compact-grid-mode", mode = *label);
+    let response = icon_button(ui, p, icon, &title, true);
+    menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        for (mode, icon, label) in choices {
+            if menu::check(ui, p, icon, label, s.grid_mode == mode, true) {
+                s.grid_mode = mode;
+                if mode == 2 && tool.grid_objects.is_empty() {
+                    tool.use_selection_for_grid(world, s);
+                }
+            }
+        }
+    });
+}
+
 fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, mods: Mods) {
     use crate::ui::widgets::{self, ActionKind};
     band(ui, p.bar.gamma_multiply(0.82), 8, 6, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(2.0, 3.0);
         ui.spacing_mut().interact_size.y = 22.0;
+        let selected = !tool.selection.is_empty();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 7.0;
             ui.spacing_mut().icon_width = 13.0;
@@ -297,6 +308,12 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             {
                 tool.set_edit_linked(world, s, linked);
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                grid_mode_button(ui, p, tool, world, s);
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().icon_width = 13.0;
             let mut face = tool.edit_mode == EditMode::Face;
             if widgets::checkbox(
                 ui,
@@ -307,6 +324,19 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
             .changed()
             {
                 tool.set_edit_mode(world, s, if face { EditMode::Face } else { EditMode::Move });
+            }
+            // Prim/face navigation shares this row, leaving room for translated labels.
+            if s.edit_linked || face {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    for (forward, icon, title) in [
+                        (true, "caret-right-filled", aurora_i18n::tr!("build-compact-next")),
+                        (false, "caret-left-filled", aurora_i18n::tr!("build-compact-previous")),
+                    ] {
+                        if icon_button(ui, p, icon, title, selected).clicked() {
+                            tool.select_next_part(world, s, forward, mods.shift);
+                        }
+                    }
+                });
             }
         });
         ui.horizontal(|ui| {
@@ -325,20 +355,6 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                 RichText::new(aurora_i18n::tr!("build-compact-root-axis")).size(10.5),
             );
         });
-        let selected = !tool.selection.is_empty();
-        // Preserve next/previous prim and face navigation when that selection mode needs it.
-        if s.edit_linked || tool.edit_mode == EditMode::Face {
-            ui.horizontal(|ui| {
-                for (forward, icon, title) in [
-                    (false, "caret-left-filled", aurora_i18n::tr!("build-compact-previous")),
-                    (true, "caret-right-filled", aurora_i18n::tr!("build-compact-next")),
-                ] {
-                    if icon_button(ui, p, icon, title, selected).clicked() {
-                        tool.select_next_part(world, s, forward, mods.shift);
-                    }
-                }
-            });
-        }
         ui.horizontal(|ui| {
             if icon_button(ui, p, "arrow-back-up", aurora_i18n::tr!("build-compact-undo"), selected).clicked() {
                 tool.undo(world, false);
@@ -464,11 +480,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             .into_galley(ui, Some(egui::TextWrapMode::Wrap), (width - 24.0).max(1.0), egui::TextStyle::Body)
         });
         let footer_height = if editing {
-            87.0 + if s.edit_linked || tool.edit_mode == EditMode::Face {
-                27.0
-            } else {
-                0.0
-            } + if tool.status.is_empty() { 0.0 } else { 20.0 }
+            115.0 + if tool.status.is_empty() { 0.0 } else { 20.0 }
         } else {
             // Measure the same galley that is displayed below. A fixed 40 px
             // estimate made Grab's wrapped hint overflow by 4 px, growing the

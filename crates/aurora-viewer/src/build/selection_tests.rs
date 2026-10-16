@@ -23,6 +23,63 @@ fn selected(tool: &BuildTool) -> Vec<u32> {
 }
 
 #[test]
+fn typed_transforms_require_effective_move_rights_before_local_preview_or_commit() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99610);
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    for linked in [false, true] {
+        settings.edit_linked = linked;
+        for flags in [0, OBJECT_MODIFY, OBJECT_MOVE, OBJECT_MOVE | OBJECT_MODIFY] {
+            world.objects.get_mut(idx).unwrap().update_flags = flags;
+            for operation in 0..3 {
+                for commit in [false, true] {
+                    let object = world.objects.get(idx).unwrap();
+                    let before = (object.position, object.scale, object.rotation);
+                    let (pos, size, rot) = match operation {
+                        0 => (Some(before.0 + Vec3::X), None, None),
+                        1 => (None, Some(before.1 + Vec3::splat(0.1)), None),
+                        _ => (None, None, Some(before.2 * Quat::from_rotation_z(0.1))),
+                    };
+                    tool.out.clear();
+                    tool.set_transform(&mut world, &settings, pos, size, rot, commit);
+                    let allowed = flags & OBJECT_MOVE != 0 && (!(linked || operation == 1) || flags & OBJECT_MODIFY != 0);
+                    let object = world.objects.get(idx).unwrap();
+                    assert_eq!((object.position, object.scale, object.rotation) != before, allowed);
+                    assert_eq!(!tool.out.is_empty(), allowed && commit);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn linked_world_transforms_inherit_root_rights_even_when_child_flags_differ() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let (mut world, mut tool, mut settings) = fixture();
+    let root = object(&world, 99610);
+    let child = object(&world, 99611);
+    settings.edit_linked = true;
+    tool.click_select(&mut world, &settings, Some(child), false);
+    world.objects.get_mut(child).unwrap().update_flags = OBJECT_MOVE | OBJECT_MODIFY;
+    world.objects.get_mut(root).unwrap().update_flags = 0;
+    tool.out.clear();
+    let before = world.objects.get(child).unwrap().position;
+    let key = world.objects.get(child).unwrap().key;
+    let target = crate::scene::Scene::object_transform(&world, child, Instant::now(), 0).unwrap().0
+        - world.region_offset(key.region).unwrap()
+        + Vec3::X;
+    tool.set_transform(&mut world, &settings, Some(target), None, None, true);
+    assert_eq!(world.objects.get(child).unwrap().position, before);
+    assert!(tool.out.is_empty());
+    world.objects.get_mut(child).unwrap().update_flags = 0;
+    world.objects.get_mut(root).unwrap().update_flags = OBJECT_MOVE | OBJECT_MODIFY;
+    tool.set_transform(&mut world, &settings, Some(target), None, None, true);
+    assert_ne!(world.objects.get(child).unwrap().position, before);
+    assert_eq!(tool.out.len(), 1);
+}
+
+#[test]
 fn first_plain_click_after_enabling_linked_edit_selects_only_the_clicked_part() {
     let (mut world, mut tool, mut settings) = fixture();
     let root = object(&world, 99610);

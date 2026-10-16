@@ -5,7 +5,7 @@
 
 use super::common::{Edit, check, combo, label, row, section, small, spin};
 use super::{Env, Request, ShapeClip};
-use crate::build::{BuildSettings, BuildTool, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
+use crate::build::{BuildSettings, BuildTool, EditMode, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
 use crate::scene::Scene;
 use crate::theme::Palette;
 use crate::ui::menu;
@@ -458,13 +458,12 @@ pub fn show_transform(
     let Some(off) = world.region_offset(key.region) else { return };
     let Some(o) = world.objects.get(idx) else { return };
     let (local_pos, local_rot) = (o.position, o.rotation);
-    let (scale, full_id) = (o.scale, o.full_id);
-    let props = tool.props.get(&full_id).cloned();
-    let editable = tool.can_modify(world, idx);
+    let scale = o.scale;
     let decimals = s.decimal_precision.min(7) as usize;
 
     let mixed = mixed_vectors(tool, world, s);
-    let can_move = props.as_ref().is_none_or(|pr| pr.owner_mask & perm::MOVE != 0) && ((local && !s.edit_linked) || editable);
+    let can_move = crate::build::can_transform(world, idx, s.edit_linked, EditMode::Move);
+    let can_scale = crate::build::can_transform(world, idx, s.edit_linked, EditMode::Stretch);
     let (z, y, x) = if local { local_rot } else { wr }.to_euler(EulerRot::ZYX);
     let wrap = |a: f32| {
         let d = (a.to_degrees() / 0.05).round() * 0.05;
@@ -530,7 +529,7 @@ pub fn show_transform(
             MIN_PRIM_SCALE..=MAX_PRIM_SCALE,
         ],
         decimals,
-        editable,
+        can_scale,
         mixed[1],
     );
     if copy {

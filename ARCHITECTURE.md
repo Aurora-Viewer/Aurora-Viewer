@@ -682,6 +682,12 @@ with the application (`app/color_picker.rs`).
 dialogs and the rows of the user inventory and of object contents
 (density, hover, selection and name style). `build/ui/compact.rs` arranges
 building in seven sections in a narrow inspector: General contains identity, group/share/deed, sale and search, while Rights keeps everyone/next-owner permissions. The five tools share the navigation rail; titles follow the section/tool, and edit selection/actions stay at the bottom of the main panel. The inspector resizes on both axes, fills the chosen height and retains its geometry across sections, tools and folding. The object inventory fills the remaining section viewport; tool hint space uses the exact wrapped text galley, preventing frame-by-frame window growth. Each transform vector has its own caption-line copy/paste controls; linked editing, face selection, both-sided stretching and root-axis editing share the footer. Shape rows (including sculpted prims) and the material map/settings/UV grids reuse the existing editing commands. `build/ui/compact_tests.rs` covers the permission split, shared selection options, per-vector clipboard interactions in all manipulators, and actual pointer resizing with section/tool/fold transitions, stable narrow-tool geometry over repeated frames, and inventory filling/filtering after height changes.
+The footer also exposes World / Local / Reference through a current-mode icon
+and the shared menu rows. `build::can_transform` applies effective simulator
+Move / Modify flags to numeric controls and manipulators before any local echo,
+with whole-selection validation and checks during dragging and release.
+Blinn-Phong UV controls remain available for empty normal/specular channels;
+non-default map transforms remain in RenderMaterials even before assigning maps.
 `build/ui/contents_selection.rs` owns the task list's Ctrl/Shift selection,
 focus and Delete/F2 dispatch before global object shortcuts. Rename requests
 focus once and commits on Enter, blur or leaving the panel, rechecking access

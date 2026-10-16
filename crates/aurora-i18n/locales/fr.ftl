@@ -1277,6 +1277,7 @@ build-ui-object-bevel = Biseautage
 ui-minimap-blue = Bleu
 ui-environment-blue-horizon = Bleu horizon
 build-ui-texture-blinn-phong = Blinn-Phong
+build-compact-grid-mode = Repère : { $mode }
 build-ui-texture-classic = Classique
 color-picker-title = Palette de couleur
 color-picker-help = Choisissez une couleur par RVB, LSL, code hexadécimal ou teinte / saturation / lumière. La pipette prélève la teinte d’une face d’objet. Glissez la couleur actuelle sur une case pour l’enregistrer. Annuler restaure les couleurs d’origine.

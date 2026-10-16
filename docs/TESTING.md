@@ -908,9 +908,16 @@ release; the camera must then be stopped. Combine with
 this variable to check the initial focus on the avatar. The HUDs and enabled
 following keep their behaviour.
 
-**`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|media]|contents`**
+**`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
 — section of the build window shown by the script (General separates object information from Rights); `+weights`, `+grid`, `+media`, `+permissions`
 also open these windows.
+
+Use `faces-ready,object:99620` with `texture:bp-normal` or `texture:bp-specular`
+to inspect and edit UV transforms before assigning either map. Assign a map
+afterwards: its prepared scale, offset and rotation must remain. In every
+edit section, the coordinate icon beside Edit linked parts opens the World /
+Local / Reference menu; choosing Reference uses the selection when no grid
+reference exists, and switching sections retains the mode.
 
 Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
 section to open a task item in the same properties panel as agent inventory

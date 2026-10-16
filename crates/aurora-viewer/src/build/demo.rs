@@ -31,7 +31,8 @@
 //!
 //! `AURORA_DEMO_BUILD_TAB` shows a section: general | rights | object | transform |
 //! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
-//! `:media` (e.g. `texture:bp`), and opens `+weights`, `+grid`, `+media`
+//! `:media` (e.g. `texture:bp`); `:bp-normal` / `:bp-specular` select empty
+//! legacy map channels, and opens `+weights`, `+grid`, `+media`
 //! (e.g. `general+weights+grid`); `contents+permissions` opens bulk rights.
 //! `AURORA_DEMO_BUILD_FOCUS=off|on` focuses the selected object before the
 //! drag, with edit camera tracking disabled/enabled.
@@ -168,10 +169,15 @@ pub fn apply_tab(tool: &mut BuildTool) {
     };
     tool.ui.tex_tab = match sub.trim() {
         "pbr" => 1,
-        "bp" | "classic" => 0,
+        "bp" | "classic" | "bp-normal" | "bp-specular" => 0,
         "media" => 2,
         _ => tool.ui.tex_tab,
     };
+    match sub.trim() {
+        "bp-normal" => tool.ui.bp_channel = 1,
+        "bp-specular" => tool.ui.bp_channel = 2,
+        _ => {}
+    }
 }
 
 pub fn texture_inventory(world: &mut World) {

@@ -12,6 +12,7 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
         world.apply(event);
     }
     let idx = world.objects.index_of_uuid(&crate::demo::action_id(118)).unwrap();
+    world.objects.get_mut(idx).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
     let id = world.objects.get(idx).unwrap().full_id;
     let mut tool = BuildTool::default();
     let settings = BuildSettings::default();
@@ -280,6 +281,145 @@ impl Inspector {
         }
         let rect = self.ctx.memory(|m| m.area_rect(egui::Id::new(super::super::INSPECTOR_ID)).unwrap());
         (rect, texts)
+    }
+}
+
+#[test]
+fn coordinate_menu_is_available_beside_linked_parts_in_every_edit_section() {
+    let mut inspector = Inspector::new();
+    let click = |inspector: &mut Inspector, point| {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    };
+    for section in [6, 1, 5, 3, 2, 0, 4] {
+        inspector.tool.tab = section;
+        for _ in 0..3 {
+            inspector.show(vec![]);
+        }
+        for (mode, label) in [
+            (1, aurora_i18n::tr!("build-compact-local")),
+            (2, aurora_i18n::tr!("build-compact-reference")),
+            (0, aurora_i18n::tr!("build-compact-world")),
+        ] {
+            let (rect, texts) = inspector.show(vec![]);
+            let linked = texts
+                .iter()
+                .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
+                .unwrap()
+                .1;
+            let point = egui::pos2(rect.right() - 19.0, linked.center().y);
+            let face = texts
+                .iter()
+                .find(|(text, _)| text == aurora_i18n::tr!("build-compact-select-face"))
+                .unwrap()
+                .1;
+            assert!(
+                face.top() > linked.bottom(),
+                "Face selection must leave room for the coordinate icon"
+            );
+            assert!(linked.right() < point.x - 11.0, "Linked editing overlaps the coordinate icon");
+            click(&mut inspector, point);
+            let (_, texts) = inspector.show(vec![]);
+            for choice in [
+                aurora_i18n::tr!("build-compact-world"),
+                aurora_i18n::tr!("build-compact-local"),
+                aurora_i18n::tr!("build-compact-reference"),
+            ] {
+                assert!(
+                    texts.iter().any(|(text, _)| text == choice),
+                    "Missing coordinate choice in section {section}"
+                );
+            }
+            let item = texts.iter().find(|(text, _)| text == label).unwrap().1;
+            click(&mut inspector, item.center());
+            assert_eq!(inspector.settings.grid_mode, mode);
+            if mode == 2 {
+                assert_eq!(inspector.tool.grid_objects, inspector.tool.selection);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            assert!(!texts.iter().any(|(text, _)| text == label), "Coordinate menu did not close");
+        }
+    }
+}
+
+#[test]
+fn empty_legacy_texture_channels_can_be_selected_and_their_scale_edited() {
+    let mut inspector = Inspector::new();
+    inspector.tool.tab = 3;
+    inspector.tool.ui.tex_tab = 0;
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let click = |inspector: &mut Inspector, point| {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    };
+    for (channel, label) in [
+        (1, aurora_i18n::tr!("build-ui-texture-normal")),
+        (2, aurora_i18n::tr!("build-ui-texture-specular")),
+    ] {
+        let (_, texts) = inspector.show(vec![]);
+        assert!(texts.iter().any(|(text, _)| text == "Blinn-Phong"));
+        let tab = texts
+            .iter()
+            .filter(|(text, _)| text == label)
+            .max_by(|a, b| a.1.top().total_cmp(&b.1.top()))
+            .unwrap()
+            .1;
+        click(&mut inspector, tab.center());
+        assert_eq!(inspector.tool.ui.bp_channel, channel);
+        let (_, texts) = inspector.show(vec![]);
+        let scale = texts.iter().find(|(text, _)| text == aurora_i18n::tr!("common-scale")).unwrap().1;
+        let field = texts
+            .iter()
+            .find(|(text, rect)| {
+                aurora_i18n::parse_number(text) == Some(1.0)
+                    && rect.top() > scale.bottom()
+                    && rect.top() < scale.bottom() + 30.0
+                    && rect.left() >= scale.left()
+                    && rect.left() < scale.left() + 94.0
+            })
+            .unwrap()
+            .1;
+        click(&mut inspector, field.center());
+        inspector.show(vec![egui::Event::Text("2.500".into())]);
+        inspector.show(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        let material = inspector
+            .tool
+            .ui
+            .legacy_pending
+            .values()
+            .find_map(|(_, material)| material.as_ref())
+            .unwrap();
+        assert!(material.normal_map.is_nil() && material.specular_map.is_nil());
+        assert_eq!(
+            if channel == 1 {
+                material.normal_st[0]
+            } else {
+                material.specular_st[0]
+            },
+            2.5
+        );
     }
 }
 

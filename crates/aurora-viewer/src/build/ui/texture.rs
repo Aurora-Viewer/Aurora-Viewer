@@ -223,18 +223,16 @@ impl BuildTool {
     }
 
     /// Change the Blinn-Phong material of the selected faces (LLSelectedTEMaterial::
-    /// set*): the default material without maps is removed instead.
+    /// set*): remove only the default material, preserving UVs of empty maps.
     fn edit_legacy(&mut self, env: &Env, world: &World, sel: &[Sel], f: impl Fn(&mut LegacyMaterial)) {
         let mut puts = Vec::new();
         for s in sel {
-            let mut m = self.face_legacy(env, world, s.idx, s.face, &s.te).unwrap_or_default();
+            let default = default_legacy(env, &s.te);
+            let mut m = self
+                .face_legacy(env, world, s.idx, s.face, &s.te)
+                .unwrap_or_else(|| default.clone());
             f(&mut m);
-            let default_mode = if env.scene.textures.has_alpha(&s.te.texture).unwrap_or(false) {
-                alpha_mode::BLEND
-            } else {
-                alpha_mode::NONE
-            };
-            let empty = m.normal_map.is_nil() && m.specular_map.is_nil() && m.diffuse_alpha_mode == default_mode;
+            let empty = m == default;
             let m = (!empty).then_some(m);
             if let Some(o) = world.objects.get(s.idx) {
                 self.ui.legacy_pending.insert((o.full_id, s.face), (s.te.material_id, m.clone()));
@@ -332,6 +330,18 @@ impl BuildTool {
     }
 }
 
+/// A face without a legacy material derives its alpha mode from the diffuse.
+pub(super) fn default_legacy(env: &Env, te: &TextureFace) -> LegacyMaterial {
+    LegacyMaterial {
+        diffuse_alpha_mode: if env.scene.textures.has_alpha(&te.texture).unwrap_or(false) {
+            alpha_mode::BLEND
+        } else {
+            alpha_mode::NONE
+        },
+        ..Default::default()
+    }
+}
+
 /// The selected faces of modifiable volume prims.
 pub(super) fn selected(tool: &BuildTool, world: &World) -> Vec<Sel> {
     tool.sel_te(world)
@@ -355,7 +365,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 p,
                 &mut tool.ui.tex_tab,
                 &[
-                    (aurora_i18n::tr!("build-ui-texture-classic"), true),
+                    (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
                     ("PBR", true),
                     (aurora_i18n::tr!("extra-media"), true),
                 ],
@@ -968,8 +978,8 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             &mut ch,
             &[
                 (aurora_i18n::tr!("build-ui-texture-diffuse"), true),
-                (aurora_i18n::tr!("build-ui-texture-normal"), normal.is_some()),
-                (aurora_i18n::tr!("build-ui-texture-specular"), spec.is_some()),
+                (aurora_i18n::tr!("build-ui-texture-normal"), true),
+                (aurora_i18n::tr!("build-ui-texture-specular"), true),
             ],
         );
         tool.ui.bp_channel = ch;
@@ -1061,6 +1071,66 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
 /// no maps).
 fn is_hide_water(te: &TextureFace, m: Option<&LegacyMaterial>) -> bool {
     te.texture == IMG_ALPHA_GRAD && te.color[3] >= 1.0 && m.is_none_or(|m| m.normal_map.is_nil() && m.specular_map.is_nil())
+}
+
+#[cfg(test)]
+mod empty_map_tests {
+    use super::*;
+
+    #[test]
+    fn empty_map_uvs_survive_material_submission_and_later_texture_assignment() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::face_selection_events(false)) {
+            world.apply(event);
+        }
+        let idx = world.objects.index_of_uuid(&crate::demo::action_id(99620)).unwrap();
+        let mut tool = BuildTool::default();
+        tool.click_select(&mut world, &BuildSettings::default(), Some(idx), false);
+        let sel = selected(&tool, &world);
+        assert!(!sel.is_empty());
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), world.avatar_lib.clone());
+        let mut media = Default::default();
+        let mut env = Env {
+            images: &Default::default(),
+            media: &mut media,
+            scene: &mut scene,
+            zoom_fraction: 0.0,
+            demo: false,
+        };
+        tool.out.clear();
+        tool.edit_legacy(&env, &world, &sel, |m| {
+            m.normal_st = [2.0, 3.0, 0.1, -0.2];
+            m.normal_rot = 0.5;
+            m.specular_st = [4.0, 5.0, -0.3, 0.4];
+            m.specular_rot = -0.5;
+        });
+        let material = tool.face_legacy(&env, &world, idx, sel[0].face, &sel[0].te).unwrap();
+        assert!(material.normal_map.is_nil() && material.specular_map.is_nil());
+        let body = tool
+            .out
+            .iter()
+            .find_map(|command| match command {
+                aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, body, .. }) if cap == "RenderMaterials" => Some(body),
+                _ => None,
+            })
+            .unwrap();
+        let payload = crate::scene::legacy_mat::unzip_llsd(body.get("Zipped").as_binary()).unwrap();
+        let encoded = payload.get("FullMaterialsPerFace").as_array()[0].get("Material");
+        assert_eq!(LegacyMaterial::from_llsd(encoded), material);
+        tool.apply_texture(&mut world, &mut env, PickTarget::Normal, DEFAULT_NORMAL, &sel);
+        tool.apply_texture(&mut world, &mut env, PickTarget::Specular, DEFAULT_SPECULAR, &sel);
+        let assigned = tool.face_legacy(&env, &world, idx, sel[0].face, &sel[0].te).unwrap();
+        assert_eq!(assigned.normal_map, DEFAULT_NORMAL);
+        assert_eq!(assigned.specular_map, DEFAULT_SPECULAR);
+        assert_eq!((assigned.normal_st, assigned.normal_rot), (material.normal_st, material.normal_rot));
+        assert_eq!(
+            (assigned.specular_st, assigned.specular_rot),
+            (material.specular_st, material.specular_rot)
+        );
+        tool.apply_texture(&mut world, &mut env, PickTarget::Normal, Uuid::nil(), &sel);
+        tool.apply_texture(&mut world, &mut env, PickTarget::Specular, Uuid::nil(), &sel);
+        assert_eq!(tool.face_legacy(&env, &world, idx, sel[0].face, &sel[0].te), Some(material));
+    }
 }
 
 /// Options under the PBR / Blinn-Phong sub-tabs.

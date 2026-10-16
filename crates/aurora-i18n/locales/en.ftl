@@ -1274,6 +1274,7 @@ build-ui-object-bevel = Bevel
 ui-minimap-blue = Blue
 ui-environment-blue-horizon = Blue horizon
 build-ui-texture-blinn-phong = Blinn-Phong
+build-compact-grid-mode = Coordinates: { $mode }
 build-ui-texture-classic = Classic
 color-picker-title = Color picker
 color-picker-help = Choose a color using RGB, LSL, hexadecimal or hue / saturation / lightness. The eyedropper samples an object face’s tint. Drag the current color onto a slot to save it. Cancel restores the original colors.
