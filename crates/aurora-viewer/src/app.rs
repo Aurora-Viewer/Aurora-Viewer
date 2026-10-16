@@ -11154,6 +11154,8 @@ impl ApplicationHandler for App {
             }
             if let Some(scene) = crate::demo::aurora_scenario() {
                 crate::demo::aurora_lines(&mut self.world, scene);
+                // the scene's unread lines as if they came while away
+                self.chat_ui.demo_lines_unseen();
             }
             // AURORA_DEMO_CONV=tp[:sent|reject]: the avatar menu's teleport
             // offer (its invitation, or sent as invited to the resident whose

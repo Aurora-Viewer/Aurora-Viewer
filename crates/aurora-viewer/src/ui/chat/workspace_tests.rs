@@ -529,3 +529,77 @@ fn the_field_says_who_types_nearby() {
         "the typing line names {name}"
     );
 }
+
+/// The "New" line: away from a conversation, two lines arrive; back, it is
+/// above them; what we write then, and lines arriving under our eyes, do
+/// not move it; away and back with nothing new, it is gone. The window
+/// without the focus counts as away; each conversation keeps its own.
+#[test]
+fn the_new_line_marks_what_arrived_while_away() {
+    use std::collections::VecDeque;
+    let mut lines: VecDeque<ChatLine> = (0..3).map(|k| line("Jane", JANE, ChatKind::Im, &format!("old {k}"))).collect();
+    let mut nl = super::NewLines::default();
+    let (jane, bob) = (Some(JANE), Some(BOB));
+    // first sight, nothing unread: no line
+    nl.frame(jane, 1, true, 10, &lines, 0);
+    assert_eq!(nl.at(jane), None);
+    // under our eyes: no line either
+    lines.push_back(line("Jane", JANE, ChatKind::Im, "while looking"));
+    nl.frame(jane, 2, true, 10, &lines, 1);
+    assert_eq!(nl.at(jane), None, "a line arriving in sight");
+    // Bob's conversation shown (frames 3-5), two lines arrive meanwhile
+    nl.frame(bob, 3, true, 0, &VecDeque::new(), 0);
+    lines.push_back(line("Jane", JANE, ChatKind::Im, "away 1"));
+    lines.push_back(line("Jane", JANE, ChatKind::Im, "away 2"));
+    nl.frame(jane, 6, true, 10, &lines, 2);
+    assert_eq!(nl.at(jane), Some(14), "above the first line that arrived away");
+    // we answer, Jane answers, under our eyes: it stays
+    lines.push_back(line("Me", Uuid::nil(), ChatKind::Own, "mine"));
+    nl.frame(jane, 7, true, 10, &lines, 0);
+    lines.push_back(line("Jane", JANE, ChatKind::Im, "reply"));
+    nl.frame(jane, 8, true, 10, &lines, 1);
+    assert_eq!(nl.at(jane), Some(14), "what we write never moves it");
+    // the window closed (no frame 9-19) then reopened, nothing new: gone
+    nl.frame(jane, 20, true, 10, &lines, 0);
+    assert_eq!(nl.at(jane), None, "back with nothing new");
+    // the viewer loses the focus, a line arrives, the focus comes back
+    nl.frame(jane, 21, false, 10, &lines, 0);
+    lines.push_back(line("Jane", JANE, ChatKind::Im, "while unfocused"));
+    nl.frame(jane, 22, false, 10, &lines, 1);
+    nl.frame(jane, 23, true, 10, &lines, 0);
+    assert_eq!(nl.at(jane), Some(18), "the focus away counts as away");
+    // only our own lines arrived while away (written from elsewhere): none
+    nl.frame(bob, 24, true, 0, &VecDeque::new(), 0);
+    lines.push_back(line("Me", Uuid::nil(), ChatKind::Own, "from elsewhere"));
+    nl.frame(jane, 25, true, 10, &lines, 0);
+    assert_eq!(nl.at(jane), None, "no line above our own");
+    assert_eq!(nl.at(bob), None, "each conversation its own");
+}
+
+/// The first sight of a conversation since the login: the lines unread
+/// then are under the "New" line.
+#[test]
+fn the_new_line_on_first_sight_is_above_the_unread_lines() {
+    use std::collections::VecDeque;
+    let lines: VecDeque<ChatLine> = (0..5).map(|k| line("Jane", JANE, ChatKind::Im, &format!("l{k}"))).collect();
+    let mut nl = super::NewLines::default();
+    nl.frame(None, 1, true, 100, &lines, 2);
+    assert_eq!(nl.at(None), Some(103));
+}
+
+/// Shown while the viewer has not the focus (just logged in, another
+/// application in front): the unread lines keep their "New" line, and the
+/// focus coming back does not take it away.
+#[test]
+fn the_new_line_waits_for_the_focus() {
+    use std::collections::VecDeque;
+    let lines: VecDeque<ChatLine> = (0..5).map(|k| line("Jane", JANE, ChatKind::Im, &format!("l{k}"))).collect();
+    let mut nl = super::NewLines::default();
+    nl.frame(None, 1, false, 0, &lines, 2);
+    assert_eq!(nl.at(None), Some(3));
+    nl.frame(None, 2, false, 0, &lines, 0);
+    nl.frame(None, 3, true, 0, &lines, 0);
+    assert_eq!(nl.at(None), Some(3), "still unseen when the focus comes");
+    nl.frame(None, 4, true, 0, &lines, 0);
+    assert_eq!(nl.at(None), Some(3));
+}

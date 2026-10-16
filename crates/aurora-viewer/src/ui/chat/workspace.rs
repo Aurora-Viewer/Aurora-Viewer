@@ -13,8 +13,8 @@ use super::{
     ChatUi, ConvAction, Lines, Rows, ToField, compose, conversation_lines, find, head, mark_read, members, sidebar, stage, thread,
 };
 use crate::theme::Palette;
-use crate::world::World;
-use std::collections::HashMap;
+use crate::world::{ChatKind, ChatLine, World};
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 /// Below this width the column becomes a rail of pictures.
@@ -92,13 +92,6 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     );
     // the entries take the rail's look once the column is closer to it
     let rail = column < (sidebar::RAIL + sidebar::WIDTH) / 2.0;
-    // the conversation left: its "New" line goes
-    if st.shown != Some(st.selected) {
-        if let Some(before) = st.shown {
-            st.first_unread.remove(&before);
-        }
-        st.shown = Some(st.selected);
-    }
     // the window moves by its title bar only: a drag on the workspace's
     // background (the column, the head, the strips) leaves it in place, as
     // one on the lines (#427)
@@ -242,7 +235,7 @@ fn pane(
     let lines_h = (pane.bottom() - ui.cursor().top() - compose::HEIGHT).max(60.0);
     // ---- the messages, and the members beside them
     let read = mark_read(world, st.selected);
-    note_first_unread(world, st, read);
+    note_new_line(ui, world, st, read);
     let w: &World = world;
     let own_name = w.own_name();
     let me = our_names(w, &own_name);
@@ -340,24 +333,83 @@ fn drops(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, st: &ChatUi, kind: Op
     }
 }
 
-/// The conversation shown was read: where its unread lines began, for
-/// its "New" line (kept until it is left or we answer).
-fn note_first_unread(world: &World, st: &mut ChatUi, read: Option<(usize, usize)>) {
-    let Some((unread, len)) = read else {
-        return;
-    };
-    if unread == 0 {
-        return;
-    }
-    let first = match st.selected {
-        None => world.chat_clock.first,
+/// The conversation shown is in sight: its "New" line (`NewLines`).
+fn note_new_line(ui: &egui::Ui, world: &World, st: &mut ChatUi, read: Option<(usize, usize)>) {
+    let (first, lines) = match st.selected {
+        None => (world.chat_clock.first, &world.chat),
         Some(id) => match world.social.ims.iter().find(|s| s.other == id) {
-            Some(s) => s.clock.first,
+            Some(s) => (s.clock.first, &s.lines),
             None => return,
         },
     };
-    let seq = first + len.saturating_sub(unread) as u64;
-    st.first_unread.entry(st.selected).or_insert(seq);
+    let unread = read.map_or(0, |(unread, _)| unread);
+    let looked = ui.input(|i| i.focused);
+    st.new_lines
+        .frame(st.selected, ui.ctx().cumulative_frame_nr(), looked, first, lines, unread);
+}
+
+/// Where the "New" line of each conversation sits (the human's rule of
+/// 2026-10-16): it marks what arrived while we were away from the
+/// conversation, and stays where it is while we read and write there. Away
+/// means not looking at it: another conversation or the Contacts tab
+/// shown, the window closed or minimised, the viewer without the focus.
+/// Coming back places it before the first line from someone else after
+/// the last one seen, or removes it when nothing arrived.
+#[derive(Default)]
+pub(super) struct NewLines {
+    /// The number the next line of each conversation had when it was last
+    /// in sight.
+    seen: HashMap<Option<Uuid>, u64>,
+    /// The "New" line of each: above this line's number.
+    at: HashMap<Option<Uuid>, u64>,
+    /// The conversation in sight, the frame it was last, and whether the
+    /// viewer had the focus then.
+    present: Option<(Option<Uuid>, u64, bool)>,
+}
+
+impl NewLines {
+    /// Nothing seen yet: the next sight of each conversation puts its
+    /// "New" line above its unread lines (a demo's lines, given at once).
+    pub(super) fn forget(&mut self) {
+        *self = NewLines::default();
+    }
+
+    /// The line the "New" line of `conv` is above.
+    pub(super) fn at(&self, conv: Option<Uuid>) -> Option<u64> {
+        self.at.get(&conv).copied()
+    }
+
+    /// A frame showing `conv`, whose lines are numbered from `first`;
+    /// `looked`: the viewer has the focus; `unread`: its lines nobody saw,
+    /// for a conversation not yet seen since the login.
+    pub(super) fn frame(&mut self, conv: Option<Uuid>, frame: u64, looked: bool, first: u64, lines: &VecDeque<ChatLine>, unread: usize) {
+        let next = first + lines.len() as u64;
+        let stayed = matches!(self.present, Some((c, f, _)) if c == conv && (f == frame || f + 1 == frame));
+        let refocused = looked && matches!(self.present, Some((_, _, false)));
+        if !stayed || refocused {
+            let from = self
+                .seen
+                .get(&conv)
+                .copied()
+                .unwrap_or(next.saturating_sub(unread as u64))
+                .max(first);
+            // (without the focus, what is shown is not seen yet)
+            self.seen.insert(conv, from);
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind == ChatKind::Own);
+            match (from..next).find(|&seq| !mine(seq)) {
+                Some(seq) => {
+                    self.at.insert(conv, seq);
+                }
+                None => {
+                    self.at.remove(&conv);
+                }
+            }
+        }
+        if looked {
+            self.seen.insert(conv, next);
+        }
+        self.present = Some((conv, frame, looked));
+    }
 }
 
 /// Our names, lowercase, whose mention marks a message: the name we show

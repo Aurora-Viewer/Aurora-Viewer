@@ -236,8 +236,6 @@ pub(super) fn show(
                         }
                         Some(to) => actions.push(ConvAction::Im { to, text }),
                     }
-                    // what we say ends the "New" line
-                    st.first_unread.remove(&st.selected);
                 }
                 draft.clear();
                 resp.request_focus();

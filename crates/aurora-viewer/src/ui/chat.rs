@@ -114,11 +114,8 @@ pub struct ChatUi {
     pub members_open: bool,
     /// The stage of the call is reduced to its strip.
     pub stage_mini: bool,
-    /// Where the "New" line of each conversation sits: its first unread
-    /// line when it was opened, until it is left.
-    first_unread: HashMap<Option<uuid::Uuid>, u64>,
-    /// The conversation shown at the last frame.
-    shown: Option<Option<uuid::Uuid>>,
+    /// Where the "New" line of each conversation sits.
+    new_lines: workspace::NewLines,
     /// The search field of the column.
     side_filter: String,
     /// The nearby chat's volume: whisper, say or shout.
@@ -151,6 +148,12 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// A demo scene's lines, given while its conversation is in sight,
+    /// count as arrived while away: their "New" line shows.
+    pub fn demo_lines_unseen(&mut self) {
+        self.new_lines.forget();
+    }
+
     /// Show a conversation, its entry brought into the view of the list.
     pub fn open(&mut self, conversation: uuid::Uuid) {
         self.selected = Some(conversation);
@@ -1302,8 +1305,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     }
     let (layout, first_unread) = match &rows {
         Rows::Classic(_) => (view::Layout::Classic, None),
-        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.first_unread.get(&st.selected).copied()),
-        Rows::Thread(_) => (view::Layout::Aurora, st.first_unread.get(&st.selected).copied()),
+        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.new_lines.at(st.selected)),
+        Rows::Thread(_) => (view::Layout::Aurora, st.new_lines.at(st.selected)),
     };
     let mut to_field = ToField::Nothing;
     let (lines, clock) = match st.selected {
