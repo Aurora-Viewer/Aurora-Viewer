@@ -25,6 +25,7 @@ pub use document::document_demo_events;
 pub(crate) mod permissions;
 mod progress;
 pub(crate) mod properties;
+mod rows;
 pub(crate) mod task_drop;
 pub mod thumbnail;
 pub(crate) mod tree;
@@ -265,6 +266,7 @@ pub struct InventoryUi {
     filters: view::Filters,
     saved_filters: Option<view::Filters>,
     view: view::ViewCache,
+    plain: rows::PlainTree,
     result_tree: view::TreeState,
     result_width: f32,
     creator_generation: Option<u64>,
@@ -288,7 +290,6 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     visible: Vec<Uuid>,
-    previous_visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
     pub consume_clipboard: bool,
@@ -438,7 +439,7 @@ impl InventoryUi {
             let order = if self.result_view() {
                 &self.result_tree.order
             } else {
-                &self.previous_visible
+                &self.plain.order
             };
             if let Some((a, b)) = self
                 .anchor
@@ -545,16 +546,14 @@ fn item_row(
         task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
         drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
         super::widgets::demo::rez_row(&r, it.id);
-        let date = if it.created_at > 0 {
-            aurora_net::inventory::created_date(it.created_at)
-        } else {
-            aurora_i18n::tr!("ui-inventory-unknown-date").into()
-        };
-        let path = inventory_path(inv, it.parent);
         let r = r.on_hover_ui(|ui| {
             ui.label(&it.name);
-            ui.label(path);
-            ui.label(date);
+            ui.label(inventory_path(inv, it.parent));
+            ui.label(if it.created_at > 0 {
+                aurora_net::inventory::created_date(it.created_at)
+            } else {
+                aurora_i18n::tr!("ui-inventory-unknown-date").into()
+            });
             if !it.desc.is_empty() {
                 ui.label(&it.desc);
             }
@@ -578,53 +577,6 @@ fn item_row(
     });
 }
 
-fn folder_tree(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    icons: &Icons,
-    inv: &mut Inventory,
-    id: Uuid,
-    depth: usize,
-    expand: Option<bool>,
-    state: &mut InventoryUi,
-    prefs: &mut InventoryPreferences,
-    facts: &Facts,
-    actions: &mut Vec<InvAction>,
-) {
-    tree_spacing(ui);
-    if depth > 24 {
-        return;
-    }
-    let Some(f) = inv.folders.get(&id) else {
-        return;
-    };
-    let fetch_state = f.state;
-    let id_salt = ui.make_persistent_id(("inv", id));
-    let mut st = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id_salt, depth == 0);
-    let first_open = depth == 0 && state.roots_seen.insert(id);
-    if first_open {
-        st.set_open(true);
-    }
-    if state.reveal_path.contains(&id) {
-        st.set_open(true);
-    }
-    if let Some(e) = expand {
-        // "Expand" only opens folders already fetched, to avoid fetching everything.
-        if !e || fetch_state == FetchState::Fetched || depth == 0 {
-            st.set_open(e || depth == 0);
-        }
-    }
-    let mut open = st.is_open();
-    folder_row(ui, p, icons, inv, id, &mut open, first_open, state, prefs, facts, actions);
-    st.set_open(open);
-    st.store(ui.ctx());
-    if open {
-        ui.indent(id_salt, |ui| {
-            folder_contents(ui, p, icons, inv, id, depth + 1, expand, state, prefs, facts, actions);
-        });
-    }
-}
-
 fn folder_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -632,7 +584,6 @@ fn folder_row(
     inv: &Inventory,
     id: Uuid,
     open: &mut bool,
-    first_open: bool,
     state: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
@@ -679,9 +630,6 @@ fn folder_row(
         destination.rect = destination.rect.union(resp.rect);
         drag::target(ui, p, &destination, inv, id, state, prefs, facts, actions);
         drag::navigation::folder(ui, &destination, state.ui_id, id, open);
-        if first_open {
-            scroll_to_row(ui, &r, egui::Align::Min);
-        }
         if r.clicked() || r.secondary_clicked() {
             state.select(ui, id, r.secondary_clicked());
         }
@@ -716,45 +664,6 @@ pub(crate) fn inventory_path(inv: &Inventory, mut id: Uuid) -> String {
     }
     parts.reverse();
     parts.join(" / ")
-}
-
-fn folder_contents(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    icons: &Icons,
-    inv: &mut Inventory,
-    id: Uuid,
-    depth: usize,
-    expand: Option<bool>,
-    state: &mut InventoryUi,
-    prefs: &mut InventoryPreferences,
-    facts: &Facts,
-    actions: &mut Vec<InvAction>,
-) {
-    let Some(f) = inv.folders.get(&id) else {
-        return;
-    };
-    let fetch_state = f.state;
-    state.view.prepare(inv, prefs.sort);
-    let children = state.view.children(id, prefs, inv.lib_root);
-    if matches!(fetch_state, FetchState::Unknown | FetchState::Failed) {
-        inv.request(id);
-    }
-    for c in &children {
-        if inv.folders.contains_key(c) {
-            folder_tree(ui, p, icons, inv, *c, depth, expand, state, prefs, facts, actions);
-        } else {
-            item_row(ui, p, icons, inv, c, state, prefs, facts, actions);
-        }
-    }
-    if children.is_empty() {
-        let text = if inv.folders.get(&id).is_some_and(|f| f.state == FetchState::Fetched) {
-            aurora_i18n::tr!("status-empty")
-        } else {
-            aurora_i18n::tr!("ui-inventory-loading-folder")
-        };
-        ui.label(RichText::new(text).size(12.0).color(p.muted_dim));
-    }
 }
 
 fn folder_window_contents(
@@ -800,11 +709,7 @@ fn folder_window_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
-            let expand = st.expand_all.take();
-            folder_contents(ui, p, icons, inv, root, 1, expand, st, prefs, facts, actions);
-        });
-        drag::navigation::scroll(ui, &mut scroll, st.ui_id);
+        rows::scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, false);
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
@@ -1009,32 +914,14 @@ fn search_rows(
         // Measure only viewport rows. Retain their natural width while scrolling
         // vertically, so the horizontal range doesn't vanish with a long label.
         // A rebuilt tree clears it; the viewport width itself is never retained.
-        let mut label = rules::name(inv, row.id);
-        if row.folder {
-            label = folder_name(inv, row.id);
-            match inv.folders.get(&row.id).map(|folder| folder.state) {
-                Some(FetchState::Fetching) => label.push_str(aurora_i18n::tr!("status-loading-3")),
-                Some(FetchState::Failed) => label.push_str(aurora_i18n::tr!("ui-inventory-failed")),
-                _ => {}
-            }
-        } else if let Some(worn) = facts.worn_label(inv, row.id) {
-            label.push_str(&format!(" ({worn})"));
-        }
-        let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
-        if !row.folder
-            && let Some(permissions) = permissions::Permissions::inventory(inv, row.id)
-        {
-            permissions.append_suffix(&mut label, p);
-        }
-        let label_width = ui.fonts_mut(|fonts| fonts.layout_job(label).size().x);
-        let width = row.depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0;
+        let width = row_width(ui, p, inv, facts, row.id, row.folder, row.depth);
         st.result_width = st.result_width.max(width);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(row.depth.min(24) as f32 * ui.spacing().indent);
             if row.folder {
                 let mut open = row.open;
-                folder_row(ui, p, icons, inv, row.id, &mut open, false, st, prefs, facts, actions);
+                folder_row(ui, p, icons, inv, row.id, &mut open, st, prefs, facts, actions);
                 if open != row.open {
                     st.result_tree.toggle(row.id, st.tab);
                 }
@@ -1043,6 +930,29 @@ fn search_rows(
             }
         });
     }
+}
+
+/// The natural width of a row of the virtual lists: its indentation, its
+/// label with the worn or loading suffix and the permissions, the caret and
+/// the icon.
+fn row_width(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, facts: &Facts, id: Uuid, folder: bool, depth: usize) -> f32 {
+    let mut label = rules::name(inv, id);
+    if folder {
+        label = folder_name(inv, id);
+        match inv.folders.get(&id).map(|folder| folder.state) {
+            Some(FetchState::Fetching) => label.push_str(aurora_i18n::tr!("status-loading-3")),
+            Some(FetchState::Failed) => label.push_str(aurora_i18n::tr!("ui-inventory-failed")),
+            _ => {}
+        }
+    } else if let Some(worn) = facts.worn_label(inv, id) {
+        label.push_str(&format!(" ({worn})"));
+    }
+    let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
+    if !folder && let Some(permissions) = permissions::Permissions::inventory(inv, id) {
+        permissions.append_suffix(&mut label, p);
+    }
+    let label_width = ui.fonts_mut(|fonts| fonts.layout_job(label).size().x);
+    depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0
 }
 
 fn rename_row(
@@ -1236,11 +1146,7 @@ fn inventory_contents(
             search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
             return;
         }
-        let mut scroll = list_scroll(ui, list_h).show(ui, |ui| {
-            let expand = st.expand_all.take();
-            folder_tree(ui, p, icons, inv, root, 0, expand, st, prefs, facts, actions);
-        });
-        drag::navigation::scroll(ui, &mut scroll, st.ui_id);
+        rows::scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, true);
     });
     task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
@@ -1301,7 +1207,7 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
-    st.previous_visible = std::mem::take(&mut st.visible);
+    st.visible.clear();
     if st.fetch_all && st.search.trim().is_empty() && !st.filters.active() && st.links_filter.is_none() && st.tab == 0 {
         // Full fetches requested by mutation dialogs must keep running even
         // when the inventory window is closed, independently of search scopes.
@@ -1354,7 +1260,7 @@ pub fn show(
             continue;
         }
         w.state.ui_id = w.id;
-        w.state.previous_visible = std::mem::take(&mut w.state.visible);
+        w.state.visible.clear();
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
         w.state.pending = st.pending;
@@ -1805,21 +1711,19 @@ mod tests {
                 },
                 |ui| {
                     let root = inv.root;
-                    let scroll = list_scroll(ui, 180.0).show(ui, |ui| {
-                        folder_tree(
-                            ui,
-                            &crate::theme::Theme::default().palette(),
-                            &Icons::default(),
-                            &mut inv,
-                            root,
-                            0,
-                            None,
-                            &mut st,
-                            &mut prefs,
-                            &facts,
-                            &mut vec![],
-                        );
-                    });
+                    let scroll = rows::scroll(
+                        ui,
+                        &crate::theme::Theme::default().palette(),
+                        &Icons::default(),
+                        &mut inv,
+                        &mut st,
+                        &mut prefs,
+                        &facts,
+                        &mut vec![],
+                        180.0,
+                        root,
+                        true,
+                    );
                     assert!(
                         scroll.content_size.x > scroll.inner_rect.width(),
                         "frame {frame}: {:?}, {:?}",
@@ -2612,22 +2516,14 @@ mod tests {
                 },
                 |ui| {
                     if frame == 0 {
-                        let mut old = egui::collapsing_header::CollapsingState::load_with_default_open(
-                            &ctx,
-                            ui.make_persistent_id(("inv", root)),
-                            false,
-                        );
-                        old.set_open(false);
-                        old.store(&ctx);
+                        // Closed in an earlier session.
+                        st.plain.set_open(root, false);
                     }
-                    folder_tree(
+                    rows::scroll(
                         ui,
                         &p,
                         &Icons::default(),
                         &mut inv,
-                        root,
-                        0,
-                        None,
                         &mut st,
                         &mut InventoryPreferences::default(),
                         &Facts {
@@ -2641,6 +2537,9 @@ mod tests {
                             names: Default::default(),
                         },
                         &mut Vec::new(),
+                        500.0,
+                        root,
+                        true,
                     );
                 },
             )));

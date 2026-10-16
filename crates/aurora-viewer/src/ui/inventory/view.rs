@@ -213,6 +213,8 @@ pub struct ViewCache {
     result_children: HashMap<Uuid, Vec<Uuid>>,
     folders: HashSet<Uuid>,
     revision: u64,
+    /// Bumped by every rebuild of the sorted entries (`prepare`).
+    built: u64,
     query: Option<Query>,
     pub results: Vec<Uuid>,
 }
@@ -307,17 +309,27 @@ impl ViewCache {
             root.push(inv.lib_root);
         }
         self.version = Some(version);
+        self.built = self.built.wrapping_add(1);
         self.query = None;
     }
 
+    /// Changes whenever the sorted children change (see `prepare`).
+    pub fn built(&self) -> u64 {
+        self.built
+    }
+
+    #[cfg(test)]
     pub fn children(&self, parent: Uuid, prefs: &InventoryPreferences, lib_root: Uuid) -> Vec<Uuid> {
+        self.children_iter(parent, prefs.show_library, lib_root).collect()
+    }
+
+    pub fn children_iter(&self, parent: Uuid, show_library: bool, lib_root: Uuid) -> impl Iterator<Item = Uuid> + '_ {
         self.children
             .get(&parent)
             .into_iter()
             .flatten()
-            .filter(|id| prefs.show_library || **id != lib_root)
+            .filter(move |id| show_library || **id != lib_root)
             .copied()
-            .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
