@@ -373,6 +373,41 @@ fn the_column_eases_to_the_rail() {
     assert!(narrow < wide && between >= 3, "{wide} → {widths:?}");
 }
 
+/// Finding in a conversation opens the field in the head's row: no strip
+/// pushes the messages (the box keeps its place), and Escape gives the head
+/// back (the human's request of 2026-10-16).
+#[test]
+fn the_find_field_opens_in_the_head_row() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.st.selected = Some(JANE);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    h.settle();
+    let input = egui::Id::new(("conv_input", Some(JANE)));
+    let box_before = h.rect(input);
+    h.st.searches.entry(Some(JANE)).or_default().open_find();
+    h.settle();
+    let field = h.rect(super::super::find::field_id());
+    assert!(
+        field.bottom() < box_before.top() - 200.0,
+        "the field is up in the head, not over the box: {field:?}"
+    );
+    assert!(
+        field.top() < 20.0 + 32.0 + super::super::head::HEIGHT,
+        "in the head's row: {field:?}"
+    );
+    assert_eq!(h.rect(input), box_before, "the messages and the box did not move");
+    let escape = egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    h.frame(vec![escape]);
+    h.settle();
+    assert!(h.st.searches.get(&Some(JANE)).is_some_and(|s| s.find.is_none()), "Escape closed it");
+}
+
 /// Thirty friends, all online, named "Friend 00" to "Friend 29".
 fn add_friends(world: &mut World) {
     for i in 0..30u128 {

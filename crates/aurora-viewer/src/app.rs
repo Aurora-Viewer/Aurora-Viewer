@@ -11187,6 +11187,12 @@ impl ApplicationHandler for App {
                     self.history_ui.show_file(title, file);
                 }
                 self.chat_ui.selected = Some(chatlog::PEER);
+                if chatlog::find_flag("legacy") {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
+                }
+                if chatlog::find_flag("narrow") {
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(8.0, 44.0), egui::vec2(480.0, 560.0));
+                }
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("cycle,") || v.starts_with("cycle-linked,")) {
                 for ev in crate::demo::selection_cycle_events() {

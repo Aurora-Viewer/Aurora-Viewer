@@ -5910,6 +5910,7 @@ ui-options-chat-logs-erased = { $count ->
 ui-options-chat-logs-erase-failed = Certains fichiers n'ont pas pu être effacés.
 ui-chat-filter-conversation = Filtrer la conversation (Ctrl+F : rechercher)
 ui-chat-filter = Filtrer…
+ui-chat-find = Rechercher dans cette conversation…
 ui-chat-find-previous = Résultat précédent (Entrée)
 ui-chat-find-next = Résultat suivant (Maj+Entrée)
 ui-chat-find-none = Aucun résultat

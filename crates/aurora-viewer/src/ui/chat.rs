@@ -1363,6 +1363,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     return;
                 };
                 let mark = mark.filter(|_| row.hit);
+                find::forget_message(ui.ctx());
                 let mut draw = |ui: &mut egui::Ui| match &mut rows {
                     Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
                     Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
@@ -1439,6 +1440,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     if let Some((year, month, day)) = look.marker {
         date_marker(ui, p, year, month, day);
     }
+    // (the current match's marker starts under the date)
+    find::note_message(ui, ui.cursor().top(), None);
     if let ChatKind::Invite(invite) = line.kind {
         invite_card::draw_line(ui, env, line, invite);
         return;
@@ -1969,26 +1972,19 @@ pub fn show(
                     ui.add_space(4.0);
                 }
                 let input_h = INPUT_H;
-                // Ctrl+F opens the find bar of the conversation shown, when
-                // the keyboard is in this window, or nowhere with the
-                // pointer over it
+                // Ctrl+F opens the find field of the conversation shown (in
+                // the head's row), when the keyboard is in this window, or
+                // nowhere with the pointer over it
                 // each conversation's own field (cursor, undo), like its draft
                 let conv_input = egui::Id::new(("conv_input", st.selected));
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
                     search.open_find();
                 }
-                // exactly what the find bar takes under the lines (a row
-                // that overflows makes the resizable window grow every frame)
-                let find_h = if search.find.is_some() {
-                    find::BAR_H + 4.0 + ui.spacing().item_spacing.y
-                } else {
-                    0.0
-                };
                 // exactly what the input row takes under them: the spacing after
                 // the lines, the 4 points before the row and the row itself (a
                 // row that overflows makes the resizable window grow every frame)
-                let lines_h = (ui.available_height() - input_h - find_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
+                let lines_h = (ui.available_height() - input_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
                 let mut to_field = ToField::Nothing;
                 egui::Frame::new()
                     .fill(p.field)
@@ -2008,21 +2004,12 @@ pub fn show(
                         };
                         to_field = conversation_lines(ui, p, lines, st, Rows::Classic(style));
                     });
-                let search = st.searches.entry(st.selected).or_default();
-                let view = st.views.entry(st.selected).or_default();
                 match to_field {
                     ToField::Nothing => {}
                     ToField::Focus => st.conv_focus_request = true,
                     ToField::Text(t) => {
                         st.drafts.entry(st.selected).or_default().push_str(&t);
                         st.conv_focus_request = true;
-                    }
-                }
-                if let Some(f) = search.find.as_mut() {
-                    ui.add_space(4.0);
-                    if find::bar(ui, p, f, view) {
-                        search.find = None;
-                        ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                     }
                 }
                 let strip_top = ui.min_rect().bottom();

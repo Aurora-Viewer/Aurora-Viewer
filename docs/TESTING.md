@@ -2616,9 +2616,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     date marker at each change of day, then the new message in its
     normal colours; the file `Nova Example.txt` receives this message.
   - `find`: the same, then Ctrl+F (pointer over the window) and a word typed at
-    frame 300. What to see: the
-    search bar under the lines, "5 / 5", the matches on an amber
-    background and an amber stroke in front of the line of the current match.
+    frame 300 (the field empty at frame 303). What to see: the find field in
+    the head's row in place of the picture and the names, "5 / 5" and the
+    arrows inside it, the messages at their full height, the matches on an
+    amber background and an amber stroke along the current match's message
+    only (from its author's row to its last line, not the day and "New"
+    lines above it). `find:none` types a word that is not there ("No match"
+    in the warning colour, the arrows greyed), `find:legacy` the same in the
+    Legacy style (a cross at the field's end), `find:narrow` a window
+    narrow enough for the rail.
   - `history`: the History window on a file of 19,950 messages
     (page 200 / 200, the most recent); `history:find` types Ctrl+F and a
     word in it: counter "9976 / 9976" once the whole file has been gone

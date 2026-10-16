@@ -238,8 +238,8 @@ fn pane(
     if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
         search.open_find();
     }
-    let find_h = if search.find.is_some() { find::BAR_H + 8.0 } else { 0.0 };
-    let lines_h = (pane.bottom() - ui.cursor().top() - compose::HEIGHT - find_h).max(60.0);
+    // (the find field is in the head's row: the messages keep their height)
+    let lines_h = (pane.bottom() - ui.cursor().top() - compose::HEIGHT).max(60.0);
     // ---- the messages, and the members beside them
     let read = mark_read(world, st.selected);
     note_first_unread(world, st, read);
@@ -291,27 +291,6 @@ fn pane(
         ToField::Text(t) => {
             st.drafts.entry(st.selected).or_default().push_str(&t);
             st.conv_focus_request = true;
-        }
-    }
-    // ---- the find bar
-    let search = st.searches.entry(st.selected).or_default();
-    let view = st.views.entry(st.selected).or_default();
-    if search.find.is_some() {
-        let mut close = false;
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.set_width(width - 24.0);
-                if let Some(f) = search.find.as_mut() {
-                    close = find::bar(ui, p, f, view);
-                }
-            });
-        });
-        ui.add_space(4.0);
-        if close {
-            search.find = None;
-            ui.ctx().memory_mut(|m| m.request_focus(conv_input));
         }
     }
     // ---- the field

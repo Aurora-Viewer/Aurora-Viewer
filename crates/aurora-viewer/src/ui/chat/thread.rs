@@ -99,6 +99,8 @@ pub(super) fn draw(
     } else {
         roomy_row(ui, env, th, line, head, &name, &who, mark, width)
     };
+    // (the current match's marker: this message, not the lines above it)
+    super::find::note_message(ui, top, Some(rect.bottom()));
     let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(left + width, rect.bottom() + ROW_GAP));
     ui.add_space(ROW_GAP);
     if !painted {
@@ -415,7 +417,8 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
     let p = env.p;
     let tone = history_tone(p, line.origin).unwrap_or(p.muted);
     ui.add_space(4.0);
-    ui.horizontal_top(|ui| {
+    let top = ui.cursor().top();
+    let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let lead = if th.compact {
             4.0 + if th.times { TIME_W + 6.0 } else { 0.0 }
@@ -435,6 +438,7 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
             chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &line.text, 12.0, tone, false, mark);
         });
     });
+    super::find::note_message(ui, top, Some(row.response.rect.bottom()));
     ui.add_space(4.0);
 }
 
