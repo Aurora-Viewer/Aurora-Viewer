@@ -77,6 +77,9 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:new`: open the menu of the column's "new
     /// conversation" button once it is drawn.
     pub demo_new_menu: bool,
+    /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
+    /// chat's volume once it is drawn.
+    pub demo_volume_menu: bool,
     /// The workspace's layout last frame (None before the first): the
     /// column as a rail, room for the members' panel. A threshold crossed
     /// back needs a margin past it (`workspace::rail_now`), so a window
@@ -640,8 +643,6 @@ pub enum ConvAction {
     },
     /// Open the inventory, to drag what to give from it.
     OpenInventory,
-    /// Play one of our active gestures.
-    PlayGesture(uuid::Uuid),
     /// The audio output of the call ("" = the system's default).
     SetOutputDevice(String),
     /// List the audio outputs again (their menu opens).

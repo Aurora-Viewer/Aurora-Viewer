@@ -474,8 +474,8 @@ fn the_line_toolbar_acts() {
     }
 }
 
-/// The field (Aurora, Compact): emoji, gestures, inventory, channel,
-/// whisper / say / shout, send.
+/// The field (Aurora, Compact): emoji, the volume's menu, inventory,
+/// channel, send.
 #[test]
 fn the_field_acts() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -485,14 +485,8 @@ fn the_field_acts() {
         assert!(h.st.emoji_open, "{style:?}: emoji");
         h.press(control_id("box-mood-smile-filled"));
         assert!(!h.st.emoji_open, "{style:?}: emoji closed");
-        let wave = Uuid::from_u128(0x6E57);
-        h.gestures.active.insert(wave);
-        h.press(control_id("box-hand-finger"));
-        h.press_text(aurora_i18n::tr!("common-loading-2"));
-        assert!(
-            has(&h.take(), |a| matches!(a, ConvAction::PlayGesture(id) if *id == wave)),
-            "{style:?}: gesture"
-        );
+        // no gestures button: their window, their keys, their trigger
+        assert!(h.shown(control_id("box-hand-finger")).is_none(), "{style:?}: no gestures");
         // the channel: "/5" opening the text, back to 0 from the chip
         h.open(None);
         h.type_text("/5 secret");
@@ -500,9 +494,15 @@ fn the_field_acts() {
         h.press(control_id("box-channel"));
         h.press_text(aurora_i18n::tr!("ui-chat-channel-reset"));
         assert_eq!(h.st.draft_mut(None), "secret", "{style:?}: channel reset");
-        // shout, then say what was typed
+        // shout from the volume's menu, then say what was typed
+        assert!(h.painted(aurora_i18n::tr!("ui-chat-volume-say")), "{style:?}: the volume named");
+        h.press(control_id("box-volume"));
         h.press_text(aurora_i18n::tr!("ui-chat-volume-shout"));
         assert_eq!(h.st.volume, Volume::Shout, "{style:?}");
+        assert!(
+            h.painted(aurora_i18n::tr!("ui-chat-volume-shout")),
+            "{style:?}: the button names it"
+        );
         h.st.conv_focus_request = true;
         h.settle();
         h.enter(Default::default());
@@ -513,10 +513,26 @@ fn the_field_acts() {
             ),
             "{style:?}: shouted"
         );
+        h.press(control_id("box-volume"));
         h.press_text(aurora_i18n::tr!("ui-chat-volume-say"));
         assert_eq!(h.st.volume, Volume::Say, "{style:?}");
-        // a resident: the paperclip, and the send button
+        // narrow, the volume stays (its icon), its menu still acts
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(460.0, 580.0));
+        // (the column eases to the rail)
+        for _ in 0..20 {
+            h.settle();
+        }
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: narrow, no channel chip");
+        h.press(control_id("box-volume"));
+        h.press_text(aurora_i18n::tr!("ui-chat-volume-whisper"));
+        assert_eq!(h.st.volume, Volume::Whisper, "{style:?}: narrow");
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 580.0));
+        for _ in 0..20 {
+            h.settle();
+        }
+        // a resident: no volume, the paperclip, and the send button
         h.open(Some(JANE));
+        assert!(h.shown(control_id("box-volume")).is_none(), "{style:?}: no volume in an IM");
         h.press(control_id("box-paperclip"));
         assert!(has(&h.take(), |a| matches!(a, ConvAction::OpenInventory)), "{style:?}: paperclip");
         h.st.conv_focus_request = true;

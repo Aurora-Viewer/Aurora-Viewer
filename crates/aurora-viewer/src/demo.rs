@@ -774,7 +774,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
 /// the group's call with the nearby chat shown: the column's call panel),
 /// `call-incoming-group` (Nova's group call ringing), `call-p2p` (our call
 /// to Tess), `conference` (a voice conference with Tess and Nova), `new`
-/// (the menu of the column's "new conversation" button open).
+/// (the menu of the column's "new conversation" button open), `volume`
+/// (the menu of the nearby chat's volume open, with `local`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -785,6 +786,8 @@ pub struct AuroraScene {
     pub away: bool,
     /// `new`: the menu of the column's "new conversation" button open.
     pub new_menu: bool,
+    /// `volume`: the menu of the nearby chat's volume open.
+    pub volume_menu: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -817,6 +820,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         call: None,
         away: false,
         new_menu: false,
+        volume_menu: false,
     };
     let mut away = false;
     for flag in flags {
@@ -836,6 +840,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "call-p2p" => scene.call = Some(AuroraCall::P2p),
             "conference" => scene.call = Some(AuroraCall::Conference),
             "new" => scene.new_menu = true,
+            "volume" => scene.volume_menu = true,
             "call-away" => {
                 scene.call = Some(AuroraCall::InCall);
                 away = true;

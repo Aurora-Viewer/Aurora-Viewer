@@ -1,10 +1,11 @@
 //! The field of a conversation in Aurora's workspace: who is typing above
-//! it, then a wide box with the emoji, the gestures (nearby chat; the
-//! gesture combo of Firestorm's nearby chat bar) or the inventory to give
-//! (a resident: what is dragged onto the conversation is offered, like
-//! LLFloaterIMSession::handleDragAndDrop), the text, the channel and the
-//! volume of the nearby chat (whisper, say, shout: Ctrl+Enter shouts and
-//! Shift+Enter whispers whatever is chosen, like the chat bar) and send.
+//! it, then a wide box with the emoji, the volume of the nearby chat (a
+//! menu of whisper, say, shout, kept at every width: Ctrl+Enter shouts and
+//! Shift+Enter whispers whatever is chosen, like the chat bar) or the
+//! inventory to give (a resident: what is dragged onto the conversation is
+//! offered, like LLFloaterIMSession::handleDragAndDrop), the text, the
+//! channel of the nearby chat and send. The gestures are played from their
+//! window, their keys or their trigger typed in the nearby chat.
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
@@ -38,6 +39,22 @@ impl Volume {
             Volume::Whisper => ChatType::Whisper,
             Volume::Say => ChatType::Normal,
             Volume::Shout => ChatType::Shout,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Volume::Whisper => aurora_i18n::tr!("ui-chat-volume-whisper"),
+            Volume::Say => aurora_i18n::tr!("ui-chat-volume-say"),
+            Volume::Shout => aurora_i18n::tr!("ui-chat-volume-shout"),
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Volume::Whisper => "volume-2",
+            Volume::Say => "volume",
+            Volume::Shout => "speakerphone",
         }
     }
 }
@@ -120,7 +137,8 @@ pub(super) fn show(
                             st.emoji_open = !st.emoji_open;
                         }
                         match kind {
-                            None => gestures_button(ui, p, world, gestures, actions),
+                            // narrow, only its icon
+                            None => volume_button(ui, p, st, roomy),
                             Some(sidebar::Kind::Private) => {
                                 let tip = aurora_i18n::tr!("ui-chat-give-inventory-tip");
                                 if box_button(ui, p, "paperclip", tip, false).clicked() {
@@ -131,20 +149,10 @@ pub(super) fn show(
                         }
                         // the right end first: what it takes fixes the field's width
                         let (channel, _) = parse_channel(&draft);
-                        let segments = [
-                            (aurora_i18n::tr!("ui-chat-volume-whisper"), true),
-                            (aurora_i18n::tr!("ui-chat-volume-say"), true),
-                            (aurora_i18n::tr!("ui-chat-volume-shout"), true),
-                        ];
-                        let seg_w = if local && roomy {
-                            crate::ui::widgets::segmented_size(ui, &segments).x + 4.0
-                        } else {
-                            0.0
-                        };
-                        // narrow, the channel and the volume give their room
-                        // to the text (Ctrl / Shift + Enter and "/n" still work)
+                        // narrow, the channel gives its room to the text ("/n"
+                        // still works)
                         let chip_w = if local && roomy { 34.0 } else { 0.0 };
-                        let field_w = (ui.available_width() - seg_w - chip_w - BUTTON - 12.0).max(40.0);
+                        let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = match st.selected {
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                             Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
@@ -161,14 +169,6 @@ pub(super) fn show(
                             completion::complete(ui, &mut output, &mut draft, gestures);
                             if roomy {
                                 channel_chip(ui, p, &mut draft, channel);
-                                let mut selected = match st.volume {
-                                    Volume::Whisper => 0,
-                                    Volume::Say => 1,
-                                    Volume::Shout => 2,
-                                };
-                                if crate::ui::widgets::segmented(ui, p, &mut selected, &segments) {
-                                    st.volume = [Volume::Whisper, Volume::Say, Volume::Shout][selected.min(2)];
-                                }
                             }
                         }
                         let has_text = !draft.trim().is_empty();
@@ -300,42 +300,58 @@ fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: boo
     resp.on_hover_text(tip)
 }
 
-/// Our active gestures, to play one (the gesture combo of Firestorm's
-/// nearby chat bar, FSNearbyChatControl).
-fn gestures_button(ui: &mut egui::Ui, p: &Palette, world: &World, gestures: &crate::gestures::Manager, actions: &mut Vec<ConvAction>) {
-    let resp = box_button(ui, p, "hand-finger", aurora_i18n::tr!("ui-chat-gestures"), false);
-    menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-        ui.set_min_width(200.0);
-        let mut list: Vec<(uuid::Uuid, String, String)> = gestures
-            .active
-            .iter()
-            .map(|id| {
-                let name = world
-                    .inventory
-                    .items
-                    .get(id)
-                    .map(|i| i.name.clone())
-                    .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned());
-                let trigger = gestures.entries.get(id).map(|e| e.definition.trigger.clone()).unwrap_or_default();
-                (*id, name, trigger)
-            })
-            .collect();
-        list.sort_by_key(|(_, n, _)| n.to_lowercase());
-        if list.is_empty() {
-            menu::info(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-chat-no-gestures"));
-        }
-        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-            for (id, name, trigger) in list {
-                let label = if trigger.is_empty() {
-                    name
-                } else {
-                    format!("{name}  ·  {trigger}")
-                };
-                if menu::item(ui, p, "hand-finger", &label) {
-                    actions.push(ConvAction::PlayGesture(id));
-                }
+/// The volume of the nearby chat: its icon, its name when `named`, and a
+/// menu of the three.
+fn volume_button(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, named: bool) {
+    let galley = named.then(|| {
+        ui.painter().layout_no_wrap(
+            st.volume.label().to_owned(),
+            egui::FontId::proportional(12.5),
+            egui::Color32::PLACEHOLDER,
+        )
+    });
+    let text_w = galley.as_ref().map_or(0.0, |g| g.size().x + 5.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(6.0 + 17.0 + text_w + 3.0 + 12.0 + 5.0, BUTTON), egui::Sense::hover());
+    let resp = ui.interact(rect, sidebar::control_id("box-volume"), egui::Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let lit = open || resp.hovered();
+    if lit {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field.gamma_multiply(0.8));
+    }
+    let tint = if lit { p.ink } else { p.muted };
+    let mut x = rect.left() + 6.0;
+    super::thread::paint_icon(
+        ui.painter(),
+        st.volume.icon(),
+        egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 8.5), egui::Vec2::splat(17.0)),
+        tint,
+    );
+    x += 17.0;
+    if let Some(g) = galley {
+        x += 5.0;
+        let size = g.size();
+        ui.painter().galley(egui::pos2(x, rect.center().y - size.y * 0.5), g, tint);
+        x += size.x;
+    }
+    super::thread::paint_icon(
+        ui.painter(),
+        "chevron-down",
+        egui::Rect::from_min_size(egui::pos2(x + 3.0, rect.center().y - 6.0), egui::Vec2::splat(12.0)),
+        tint,
+    );
+    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-chat-volume-tip"));
+    if std::mem::take(&mut st.demo_volume_menu) {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+    // above the field, at the bottom of the window
+    let place = Some((egui::RectAlign::TOP_START, 6.0));
+    menu::dropdown_placed(&resp, p, egui::PopupCloseBehavior::CloseOnClick, place, |ui| {
+        for v in [Volume::Whisper, Volume::Say, Volume::Shout] {
+            if menu::check(ui, p, v.icon(), v.label(), st.volume == v, true) {
+                st.volume = v;
             }
-        });
+        }
     });
 }
 

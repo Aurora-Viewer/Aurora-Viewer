@@ -9247,7 +9247,6 @@ impl App {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
                         }
                         ui::chat::ConvAction::OpenInventory => self.panels.inventory = true,
-                        ui::chat::ConvAction::PlayGesture(id) => a.gestures.push(id),
                         ui::chat::ConvAction::SetOutputDevice(device) => {
                             self.settings.audio.output_device = device;
                             self.settings.save();
@@ -10903,6 +10902,7 @@ impl ApplicationHandler for App {
                     self.chat_ui.members_open = view == crate::demo::Bubbles::Group;
                     self.chat_ui.stage_mini = scene.call == Some(crate::demo::AuroraCall::Mini);
                     self.chat_ui.demo_new_menu = scene.new_menu;
+                    self.chat_ui.demo_volume_menu = scene.volume_menu;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;
