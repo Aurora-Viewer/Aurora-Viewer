@@ -21,6 +21,7 @@ pub mod lights;
 mod list_index;
 pub mod loading;
 mod lod_watch;
+pub mod mesh_bytes;
 pub mod meshes;
 pub mod morph;
 pub mod particles;
@@ -1377,7 +1378,8 @@ impl Scene {
                         self.geom_pending = self.geom_pending.saturating_sub(1);
                     }
                 }
-                JobResult::MeshCache { id, data } => self.meshes.on_cache(id, data),
+                JobResult::MeshCache { id, arrival } => self.meshes.on_cache(id, arrival.map(|a| *a)),
+                JobResult::MeshPart { id, arrival } => self.meshes.on_part(id, *arrival, &self.jobs),
                 JobResult::Material { id, material } => self.materials.on_material(id, material),
                 JobResult::Done => {}
                 other => self.textures.on_job(other),

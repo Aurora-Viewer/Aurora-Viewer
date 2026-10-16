@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 struct RawMesh {
     asset: Uuid,
-    data: Option<Arc<Vec<u8>>>,
+    data: Option<crate::scene::meshes::MeshView>,
     skin: Option<Arc<aurora_assets::SkinInfo>>,
     rigid: Option<Rigid>,
     appearance: Vec<Face>,
@@ -145,12 +145,15 @@ impl Input {
                 continue;
             };
             {
-                let (data, skin) = scene.meshes.preview_source(&id);
-                let skin = skin.filter(|skin| !skin.joint_names.is_empty());
+                let data = scene.meshes.view(&id);
+                let skin = data
+                    .as_ref()
+                    .and_then(|m| m.skin.clone())
+                    .filter(|skin| !skin.joint_names.is_empty());
                 let rigid = skin.is_none().then(|| Rigid::capture(world, index)).flatten();
                 let mut mesh_hash = std::collections::hash_map::DefaultHasher::new();
                 id.hash(&mut mesh_hash);
-                data.as_ref().map(|bytes| bytes.len()).hash(&mut mesh_hash);
+                data.as_ref().map(|m| m.bytes.held()).hash(&mut mesh_hash);
                 skin.as_ref().map(|skin| Arc::as_ptr(skin) as usize).hash(&mut mesh_hash);
                 if let Some(rigid) = &rigid {
                     rigid.joint.hash(&mut mesh_hash);
@@ -238,10 +241,8 @@ impl Input {
                             .map(|ready| ready.faces.clone())
                     })
                     .or_else(|| {
-                        let data = mesh.data.as_ref()?;
-                        let header = aurora_assets::parse_mesh_header(data).ok()?;
-                        let lod = header.actual_lod(3)?;
-                        let bytes = aurora_assets::mesh::section_bytes(data, header.lods[lod]?)?;
+                        // the finest level held
+                        let bytes = mesh.data.as_ref()?.lod_section(3)?;
                         Some(Arc::new(aurora_assets::decode_mesh_lod(bytes).ok()?))
                     })?;
                 Some(Mesh {

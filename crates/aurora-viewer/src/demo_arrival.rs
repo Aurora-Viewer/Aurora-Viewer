@@ -1,23 +1,30 @@
-//! AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]: an
-//! arrival in a busy region, to measure what the loading shows first.
+//! AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]:
+//! an arrival in a busy region, to measure what the loading shows first.
 //!
 //! `n` objects (1,200 by default) arrive all around our avatar, the nearest
 //! first and about 600 a second as a simulator sends them, from 3 to 120 m
 //! away and larger with the distance; one in three is a mesh, each has its
-//! own texture. Sixteen avatars stand nearby, each playing two animations.
+//! own texture. `avatars` avatars (16 by default) stand nearby, each playing
+//! two animations and, with `worn`, wearing that many rigged meshes (the
+//! `.mesh` files of the folder that have a skin), each with its texture.
+//! With `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
+//! its `mat` subfolder); the textures they name are served from the `tex`
+//! subfolder when it holds them.
 //! Every asset is downloaded from the local asset server
 //! (demo_asset_server.rs, on this machine only), which answers each request
-//! after `net` milliseconds (200 by default): the textures (`.j2c`), meshes
+//! after `net` milliseconds (200 by default), the bodies sharing `bw`
+//! megabits a second when given (a link held by its throughput): the textures (`.j2c`), meshes
 //! (`.mesh`, static ones) and animations (`.anim`) are the files of
 //! `<folder>`'s `tex`, `mesh` and `anim` subfolders, under ids proper to the
 //! run, so no disk cache holds them. `turn` seconds after the first objects
 //! (3 by default) the avatar turns round: what was behind is now in front.
 //!
 //! The log tells when half, nine tenths and all of what is in front of the
-//! camera after the turn showed (textures with their first pixels, meshes
-//! with their geometry), weighted by size on screen (`demo arrival: front`),
+//! camera after the turn showed (its geometry built and its texture with its
+//! first pixels), weighted by size on screen (`demo arrival: front`),
 //! the same for everything around (`demo arrival: all`), when the
-//! animations arrived (`demo arrival: animations`), then what the server
+//! animations arrived (`demo arrival: animations`), when what the avatars
+//! wear showed (`demo arrival: worn`, with `worn`), then what the server
 //! sent (`demo arrival: done`).
 
 use super::{HANDLE, height, prim, shape, te};
@@ -28,7 +35,7 @@ use aurora_prim::ExtraParams;
 use aurora_prim::params::*;
 use glam::{Quat, Vec2, Vec3};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -42,11 +49,14 @@ const FIRST_FRAME: u64 = 300;
 const FIRST_AFTER: Duration = Duration::from_secs(4);
 const AVATARS: u32 = 16;
 const ANIMS_EACH: u32 = 2;
-/// Distinct meshes, cycled over the mesh objects.
+/// Distinct meshes, cycled over the mesh objects, and rigged ones over
+/// what the avatars wear.
 const MESHES: usize = 400;
-/// Local ids of the objects and of the avatars.
+const RIGGED: usize = 300;
+/// Local ids of the objects, of the avatars and of what they wear.
 const FIRST_LOCAL_ID: u32 = 120_000;
 const FIRST_AVATAR_ID: u32 = 125_000;
+const FIRST_WORN_ID: u32 = 130_000;
 /// Half the angle of what counts as in front after the turn.
 const FRONT_COS: f32 = 0.707;
 /// Shares the log tells, in tenths.
@@ -57,6 +67,10 @@ const KIND_TEXTURE: u32 = 1;
 const KIND_MESH: u32 = 2;
 const KIND_ANIM: u32 = 3;
 const KIND_AVATAR: u32 = 4;
+const KIND_RIGGED: u32 = 5;
+const KIND_MATERIAL: u32 = 6;
+/// Distinct PBR materials, cycled.
+const MATERIALS: usize = 300;
 
 /// Part of the ids proper to this run: never in a disk cache.
 static RUN: AtomicU32 = AtomicU32::new(0);
@@ -76,7 +90,11 @@ fn parse_id(id: &Uuid) -> Option<(u32, u32)> {
 struct Files {
     textures: Vec<PathBuf>,
     meshes: Vec<PathBuf>,
+    rigged: Vec<PathBuf>,
     anims: Vec<PathBuf>,
+    materials: Vec<PathBuf>,
+    /// The folder's `tex`: the textures a material names, by their id.
+    tex_dir: PathBuf,
 }
 
 /// Files of `dir` with extension `ext` and a size within `bytes`, in name
@@ -98,12 +116,12 @@ fn list_files(dir: &Path, ext: &str, bytes: std::ops::Range<u64>, most: usize, k
         .collect()
 }
 
-/// A mesh drawn as it is, without a skeleton.
-fn static_mesh(path: &Path) -> bool {
+/// A mesh whose header reads, rigged (with a skin) or not.
+fn mesh_with_skin(path: &Path, skin: bool) -> bool {
     std::fs::read(path)
         .ok()
         .and_then(|d| aurora_assets::parse_mesh_header(&d).ok())
-        .is_some_and(|h| h.skin.is_none() && h.lods.iter().any(Option::is_some))
+        .is_some_and(|h| h.skin.is_some() == skin && h.lods.iter().any(Option::is_some))
 }
 
 struct Placed {
@@ -111,13 +129,16 @@ struct Placed {
     size: f32,
     texture: Uuid,
     mesh: Option<Uuid>,
+    /// Its PBR material (`pbr=1`).
+    material: Option<Uuid>,
+    /// Its object's id (`prim`'s).
+    full_id: Uuid,
 }
 
-/// Bytes and requests the server answered, per kind.
+/// Requests the server answered, per kind.
 #[derive(Default)]
 struct Served {
-    requests: [AtomicU32; 3],
-    bytes: [AtomicU64; 3],
+    requests: [AtomicU32; 4],
 }
 
 struct Run {
@@ -130,15 +151,25 @@ struct Run {
     start: Vec3,
     front: Vec2,
     turned: bool,
-    told: [usize; 3],
+    /// What the avatars wear: object and texture ids.
+    worn: Vec<(Uuid, Uuid)>,
+    told: [usize; 4],
     done: bool,
     served: Arc<Served>,
+    link: Arc<super::asset_server::Link>,
 }
 
 pub struct ArrivalDemo {
     delay: Duration,
+    /// `bw=`: the link's bandwidth in megabits a second.
+    mbps: Option<f64>,
     n: u32,
     turn: Duration,
+    /// `avatars=`, and `worn=` rigged meshes each.
+    avatars: u32,
+    worn: u32,
+    /// `pbr=1`: PBR materials on one object in twelve.
+    pbr: bool,
     files: Arc<OnceLock<Files>>,
     armed: Option<Instant>,
     run: Option<Run>,
@@ -161,23 +192,45 @@ impl ArrivalDemo {
         let files = Arc::new(OnceLock::new());
         let ready = files.clone();
         let objects = n as usize;
+        let avatars = option::<u32>(&value, "avatars").unwrap_or(AVATARS).clamp(1, 200);
+        let worn = option::<u32>(&value, "worn").unwrap_or(0).min(32);
+        let pbr = option::<u32>(&value, "pbr").is_some_and(|p| p > 0);
         let spawned = std::thread::Builder::new().name("demo-arrival-files".into()).spawn(move || {
             let textures = list_files(&folder.join("tex"), "j2c", 4096..8 << 20, objects, |_| true);
-            let meshes = list_files(&folder.join("mesh"), "mesh", 4096..512 << 10, MESHES, static_mesh);
+            let meshes = list_files(&folder.join("mesh"), "mesh", 4096..512 << 10, MESHES, |p| mesh_with_skin(p, false));
+            let rigged = if worn > 0 {
+                list_files(&folder.join("mesh"), "mesh", 4096..2 << 20, RIGGED, |p| mesh_with_skin(p, true))
+            } else {
+                Vec::new()
+            };
+            let materials = if pbr {
+                list_files(&folder.join("mat"), "mat", 16..1 << 20, MATERIALS, |_| true)
+            } else {
+                Vec::new()
+            };
             let anims = list_files(
                 &folder.join("anim"),
                 "anim",
                 512..256 << 10,
-                (AVATARS * ANIMS_EACH) as usize,
+                (avatars * ANIMS_EACH) as usize,
                 |_| true,
             );
             log::info!(
-                "demo arrival: {} textures, {} static meshes, {} animations to serve",
+                "demo arrival: {} textures, {} static meshes, {} rigged meshes, {} animations, {} materials to serve",
                 textures.len(),
                 meshes.len(),
-                anims.len()
+                rigged.len(),
+                anims.len(),
+                materials.len()
             );
-            let _ = ready.set(Files { textures, meshes, anims });
+            let _ = ready.set(Files {
+                textures,
+                meshes,
+                rigged,
+                anims,
+                materials,
+                tex_dir: folder.join("tex"),
+            });
         });
         if let Err(e) = spawned {
             log::warn!("demo arrival: files not looked over ({e})");
@@ -185,8 +238,12 @@ impl ArrivalDemo {
         }
         Some(ArrivalDemo {
             delay: Duration::from_millis(option(&value, "net").unwrap_or(200)),
+            mbps: option(&value, "bw"),
             n,
             turn: Duration::from_secs_f32(option::<f32>(&value, "turn").unwrap_or(3.0).max(0.0)),
+            avatars,
+            worn,
+            pbr,
             files,
             armed: None,
             run: None,
@@ -196,7 +253,12 @@ impl ArrivalDemo {
     /// Start the server, place the objects and the avatars.
     fn begin(&mut self, world: &mut World) -> Option<Run> {
         let files = self.files.get()?;
-        if files.textures.is_empty() || files.meshes.is_empty() || files.anims.is_empty() {
+        if files.textures.is_empty()
+            || files.meshes.is_empty()
+            || files.anims.is_empty()
+            || (self.worn > 0 && files.rigged.is_empty())
+            || (self.pbr && files.materials.is_empty())
+        {
             log::warn!("demo arrival: textures, meshes or animations missing from the folder");
             return None;
         }
@@ -206,23 +268,35 @@ impl ArrivalDemo {
             let served = served.clone();
             Arc::new(move |kind, id| {
                 let files = files.get()?;
-                let (k, i) = parse_id(id)?;
+                let Some((k, i)) = parse_id(id) else {
+                    // a texture a material names: its file in the folder,
+                    // else one of the others (chosen by its id)
+                    if kind != "texture" {
+                        return None;
+                    }
+                    let path = files.tex_dir.join(format!("{id}.j2c"));
+                    served.requests[0].fetch_add(1, Ordering::Relaxed);
+                    return Some(if path.is_file() {
+                        path
+                    } else {
+                        files.textures[(id.as_u128() % files.textures.len() as u128) as usize].clone()
+                    });
+                };
                 let (list, slot) = match (kind, k) {
                     ("texture", KIND_TEXTURE) => (&files.textures, 0),
                     ("mesh", KIND_MESH) => (&files.meshes, 1),
+                    ("mesh", KIND_RIGGED) => (&files.rigged, 1),
                     ("animatn", KIND_ANIM) => (&files.anims, 2),
+                    ("material", KIND_MATERIAL) => (&files.materials, 3),
                     _ => return None,
                 };
                 let path = list.get(i as usize % list.len())?.clone();
                 served.requests[slot].fetch_add(1, Ordering::Relaxed);
-                // (a texture is asked for by ranges: its bytes are in `texture load:`)
-                if slot > 0 {
-                    served.bytes[slot].fetch_add(std::fs::metadata(&path).map_or(0, |m| m.len()), Ordering::Relaxed);
-                }
                 Some(path)
             })
         };
-        let url = match super::asset_server::start_assets(resolve, self.delay) {
+        let link = super::asset_server::Link::new(self.delay, self.mbps);
+        let url = match super::asset_server::start_assets(resolve, link.clone()) {
             Ok(url) => url,
             Err(e) => {
                 log::warn!("demo arrival: no local asset server ({e})");
@@ -250,7 +324,10 @@ impl ArrivalDemo {
                     pos: Vec3::new(x, y, height(x, y) + size * 0.5),
                     size,
                     texture: id(KIND_TEXTURE, i as u32),
+                    full_id: Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | (FIRST_LOCAL_ID + i as u32) as u128),
                     mesh: (i % 3 == 0).then(|| id(KIND_MESH, (i / 3) as u32)),
+                    // (one object in twelve, a prim)
+                    material: (self.pbr && i % 3 == 1 && i % 4 == 1).then(|| id(KIND_MATERIAL, i as u32)),
                 }
             })
             .collect();
@@ -265,8 +342,10 @@ impl ArrivalDemo {
         let mut avatars = Vec::new();
         let mut anims = Vec::new();
         let mut played = Vec::new();
-        for k in 0..AVATARS {
-            let a = k as f32 * std::f32::consts::TAU / AVATARS as f32;
+        let mut worn = Vec::new();
+        let count = self.avatars;
+        for k in 0..count {
+            let a = k as f32 * std::f32::consts::TAU / count as f32;
             let d = 5.0 + (k % 4) as f32 * 5.0;
             let (x, y) = (start.x + a.cos() * d, start.y + a.sin() * d);
             let mut o = prim(
@@ -283,12 +362,49 @@ impl ArrivalDemo {
             o.full_id = id(KIND_AVATAR, k);
             o.name_values = format!("FirstName STRING RW SV Arrival\nLastName STRING RW SV {k}");
             avatars.push(o);
+            // what it wears: rigged meshes, each with its texture
+            for j in 0..self.worn {
+                let w = k * self.worn + j;
+                let mesh = SculptParams {
+                    texture: id(KIND_RIGGED, w),
+                    sculpt_type: LL_SCULPT_TYPE_MESH,
+                };
+                let texture = id(KIND_TEXTURE, n as u32 + w);
+                let mut t = (*te([1.0; 4], 0, false, 0.0)).clone();
+                for f in &mut t.faces {
+                    f.texture = texture;
+                }
+                let mut o = prim(
+                    FIRST_WORN_ID + w,
+                    Vec3::ZERO,
+                    Quat::IDENTITY,
+                    Vec3::splat(1.0),
+                    aurora_prim::VolumeParams {
+                        sculpt: Some(mesh),
+                        ..Default::default()
+                    },
+                    Arc::new(t),
+                    ExtraParams {
+                        sculpt: Some(mesh),
+                        ..Default::default()
+                    },
+                    "",
+                );
+                o.parent_id = FIRST_AVATAR_ID + k;
+                o.state = 0x10; // chest (a rigged mesh follows the skeleton)
+                worn.push((o.full_id, texture));
+                avatars.push(o);
+            }
             let list: Vec<(Uuid, i32)> = (0..ANIMS_EACH).map(|j| (id(KIND_ANIM, k * ANIMS_EACH + j), j as i32 + 1)).collect();
             anims.extend(list.iter().map(|(a, _)| *a));
+            // (standing as the demo's avatars do, under what is downloaded:
+            // the files may be partial poses)
+            let mut playing = vec![(super::IDLE_ANIM, 0)];
+            playing.extend(list);
             played.push(NetEvent::AvatarAnimations {
                 sources: Vec::new(),
                 avatar: id(KIND_AVATAR, k),
-                anims: list,
+                anims: playing,
             });
         }
         world.apply(NetEvent::ObjectUpdates {
@@ -300,12 +416,14 @@ impl ArrivalDemo {
         }
         let meshes = objects.iter().filter(|o| o.mesh.is_some()).count();
         log::info!(
-            "demo arrival: {} objects ({} meshes), {} animations on {} avatars, {} ms a request, turn after {:.1} s",
+            "demo arrival: {} objects ({} meshes), {} animations on {} avatars wearing {} rigged meshes, {} ms a request, {}, turn after {:.1} s",
             n,
             meshes,
             anims.len(),
-            AVATARS,
+            count,
+            worn.len(),
             self.delay.as_millis(),
+            self.mbps.map_or("no bandwidth limit".to_owned(), |m| format!("{m} Mb/s")),
             self.turn.as_secs_f32()
         );
         Some(Run {
@@ -318,9 +436,11 @@ impl ArrivalDemo {
             start,
             front: Vec2::new(yaw.cos(), yaw.sin()),
             turned: false,
-            told: [0; 3],
+            worn,
+            told: [0; 4],
             done: false,
             served,
+            link,
         })
     }
 
@@ -379,7 +499,10 @@ impl ArrivalDemo {
                         }
                         None => (
                             shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
-                            ExtraParams::default(),
+                            ExtraParams {
+                                render_materials: p.material.map_or_else(Vec::new, |m| (0..6).map(|f| (f, m)).collect()),
+                                ..Default::default()
+                            },
                         ),
                     };
                     prim(
@@ -411,7 +534,24 @@ impl ArrivalDemo {
             let to = p.pos.truncate() - run.start.truncate();
             let d = to.length().max(1.0);
             let w = p.size / d;
-            let shown = scene.textures.decoded_level(&p.texture).is_some() && p.mesh.is_none_or(|m| scene.meshes.meta(&m).is_some());
+            // (its geometry is built and its texture shows its first pixels;
+            // with a PBR material, the material and its base color texture)
+            let built = world
+                .objects
+                .index_of_uuid(&p.full_id)
+                .and_then(|i| scene.gpu.get(i))
+                .is_some_and(|g| g.geom.is_some());
+            let textured = match p.material {
+                Some(m) => scene.materials.peek(&m).is_some_and(|m| {
+                    // (one nothing asks for: the object is too small on
+                    // screen to be drawn)
+                    m.base_color_texture.is_none_or(|t| {
+                        scene.textures.decoded_level(&t).is_some() || scene.textures.is_unavailable(&t) || !scene.textures.is_wanted(&t)
+                    })
+                }),
+                None => scene.textures.decoded_level(&p.texture).is_some(),
+            };
+            let shown = built && textured;
             let ahead = to.normalize_or_zero().dot(run.front) > FRONT_COS;
             all_all += w;
             all += if shown { w } else { 0.0 };
@@ -421,12 +561,38 @@ impl ArrivalDemo {
             }
         }
         let anims = run.anims.iter().filter(|a| scene.anims.asset_settled(a)).count() as f32;
+        // what the avatars wear, built and with its texture (all of it when
+        // they wear nothing)
+        let dressed = run
+            .worn
+            .iter()
+            .filter(|(object, texture)| {
+                let built = world
+                    .objects
+                    .index_of_uuid(object)
+                    .and_then(|i| scene.gpu.get(i))
+                    .is_some_and(|g| g.geom.is_some());
+                built && scene.textures.decoded_level(texture).is_some()
+            })
+            .count();
         let shares = [
             ("front", front / front_all.max(1e-6)),
             ("all", all / all_all.max(1e-6)),
             ("animations", anims / run.anims.len().max(1) as f32),
+            (
+                "worn",
+                if run.worn.is_empty() {
+                    1.0
+                } else {
+                    dressed as f32 / run.worn.len() as f32
+                },
+            ),
         ];
         for (k, (name, share)) in shares.iter().enumerate() {
+            if *name == "worn" && run.worn.is_empty() {
+                run.told[k] = STEPS.len();
+                continue;
+            }
             while run.told[k] < STEPS.len() && *share * 10.0 >= STEPS[run.told[k]] as f32 - 1e-4 {
                 log::info!("demo arrival: {name} {}0% shown after {elapsed:.2} s", STEPS[run.told[k]]);
                 run.told[k] += 1;
@@ -435,14 +601,17 @@ impl ArrivalDemo {
         if run.told.iter().all(|t| *t == STEPS.len()) && run.sent == run.order.len() {
             run.done = true;
             let s = &run.served;
-            let mb = |slot: usize| s.bytes[slot].load(Ordering::Relaxed) as f32 / 1e6;
+            let mb = |kind: &str| run.link.sent(kind) as f32 / 1e6;
             log::info!(
-                "demo arrival: done after {elapsed:.2} s; served {} texture requests, {} mesh requests ({:.1} MB), {} animation requests ({:.2} MB)",
+                "demo arrival: done after {elapsed:.2} s; served {} texture requests ({:.1} MB), {} mesh requests ({:.1} MB), {} animation requests ({:.2} MB), {} material requests ({:.2} MB)",
                 s.requests[0].load(Ordering::Relaxed),
+                mb("texture"),
                 s.requests[1].load(Ordering::Relaxed),
-                mb(1),
+                mb("mesh"),
                 s.requests[2].load(Ordering::Relaxed),
-                mb(2),
+                mb("animatn"),
+                s.requests[3].load(Ordering::Relaxed),
+                mb("material"),
             );
         }
     }

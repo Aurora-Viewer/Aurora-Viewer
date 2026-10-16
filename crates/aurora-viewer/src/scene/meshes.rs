@@ -1,10 +1,40 @@
-//! Mesh and GLTF material asset streaming (whole-asset fetch + disk cache).
+//! Mesh assets, downloaded by parts, and GLTF material assets.
+//!
+//! A mesh drawn below its high level of detail is no longer downloaded
+//! whole (every level and its physics, in one request): its header first,
+//! then only the blocks that are drawn, a level of detail and the skin, by
+//! byte ranges. Port of the requests of LLMeshRepoThread
+//! (indra/newview/llmeshrepository.cpp, originally LGPL 2.1):
+//! `fetchMeshHeader` asks for the first 4,096 bytes (`MESH_HEADER_SIZE`,
+//! the blocks that fit in them come with them), `fetchMeshLOD` and
+//! `fetchMeshSkinInfo` the range of one block. Two missing blocks close to
+//! each other are asked for in one request.
+//!
+//! **Different from Firestorm, deliberately:** the first request is sized
+//! by the level wanted (`first_request`), and a mesh first wanted at its
+//! high level is still downloaded whole, in one request. The blocks of an
+//! asset go from the coarsest level to the finest, then the physics and the
+//! skin, and the high level is three quarters of the bytes of all meshes:
+//! the start of the asset holds the header and the coarser levels.
+//! Measured on a local set of 3,000 mesh assets, requests and bytes against
+//! the whole assets in one request each: to show the lowest or low level, the first
+//! 4 KiB then what is missing take 1.28 and 1.46 requests for 3 and 6 % of
+//! the bytes, the first 8 KiB 1.24 and 1.33 for 6 and 8 %; the medium
+//! level, 1.85 requests for 22 % with 4 KiB, 1.35 for 32 % with 32 KiB; the
+//! high level, 1.86 requests for 80 %: one more round trip before what is
+//! near is drawn, for a fifth of its bytes. What is left over one request
+//! is mostly the skin of rigged meshes, at the end of the asset. The
+//! bytes are parsed by jobs (header, skin): the main thread only keeps
+//! them, it no longer copies a whole asset nor parses it in a frame. What
+//! is held is kept in the disk cache (`mesh_bytes.rs`).
 
 use super::GeomKey;
 use super::fetch_priority::{self, urgent};
 use super::jobs::{JobResult, Jobs, mesh_to_faces};
+use super::mesh_bytes::{MeshBytes, ranges_to_fetch};
 use aurora_assets::material::PbrOverride;
-use aurora_assets::{MeshHeader, PbrMaterial, SkinInfo};
+use aurora_assets::{AssetError, MeshHeader, PbrMaterial, SkinInfo};
+use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::StagingPool;
 use std::collections::{HashMap, HashSet};
@@ -16,12 +46,53 @@ use uuid::Uuid;
 pub const FETCH_KIND_MESH: u64 = 2 << 60;
 pub const FETCH_KIND_MATERIAL: u64 = 3 << 60;
 
+/// The first request of a mesh: the start of the asset, its header and the
+/// coarser levels, sized by the finest level wanted (None: the whole
+/// asset). See the module comment for the measure behind the sizes.
+fn first_request(finest_wanted: u8) -> Option<usize> {
+    match finest_wanted {
+        0 | 1 => Some(8 << 10),
+        2 => Some(32 << 10),
+        _ => None,
+    }
+}
+/// Two missing blocks this close are asked for in one request.
+const JOIN_GAP: usize = 4096;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+enum Stage {
+    /// Not looked for yet.
+    #[default]
+    New,
+    /// Its disk cache file is being read.
+    Reading,
+    /// Its header is to be downloaded.
+    ToFetch,
+    /// Its header is downloading.
+    Fetching,
+    /// Its header is known: its blocks are downloaded as they are wanted.
+    Known,
+    /// Its header did not come, or a block failed again and again.
+    Failed,
+    /// No object wanted it before its header came: wanted again, it
+    /// starts over.
+    Unwanted,
+}
+
 #[derive(Default)]
 struct MeshEntry {
-    data: Option<Arc<Vec<u8>>>,
+    /// What is held of the asset.
+    bytes: MeshBytes,
     header: Option<MeshHeader>,
     skin: Option<Arc<SkinInfo>>,
-    state: u8, // 0 new, 1 cache check, 2 fetching, 3 ready, 4 failed, 5 to fetch, 6 not wanted
+    /// Its skin block did not decode: built without it, as when the whole
+    /// asset came.
+    skin_bad: bool,
+    stage: Stage,
+    /// Held in memory only (imports, demo fixtures): never downloaded.
+    local: bool,
+    /// The header is larger than the first request: the whole asset is asked.
+    whole: bool,
     retry_at: Option<Instant>,
     failures: u32,
     /// The asset server does not have it, or what it sent is not a mesh:
@@ -32,11 +103,12 @@ struct MeshEntry {
     /// Listed in `MeshStreamer::todo`.
     queued: bool,
     /// Size on screen of its largest user, in pixels, and whether one is
-    /// ours (`MeshStreamer::need`): the rank of its download.
+    /// ours (`MeshStreamer::need`): the rank of its downloads.
     px: f32,
     own: bool,
-    /// Its download under way, and the rank it was last given.
-    fetch_key: u64,
+    /// Its downloads under way (key, range asked), and the rank they were
+    /// last given.
+    inflight: Vec<(u64, Option<(usize, usize)>)>,
     sent: f32,
 }
 
@@ -48,20 +120,113 @@ impl MeshEntry {
             (Lane::Bulk, fetch_priority::mesh(self.px))
         }
     }
-}
 
-impl MeshEntry {
+    /// Header and skin known: placed and built as a whole asset was.
+    fn ready(&self) -> bool {
+        self.header
+            .as_ref()
+            .is_some_and(|h| h.skin.is_none() || self.skin.is_some() || self.skin_bad)
+    }
+
+    /// The block drawn for a level of detail (`actual_lod`).
+    fn lod_block(&self, lod: u8) -> Option<(usize, usize)> {
+        let h = self.header.as_ref()?;
+        h.actual_lod(lod as usize).and_then(|a| h.lods[a])
+    }
+
+    /// Blocks wanted and not held: the skin, those of the wanted levels.
+    fn missing(&self) -> Vec<(usize, usize)> {
+        let Some(h) = &self.header else {
+            return Vec::new();
+        };
+        let skin = h.skin.filter(|_| self.skin.is_none() && !self.skin_bad);
+        skin.into_iter()
+            .chain(self.wanted_lods.iter().filter_map(|&lod| self.lod_block(lod)))
+            .filter(|b| !self.bytes.holds(*b))
+            .collect()
+    }
+
+    /// A missing block that no download under way brings.
+    fn uncovered(&self) -> Vec<(usize, usize)> {
+        let mut missing = self.missing();
+        missing.retain(|&(start, len)| {
+            !self.inflight.iter().any(|(_, r)| match r {
+                None => true,
+                Some((s, l)) => *s <= start && s + l >= start + len,
+            })
+        });
+        missing
+    }
+
+    /// A wanted level whose block is held, once the skin is known.
+    fn buildable(&self) -> bool {
+        self.ready()
+            && self
+                .wanted_lods
+                .iter()
+                .any(|&lod| self.lod_block(lod).is_some_and(|b| self.bytes.holds(b)))
+    }
+
     /// `MeshStreamer::update` has something to do for it, now or at its
-    /// retry time: a new mesh to read from the disk cache, a download to
-    /// start or to start again, LODs to build.
+    /// retry time: a new mesh to read from the disk cache, a header to
+    /// download, a block to download or a level to build.
     fn has_work(&self) -> bool {
-        match self.state {
-            0 | 5 => true,
-            3 => !self.wanted_lods.is_empty(),
-            4 => self.failures <= 3,
-            _ => false,
+        match self.stage {
+            Stage::New | Stage::ToFetch => true,
+            Stage::Known => self.buildable() || (!self.local && !self.uncovered().is_empty()),
+            Stage::Failed => self.failures <= 3,
+            Stage::Reading | Stage::Fetching | Stage::Unwanted => false,
         }
     }
+}
+
+/// What a job made of mesh bytes read from the disk or downloaded: the
+/// bytes, and the header and skin found in them.
+pub struct MeshArrival {
+    bytes: MeshBytes,
+    header: Option<MeshHeader>,
+    skin: Option<Result<SkinInfo, String>>,
+    /// Not a mesh: why.
+    invalid: Option<String>,
+    /// The header goes past the bytes held (larger than the first request).
+    truncated: bool,
+}
+
+/// Parse what `bytes` holds: the header when they start the asset and it is
+/// not known yet (`header`), the skin when wanted and held.
+fn arrival(bytes: MeshBytes, header: Option<MeshHeader>, want_skin: bool) -> MeshArrival {
+    let mut a = MeshArrival {
+        bytes,
+        header: None,
+        skin: None,
+        invalid: None,
+        truncated: false,
+    };
+    let header = match header {
+        Some(h) => Some(h),
+        None => match a.bytes.first().map(aurora_assets::parse_mesh_header) {
+            Some(Ok(h)) => {
+                a.header = Some(h.clone());
+                Some(h)
+            }
+            Some(Err(AssetError::Truncated(_))) if !a.bytes.is_whole() => {
+                a.truncated = true;
+                None
+            }
+            Some(Err(e)) => {
+                a.invalid = Some(e.to_string());
+                None
+            }
+            None => None,
+        },
+    };
+    if want_skin
+        && let Some(range) = header.and_then(|h| h.skin)
+        && let Some(section) = a.bytes.section(range)
+    {
+        a.skin = Some(aurora_assets::decode_skin(section).map_err(|e| e.to_string()));
+    }
+    a
 }
 
 /// Info about a mesh needed for placement.
@@ -70,6 +235,24 @@ pub struct MeshMeta {
     pub skin: Option<Arc<SkinInfo>>,
     /// Byte size of each LOD (lowest .. high), for the render cost.
     pub lod_bytes: [u32; 4],
+}
+
+/// What is held of a mesh, for the readers of its geometry outside the
+/// scene (feet on rigged shoes, media faces).
+#[derive(Clone)]
+pub struct MeshView {
+    pub header: MeshHeader,
+    pub bytes: MeshBytes,
+    pub skin: Option<Arc<SkinInfo>>,
+}
+
+impl MeshView {
+    /// The finest level of detail held, at most `lod`, else the coarsest
+    /// held above it.
+    pub fn lod_section(&self, lod: usize) -> Option<&[u8]> {
+        let held = |l: usize| self.header.lods[l].and_then(|r| self.bytes.section(r));
+        (0..=lod.min(3)).rev().find_map(held).or_else(|| (lod.min(3) + 1..4).find_map(held))
+    }
 }
 
 pub struct MeshStreamer {
@@ -94,6 +277,12 @@ pub struct MeshStreamer {
     pub meta_generation: u64,
     /// The renderer's staging memory, given to the LOD jobs.
     pub staging: Option<Arc<StagingPool>>,
+    /// Bytes of mesh assets downloaded, and requests sent (`counts`).
+    pub downloaded: u64,
+    pub requests: u64,
+    /// When `mesh load:` was last written, and the requests it told.
+    logged_at: Option<Instant>,
+    logged_requests: u64,
 }
 
 impl MeshStreamer {
@@ -111,6 +300,10 @@ impl MeshStreamer {
             logged_failures: 0,
             meta_generation: 0,
             staging: None,
+            downloaded: 0,
+            requests: 0,
+            logged_at: None,
+            logged_requests: 0,
         }
     }
 
@@ -118,14 +311,14 @@ impl MeshStreamer {
     pub fn want(&mut self, id: Uuid, lod: u8) {
         let e = self.entries.entry(id).or_default();
         e.wanted_lods.insert(lod);
-        if e.state == 6 {
-            e.state = 5;
+        if e.stage == Stage::Unwanted {
+            e.stage = Stage::ToFetch;
         }
         Self::attend(&mut self.todo, id, e);
     }
 
     /// An object using a mesh covers `px` pixels on screen (`own`: worn by
-    /// our avatar). A download still waiting moves up to the nearest user;
+    /// our avatar). Its downloads still waiting move up to the nearest user;
     /// ours go in the urgent lane.
     pub fn need(&mut self, id: Uuid, px: f32, own: bool) {
         let Some(e) = self.entries.get_mut(&id) else {
@@ -138,21 +331,23 @@ impl MeshStreamer {
         e.px = e.px.max(px);
         e.own |= own;
         let (lane, priority) = e.lane();
-        if e.state == 2 && e.fetch_key != 0 {
-            if lane != was.0 {
-                // (a new request under the same key replaces the waiting one)
-                self.moved.push((e.fetch_key, f32::NAN));
-            } else if fetch_priority::changed(e.sent, priority) {
-                e.sent = priority;
-                self.moved.push((e.fetch_key, priority));
-            }
+        if e.inflight.is_empty() {
+            return;
+        }
+        if lane != was.0 {
+            // (a new request under the same key replaces the waiting one)
+            self.moved.extend(e.inflight.iter().map(|(key, _)| (*key, f32::NAN)));
+        } else if fetch_priority::changed(e.sent, priority) {
+            e.sent = priority;
+            self.moved.extend(e.inflight.iter().map(|(key, _)| (*key, priority)));
         }
     }
 
     /// No object uses the mesh any more (the scene let all its geometries
-    /// go). A download still waiting for a slot is dropped, as Firestorm
-    /// drops pending mesh requests whose volumes are gone; one already
-    /// sent ends, and is ignored. Wanted again, it starts over.
+    /// go). Its downloads still waiting for a slot are dropped, as Firestorm
+    /// drops pending mesh requests whose volumes are gone; those already
+    /// sent end, and are ignored. Wanted again, what is missing is asked
+    /// again.
     pub fn unwant(&mut self, id: &Uuid) {
         let Some(e) = self.entries.get_mut(id) else {
             return;
@@ -160,15 +355,12 @@ impl MeshStreamer {
         e.wanted_lods.clear();
         e.px = 0.0;
         e.own = false;
-        match e.state {
-            2 => {
-                self.by_key.remove(&e.fetch_key);
-                self.dropped.push(e.fetch_key);
-                e.fetch_key = 0;
-                e.state = 6;
-            }
-            5 => e.state = 6,
-            _ => {}
+        for (key, _) in e.inflight.drain(..) {
+            self.by_key.remove(&key);
+            self.dropped.push(key);
+        }
+        if matches!(e.stage, Stage::Fetching | Stage::ToFetch) {
+            e.stage = Stage::Unwanted;
         }
     }
 
@@ -179,20 +371,18 @@ impl MeshStreamer {
         }
     }
 
-    /// Disk cache file of a mesh asset (media picking reads it).
-    pub fn cache_path(&self, id: &Uuid) -> PathBuf {
-        self.cache_dir.join("mesh").join(format!("{id}.mesh"))
-    }
-
-    pub fn preview_source(&self, id: &Uuid) -> (Option<Arc<Vec<u8>>>, Option<Arc<SkinInfo>>) {
-        self.entries
-            .get(id)
-            .map(|entry| (entry.data.clone(), entry.skin.clone()))
-            .unwrap_or_default()
+    /// What is held of a mesh, once its header is known.
+    pub fn view(&self, id: &Uuid) -> Option<MeshView> {
+        let e = self.entries.get(id)?;
+        Some(MeshView {
+            header: e.header.clone()?,
+            bytes: e.bytes.clone(),
+            skin: e.skin.clone(),
+        })
     }
 
     pub fn meta(&self, id: &Uuid) -> Option<MeshMeta> {
-        let e = self.entries.get(id)?;
+        let e = self.entries.get(id).filter(|e| e.ready())?;
         let h = e.header.as_ref()?;
         let lod_bytes = h.lods.map(|l| l.map(|(_, size)| size as u32).unwrap_or(0));
         Some(MeshMeta {
@@ -206,10 +396,11 @@ impl MeshStreamer {
         self.entries.insert(
             id,
             MeshEntry {
-                data: Some(data),
+                bytes: MeshBytes::whole(data),
                 header: Some(header),
                 skin,
-                state: 3,
+                stage: Stage::Known,
+                local: true,
                 ..Default::default()
             },
         );
@@ -234,7 +425,8 @@ impl MeshStreamer {
                     physics_convex: None,
                     version: 1,
                 }),
-                state: 3,
+                stage: Stage::Known,
+                local: true,
                 ..Default::default()
             },
         );
@@ -258,7 +450,9 @@ impl MeshStreamer {
     /// or invalid (LLMeshHeaderHandler::processFailure marks every LOD
     /// unavailable at once), or its download failed again and again.
     pub fn failed(&self, id: &Uuid) -> bool {
-        self.entries.get(id).is_some_and(|e| e.state == 4 && (e.gone || e.failures > 3))
+        self.entries
+            .get(id)
+            .is_some_and(|e| e.stage == Stage::Failed && (e.gone || e.failures > 3))
     }
 
     /// Diagnostic: the state of a mesh asset, without requesting it.
@@ -266,14 +460,17 @@ impl MeshStreamer {
         let Some(e) = self.entries.get(id) else {
             return "not requested".into();
         };
-        let state = match e.state {
-            0 => "new",
-            1 => "reading the disk cache",
-            2 => "downloading",
-            3 => "loaded",
-            4 if e.gone => "unavailable",
-            4 => "download failed",
-            _ => "waiting to download",
+        let state = match e.stage {
+            Stage::New => "new",
+            Stage::Reading => "reading the disk cache",
+            Stage::ToFetch => "waiting to download",
+            Stage::Fetching => "downloading its header",
+            Stage::Known if !e.inflight.is_empty() => "downloading blocks",
+            Stage::Known if e.ready() => "loaded",
+            Stage::Known => "waiting for its skin",
+            Stage::Failed if e.gone => "unavailable",
+            Stage::Failed => "download failed",
+            Stage::Unwanted => "not wanted",
         };
         let retry = e
             .retry_at
@@ -283,7 +480,25 @@ impl MeshStreamer {
             .unwrap_or_default();
         let mut building: Vec<u8> = e.building.iter().copied().collect();
         building.sort_unstable();
-        format!("{state}, failures {}{retry}, LODs being built {building:?}", e.failures)
+        format!(
+            "{state}, {} bytes held, failures {}{retry}, LODs being built {building:?}",
+            e.bytes.held(),
+            e.failures
+        )
+    }
+
+    fn request(key: u64, base: &str, id: &Uuid, range: Option<(usize, usize)>, lane: Lane, priority: f32) -> FetchRequest {
+        FetchRequest {
+            key,
+            url: super::textures::asset_url(base, "mesh_id", id),
+            range: range.map(|(start, len)| ByteRange {
+                start: start as u64,
+                end: Some((start + len).saturating_sub(1) as u64),
+            }),
+            priority,
+            lane,
+            accept: "application/vnd.ll.mesh",
+        }
     }
 
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>, rig: &Arc<super::anim::Rig>) {
@@ -292,18 +507,21 @@ impl MeshStreamer {
             fetcher.cancel(key);
         }
         for (key, priority) in self.moved.drain(..) {
-            match self.by_key.get(&key).and_then(|id| self.entries.get_mut(id)) {
-                // (to the other lane: asked again under its key)
-                Some(e) if priority.is_nan() => {
-                    if let Some(base) = viewer_asset {
-                        let (lane, priority) = e.lane();
-                        e.sent = priority;
-                        let id = self.by_key[&key];
-                        fetcher.request(Self::request(key, base, &id, lane, priority));
-                    }
+            let Some(id) = self.by_key.get(&key).copied() else {
+                continue;
+            };
+            let Some(e) = self.entries.get_mut(&id) else {
+                continue;
+            };
+            if priority.is_nan() {
+                // to the other lane: asked again under its key
+                if let (Some(base), Some(&(_, range))) = (viewer_asset, e.inflight.iter().find(|(k, _)| *k == key)) {
+                    let (lane, priority) = e.lane();
+                    e.sent = priority;
+                    fetcher.request(Self::request(key, base, &id, range, lane, priority));
                 }
-                Some(_) => fetcher.reprioritise(key, priority),
-                None => {}
+            } else {
+                fetcher.reprioritise(key, priority);
             }
         }
         let mut todo = std::mem::take(&mut self.todo);
@@ -318,50 +536,65 @@ impl MeshStreamer {
                 if e.retry_at.is_some_and(|t| now < t) {
                     break 'visit;
                 }
-                match e.state {
-                    0 => {
-                        e.state = 1;
+                match e.stage {
+                    Stage::New => {
+                        e.stage = Stage::Reading;
                         let path = self.cache_dir.join("mesh").join(format!("{id}.mesh"));
                         jobs.spawn(move || JobResult::MeshCache {
                             id,
-                            data: crate::cache::read_touch(path).ok(),
+                            arrival: crate::cache::read_touch(path)
+                                .ok()
+                                .and_then(MeshBytes::decode)
+                                .map(|bytes| Box::new(arrival(bytes, None, true))),
                         });
+                        break 'visit;
                     }
-                    4 if e.failures <= 3 => {
-                        e.state = 5; // trigger fetch below
+                    Stage::Failed if e.failures <= 3 => {
+                        e.retry_at = None;
+                        e.stage = if e.header.is_some() { Stage::Known } else { Stage::ToFetch };
                     }
                     _ => {}
                 }
-                if e.state == 5 {
-                    let Some(base) = viewer_asset else {
-                        e.state = 4;
-                        break 'visit;
-                    };
+                let Some(base) = viewer_asset.filter(|_| !e.local) else {
+                    // (without the capability yet: asked again at the next frame)
+                    if e.stage == Stage::Known {
+                        Self::build(jobs, id, e, rig, self.staging.as_ref());
+                    }
+                    break 'visit;
+                };
+                if e.stage == Stage::ToFetch {
+                    // the start of the asset (fetchMeshHeader), or the whole
+                    // asset when its high level is wanted (see above) or its
+                    // header is larger than that start
+                    let finest = e.wanted_lods.iter().copied().max().unwrap_or(0);
+                    let range = first_request(finest).filter(|_| !e.whole).map(|len| (0, len));
                     let key = FETCH_KIND_MESH | self.next_key;
                     self.next_key += 1;
                     self.by_key.insert(key, id);
-                    e.state = 2;
-                    e.fetch_key = key;
+                    self.requests += 1;
+                    e.stage = Stage::Fetching;
+                    e.inflight.push((key, range));
                     let (lane, priority) = e.lane();
                     e.sent = priority;
-                    fetcher.request(Self::request(key, base, &id, lane, priority));
+                    fetcher.request(Self::request(key, base, &id, range, lane, priority));
+                    break 'visit;
                 }
-                if e.state == 3 && !e.wanted_lods.is_empty() {
-                    let (Some(data), Some(header)) = (e.data.clone(), e.header.clone()) else {
-                        break 'visit;
-                    };
-                    let lods: Vec<u8> = e.wanted_lods.drain().collect();
-                    for lod in lods {
-                        if !e.building.insert(lod) {
-                            continue;
+                if e.stage == Stage::Known {
+                    // the blocks drawn (fetchMeshLOD, fetchMeshSkinInfo)
+                    let uncovered = e.uncovered();
+                    if !uncovered.is_empty() {
+                        let (lane, priority) = e.lane();
+                        e.sent = priority;
+                        for range in ranges_to_fetch(&e.bytes, &uncovered, JOIN_GAP) {
+                            let key = FETCH_KIND_MESH | self.next_key;
+                            self.next_key += 1;
+                            self.by_key.insert(key, id);
+                            self.requests += 1;
+                            e.inflight.push((key, Some(range)));
+                            fetcher.request(Self::request(key, base, &id, Some(range), lane, priority));
                         }
-                        let skin = e.skin.clone();
-                        let header = header.clone();
-                        let data = data.clone();
-                        let rig = rig.clone();
-                        let pool = self.staging.clone();
-                        jobs.spawn(move || build_mesh_lod(id, lod, &data, &header, skin, &rig, pool.as_deref()));
                     }
+                    Self::build(jobs, id, e, rig, self.staging.as_ref());
                 }
             }
             if e.has_work() {
@@ -374,47 +607,48 @@ impl MeshStreamer {
         }
         // one entry per download under way
         self.fetching = self.by_key.len();
-    }
-
-    fn request(key: u64, base: &str, id: &Uuid, lane: Lane, priority: f32) -> FetchRequest {
-        FetchRequest {
-            key,
-            url: super::textures::asset_url(base, "mesh_id", id),
-            range: None,
-            priority,
-            lane,
-            accept: "application/vnd.ll.mesh",
+        // `mesh load:` every 10 s while meshes download (the bytes of an
+        // arrival beside those of the `texture load:` line)
+        if self.requests != self.logged_requests && self.logged_at.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(10)) {
+            self.logged_at = Some(now);
+            self.logged_requests = self.requests;
+            let (ready, fetching, failed) = self.counts();
+            log::info!(
+                "mesh load: {} requests, {:.1} MB downloaded since the start; {} meshes loaded, {} downloading, {} failed",
+                self.requests,
+                self.downloaded as f64 / 1e6,
+                ready,
+                fetching,
+                failed
+            );
         }
     }
 
-    fn accept_data(&mut self, id: Uuid, data: Vec<u8>) -> bool {
-        let Some(e) = self.entries.get_mut(&id) else {
-            return false;
+    /// Build the wanted levels whose block is held, once the skin is known.
+    fn build(jobs: &Jobs, id: Uuid, e: &mut MeshEntry, rig: &Arc<super::anim::Rig>, staging: Option<&Arc<StagingPool>>) {
+        if !e.ready() {
+            return;
+        }
+        let Some(header) = e.header.clone() else {
+            return;
         };
-        match aurora_assets::parse_mesh_header(&data) {
-            Ok(h) => {
-                if let Some(range) = h.skin
-                    && let Some(sec) = aurora_assets::mesh::section_bytes(&data, range)
-                {
-                    match aurora_assets::decode_skin(sec) {
-                        Ok(s) => e.skin = Some(Arc::new(s)),
-                        Err(err) => log::debug!("mesh {id} skin: {err}"),
-                    }
-                }
-                e.header = Some(h);
-                e.data = Some(Arc::new(data));
-                e.state = 3;
-                e.gone = false;
-                e.building.clear();
-                // (the LODs asked for while it was coming)
-                Self::attend(&mut self.todo, id, e);
-                self.meta_generation += 1;
-                true
+        let lods: Vec<u8> = e
+            .wanted_lods
+            .iter()
+            .copied()
+            .filter(|&lod| e.lod_block(lod).is_some_and(|b| e.bytes.holds(b)))
+            .collect();
+        for lod in lods {
+            e.wanted_lods.remove(&lod);
+            if !e.building.insert(lod) {
+                continue;
             }
-            Err(err) => {
-                self.log_failure(format_args!("mesh {id}: invalid asset ({err})"));
-                false
-            }
+            let skin = e.skin.clone();
+            let header = header.clone();
+            let bytes = e.bytes.clone();
+            let rig = rig.clone();
+            let pool = staging.cloned();
+            jobs.spawn(move || build_mesh_lod(id, lod, &bytes, &header, skin, &rig, pool.as_deref()));
         }
     }
 
@@ -422,22 +656,29 @@ impl MeshStreamer {
         let Some(id) = self.by_key.remove(&r.key) else {
             return;
         };
-        if let Some(e) = self.entries.get_mut(&id) {
-            e.fetch_key = 0;
-        }
+        let Some(e) = self.entries.get_mut(&id) else {
+            return;
+        };
+        e.inflight.retain(|(k, _)| *k != r.key);
         match r.data {
             Ok(data) if !data.is_empty() => {
-                let copy = data.clone();
-                if self.accept_data(id, data) {
-                    let path = self.cache_dir.join("mesh").join(format!("{id}.mesh"));
-                    jobs.spawn(move || {
-                        let _ = crate::cache::write(path, &copy);
-                        JobResult::Done
-                    });
-                    return;
-                }
-                // not a mesh: it will not get better
-                self.fail(id, Duration::from_secs(120), true);
+                self.downloaded += data.len() as u64;
+                // (parsed by a job: header and skin; the main thread only
+                // keeps the bytes, `on_part`)
+                let data = Arc::new(data);
+                let bytes = if r.offset == 0 && r.status == 200 {
+                    MeshBytes::whole(data)
+                } else {
+                    let mut b = MeshBytes::default();
+                    b.add(r.offset as usize, data);
+                    b
+                };
+                let header = e.header.clone();
+                let want_skin = e.skin.is_none() && !e.skin_bad;
+                jobs.spawn(move || JobResult::MeshPart {
+                    id,
+                    arrival: Box::new(arrival(bytes, header, want_skin)),
+                });
             }
             _ => {
                 let why = match &r.data {
@@ -452,6 +693,92 @@ impl MeshStreamer {
         }
     }
 
+    /// Bytes downloaded, parsed by their job.
+    pub fn on_part(&mut self, id: Uuid, a: MeshArrival, jobs: &Jobs) {
+        if self.keep(id, a, true) {
+            let Some(e) = self.entries.get(&id) else {
+                return;
+            };
+            let path = self.cache_path(&id);
+            let bytes = e.bytes.clone();
+            jobs.spawn(move || {
+                let _ = crate::cache::write(path, &bytes.encode());
+                JobResult::Done
+            });
+        }
+    }
+
+    /// The disk cache file of a mesh, parsed by its job (None: not there,
+    /// or damaged).
+    pub fn on_cache(&mut self, id: Uuid, a: Option<MeshArrival>) {
+        let Some(e) = self.entries.get_mut(&id) else {
+            return;
+        };
+        if e.stage != Stage::Reading {
+            return;
+        }
+        let kept = a.is_some_and(|a| self.keep(id, a, false));
+        if let Some(e) = self.entries.get_mut(&id) {
+            if !kept || e.header.is_none() {
+                e.stage = Stage::ToFetch;
+            }
+            Self::attend(&mut self.todo, id, e);
+        }
+    }
+
+    /// Keep what a job made of bytes; false when they were not a mesh.
+    fn keep(&mut self, id: Uuid, a: MeshArrival, downloaded: bool) -> bool {
+        let Some(e) = self.entries.get_mut(&id) else {
+            return false;
+        };
+        if let Some(why) = a.invalid {
+            if downloaded {
+                self.log_failure(format_args!("mesh {id}: invalid asset ({why})"));
+                // not a mesh: it will not get better
+                self.fail(id, Duration::from_secs(120), true);
+            }
+            return false;
+        }
+        if a.truncated {
+            // a header larger than the first request (Firestorm assumes
+            // 4 KiB is enough): the whole asset
+            e.whole = true;
+            e.stage = Stage::ToFetch;
+            Self::attend(&mut self.todo, id, e);
+            return false;
+        }
+        if a.bytes.is_whole() {
+            e.bytes = a.bytes;
+        } else {
+            for (start, part) in a.bytes.into_parts() {
+                e.bytes.add(start, part);
+            }
+        }
+        if let Some(h) = a.header {
+            e.header = Some(h);
+            self.meta_generation += 1;
+        }
+        if e.header.is_some() && matches!(e.stage, Stage::Reading | Stage::Fetching | Stage::ToFetch | Stage::Failed) {
+            e.stage = Stage::Known;
+        }
+        match a.skin {
+            Some(Ok(s)) => {
+                e.skin = Some(Arc::new(s));
+                self.meta_generation += 1;
+            }
+            Some(Err(why)) => {
+                log::debug!("mesh {id} skin: {why}");
+                e.skin_bad = true;
+            }
+            None => {}
+        }
+        e.failures = 0;
+        e.gone = false;
+        e.retry_at = None;
+        Self::attend(&mut self.todo, id, e);
+        true
+    }
+
     fn log_failure(&mut self, msg: std::fmt::Arguments) {
         self.logged_failures += 1;
         let n = self.logged_failures;
@@ -464,49 +791,35 @@ impl MeshStreamer {
     pub fn counts(&self) -> (usize, usize, usize) {
         let mut c = (0, 0, 0);
         for e in self.entries.values() {
-            match e.state {
-                3 => c.0 += 1,
-                2 => c.1 += 1,
-                4 => c.2 += 1,
-                _ => {}
+            if e.stage == Stage::Fetching || !e.inflight.is_empty() {
+                c.1 += 1;
+            } else if e.stage == Stage::Known && e.ready() {
+                c.0 += 1;
+            } else if e.stage == Stage::Failed {
+                c.2 += 1;
             }
         }
         c
     }
 
     /// A download that failed, asked again after `backoff`; `gone` when the
-    /// asset is missing or invalid (see `failed`).
+    /// asset is missing or invalid (see `failed`). A block that failed more
+    /// than three times leaves the mesh failed, as its header does.
     fn fail(&mut self, id: Uuid, backoff: Duration, gone: bool) {
         if let Some(e) = self.entries.get_mut(&id) {
-            e.state = 4;
             e.failures += 1;
             e.gone = gone;
             e.retry_at = Some(Instant::now() + backoff);
+            if e.header.is_none() || gone || e.failures > 3 {
+                e.stage = Stage::Failed;
+            }
             Self::attend(&mut self.todo, id, e);
         }
     }
 
-    pub fn on_cache(&mut self, id: Uuid, data: Option<Vec<u8>>) {
-        let Some(e) = self.entries.get_mut(&id) else {
-            return;
-        };
-        if e.state != 1 {
-            return;
-        }
-        match data {
-            Some(d) => {
-                if !self.accept_data(id, d)
-                    && let Some(e) = self.entries.get_mut(&id)
-                {
-                    e.state = 5;
-                    Self::attend(&mut self.todo, id, e);
-                }
-            }
-            None => {
-                e.state = 5;
-                Self::attend(&mut self.todo, id, e);
-            }
-        }
+    /// Disk cache file of a mesh asset.
+    fn cache_path(&self, id: &Uuid) -> PathBuf {
+        self.cache_dir.join("mesh").join(format!("{id}.mesh"))
     }
 
     pub fn on_geometry_done(&mut self, id: &Uuid, lod: u8) {
@@ -519,7 +832,7 @@ impl MeshStreamer {
 fn build_mesh_lod(
     id: Uuid,
     lod: u8,
-    data: &[u8],
+    bytes: &MeshBytes,
     header: &MeshHeader,
     skin: Option<Arc<SkinInfo>>,
     rig: &super::anim::Rig,
@@ -532,7 +845,7 @@ fn build_mesh_lod(
     let Some(range) = header.lods.get(actual).copied().flatten() else {
         return JobResult::GeometryFailed { key };
     };
-    let Some(section) = aurora_assets::mesh::section_bytes(data, range) else {
+    let Some(section) = bytes.section(range) else {
         return JobResult::GeometryFailed { key };
     };
     match aurora_assets::decode_mesh_lod(section) {
@@ -944,19 +1257,101 @@ mod tests {
             logged_failures: 0,
             meta_generation: 0,
             staging: None,
+            downloaded: 0,
+            requests: 0,
+            logged_at: None,
+            logged_requests: 0,
         }
     }
 
-    /// A download of mesh `id` in flight, as `update` leaves it.
+    /// A download of mesh `id`'s header in flight, as `update` leaves it.
     fn mesh_fetching(s: &mut MeshStreamer, id: Uuid) -> u64 {
         s.want(id, 3);
         let key = FETCH_KIND_MESH | s.next_key;
         s.next_key += 1;
         s.by_key.insert(key, id);
         if let Some(e) = s.entries.get_mut(&id) {
-            e.state = 2;
+            e.stage = Stage::Fetching;
+            e.inflight.push((key, None));
         }
         key
+    }
+
+    /// The next mesh part a job parsed, handed to the streamer.
+    fn take_part(s: &mut MeshStreamer, jobs: &Jobs, rx: &crossbeam_channel::Receiver<JobResult>) {
+        loop {
+            match rx.recv_timeout(Duration::from_secs(10)).expect("job result") {
+                JobResult::MeshPart { id, arrival } => return s.on_part(id, *arrival, jobs),
+                _ => continue,
+            }
+        }
+    }
+
+    fn reply(key: u64, data: &[u8], offset: usize) -> FetchResult {
+        FetchResult {
+            key,
+            status: 206,
+            complete: false,
+            offset: offset as u64,
+            data: Ok(data.to_vec()),
+        }
+    }
+
+    #[test]
+    fn a_far_mesh_comes_by_parts_and_a_near_one_whole() {
+        let (jobs, rx) = Jobs::new();
+        let (_rt, fetcher) = idle_fetcher();
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig = lib.rig.clone();
+        let mut model = crate::demo::auto_hover::rigged_model(&lib);
+        model.normalize().expect("model");
+        let asset = aurora_assets::import_mesh::encode::asset(
+            &[None, None, None, Some(model)],
+            None,
+            &aurora_assets::import_mesh::process::Physics::default(),
+            aurora_assets::import_mesh::encode::Options {
+                skin: true,
+                ..Default::default()
+            },
+        )
+        .expect("asset");
+        let header = aurora_assets::parse_mesh_header(&asset).expect("header");
+        let (high, skin) = (header.lods[3].expect("high"), header.skin.expect("skin"));
+
+        // far: the start of the asset first, sized for a coarse level
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(1);
+        s.want(id, 1);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        s.on_cache(id, None);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        let (key, range) = s.entries[&id].inflight[0];
+        assert_eq!(range, Some((0, 8 << 10)));
+        // its reply holds the header only: placed nowhere yet (skin missing)
+        s.on_fetch(reply(key, &asset[..header.header_size], 0), &jobs);
+        take_part(&mut s, &jobs, &rx);
+        assert_eq!(s.entries[&id].stage, Stage::Known);
+        assert!(s.meta(&id).is_none());
+        // the level drawn (the only one, high) and the skin after it: one request
+        s.update(&jobs, &fetcher, CAP, &rig);
+        let asked: Vec<_> = s.entries[&id].inflight.iter().map(|(_, r)| *r).collect();
+        let (start, end) = (high.0.min(skin.0), (high.0 + high.1).max(skin.0 + skin.1));
+        assert_eq!(asked, [Some((start, end - start))]);
+        let key = s.entries[&id].inflight[0].0;
+        s.on_fetch(reply(key, &asset[start..end], start), &jobs);
+        take_part(&mut s, &jobs, &rx);
+        assert!(s.meta(&id).is_some_and(|m| m.skin.is_some()));
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert!(s.entries[&id].building.contains(&1));
+        assert_eq!(s.requests, 2);
+
+        // near: the whole asset in one request
+        let near = Uuid::from_u128(2);
+        s.want(near, 3);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        s.on_cache(near, None);
+        s.update(&jobs, &fetcher, CAP, &rig);
+        assert_eq!(s.entries[&near].inflight[0].1, None);
     }
 
     /// A fetcher whose requests go nowhere: its runtime is never driven.
@@ -973,11 +1368,10 @@ mod tests {
         let mut s = mesh_streamer();
         let id = Uuid::from_u128(5);
         let key = mesh_fetching(&mut s, id);
-        s.need(id, 40.0, false);
         if let Some(e) = s.entries.get_mut(&id) {
-            e.fetch_key = key;
             e.sent = fetch_priority::mesh(40.0);
         }
+        s.need(id, 40.0, false);
         // a user a little nearer: not worth telling the fetcher
         s.need(id, 50.0, false);
         assert!(s.moved.is_empty());
@@ -992,12 +1386,12 @@ mod tests {
         // no object wants it any more: the waiting download goes
         s.unwant(&id);
         assert_eq!(s.dropped, [key]);
-        assert_eq!(s.entries[&id].state, 6);
+        assert_eq!(s.entries[&id].stage, Stage::Unwanted);
         assert!(!s.by_key.contains_key(&key));
         assert!(!s.entries[&id].has_work());
         // wanted again: downloaded again, at its new rank
         s.want(id, 1);
-        assert_eq!(s.entries[&id].state, 5);
+        assert_eq!(s.entries[&id].stage, Stage::ToFetch);
         assert_eq!(s.entries[&id].lane(), (Lane::Bulk, fetch_priority::mesh(0.0)));
     }
 
@@ -1022,7 +1416,7 @@ mod tests {
         assert_eq!(s.todo, [id]);
         // its disk cache is read: it waits for the answer, off the list
         s.update(&jobs, &fetcher, CAP, &rig);
-        assert_eq!(s.entries[&id].state, 1);
+        assert_eq!(s.entries[&id].stage, Stage::Reading);
         assert!(s.todo.is_empty());
         // not in the cache, and no capability yet: asked again at each frame
         s.on_cache(id, None);
@@ -1031,7 +1425,7 @@ mod tests {
         assert_eq!(s.todo, [id]);
         // downloaded once the capability is there
         s.update(&jobs, &fetcher, CAP, &rig);
-        assert_eq!(s.entries[&id].state, 2);
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
         assert_eq!(s.fetching, 1);
         assert!(s.todo.is_empty());
         // a failed download stays listed until its retry
@@ -1039,12 +1433,12 @@ mod tests {
         s.on_fetch(failed(key, 503), &jobs);
         assert_eq!(s.todo, [id]);
         s.update(&jobs, &fetcher, CAP, &rig);
-        assert_eq!(s.entries[&id].state, 4, "not before its retry time");
+        assert_eq!(s.entries[&id].stage, Stage::Failed, "not before its retry time");
         assert_eq!(s.todo, [id]);
         assert_eq!(s.fetching, 0);
         s.entries.get_mut(&id).expect("entry").retry_at = Some(Instant::now());
         s.update(&jobs, &fetcher, CAP, &rig);
-        assert_eq!(s.entries[&id].state, 2);
+        assert_eq!(s.entries[&id].stage, Stage::Fetching);
         assert!(s.todo.is_empty());
         // given up after the fourth failure: off the list for good
         for _ in 0..3 {
@@ -1058,7 +1452,7 @@ mod tests {
 
         // a LOD asked of a loaded mesh lists it for the frame that builds it
         let loaded = Uuid::from_u128(1000);
-        s.entries.get_mut(&loaded).expect("entry").data = Some(Arc::new(Vec::new()));
+        s.entries.get_mut(&loaded).expect("entry").bytes = MeshBytes::whole(Arc::new(vec![0]));
         s.want(loaded, 1);
         assert_eq!(s.todo, [loaded]);
         s.update(&jobs, &fetcher, CAP, &rig);
@@ -1113,7 +1507,7 @@ mod tests {
 
     #[test]
     fn missing_or_invalid_mesh_is_not_expected_at_once() {
-        let (jobs, _rx) = Jobs::new();
+        let (jobs, rx) = Jobs::new();
         let mut s = mesh_streamer();
         // the asset server does not have it: its wearer does not wait for it
         let missing = Uuid::from_u128(1);
@@ -1142,6 +1536,8 @@ mod tests {
             },
             &jobs,
         );
+        // (told once its job looked at it)
+        take_part(&mut s, &jobs, &rx);
         assert!(s.failed(&junk));
         assert_eq!(s.describe(&Uuid::from_u128(4)), "not requested");
     }
