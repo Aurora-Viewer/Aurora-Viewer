@@ -29,11 +29,17 @@ const LIT_HOVER: f32 = 0.7;
 /// outside the area. egui's area hit test and pointer still describe the last
 /// frame when winit delivers a move followed by a press before the next frame.
 pub(super) fn contains_pointer(ctx: &Context, pos: Pos2) -> bool {
+    // Match egui's hit_test distance, including its rounded tolerance around
+    // each grip: the raw interact_rect alone leaves that margin to the world.
+    let radius = ctx.global_style().interaction.interact_radius;
     let layers = ctx.memory(|memory| memory.areas().visible_layer_ids());
     layers.into_iter().any(|layer| {
         Edge::ALL.into_iter().any(|edge| {
-            ctx.read_response(edge.id(layer.id))
-                .is_some_and(|response| response.enabled() && response.interact_rect.contains(pos))
+            ctx.read_response(edge.id(layer.id)).is_some_and(|response| {
+                response.enabled()
+                    && !response.interact_rect.is_negative()
+                    && response.interact_rect.distance_sq_to_pos(pos) <= radius * radius
+            })
         })
     })
 }
@@ -468,6 +474,69 @@ mod tests {
                 !crate::ui::widgets::pointer_over_ui(&fixture.ctx, world),
                 "world clicks resume after the release"
             );
+        }
+    }
+
+    #[test]
+    fn resize_grip_tolerance_blocks_world_events_before_the_next_ui_frame() {
+        for scale in [1.0, 1.5, 2.0] {
+            for radius in [5.0, 9.0] {
+                for edge in Edge::ALL {
+                    let mut fixture = Fixture {
+                        ctx: Context::default(),
+                        frame: 0,
+                        content_width: 0.0,
+                    };
+                    fixture.ctx.set_pixels_per_point(scale);
+                    fixture.ctx.global_style_mut(|style| style.interaction.interact_radius = radius);
+                    let mut rect = fixture.show(vec![]);
+                    for _ in 0..8 {
+                        rect = fixture.show(vec![]);
+                    }
+                    let world = pos2(80.0, 80.0);
+                    fixture.show(vec![egui::Event::PointerMoved(world)]);
+                    let hit = edge.hit_rect(rect);
+                    let mut border = hit.center();
+                    let mut outward = Vec2::ZERO;
+                    if edge.left() {
+                        border.x = hit.left();
+                        outward.x = -1.0;
+                    } else if edge.right() {
+                        border.x = hit.right();
+                        outward.x = 1.0;
+                    }
+                    if edge.top() {
+                        border.y = hit.top();
+                        outward.y = -1.0;
+                    } else if edge.bottom() {
+                        border.y = hit.bottom();
+                        outward.y = 1.0;
+                    }
+                    let outward = outward.normalized();
+                    let grip = border + outward * radius * 0.75;
+                    assert!(!hit.contains(grip));
+                    assert!(!fixture.ctx.is_pointer_over_egui(), "egui still has the previous world position");
+                    assert!(
+                        crate::ui::widgets::pointer_over_ui(&fixture.ctx, grip),
+                        "edge {} leaks its tolerance margin at scale {scale}, radius {radius}",
+                        edge as u8
+                    );
+                    assert!(
+                        !crate::ui::widgets::pointer_over_ui(&fixture.ctx, border + outward * (radius + 1.0)),
+                        "outside egui's tolerance, the world must remain interactive"
+                    );
+                    fixture.press(grip);
+                    assert_eq!(fixture.ctx.dragged_id(), Some(edge.id(Id::new("resize_fixture"))));
+                    let target = grip + outward * 60.0;
+                    let resized = fixture.show(vec![egui::Event::PointerMoved(target)]);
+                    assert_ne!(resized, rect, "the tolerance margin must actually resize the window");
+                    assert!(crate::ui::widgets::pointer_over_ui(&fixture.ctx, world), "the drag retains capture");
+                    fixture.release(target);
+                    fixture.show(vec![egui::Event::PointerMoved(world)]);
+                    fixture.show(vec![]);
+                    assert!(!crate::ui::widgets::pointer_over_ui(&fixture.ctx, world));
+                }
+            }
         }
     }
 
