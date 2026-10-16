@@ -1417,6 +1417,7 @@ To check with these scenarios:
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
+| `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
 
@@ -1480,7 +1481,20 @@ To check with these scenarios:
   `max=` and `r_acquire` in `max:` on the seconds of a growth; with
   `AURORA_PROFILE_FRAMES=1`, the `render profile` line of the slow frame.
   What a growth costs is the first use of the new buffer, about 21 µs per
-  MB (`aurora-render/src/arena.rs`).
+  MB (`aurora-render/src/arena.rs`). The arena's peak use is remembered
+  for the region (`geometry-needs.txt` of the cache, that of the demo for
+  the demo: `cache\demo`): the next run grows the arena at once behind
+  the loading screen (`geometry arena grown ahead behind the loading
+  screen` in the log) and no growth happens in the scene any more. Delete
+  that file to measure a first visit again.
+- **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
+  once the loading screen is gone, our avatar and the camera behind it
+  turn at that rate (180 if the value is not a number) for the first
+  duration (1 s by default), then stay still for the second (3 s), and
+  again: what comes into view has to be synced, listed and textured.
+  Combine with a load scene (`AURORA_DEMO_ARRIVAL`, `AURORA_DEMO_CROWD`,
+  `AURORA_DEMO_STREAM`) and `AURORA_PROFILE=1`, and read the worst frame
+  of each second (`max=`, `max:`, `ft=`).
 - **`AURORA_DEMO_LIGHTS=<n>`**: n small local lights (64 if the value
   is not a number, 256 at most), glowing spheres of 6 cm at
   head height, spaced 1.6 m apart on the crowd's plaza and beyond,
@@ -3585,6 +3599,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
+| `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
@@ -3885,6 +3900,16 @@ What the inventory must show with these scenarios:
   and moves on to the next frame; with `0`, the same packet is executed in
   place. `thread=on|off` in the `perf summary` line, and a log line at
   startup (`renderer: frames drawn by…`).
+- **`AURORA_FRAME_PRIORITY=normal|alt`**: by default the threads a frame
+  waits for (the main thread, the render thread, the pool workers that
+  help the main thread in the frame's parallel loops and the texture page
+  thread) run one step above normal priority, so that other programs
+  keeping the cores busy do not take a core from a step of the frame
+  (`aurora-render/src/frame_priority.rs`). `normal` keeps them at normal
+  priority, as before; `alt` puts them back at normal priority one second
+  in three, named `xmode=old` at the end of the `perf summary` line
+  (`xmode=new` for the others): read `ft=` and `off_cpu:` per mode, on a
+  machine that is busy with something else (a build, another viewer).
 - **`AURORA_MSAA_PREPASS=0|alt`**: with MSAA, the scene pass has its own
   multisampled depth and cannot reuse that of the single-sample prepass. By
   default, a second prepass fills this depth just before (terrain and
@@ -4048,6 +4073,12 @@ thread.
   the number of frames beyond 1.5 × the median of that second (the hitches
   shown by the frame graph). The frame is that of the main thread: the time
   between two turns of its loop, waits included.
+- `ft=`: the frames of the second by whole millisecond, the empty ones left
+  out (`ft=5:120,6:61,14:1`: 120 frames of 5 to 6 ms, 61 of 6 to 7 and one
+  of 14 to 15; `99` holds everything from 99 ms on). Unlike `p95` and
+  `max`, these counts add up over a reading: the frames of 10 ms or more
+  per minute, and the p99 and p99.9 of a whole session, come from their
+  sum.
 - **Main thread**: the average CPU time of each step of the frame
   (`events`, `social`, `sync`, `media`, `lists`, `stream`, `params`, `ui`,
   `render`…), whose sum gives `frame`. `render` is what rendering costs the
