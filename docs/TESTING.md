@@ -81,7 +81,7 @@ viewer's process closes. For a test with human intervention, keep the title
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
-| `AURORA_DEMO_TOD=0..4` | Time of day |
+| `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |

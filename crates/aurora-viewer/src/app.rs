@@ -11082,6 +11082,14 @@ impl ApplicationHandler for App {
                         .insert(id, Arc::new(crate::scene::anim::BoundAnim::bind(anim, &rig)));
                 }
             }
+            // the library skies of the time of day presets: nothing to fetch
+            // them from offline, so the built-in sky with each preset's sun
+            for preset in 1..=crate::world::env::TIME_OF_DAY_PRESETS {
+                if let Some(id) = crate::world::env::time_of_day_sky(preset) {
+                    let sky = crate::world::eep::SkyFrame::with_sun(crate::world::env::time_of_day_sun(preset));
+                    self.scene.settings.insert_local(id, crate::world::eep::Settings::Sky(sky), None);
+                }
+            }
             // AURORA_DEMO_ENV_SELECT: the library's settings assets, known locally
             if crate::demo::env::enabled() {
                 for (id, settings, map) in crate::demo::env::settings_assets() {
@@ -11109,7 +11117,7 @@ impl ApplicationHandler for App {
                 }
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
-                self.panels.time_of_day = t.min(4);
+                self.panels.time_of_day = t.min(crate::world::env::TIME_OF_DAY_PRESETS);
             }
             // AURORA_DEMO_DEBUG="bounds,culling,..." turns debug overlays on (captures)
             if let Ok(v) = std::env::var("AURORA_DEMO_DEBUG") {
