@@ -8930,8 +8930,8 @@ impl App {
                         &favorites,
                     )
                 };
-                // what the bars leave: where the windows are laid out, moved
-                // and snapped this frame (above the dock with the islands)
+                // what the bars leave: where the windows are laid out and
+                // snapped this frame (above the dock with the islands)
                 let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 // the favourites' row under the islands keeps the windows under it
                 if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
@@ -8992,6 +8992,25 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                // the islands leave room between them, above and below: the
+                // windows move over the whole screen; the Legacy Viewer's
+                // bars are full width, the windows stay between them
+                ui::layout::set_move_area(ui.ctx(), if classic_bars { area } else { ui.ctx().content_rect() });
+                let mut edges = ui::layout::Edges {
+                    left: self.settings.windows_stop_left,
+                    right: self.settings.windows_stop_right,
+                    bottom: self.settings.windows_stop_bottom,
+                };
+                // AURORA_DEMO_WINDOW_EDGES=<l|r|b…>: those edges let open for
+                // the run, nothing saved
+                if self.demo
+                    && let Ok(open) = std::env::var("AURORA_DEMO_WINDOW_EDGES")
+                {
+                    edges.left &= !open.contains('l');
+                    edges.right &= !open.contains('r');
+                    edges.bottom &= !open.contains('b');
+                }
+                ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
                 if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {

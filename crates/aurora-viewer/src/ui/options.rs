@@ -1809,6 +1809,26 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-windows-stop-at-edges"),
+                    aurora_i18n::tr!("ui-options-windows-stop-at-edges-help"),
+                    |ui| {
+                        let mut changed = false;
+                        ui.horizontal(|ui| {
+                            changed |= super::widgets::checkbox(ui, p, &mut s.windows_stop_left, aurora_i18n::tr!("ui-options-edge-left"))
+                                .changed();
+                            changed |=
+                                super::widgets::checkbox(ui, p, &mut s.windows_stop_right, aurora_i18n::tr!("ui-options-edge-right"))
+                                    .changed();
+                            changed |=
+                                super::widgets::checkbox(ui, p, &mut s.windows_stop_bottom, aurora_i18n::tr!("ui-options-edge-bottom"))
+                                    .changed();
+                        });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-context-menu"),
                     aurora_i18n::tr!("ui-options-context-menu-help"),
                     |ui| {
