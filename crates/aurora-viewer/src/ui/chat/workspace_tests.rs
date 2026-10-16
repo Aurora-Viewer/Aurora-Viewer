@@ -653,3 +653,87 @@ fn a_dragged_edge_is_followed_at_once() {
         "the window follows the pointer: {gaps:?}"
     );
 }
+
+/// Each edge and a corner of the window dragged quickly in and out, past
+/// its minimum: the edges that are not dragged never move, on any frame
+/// (the human's report of 2026-10-16: the opposite edge jumped for a frame
+/// then came back).
+#[test]
+fn the_fixed_edges_stay_while_one_is_dragged_fast() {
+    // (grab point from the window's rect, direction of the drag, which
+    // sides move: left, right, top, bottom)
+    type Grab = fn(egui::Rect) -> egui::Pos2;
+    let cases: [(&str, Grab, egui::Vec2, [bool; 4]); 5] = [
+        (
+            "right",
+            |r| egui::pos2(r.right() - 1.0, r.center().y),
+            egui::vec2(-1.0, 0.0),
+            [false, true, false, false],
+        ),
+        (
+            "left",
+            |r| egui::pos2(r.left() + 1.0, r.center().y),
+            egui::vec2(1.0, 0.0),
+            [true, false, false, false],
+        ),
+        (
+            "bottom",
+            |r| egui::pos2(r.center().x, r.bottom() - 1.0),
+            egui::vec2(0.0, -1.0),
+            [false, false, false, true],
+        ),
+        (
+            "top",
+            |r| egui::pos2(r.center().x, r.top() + 1.0),
+            egui::vec2(0.0, 1.0),
+            [false, false, true, false],
+        ),
+        (
+            "corner",
+            |r| r.right_bottom() - egui::vec2(6.0, 6.0),
+            egui::vec2(-1.0, -1.0),
+            [false, true, false, true],
+        ),
+    ];
+    for (name, grab_of, dir, moves) in cases {
+        for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+            let mut h = Harness::new(style);
+            h.st.selected = Some(JANE);
+            crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(200.0, 150.0), egui::vec2(800.0, 560.0));
+            h.settle();
+            let window = |h: &Harness| {
+                h.frames
+                    .ctx
+                    .memory(|m| m.area_rect(egui::Id::new("conversations")))
+                    .expect("the window")
+            };
+            let start = window(&h);
+            let grab = grab_of(start);
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            h.frame(vec![egui::Event::PointerMoved(grab)]);
+            h.frame(vec![button(grab, true)]);
+            let mut rects = Vec::new();
+            // quick flicks: 150 points a frame, in past the minimum and out
+            for d in [150.0, 300.0, 450.0, 600.0, 450.0, 150.0, -100.0, 200.0, 500.0, 0.0, 600.0, 0.0] {
+                h.frame(vec![egui::Event::PointerMoved(grab + dir * d)]);
+                rects.push(window(&h));
+            }
+            h.frame(vec![button(grab, false)]);
+            let sides = |r: egui::Rect| [r.left(), r.right(), r.top(), r.bottom()];
+            let fixed = sides(start);
+            for (k, r) in rects.iter().enumerate() {
+                for (s, (&now, &was)) in sides(*r).iter().zip(fixed.iter()).enumerate() {
+                    assert!(
+                        moves[s] || (now - was).abs() < 0.5,
+                        "{name} {style:?}, frame {k}: side {s} moved from {was} to {now} ({rects:?})"
+                    );
+                }
+            }
+        }
+    }
+}
