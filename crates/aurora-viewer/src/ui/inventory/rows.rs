@@ -236,7 +236,8 @@ pub(super) fn scroll(
     if let Some(open) = st.expand_all.take() {
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
     }
-    let mut offset = None;
+    // Back from a search: where the list was (a revealed row below wins).
+    let mut offset = st.plain_scroll_restore.take();
     // The root opens the first time it is shown, scrolled to the top.
     if show_root && st.roots_seen.insert(root) {
         st.plain.set_open(root, true);
@@ -297,6 +298,7 @@ pub(super) fn scroll(
         guides(ui, &st.plain, range, origin, pitch);
         ui.set_min_width(st.plain.width);
     });
+    st.plain_scroll = out.state.offset.y;
     drag::navigation::scroll(ui, &mut out, st.ui_id);
     out
 }
