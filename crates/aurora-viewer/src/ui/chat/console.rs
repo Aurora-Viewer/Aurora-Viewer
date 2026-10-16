@@ -328,10 +328,12 @@ mod tests {
         assert_eq!(job(&emote), "Orion waves");
     }
 
-    /// The picture and the name of a card open the profile; its text, and
-    /// the room beside a short card, let the click through to the world.
+    /// The picture and the name of a card open the profile, and offer the
+    /// sender's menu of the Conversations thread on a right click; its
+    /// text, and the room beside a short card, let the click through to
+    /// the world.
     #[test]
-    fn a_cards_picture_and_name_open_the_profile_and_the_rest_reaches_the_world() {
+    fn a_cards_picture_and_name_open_the_profile_or_the_menu_and_the_rest_reaches_the_world() {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let mut notice = line(ChatKind::System, "", 0);
         notice.text = "Nova est en ligne.".into();
@@ -364,6 +366,14 @@ mod tests {
                 },
             );
             out.textures_delta.clear();
+            // the texts on screen, to find a menu's items
+            out.shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<String>>()
         };
         frame(Vec::new());
         frame(Vec::new());
@@ -382,6 +392,31 @@ mod tests {
             frame(vec![egui::Event::PointerMoved(at), click(at, true)]);
             frame(vec![click(at, false)]);
             assert_eq!(crate::ui::profile::take_open_request(&ctx), Some(uuid::Uuid::from_u128(7)));
+        }
+        // a right click offers the sender's menu of the Conversations thread
+        let right = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let im = aurora_i18n::tr!("ui-context-send-im").to_string();
+        for at in [picture.center(), name.center()] {
+            frame(vec![egui::Event::PointerMoved(at), right(at, true)]);
+            frame(vec![right(at, false)]);
+            let texts = frame(Vec::new());
+            assert!(egui::Popup::is_any_open(&ctx), "the sender's menu");
+            assert!(texts.contains(&im), "its IM item: {texts:?}");
+            assert_eq!(crate::ui::profile::take_open_request(&ctx), None, "a right click opens no profile");
+            frame(vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]);
+            frame(Vec::new());
+            assert!(!egui::Popup::is_any_open(&ctx));
         }
         let text = egui::pos2(name.left() + 20.0, name.bottom() + 8.0);
         frame(vec![egui::Event::PointerMoved(text)]);
