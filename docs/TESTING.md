@@ -3266,6 +3266,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
@@ -3376,6 +3377,25 @@ What the inventory must show with these scenarios:
   - To be combined with `AURORA_DEMO_VOICE` for our own plate and that of
     Loup Violet (blocked in the demo), and with `AURORA_NAME_TAGS=classic`
     to compare with the classic name tags.
+- **`AURORA_DEMO_VOICE_MENU`**: at frame 600, opens the world menu on the
+  nearest name plate of a resident in our voice channel whose voice is not
+  blocked (with `AURORA_DEMO_TAGS=voice`: Orion, the speaking friend).
+  Its first row is the resident's voice: speaker, volume slider, percentage
+  (100 % = as they send it, 200 % at the end) and the voice mute button.
+  `louder` sets their volume to 160 % first, `muted` blocks their voice
+  first (the slider greyed at 0 %, the button lit). Capture at frame 620 or
+  later with `AURORA_FPS_LIMIT=60`; `AURORA_DEMO_PIE=1` shows the same row
+  in a panel under the pie menu. The list menus of the same residents get
+  the row too, opened with `AURORA_DEMO_POINTER` (right click `,r` at
+  frame 302, capture at frame 345): with `AURORA_DEMO_PEOPLE=rows`,
+  `150,439,r` is Nova in People › Near you (in voice) and `150,304,r` Lune
+  (out of voice: no row); with `AURORA_DEMO_PEOPLE=friends`, `150,240,r` is
+  Nova in Friends and `688,237,l` the "…" menu of her sheet. With
+  `AURORA_DEMO_CALL=group` and `AURORA_DEMO_CONV=aurora`, the menu of a
+  participant's name in the conversation has it once the call is connected
+  (`…;764,616,r` as the seventh point, capture at frame 720). Positions are
+  window pixels at the default capture size; the residents out of voice
+  never get the row.
 - **`AURORA_VOICE_LEVEL_LOG`**: once a second, a `voice level (own plate,
   loudest over 1 s)` line with the loudest raw level of our own plate (and
   its dBFS, the microphone meter's value), whether we spoke, the smoothed
