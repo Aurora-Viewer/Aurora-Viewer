@@ -356,8 +356,8 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                 .and_then(|d| d.roles.get(&r))
                 .map_or_else(String::new, |r| role_name(&r.name)),
             _ => aurora_i18n::tr!("ui-group-profile-by-role").to_owned(),
-        } + " ▾";
-        let by_role = pill(ui, p, &role_label, matches!(st.members.show, Show::Role(_)));
+        };
+        let by_role = widgets::filter_pill(ui, p, "crown", &role_label, matches!(st.members.show, Show::Role(_)));
         // "Invite" with the ability, as in the head
         if v.can(powers::MEMBER_INVITE)
             && widgets::action_button(
@@ -497,19 +497,20 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         let mut format =
             crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, if on { p.muted } else { p.muted_dim });
         format.extra_letter_spacing = 0.4;
-        let arrow = if on {
-            if st.members.reversed { " ▴" } else { " ▾" }
-        } else {
-            ""
-        };
-        job.append(&(label.to_uppercase() + arrow), 0.0, format);
+        job.append(&label.to_uppercase(), 0.0, format);
         let galley = ui.painter().layout_job(job);
+        const CARET: f32 = 9.0;
+        let caret_w = if on { widgets::caret_room(CARET) } else { 0.0 };
         let right = i == last && manage;
         let pos = if right {
-            Pos2::new(cell.right() - 8.0 - galley.size().x, cell.center().y - galley.size().y / 2.0)
+            Pos2::new(cell.right() - 8.0 - galley.size().x - caret_w, cell.center().y - galley.size().y / 2.0)
         } else {
             Pos2::new(cell.left() + 8.0, cell.center().y - galley.size().y / 2.0)
         };
+        if on {
+            let center = Pos2::new(pos.x + galley.size().x + caret_w - CARET / 2.0, cell.center().y);
+            widgets::paint_glyph(ui.painter(), widgets::sort_caret(st.members.reversed), center, CARET, p.muted);
+        }
         ui.painter().galley(pos.round(), galley, p.muted_dim);
         if let Some(sort) = sort {
             let r = ui.interact(cell, ui.id().with(("group_members_head", i)), Sense::click());
@@ -952,8 +953,9 @@ fn abilities_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &V
                             .color(p.violet_pale),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let arrow = if open { "▾" } else { "▸" };
-                        ui.label(egui::RichText::new(format!("{has} / {of} {arrow}")).size(11.0).color(p.muted_dim));
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        widgets::glyph(ui, widgets::disclosure_caret(open), p.muted_dim, 11.0);
+                        ui.label(egui::RichText::new(format!("{has} / {of}")).size(11.0).color(p.muted_dim));
                     });
                 })
                 .response

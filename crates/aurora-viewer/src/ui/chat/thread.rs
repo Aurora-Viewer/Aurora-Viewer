@@ -345,7 +345,7 @@ fn compact_row(
                 egui::pos2(r.right(), r.top() + 10.5),
                 egui::Align2::RIGHT_CENTER,
                 hhmm(line.time),
-                egui::FontId::monospace(10.5),
+                egui::FontId::proportional(10.5),
                 p.muted_dim,
             );
         }

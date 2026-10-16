@@ -666,9 +666,10 @@ fn set_head(ui: &mut egui::Ui, p: &Palette, set: &AbilitySet, on: usize, open: b
                     .color(p.violet_pale),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let arrow = if open { "▾" } else { "▸" };
+                ui.spacing_mut().item_spacing.x = 3.0;
+                widgets::glyph(ui, widgets::disclosure_caret(open), p.muted_dim, 11.0);
                 ui.label(
-                    egui::RichText::new(format!("{on} / {} {arrow}", set.abilities.len()))
+                    egui::RichText::new(format!("{on} / {}", set.abilities.len()))
                         .size(11.0)
                         .color(p.muted_dim),
                 );

@@ -146,7 +146,7 @@ fn badges(data: &MarketplaceData, inv: &Inventory, root: Uuid, id: Uuid) -> Vec<
 /// font and colours of the inventory's permission badges.
 fn row_label(name: &str, badges: &[(String, Tone)], p: &Palette) -> egui::text::LayoutJob {
     let mut job = tree::name(name, p);
-    let font = egui::FontId::monospace(12.0);
+    let font = egui::FontId::proportional(12.0);
     for (i, (text, tone)) in badges.iter().enumerate() {
         let gap = if i == 0 { "  " } else { " · " };
         job.append(gap, 0.0, egui::TextFormat::simple(font.clone(), p.muted_dim));

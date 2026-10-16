@@ -34,6 +34,30 @@ pub(crate) fn inventory_item_label(
     })
 }
 
+/// The Tabler caret of something that unfolds: down when open.
+pub fn disclosure_caret(open: bool) -> &'static str {
+    if open { "caret-down-filled" } else { "caret-right-filled" }
+}
+
+/// The Tabler caret of a sorted column: up or down, as the list's arrow
+/// pointed.
+pub fn sort_caret(up: bool) -> &'static str {
+    if up { "caret-up-filled" } else { "caret-down-filled" }
+}
+
+/// The width a caret of `paint_glyph` takes after a text of `size`.
+pub fn caret_room(size: f32) -> f32 {
+    3.0 + size
+}
+
+/// A Tabler icon painted `size` wide, centered on `center`.
+pub fn paint_glyph(painter: &egui::Painter, name: &str, center: egui::Pos2, size: f32, color: Color32) {
+    if let Some(icon) = crate::ui::icons::global(name) {
+        let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+        painter.image(icon.id(), egui::Rect::from_center_size(center, Vec2::splat(size)), uv, color);
+    }
+}
+
 pub fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     if let Some(icon) = crate::ui::icons::global(name) {

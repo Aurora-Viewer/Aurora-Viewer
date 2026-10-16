@@ -849,11 +849,14 @@ fn objects(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
             ];
             let any_shown = shown.iter().any(|(_, count, can, _)| *can && *count > 0);
             editable(ui, any_shown, |ui| {
-                let label = format!("{} ▾", aurora_i18n::tr!("common-show"));
+                let mut button = egui::Button::new(RichText::new(aurora_i18n::tr!("common-show")).size(12.5));
+                if let Some(caret) = crate::ui::icons::global(widgets::disclosure_caret(true)) {
+                    button = button.right_text(egui::Image::new((caret.id(), Vec2::splat(10.0))).tint(p.muted));
+                }
                 menu::button(
                     ui,
                     p,
-                    egui::Button::new(RichText::new(label).size(12.5)).min_size(Vec2::new(0.0, 26.0)),
+                    button.min_size(Vec2::new(0.0, 26.0)),
                     |ui| {
                         for (label, count, can, kind) in shown {
                             if menu::item_if(ui, p, "eye-filled", label, can && count > 0) {
