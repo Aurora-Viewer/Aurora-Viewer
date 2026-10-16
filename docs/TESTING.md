@@ -719,7 +719,10 @@ requested, and follows the search filter. A click applies the local preview;
 combine this scenario with `AURORA_DEMO_IMPORTS=local`.
 `faces-picker-material,object:99620` opens the same picker for a PBR
 material, with the demo's tiled PBR material selected: the preview is a GPU-rendered
-sphere with the material's maps, while list rows remain icons. Only local materials
+sphere with the material's maps, while list rows remain icons. Drag the sphere
+with the left mouse button to orbit it without moving the picker or changing
+the selected material; use the wheel to zoom and double-click to reset the view.
+Only local materials
 must be listed in Local. These files appear without
 having been applied to an object beforehand. The import window closes when
 the picker opens to clear the view.

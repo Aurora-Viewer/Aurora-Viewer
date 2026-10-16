@@ -80,6 +80,7 @@ pub struct TexturePicker {
     footer_height: f32,
     material_previews: super::texture_library::previews::Previews,
     material_model: Option<std::sync::Arc<aurora_render::preview::Model>>,
+    material_view: aurora_render::preview::View,
     /// Images to stream (selected texture preview).
     pub wanted_images: HashSet<Uuid>,
     /// Build floater options: list materials, the default asset, "None".
@@ -114,6 +115,7 @@ impl TexturePicker {
         self.uuid_error = false;
         self.footer_height = 0.0;
         self.material_model = None;
+        self.material_view.reset_camera();
         self.preview = None;
         self.generation = self.generation.wrapping_add(1);
     }
@@ -228,13 +230,18 @@ impl TexturePicker {
                     if self.materials
                         && let Some(model) = self.material_model.clone()
                     {
-                        aurora_render::preview::paint_hint(
+                        self.material_view.background = super::texture_library::previews::view(p).background;
+                        let response = aurora_render::preview::paint(
                             ui,
                             ui.id().with("selected_material_preview"),
                             model,
-                            super::texture_library::previews::view(p),
+                            &mut self.material_view,
                             Vec2::splat(side),
                         );
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(egui::Id::new("picker_material_scene"), response.rect));
+                        let _ = response;
                         return;
                     }
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
@@ -736,6 +743,50 @@ mod tests {
                     );
                 }
             }
+            let image = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("picker_material_scene")))
+                .unwrap();
+            let window = ctx.memory(|memory| memory.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            let camera = picker.material_view;
+            let start = image.center();
+            let target = start + egui::vec2(35.0, 18.0);
+            let time = 1.0 + index as f64 * 2.0;
+            frame(&ctx, &mut picker, &mut world, time, vec![egui::Event::PointerMoved(start)]);
+            frame(
+                &ctx,
+                &mut picker,
+                &mut world,
+                time + 0.02,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }],
+            );
+            frame(&ctx, &mut picker, &mut world, time + 0.04, vec![egui::Event::PointerMoved(target)]);
+            frame(
+                &ctx,
+                &mut picker,
+                &mut world,
+                time + 0.06,
+                vec![egui::Event::PointerButton {
+                    pos: target,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            assert_ne!(picker.material_view.yaw, camera.yaw, "dragging the material must orbit the preview");
+            assert_ne!(picker.material_view.pitch, camera.pitch);
+            let after = ctx.memory(|memory| memory.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            assert!(
+                (after.min - window.min).length() < 0.5,
+                "orbit moved the picker: {window:?} -> {after:?}"
+            );
+            assert!((after.size() - window.size()).length() < 0.5, "orbit resized the picker");
+            assert_eq!(picker.selected, Some(asset));
+            assert_eq!(picker.take_preview(), None, "orbiting must not apply the material");
         }
     }
 
