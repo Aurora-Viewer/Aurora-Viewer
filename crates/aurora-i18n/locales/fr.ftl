@@ -7422,16 +7422,22 @@ shape-param-11001-min = Abaisser
 shape-param-11001-max = Plus élevé
 
 # Compact texture and material library
-texture-library-title = Textures et matériaux
+texture-library-title = Bibliothèque
 texture-library-side = Afficher sur le côté
 texture-library-bottom = Afficher en bas
-texture-library-empty = Placez des textures ou matériaux dans #Aurora/Textures Library.
+texture-library-empty = Placez des textures, matériaux ou objets dans #Aurora/Textures Library.
 texture-library-preparing = Préparation des dossiers de la bibliothèque…
 texture-library-loading = Chargement des dossiers…
 texture-library-retry = Réessayer
 texture-library-all = Toute la bibliothèque
 texture-library-textures = Textures
 texture-library-pbr = PBR
+texture-library-objects = Objets
+texture-library-object-drag-hint = Glisser dans le monde pour rez. Ctrl : contenu de l’objet.
+texture-library-demo-object-image = Objet avec image
+texture-library-demo-object = Objet sans image
+texture-library-demo-object-group = Groupe d’objets sans image
+texture-library-demo-object-group-image = Groupe d’objets avec image (sans copie)
 texture-library-recent = Récemment utilisés
 texture-library-preview = Ouvrir l’aperçu
 texture-library-drag-hint = Glisser sur une face. Maj : toutes les faces. Ctrl : contenu de l’objet.
@@ -7453,7 +7459,7 @@ texture-library-demo-linen = Lin naturel
 texture-library-demo-sources = Matériaux de démonstration
 texture-library-folder-error = Certains dossiers n’ont pas pu être chargés.
 texture-library-manage = Organiser dans l’inventaire
-texture-library-content-hint = Déplacez ou copiez des textures, matériaux et dossiers dans #Aurora/Textures Library. Les sous-dossiers sont inclus.
+texture-library-content-hint = Déplacez ou copiez des textures, matériaux, objets et dossiers dans #Aurora/Textures Library. Les sous-dossiers sont inclus.
 texture-library-demo-polished = Poli
 
 texture-library-click-hint = Cliquez pour appliquer aux faces sélectionnées en mode édition.

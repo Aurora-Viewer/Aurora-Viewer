@@ -118,13 +118,16 @@ their own drafts, save acknowledgements and close confirmations, and opening
 the same item raises/restores it. Resource, notecard and script integration
 tests exercise the shared placement with their actual floaters.
 `ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` subtree
-by inventory generation, includes only actual texture/material items and real
+by inventory generation, includes only actual texture/material/object items and real
 folders/subfolders, and excludes all links and the bridge's sibling data.
 `previews.rs` assembles bounded, revisioned PBR models on workers
 and draws them with the importer's shared GPU preview. `app/texture_library.rs`
 routes inventory mutations, library clicks on selected edit faces and
 permission-aware world face drops through the
-existing build and task-inventory operations. `Settings::texture_library`
+existing build and task-inventory operations. Object cards use inventory thumbnails,
+falling back to distinct single/coalesced-object icons, and share the inventory
+rez drag path (`app/inventory_drag.rs`), including permission checks and no-copy consumption.
+`Settings::texture_library`
 persists presentation, favorites and recent resources. Ctrl+Space and the
 customizable toolbar command toggle the current floater. `demo_texture_library.rs`
 provides actual synthetic inventory folders, tileable textures and PBR materials offline.

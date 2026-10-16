@@ -131,10 +131,19 @@ impl App {
             return;
         }
         let inventory = matches!(mode.as_str(), "preview" | "preview-drag" | "inventory-drag");
-        if !inventory && !matches!(mode.as_str(), "drop" | "apply" | "apply-pbr") {
+        if !inventory
+            && !matches!(
+                mode.as_str(),
+                "drop" | "apply" | "apply-pbr" | "objects-drop" | "objects-nocopy-drop"
+            )
+        {
             return;
         }
-        let item = crate::demo::texture_library::first_texture();
+        let item = if mode.starts_with("objects") {
+            crate::demo::texture_library::first_object()
+        } else {
+            crate::demo::texture_library::first_texture()
+        };
         let source = if inventory {
             self.egui_ctx
                 .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", self.inventory_ui.ui_id, item))))
@@ -202,7 +211,7 @@ impl App {
                 }
             }
             self.library_demo_seeded = true;
-            self.settings.texture_library.presentation = if mode == "horizontal" {
+            self.settings.texture_library.presentation = if matches!(mode.as_str(), "horizontal" | "objects-horizontal") {
                 library::Presentation::Horizontal
             } else {
                 library::Presentation::Vertical
