@@ -8,34 +8,55 @@ use aurora_net::inventory::operations::Mutation;
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
+mod combinations;
+mod editor;
+mod migration;
+pub mod prototype;
 #[cfg(test)]
 mod tests;
 
 pub enum Action {
     Edit(Mutation, Option<Uuid>),
+    EditContainer(Mutation, EditorTarget),
     Create(Set),
     Import(Uuid),
+    Migrate,
+    ReloadMigration,
     Reload,
     Preferences,
+    MovementPreferences,
+}
+
+#[derive(Clone, Copy)]
+pub struct EditorTarget {
+    pub set: Uuid,
+    pub state: State,
+    pub container: Option<Uuid>,
 }
 
 pub struct Pending {
     pub request: Uuid,
     pub refresh: Vec<Uuid>,
     pub select: Option<Uuid>,
+    pub editor: Option<EditorTarget>,
 }
 
 #[derive(Default)]
 pub struct AoUi {
+    pub tab: usize,
+    /// Only populated by the explicit offline AO design scenario.
+    pub prototype: Option<prototype::Prototype>,
     pub pending: Option<Pending>,
     pub import: Option<Uuid>,
     pub import_folder: Option<Uuid>,
+    pub migration: Option<crate::ao::migration::Migration>,
     pub message: String,
     pub warnings: Vec<String>,
+    pub startup_loading: bool,
     pub state: State,
     pub container: Option<Uuid>,
     name: String,
-    container_name: String,
+    combination: Option<combinations::Dialog>,
     new_dialog: Option<SetDialog>,
     remove: Option<Uuid>,
     picker: Option<bool>,
@@ -45,6 +66,8 @@ pub struct AoUi {
     rows_key: Option<(u64, String, bool)>,
     cycle_edit: Option<(Uuid, Cycle)>,
     selected_set: Uuid,
+    state_focus: Option<State>,
+    rail_state: Option<State>,
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +80,43 @@ enum SetDialog {
 impl AoUi {
     pub fn busy(&self) -> bool {
         self.pending.is_some() || self.import.is_some() || self.import_folder.is_some()
+    }
+
+    pub fn finish_editor(&mut self, target: EditorTarget, created: &std::collections::HashMap<Uuid, Uuid>) -> bool {
+        if self.selected_set != target.set || self.state != target.state {
+            return false;
+        }
+        self.container = target.container.map(|id| created.get(&id).copied().unwrap_or(id));
+        true
+    }
+
+    pub fn interface_demo(&mut self, mode: &str, catalog: &inventory::Catalog) {
+        let Some(set) = catalog.selected(self.selected_set) else { return };
+        self.state = if mode == "interface-swim" {
+            State::SwimmingForward
+        } else {
+            State::Standing
+        };
+        self.container = set.states.get(&self.state).and_then(|c| {
+            if mode == "interface-group" {
+                c.steps.iter().find(|s| s.group).map(|s| s.id)
+            } else if mode == "interface-track" {
+                c.tracks.first().map(|t| t.id)
+            } else {
+                None
+            }
+        });
+        if mode == "interface-combine" {
+            let mut dialog = combinations::Dialog::new(set.id, self.state);
+            dialog.name = "Body and hands".into();
+            dialog.selected = set
+                .states
+                .get(&self.state)
+                .into_iter()
+                .flat_map(|c| c.steps.iter().take(2).map(|s| s.id))
+                .collect();
+            self.combination = Some(dialog);
+        }
     }
 
     pub fn reset_cycle(&mut self) {
@@ -95,19 +155,59 @@ pub fn show(
     account: &mut Account,
     state: &mut AoUi,
     open: &mut bool,
+    movement: &mut super::movement::MovementUi,
+    movement_prefs: &mut crate::movement::Preferences,
+    keys: &crate::keybinds::KeyBindings,
+    movement_status: &str,
 ) -> Vec<Action> {
     let mut out = Vec::new();
     let selected = catalog.selected(account.selected);
+    movement.swim_ready = catalog.swimming_ready(account.selected);
+    movement.swim_slots = selected.map_or(0, Set::swimming_slots);
     let selected_id = selected.map_or(Uuid::nil(), |s| s.id);
     if state.selected_set != selected_id {
         state.selected_set = selected_id;
+        state.picker = None;
         state.container = None;
         state.cycle_edit = None;
+        state.combination = None;
     }
     let title = aurora_i18n::tr!("ao-title");
-    Floater::new("ao", title, egui::pos2(220.0, 120.0), Vec2::new(560.0, 550.0))
+    prototype::workbench(ctx, p, state, open);
+    Floater::new("ao", title, egui::pos2(220.0, 120.0), Vec2::new(560.0, 760.0))
         .help(aurora_i18n::tr!("ao-help"))
         .show(ctx, p, open, |ui| {
+            if prototype::before(ui, p, state) {
+                return;
+            }
+            if state.prototype.is_none() {
+                widgets::tabs(
+                    ui,
+                    p,
+                    &mut state.tab,
+                    &[
+                        (aurora_i18n::tr!("ao-tab-animations"), true),
+                        (aurora_i18n::tr!("ao-tab-movement"), true),
+                    ],
+                );
+                if state.tab == 1 {
+                    let actions = egui::ScrollArea::vertical()
+                        .id_salt("ao_movement")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| movement.show(ui, p, movement_prefs, keys, movement_status))
+                        .inner;
+                    if actions.changed {
+                        out.push(Action::MovementPreferences);
+                    }
+                    if actions.animations {
+                        state.tab = 0;
+                        state.state = State::SwimmingForward;
+                        state.container = None;
+                        state.cycle_edit = None;
+                    }
+                    return;
+                }
+            }
             ui.horizontal(|ui| {
                 if toggle(ui, p, "ao-enabled", &mut account.enabled) {
                     if account.enabled {
@@ -121,6 +221,10 @@ pub fn show(
                 });
                 toggle(ui, p, "ao-stands", &mut runtime.stands);
             });
+            if let Some(set) = selected {
+                set_options(ui, p, inv, set, state, &mut out);
+            }
+            widgets::divider(ui, p);
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("ao-set"));
                 egui::ComboBox::from_id_salt("ao_set")
@@ -139,7 +243,7 @@ pub fn show(
                 }
             });
             ui.add_enabled_ui(!state.busy() && !catalog.loading, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-new")).clicked() {
                         state.name.clear();
                         state.new_dialog = Some(SetDialog::New);
@@ -147,6 +251,12 @@ pub fn show(
                     if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-import")).clicked() {
                         state.picker = Some(true);
                         state.folder = inv.root;
+                    }
+                    if ui
+                        .add_enabled(!state.startup_loading, egui::Button::new(aurora_i18n::tr!("ao-migrate")))
+                        .clicked()
+                    {
+                        state.migration = Some(Default::default());
                     }
                     if let Some(set) = selected {
                         if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-duplicate")).clicked() {
@@ -161,7 +271,7 @@ pub fn show(
             });
             if catalog.failed {
                 ui.label(RichText::new(aurora_i18n::tr!("ao-fetch-failed")).color(p.warn));
-            } else if catalog.loading {
+            } else if catalog.loading || state.startup_loading {
                 ui.label(RichText::new(aurora_i18n::tr!("ao-loading")).color(p.muted));
             }
             if state.busy() {
@@ -188,19 +298,6 @@ pub fn show(
             widgets::divider(ui, p);
             ui.add_enabled_ui(!state.busy(), |ui| {
                 ui.horizontal(|ui| {
-                    let mut edit = set.clone();
-                    if toggle(ui, p, "ao-sits", &mut edit.sits) {
-                        push(&mut out, state, inventory::save_set(inv, &edit));
-                    }
-                    if toggle(ui, p, "ao-smart", &mut edit.smart) {
-                        push(&mut out, state, inventory::save_set(inv, &edit));
-                    }
-                });
-                let mut edit = set.clone();
-                if toggle(ui, p, "ao-mouselook", &mut edit.mouselook) {
-                    push(&mut out, state, inventory::save_set(inv, &edit));
-                }
-                ui.horizontal(|ui| {
                     let mut is_default = set.default;
                     if toggle(ui, p, "ao-default", &mut is_default) {
                         let mut change = Mutation::default();
@@ -223,260 +320,74 @@ pub fn show(
                 });
             });
             widgets::divider(ui, p);
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("ao_state")
-                    .selected_text(state.state.label())
-                    .width(210.0)
-                    .show_ui(ui, |ui| {
-                        for s in State::ALL {
-                            if ui.selectable_value(&mut state.state, s, s.label()).changed() {
-                                state.container = None;
-                                state.cycle_edit = None;
-                            }
-                        }
-                    });
-                if let Some(current) = runtime.current {
-                    ui.label(RichText::new(aurora_i18n::tr!("ao-current", state = current.label())).color(p.muted));
-                }
-            });
-            let config = set.states.get(&state.state).cloned().unwrap_or_default();
-            if let Some(container) = state.container
-                && !config.steps.iter().any(|s| s.id == container)
-                && !config.tracks.iter().any(|t| t.id == container)
-            {
-                state.container = None;
-            }
-            ui.horizontal(|ui| {
-                if widgets::icon_button(
-                    ui,
-                    p,
-                    "caret-left-filled",
-                    aurora_i18n::tr!("ao-previous"),
-                    !config.steps.is_empty(),
-                ) {
-                    runtime.cycle(state.state, &config, true);
-                }
-                if widgets::icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("ao-next"), !config.steps.is_empty()) {
-                    runtime.cycle(state.state, &config, false);
-                }
-                ui.add_enabled_ui(!state.busy(), |ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-add")).clicked() {
-                        state.picker = Some(false);
-                        state.folder = crate::world::inventory::actions::system(inv, 20).unwrap_or(inv.root);
-                    }
-                });
-            });
-            if let Some(name) = state.container.and_then(|id| {
-                config
-                    .steps
-                    .iter()
-                    .find(|s| s.id == id)
-                    .map(|s| s.name.as_str())
-                    .or_else(|| config.tracks.iter().find(|t| t.id == id).map(|t| t.name.as_str()))
-            }) {
-                ui.label(RichText::new(aurora_i18n::tr!("ao-target", name = name.to_owned())).color(p.muted));
-            }
-            let drop = egui::Frame::new()
-                .fill(p.field)
-                .inner_margin(6.0)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt("ao_animations")
-                        .max_height(190.0)
-                        .show(ui, |ui| {
-                            for (index, step) in config.steps.iter().enumerate() {
-                                ui.horizontal(|ui| {
-                                    let label = if step.group {
-                                        format!("{} ({})", step.name, step.members.len())
-                                    } else {
-                                        step.name.clone()
-                                    };
-                                    let playing = runtime.index(state.state, config.folder) == index;
-                                    let response = ui.selectable_label(playing, label).on_hover_text(aurora_i18n::tr!("ao-play-tip"));
-                                    if response.clicked() {
-                                        state.container = step.group.then_some(step.id);
-                                    }
-                                    if response.double_clicked() {
-                                        runtime.choose(state.state, config.folder, index);
-                                    }
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy()) {
-                                            state.remove = Some(step.id);
-                                        }
-                                        if widgets::icon_button(
-                                            ui,
-                                            p,
-                                            "caret-down-filled",
-                                            aurora_i18n::tr!("ao-down"),
-                                            !state.busy() && index + 1 < config.steps.len(),
-                                        ) {
-                                            push(&mut out, state, inventory::order(inv, &config, index, true));
-                                        }
-                                        if widgets::icon_button(
-                                            ui,
-                                            p,
-                                            "caret-up-filled",
-                                            aurora_i18n::tr!("ao-up"),
-                                            !state.busy() && index > 0,
-                                        ) {
-                                            push(&mut out, state, inventory::order(inv, &config, index, false));
-                                        }
-                                    });
-                                });
-                                if step.group {
-                                    ui.indent(step.id, |ui| {
-                                        member_rows(ui, p, inv, &step.members, state, &mut out);
-                                    });
-                                }
-                            }
-                            for track in &config.tracks {
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .selectable_label(
-                                            state.container == Some(track.id),
-                                            format!("{} · {}", aurora_i18n::tr!("ao-track"), track.name),
-                                        )
-                                        .clicked()
-                                    {
-                                        state.container = Some(track.id);
-                                        state.cycle_edit = None;
-                                    }
-                                    if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy()) {
-                                        state.remove = Some(track.id);
-                                    }
-                                });
-                                ui.indent(track.id, |ui| {
-                                    for (index, a) in track.members.iter().enumerate() {
-                                        ui.horizontal(|ui| {
-                                            if ui
-                                                .selectable_label(runtime.index(state.state, track.id) == index, &a.name)
-                                                .double_clicked()
-                                            {
-                                                runtime.choose(state.state, track.id, index);
-                                            }
-                                            if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy())
-                                            {
-                                                push(&mut out, state, inventory::remove(inv, a.link));
-                                            }
-                                            if widgets::icon_button(
-                                                ui,
-                                                p,
-                                                "caret-up-filled",
-                                                aurora_i18n::tr!("ao-up"),
-                                                !state.busy() && index > 0,
-                                            ) {
-                                                push(&mut out, state, inventory::member_order(inv, &track.members, index, false));
-                                            }
-                                            if widgets::icon_button(
-                                                ui,
-                                                p,
-                                                "caret-down-filled",
-                                                aurora_i18n::tr!("ao-down"),
-                                                !state.busy() && index + 1 < track.members.len(),
-                                            ) {
-                                                push(&mut out, state, inventory::member_order(inv, &track.members, index, true));
-                                            }
-                                        });
-                                    }
-                                });
-                            }
-                            if config.steps.is_empty() && config.tracks.is_empty() {
-                                ui.label(RichText::new(aurora_i18n::tr!("ao-drop")).color(p.muted));
-                            }
-                        });
-                })
-                .response;
-            if let Some(payload) = drop.dnd_release_payload::<super::inventory::InvDrag>()
-                && !state.busy()
-            {
-                push(&mut out, state, inventory::add(inv, set, state.state, payload.0, state.container));
-            }
-            ui.add_enabled_ui(!state.busy(), |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.container_name)
-                            .desired_width(150.0)
-                            .hint_text(aurora_i18n::tr!("ao-container-name")),
-                    );
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-group")).clicked() {
-                        push(
-                            &mut out,
-                            state,
-                            inventory::new_container(inv, set, state.state, &state.container_name.clone(), false),
-                        );
-                    }
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-track")).clicked() {
-                        push(
-                            &mut out,
-                            state,
-                            inventory::new_container(inv, set, state.state, &state.container_name.clone(), true),
-                        );
-                    }
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-state-root")).clicked() {
-                        state.container = None;
-                        state.cycle_edit = None;
-                    }
-                });
-                let track = state.container.and_then(|id| config.tracks.iter().find(|t| t.id == id));
-                let (id, cycle) = track.map_or((config.folder, &config.cycle), |t| (t.id, &t.cycle));
-                if !id.is_nil() {
-                    if state.cycle_edit.as_ref().is_none_or(|(old, _)| *old != id) {
-                        state.cycle_edit = Some((id, cycle.clone()));
-                    }
-                    let edit = &mut state.cycle_edit.as_mut().expect("cycle editor initialized").1;
-                    let apply = ui
-                        .horizontal(|ui| {
-                            toggle(ui, p, "ao-cycle", &mut edit.cycle);
-                            toggle(ui, p, "ao-random", &mut edit.random);
-                            ui.add(egui::DragValue::new(&mut edit.seconds).range(0.0..=86400.0).suffix(" s").speed(1.0));
-                            widgets::flat_button(ui, p, aurora_i18n::tr!("common-apply")).clicked()
-                        })
-                        .inner;
-                    if apply {
-                        let edit = edit.clone();
-                        let result = if let Some(track) = track {
-                            crate::world::inventory::actions::patch(
-                                inv,
-                                track.id,
-                                aurora_llsd::llsd_map! { "name" => format!("{}:TR{}",track.name,edit.suffix()) },
-                            )
-                        } else {
-                            let mut config = config.clone();
-                            config.cycle = edit;
-                            inventory::save_cycle(inv, state.state, &config)
-                        };
-                        push(&mut out, state, result);
-                    }
-                }
-            });
+            editor::show(ui, p, inv, set, runtime, state, &mut out);
         });
     if *open {
         dialogs(ctx, p, inv, catalog, state, &mut out);
+        migration::show(ctx, p, catalog, state, &mut out);
+        combinations::show(ctx, p, inv, catalog, state, &mut out);
     }
     out
 }
 
-fn member_rows(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, members: &[crate::ao::Animation], state: &mut AoUi, out: &mut Vec<Action>) {
-    for (index, a) in members.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(&a.name);
-            if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-remove"), !state.busy()) {
-                push(out, state, inventory::remove(inv, a.link));
-            }
-            if widgets::icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ao-up"), !state.busy() && index > 0) {
-                push(out, state, inventory::member_order(inv, members, index, false));
-            }
-            if widgets::icon_button(
-                ui,
-                p,
-                "caret-down-filled",
-                aurora_i18n::tr!("ao-down"),
-                !state.busy() && index + 1 < members.len(),
-            ) {
-                push(out, state, inventory::member_order(inv, members, index, true));
-            }
+fn set_options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, state: &mut AoUi, out: &mut Vec<Action>) {
+    ui.add_enabled_ui(!state.busy(), |ui| {
+        let (mut sits, mut smart, mut mouselook) = (set.sits, set.smart, set.mouselook);
+        let mut changed = false;
+        ui.horizontal_wrapped(|ui| {
+            changed |= toggle(ui, p, "ao-sits", &mut sits);
+            changed |= toggle(ui, p, "ao-smart", &mut smart);
         });
-    }
+        changed |= toggle(ui, p, "ao-mouselook", &mut mouselook);
+        if changed {
+            let mut edit = set.clone();
+            (edit.sits, edit.smart, edit.mouselook) = (sits, smart, mouselook);
+            push(out, state, inventory::save_set(inv, &edit));
+        }
+    });
+}
+
+fn swimming_slot(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, state: &mut AoUi, out: &mut Vec<Action>) {
+    let count = set.swimming_slots();
+    let progress = if count == State::SWIMMING.len() {
+        aurora_i18n::tr!("ao-swim-ready", count = count, total = State::SWIMMING.len())
+    } else {
+        aurora_i18n::tr!("ao-swim-required", count = count, total = State::SWIMMING.len())
+    };
+    ui.label(RichText::new(progress).color(p.muted));
+    let slot = state.state;
+    let animation = set.swimming_animation(slot);
+    let label = animation.map_or(aurora_i18n::tr!("ao-swim-choose"), |a| a.name.as_str());
+    ui.horizontal(|ui| {
+        let response = ui
+            .add_enabled(
+                !state.busy(),
+                egui::Button::new(label)
+                    .truncate()
+                    .min_size(Vec2::new((ui.available_width() - 28.0).max(40.0), 30.0)),
+            )
+            .on_hover_text(label);
+        if response.clicked() {
+            state.container = None;
+            state.picker = Some(false);
+            state.folder = crate::world::inventory::actions::system(inv, 20).unwrap_or(inv.root);
+        }
+        if let Some(payload) = response.dnd_release_payload::<super::inventory::InvDrag>()
+            && !state.busy()
+        {
+            push(out, state, inventory::set_swimming(inv, set, slot, payload.0));
+        }
+        if widgets::icon_button(
+            ui,
+            p,
+            "trash-filled",
+            aurora_i18n::tr!("common-remove"),
+            set.states.contains_key(&slot) && !state.busy(),
+        ) && let Some(config) = set.states.get(&slot)
+        {
+            push(out, state, inventory::remove(inv, config.folder));
+        }
+    });
 }
 
 fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inventory::Catalog, state: &mut AoUi, out: &mut Vec<Action>) {

@@ -1,0 +1,77 @@
+//! One startup fallback from Firestorm's AO to Aurora-owned inventory links.
+//! Existing Aurora folders, including an empty AO, are always authoritative.
+use super::inventory::{self, Catalog};
+use crate::world::{World, inventory::Inventory};
+use aurora_net::inventory::operations::Mutation;
+use uuid::Uuid;
+
+#[derive(Default)]
+pub struct Bootstrap {
+    source: Catalog,
+    finished: bool,
+}
+
+impl Bootstrap {
+    /// Cached folders can be ready before the login seed has supplied these
+    /// services. Match Session's EditInventory preconditions before consuming
+    /// the single startup attempt; no request has been sent while waiting.
+    pub fn writable(world: &World) -> bool {
+        world.movement_complete
+            && !world.teleporting
+            && world.inventory.held.is_none()
+            && world.main().is_some_and(|region| {
+                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
+                    .iter()
+                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
+            })
+    }
+
+    pub fn loading(&self) -> bool {
+        !self.finished && (self.source.loading || !self.source.missing.is_empty() || !self.source.sets.is_empty())
+    }
+
+    pub fn missing(&self) -> &[Uuid] {
+        &self.source.missing
+    }
+
+    pub fn poll(
+        &mut self,
+        inv: &mut Inventory,
+        native: &Catalog,
+        selected: Uuid,
+        writable: bool,
+    ) -> Option<Result<(Mutation, Option<Uuid>), String>> {
+        if self.finished || native.loading || native.failed {
+            return None;
+        }
+        if native.root.is_some() {
+            self.source = Catalog::default();
+            self.finished = true;
+            return None;
+        }
+        self.source.refresh_firestorm(inv);
+        if self.source.failed {
+            self.finished = true;
+            return Some(Err(aurora_i18n::tr!("ao-fetch-failed").into()));
+        }
+        if self.source.loading || !self.source.missing.is_empty() {
+            return None;
+        }
+        if self.source.sets.is_empty() {
+            self.finished = true;
+            return None;
+        }
+        if !writable {
+            return None;
+        }
+        // The independent bridge factory owns startup creation of #Aurora.
+        // Wait for its inventory acknowledgement instead of racing a second
+        // parent creation. No bridge attachment or motor is required here.
+        inventory::child(inv, inv.root, "#Aurora")?;
+        self.finished = true;
+        Some(inventory::reconstruct(inv, &self.source, selected))
+    }
+}
+
+#[cfg(test)]
+mod tests;

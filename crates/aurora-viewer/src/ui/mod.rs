@@ -49,6 +49,8 @@ pub mod marketplace_listings;
 pub mod media;
 pub mod menu;
 pub mod minimap;
+pub mod movelock;
+pub mod movement;
 pub mod nameplate;
 pub mod news;
 pub mod notification_center;

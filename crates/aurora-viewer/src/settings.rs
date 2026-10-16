@@ -293,6 +293,9 @@ pub struct Settings {
     pub gestures: crate::ui::gestures::Settings,
     pub imports: crate::imports::Preferences,
     pub ao: crate::ao::Settings,
+    /// Requested position lock and options, independent for each avatar.
+    pub bridge: std::collections::HashMap<uuid::Uuid, crate::world::bridge::Preferences>,
+    pub movements: std::collections::HashMap<uuid::Uuid, crate::movement::Preferences>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
     /// Depth of field (Preferences › Graphics).
@@ -1019,6 +1022,8 @@ impl Default for Settings {
             show_appearance: false,
             show_ao: false,
             ao: Default::default(),
+            bridge: Default::default(),
+            movements: Default::default(),
             snapshot: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,

@@ -388,6 +388,17 @@ impl App {
             CtxAction::Inspect(id) => self.inspect_object(id),
             CtxAction::InspectAvatar(id) => self.inspect_avatar(id),
             CtxAction::Derender { id, permanent } => self.derender(id, permanent),
+
+            CtxAction::ScriptInfo(id) => {
+                let root = self
+                    .world
+                    .objects
+                    .index_of_uuid(&id)
+                    .map(|idx| linkset_root(&self.world, idx))
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .map_or(id, |o| o.full_id);
+                self.inspect_scripts(root);
+            }
             CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
             CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
             CtxAction::Rebake => self.rebake(),

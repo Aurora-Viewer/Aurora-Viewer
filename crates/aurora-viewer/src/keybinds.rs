@@ -284,6 +284,10 @@ pub enum Action {
     Down,
     Fly,
     AlwaysRun,
+    /// Physical Movelock (Firestorm Ctrl+Alt+P).
+    MoveLock,
+    MovementEnhancer,
+    PassWall,
     Mouselook,
     ResetCamera,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -383,6 +387,9 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Down, aurora_i18n::tr!("status-crouch-descend")),
                     (Action::Fly, aurora_i18n::tr!("extra-fly-land")),
                     (Action::AlwaysRun, aurora_i18n::tr!("keybinds-always-run")),
+                    (Action::MoveLock, aurora_i18n::tr!("movelock-title")),
+                    (Action::MovementEnhancer, aurora_i18n::tr!("movement-title")),
+                    (Action::PassWall, aurora_i18n::tr!("movement-pass")),
                 ],
             ),
             (
@@ -557,6 +564,10 @@ impl KeyBindings {
             (Action::Down, [k(K::PageDown), k(K::KeyC)]),
             (Action::Fly, [k(K::Home), k(K::KeyF)]),
             (Action::AlwaysRun, [kmod(K::KeyR, true, false), None]),
+            (Action::MoveLock, [kalt(K::KeyP, true, false), None]),
+            (Action::MovementEnhancer, [kalt(K::KeyM, true, false), None]),
+            // Ctrl + the current jump key is derived at use, including rebindings.
+            (Action::PassWall, [None, None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
@@ -743,6 +754,9 @@ impl HoldKey {
 impl KeyBindings {
     /// Fill actions missing from an older settings file with their defaults.
     pub fn sanitized(mut self) -> KeyBindings {
+        if self.get(Action::PassWall) == [kalt(KeyCode::KeyG, true, false), None] {
+            self.set(Action::PassWall, 0, None);
+        }
         let defaults = KeyBindings::default();
         let mut seen = HashSet::new();
         self.map.retain(|(a, _)| seen.insert(*a));
@@ -885,6 +899,43 @@ impl KeyBindings {
             .iter()
             .find(|(a, bs)| !is_held(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
             .map(|(a, _)| *a)
+    }
+
+    /// Follow the actual jump bindings; explicit action or camera bindings win.
+    pub fn pass_wall_triggered(&self, input: &Input, m: Mods) -> bool {
+        if self.get(Action::PassWall).iter().any(Option::is_some) {
+            return self.triggered(input, m) == Some(Action::PassWall);
+        }
+        m.ctrl
+            && !m.alt
+            && !m.shift
+            && self.triggered(input, m).is_none()
+            && self
+                .get(Action::Up)
+                .iter()
+                .flatten()
+                .any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift)
+            && !self.map.iter().any(|(a, bs)| {
+                *a != Action::Up && *a != Action::HudDrag && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
+            })
+    }
+
+    pub fn pass_wall_label(&self) -> String {
+        let explicit: Vec<_> = self.get(Action::PassWall).into_iter().flatten().collect();
+        let bindings = if explicit.is_empty() {
+            self.get(Action::Up)
+                .into_iter()
+                .flatten()
+                .filter(|b| !b.ctrl && !b.alt && !b.shift)
+                .map(|mut b| {
+                    b.ctrl = true;
+                    b
+                })
+                .collect()
+        } else {
+            explicit
+        };
+        bindings.iter().map(Binding::label).collect::<Vec<_>>().join(" / ")
     }
 
     /// The held actions an input belongs to (double-tap running).
@@ -1312,5 +1363,43 @@ mod tests {
         let bytes = serde_json::to_vec(&kb).expect("serialize bindings");
         let loaded: KeyBindings = serde_json::from_slice(&bytes).expect("read bindings");
         assert_eq!(loaded.sanitized(), kb);
+    }
+}
+
+#[cfg(test)]
+mod passage_tests {
+    use super::*;
+    #[test]
+    fn passage_follows_jump_rebindings_without_overriding_another_shortcut() {
+        let mut keys = KeyBindings::default();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert!(keys.pass_wall_triggered(&Input::key(KeyCode::PageUp), ctrl));
+        assert!(keys.pass_wall_triggered(&Input::key(KeyCode::KeyE), ctrl));
+        assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::KeyE), Mods::default()));
+        keys.set(Action::Up, 0, k(KeyCode::Space));
+        keys.set(Action::Up, 1, None);
+        assert!(keys.pass_wall_triggered(&Input::key(KeyCode::Space), ctrl));
+        assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::PageUp), ctrl));
+        keys.set(Action::Inventory, 0, kmod(KeyCode::Space, true, false));
+        assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::Space), ctrl));
+        assert_eq!(keys.triggered(&Input::key(KeyCode::Space), ctrl), Some(Action::Inventory));
+    }
+    #[test]
+    fn passage_migrates_the_former_default_and_preserves_custom_bindings() {
+        let mut keys = KeyBindings::default();
+        keys.set(Action::PassWall, 0, kalt(KeyCode::KeyG, true, false));
+        assert_eq!(keys.sanitized().get(Action::PassWall), [None, None]);
+        let mut keys = KeyBindings::default();
+        keys.set(Action::PassWall, 0, kmod(KeyCode::KeyJ, true, false));
+        let keys = keys.sanitized();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert!(keys.pass_wall_triggered(&Input::key(KeyCode::KeyJ), ctrl));
+        assert!(!keys.pass_wall_triggered(&Input::key(KeyCode::KeyE), ctrl));
     }
 }

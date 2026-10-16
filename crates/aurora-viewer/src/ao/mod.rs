@@ -2,8 +2,10 @@
 //! AOEngine / AOSet (Firestorm indra/newview/aoengine.cpp, aoset.cpp,
 //! originally LGPL 2.1). Inventory links keep the original animations intact.
 
+pub mod bootstrap;
 pub mod demo;
 pub mod inventory;
+pub mod migration;
 pub mod runtime;
 #[cfg(test)]
 mod tests;
@@ -54,11 +56,15 @@ pub enum State {
     SwimmingForward,
     SwimmingUp,
     SwimmingDown,
+    UnderwaterFloating,
+    WaterFlightExit,
+    WaterEntry,
+    WaterShoreExit,
     Always,
 }
 
 impl State {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 30] = [
         Self::Standing,
         Self::Walking,
         Self::Running,
@@ -84,6 +90,10 @@ impl State {
         Self::SwimmingForward,
         Self::SwimmingUp,
         Self::SwimmingDown,
+        Self::UnderwaterFloating,
+        Self::WaterFlightExit,
+        Self::WaterEntry,
+        Self::WaterShoreExit,
         Self::Always,
     ];
 
@@ -114,6 +124,10 @@ impl State {
             "Swimming Forward",
             "Swimming Up",
             "Swimming Down",
+            "Underwater Floating",
+            "Water Flight Exit",
+            "Water Entry",
+            "Water Shore Exit",
             "Always",
         ][self as usize]
     }
@@ -146,6 +160,10 @@ impl State {
                 "ao-swimming-forward",
                 "ao-swimming-up",
                 "ao-swimming-down",
+                "ao-underwater-floating",
+                "ao-water-flight-exit",
+                "ao-water-entry",
+                "ao-water-shore-exit",
                 "ao-always",
             ][self as usize],
         )
@@ -205,6 +223,10 @@ impl State {
                 0xaec4610c_757f_bc4e_c092_c6e9caf18daf,
                 0x62c5de58_cb33_5743_3d07_9e4cd4352864,
                 0x20f063ea_8306_2562_0b07_5c853b37b31e,
+                0x4ae8016b_31b9_03bb_c401_b1ea941db41d,
+                0x2305bd75_1ca9_b03b_1faa_b176b8a8c49e,
+                0x666307d9_a860_572d_6fd4_c3ab8865c094,
+                0x2305bd75_1ca9_b03b_1faa_b176b8a8c49e,
                 0,
             ][self as usize],
         )
@@ -225,6 +247,21 @@ impl State {
             self,
             Self::GroundSit | Self::Landing | Self::SoftLanding | Self::StandingUp | Self::PreJumping
         )
+    }
+
+    pub const SWIMMING: [Self; 8] = [
+        Self::Floating,
+        Self::SwimmingForward,
+        Self::SwimmingDown,
+        Self::SwimmingUp,
+        Self::UnderwaterFloating,
+        Self::WaterFlightExit,
+        Self::WaterEntry,
+        Self::WaterShoreExit,
+    ];
+
+    pub fn swimming(self) -> bool {
+        Self::SWIMMING.contains(&self)
     }
 }
 
@@ -317,6 +354,23 @@ pub struct Set {
 }
 
 impl Set {
+    /// Swimming uses one explicit inventory animation per slot, never a
+    /// bundled/private fallback or a flight override inherited from Firestorm.
+    pub fn swimming_animation(&self, state: State) -> Option<&Animation> {
+        let config = self.states.get(&state).filter(|_| state.swimming())?;
+        let step = config.steps.first()?;
+        (config.steps.len() == 1 && config.tracks.is_empty() && !step.group && step.members.len() == 1)
+            .then(|| &step.members[0])
+            .filter(|a| !a.asset.is_nil())
+    }
+
+    pub fn swimming_slots(&self) -> usize {
+        State::SWIMMING
+            .into_iter()
+            .filter(|s| self.swimming_animation(*s).is_some())
+            .count()
+    }
+
     pub fn new(name: String) -> Self {
         Self {
             id: Uuid::new_v4(),

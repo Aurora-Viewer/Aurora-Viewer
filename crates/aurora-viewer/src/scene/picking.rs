@@ -74,6 +74,159 @@ pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
 }
 
 impl Scene {
+    fn movement_solid(&self, world: &World, idx: usize) -> bool {
+        let Some(o) = world.objects.get(idx) else { return false };
+        o.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && o.update_flags & crate::build::edits::FLAGS_PHANTOM == 0
+            && self.gpu.get(idx).is_some_and(|g| !g.hud && !g.rigged && g.owner_avatar.is_none())
+    }
+    /// A short forward probe for swimming. Uses rendered surface normals,
+    /// not height alone, so a shallow beach never triggers the exit jump.
+    pub fn movement_obstacle(&self, world: &World, origin: Vec3, direction: Vec3) -> bool {
+        let ray = (origin, direction);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let now = Instant::now();
+        candidates.par_iter().any(|&idx| {
+            self.movement_solid(world, idx)
+                && self.gpu.get(idx).is_some_and(|g| ray_may_hit(g, ray))
+                && self
+                    .face_hit(world, idx, ray, now, true)
+                    .is_some_and(|h| h.t < 1.4 && h.normal.z.abs() < 0.55)
+        })
+    }
+    /// Find a nearby walkable top beyond a steep face, with room above it.
+    /// The server retains collision authority; this is only a bounded jump goal.
+    pub fn swim_landing(&self, world: &World, origin: Vec3, direction: Vec3, height: f32) -> Option<Vec3> {
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates((origin, direction), &mut candidates);
+        let distance = candidates
+            .par_iter()
+            .filter_map(|&idx| {
+                if !self.movement_solid(world, idx) {
+                    return None;
+                }
+                let hit = self.face_hit(world, idx, (origin, direction), now, true)?;
+                (hit.t <= 1.4 && hit.normal.z.abs() < 0.55).then_some(hit.t)
+            })
+            .min_by(f32::total_cmp)?;
+        for ahead in [distance + 0.45, distance + 0.8, distance + 1.1] {
+            let top = origin + direction * ahead + Vec3::Z * 3.5;
+            let ray = (top, -Vec3::Z);
+            candidates.clear();
+            self.pick.ray_candidates(ray, &mut candidates);
+            let hit = candidates
+                .par_iter()
+                .filter_map(|&idx| {
+                    self.movement_solid(world, idx)
+                        .then(|| self.face_hit(world, idx, ray, now, true))
+                        .flatten()
+                })
+                .filter(|hit| hit.t <= 4.0 && hit.normal.z > 0.7)
+                .min_by(|a, b| a.t.total_cmp(&b.t));
+            let Some(hit) = hit else { continue };
+            let feet = top - Vec3::Z * hit.t;
+            let destination = feet + Vec3::Z * (height * 0.5 + 0.08);
+            let delta = destination - origin;
+            if !(0.1..=3.5).contains(&delta.z) || delta.length_squared() > 16.0 {
+                continue;
+            }
+            let head_ray = (feet + Vec3::Z * 0.12, Vec3::Z);
+            candidates.clear();
+            self.pick.ray_candidates(head_ray, &mut candidates);
+            let blocked = candidates.par_iter().any(|&idx| {
+                self.movement_solid(world, idx)
+                    && self
+                        .face_hit(world, idx, head_ray, now, true)
+                        .is_some_and(|hit| hit.t < height + 0.1)
+            });
+            let occupied = self.gpu.iter().enumerate().any(|(idx, gpu)| {
+                gpu.is_avatar
+                    && world.objects.get(idx).is_some_and(|object| object.full_id != world.agent_id)
+                    && (gpu.center - destination).truncate().length() < 0.7
+                    && (gpu.center.z - destination.z).abs() < height
+            });
+            if !blocked && !occupied {
+                return Some(destination);
+            }
+        }
+        None
+    }
+    /// Conservative avatar-sized free space behind a nearby solid object.
+    /// Visual geometry cannot reproduce Havok shapes; boxes deliberately
+    /// reject uncertain destinations before a bounded scripted physical passage.
+    pub fn movement_exit(&self, world: &World, origin: Vec3, direction: Vec3, height: f32) -> Option<Vec3> {
+        let ray = (origin, direction);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let now = Instant::now();
+        let (distance, idx) = candidates
+            .par_iter()
+            .filter_map(|&idx| {
+                if !self.movement_solid(world, idx) {
+                    return None;
+                }
+                let hit = self.face_hit(world, idx, ray, now, true)?;
+                // Allow activation before the avatar is pressed against it.
+                (hit.t <= 3.0).then_some((hit.t, idx))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))?;
+        let (center, size) = self.click_bounds(world, idx)?;
+        let (_, rotation, _) = Self::object_transform(world, idx, now, 0)?;
+        let local_dir = rotation.inverse() * direction;
+        let local_origin = rotation.inverse() * (origin - center);
+        let half = size.abs() * 0.5 + Vec3::splat(0.4);
+        // Backwards ray finds the far end of the same inflated box.
+        let far = 8.0;
+        let back = ray_box(local_origin + local_dir * far, -local_dir, -half, half)?;
+        // Together with the inflated box, leave 1 m beyond a perpendicular
+        // wall so the temporary anchor continues pulling until fully clear.
+        let travel = (far - back + 0.60).max(distance + 0.5);
+        if !(0.5..=8.0).contains(&travel) {
+            return None;
+        }
+        let mut destination = origin + direction * travel;
+        let region = world.main()?;
+        if destination.x < 0.4
+            || destination.y < 0.4
+            || destination.x > region.heightmap.size_x as f32 - 0.4
+            || destination.y > region.heightmap.size_y as f32 - 0.4
+        {
+            return None;
+        }
+        let ground = world.ground_height(destination)?;
+        destination.z = destination.z.max(ground + height * 0.5 + 0.1);
+        let occupied = self.gpu.par_iter().enumerate().any(|(idx, g)| {
+            if g.is_avatar
+                && let Some(object) = world.objects.get(idx)
+            {
+                if object.full_id == world.agent_id {
+                    return false;
+                }
+                let delta = g.center - destination;
+                return delta.truncate().length() < 0.7 && delta.z.abs() < (height + object.scale.z) * 0.5;
+            }
+            if !self.movement_solid(world, idx) {
+                return false;
+            }
+            let Some((center, size)) = self.click_bounds(world, idx) else {
+                return true;
+            };
+            if g.geom.is_none() {
+                return center.distance(destination) < g.radius + height;
+            }
+            let Some((_, rotation, _)) = Self::object_transform(world, idx, now, 0) else {
+                return true;
+            };
+            let local = (rotation.inverse() * (destination - center)).abs();
+            // Rotate the capsule's conservative world box into object space.
+            let inverse = glam::Mat3::from_quat(rotation.inverse());
+            let ext = inverse.x_axis.abs() * 0.35 + inverse.y_axis.abs() * 0.35 + inverse.z_axis.abs() * (height * 0.5);
+            local.cmple(size.abs() * 0.5 + ext).all()
+        });
+        (!occupied && destination.is_finite()).then_some(destination)
+    }
     /// LLToolPie::handleRightMouseDown / LLToolSelectRect::handleMouseDown:
     /// pick_transparent includes every volume surface, without requiring a
     /// touch handler or click action. The displayed depth still bounds the
@@ -1096,6 +1249,100 @@ pub(super) mod tests {
         assert!(ray_box(Vec3::new(-2.0, 3.0, 0.0), Vec3::X, -Vec3::ONE, Vec3::ONE).is_none());
         assert!(ray_box(Vec3::new(-2.0, 0.0, 0.0), -Vec3::X, -Vec3::ONE, Vec3::ONE).is_none());
     }
+    #[test]
+    fn movement_pass_finds_free_space_and_rejects_blocked_or_phantom_obstacles() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for (idx, x) in [(front, 129.0), (back, 137.0)] {
+            let object = world.objects.get_mut(idx).expect("object");
+            object.position = Vec3::new(x, 128.0, 50.0);
+            object.update_flags = 0;
+            scene.gpu[idx].center = object.position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let origin = Vec3::new(128.0, 128.0, 50.0);
+        assert!(scene.movement_obstacle(&world, origin, Vec3::X));
+        let exit = scene.movement_exit(&world, origin, Vec3::X, 1.7).expect("clear far side");
+        assert!(
+            exit.distance(Vec3::new(130.5, 128.0, 50.0)) < 0.0001,
+            "leave one metre beyond the wall's far face at x=129.5"
+        );
+        for distance in [1.6, 2.5, 3.0] {
+            let approach = origin.with_x(128.5 - distance);
+            let farther_exit = scene.movement_exit(&world, approach, Vec3::X, 1.7).expect("wall in approach range");
+            assert!(
+                farther_exit.distance(exit) < 0.0001,
+                "the approach distance must not move the exit farther away"
+            );
+        }
+        assert!(
+            scene.movement_exit(&world, origin.with_x(125.4), Vec3::X, 1.7).is_none(),
+            "wall beyond three metres"
+        );
+        world.objects.get_mut(back).expect("back").position.x = exit.x;
+        assert!(scene.movement_exit(&world, origin, Vec3::X, 1.7).is_none(), "occupied destination");
+        world.objects.get_mut(front).expect("front").update_flags |= crate::build::edits::FLAGS_PHANTOM;
+        assert!(!scene.movement_obstacle(&world, origin, Vec3::X));
+        assert!(
+            scene.movement_exit(&world, origin, Vec3::X, 1.7).is_some(),
+            "solid obstacle behind the phantom is now within reach"
+        );
+        world.objects.get_mut(back).expect("back").position.x = 137.0;
+        assert!(scene.movement_exit(&world, origin, Vec3::X, 1.7).is_none());
+    }
+    #[test]
+    fn swim_landing_finds_a_walkable_top_and_rejects_phantom_and_low_ceiling() {
+        for ceiling in [false, true] {
+            let (mut world, mut scene, front, back) = scene_with_two_objects();
+            for (idx, x) in [(front, 129.0), (back, 137.0)] {
+                let object = world.objects.get_mut(idx).expect("object");
+                object.position = Vec3::new(x, 128.0, 50.0);
+                object.update_flags = 0;
+                scene.gpu[idx].center = object.position;
+                scene.gpu[idx].radius = 2.0;
+                scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+            }
+            let key = scene.gpu[front].geom.expect("geometry");
+            let GeomState::Ready(geometry) = &mut scene.geoms.get_mut(&key).expect("geometry").state else {
+                panic!("ready geometry");
+            };
+            // One solid front and its horizontal top; the optional low
+            // underside leaves insufficient avatar-sized landing room.
+            let mut vertices = vec![
+                [-0.5, -0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+                [-0.5, 0.5, 0.5],
+                [-0.5, -0.5, 0.5],
+                [-0.5, -0.5, 0.5],
+                [0.5, -0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+            ];
+            let mut indices = vec![0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7];
+            if ceiling {
+                vertices.extend([[-0.5, -0.5, 1.2], [0.5, -0.5, 1.2], [0.5, 0.5, 1.2], [-0.5, 0.5, 1.2]]);
+                indices.extend([8, 10, 9, 8, 11, 10]);
+            }
+            let uvs = vec![[0.0; 2]; vertices.len()];
+            let geometry = Arc::get_mut(geometry).expect("unshared test geometry");
+            geometry.max.z = if ceiling { 1.2 } else { 0.5 };
+            geometry.pick_faces[0] = Some(PickFace::new(vertices, uvs, indices));
+            let origin = Vec3::new(128.0, 128.0, 50.0);
+            assert!(scene.movement_obstacle(&world, origin, Vec3::X));
+            let landing = scene.swim_landing(&world, origin, Vec3::X, 1.7);
+            if ceiling {
+                assert!(landing.is_none(), "do not guide the avatar under a low ceiling");
+            } else {
+                let landing = landing.expect("clear top");
+                assert!((128.5..129.5).contains(&landing.x));
+                assert!((landing.z - 51.43).abs() < 0.01);
+                world.objects.get_mut(front).expect("front").update_flags |= crate::build::edits::FLAGS_PHANTOM;
+                assert!(!scene.movement_obstacle(&world, origin, Vec3::X));
+                assert!(scene.swim_landing(&world, origin, Vec3::X, 1.7).is_none());
+            }
+        }
+    }
+
     pub(in crate::scene) fn scene_with_two_objects() -> (World, Scene, usize, usize) {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());

@@ -966,6 +966,14 @@ pub enum NetEvent {
         target: crate::scripts::ScriptTarget,
         result: Result<crate::scripts::ScriptSaved, String>,
     },
+    BridgeReply {
+        request: Uuid,
+        result: Result<crate::bridge::Ack, String>,
+    },
+    BridgeQueryReply {
+        request: Uuid,
+        result: Result<crate::bridge::query::Reply, String>,
+    },
     InventoryThumbnailSource {
         request: Uuid,
         asset: Uuid,
@@ -1715,6 +1723,15 @@ pub enum NetCommand {
         handle: RegionHandle,
         options: crate::scripts::ScriptOptions,
         source: String,
+    },
+    Bridge {
+        request: Uuid,
+        command: crate::bridge::Command,
+    },
+    BridgeQuery {
+        request: Uuid,
+        endpoint: crate::bridge::Endpoint,
+        query: crate::bridge::query::Query,
     },
     FetchInventoryThumbnail {
         request: Uuid,

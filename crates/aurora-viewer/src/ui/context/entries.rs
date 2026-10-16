@@ -169,7 +169,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     ui.submenu("box", aurora_i18n::tr!("common-object"), true, |ui| {
         ui.todo("info-circle-filled", aurora_i18n::tr!("common-profile"));
         ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
-        ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
+        ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
         ui.separator();
         // two objects or more: a right click on a selected one keeps them;
         // one alone has nothing to link to
@@ -440,7 +440,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         !f.object.id.is_nil(),
         CtxAction::Inspect(f.object.id),
     );
-    ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
+    ui.item_if(
+        "code",
+        aurora_i18n::tr!("ui-context-script-information"),
+        !f.object.id.is_nil(),
+        CtxAction::ScriptInfo(f.object.id),
+    );
     derender_items(
         ui,
         f.object.id,
@@ -648,7 +653,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         aurora_i18n::tr!("ui-context-inspect-2"),
         CtxAction::Inspect(attachment),
     );
-    ui.todo("code", aurora_i18n::tr!("ui-context-script-info"));
+    ui.item(
+        "code",
+        aurora_i18n::tr!("ui-context-script-info"),
+        CtxAction::ScriptInfo(attachment),
+    );
     // the worn object, not its wearer (the selection's root)
     derender_items(ui, attachment, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
     ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
@@ -1342,5 +1351,31 @@ mod tests {
             assert_eq!(row.checked, Some(blocked));
             assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleParticleMute(i)) if i == id));
         }
+    }
+}
+
+#[cfg(test)]
+mod bridge_query_tests {
+    use super::*;
+    #[test]
+    fn object_submenu_dispatches_script_information_for_the_selected_object() {
+        let object = Uuid::from_u128(101);
+        let target = Target::Object {
+            key: ObjKey { region: 1, local_id: 10 },
+            full_id: object,
+            offset: Vec3::ZERO,
+        };
+        let entries = world_menu(&target, &Facts::default(), Vec3::ZERO);
+        let entry = entries
+            .iter()
+            .find(|e| e.label == aurora_i18n::tr!("common-object"))
+            .expect("object submenu");
+        let Kind::Submenu(children) = &entry.kind else { panic!("submenu") };
+        let info = children
+            .iter()
+            .find(|e| e.label == aurora_i18n::tr!("ui-context-script-information"))
+            .expect("script info");
+        assert!(info.enabled);
+        assert!(matches!(&info.kind, Kind::Action(CtxAction::ScriptInfo(id)) if *id == object));
     }
 }
