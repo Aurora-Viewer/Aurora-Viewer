@@ -367,6 +367,51 @@ impl VoiceLight {
 const RIPPLE_PERIOD: f64 = 1.5;
 const RIPPLE_REACH: f32 = 18.0;
 
+/// The ring of `GlowStyle::RingLoud` for a smoothed level `level` and an
+/// overdrive `heat` (both 0..1), in mockup pixels, before the gate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct LoudRing {
+    /// From the plate's edge to the ring, and its width.
+    pub gap: f32,
+    pub width: f32,
+    /// Opacity of the ring, of its glow, and how far the plate's own edge
+    /// takes the ring's color.
+    pub alpha: f32,
+    pub glow: f32,
+    pub edge: f32,
+    /// Blur of the glow around the ring.
+    pub blur: f32,
+    pub color: Color32,
+}
+
+/// Everything grows with the level, so that a whisper, a voice and a shout
+/// look different at a glance: a whisper (just above the speaking level) is
+/// a faint hairline hugging the plate with almost no glow, a normal voice
+/// about the `Ring` look, a shout a thick bright ring pushed out with a wide
+/// glow. The glow grows with the square of the level: it stays out of the
+/// way until the voice is loud. The color is the microphone badge's green,
+/// a little brighter as the voice rises, sliding to the danger red only past
+/// the overdriven level (`overdrive`), through the amber: halfway between
+/// the green and the red directly is a muddy olive.
+pub(super) fn loud_ring(p: &Palette, level: f32, heat: f32) -> LoudRing {
+    let (l, h) = (level.clamp(0.0, 1.0), heat.clamp(0.0, 1.0));
+    let green = p.success.lerp_to_gamma(p.ink, 0.3 * l);
+    let color = if h < 0.5 {
+        green.lerp_to_gamma(p.amber, 2.0 * h)
+    } else {
+        p.amber.lerp_to_gamma(p.danger, 2.0 * h - 1.0)
+    };
+    LoudRing {
+        gap: 1.0 + 7.0 * l,
+        width: 0.9 + 2.7 * l,
+        alpha: 0.4 + 0.6 * l,
+        glow: 0.03 + 0.5 * l * l,
+        edge: 0.25 + 0.35 * l,
+        blur: 2.0 + 24.0 * l * l,
+        color,
+    }
+}
+
 /// The voice's light on a plate `height` points high, whose border is
 /// `plain` when silent, in the look `style`; `time` (seconds) moves the
 /// ripples. Palette colors only: the green of the microphone badge, lit
@@ -418,6 +463,20 @@ pub(super) fn voice_light(p: &Palette, style: GlowStyle, halo: Halo, plain: Colo
                     gap: gap * k,
                     width: width * k,
                     color: lit.gamma_multiply(g * (0.85 + 0.15 * l)),
+                }],
+            )
+        }
+        GlowStyle::RingLoud => {
+            let r = loud_ring(p, l, halo.heat.clamp(0.0, 1.0));
+            // closes in on the plate as the voice starts
+            let gap = r.gap + 4.0 * (1.0 - g);
+            VoiceLight::new(
+                &[glow(r.blur, gap + r.width, r.color.gamma_multiply(g * r.glow))],
+                Border::Around(plain.lerp_to_gamma(r.color, g * r.edge), SCALE),
+                &[Ring {
+                    gap: gap * k,
+                    width: r.width * k,
+                    color: r.color.gamma_multiply(g * r.alpha),
                 }],
             )
         }

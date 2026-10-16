@@ -510,7 +510,7 @@ fn every_voice_look_grows_with_the_level_and_fades_with_the_gate() {
     let full = Metrics::of(Level::Full, SCALE).height;
     let far = Metrics::of(Level::Far, SCALE).height;
     for style in GLOW_STYLES {
-        let look = |level: f32, gate: f32, height: f32| paint::voice_light(&p, style, Halo { level, gate }, plain, height, 0.3);
+        let look = |level: f32, gate: f32, height: f32| paint::voice_light(&p, style, Halo { level, gate, heat: 0.0 }, plain, height, 0.3);
         let (loud, whisper) = (look(1.0, 1.0, full), look(0.0, 1.0, full));
         let ((reach_loud, alpha_loud), (reach_whisper, alpha_whisper)) = (voice_extent(&loud), voice_extent(&whisper));
         // (the ripples go as far at any level, only brighter)
@@ -531,7 +531,21 @@ fn every_voice_look_grows_with_the_level_and_fades_with_the_gate() {
         assert!(edge.g() > plain.g(), "{style:?}");
     }
     // the ring closes in on the plate as the voice starts
-    let ring = |gate: f32| paint::voice_light(&p, GlowStyle::Ring, Halo { level: 0.5, gate }, plain, full, 0.0).rings()[0];
+    let ring = |gate: f32| {
+        paint::voice_light(
+            &p,
+            GlowStyle::Ring,
+            Halo {
+                level: 0.5,
+                gate,
+                heat: 0.0,
+            },
+            plain,
+            full,
+            0.0,
+        )
+        .rings()[0]
+    };
     assert!(ring(0.2).gap > ring(1.0).gap && ring(0.2).color.a() < ring(1.0).color.a());
 }
 
@@ -540,7 +554,11 @@ fn the_ripples_rise_and_fade_smoothly() {
     let p = Theme::default().palette();
     let plain = p.ink.gamma_multiply(0.14);
     let full = Metrics::of(Level::Full, SCALE).height;
-    let halo = Halo { level: 0.6, gate: 1.0 };
+    let halo = Halo {
+        level: 0.6,
+        gate: 1.0,
+        heat: 0.0,
+    };
     let rings_at = |t: f32| paint::voice_light(&p, GlowStyle::Ripple, halo, plain, full, t).rings().to_vec();
     let mut previous = rings_at(0.0);
     for frame in 1..=180 {
@@ -610,6 +628,81 @@ fn the_voice_envelope_does_not_depend_on_the_frame_rate() {
     };
     let (slow, fast) = (run(30), run(240));
     assert!((slow.level - fast.level).abs() < 0.01 && (slow.gate - fast.gate).abs() < 0.01);
+}
+
+#[test]
+fn the_loud_ring_grows_with_the_voice_and_turns_red_only_when_overdriven() {
+    let p = Theme::default().palette();
+    let over = crate::ui::voice_tag::LEVEL_MAX;
+    // from the speaking level to past the overdriven one, as the plates read it
+    let raws: Vec<f32> = (0..=70).map(|i| aurora_voice::SPEAKING_AUDIO_LEVEL + i as f32 * 0.005).collect();
+    let rings: Vec<_> = raws.iter().map(|&r| paint::loud_ring(&p, voice_level(r), overdrive(r))).collect();
+    for (w, r) in rings.windows(2).zip(&raws[1..]) {
+        let (a, b) = (w[0], w[1]);
+        assert!(b.gap >= a.gap && b.width >= a.width, "{r}: {a:?} -> {b:?}");
+        assert!(
+            b.alpha >= a.alpha && b.glow >= a.glow && b.blur >= a.blur && b.edge >= a.edge,
+            "{r}"
+        );
+        // the red never goes back as the voice rises
+        assert!(overdrive(*r) >= overdrive(*r - 0.005), "{r}");
+    }
+    let green = |level: f32| paint::loud_ring(&p, level, 0.0).color;
+    for (ring, &raw) in rings.iter().zip(&raws) {
+        if raw <= over {
+            assert_eq!(ring.color, green(voice_level(raw)), "green below the overdriven level: {raw}");
+        }
+    }
+    // a clear range: a faint hairline on the plate, then a thick ring well out
+    let (whisper, normal, shout) = (rings[2], rings[30], rings[66]);
+    assert!(whisper.gap < 1.5 && whisper.width < 1.2 && whisper.alpha < 0.5 && whisper.glow < 0.06);
+    assert!(normal.gap > 2.0 * whisper.gap && normal.width > 1.5 * whisper.width);
+    assert!(shout.gap > 7.0 && shout.width > 3.0 && shout.glow > 0.4 && shout.blur > 20.0);
+    // a shout is red, from the palette
+    assert!(overdrive(raws[66]) >= 1.0);
+    assert_eq!(shout.color, p.danger);
+    // halfway, the amber of the palette rather than a mix of green and red
+    assert_eq!(paint::loud_ring(&p, 1.0, 0.5).color, p.amber);
+    assert!(overdrive(over) == 0.0 && overdrive(over + 0.015) > 0.4 && overdrive(f32::NAN) == 0.0);
+}
+
+#[test]
+fn the_red_comes_and_goes_smoothly() {
+    let dt = 1.0 / 60.0;
+    let mut e = VoiceEnvelope::default();
+    let over = crate::ui::voice_tag::LEVEL_MAX;
+    // a normal voice: no red at all
+    for _ in 0..60 {
+        e.update_raw(0.46, true, dt);
+    }
+    assert_eq!(e.heat, 0.0);
+    // a shout: red within a few frames, never in one
+    e.update_raw(over + 0.05, true, dt);
+    assert!(e.heat > 0.0 && e.heat < 0.5, "{}", e.heat);
+    for _ in 0..10 {
+        e.update_raw(over + 0.05, true, dt);
+    }
+    assert!(e.heat > 0.95, "{}", e.heat);
+    // back to normal: it fades slower than it came
+    let mut previous = e.heat;
+    for _ in 0..12 {
+        e.update_raw(0.46, true, dt);
+        assert!(e.heat < previous && previous - e.heat < 0.1);
+        previous = e.heat;
+    }
+    assert!(e.heat > 0.3);
+    // silence for good: nothing left
+    for _ in 0..120 {
+        e.update_raw(0.0, false, dt);
+    }
+    assert_eq!(e, VoiceEnvelope::default());
+}
+
+#[test]
+fn the_glow_looks_are_named_for_the_demo_switch() {
+    let names: Vec<_> = GLOW_STYLES.iter().map(|s| s.name()).collect();
+    assert_eq!(names, ["thin", "aura", "ring", "ring-loud", "ripple"]);
+    assert_eq!(GlowStyle::default(), GlowStyle::RingLoud);
 }
 
 #[test]

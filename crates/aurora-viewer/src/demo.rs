@@ -5309,12 +5309,25 @@ pub fn voice_levels(
     let mine = if synthetic {
         level
     } else if talking {
-        mic_level
+        participant_level(mic_level)
     } else {
         0.0
     };
     m.insert(me, (mine, mine > aurora_voice::SPEAKING_AUDIO_LEVEL));
     m
+}
+
+/// The microphone meter's level (the tuning scale of `MicCapture::level`:
+/// 0.8 at full scale, 0.01 a decibel) on the participant scale the voice
+/// server reports and the tags read (`0.18 + 0.005 × dB` of a 16-bit RMS,
+/// about 0.63 at full scale, aurora_voice::transmit): the demo's own tag
+/// then lights up, and turns red, at the same loudness as on the grid.
+fn participant_level(tuning: f32) -> f32 {
+    if tuning <= 0.0 {
+        return 0.0;
+    }
+    let dbfs = (tuning - 0.8) * 100.0;
+    (0.63 + 0.005 * dbfs).max(0.0)
 }
 
 #[cfg(test)]
@@ -5325,7 +5338,12 @@ mod voice_tests {
     fn own_demo_tag_respects_voice_and_transmission() {
         assert!(voice_levels(1.0, DEMO_AGENT, false, true, 0.6, None).is_empty());
         assert_eq!(voice_levels(1.0, DEMO_AGENT, true, false, 0.6, None)[&DEMO_AGENT], (0.0, false));
-        assert_eq!(voice_levels(1.0, DEMO_AGENT, true, true, 0.6, None)[&DEMO_AGENT], (0.6, true));
+        let (level, speaking) = voice_levels(1.0, DEMO_AGENT, true, true, 0.6, None)[&DEMO_AGENT];
+        assert!((level - 0.53).abs() < 1e-4 && speaking, "{level}");
+        // the meter's overdriven level is the tags' red point, its silence no voice
+        assert!((participant_level(0.7) - 0.58).abs() < 1e-4);
+        assert_eq!(participant_level(0.0), 0.0);
+        assert!(participant_level(0.1) < aurora_voice::SPEAKING_AUDIO_LEVEL);
     }
 
     #[test]

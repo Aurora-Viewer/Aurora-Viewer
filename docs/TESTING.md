@@ -3258,7 +3258,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
-| `AURORA_DEMO_VOICE_GLOW=thin`, `aura`, `ring`, `ripple` or `cycle` | Temporary: look of a speaking name plate, to compare the variants |
+| `AURORA_DEMO_VOICE_GLOW=thin`, `aura`, `ring`, `ring-loud`, `ripple` or `cycle` | Temporary: look of a speaking name plate, to compare the variants |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -3359,13 +3359,21 @@ What the inventory must show with these scenarios:
 - **`AURORA_DEMO_VOICE_GLOW`** (temporary, until one look is chosen): the
   light of a speaking plate. `thin` is the first tight halo; `aura` a green
   rim that widens with the voice and a wide bloom breathing with it; `ring`
-  (the default) a thin green ring a few points from the plate over a soft
-  glow, closing in when the voice starts; `ripple` the rim and rings rising
+  a thin green ring a few points from the plate over a soft glow, closing
+  in when the voice starts; `ring-loud` (the default) the same ring with a
+  much wider range: a whisper is a faint hairline on the plate with almost
+  no glow, a normal voice the `ring`, a shout a thick bright ring pushed
+  out with a wide glow, sliding through amber to red past the overdriven level as the
+  Legacy Viewer's speaking indicator; `ripple` the rim and rings rising
   from the plate. `cycle` goes from one to the next every four seconds.
-  With `AURORA_DEMO_TAGS=voice`, Tess speaks too, over the white wall,
-  next to Orion over the dark scene; add `AURORA_DEMO_VOICE=speaking` for
-  our own plate. Look at the plates on both backgrounds, at a whisper and
-  at a loud level, and at the start and end of speech (never a jump).
+  With `AURORA_DEMO_TAGS=voice`, Tess speaks too, over the white wall: her
+  voice goes whisper → normal → shout → normal every eight seconds, next to
+  Orion over the dark scene. Add `AURORA_DEMO_VOICE=speaking` for our own
+  plate, or `AURORA_DEMO_TALK=1` without `AURORA_DEMO_VOICE` for our plate
+  to follow the real microphone (voice enabled in Preferences; the meter's
+  level is turned into the voice server's scale, so a shout turns red as
+  loud as on the grid). Look at the plates on both backgrounds, through the
+  whole range, and at the start and end of speech (never a jump).
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes

@@ -376,9 +376,10 @@ pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
     levels.insert(SOL, talk(1.3));
     levels.insert(VEGA, (0.0, false));
     if !status_set(mode, time) {
-        // AURORA_DEMO_VOICE_GLOW: Tess speaks too, over the white wall
+        // AURORA_DEMO_VOICE_GLOW: Tess speaks too, over the white wall,
+        // from a whisper to a shout and back
         let tess = if crate::ui::nameplate::glow_demo() {
-            talk(2.6)
+            (voice_sweep(time), true)
         } else {
             (0.0, false)
         };
@@ -387,9 +388,48 @@ pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
     }
 }
 
+/// Raw levels of a whisper (just above the speaking level), a normal voice
+/// and a shout (past the overdriven level), on WebRTC's participant scale.
+const WHISPER: f32 = 0.33;
+const NORMAL: f32 = 0.46;
+const SHOUT: f32 = 0.61;
+/// Seconds of each step of `voice_sweep`: held, then eased to the next.
+const SWEEP_STEP: f64 = 2.0;
+const SWEEP_HOLD: f64 = 1.2;
+
+/// A voice that goes whisper → normal → shout → normal and again, every
+/// eight seconds, with a light syllable wobble: the whole range of the
+/// speaking ring without a microphone.
+fn voice_sweep(time: f64) -> f32 {
+    let steps = [WHISPER, NORMAL, SHOUT, NORMAL];
+    let at = time.max(0.0) / SWEEP_STEP;
+    let i = at as usize % steps.len();
+    let into = (at.fract() * SWEEP_STEP - SWEEP_HOLD).max(0.0) / (SWEEP_STEP - SWEEP_HOLD);
+    let ease = (into * into * (3.0 - 2.0 * into)) as f32;
+    let (from, to) = (steps[i], steps[(i + 1) % steps.len()]);
+    // nine wobbles a loop
+    let wobble = (time * std::f64::consts::TAU * 9.0 / 8.0).sin() as f32;
+    from + (to - from) * ease + 0.01 * wobble
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_glow_sweep_covers_whisper_to_shout_without_a_jump() {
+        use crate::ui::nameplate::overdrive;
+        let levels: Vec<f32> = (0..=1600).map(|i| voice_sweep(i as f64 / 100.0)).collect();
+        // always speaking, from a whisper to past the overdriven level
+        assert!(levels.iter().all(|&l| l > aurora_voice::SPEAKING_AUDIO_LEVEL));
+        assert!(levels.iter().any(|&l| l < WHISPER + 0.02) && levels.iter().any(|&l| overdrive(l) > 0.9));
+        assert!(levels.iter().filter(|&&l| overdrive(l) > 0.0).count() < levels.len() / 2);
+        for w in levels.windows(2) {
+            assert!((w[1] - w[0]).abs() < 0.01, "{w:?}");
+        }
+        // eight seconds a loop
+        assert!((voice_sweep(1.0) - voice_sweep(9.0)).abs() < 1e-3);
+    }
 
     #[test]
     fn the_cycle_alternates_the_two_sets() {

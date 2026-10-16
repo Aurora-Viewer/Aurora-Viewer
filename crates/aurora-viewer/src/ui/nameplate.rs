@@ -453,11 +453,17 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
 pub struct VoiceEnvelope {
     pub gate: f32,
     pub level: f32,
+    /// 0..1: how far past the overdriven level the voice goes, smoothed
+    /// like the level (`overdrive`).
+    pub heat: f32,
 }
 
 const VOICE_ATTACK: f32 = 0.04;
 const VOICE_RELEASE: f32 = 0.28;
 const GATE_RELEASE: f32 = 0.22;
+/// Raw level over the overdriven one at which a plate is fully red: about
+/// 6 dB, so that the color slides instead of switching.
+const OVERDRIVE_SPAN: f32 = 0.03;
 
 /// Raw participant level (what `aurora_voice` reports) to 0..1 over the
 /// range a voice really covers, as the classic tag's outline.
@@ -470,7 +476,29 @@ pub fn voice_level(raw: f32) -> f32 {
     }
 }
 
+/// How far a raw participant level goes past the overdriven level (0..1):
+/// 0 up to it, 1 one `OVERDRIVE_SPAN` above. The speaking indicator of the
+/// Legacy Viewer turns red above LLVoiceClient::OVERDRIVEN_POWER_LEVEL
+/// (RED_THRESHOLD of llvoicevisualizer.cpp, llspeakers.cpp); on WebRTC's
+/// participant scale that point is `voice_tag::LEVEL_MAX` (its 0.7 is out
+/// of reach, see there).
+pub fn overdrive(raw: f32) -> f32 {
+    if raw.is_finite() {
+        ((raw - super::voice_tag::LEVEL_MAX) / OVERDRIVE_SPAN).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 impl VoiceEnvelope {
+    /// One frame later (`dt` seconds), from the raw participant level.
+    pub fn update_raw(&mut self, raw: f32, speaking: bool, dt: f32) {
+        let target = if speaking { overdrive(raw) } else { 0.0 };
+        let tau = if target > self.heat { VOICE_ATTACK } else { VOICE_RELEASE };
+        self.heat += (target - self.heat) * (1.0 - (-dt / tau).exp());
+        self.update(voice_level(raw), speaking, dt);
+    }
+
     /// One frame later (`dt` seconds): `level` is 0..1 (`voice_level`).
     pub fn update(&mut self, level: f32, speaking: bool, dt: f32) {
         let toward = |value: f32, target: f32, tau: f32| value + (target - value) * (1.0 - (-dt / tau).exp());
@@ -492,17 +520,21 @@ impl VoiceEnvelope {
         (self.gate > 0.0).then_some(Halo {
             level: self.level,
             gate: self.gate,
+            heat: self.heat,
         })
     }
 }
 
-/// How loud a speaking plate shines: the smoothed level and the gate, both
-/// 0..1. `paint::voice_light` turns it into lights for the plate's size.
+/// How loud a speaking plate shines: the smoothed level, the gate and the
+/// overdrive, all 0..1. `paint::voice_light` turns it into lights for the
+/// plate's size.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Halo {
     pub level: f32,
     /// 0..1: how far the plate has lit up (the outline turned green).
     pub gate: f32,
+    /// 0..1: how far past the overdriven level (`overdrive`), red at 1.
+    pub heat: f32,
 }
 
 /// The look of a speaking plate. Temporary: the variants are compared live
@@ -516,24 +548,48 @@ pub enum GlowStyle {
     Aura,
     /// A thin green ring a few points away from the plate, over a soft
     /// glow: it closes in when the voice starts and opens with its level.
-    #[default]
     Ring,
+    /// The ring with a much wider range, so that the voice's intensity
+    /// reads at a glance: a whisper is a faint hairline hugging the plate
+    /// with almost no glow, a normal voice the `Ring`, a shout a thick
+    /// bright ring pushed out with a wide glow, turning red past the
+    /// overdriven level as the Legacy Viewer's speaking indicator does.
+    #[default]
+    RingLoud,
     /// The lit rim, and rings rising from the plate as the voice goes on.
     Ripple,
 }
 
-const GLOW_STYLES: [GlowStyle; 4] = [GlowStyle::Thin, GlowStyle::Aura, GlowStyle::Ring, GlowStyle::Ripple];
+impl GlowStyle {
+    fn name(self) -> &'static str {
+        match self {
+            GlowStyle::Thin => "thin",
+            GlowStyle::Aura => "aura",
+            GlowStyle::Ring => "ring",
+            GlowStyle::RingLoud => "ring-loud",
+            GlowStyle::Ripple => "ripple",
+        }
+    }
+}
+
+const GLOW_STYLES: [GlowStyle; 5] = [
+    GlowStyle::Thin,
+    GlowStyle::Aura,
+    GlowStyle::Ring,
+    GlowStyle::RingLoud,
+    GlowStyle::Ripple,
+];
 /// Seconds each look lasts with AURORA_DEMO_VOICE_GLOW=cycle.
 const GLOW_CYCLE: f64 = 4.0;
 
 /// The look of the speaking plates at `now` (seconds of the interface's
-/// clock): AURORA_DEMO_VOICE_GLOW=thin|aura|ring|ripple, or `cycle` to go
-/// from one to the next; the default otherwise.
+/// clock): AURORA_DEMO_VOICE_GLOW=thin|aura|ring|ring-loud|ripple, or
+/// `cycle` to go from one to the next; the default otherwise.
 pub fn glow_style(now: f64) -> GlowStyle {
     static CHOSEN: std::sync::OnceLock<Option<Option<GlowStyle>>> = std::sync::OnceLock::new();
     let chosen = CHOSEN.get_or_init(|| {
         let name = std::env::var("AURORA_DEMO_VOICE_GLOW").ok()?;
-        Some(GLOW_STYLES.into_iter().find(|s| format!("{s:?}").eq_ignore_ascii_case(name.trim())))
+        Some(GLOW_STYLES.into_iter().find(|s| s.name().eq_ignore_ascii_case(name.trim())))
     });
     match chosen {
         None => GlowStyle::default(),
@@ -720,7 +776,7 @@ impl Plates {
                 entry.changed = now;
             }
             match tag.voice {
-                Some((raw, speaking)) => entry.voice.update(voice_level(raw), speaking, dt),
+                Some((raw, speaking)) => entry.voice.update_raw(raw, speaking, dt),
                 None => entry.voice = VoiceEnvelope::default(),
             }
             // the blur comes and goes over the level's ease, not in one frame
