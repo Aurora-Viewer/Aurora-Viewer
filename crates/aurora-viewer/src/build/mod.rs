@@ -40,7 +40,7 @@ use geom::Cam;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// LL_PCODE_* / FLAGS_CREATE_SELECTED of object updates (llprimitive.h).
@@ -130,6 +130,18 @@ pub struct BuildSettings {
 #[cfg(test)]
 mod worn_tests;
 
+/// LLManipTranslate / Rotate / Scale::canAffectSelection (Firestorm): the
+/// simulator's effective flags apply before any local transform. Moving a
+/// whole no-modify object is allowed; linked edits and stretching need Modify.
+/// LLViewerObject::permMove / permModify inherit the root's effective flags.
+pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) -> bool {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let Some(root) = world.objects.get(root_of(world, idx)) else {
+        return false;
+    };
+    root.update_flags & OBJECT_MOVE != 0 && (!(linked || mode == EditMode::Stretch) || root.update_flags & OBJECT_MODIFY != 0)
+}
+
 /// LLSelectMgr::highlightObjectAndFamily for the objects of ForceObjectSelect:
 /// each one's linkset, its root first.
 fn land_highlighted(world: &World) -> Vec<(usize, bool)> {
@@ -199,7 +211,7 @@ mod hud_tests {
         tool.set_transform(&mut world, &settings, Some(position), None, None, true);
         assert_eq!(world.objects.get(child).unwrap().position, before);
         assert!(tool.out.is_empty());
-        world.objects.get_mut(child).unwrap().update_flags |= OBJECT_MODIFY;
+        world.objects.get_mut(root).unwrap().update_flags |= OBJECT_MODIFY;
         tool.set_transform(&mut world, &settings, Some(position), None, None, true);
         assert!(world.objects.get(child).unwrap().position.abs_diff_eq(position, 1e-5));
         assert_eq!(tool.out.len(), 1);
@@ -459,6 +471,8 @@ pub struct BuildTool {
     pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
+    /// Ordered link instruction awaiting confirmed simulator parents.
+    pending_link: Option<(Vec<Uuid>, Instant)>,
     /// ObjectProperties of selected objects.
     pub props: HashMap<Uuid, ObjectProps>,
     pub cam: Cam,
@@ -509,6 +523,7 @@ impl Default for BuildTool {
             next_tag: 1,
             menu_selection: false,
             selection_linked: false,
+            pending_link: None,
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
@@ -639,8 +654,11 @@ pub fn highlighted_of(world: &World, selection: &[ObjKey], linked: bool) -> Vec<
             let root = root_of(world, idx) == idx;
             out.push((idx, root));
         } else {
-            for (i, p) in family(world, idx).into_iter().enumerate() {
-                out.push((p, i == 0));
+            let root = root_of(world, idx);
+            for p in family(world, root) {
+                if !out.iter().any(|(i, _)| *i == p) {
+                    out.push((p, p == root));
+                }
             }
         }
     }
@@ -968,9 +986,35 @@ impl BuildTool {
         self.select_type(world) != SelectType::World
     }
 
+    fn advance_link(&mut self, world: &mut World, now: Instant) {
+        if let Some((members, started)) = &self.pending_link {
+            if let Some(root) = members.first()
+                && world.objects.remember_link_order(*root, &members[1..])
+            {
+                self.status = aurora_i18n::tr!("build-mod-objects-linked", value0 = format!("{}", members.len()));
+                self.pending_link = None;
+                self.costs_stale();
+            } else if now.saturating_duration_since(*started) > Duration::from_secs(30) {
+                self.pending_link = None;
+                self.status = aurora_i18n::tr!("build-link-unconfirmed").into();
+            }
+        }
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, now: Instant) {
+        // Parent changes are authoritative only after simulator object updates.
+        // Former roots become one whole-object selection after a successful link.
+        if !self.selection_linked
+            && self
+                .selection
+                .iter()
+                .any(|key| world.objects.index_of(key).is_some_and(|i| root_of(world, i) != i))
+        {
+            let roots = self.roots(world);
+            self.selection = roots.into_iter().filter_map(|i| world.objects.get(i).map(|o| o.key)).collect();
+        }
         self.selection.retain(|k| world.objects.index_of(k).is_some());
         if !self.selection.is_empty()
             && !self.attachment_selected(world)
@@ -1170,8 +1214,19 @@ impl BuildTool {
         }
         let Some((handle, _)) = first else { return };
         let ids: Vec<u32> = roots.iter().filter_map(|&r| world.objects.get(r).map(|o| o.key.local_id)).collect();
+        // New children precede the root's existing children (ObjectLink).
+        // Retain this instruction only after all simulator parents agree,
+        // so reordered UDP packets cannot redefine the newly created links.
+        let mut expected = vec![roots[0]];
+        expected.extend(roots.iter().skip(1).flat_map(|&r| family(world, r)));
+        expected.extend(family(world, roots[0]).into_iter().skip(1));
+        let members = expected
+            .into_iter()
+            .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
+            .collect();
+        self.pending_link = Some((members, Instant::now()));
         self.send(BuildCmd::Link { handle, local_ids: ids });
-        self.status = aurora_i18n::tr!("build-mod-objects-linked", value0 = format!("{}", roots.len()));
+        self.status = aurora_i18n::tr!("build-link-pending").into();
         self.costs_stale();
     }
 
@@ -1331,6 +1386,7 @@ impl BuildTool {
         self.last_frame = Some(now);
         self.update_replacement(world, now);
         self.advance_bulk_permissions(world, now);
+        self.advance_link(world, now);
         if !self.open {
             return;
         }
@@ -1829,6 +1885,10 @@ impl BuildTool {
     ) {
         let Some(key) = self.selection.first().copied() else { return };
         let Some(idx) = world.objects.index_of(&key) else { return };
+        let mode = if size.is_some() { EditMode::Stretch } else { EditMode::Move };
+        if !can_transform(world, idx, s.edit_linked, mode) {
+            return;
+        }
         let now = Instant::now();
         let Some((wp, wr, _)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {
             return;
@@ -1846,14 +1906,6 @@ impl BuildTool {
                 p
             }
         });
-        if local {
-            let flags = world.objects.get(root_of(world, idx)).map_or(0, |o| o.update_flags);
-            if flags & crate::ui::context::flags::OBJECT_MOVE == 0
-                || ((s.edit_linked || size.is_some()) && o.update_flags & crate::ui::context::flags::OBJECT_MODIFY == 0)
-            {
-                return;
-            }
-        }
         let Some(off) = world.region_offset(o.key.region) else { return };
         let parent = edit_parent(world, idx, now);
         let position_scale = world.hud_position_scale(idx);

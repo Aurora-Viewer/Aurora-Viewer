@@ -25,6 +25,19 @@ const ARC_HOT: f32 = 16.0;
 /// (they are fully lit while dragged).
 const LIT_HOVER: f32 = 0.7;
 
+/// Test the painted handles at the event's position, including their grip
+/// outside the area. egui's area hit test and pointer still describe the last
+/// frame when winit delivers a move followed by a press before the next frame.
+pub(super) fn contains_pointer(ctx: &Context, pos: Pos2) -> bool {
+    let layers = ctx.memory(|memory| memory.areas().visible_layer_ids());
+    layers.into_iter().any(|layer| {
+        Edge::ALL.into_iter().any(|edge| {
+            ctx.read_response(edge.id(layer.id))
+                .is_some_and(|response| response.enabled() && response.interact_rect.contains(pos))
+        })
+    })
+}
+
 #[derive(Clone, Copy)]
 enum Edge {
     Left,
@@ -403,6 +416,58 @@ mod tests {
                 modifiers: Default::default(),
             }]);
             self.show(vec![])
+        }
+    }
+
+    #[test]
+    fn construction_resize_grips_block_world_events_before_the_next_ui_frame() {
+        for edge in Edge::ALL {
+            let mut fixture = Fixture {
+                ctx: Context::default(),
+                frame: 0,
+                content_width: 0.0,
+            };
+            let mut rect = fixture.show(vec![]);
+            for _ in 0..8 {
+                rect = fixture.show(vec![]);
+            }
+            let world = egui::pos2(80.0, 80.0);
+            fixture.show(vec![egui::Event::PointerMoved(world)]);
+            assert!(!crate::ui::widgets::pointer_over_ui(&fixture.ctx, world));
+            let mut grip = rect.center();
+            if edge.left() {
+                grip.x = rect.left() - 2.0;
+            }
+            if edge.right() {
+                grip.x = rect.right() + 2.0;
+            }
+            if edge.top() {
+                grip.y = rect.top() - 2.0;
+            }
+            if edge.bottom() {
+                grip.y = rect.bottom() + 2.0;
+            }
+            assert!(!rect.contains(grip));
+            assert!(!fixture.ctx.is_pointer_over_egui(), "egui still has the previous world position");
+            assert!(
+                crate::ui::widgets::pointer_over_ui(&fixture.ctx, grip),
+                "edge {} leaks its press",
+                edge as u8
+            );
+            fixture.press(grip);
+            let target = grip + egui::vec2(60.0, 45.0);
+            fixture.show(vec![egui::Event::PointerMoved(target)]);
+            assert!(
+                crate::ui::widgets::pointer_over_ui(&fixture.ctx, target),
+                "resize must retain capture"
+            );
+            fixture.release(target);
+            fixture.show(vec![egui::Event::PointerMoved(world)]);
+            fixture.show(vec![]);
+            assert!(
+                !crate::ui::widgets::pointer_over_ui(&fixture.ctx, world),
+                "world clicks resume after the release"
+            );
         }
     }
 

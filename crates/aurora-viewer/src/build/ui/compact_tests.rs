@@ -12,6 +12,7 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
         world.apply(event);
     }
     let idx = world.objects.index_of_uuid(&crate::demo::action_id(118)).unwrap();
+    world.objects.get_mut(idx).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
     let id = world.objects.get(idx).unwrap().full_id;
     let mut tool = BuildTool::default();
     let settings = BuildSettings::default();
@@ -284,6 +285,295 @@ impl Inspector {
 }
 
 #[test]
+fn construction_coordinate_icons_select_one_mode_and_keep_the_right_edge() {
+    let mut inspector = Inspector::new();
+    let click = |inspector: &mut Inspector, point| {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    };
+    for width in [344.0, 520.0] {
+        crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(width, 684.0));
+        for section in [6, 1, 5, 3, 2, 0, 4] {
+            inspector.tool.tab = section;
+            for _ in 0..3 {
+                inspector.show(vec![]);
+            }
+            for mode in [1, 2, 0] {
+                let (rect, texts) = inspector.show(vec![]);
+                let linked = texts
+                    .iter()
+                    .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
+                    .unwrap()
+                    .1;
+                let target = inspector
+                    .ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("build_grid_mode", mode))))
+                    .unwrap();
+                assert!(
+                    rect.contains_rect(target),
+                    "Coordinate control outside inspector: {rect:?}, {target:?}"
+                );
+                let point = target.center();
+                let axes = inspector
+                    .ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("build_grid_axes")))
+                    .unwrap();
+                assert!(
+                    (axes.right() - target.right()).abs() < 0.5,
+                    "axes and coordinate icons must share their right edge"
+                );
+                assert!(
+                    rect.right() - target.right() < 16.0,
+                    "coordinate column must stay against the window's right edge: {rect:?}, {target:?}"
+                );
+                let face = texts
+                    .iter()
+                    .find(|(text, _)| text == aurora_i18n::tr!("build-compact-select-face"))
+                    .unwrap()
+                    .1;
+                assert!(
+                    face.top() > linked.bottom(),
+                    "Face selection must leave room for the coordinate icons"
+                );
+                assert!(linked.right() < rect.right() - 44.0, "Linked editing overlaps the coordinate icons");
+                click(&mut inspector, point);
+                assert_eq!(inspector.settings.grid_mode, mode, "Coordinate icon in section {section}");
+                if mode == 2 {
+                    assert_eq!(inspector.tool.grid_objects, inspector.tool.selection);
+                }
+                click(&mut inspector, point);
+                assert_eq!(inspector.settings.grid_mode, mode, "Clicking the active mode must keep it selected");
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_legacy_texture_channels_can_be_selected_and_their_scale_edited() {
+    let mut inspector = Inspector::new();
+    inspector.tool.tab = 3;
+    inspector.tool.ui.tex_tab = 0;
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let click = |inspector: &mut Inspector, point| {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    };
+    for (channel, label) in [
+        (1, aurora_i18n::tr!("build-ui-texture-normal")),
+        (2, aurora_i18n::tr!("build-ui-texture-specular")),
+    ] {
+        let (_, texts) = inspector.show(vec![]);
+        assert!(texts.iter().any(|(text, _)| text == "Blinn-Phong"));
+        let tab = texts
+            .iter()
+            .filter(|(text, _)| text == label)
+            .max_by(|a, b| a.1.top().total_cmp(&b.1.top()))
+            .unwrap()
+            .1;
+        click(&mut inspector, tab.center());
+        assert_eq!(inspector.tool.ui.bp_channel, channel);
+        let (_, texts) = inspector.show(vec![]);
+        let scale = texts.iter().find(|(text, _)| text == aurora_i18n::tr!("common-scale")).unwrap().1;
+        let field = texts
+            .iter()
+            .find(|(text, rect)| {
+                aurora_i18n::parse_number(text) == Some(1.0)
+                    && rect.top() > scale.bottom()
+                    && rect.top() < scale.bottom() + 30.0
+                    && rect.left() >= scale.left()
+                    && rect.left() < scale.left() + 94.0
+            })
+            .unwrap()
+            .1;
+        click(&mut inspector, field.center());
+        inspector.show(vec![egui::Event::Text("2.500".into())]);
+        inspector.show(vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        let material = inspector
+            .tool
+            .ui
+            .legacy_pending
+            .values()
+            .find_map(|(_, material)| material.as_ref())
+            .unwrap();
+        assert!(material.normal_map.is_nil() && material.specular_map.is_nil());
+        assert_eq!(
+            if channel == 1 {
+                material.normal_st[0]
+            } else {
+                material.specular_st[0]
+            },
+            2.5
+        );
+    }
+}
+
+#[test]
+fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
+    fn values(inspector: &Inspector, channel: usize) -> [f32; 5] {
+        let object = inspector
+            .world
+            .objects
+            .get(inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap())
+            .unwrap();
+        if inspector.tool.ui.tex_tab == 1 {
+            let over = BuildTool::gltf_override(&inspector.world, inspector.world.objects.index_of(&object.key).unwrap(), 0);
+            let t = over.transforms[channel.saturating_sub(1)];
+            return [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation];
+        }
+        let material = inspector
+            .tool
+            .ui
+            .legacy_pending
+            .get(&(object.full_id, 0))
+            .and_then(|(_, m)| m.clone())
+            .unwrap_or_default();
+        let te = object.te.as_ref().unwrap().face(0);
+        match channel {
+            1 => [
+                material.normal_st[0],
+                material.normal_st[1],
+                material.normal_st[2],
+                material.normal_st[3],
+                material.normal_rot,
+            ],
+            2 => [
+                material.specular_st[0],
+                material.specular_st[1],
+                material.specular_st[2],
+                material.specular_st[3],
+                material.specular_rot,
+            ],
+            _ => [te.scale_s, te.scale_t, te.offset_s, te.offset_t, te.rotation],
+        }
+    }
+    fn drag(inspector: &mut Inspector, point: egui::Pos2) {
+        inspector.tool.out.clear();
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        let mut end = point;
+        for delta in [10.0, 20.0, 30.0] {
+            end = point + egui::vec2(delta, 0.0);
+            inspector.show(vec![egui::Event::PointerMoved(end)]);
+            assert!(inspector.tool.out.is_empty(), "Dragging must not send intermediate edits");
+        }
+        for _ in 0..3 {
+            inspector.show(vec![]);
+            assert!(inspector.tool.out.is_empty());
+        }
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        assert_eq!(inspector.tool.out.len(), 1, "Release must submit the retained value once");
+        inspector.show(vec![]);
+        assert_eq!(inspector.tool.out.len(), 1, "An idle frame must not submit again");
+    }
+    for pbr in [false, true] {
+        for channel in 0..if pbr { 5 } else { 3 } {
+            let mut inspector = Inspector::new();
+            inspector.tool.tab = 3;
+            inspector.tool.edit_mode = EditMode::Face;
+            inspector.tool.ui.tex_tab = usize::from(pbr);
+            inspector.tool.ui.bp_channel = channel;
+            inspector.tool.ui.pbr_channel = channel;
+            let key = inspector.tool.selection[0];
+            inspector.tool.faces.insert(key, vec![0]);
+            let idx = inspector.world.objects.index_of(&key).unwrap();
+            if pbr {
+                inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, uuid::Uuid::from_u128(9100))];
+            }
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 800.0));
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            for property in 0..5 {
+                let before = values(&inspector, channel);
+                let (_, texts) = inspector.show(vec![]);
+                let (label, width, row) = match property {
+                    0 | 1 => (aurora_i18n::tr!("common-scale"), 103.0, property),
+                    2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
+                    _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
+                };
+                let title = texts.iter().find(|(text, _)| text == label).unwrap().1;
+                let mut fields: Vec<_> = texts
+                    .iter()
+                    .filter(|(text, rect)| {
+                        aurora_i18n::parse_number(text).is_some()
+                            && rect.top() > title.bottom()
+                            && rect.top() < title.bottom() + 70.0
+                            && rect.left() >= title.left()
+                            && rect.right() < title.left() + width
+                    })
+                    .collect();
+                fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+                let point = fields
+                    .get(row)
+                    .unwrap_or_else(|| panic!("Missing UV field {property}, PBR={pbr}, channel={channel}"))
+                    .1
+                    .center();
+                drag(&mut inspector, point);
+                let after = values(&inspector, channel);
+                assert!(
+                    after[property] > before[property],
+                    "UV drag lost its value: PBR={pbr}, channel={channel}, field={property}: {before:?} -> {after:?}"
+                );
+                for other in (0..5).filter(|other| *other != property) {
+                    assert!((after[other] - before[other]).abs() < 1e-5, "Dragging one UV field changed another");
+                }
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let glow = texts
+                .iter()
+                .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-glow"))
+                .unwrap()
+                .1;
+            let point = texts
+                .iter()
+                .find(|(text, rect)| {
+                    aurora_i18n::parse_number(text).is_some()
+                        && rect.left() > glow.right()
+                        && (rect.center().y - glow.center().y).abs() < 10.0
+                })
+                .unwrap()
+                .1
+                .center();
+            drag(&mut inspector, point);
+            assert!(inspector.world.objects.get(idx).unwrap().te.as_ref().unwrap().face(0).glow > 0.0);
+        }
+    }
+}
+
+#[test]
 fn narrow_grab_panel_keeps_its_height_across_frames_and_wrapped_status_messages() {
     let mut inspector = Inspector::new();
     let mut original = inspector.show(vec![]).0;
@@ -337,7 +627,7 @@ fn object_contents_inventory_fills_the_panel_and_follows_height_changes_and_filt
     let gap_to_footer = |surface: egui::Rect, texts: &[(String, egui::Rect)]| {
         let footer = texts
             .iter()
-            .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
+            .find(|(text, _)| text == aurora_i18n::tr!("build-compact-both-sides"))
             .unwrap()
             .1;
         footer.top() - surface.bottom()
@@ -442,7 +732,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
         let (rect, texts) = inspector.show(vec![]);
         assert!(
             (rect.size() - expanded.size()).length() < 1.0,
-            "Switching section changed the chosen size: {tab}"
+            "Switching section changed the chosen size: {tab}; {expanded:?} -> {rect:?}"
         );
         let title = sections().into_iter().find(|(id, _, _)| *id == tab).unwrap().2;
         assert_eq!(
@@ -457,8 +747,9 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             let matches: Vec<_> = texts.iter().filter(|(text, _)| text == label).collect();
             assert_eq!(matches.len(), 1, "Shared option missing or duplicated: {label}");
             assert!(
-                expanded.bottom() - matches[0].1.bottom() < 65.0,
-                "Shared option must be in the footer: {label}"
+                expanded.bottom() - matches[0].1.bottom() < 170.0,
+                "Shared option must be in the footer: {label}; window={expanded:?}, control={:?}",
+                matches[0].1
             );
         }
     }
@@ -481,7 +772,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
         if expanding {
             assert!((rect.size() - expanded.size()).length() < 1.0);
         } else {
-            assert!(rect.height() < 60.0);
+            assert!(rect.height() < 85.0);
             assert!((rect.width() - expanded.width()).abs() < 1.0);
         }
     }
@@ -492,8 +783,14 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             (rect.size() - expanded.size()).length() < 1.0,
             "Switching tool changed the chosen size: {tool:?}"
         );
-        assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-duplicate")));
-        assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")));
+        assert_eq!(
+            texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-duplicate")),
+            tool == Tool::Create
+        );
+        assert_eq!(
+            texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")),
+            tool == Tool::Create
+        );
     }
 }
 

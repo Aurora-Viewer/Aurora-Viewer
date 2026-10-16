@@ -24,6 +24,12 @@ impl Edit {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SpinnerDrag {
+    widget: egui::Id,
+    value: f32,
+}
+
 pub fn label(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
     ui.label(RichText::new(t).size(12.0).color(p.muted))
 }
@@ -80,6 +86,19 @@ pub fn spin_with_min_decimals(
     tentative: bool,
     min_decimals: usize,
 ) -> Edit {
+    // Commit-only fields are read from the object again each frame. Keep the
+    // gesture's value until release, without sending intermediate server edits.
+    let draft_id = ui.next_auto_id().with("build_spinner_drag");
+    let draft = ui
+        .data_mut(|data| {
+            let draft = data.get_temp::<SpinnerDrag>(draft_id);
+            data.remove::<SpinnerDrag>(draft_id);
+            draft
+        })
+        .filter(|draft| ui.is_enabled() && (ui.ctx().is_being_dragged(draft.widget) || ui.ctx().drag_stopped_id() == Some(draft.widget)));
+    if let Some(draft) = draft {
+        *v = draft.value;
+    }
     // Firestorm's spinner modifiers: Alt ×10, Ctrl ×0.1, Shift ×0.01
     let m = ui.input(|i| i.modifiers);
     let speed = increment
@@ -95,15 +114,31 @@ pub fn spin_with_min_decimals(
         };
     let mut dv = egui::DragValue::new(v)
         .speed(speed)
-        .range(range)
+        .range(range.clone())
         .custom_parser(aurora_i18n::parse_number)
         .max_decimals(decimals)
         .min_decimals(min_decimals.min(decimals));
     if tentative {
         dv = dv.custom_formatter(|_, _| "—".into());
     }
-    let r = ui.add_sized([width, 26.0], dv);
-    let mut e = Edit::default();
+    let (r, step) = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let r = ui.add_sized([(width - 13.0).max(16.0), 26.0], dv);
+            let step = crate::ui::widgets::step_buttons(ui, 26.0);
+            (r, step)
+        })
+        .inner;
+    if step != 0 {
+        *v = (*v + increment * step as f32).clamp(*range.start(), *range.end());
+    }
+    if r.dragged() {
+        ui.data_mut(|data| data.insert_temp(draft_id, SpinnerDrag { widget: r.id, value: *v }));
+    }
+    let mut e = Edit {
+        changed: step != 0,
+        commit: step != 0,
+    };
     if r.changed() {
         e.changed = true;
         if !r.dragged() {
@@ -111,6 +146,7 @@ pub fn spin_with_min_decimals(
         }
     }
     if r.drag_stopped() {
+        e.changed |= draft.is_some();
         e.commit = true;
     }
     e
@@ -118,16 +154,25 @@ pub fn spin_with_min_decimals(
 
 /// Integer spinner.
 pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i32>, width: f32) -> Edit {
-    let r = ui.add_sized(
-        [width, 19.0],
-        egui::DragValue::new(v)
-            .custom_parser(aurora_i18n::parse_number)
-            .speed(0.25)
-            .range(range),
-    );
+    let (r, step) = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let r = ui.add_sized(
+                [(width - 13.0).max(16.0), 26.0],
+                egui::DragValue::new(&mut *v)
+                    .custom_parser(aurora_i18n::parse_number)
+                    .speed(0.25)
+                    .range(range.clone()),
+            );
+            (r, crate::ui::widgets::step_buttons(ui, 26.0))
+        })
+        .inner;
+    if step != 0 {
+        *v = v.saturating_add(step as i32).clamp(*range.start(), *range.end());
+    }
     Edit {
-        changed: r.changed(),
-        commit: (r.changed() && !r.dragged()) || r.drag_stopped(),
+        changed: r.changed() || step != 0,
+        commit: step != 0 || (r.changed() && !r.dragged()) || r.drag_stopped(),
     }
 }
 
@@ -305,6 +350,61 @@ pub fn same<T: PartialEq + Copy>(mut it: impl Iterator<Item = T>) -> (Option<T>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn increment_buttons_commit_clamp_and_inherit_disabled_state() {
+        let ctx = egui::Context::default();
+        let mut value = 0.95;
+        let mut step_at = egui::Pos2::ZERO;
+        let mut show = |events: Vec<egui::Event>, enabled| {
+            let mut result = Edit::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.add_enabled_ui(enabled, |ui| {
+                        step_at = ui.cursor().min + egui::vec2(63.5, 6.5);
+                        result = spin(ui, &mut value, 0.1, 0.0..=1.0, 3, 70.0, false);
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (value, result, step_at)
+        };
+        let (_, _, point) = show(vec![], true);
+        show(vec![egui::Event::PointerMoved(point)], true);
+        for pressed in [true, false] {
+            let (value, result, _) = show(
+                vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }],
+                true,
+            );
+            if !pressed {
+                assert_eq!(value, 1.0);
+                assert!(result.changed && result.commit);
+            }
+        }
+        for pressed in [true, false] {
+            let (value, result, _) = show(
+                vec![egui::Event::PointerButton {
+                    pos: point + egui::vec2(0.0, 13.0),
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }],
+                false,
+            );
+            assert_eq!(value, 1.0);
+            assert!(!result.changed && !result.commit);
+        }
+    }
 
     #[test]
     fn srgb_round_trip() {
