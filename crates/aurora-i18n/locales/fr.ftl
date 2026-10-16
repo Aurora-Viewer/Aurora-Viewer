@@ -510,6 +510,59 @@ notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = Cette note ou son objet n’est plus disponible.
 notecard-task-demo-title = Note dans un objet
 notecard-save-button = Enregistrer (Ctrl+S)
+notecard-view-classic = Classique
+notecard-view-markdown = Markdown
+notecard-view-source = Éditer
+notecard-source-heading = Texte brut
+notecard-preview-heading = Aperçu Markdown
+notecard-format-bold = Gras
+notecard-format-italic = Italique
+notecard-format-strike = Barré
+notecard-format-code = Code
+notecard-format-link = Lien
+notecard-format-heading = Titre
+notecard-format-bullet = Liste
+notecard-format-ordered = Liste num.
+notecard-format-quote = Citation
+notecard-format-code-block = Bloc de code
+notecard-format-lsl = LSL
+notecard-format-placeholder = texte
+notecard-format-hint = Dans le texte brut, sélectionnez du texte puis un format, ou insérez un modèle sans sélection.
+notecard-markdown-help = Aide Markdown
+notecard-markdown-help-code = Utilisez un bloc ```lsl pour retrouver les couleurs de l’éditeur de scripts. Dans Éditer : Tab indente, Maj+Tab désindente, Entrée reprend l’indentation du code LSL et les accolades fermantes s’alignent. Ctrl+K commente les lignes LSL sélectionnées ; Ctrl+Maj+K ajoute ou retire un commentaire de bloc. Le texte collé reste inchangé.
+notecard-markdown-help-intro = Les boutons modifient le texte brut et l’aperçu suit vos changements. Recliquez pour retirer un style, un titre, une liste ou une citation. Ctrl+Z annule, Ctrl+Y rétablit.
+notecard-markdown-help-extra = Titres : de # à ######. Séparez les paragraphes par une ligne vide. Pour un tableau, utilisez des colonnes séparées par | et une ligne d’en-tête comme | --- | --- |. Les images affichent leur texte alternatif ; le HTML reste du texte. Les pièces jointes sont conservées à la sauvegarde (Ctrl+S).
+notecard-markdown-demo =
+    # Bienvenue dans Aurora
+    Une note avec du **gras**, de l’*italique*, du ~~barré~~ et du `code`.
+
+    ## Vos notes
+    - Conserver le texte original en changeant d’affichage.
+    - Enregistrer depuis chaque vue avec **Ctrl+S**.
+
+    > Les pièces jointes font toujours partie de la note.
+
+    { "[" }Aurora Viewer](https://auroraviewer.com)
+
+    ```text
+    Un bloc de code brut
+    ```
+notecard-lsl-demo =
+    # LSL dans une note
+    Utilisez le bouton **LSL**, puis écrivez comme dans l’éditeur de scripts.
+
+    ```lsl
+    default
+    { "{" }
+        state_entry()
+    { "    {" }
+            // Couleurs et indentation LSL
+            integer count = 2;
+            vector tint = <1.0, 0.5, 0.0>;
+            llSay(PUBLIC_CHANNEL, "Bonjour 🐺");
+    { "    }" }
+    { "}" }
+    ```
 inventory-preview-busy = Trop de documents sont en cours de chargement. Réessayez dans un instant.
 inventory-preview-timeout = Le chargement du document a expiré. Rouvrez-le pour réessayer.
 notecard-text-too-large = Une note ne peut pas dépasser 65 536 octets de texte.

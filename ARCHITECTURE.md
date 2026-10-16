@@ -95,6 +95,33 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/inventory/markdown.rs` provides each inventory/object notecard's Classic,
+Markdown and split Edit views. Classic retains Firestorm's plain proportional
+text with embedded inventory. CommonMark is parsed once per source change on
+the worker pool and displayed as a selectable, read-only rich text editor.
+Edit places the raw source on the left and its live Markdown preview on the
+right, with independent scroll areas and a common save footer.
+`InventoryPreferences::notecard_view` persists the last explicit tab choice
+for inventory and object notes. New document windows inherit it on first
+display; existing windows retain their own mode and draft. Old settings
+without the preference start in Classic.
+`ui/inventory/markdown/formatting.rs` adds the Edit toolbar and syntax help;
+formatting transforms the source selection, preserves Unicode and embedded
+markers, and records one native undo step per action. The latest
+ready preview remains visible while a changed draft is being parsed;
+the existing embedded-item renderer keeps attachment actions in every view.
+All modes share the original source draft and permission-aware save lifecycle
+in `ui/inventory/document.rs`; formatted text never enters the asset encoder.
+`ui/inventory/markdown/code.rs` maps fenced LSL tokens back to the exact source
+and formatted preview. The document worker uses the script editor's lexer;
+drawing resolves the same current skin/custom script colors. Edit reuses
+`ui/scripts/indent.rs` and its selection commands, with LSL scopes for comment
+shortcuts, automatic indentation and brace matching. Tab stops and multiline
+Tab/Shift+Tab work throughout the source; pasted text remains untouched.
+Code-block backgrounds use character ranges from the parser and the shaped
+text rows: one full-width surface per block, below native text/selection,
+including wrapped and empty rows. Inline code retains its glyph highlight.
+
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material

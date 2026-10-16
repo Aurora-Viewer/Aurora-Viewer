@@ -167,6 +167,7 @@ impl App {
         let keys: Vec<_> = self.task_notecards.keys().copied().collect();
         let mut saves = Vec::new();
         let mut embedded = Vec::new();
+        let notecard_view = self.settings.inventory.notecard_view;
         for (object, item) in keys {
             let metadata = self.task_notecard_item(object, item);
             let Some(d) = self.task_notecards.get_mut(&(object, item)) else {
@@ -192,6 +193,8 @@ impl App {
                 &mut d.state,
                 &self.world.inventory,
                 &self.ui_images,
+                &mut self.settings.inventory,
+                &self.settings.script_editor,
             ) {
                 if let InvAction::SaveContent { text, close, .. } = action {
                     saves.push((object, item, text, close));
@@ -205,6 +208,9 @@ impl App {
                     embedded.push((editor, notecard, marker, copy, object));
                 }
             }
+        }
+        if self.settings.inventory.notecard_view != notecard_view {
+            self.settings.save();
         }
         for (editor, notecard, marker, copy, object) in embedded {
             self.open_notecard_attachment(editor, notecard, marker, copy, object);
