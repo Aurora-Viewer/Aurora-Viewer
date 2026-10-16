@@ -1,6 +1,7 @@
 //! Attachment-driven grounding in a neutral pose. This extends Firestorm's
 //! manual LLFloaterHoverHeight / LLVOAvatarSelf::sendHoverHeight: animations
 //! never drive the estimate, and only rendered vertices with foot weights count.
+use super::meshes::MeshView;
 use super::{GpuGeom, Scene, anim, avatar::AvatarLibrary};
 use crate::world::World;
 use aurora_assets::{MeshFace, SkinInfo};
@@ -72,8 +73,7 @@ impl Default for AutoHover {
 
 enum Surface {
     Mesh {
-        data: Arc<Vec<u8>>,
-        skin: Option<Arc<SkinInfo>>,
+        mesh: MeshView,
         rigid: Option<Mat4>,
     },
     Geometry {
@@ -228,17 +228,19 @@ impl Scene {
                 if volume.is_mesh() {
                     if let Some(sculpt) = volume.sculpt {
                         sculpt.texture.hash(&mut hash);
-                        let (data, skin) = self.meshes.preview_source(&sculpt.texture);
-                        data.as_ref().map(|d| Arc::as_ptr(d) as usize).hash(&mut hash);
+                        // (once a level of detail is held: the blocks arrive one
+                        // by one, a new one changes the hash)
+                        let mesh = self.meshes.view(&sculpt.texture).filter(|m| m.lod_section(3).is_some());
+                        mesh.as_ref().map(|m| m.bytes.held()).hash(&mut hash);
+                        let skin = mesh.as_ref().and_then(|m| m.skin.clone());
                         skin.as_ref().map(|s| Arc::as_ptr(s) as usize).hash(&mut hash);
-                        if let Some(data) = data {
+                        if let Some(mesh) = mesh {
                             // Worn animesh has its own controller and does not
                             // deform with the avatar's feet.
                             let own_rig = skin.is_some() && Self::skeleton_owner(world, idx).is_some_and(|s| s.0 == world.agent_id);
                             if own_rig || (skin.is_none() && on_foot) {
                                 surfaces.push(Surface::Mesh {
-                                    data,
-                                    skin,
+                                    mesh,
                                     rigid: (!own_rig).then(|| model * Mat4::from_scale(object.visual_scale())),
                                 });
                             }
@@ -446,13 +448,11 @@ impl Estimate {
                             }
                         }
                     }
-                    Surface::Mesh { data, skin, rigid } => {
-                        let header = aurora_assets::parse_mesh_header(&data).map_err(|_| ())?;
-                        let lod = header.actual_lod(3).ok_or(())?;
-                        let range = header.lods[lod].ok_or(())?;
-                        let section = aurora_assets::mesh::section_bytes(&data, range).ok_or(())?;
+                    Surface::Mesh { mesh, rigid } => {
+                        // the finest level held (the high one, as LLVOAvatar reads)
+                        let section = mesh.lod_section(3).ok_or(())?;
                         let faces = aurora_assets::decode_mesh_lod(section).map_err(|_| ())?;
-                        if let Some(z) = mesh_min(&faces, skin.as_deref(), rigid, rig, &matrices) {
+                        if let Some(z) = mesh_min(&faces, mesh.skin.as_deref(), rigid, rig, &matrices) {
                             lower(&mut min, Vec3::Z * z);
                         }
                     }
@@ -717,7 +717,7 @@ mod tests {
         let lib = library();
         let mut scene = Scene::new(std::path::PathBuf::new(), lib.clone());
         crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
-        let (data, skin) = scene.meshes.preview_source(&crate::demo::auto_hover::MESH);
+        let mesh = scene.meshes.view(&crate::demo::auto_hover::MESH);
         let foot = lib.rig.default_world_inv[lib.rig.names["mFootLeft"]].inverse().w_axis.z;
         let estimate = Estimate {
             lib: lib.clone(),
@@ -727,8 +727,7 @@ mod tests {
             }),
             ground: foot,
             surfaces: vec![Surface::Mesh {
-                data: data.unwrap(),
-                skin,
+                mesh: mesh.unwrap(),
                 rigid: None,
             }],
         };
@@ -788,11 +787,10 @@ mod tests {
         scene.neutral_pose_test = Some(true);
         scene.update_poses(&mut world, Vec3::ZERO, now);
         settle(&mut scene, &mut world, now);
-        let (data, skin) = scene.meshes.preview_source(&crate::demo::auto_hover::MESH);
-        let data = data.unwrap();
-        let header = aurora_assets::parse_mesh_header(&data).unwrap();
-        let faces = aurora_assets::decode_mesh_lod(aurora_assets::mesh::section_bytes(&data, header.lods[3].unwrap()).unwrap()).unwrap();
-        let lowest = mesh_min(&faces, skin.as_deref(), None, &lib.rig, &scene.auto_hover.matrices).unwrap();
+        let mesh = scene.meshes.view(&crate::demo::auto_hover::MESH).unwrap();
+        let section = mesh.bytes.section(mesh.header.lods[3].unwrap()).unwrap();
+        let faces = aurora_assets::decode_mesh_lod(section).unwrap();
+        let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &scene.auto_hover.matrices).unwrap();
         let root = Scene::object_transform(&world, owner, now, 0).unwrap().0;
         let bottom_world = root.z - lib.pelvis.z + lowest;
         assert!(
@@ -1013,8 +1011,17 @@ mod tests {
             lib,
             ground: 0.0,
             surfaces: vec![Surface::Mesh {
-                data: Arc::new(vec![0xff; 4]),
-                skin: None,
+                mesh: MeshView {
+                    header: aurora_assets::MeshHeader {
+                        header_size: 0,
+                        lods: [Some((0, 4)); 4],
+                        skin: None,
+                        physics_convex: None,
+                        version: 1,
+                    },
+                    bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),
+                    skin: None,
+                },
                 rigid: Some(Mat4::IDENTITY),
             }],
         };

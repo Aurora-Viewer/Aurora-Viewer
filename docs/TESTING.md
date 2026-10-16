@@ -1555,8 +1555,8 @@ To check with these scenarios:
   front, and the loading must follow.
   - The log tells when half, nine tenths and all of what is in front after
     the turn showed, weighted by its size on screen (`demo arrival: front
-    50% shown after … s`; a texture counts once it shows its first pixels,
-    a mesh once its header is read), the same for everything around
+    50% shown after … s`; an object counts once its geometry is built and
+    its texture shows its first pixels), the same for everything around
     (`demo arrival: all …`), when the animations arrived (`demo arrival:
     animations …`), then the requests and megabytes served (`demo arrival:
     done`). The `texture load:` line gives the decodes and their CPU.

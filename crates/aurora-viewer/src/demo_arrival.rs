@@ -14,8 +14,8 @@
 //! (3 by default) the avatar turns round: what was behind is now in front.
 //!
 //! The log tells when half, nine tenths and all of what is in front of the
-//! camera after the turn showed (textures with their first pixels, meshes
-//! with their geometry), weighted by size on screen (`demo arrival: front`),
+//! camera after the turn showed (its geometry built and its texture with its
+//! first pixels), weighted by size on screen (`demo arrival: front`),
 //! the same for everything around (`demo arrival: all`), when the
 //! animations arrived (`demo arrival: animations`), then what the server
 //! sent (`demo arrival: done`).
@@ -111,6 +111,8 @@ struct Placed {
     size: f32,
     texture: Uuid,
     mesh: Option<Uuid>,
+    /// Its object's id (`prim`'s).
+    full_id: Uuid,
 }
 
 /// Bytes and requests the server answered, per kind.
@@ -250,6 +252,7 @@ impl ArrivalDemo {
                     pos: Vec3::new(x, y, height(x, y) + size * 0.5),
                     size,
                     texture: id(KIND_TEXTURE, i as u32),
+                    full_id: Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | (FIRST_LOCAL_ID + i as u32) as u128),
                     mesh: (i % 3 == 0).then(|| id(KIND_MESH, (i / 3) as u32)),
                 }
             })
@@ -411,7 +414,13 @@ impl ArrivalDemo {
             let to = p.pos.truncate() - run.start.truncate();
             let d = to.length().max(1.0);
             let w = p.size / d;
-            let shown = scene.textures.decoded_level(&p.texture).is_some() && p.mesh.is_none_or(|m| scene.meshes.meta(&m).is_some());
+            // (its texture shows its first pixels, and its geometry is built)
+            let built = world
+                .objects
+                .index_of_uuid(&p.full_id)
+                .and_then(|i| scene.gpu.get(i))
+                .is_some_and(|g| g.geom.is_some());
+            let shown = built && scene.textures.decoded_level(&p.texture).is_some();
             let ahead = to.normalize_or_zero().dot(run.front) > FRONT_COS;
             all_all += w;
             all += if shown { w } else { 0.0 };

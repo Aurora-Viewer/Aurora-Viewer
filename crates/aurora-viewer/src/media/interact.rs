@@ -37,11 +37,9 @@ impl MediaManager {
         }
         let faces: Vec<Option<CpuFace>> = if o.volume.is_mesh() {
             let id = o.volume.sculpt?.texture;
-            let data = std::fs::read(scene.meshes.cache_path(&id)).ok()?;
-            let header = aurora_assets::mesh::parse_mesh_header(&data).ok()?;
-            let l = header.actual_lod(3)?;
-            let section = aurora_assets::mesh::section_bytes(&data, header.lods[l]?)?;
-            aurora_assets::mesh::decode_mesh_lod(section)
+            // the finest level held (no longer read back from the disk cache)
+            let mesh = scene.meshes.view(&id)?;
+            aurora_assets::mesh::decode_mesh_lod(mesh.lod_section(3)?)
                 .ok()?
                 .into_iter()
                 .map(|f| {
