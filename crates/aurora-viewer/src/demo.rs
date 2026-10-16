@@ -710,6 +710,61 @@ pub fn bubbles_events() -> Vec<NetEvent> {
     ev
 }
 
+/// `AURORA_DEMO_CHAT_LINES=1|legacy`: nearby chat said at the arrival, to
+/// see the lines above the chat bar (`ui/chat/console.rs`): two lines of
+/// one resident, an emote, an object's line, a long line with a link, a
+/// shout. `legacy` shows them as the Legacy Viewer's lines for the session
+/// (nothing is saved). Some(true) for `legacy`.
+pub fn chat_lines_scenario() -> Option<bool> {
+    match std::env::var("AURORA_DEMO_CHAT_LINES").ok()?.as_str() {
+        "legacy" => Some(true),
+        "" | "0" => None,
+        _ => Some(false),
+    }
+}
+
+pub fn chat_lines_events() -> Vec<NetEvent> {
+    let object = Uuid::from_u128(0xC4A7_0000_0000_0000_0000_0000_0000_0001);
+    let nova = aurora_i18n::tr!("demo-nova-example");
+    let orion = aurora_i18n::tr!("demo-orion-example");
+    let say = |from: Uuid, name: &str, text: &str, object: bool, chat_type| {
+        NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: name.into(),
+            source_id: from,
+            owner_id: Uuid::nil(),
+            source_type: if object {
+                aurora_net::ChatSourceType::Object
+            } else {
+                aurora_net::ChatSourceType::Agent
+            },
+            chat_type,
+            position: Vec3::ZERO,
+            message: text.into(),
+        })
+    };
+    let normal = aurora_net::ChatType::Normal;
+    vec![
+        say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-1"), false, normal),
+        say(DEMO_NOVA, nova, aurora_i18n::tr!("demo-bubbles-local-2"), false, normal),
+        say(DEMO_FRIEND, orion, aurora_i18n::tr!("demo-chat-lines-emote"), false, normal),
+        say(
+            object,
+            aurora_i18n::tr!("common-demo-hud"),
+            aurora_i18n::tr!("demo-bubbles-local-3"),
+            true,
+            normal,
+        ),
+        say(DEMO_FRIEND, orion, aurora_i18n::tr!("demo-chat-lines-long"), false, normal),
+        say(
+            DEMO_NOVA,
+            nova,
+            aurora_i18n::tr!("demo-chat-lines-shout"),
+            false,
+            aurora_net::ChatType::Shout,
+        ),
+    ]
+}
+
 /// The lines said before the scenario starts (yesterday's among them) and
 /// ours: they are written in the conversations as they would have been.
 pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
@@ -3880,6 +3935,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if bubbles_scenario().is_some() {
         ev.extend(bubbles_events());
+    }
+    if chat_lines_scenario().is_some() {
+        ev.extend(chat_lines_events());
     }
     if aurora_scenario().is_some() {
         ev.extend(aurora_events());

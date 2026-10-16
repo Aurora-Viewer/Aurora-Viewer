@@ -501,6 +501,10 @@ pub struct Settings {
     /// Firestorm's yellow region restart box (floater_region_restarting.xml)
     /// instead of the alert card of `ui/region_restart.rs`.
     pub classic_restart_alert: bool,
+    /// The Legacy Viewer's one-line nearby chat lines above the chat bar
+    /// instead of the cards grouped by sender, with their picture
+    /// (`ui/chat/console.rs`).
+    pub classic_chat_lines: bool,
     /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
     /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
     /// fade slowly. Off, the default until it has been tried on the grid:
@@ -1010,6 +1014,7 @@ impl Default for Settings {
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
+            classic_chat_lines: false,
             predict_own_motion: false,
             region_restart: Default::default(),
             reduce_motion: false,

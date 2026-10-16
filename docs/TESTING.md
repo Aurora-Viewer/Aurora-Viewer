@@ -1734,6 +1734,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
+| `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
@@ -2357,6 +2358,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is disabled; only enter synthetic values for this test.
   `AURORA_UPDATE_ACK` and `AURORA_UPDATE_ROLLBACK` are internal signals between
   processes, not scenarios to set by hand.
+- **`AURORA_DEMO_CHAT_LINES=1|legacy`**: nearby chat said at the arrival,
+  shown above the chat bar with the Conversations window closed: two lines
+  of one resident, an emote, an object's line, a long line with a link, a
+  shout (only the 6 most recent lines show, as always). `1`: Aurora's cards
+  (Preferences › Aurora › Nearby chat lines), one per sender in a row, the
+  picture, the name, the time if shown, SHOUTS / WHISPERS / IM after the
+  name, the lines under it, each fading on its own; `legacy`: the Legacy
+  Viewer's one-line look for the session (nothing saved). Check them over a
+  dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
+  name, the picture and the links clickable, the world clickable around.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the
