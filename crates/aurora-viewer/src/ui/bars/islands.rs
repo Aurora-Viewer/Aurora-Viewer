@@ -312,6 +312,8 @@ fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mu
 /// One island in an area of its own at `rect`, its surface under what
 /// `body` draws there (in screen coordinates).
 pub(super) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    // (the windows keep their title clear of it: `layout::clear_of_islands`)
+    crate::ui::layout::island_drawn(ctx, rect);
     egui::Area::new(Id::new(("bars_island", name)))
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)

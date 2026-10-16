@@ -8924,8 +8924,8 @@ impl App {
                         &favorites,
                     )
                 };
-                // what the bars leave: where the windows are laid out, moved
-                // and snapped this frame (above the dock with the islands)
+                // what the bars leave: where the windows are laid out and
+                // snapped this frame (above the dock with the islands)
                 let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 // the favourites' row under the islands keeps the windows under it
                 if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
@@ -8986,6 +8986,10 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                // the islands leave room between them, above and below: the
+                // windows move over the whole screen; the Legacy Viewer's
+                // bars are full width, the windows stay between them
+                ui::layout::set_move_area(ui.ctx(), if classic_bars { area } else { ui.ctx().content_rect() });
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
                 if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {

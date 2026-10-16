@@ -1972,6 +1972,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Take screenshots at `620,740,900,1120` to check content, collapse, move and
   restored dimensions. The "−" button stays usable; the other
   title bar buttons and the content do not trigger the title bar double-click.
+  `reach-top`, `reach-bottom` and `reach-right` instead drag the inventory by
+  its title bar at frames 700–709 (no collapse) into the widest gap between
+  the top islands, between the bottom ones, or far past the right edge, and
+  release it there: with the islands the windows move over the whole screen,
+  a title left under an island comes out below the top row (above the
+  bottom one), and past an edge `TITLE_GRIP` of the title bar stays on
+  screen. Capture at `690,760` with `AURORA_FPS_LIMIT=60`.
 - **`AURORA_DEMO_MINIMIZED=1|expand`**: double-clicks the real title bar of
   Conversations at frames 600–605; the window becomes a bar 200 points wide
   at most, outlined in the accent while messages are unread (the demo group

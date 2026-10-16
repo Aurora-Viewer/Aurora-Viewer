@@ -103,29 +103,21 @@ fn minimized_width(expanded: f32) -> f32 {
     expanded.min(MINIMIZED_W)
 }
 
-/// Height of a floater's title bar, and the width of it that stays inside
-/// the room at least: enough to grab it and bring the window back.
-const TITLE_BAR_H: f32 = 38.0;
-const TITLE_GRIP: f32 = 96.0;
-
-/// `pos` of a window `width` wide, moved so that its title bar is in
-/// `area`: whole in height, and by `TITLE_GRIP` at least in width.
-fn keep_title_in(area: egui::Rect, pos: egui::Pos2, width: f32) -> egui::Pos2 {
-    let grip = TITLE_GRIP.min(width);
-    let left = area.left() - (width - grip);
-    let right = (area.right() - grip).max(left);
-    let bottom = (area.bottom() - TITLE_BAR_H).max(area.top());
-    egui::pos2(pos.x.clamp(left, right), pos.y.clamp(area.top(), bottom))
-}
-
 /// The position to give window `id` this frame: `asked` (by the layout, a
 /// placement or a resize) or where it stood, with its title bar kept in
-/// `area`. None when it stands well and nothing asks for it elsewhere.
+/// `area` (`layout::keep_title_in`) and, once no button is held, clear of
+/// the bars' islands (`layout::clear_of_islands`): a window saved in a
+/// larger screen or another layout comes back within reach. None when it
+/// stands well and nothing asks for it elsewhere.
 fn title_in_reach(ctx: &egui::Context, id: egui::Id, area: egui::Rect, asked: Option<egui::Pos2>) -> Option<egui::Pos2> {
+    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, islands, keep_title_in};
     let state = egui::AreaState::load(ctx, id).filter(|s| s.size.is_some());
-    let width = state.as_ref().and_then(|s| s.size).map_or(TITLE_GRIP, |s| s.x);
+    let size = state.as_ref().and_then(|s| s.size).unwrap_or(egui::vec2(TITLE_GRIP, TITLE_BAR_H));
     let pos = asked.or_else(|| state.as_ref().map(|s| s.left_top_pos()))?;
-    let kept = keep_title_in(area, pos, width);
+    let mut kept = keep_title_in(area, pos, size);
+    if !ctx.input(|i| i.pointer.any_down()) {
+        kept = clear_of_islands(area, kept, size, &islands(ctx));
+    }
     (asked.is_some() || kept != pos).then_some(kept)
 }
 
@@ -391,10 +383,16 @@ impl<'a> Floater<'a> {
         // a placement asked this frame and a resize in progress come after
         let slot = super::layout::slot(ctx, window_id);
         let mut asked = opening.as_ref().map(|o| o.pos).or(slot.pos);
-        // (a window dragged with its group has its own limits; the others
-        // stay off the bars, which egui's own limit, the screen, lets them
-        // cover)
-        w = w.constrain_to(slot.limits.unwrap_or(work));
+        // A window moves anywhere in the room the bars leave it
+        // (`layout::move_area`: the whole screen with the islands, between
+        // the Legacy Viewer's bars otherwise), partly out of it if need be,
+        // its title bar in (`layout::reach`); a window dragged with its
+        // group has the group's limits.
+        let room = super::layout::move_area(ctx);
+        let size = egui::AreaState::load(ctx, window_id)
+            .and_then(|s| s.size)
+            .unwrap_or(self.default_size);
+        w = w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size)));
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             asked = Some(pos);
             if self.cascade.is_some() {
@@ -410,7 +408,7 @@ impl<'a> Floater<'a> {
         // Whatever places the window, its title bar stays in reach: egui
         // lets a window larger than its limits slide out of them by what it
         // has in excess, title first.
-        if let Some(pos) = title_in_reach(ctx, window_id, work, asked) {
+        if let Some(pos) = title_in_reach(ctx, window_id, room, asked) {
             w = w.current_pos(pos);
         }
         let mut glass_slot = None;
@@ -740,7 +738,7 @@ pub(crate) fn toolstrip<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, body:
         .fade_in(false)
         .movable(true)
         .default_pos(pos)
-        .constrain_to(slot.limits.unwrap_or_else(|| super::layout::work_area(ctx)));
+        .constrain_to(slot.limits.unwrap_or_else(|| super::layout::move_area(ctx)));
     let asked = ctx
         .data_mut(|data| data.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS)))
         .or(slot.pos);

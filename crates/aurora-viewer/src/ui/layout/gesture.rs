@@ -99,8 +99,17 @@ impl Live {
 }
 
 impl Windows {
-    /// One frame of the gestures; see `layout::frame`.
-    pub(super) fn drive(&mut self, area: Rect, pixels_per_point: f32, pointer: Pointer, snap_enabled: bool) -> Option<overlay::Overlay> {
+    /// One frame of the gestures; see `layout::frame`. `area`: the work
+    /// area, what a window snaps to; `room`: where it moves
+    /// (`layout::move_area`).
+    pub(super) fn drive(
+        &mut self,
+        area: Rect,
+        room: Rect,
+        pixels_per_point: f32,
+        pointer: Pointer,
+        snap_enabled: bool,
+    ) -> Option<overlay::Overlay> {
         self.live.frame += 1;
         self.live.snap = snap_enabled;
         self.live.places.clear();
@@ -178,16 +187,17 @@ impl Windows {
             return None;
         }
 
-        // where egui has the dragged window this frame; a group stays whole
-        // inside the work area (a window does not cover the bars:
-        // `widgets::Floater`), so the window stops where its block does
+        // where egui has the dragged window this frame: alone, anywhere its
+        // title bar stays in the room (`layout::reach`, as
+        // `widgets::Floater` constrains it); a group stays whole inside the
+        // room, so the window stops where its block does
         let block = moved.start.iter().fold(Rect::NOTHING, |all, (_, rect)| all.union(*rect));
         let limits = if moved.start.len() > 1 {
-            let limits = snap::block_limits(area, start, block);
+            let limits = snap::block_limits(room, start, block);
             self.live.limits = Some((window, limits));
             limits
         } else {
-            area
+            super::reach(room, start.size())
         };
         let travel = constrained(start.translate(pointer.total), limits, pixels_per_point) - start.min;
         for (id, rect) in moved.start.iter().skip(1) {
