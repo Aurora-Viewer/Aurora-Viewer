@@ -4225,12 +4225,11 @@ impl App {
         self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
     }
 
+    /// LLAgent::toggleFlying → setFlying (indra/newview/llagent.cpp): only
+    /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
+    /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
         self.world.agent.flying = !self.world.agent.flying;
-        if !self.world.agent.flying {
-            // landing: a short UP_NEG nudge is implicit when FLY is cleared
-            self.net.send(NetCommand::OneShotControl(control::STOP));
-        }
     }
 
     /// A conversation the user opened (a contact, a name's menu, People)
@@ -5201,7 +5200,7 @@ impl App {
             }
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
-            self.trace_demo_link();
+            self.trace_own_motion();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)

@@ -665,26 +665,38 @@ pub fn glide(current: Vec3, velocity: Vec3, target: Vec3, dt: f32) -> (Vec3, Vec
 /// Deceleration (m/s²) of the last of a stop that `ease_out` stretches.
 const EASE_DECEL: f32 = 6.0;
 
+/// Beyond this the aim is not the end of our stop but a motion of the
+/// simulator's own (a push, a slide): the glide follows it.
+const EASE_RANGE: f32 = 0.5;
+
 /// After a release the drawn avatar only slows down. When the simulator
 /// stops a frame later than the lead expected (the release reached it a
 /// physics step later), the aim moves on a few centimetres after the glide
 /// had nearly stopped: rather than speeding up again for them, the avatar
 /// goes on at the speed it had and slows down as it reaches the aim.
-/// `glided` is the glide's answer from `current` at `velocity`.
+/// Horizontally and within `EASE_RANGE` only: the height is the glide's,
+/// so a fall the simulator makes alone (the end of a flight, a ledge) or
+/// a take-off is followed (an avatar nearly at rest kept its nearly zero
+/// speed and hung in the air until the next key). `glided` is the glide's
+/// answer from `current` at `velocity`.
 pub fn ease_out(current: Vec3, velocity: Vec3, glided: (Vec3, Vec3), aim: Vec3, dt: f32) -> (Vec3, Vec3) {
-    let ahead = aim - current;
+    let ahead = horizontal(aim - current);
+    let velocity = horizontal(velocity);
     let before = velocity.length();
-    if glided.1.length() <= before || ahead.dot(velocity) <= 0.0 {
+    let distance = ahead.length();
+    if horizontal(glided.1).length() <= before || ahead.dot(velocity) <= 0.0 || distance > EASE_RANGE {
         return glided;
     }
-    let distance = ahead.length();
     let speed = before.min((2.0 * EASE_DECEL * distance).sqrt());
     let step = speed * dt.max(0.0);
-    if step >= distance {
-        return (aim, Vec3::ZERO);
-    }
-    let direction = ahead / distance;
-    (current + direction * step, direction * speed)
+    let (x, y) = if step >= distance {
+        (aim.x, aim.y)
+    } else {
+        let moved = current + ahead / distance * step;
+        (moved.x, moved.y)
+    };
+    let flat = if step >= distance { Vec3::ZERO } else { ahead / distance * speed };
+    (Vec3::new(x, y, glided.0.z), Vec3::new(flat.x, flat.y, glided.1.z))
 }
 
 /// A correction smaller than this, at rest after a release, waits for the

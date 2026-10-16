@@ -3339,6 +3339,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
+| `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
@@ -3724,6 +3725,13 @@ What the inventory must show with these scenarios:
 - **`AURORA_PROFILE_FRAMES=1`**: in addition, one `render profile` line and
   one `gpu profile` line per frame (renderer steps and GPU time per element
   of each frame).
+- **`AURORA_OWN_MOTION_TRACE=1`**: on a grid with Aurora's movement
+  (Preferences › Aurora › Movement, "Instant"), the `demo link trace` line
+  of `AURORA_DEMO_LINK=…,trace` for each frame where our avatar moves, is
+  led or still has a correction to fade (`t` counts from the launch); the
+  end of the line gives the flight, the simulator's height, the lead's,
+  the simulator's velocity and the drawn one, to read a take-off or a
+  landing.
 - **`AURORA_HOVER_CHECK=1`**: each answer about the object under the cursor
   (kept from a previous frame, or searched among the candidates of the
   picking index) is compared with the full search in the scene; the
