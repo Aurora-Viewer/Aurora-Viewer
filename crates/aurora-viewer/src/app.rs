@@ -11881,6 +11881,8 @@ impl ApplicationHandler for App {
                         | "worn"
                         | "filtered"
                         | "large"
+                        | "search-selection"
+                        | "search-selection-keyboard"
                         | "long"
                         | "long-filtered"
                         | "resize-left"
@@ -11892,7 +11894,11 @@ impl ApplicationHandler for App {
                         | "received-missing"
                 );
                 if configured_view {
-                    crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
+                    crate::world::inventory::demo::seed_view(
+                        &mut self.world.inventory,
+                        self.world.agent_id,
+                        view == "large" || view.starts_with("search-selection"),
+                    );
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
@@ -11931,6 +11937,9 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
+                    }
+                    if view.starts_with("search-selection") {
+                        self.inventory_ui.search = aurora_i18n::tr!("world-inventory-demo-item", n = "1490");
                     }
                     if matches!(view.as_str(), "long" | "long-filtered" | "resize-left" | "resize-right") {
                         crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);

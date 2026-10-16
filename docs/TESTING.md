@@ -1892,7 +1892,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus and windows |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -2112,6 +2112,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=search-selection|search-selection-keyboard`**:
+  search for item 1490 in a 1,500-item folder, select its real row at frames
+  650–651, then clear the query using the field's cross at 720–721 or
+  Ctrl+A / Backspace at 730–731. Capture at 680 and 820: the selection stays
+  highlighted, its parent folder opens and the full inventory scrolls to
+  it. At frame 800 the log reports the empty query, selection and visibility.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, with `AURORA_DEMO_INVENTORY=1`:
   double-click on the real title bar of the inventory at frames 660–665; `1`
   keeps the bar collapsed, `restore` expands it at frames 1000–1005,
