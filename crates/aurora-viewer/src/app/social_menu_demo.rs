@@ -34,6 +34,10 @@ impl App {
                     self.world.particles_blocked(&RESIDENT)
                 );
             }
+            (600, Step::Card) => self.on_ctx_action(CtxAction::GiveCallingCard(RESIDENT)),
+            (600, Step::CardOffer) => {
+                self.world.apply(crate::demo::social_menu::card_offer());
+            }
             _ => {}
         }
     }

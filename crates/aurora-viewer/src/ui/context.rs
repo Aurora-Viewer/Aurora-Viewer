@@ -226,6 +226,8 @@ pub enum CtxAction {
     /// "Invite to group" (LLAvatarActions::inviteToGroup): the groups where
     /// we may invite, then the chosen group's invitation window.
     InviteToGroup(Uuid),
+    /// "Give my calling card" (LLAvatarGiveCard: OfferCallingCard).
+    GiveCallingCard(Uuid),
     /// "Create landmark" where the agent is (About Land's Landmark).
     CreateLandmark,
     /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).

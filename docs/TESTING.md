@@ -1761,7 +1761,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
-| `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set" and "Block particles" |
+| `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -2855,9 +2855,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
-- **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles`**:
-  a resident's "Invite to group", "Add to contact set" and "Block
-  particles", on the wolf (unblocked for the scenario, owner of the
+- **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles|card|card-offer`**:
+  a resident's "Invite to group", "Add to contact set", "Block
+  particles" and "Give my calling card", on the wolf (unblocked for the scenario, owner of the
   plaza's fountain, and our abilities in "Aurora Builders" an officer's).
   Capture with `AURORA_FPS_LIMIT=60` (and `AURORA_DEMO_PIE=0` for the list
   menu). `menu`: the wolf's world menu at frame 600, from its name plate
@@ -2874,7 +2874,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   file is left as it was. `particles`: capture 690 shows the fountain's
   particles; "Block particles" at frame 700 makes them go at once, and the
   menu opened at frame 720 shows the entry checked (capture 780); the log
-  says `demo social menu: particles of … blocked: true`.
+  says `demo social menu: particles of … blocked: true`. `card`: "Give my
+  calling card" at frame 600: "You have offered a calling card to …", then
+  the demo server accepts it, "Your calling card was accepted." (capture
+  640). `card-offer`: the wolf offers us his calling card at frame 600,
+  Accept / Decline (capture 640); the answer is logged as `demo social
+  menu: calling card accepted|declined`.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About

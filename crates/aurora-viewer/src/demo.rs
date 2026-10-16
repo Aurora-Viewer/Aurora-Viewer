@@ -1544,6 +1544,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = search::reply(cmd) {
         return events;
     }
+    if let Some(events) = social_menu::reply(cmd) {
+        return events;
+    }
     use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go

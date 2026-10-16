@@ -339,7 +339,12 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     );
     contact_set_entries(ui, f, id);
     ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "id-filled",
+        aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        CtxAction::GiveCallingCard(id),
+    );
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
     // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
     ui.item(
@@ -435,7 +440,12 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     );
     contact_set_entries(ui, f, id);
     ui.item("message-circle-filled", aurora_i18n::tr!("ui-context-send-im"), CtxAction::Im(id));
-    ui.todo("id-filled", aurora_i18n::tr!("ui-context-give-my-calling-card"));
+    // Avatar.GiveCard (enabled like RLV.CanShowName: always here)
+    ui.item(
+        "id-filled",
+        aurora_i18n::tr!("ui-context-give-my-calling-card"),
+        CtxAction::GiveCallingCard(id),
+    );
     ui.item_if("phone-filled", aurora_i18n::tr!("common-voice-call"), f.voice, CtxAction::Call(id));
     // Avatar.InviteToGroup (enabled like RLV.CanShowName: always here)
     ui.item(
@@ -872,6 +882,10 @@ mod tests {
             let invite = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-invite-to-group");
             assert!(invite.enabled);
             assert!(matches!(invite.kind, Kind::Action(CtxAction::InviteToGroup(i)) if i == id));
+            // "Give my calling card": enabled, OfferCallingCard to them
+            let card = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-give-my-calling-card");
+            assert!(card.enabled);
+            assert!(matches!(card.kind, Kind::Action(CtxAction::GiveCallingCard(i)) if i == id));
             // "Add to contact set": each set, then a new one
             let sets = find(world_menu(&target, &f, Vec3::ZERO), "ui-context-add-to-contact-set");
             let Kind::Submenu(rows) = sets.kind else {
