@@ -211,7 +211,7 @@ impl Inspector {
         let scene = crate::scene::Scene::new(std::env::temp_dir(), world.avatar_lib.clone());
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
-        crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
+        crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
         Self {
             ctx,
             world,

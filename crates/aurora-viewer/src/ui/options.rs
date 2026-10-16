@@ -2115,9 +2115,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
         }
         2 => {
             group(ui, p, aurora_i18n::tr!("ui-options-bundled-fonts"), |ui| {
-                for builtin in [fonts::NOTO, fonts::INTER, fonts::ROBOTO] {
-                    let sel = s.font == builtin || (s.font.is_empty() && builtin == fonts::NOTO);
-                    let label = if builtin == fonts::NOTO {
+                for builtin in fonts::BUILTINS.iter().map(|b| b.name) {
+                    let sel = s.font == builtin || (s.font.is_empty() && builtin == fonts::DEFAULT);
+                    let label = if builtin == fonts::DEFAULT {
                         aurora_i18n::tr!("ui-options-default", builtin = builtin.to_string())
                     } else {
                         builtin.to_owned()

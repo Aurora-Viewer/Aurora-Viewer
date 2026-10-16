@@ -888,11 +888,11 @@ mod tests {
         };
         let ctx = egui::Context::default();
         restore(&ctx, &saved).expect("restore");
-        crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
+        crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
         assert_eq!(first_font(&ctx), "aurora-main");
 
         let ctx = egui::Context::default();
-        crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
+        crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
         super::restore(&ctx, &saved).expect("restore");
         assert_ne!(first_font(&ctx), "aurora-main", "egui keeps pending fonts now: the order is free");
     }

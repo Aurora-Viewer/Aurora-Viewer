@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn a_name_at_the_top_of_the_list_keeps_off_its_edge() {
         let kind = ChatKind::Local(ChatType::Normal);
-        let named = drawn(crate::ui::fonts::NOTO, kind, view::Look { first: true, ..NAMED });
+        let named = drawn(crate::ui::fonts::DEFAULT, kind, view::Look { first: true, ..NAMED });
         let name_top = named
             .texts
             .iter()
@@ -525,7 +525,7 @@ mod tests {
             .1
             - named.list_top;
         let day = drawn(
-            crate::ui::fonts::NOTO,
+            crate::ui::fonts::DEFAULT,
             kind,
             view::Look {
                 marker: Some((2020, 1, 1)),
@@ -540,7 +540,7 @@ mod tests {
             "the name's ink starts {name_top} px under the top, a day's {day_top} px"
         );
         // further down the list, groups stay as close as before
-        let below = drawn(crate::ui::fonts::NOTO, kind, NAMED);
+        let below = drawn(crate::ui::fonts::DEFAULT, kind, NAMED);
         let below_top = below
             .texts
             .iter()
