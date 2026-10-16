@@ -9149,6 +9149,7 @@ impl App {
                     self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
                 }
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
+                self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, their typing animation)
@@ -10946,6 +10947,7 @@ impl ApplicationHandler for App {
                     self.chat_ui.stage_mini = scene.call == Some(crate::demo::AuroraCall::Mini);
                     self.chat_ui.demo_new_menu = scene.new_menu;
                     self.chat_ui.demo_volume_menu = scene.volume_menu;
+                    self.chat_ui.demo_channel = scene.channel;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;

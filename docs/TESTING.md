@@ -2350,9 +2350,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   disturb), `group` (Aurora Builders with its members' panel: MOD tag,
   an amber bar on the message that names us, a place link), `local` (the
   nearby chat: object tag and box, shout and whisper tags, our emote in
-  violet italics, notices with an icon, someone typing, the channel chip
-  and the volume's menu, Whisper / Say / Shout, at the left of the
-  field); `compact` for the Compact style (one row
+  violet italics, notices with an icon, someone typing, the volume's
+  menu, Whisper / Say / Shout, at the left of the field; the channel chip
+  is hidden as by default); `compact` for the Compact style (one row
   per message, time, name and tags); `medium` (700 px), `narrow` (460
   px: the column becomes a rail of pictures) or a width in points;
   `call-incoming` (Tess calls: the banner and the pulsing entry),
@@ -2366,7 +2366,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the "new conversation" button beside the column's search field open:
   Private message, Group chat, Conference), `volume` (with `local`: the
   volume's menu open, above the field; with `narrow` the button keeps
-  its icon). The calls are those of
+  its icon), `channel` (the "/0" channel chip shown, as Preferences ›
+  Chat › Show the channel selector does). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act

@@ -4,7 +4,8 @@
 //! Shift+Enter whispers whatever is chosen, like the chat bar) or the
 //! inventory to give (a resident: what is dragged onto the conversation is
 //! offered, like LLFloaterIMSession::handleDragAndDrop), the text, the
-//! channel of the nearby chat and send. The gestures are played from their
+//! channel of the nearby chat (when the preferences show it,
+//! FSShowChatChannel) and send. The gestures are played from their
 //! window, their keys or their trigger typed in the nearby chat.
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
@@ -149,9 +150,10 @@ pub(super) fn show(
                         }
                         // the right end first: what it takes fixes the field's width
                         let (channel, _) = parse_channel(&draft);
-                        // narrow, the channel gives its room to the text ("/n"
-                        // still works)
-                        let chip_w = if local && roomy { 34.0 } else { 0.0 };
+                        // the channel's chip: when the preferences show it, not
+                        // in the narrow layout ("/n" before the text still works)
+                        let chip = local && roomy && st.show_channel;
+                        let chip_w = if chip { 34.0 } else { 0.0 };
                         let field_w = (ui.available_width() - chip_w - BUTTON - 12.0).max(40.0);
                         let hint = match st.selected {
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
@@ -169,7 +171,7 @@ pub(super) fn show(
                         crate::ui::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
                         if local {
                             completion::complete(ui, &mut output, &mut draft, gestures);
-                            if roomy {
+                            if chip {
                                 channel_chip(ui, p, &mut draft, channel);
                             }
                         }

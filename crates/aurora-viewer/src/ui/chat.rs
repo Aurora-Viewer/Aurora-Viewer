@@ -80,6 +80,9 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
     /// chat's volume once it is drawn.
     pub demo_volume_menu: bool,
+    /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
+    /// without changing the preferences.
+    pub demo_channel: bool,
     /// The workspace's layout last frame (None before the first): the
     /// column as a rail, room for the members' panel. A threshold crossed
     /// back needs a margin past it (`workspace::rail_now`), so a window
@@ -98,6 +101,9 @@ pub struct ChatUi {
     /// The times of the lines are shown (Preferences › Chat), given every
     /// frame by the app.
     pub timestamps: bool,
+    /// The nearby chat's field shows its channel selector (Preferences ›
+    /// Chat, off by default), given every frame by the app.
+    pub show_channel: bool,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,

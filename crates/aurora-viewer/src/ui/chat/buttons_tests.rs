@@ -509,7 +509,21 @@ fn the_field_acts() {
         assert!(!h.st.emoji_open, "{style:?}: emoji closed");
         // no gestures button: their window, their keys, their trigger
         assert!(h.shown(control_id("box-hand-finger")).is_none(), "{style:?}: no gestures");
-        // the channel: "/5" opening the text, back to 0 from the chip
+        // the channel: hidden by default, "/5" before the text still sends
+        // on 5
+        h.open(None);
+        h.type_text("/5 hidden");
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: no chip by default");
+        h.enter(Default::default());
+        assert!(
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::Local(c) if c.channel == 5 && c.message == "hidden")
+            ),
+            "{style:?}: /5 without the chip"
+        );
+        // shown by the preferences: "/5" opening the text, back to 0 from it
+        h.st.show_channel = true;
         h.open(None);
         h.type_text("/5 secret");
         assert!(h.painted("/5"), "{style:?}: the chip shows the channel");

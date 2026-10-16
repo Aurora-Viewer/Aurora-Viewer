@@ -1055,6 +1055,15 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
         c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
             toggle(ui, p, &mut s.chat_timestamps)
         });
+        // FSShowChatChannel: the "/0" chip of the field (off, as in the
+        // Legacy Viewer)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-show-chat-channel"),
+            aurora_i18n::tr!("ui-options-show-chat-channel-hint"),
+            |ui| toggle(ui, p, &mut s.show_chat_channel),
+        );
         c |= row(
             ui,
             p,
