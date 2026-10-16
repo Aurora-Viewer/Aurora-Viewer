@@ -7,6 +7,7 @@ pub mod animesh;
 mod auto_hover;
 pub mod avatar;
 pub mod banlines;
+pub mod blend_order;
 pub mod complexity;
 pub mod drawn;
 pub mod fetch_priority;
@@ -743,7 +744,7 @@ pub struct Scene {
     pub lod_factor: f32,
     pub draw_distance: f32,
     last_origin: Option<(u32, u32)>,
-    blend_tmp: Vec<(f32, DrawCmd, bool)>,
+    blend_tmp: Vec<blend_order::BlendEntry>,
     pub anims: anim::AnimStreamer,
     object_signals: HashMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
@@ -3439,7 +3440,7 @@ impl Scene {
             opaque2: Vec<DrawCmd>,
             mask: Vec<DrawCmd>,
             mask2: Vec<DrawCmd>,
-            blend: Vec<(f32, DrawCmd, bool)>,
+            blend: Vec<blend_order::BlendEntry>,
             glow: Vec<DrawCmd>,
             glow_alpha: Vec<DrawCmd>,
             /// Draws of the avatars pictured for their impostor: (capture slot, draw, blended).
@@ -3609,7 +3610,12 @@ impl Scene {
                     continue;
                 }
                 match pass {
-                    Pass::Blend => l.blend.push((blend_d, cmd, f.glow)),
+                    Pass::Blend => l.blend.push(blend_order::BlendEntry {
+                        distance: blend_d,
+                        cmd,
+                        glow: f.glow,
+                        rigged: g.rigged,
+                    }),
                     _ if !full => {}
                     Pass::Opaque => l.opaque.push(cmd),
                     Pass::OpaqueTwoSided => l.opaque2.push(cmd),
@@ -3649,10 +3655,15 @@ impl Scene {
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
-        self.blend_tmp.extend(self.banlines.cmds.iter().map(|(d, c)| (*d, *c, false)));
-        self.blend_tmp.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        self.lists.blend.extend(self.blend_tmp.iter().map(|(_, c, _)| *c));
-        self.lists.blend_glow.extend(self.blend_tmp.iter().map(|(_, _, g)| *g));
+        self.blend_tmp.extend(self.banlines.cmds.iter().map(|(d, c)| blend_order::BlendEntry {
+            distance: *d,
+            cmd: *c,
+            glow: false,
+            rigged: false,
+        }));
+        self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
+        self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
+        self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.shadow_casters.extend(result.casters);
         self.lists.reflection = result.refl;
         self.lists.probe = result.probe;
