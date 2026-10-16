@@ -177,7 +177,19 @@ impl App {
         };
         let Some(source) = source else { return };
         let start = if inventory { 720 } else { 650 };
-        let target = egui::pos2(480.0, 430.0);
+        let target = if mode.starts_with("objects") {
+            let point = self.world.agent.position + Vec3::new(5.0, 2.0, 0.0);
+            let Some(target) = self
+                .world
+                .ground_height(point)
+                .and_then(|z| self.build.cam.project(Vec3::new(point.x, point.y, z)))
+            else {
+                return;
+            };
+            target
+        } else {
+            egui::pos2(480.0, 430.0)
+        };
         if mode != "preview" {
             match self.frame_count.saturating_sub(start) {
                 0 if self.frame_count >= start => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
@@ -222,6 +234,10 @@ impl App {
             self.panels.people = false;
             self.panels.perf = false;
             self.panels.minimap = false;
+            self.panels.ao = false;
+            if matches!(mode.as_str(), "objects-drop" | "objects-nocopy-drop") && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
+            }
             let inventory_drag = crate::demo::texture_library::inventory_drag_enabled();
             self.panels.inventory = mode == "inventory" || inventory_drag;
             if inventory_drag {

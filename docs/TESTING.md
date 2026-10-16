@@ -1543,7 +1543,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material library with synthetic real inventory folders, textures and PBR resources. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material/object library with synthetic inventory and thumbnails. |
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
@@ -1565,6 +1565,15 @@ in inventory, `search` filters stone PBR materials (including a nested polished
 folder), and `empty` keeps the sample resources outside the empty library. `drop` performs a real card drag onto the
 modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenarios
 make demo objects modifiable so manual surface drops can also be exercised.
+`objects` and `objects-horizontal` show the Objects filter, with a thumbnail,
+single-object and coalesced-object fallback icons, and a no-copy group with an image.
+`objects-drop` drags the first object into the world at frame 650 through the
+inventory rez path, using a projected ground point and an elevated camera
+unless `AURORA_DEMO_CAM` is set (capture at frame 800). The offline simulator stands in with
+a cube; actual object/coalesced geometry and server rez permissions need grid validation.
+`objects-nocopy-drop` drops the no-copy group instead: its card disappears after
+the drop, and the stand-in cube appears in the world.
+Library scenarios keep the unrelated AO window closed from startup.
 `baseline` keeps the library closed in the same scene for a profiling comparison.
 `preview` double-clicks an actual inventory texture and leaves its preview open;
 `preview-drag` then drags the preview image onto that surface, and `inventory-drag`

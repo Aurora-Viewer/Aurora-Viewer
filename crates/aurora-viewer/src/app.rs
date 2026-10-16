@@ -640,6 +640,12 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
+            && std::env::var_os("AURORA_DEMO_AO").is_none()
+        {
+            settings.show_ao = false;
+        }
         let net = NetClient::new()?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
