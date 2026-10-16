@@ -5180,18 +5180,24 @@ pub fn lights_events(n: u32) -> Vec<NetEvent> {
 /// and the torso, as the stacked cards of mesh hair and layered clothes:
 /// `segments` quads along each side of a shell (its triangle count), a
 /// texture of strands `period` texels apart of which `empty` percent of the
-/// texels are fully transparent.
+/// texels are fully transparent. AURORA_DEMO_LASHES=1: our avatar also
+/// wears a small red ball inside the head shell, blended, on the side the
+/// camera sees (eyelashes behind a fringe).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HairDemo {
     pub layers: u32,
     pub segments: u32,
     pub empty: u32,
     pub period: u32,
+    pub lashes: bool,
 }
 
 pub fn hair_demo() -> Option<HairDemo> {
     let v = std::env::var("AURORA_DEMO_HAIR").ok()?;
-    Some(hair_demo_from(&v))
+    Some(HairDemo {
+        lashes: std::env::var("AURORA_DEMO_LASHES").is_ok_and(|v| v.trim() == "1"),
+        ..hair_demo_from(&v)
+    })
 }
 
 fn hair_demo_from(v: &str) -> HairDemo {
@@ -5204,11 +5210,15 @@ fn hair_demo_from(v: &str) -> HairDemo {
         // (above, the texture would count as a mask)
         empty: next(60).min(90),
         period: next(16).clamp(4, 256),
+        lashes: false,
     }
 }
 
 /// Strand texture of the hair demo.
 pub const TEX_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0020);
+
+/// Mesh asset of the ball of AURORA_DEMO_LASHES.
+pub const LASHES_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0100);
 
 /// Mesh asset of one layer of the hair demo (a head shell and a torso shell).
 pub fn hair_mesh(layer: u32) -> Uuid {
@@ -5251,6 +5261,32 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
             worn.state = 0x10; // chest
             objects.push(worn);
         }
+    }
+    if demo.lashes {
+        let mesh = SculptParams {
+            texture: LASHES_MESH,
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        };
+        // blended by its color's alpha, nearly opaque
+        let mut lashes = prim(
+            200_040,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.1),
+            aurora_prim::VolumeParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            te([1.0, 0.1, 0.1, 0.95], 0, true, 0.0),
+            ExtraParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            "",
+        );
+        lashes.parent_id = 9000;
+        lashes.state = 0x10; // chest
+        objects.push(lashes);
     }
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }

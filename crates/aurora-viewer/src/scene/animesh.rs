@@ -368,7 +368,8 @@ impl super::Scene {
 
     /// AURORA_DEMO_HAIR: one rigged mesh per layer, a shell around the head
     /// (bound to mHead) and one around the torso (mChest), each its own
-    /// face, slightly larger from one layer to the next.
+    /// face, slightly larger from one layer to the next. With
+    /// AURORA_DEMO_LASHES, a small ball inside the head shell too.
     pub fn install_demo_hair(&mut self, renderer: &mut aurora_render::Renderer, demo: crate::demo::HairDemo) {
         use super::jobs::FaceGeom;
         use aurora_render::SkinVertex;
@@ -381,8 +382,63 @@ impl super::Scene {
             }
         }
         let seg = demo.segments;
-        for layer in 0..demo.layers {
-            let id = crate::demo::hair_mesh(layer);
+        // a latitude / longitude sphere around a joint, the strands running down it
+        let sphere = |name: &str, offset: Vec3, radii: Vec3| -> Option<FaceGeom> {
+            let &j = rig.names.get(name)?;
+            let center = rest[j].w_axis.truncate() + offset;
+            let mut face = FaceGeom {
+                vertices: Vec::new(),
+                indices: Vec::new(),
+                skin: Some(Vec::new()),
+            };
+            for row in 0..=seg {
+                let lat = std::f32::consts::PI * row as f32 / seg as f32;
+                for col in 0..=seg {
+                    let lon = std::f32::consts::TAU * col as f32 / seg as f32;
+                    let n = Vec3::new(lat.sin() * lon.cos(), lat.sin() * lon.sin(), lat.cos());
+                    let p = center + n * radii;
+                    let uv = [4.0 * col as f32 / seg as f32, row as f32 / seg as f32];
+                    face.vertices.push(aurora_render::Vertex::new(p.to_array(), n.to_array(), uv));
+                    if let Some(s) = &mut face.skin {
+                        s.push(SkinVertex {
+                            joints: [j as u8, 0, 0, 0],
+                            weights: [255, 0, 0, 0],
+                        });
+                    }
+                }
+            }
+            let at = |row: u32, col: u32| (row * (seg + 1) + col) as u16;
+            for row in 0..seg {
+                for col in 0..seg {
+                    let (a, b, c, d) = (at(row, col), at(row + 1, col), at(row + 1, col + 1), at(row, col + 1));
+                    face.indices.extend([a, b, c, a, c, d]);
+                }
+            }
+            Some(face)
+        };
+        let mut meshes: Vec<(Uuid, Vec<Option<FaceGeom>>)> = (0..demo.layers)
+            .map(|layer| {
+                let grow = 0.012 * layer as f32;
+                let faces = [
+                    ("mHead", Vec3::new(0.0, 0.0, 0.07), Vec3::splat(0.14)),
+                    ("mChest", Vec3::new(0.0, 0.0, -0.05), Vec3::new(0.2, 0.25, 0.34)),
+                ]
+                .into_iter()
+                .filter_map(|(name, offset, radii)| sphere(name, offset, radii + grow).map(Some))
+                .collect();
+                (crate::demo::hair_mesh(layer), faces)
+            })
+            .collect();
+        if demo.lashes {
+            // behind the face for the default camera (which looks at the
+            // back of the head): nearer the camera than the centre of the
+            // hair around it, as eyelashes are nearer than a fringe's centre
+            meshes.push((
+                crate::demo::LASHES_MESH,
+                vec![sphere("mHead", Vec3::new(-0.105, 0.0, 0.07), Vec3::splat(0.03))],
+            ));
+        }
+        for (id, faces) in meshes {
             self.meshes.insert_demo_skin(
                 id,
                 aurora_assets::SkinInfo {
@@ -391,47 +447,6 @@ impl super::Scene {
                     ..Default::default()
                 },
             );
-            let grow = 0.012 * layer as f32;
-            let faces: Vec<Option<FaceGeom>> = [
-                ("mHead", Vec3::new(0.0, 0.0, 0.07), Vec3::splat(0.14)),
-                ("mChest", Vec3::new(0.0, 0.0, -0.05), Vec3::new(0.2, 0.25, 0.34)),
-            ]
-            .into_iter()
-            .filter_map(|(name, offset, radii)| {
-                let &j = rig.names.get(name)?;
-                let center = rest[j].w_axis.truncate() + offset;
-                let mut face = FaceGeom {
-                    vertices: Vec::new(),
-                    indices: Vec::new(),
-                    skin: Some(Vec::new()),
-                };
-                // a latitude / longitude sphere, the strands running down it
-                for row in 0..=seg {
-                    let lat = std::f32::consts::PI * row as f32 / seg as f32;
-                    for col in 0..=seg {
-                        let lon = std::f32::consts::TAU * col as f32 / seg as f32;
-                        let n = Vec3::new(lat.sin() * lon.cos(), lat.sin() * lon.sin(), lat.cos());
-                        let p = center + n * (radii + grow);
-                        let uv = [4.0 * col as f32 / seg as f32, row as f32 / seg as f32];
-                        face.vertices.push(aurora_render::Vertex::new(p.to_array(), n.to_array(), uv));
-                        if let Some(s) = &mut face.skin {
-                            s.push(SkinVertex {
-                                joints: [j as u8, 0, 0, 0],
-                                weights: [255, 0, 0, 0],
-                            });
-                        }
-                    }
-                }
-                let at = |row: u32, col: u32| (row * (seg + 1) + col) as u16;
-                for row in 0..seg {
-                    for col in 0..seg {
-                        let (a, b, c, d) = (at(row, col), at(row + 1, col), at(row + 1, col + 1), at(row, col + 1));
-                        face.indices.extend([a, b, c, a, c, d]);
-                    }
-                }
-                Some(Some(face))
-            })
-            .collect();
             for lod in 0..4 {
                 let faces = faces
                     .iter()

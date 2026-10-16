@@ -258,8 +258,14 @@ pub struct DrawLists {
     pub mask: Vec<DrawCmd>,
     pub mask_two_sided: Vec<DrawCmd>,
     pub water: Vec<DrawCmd>,
-    /// Sorted back to front.
+    /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
+    /// The first `blend_depth` entries of `blend` are rigged faces (worn
+    /// rigged meshes, animesh): drawn before the other blended faces and
+    /// writing depth, so that a layer in front (mesh hair) hides what is
+    /// behind it (eyelashes) whatever the order of the two objects
+    /// (LLDrawPoolAlpha::render: forwardRender(true) first, depth written).
+    pub blend_depth: usize,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -360,6 +366,7 @@ impl DrawLists {
         self.water.clone_from(&src.water);
         self.blend.clone_from(&src.blend);
         self.blend_glow.clone_from(&src.blend_glow);
+        self.blend_depth = src.blend_depth;
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
@@ -389,6 +396,7 @@ impl DrawLists {
         self.mask_two_sided.clear();
         self.water.clear();
         self.blend.clear();
+        self.blend_depth = 0;
         self.shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();
@@ -1225,6 +1233,7 @@ mod tests {
         scene.terrain.push(cmd(1));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_glow.extend([false, true, false]);
+        scene.blend_depth = 1;
         scene.glow.push(cmd(4));
         scene.select_root.push(cmd(5));
         scene.select_faces.push(cmd(6));
@@ -1267,6 +1276,7 @@ mod tests {
         assert_eq!(packet.hud_blend[0].record, 21);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
+        assert_eq!(packet.blend_depth, 1);
         assert_eq!((packet.terrain.len(), packet.glow.len(), packet.select_root.len()), (1, 1, 1));
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
