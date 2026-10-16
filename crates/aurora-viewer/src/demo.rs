@@ -67,6 +67,9 @@ pub mod link;
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
 pub mod notifs;
+/// The object menu scenario's objects (AURORA_DEMO_OBJECT_MENU).
+#[path = "demo_object_menu.rs"]
+pub mod object_menu;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_people.rs"]
 pub mod people;

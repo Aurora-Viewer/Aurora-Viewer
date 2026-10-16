@@ -229,8 +229,8 @@ fn head_label(ui: &egui::Ui, p: &Palette, text: &str, cell: Rect, right: bool) {
     } else {
         cell.left() + 8.0
     };
-    ui.painter()
-        .galley(Pos2::new(x, cell.center().y - galley.size().y / 2.0).round(), galley, p.muted_dim);
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, x, cell.center().y);
+    ui.painter().galley(at, galley, p.muted_dim);
 }
 
 /// The region and the position in it, as Firestorm's "location" column
@@ -374,8 +374,8 @@ fn parcels(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, data: Option
         let galley = ui
             .painter()
             .layout_no_wrap(parcel_area(parcel), FontId::proportional(12.5), p.muted);
-        let pos = Pos2::new(x + AREA_W - 8.0 - galley.size().x, mid - galley.size().y / 2.0);
-        ui.painter().galley(pos.round(), galley, p.muted);
+        let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, x + AREA_W - 8.0 - galley.size().x, mid);
+        ui.painter().galley(pos, galley, p.muted);
         // "Map" at the end of the row
         let cell = Rect::from_min_max(Pos2::new(row.right() - ACTION_W, row.top()), row.right_bottom());
         let mut b = ui.new_child(
@@ -531,11 +531,8 @@ fn kv(ui: &mut egui::Ui, p: &Palette, key: &str, value: &str, color: Color32, st
     };
     let value = ui.painter().layout_no_wrap(value.to_owned(), font.clone(), color);
     let value_w = value.size().x;
-    ui.painter().galley(
-        Pos2::new(row.right() - value_w, row.center().y - value.size().y / 2.0).round(),
-        value,
-        color,
-    );
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &value, row.right() - value_w, row.center().y);
+    ui.painter().galley(at, value, color);
     widgets::paint_elided(
         ui,
         key,
@@ -656,11 +653,8 @@ fn sales(ui: &mut egui::Ui, p: &Palette, list: &[Transaction]) {
         let color = amount_color(p, t.amount);
         let amount = ui.painter().layout_no_wrap(lindens(t.amount), FontId::proportional(12.5), color);
         let amount_w = amount.size().x;
-        ui.painter().galley(
-            Pos2::new(row.right() - amount_w, mid - amount.size().y / 2.0).round(),
-            amount,
-            color,
-        );
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &amount, row.right() - amount_w, mid);
+        ui.painter().galley(at, amount, color);
         let what = [t.user.as_str(), verb(t.kind), t.item.as_str()]
             .into_iter()
             .filter(|s| !s.is_empty())

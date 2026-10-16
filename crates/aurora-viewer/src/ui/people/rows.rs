@@ -121,7 +121,7 @@ pub(super) fn paint_tile(
                     initials.to_owned(),
                     semibold(ui, tile.height() * 0.36, p.on_accent),
                 ));
-                ui.painter().galley(tile.center() - g.size() / 2.0, g, p.on_accent);
+                crate::ui::widgets::paint_ink_centered(ui.painter(), g, tile.center(), p.on_accent);
             } else {
                 super::radar::icon(ui, icon, tile, tile.height() * 0.45, p.muted);
             }
@@ -188,7 +188,8 @@ pub(super) fn names(
         let r = Rect::from_min_size(Pos2::new(x, y - 8.0), Vec2::new(g.size().x + 12.0, 16.0));
         if r.right() <= right {
             ui.painter().rect_filled(r, ui.visuals().window_corner_radius, fill);
-            ui.painter().galley(r.center() - g.size() / 2.0, g, ink);
+            let left = r.center().x - g.size().x / 2.0;
+            crate::ui::widgets::paint_row_text(ui.painter(), g, left, r.center().y, ink);
         }
     }
     cut
@@ -252,7 +253,7 @@ pub(super) fn paint_more(ui: &egui::Ui, p: &Palette, cell: Rect, hidden: usize) 
         format!("+{hidden}"),
         semibold(ui, 12.0, p.muted),
     ));
-    ui.painter().galley(cell.center() - g.size() / 2.0, g, p.muted);
+    crate::ui::widgets::paint_ink_centered(ui.painter(), g, cell.center(), p.muted);
 }
 
 /// Width of the pill of `n` quick actions.

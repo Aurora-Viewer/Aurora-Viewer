@@ -107,8 +107,8 @@ fn head(ui: &mut egui::Ui, p: &Palette, cols: &[(&str, f32, bool)]) -> Vec<f32> 
             } else {
                 rect.left() + 6.0
             };
-            ui.painter()
-                .galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, p.muted_dim);
+            let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+            ui.painter().galley(at, g, p.muted_dim);
         }
     });
     widths
@@ -130,7 +130,8 @@ fn row(ui: &mut egui::Ui, p: &Palette, widths: &[f32], cells: &[(String, bool)],
         job.wrap = egui::text::TextWrapping::truncate_at_width(w - 12.0);
         let g = ui.painter().layout_job(job);
         let gx = if *right { x + w - 8.0 - g.size().x } else { x + 6.0 };
-        ui.painter().galley(egui::pos2(gx, rect.center().y - g.size().y / 2.0), g, p.ink);
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, gx, rect.center().y);
+        ui.painter().galley(at, g, p.ink);
         x += w;
     }
     r

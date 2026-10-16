@@ -543,7 +543,7 @@ fn row_text(ui: &egui::Ui, text: &str, left_center: egui::Pos2, width: f32, col:
         width - if bold { 1.0 } else { 0.0 },
         egui::TextStyle::Body,
     );
-    let pos = egui::pos2(left_center.x, left_center.y - galley.size().y * 0.5);
+    let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, left_center.x, left_center.y);
     if bold {
         let ppp = ui.ctx().pixels_per_point();
         let dx = ppp.round().max(1.0) / ppp;
@@ -1668,8 +1668,7 @@ fn sets_tab(
                                 rect.right() - x - 4.0,
                                 egui::TextStyle::Body,
                             );
-                            ui.painter()
-                                .galley(egui::pos2(x, rect.center().y - galley.size().y * 0.5), galley, col);
+                            crate::ui::widgets::paint_row_text(ui.painter(), galley, x, rect.center().y, col);
                             if resp.clicked() {
                                 let mods = ui.input(|i| i.modifiers);
                                 click_select(&mut st.set_sel, &mut st.set_anchor, &order, *id, mods);

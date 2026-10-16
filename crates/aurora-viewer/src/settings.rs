@@ -368,6 +368,12 @@ pub struct Settings {
     /// ChangeObjectBonusFactor is asked before Region / Estate sends a new
     /// object bonus (its "ignore" box turns it off; shown by default).
     pub confirm_object_bonus: bool,
+    /// The object menu asks before "Return" (ReturnToOwner), "Drop"
+    /// (AttachmentDrop) and the script actions on a selection
+    /// (ConfirmScriptModify); their "ignore" boxes turn these off.
+    pub confirm_return_to_owner: bool,
+    pub confirm_attachment_drop: bool,
+    pub confirm_script_modify: bool,
     /// RegionCheckTextureHeights: Region / Estate asks before sending
     /// elevation ranges whose low end is above the high one ("Don't ask"
     /// turns it off; on by default).
@@ -412,7 +418,8 @@ pub struct Settings {
     pub show_chat_channel: bool,
     /// The local chat bar keeps the keyboard after a message is sent; Enter
     /// on the empty bar gives it back to the world (the Legacy Viewer's
-    /// CloseChatOnReturn off). Off by default: the bar lets go after sending.
+    /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
+    /// off, the bar lets go after sending.
     pub chat_keep_focus: bool,
     /// Show Contacts in Conversations (Preferences > Chat, on by default as
     /// the Legacy Viewer's always-present entry; it can be hidden there).
@@ -682,7 +689,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 16;
+const SETTINGS_VERSION: u32 = 17;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -998,6 +1005,9 @@ impl Default for Settings {
             confirm_teleports: true,
             confirm_no_transfer_settings: true,
             confirm_object_bonus: true,
+            confirm_return_to_owner: true,
+            confirm_attachment_drop: true,
+            confirm_script_modify: true,
             region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
@@ -1024,7 +1034,7 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
-            chat_keep_focus: false,
+            chat_keep_focus: true,
             show_contacts_tab: true,
             send_typing_state: true,
             chat_toast_seconds: 20.0,
@@ -1456,6 +1466,11 @@ impl Settings {
             // the former default, Noto Sans (version 3 had moved Inter to it)
             self.font = crate::ui::fonts::DEFAULT.into();
         }
+        if self.settings_version < 17 {
+            // new default: the chat bar keeps the keyboard after sending
+            // (every file wrote the old "off")
+            self.chat_keep_focus = true;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1847,6 +1862,24 @@ mod tests {
             let loaded: Settings = serde_json::from_slice(&saved).expect("reload synthetic channel preference");
             assert_eq!(loaded.sanitized().show_chat_channel, show_chat_channel);
         }
+    }
+
+    /// The chat bar keeps the keyboard by default, earlier files get it once
+    /// (they all wrote the old "off"), a later choice stays.
+    #[test]
+    fn chat_bar_keeps_focus_by_default_and_once_for_earlier_files() {
+        assert!(Settings::default().sanitized().chat_keep_focus);
+        let old = Settings {
+            settings_version: 16,
+            chat_keep_focus: false,
+            ..Settings::default()
+        };
+        assert!(old.sanitized().chat_keep_focus);
+        let chosen = Settings {
+            chat_keep_focus: false,
+            ..Settings::default()
+        };
+        assert!(!chosen.sanitized().chat_keep_focus);
     }
 
     #[test]

@@ -142,6 +142,16 @@ pub struct AutoPilot {
     /// Running while walking there.
     pub run: bool,
     pub started: Instant,
+    /// What to do once there (the finish callback of startAutoPilotGlobal).
+    pub on_arrival: Option<Arrival>,
+}
+
+/// The finish callback of a walk: run when it ends within its stop
+/// distance and was not cancelled (LLAgent::stopAutoPilot's `success`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Arrival {
+    /// "Put on" of a rezzed object (LLObjectAttachToAvatar::onNearAttachObject).
+    Attach { object: uuid::Uuid, point: u8 },
 }
 
 /// Why a walk ended.
@@ -178,7 +188,24 @@ impl AutoPilot {
             no_progress: 0.0,
             run,
             started: now,
+            on_arrival: None,
         }
+    }
+
+    /// startAutoPilotGlobal with a stop distance and a finish callback.
+    pub fn start_to(from: Vec3, target: Vec3, stop_distance: f32, arrival: Arrival, now: Instant) -> AutoPilot {
+        AutoPilot {
+            stop_distance,
+            on_arrival: Some(arrival),
+            ..AutoPilot::start(from, target, false, now)
+        }
+    }
+
+    /// Ended where it was going: within the stop distance of the target,
+    /// on the ground plane (Aurora's walk does not fly up to a target
+    /// above the avatar, as startAutoPilotGlobal may).
+    pub fn reached(&self, position: Vec3) -> bool {
+        (self.target - position).truncate().length() < self.stop_distance
     }
 
     /// One frame of LLAgent::autoPilot from the avatar's place and heading,

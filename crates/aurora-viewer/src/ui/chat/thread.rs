@@ -232,11 +232,7 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
     if let Some(fill) = fill {
         ui.painter().rect_filled(rect, crate::ui::widgets::inner_radius(ui.visuals()), fill);
     }
-    ui.painter().galley(
-        egui::pos2(rect.left() + pad, rect.center().y - galley.size().y * 0.5),
-        galley,
-        color,
-    );
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, rect.left() + pad, rect.center().y, color);
 }
 
 /// The name of a head or a compact row: clickable to the profile, with the
@@ -456,11 +452,8 @@ fn day_separator(ui: &mut egui::Ui, p: &Palette, text: &str) {
         ui.painter().hline(l..=rect.center().x - half, y, stroke);
         ui.painter().hline(rect.center().x + half..=r, y, stroke);
     }
-    ui.painter().galley(
-        egui::pos2(rect.center().x - galley.size().x * 0.5, y - galley.size().y * 0.5),
-        galley,
-        p.muted_dim,
-    );
+    let left = rect.center().x - galley.size().x * 0.5;
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, left, y, p.muted_dim);
     ui.add_space(4.0);
 }
 
@@ -481,8 +474,10 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
         y,
         egui::Stroke::new(1.0, p.danger.gamma_multiply(0.6)),
     );
-    ui.painter()
-        .galley(egui::pos2(text_left, y - galley.size().y * 0.5), galley, p.danger);
+    // capitals only: their middle on the line
+    let font = egui::FontId::proportional(10.0);
+    let baseline = crate::ui::widgets::centered_baseline(ui.painter(), font, y);
+    crate::ui::widgets::paint_on_baseline(ui.painter(), galley, text_left, baseline, p.danger);
     ui.add_space(2.0);
 }
 

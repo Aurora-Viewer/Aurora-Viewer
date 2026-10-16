@@ -984,6 +984,12 @@ pub enum NetEvent {
         open: bool,
         result: Result<crate::inventory::InvItem, String>,
     },
+    /// The new item of a `NetCommand::CopyInventoryItem`, as the server
+    /// created it, or why it never arrived.
+    InventoryItemCopied {
+        request: Uuid,
+        result: Result<crate::inventory::InvItem, String>,
+    },
     InventoryMerchant(Result<bool, String>),
     /// The merchant status of the "Marketplace listings" window
     /// (getMerchantStatusCoro).
@@ -1661,6 +1667,13 @@ pub enum NetCommand {
         change: crate::inventory::operations::Mutation,
     },
     CopyInventoryItems(Vec<crate::inventory::operations::CopyItem>),
+    /// One item copy whose new item is reported by `InventoryItemCopied`
+    /// (copy_inventory_item with an LLInventoryCallback). A nil `parent`
+    /// lets the server choose the default folder of the item's type.
+    CopyInventoryItem {
+        request: Uuid,
+        copy: crate::inventory::operations::CopyItem,
+    },
     /// Track a mutation's deferred item copies while its folders remain visible.
     FinishInventoryCopies {
         request: Uuid,
@@ -1803,6 +1816,8 @@ pub enum NetCommand {
         asset: Uuid,
         active: bool,
     },
+    /// SoundTrigger at our position in the main region (send_sound_trigger):
+    /// gesture sounds and a sound item double-clicked in the inventory.
     GestureSound {
         asset: Uuid,
         position: Vec3,

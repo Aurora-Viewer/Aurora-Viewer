@@ -48,7 +48,7 @@ impl Keycap {
                     ui.painter().image(texture.id(), image, uv, behind);
                     text.min.x += MOUSE;
                 }
-                let mut pos = text.center() - galley.size() / 2.0;
+                let mut pos = super::row_text_origin(ui.painter(), galley, text.center().x - galley.size().x / 2.0, text.center().y);
                 // The accent of a capital (Ù on AZERTY, Ö on QWERTZ) rises
                 // past the line box of this small font: lower the name until
                 // its ink fits in the cap, written in the colour behind.

@@ -778,11 +778,8 @@ fn speed_row(ui: &mut egui::Ui, p: &Palette, free: FreeView, out: &mut Output) {
     let value_w = value.x;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), value.y), Sense::hover());
     let at = FieldRow::new(rect, label.size().x, value_w);
-    ui.painter().galley(
-        egui::pos2(at.label.left(), at.label.center().y - label.size().y / 2.0),
-        label,
-        p.ink,
-    );
+    let label_at = crate::ui::widgets::row_text_origin(ui.painter(), &label, at.label.left(), at.label.center().y);
+    ui.painter().galley(label_at, label, p.ink);
     let mut speed = free.speed;
     // the slider and the box exactly in their places, as tall as the row
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
@@ -815,8 +812,8 @@ fn field_label(ui: &egui::Ui, p: &Palette, text: &str) -> std::sync::Arc<egui::G
 fn collisions_row(ui: &mut egui::Ui, p: &Palette, free: FreeView, out: &mut Output) {
     let label = field_label(ui, p, aurora_i18n::tr!("controls-free-no-collisions"));
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), widgets::SWITCH_SIZE.y), Sense::hover());
-    ui.painter()
-        .galley(egui::pos2(rect.left(), rect.center().y - label.size().y / 2.0), label, p.ink);
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &label, rect.left(), rect.center().y);
+    ui.painter().galley(at, label, p.ink);
     let switch = Rect::from_min_size(egui::pos2(rect.right() - widgets::SWITCH_SIZE.x, rect.top()), widgets::SWITCH_SIZE);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(switch));
     let mut on = free.no_collisions;
@@ -1255,8 +1252,8 @@ fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool
     let total = 16.0 + 5.0 + galley.size().x;
     let left = rect.center().x - total / 2.0;
     paint_icon(ui, icon, egui::pos2(left + 8.0, rect.center().y), 15.0, color);
-    ui.painter()
-        .galley(egui::pos2(left + 21.0, rect.center().y - galley.size().y / 2.0), galley, color);
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, left + 21.0, rect.center().y);
+    ui.painter().galley(at, galley, color);
     resp
 }
 

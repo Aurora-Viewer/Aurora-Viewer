@@ -308,11 +308,7 @@ pub(super) fn line(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, cont
         15.0,
         p.muted,
     );
-    ui.painter().galley(
-        Pos2::new(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        p.ink,
-    );
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, rect.left() + 26.0, rect.center().y, p.ink);
     let slot = Rect::from_min_max(Pos2::new(rect.right() - control_w, rect.top()), rect.max);
     control(
         &mut ui.new_child(

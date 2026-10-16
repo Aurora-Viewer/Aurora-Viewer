@@ -518,8 +518,7 @@ pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     );
     let y = rect.bottom() - 9.0;
     let w = galley.size().x;
-    ui.painter()
-        .galley(Pos2::new(rect.left() + 2.0, y - galley.size().y / 2.0), galley, p.muted_dim);
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, rect.left() + 2.0, y, p.muted_dim);
     let from = rect.left() + 2.0 + w + 6.0;
     if from < rect.right() {
         ui.painter()
@@ -699,7 +698,7 @@ fn paint_badges(
             format!("+{hidden}"),
             semibold(ui, size - 1.0, p.muted),
         ));
-        ui.painter().galley(cell.center() - galley.size() / 2.0, galley, p.muted);
+        crate::ui::widgets::paint_ink_centered(ui.painter(), galley, cell.center(), p.muted);
         if pointer.is_some_and(|at| cell.contains(at)) {
             let rest: Vec<&str> = list[end.badges.len()..].iter().map(|(_, _, text)| text.as_str()).collect();
             tip = Some(rest.join("\n"));
@@ -776,21 +775,15 @@ fn paint_rich(
             distance_text(row.range, data.draw_distance),
             semibold(ui, 13.0, color),
         ));
-        ui.painter().galley(
-            Pos2::new(dist.right() - galley.size().x, dist.center().y - galley.size().y / 2.0),
-            galley,
-            color,
-        );
+        let left = dist.right() - galley.size().x;
+        crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
     if let Some(seen) = end.seen {
         let galley = ui
             .painter()
             .layout_no_wrap(seen_text(row.seen), FontId::proportional(11.0), p.muted_dim);
-        ui.painter().galley(
-            Pos2::new(seen.right() - galley.size().x, seen.center().y - galley.size().y / 2.0),
-            galley,
-            p.muted_dim,
-        );
+        let left = seen.right() - galley.size().x;
+        crate::ui::widgets::paint_row_text(ui.painter(), galley, left, seen.center().y, p.muted_dim);
     }
     let tip = paint_badges(ui, p, &list, &end, false, pointer);
     if let (Some((pill, cells)), Some(buttons)) = (&end.actions, &buttons) {
@@ -866,11 +859,8 @@ fn paint_compact(
             distance_text(row.range, data.draw_distance),
             semibold(ui, 11.5, color),
         ));
-        ui.painter().galley(
-            Pos2::new(dist.right() - galley.size().x, dist.center().y - galley.size().y / 2.0),
-            galley,
-            color,
-        );
+        let left = dist.right() - galley.size().x;
+        crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
     let tip = paint_badges(ui, p, &list, &end, true, pointer);
     if let (Some((pill, cells)), Some(buttons)) = (&end.actions, &buttons) {
@@ -890,8 +880,7 @@ fn paint_compact(
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let g = ui.painter().layout_job(job);
     let cut = g.elided;
-    ui.painter()
-        .galley(Pos2::new(left, rect.center().y - g.size().y / 2.0), g, name_color);
+    crate::ui::widgets::paint_row_text(ui.painter(), g, left, rect.center().y, name_color);
     tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
 }
 

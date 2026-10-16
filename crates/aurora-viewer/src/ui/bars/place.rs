@@ -658,12 +658,14 @@ mod tests {
                 .iter()
                 .map(|n| layout(n, 13.0))
                 .chain([layout("Demo Region (132, 126, 33)", 12.0)])
-                .map(|g| crate::ui::widgets::baseline_origin(&g, 0.0, baseline).y + crate::ui::widgets::galley_baseline(&g))
+                .map(|g| {
+                    crate::ui::widgets::baseline_origin(&painter, &g, 0.0, baseline).y + crate::ui::widgets::galley_baseline(&painter, &g)
+                })
                 .collect();
             // the old placement: each text centred on its own ink at y 20
             let inked: Vec<f32> = [layout("Lunaria Commons", 13.0), layout("\u{c9}\u{c2}\u{ce} Tower", 13.0)]
                 .iter()
-                .map(|g| (20.0 - crate::ui::widgets::ink_rect(g).center().y).round() + crate::ui::widgets::galley_baseline(g))
+                .map(|g| (20.0 - crate::ui::widgets::ink_rect(g).center().y).round() + crate::ui::widgets::galley_baseline(&painter, g))
                 .collect();
             out = Some((baseline, drawn, inked));
         });

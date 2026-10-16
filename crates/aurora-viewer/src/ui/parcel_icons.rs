@@ -55,6 +55,17 @@ pub struct ParcelState<'a> {
     pub health: f32,
 }
 
+/// allowAgentBuild / LLParcel::allowModifyBy, with "rez under land group":
+/// the parcel is ours or no one's, open to all, or to its group we are in.
+pub fn agent_can_build(s: &ParcelState) -> bool {
+    let parcel = |f: u32| s.parcel.flags & f != 0;
+    let owner = s.parcel.owner_id.is_nil() || (!s.parcel.is_group_owned && s.parcel.owner_id == s.agent_id);
+    let group_create = s
+        .group
+        .is_some_and(|g| parcel(pf::CREATE_GROUP_OBJECTS) || g.powers & GP_LAND_ALLOW_CREATE != 0);
+    owner || parcel(pf::CREATE_OBJECTS) || group_create
+}
+
 /// The icons, in Firestorm's order (voice, fly, push, build, scripts,
 /// damage, see avatars).
 pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
@@ -118,12 +129,7 @@ pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
         },
     ));
 
-    // allowAgentBuild / LLParcel::allowModifyBy, with FS rez under land group
-    let owner = s.parcel.owner_id.is_nil() || (!s.parcel.is_group_owned && s.parcel.owner_id == s.agent_id);
-    let group_create = s
-        .group
-        .is_some_and(|g| parcel(pf::CREATE_GROUP_OBJECTS) || g.powers & GP_LAND_ALLOW_CREATE != 0);
-    let build = owner || parcel(pf::CREATE_OBJECTS) || group_create;
+    let build = agent_can_build(s);
     out.push(icon(
         "box",
         build,
@@ -292,7 +298,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, icons: &Icons, items: &[ParcelIcon],
             paint_strike(ui.painter(), ir, if resp.hovered() { p.raised } else { bg }, col);
         }
         if let Some(g) = label {
-            let pos = egui::pos2(ir.right() + 2.0, rect.center().y - g.size().y / 2.0);
+            let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, ir.right() + 2.0, rect.center().y);
             ui.painter().galley(pos, g, col);
         }
         let resp = resp.on_hover_text(aurora_i18n::tr!("ui-parcel-icons-click-about-land", value0 = it.tip.to_string()));

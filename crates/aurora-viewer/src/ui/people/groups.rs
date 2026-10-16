@@ -298,7 +298,8 @@ fn paint_tag(ui: &egui::Ui, p: &Palette, cell: Rect, text: &str) {
         FontId::new(11.0, crate::ui::fonts::semibold(ui.ctx())),
         p.on_accent,
     );
-    ui.painter().galley(r.center() - g.size() / 2.0, g, p.on_accent);
+    let left = r.center().x - g.size().x / 2.0;
+    crate::ui::widgets::paint_row_text(ui.painter(), g, left, r.center().y, p.on_accent);
 }
 
 /// Open the sheet of a group; its titles, members and notices are asked
@@ -536,8 +537,7 @@ fn choice_button(ui: &mut egui::Ui, p: &Palette, text: &str, width: f32, enabled
     let g = ui
         .painter()
         .layout_no_wrap(text.to_owned(), FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx())), ink);
-    ui.painter()
-        .galley(Pos2::new(rect.left() + 9.0, rect.center().y - g.size().y / 2.0), g, ink);
+    crate::ui::widgets::paint_row_text(ui.painter(), g, rect.left() + 9.0, rect.center().y, ink);
     super::radar::icon(
         ui,
         "chevron-down",

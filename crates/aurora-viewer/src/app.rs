@@ -51,6 +51,8 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
+mod object_menu;
+mod object_menu_demo;
 mod own_motion;
 mod pay;
 mod plate_click;
@@ -330,6 +332,8 @@ pub struct App {
     context_menu_was: bool,
     /// "Delete" waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
+    /// The object menus' questions and script queue (app/object_menu.rs).
+    object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
     /// with the state of its "Do not show again" box.
     place_confirm: Option<(String, Vec3, bool)>,
@@ -597,6 +601,27 @@ fn bandwidth_kbps(settings: &Settings) -> f32 {
         .unwrap_or(settings.bandwidth_kbps as f32)
 }
 
+/// The interface font, or AURORA_UI_FONT for this launch (a built-in name
+/// or `system:<path>`): every font compared in one run of captures,
+/// Preferences left alone.
+fn ui_font(settings: &Settings) -> String {
+    std::env::var("AURORA_UI_FONT")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| settings.font.clone())
+}
+
+/// The interface scale, or AURORA_UI_SCALE for this launch (brought into
+/// the range of the Preferences, 0.75–2).
+fn ui_scale(settings: &Settings) -> f32 {
+    std::env::var("AURORA_UI_SCALE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|s| s.is_finite())
+        .map_or(settings.ui_scale, |s| s.clamp(0.75, 2.0))
+}
+
 /// The colour vision the interface adapts to: the preferences', or in demo
 /// mode `AURORA_DEMO_COLORBLIND` (a capture's, never saved).
 fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
@@ -686,7 +711,7 @@ impl App {
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
-        egui_ctx.set_zoom_factor(settings.ui_scale);
+        egui_ctx.set_zoom_factor(ui_scale(&settings));
         // last view of the previous session for the loading screen
         let mut backdrop = ui::backdrop::Backdrop::default();
         if settings.loading_backdrop && std::env::var_os("AURORA_CAPTURE").is_none() {
@@ -699,7 +724,7 @@ impl App {
             ui::layout::load(&egui_ctx);
         }
         // after the layout: restoring it drops the fonts installed before
-        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &settings.font);
+        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &ui_font(&settings));
 
         // Decode the 4096px logo off the main thread.
         let (tx, rx) = crossbeam_channel::bounded(1);
@@ -836,6 +861,7 @@ impl App {
             mic_was: false,
             context_menu_was: false,
             delete_confirm: None,
+            object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
             script_dialogs_were: 0,
@@ -1255,6 +1281,30 @@ impl App {
                 self.world.inventory.add_items(items);
                 return;
             }
+            // the server's copy: the default folder of its type for a nil parent
+            if let NetCommand::CopyInventoryItem { request, copy } = &cmd {
+                let inv = &self.world.inventory;
+                let result = inv
+                    .items
+                    .get(&copy.item)
+                    .cloned()
+                    .map(|mut it| {
+                        it.id = uuid::Uuid::new_v4();
+                        it.owner = self.world.agent_id;
+                        it.parent = if copy.parent.is_nil() {
+                            crate::world::inventory::actions::system(inv, it.asset_type).unwrap_or(inv.root)
+                        } else {
+                            copy.parent
+                        };
+                        it
+                    })
+                    .ok_or_else(|| aurora_i18n::tr!("inventory-copy-unconfirmed").into());
+                if let Ok(it) = &result {
+                    self.world.inventory.add_items(vec![it.clone()]);
+                }
+                self.on_app_event(NetEvent::InventoryItemCopied { request: *request, result });
+                return;
+            }
             if let NetCommand::FinishInventoryCopies { request, reply } = &cmd {
                 let items = reply
                     .copies
@@ -1478,17 +1528,24 @@ impl App {
                 self.on_app_event(NetEvent::OutfitUpdated { request: *request, result });
                 return;
             }
+            // the demo backpack comes back with its prims; other outfit
+            // objects are invisible placeholders
             if let NetCommand::RezAttachments(items) = &cmd {
                 self.world.apply(NetEvent::ObjectUpdates {
                     handle: self.world.main_region.unwrap_or_default(),
-                    objects: items.iter().map(crate::demo::outfit_attachment).collect(),
+                    objects: items
+                        .iter()
+                        .flat_map(|item| crate::demo::worn::rez(item).unwrap_or_else(|| vec![crate::demo::outfit_attachment(item)]))
+                        .collect(),
                 });
                 return;
             }
+            // DetachAttachmentIntoInv names the item: the simulator kills the
+            // object worn from it, whatever its object id
             if let NetCommand::DetachAttachments(items) = &cmd {
                 let local_ids = items
                     .iter()
-                    .filter_map(|id| self.world.objects.index_of_uuid(id))
+                    .filter_map(|id| self.world.worn_attachment(id))
                     .filter_map(|idx| self.world.objects.get(idx))
                     .map(|o| o.key.local_id)
                     .collect();
@@ -1873,6 +1930,10 @@ impl App {
         } = ev
         {
             self.notecard_inventory_copied(editor, notecard, open, result);
+            return;
+        }
+        if let NetEvent::InventoryItemCopied { request, result } = ev {
+            self.wear_copied(request, result);
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
@@ -3922,6 +3983,7 @@ impl App {
         }
         self.demo_script_steps();
         self.world_click_demo_steps();
+        self.object_menu_demo_steps();
         // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
         if let Some(g) = &self.gfx
             && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())
@@ -5099,7 +5161,7 @@ impl App {
             crate::crash::update(&self.skin.theme, &self.settings);
             self.palette = self.skin.theme.palette();
             self.cursors.set_palette(&self.palette);
-            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+            self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
 
         self.frame_profile.lap(Lap::Start);
@@ -5998,7 +6060,7 @@ impl App {
         let t_ui = Instant::now();
         self.world.objects.refresh_labelled();
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
-            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
@@ -6102,6 +6164,7 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
             raw.events
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
@@ -6406,12 +6469,12 @@ impl App {
 
         // apply UI actions
         if actions.font_changed {
-            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         if actions.ui_scale_changed {
             // Zoom changes no render/network setting or crash record field.
             // In particular, never fsync the crash snapshot during a drag.
-            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+            self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
@@ -6432,7 +6495,7 @@ impl App {
             ui::colors::set(&self.settings.colors);
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
-            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+            self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
@@ -9739,6 +9802,7 @@ impl App {
                     self.build.release_menu_selection(&self.world);
                     self.flush_build();
                 }
+                self.object_menu_ui(&ctx, &p);
                 if let Some((id, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -11937,6 +12001,20 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
                 crate::demo::worn::seed_inventory(&mut self.world);
+                // `inventory`, `library`, `sound`: the rows to double-click in sight
+                let mode = std::env::var("AURORA_DEMO_WORN").unwrap_or_default();
+                if mode == "library" {
+                    crate::demo::worn::seed_library(&mut self.world);
+                }
+                if mode == "sound" {
+                    let (id, clip) = crate::demo::chime();
+                    self.scene.sounds.insert(id, clip);
+                    crate::demo::worn::seed_sound(&mut self.world, id);
+                }
+                if let Some(&(_, first)) = crate::demo::worn::double_clicks(&mode).first() {
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, first);
+                }
             }
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.

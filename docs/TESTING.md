@@ -556,6 +556,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
+| `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 ### Details
 
@@ -1007,13 +1008,40 @@ copied / scripts observed. Name conflicts and non-copyable contents stop the
 operation before any unlinking. Copying a script does not keep its runtime
 memory; replacing the root does not automatically copy the Linkset Data.
 
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop`**
+— at frame 600, a violet bell of ours (scripted, touch text "Ring the
+bell", sit text "Lie down"), a teal crate of ours and a cloud of large
+amber particles another resident owns stand in a row 5 m ahead, where the
+camera looks. At frame 700 the right click opens the menu of the bell
+(`list`: "Ring the bell" and "Lie down" as labels, Return enabled, the
+script actions and Put on in their submenus), or lands on the particles
+(`particle`: the menu of what is behind, with "Ignore particle owner"
+enabled). At frame 740: `scripts` chooses Reset scripts (the "modify
+scripts" question), `scripts-run` answers it yes (the Reset progress
+window lists the bell's script, then "Done."); `return` / `return-yes`
+choose Return (the question; answered yes, the bell goes); `wear` chooses
+Put on ▸ Attach to ▸ Right Arm ▸ Right Hand: the avatar walks to the bell,
+then attaches it (it leaves the world: the demo has no item to wear it
+from); `particle-block` blocks the particles' owner: People opens on the
+Blocked tab with Nova Exemple. `link` selects the crate and the bell in
+the build tools at frame 650: the menu then has Link enabled (Object ▸)
+and "Take multiple ▸" instead of Take. `drop`, with `AURORA_DEMO_WORN=1`,
+opens the worn backpack's menu and chooses Drop (the question). The log
+writes `demo object menu: <action>` and, at frame 900, `demo object menu
+result: …` (bell in the world or gone, particle owner, block, queue
+lines). Capture with `AURORA_FPS_LIMIT=60` at frames 760 (menus), 780
+(questions), 800 (queue window, block list) and 1000 (wear); a submenu
+opens under `AURORA_DEMO_POINTER` (one point every 60 frames from frame
+300: the eighth point is at frame 720). Our attachments' menu (favorites,
+Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
+
 
 ## HUDs
 
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks |
 
 ### Details
 
@@ -1075,7 +1103,7 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|inspect`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|inspect|inventory|library|sound`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -1091,9 +1119,29 @@ access to a grid.
 - `inspect`: "Inspect" at frame 740: the window lists the root and the
   linked prim, their figures and the totals; the prim of the highlighted
   row is outlined in yellow, the others in blue.
+- `inventory`: the inventory opens on the item, double-clicked on its real
+  row at frames 700–703 (the backpack detaches, its worn label leaves the
+  row) and again at 900–903 (it is worn again: the demo server rezzes its
+  two prims back under new local and object ids, as the simulator does), like the Legacy Viewer's
+  double-click (LLObjectBridge::openItem). The log writes
+  `demo worn inventory: double-click on the item row at frame …`. The other
+  objects of the demo outfit show as worn after the first change: the demo
+  lists them in the current outfit without wearing them at start. By hand,
+  also double-click a worn piece of clothing (it comes off) and a worn body
+  part (nothing happens: a body part is only replaced).
+- `library`: the Library holds a hat, a shirt and a shape, double-clicked at
+  frames 700, 800 and 900: each is copied into the inventory (the folder of
+  its type, like the server's default folder) and the copy is worn
+  (LLAppearanceMgr::wearItemsOnAvatar). The log writes `library copy
+  arrived, wearing it: …` three times; at frame 1000 the shape's copy is
+  worn in place of "Aurora silhouette".
+- `sound`: a sound item playing the demo chime, double-clicked at frame
+  700: it plays in the world at our position (LLSoundBridgeAction), where
+  "Open" shows its preview. The log writes `demo sound trigger: …`.
 
 The steps are counted in frames: capture with `AURORA_FPS_LIMIT=60`,
-around frames 720 (menu), 770 (edit, inspect) and 850 (move).
+around frames 720 (menu), 770 (edit, inspect), 850 (move), 680, 800,
+1000 (inventory) and 680, 760, 860, 1000 (library).
 
 To check with these scenarios:
 
@@ -3615,6 +3663,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GLOW_SKIP=<mask>` | Removes a family of faces from the glow |
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
+| `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
@@ -3757,6 +3806,16 @@ What the inventory must show with these scenarios:
   CJK, Arabic, mathematical letters…) become squares again. To compare with
   `AURORA_DEMO_GLYPHS=1` or to isolate a font problem. The log says
   `system fallback fonts: off`.
+- **`AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>`**: the interface
+  font (`Inter`, `Noto Sans`, `Roboto` or `system:<path of a .ttf>`) and
+  scale (0.75 to 2) of this launch, without touching Preferences ›
+  Fonts / Interface: to capture one screen with every font and scale in a
+  row. Give the window the scale too (`AURORA_WINDOW_SIZE="2304,1296"` at
+  1.5), else the top bar drops what does not fit. What to look for: text
+  beside an icon, a badge or a box (the place island's rating badge and
+  name, buttons, menu rows) centred alike with every font; the test
+  `the_place_island_centres_its_badge_and_texts_with_every_font` measures
+  the place island.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise

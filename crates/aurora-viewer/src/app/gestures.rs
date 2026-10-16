@@ -281,6 +281,29 @@ impl App {
         self.gesture_effects(effects);
     }
 
+    /// send_sound_trigger (llviewermessage.cpp): a sound at our position,
+    /// gain 1, heard by everyone around once the region relays it. Offline
+    /// the demo plays it there itself, as the region's echo would.
+    pub(super) fn send_sound_trigger(&mut self, asset: Uuid) {
+        if asset.is_nil() {
+            return;
+        }
+        if self.demo {
+            log::info!("demo sound trigger: {asset}");
+            self.scene
+                .sounds
+                .trigger(asset, self.world.agent.position, Some(self.world.agent_id), 1.0);
+            return;
+        }
+        let Some(offset) = self.world.main_region.and_then(|handle| self.world.region_offset(handle)) else {
+            return;
+        };
+        self.send(NetCommand::GestureSound {
+            asset,
+            position: self.world.agent.position - offset,
+        });
+    }
+
     fn gesture_effects(&mut self, effects: Vec<Effect>) {
         for effect in effects {
             match effect {
@@ -295,24 +318,7 @@ impl App {
                         self.send(NetCommand::AgentAnimation { anim, start });
                     }
                 }
-                Effect::Sound(asset) => {
-                    if self.demo {
-                        self.scene
-                            .sounds
-                            .trigger(asset, self.world.agent.position, Some(self.world.agent_id), 1.0);
-                    }
-                    if !self.demo {
-                        self.send(NetCommand::GestureSound {
-                            asset,
-                            position: self.world.agent.position
-                                - self
-                                    .world
-                                    .main_region
-                                    .and_then(|handle| self.world.region_offset(handle))
-                                    .unwrap_or(glam::Vec3::ZERO),
-                        });
-                    }
-                }
+                Effect::Sound(asset) => self.send_sound_trigger(asset),
                 Effect::Chat(text) => {
                     let (channel, message) = crate::ui::chat::parse_channel(&text);
                     if !message.is_empty() && (channel != 0 || !self.chat_command(&message)) {

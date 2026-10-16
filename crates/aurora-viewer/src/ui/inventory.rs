@@ -88,6 +88,14 @@ pub enum InvAction {
         start: bool,
     },
     Sound(Uuid),
+    /// Play a sound in the world, heard by everyone around (send_sound_trigger).
+    TriggerSound(Uuid),
+    /// Copy a Library wearable into the inventory, then wear the copy
+    /// (`replace` as for `Action::WearItem`).
+    WearCopy {
+        item: Uuid,
+        replace: bool,
+    },
     Restore(Uuid),
     Share {
         items: Vec<Uuid>,
@@ -260,6 +268,8 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    /// Library wearables being copied to be worn: copy request → replace.
+    pub wear_copies: std::collections::HashMap<Uuid, bool>,
     pub filters_open: bool,
     pub preferences_open: bool,
     filters_initialized: bool,
@@ -553,6 +563,7 @@ fn item_row(
         task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
         drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
         super::widgets::demo::rez_row(&r, it.id);
+        super::widgets::demo::worn_row(&r, it.id);
         let r = r.on_hover_ui(|ui| {
             ui.label(&it.name);
             ui.label(inventory_path(inv, it.parent));
@@ -578,7 +589,7 @@ fn item_row(
             st.reveal_path.clear();
         }
         if r.double_clicked() {
-            context::open(inv, *id, st, prefs, actions);
+            context::double_click(inv, *id, st, prefs, facts, actions);
         }
         super::menu::context_menu(&r, p, |ui| context::show(ui, p, inv, *id, st, prefs, facts, actions));
     });
@@ -2244,10 +2255,132 @@ mod tests {
         };
         for (id, replace) in [(8100, false), (8111, false), (8112, true)] {
             let mut actions = vec![];
-            context::open(&inv, Uuid::from_u128(id), &mut InventoryUi::default(), &prefs, &mut actions);
+            context::double_click(
+                &inv,
+                Uuid::from_u128(id),
+                &mut InventoryUi::default(),
+                &prefs,
+                &Facts::default(),
+                &mut actions,
+            );
             assert!(
                 matches!(actions.as_slice(), [InvAction::Appearance(crate::world::appearance::Action::WearItem { replace: actual, .. })] if *actual == replace)
             );
+        }
+    }
+
+    /// LLObjectBridge::openItem / LLWearableBridge::openItem: a second
+    /// double-click on what is worn takes it off, through a link too; a worn
+    /// body part stays put.
+    #[test]
+    fn double_click_takes_off_what_is_worn_except_body_parts() {
+        use crate::world::appearance::Action as Wear;
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut physics = inv.items[&Uuid::from_u128(8111)].clone();
+        physics.id = Uuid::from_u128(8190);
+        physics.flags = 15;
+        inv.add_items(vec![physics]);
+        let worn: HashSet<Uuid> = [8100, 8111, 8112, 8190].into_iter().map(Uuid::from_u128).collect();
+        let facts = Facts {
+            worn,
+            ..Default::default()
+        };
+        let click = |id: u128| {
+            let mut actions = vec![];
+            context::double_click(
+                &inv,
+                Uuid::from_u128(id),
+                &mut InventoryUi::default(),
+                &InventoryPreferences::default(),
+                &facts,
+                &mut actions,
+            );
+            actions
+        };
+        // object, its link (acts on the original), clothing, physics
+        for (row, item) in [(8100, 8100), (8113, 8100), (8111, 8111), (8190, 8190)] {
+            assert!(
+                matches!(&click(row)[..], [InvAction::Appearance(Wear::Remove(id))] if *id == Uuid::from_u128(item)),
+                "row {row}"
+            );
+        }
+        assert!(click(8112).is_empty(), "a worn body part is only replaced");
+        // not worn: the same rows put the item on again, replacing by default
+        let mut actions = vec![];
+        context::double_click(
+            &inv,
+            Uuid::from_u128(8113),
+            &mut InventoryUi::default(),
+            &InventoryPreferences::default(),
+            &Facts::default(),
+            &mut actions,
+        );
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == Uuid::from_u128(8100))
+        );
+    }
+
+    /// LLSoundBridgeAction: a double-click plays a sound in the world, where
+    /// "Open" shows its preview; a null sound sends nothing.
+    #[test]
+    fn double_click_triggers_a_sound_in_the_world() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let sound = Uuid::from_u128(8105);
+        let asset = inv.items[&sound].asset_id;
+        let click = |inv: &Inventory| {
+            let mut actions = vec![];
+            context::double_click(
+                inv,
+                sound,
+                &mut InventoryUi::default(),
+                &InventoryPreferences::default(),
+                &Facts::default(),
+                &mut actions,
+            );
+            actions
+        };
+        assert!(matches!(&click(&inv)[..], [InvAction::TriggerSound(id)] if *id == asset));
+        if let Some(it) = inv.items.get_mut(&sound) {
+            it.asset_id = Uuid::nil();
+        }
+        assert!(click(&inv).is_empty());
+    }
+
+    /// LLAppearanceMgr::wearItemsOnAvatar: a Library wearable is copied into
+    /// the inventory, then the copy is worn, replacing as the double-click
+    /// preferences say (body parts always replace).
+    #[test]
+    fn double_click_on_a_library_wearable_copies_it_then_wears_it() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let library: Vec<_> = [8100u128, 8111, 8112]
+            .into_iter()
+            .map(|n| {
+                let mut it = inv.items[&Uuid::from_u128(n)].clone();
+                it.id = Uuid::from_u128(n + 500);
+                it.parent = inv.lib_root;
+                it.owner = inv.lib_owner;
+                it
+            })
+            .collect();
+        inv.add_items(library);
+        for (add, expected) in [(false, [true, true, true]), (true, [false, false, true])] {
+            let prefs = InventoryPreferences {
+                double_click_add_objects: add,
+                double_click_add_clothes: add,
+                ..Default::default()
+            };
+            for (n, replace) in [8600u128, 8611, 8612].into_iter().zip(expected) {
+                let mut actions = vec![];
+                let item = Uuid::from_u128(n);
+                context::double_click(&inv, item, &mut InventoryUi::default(), &prefs, &Facts::default(), &mut actions);
+                assert!(
+                    matches!(&actions[..], [InvAction::WearCopy { item: id, replace: r }] if *id == item && *r == replace),
+                    "item {n}, add {add}"
+                );
+            }
         }
     }
 
