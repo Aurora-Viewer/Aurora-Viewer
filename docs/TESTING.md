@@ -1316,6 +1316,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
+| `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1352,6 +1353,12 @@ To check with these scenarios:
   number of objects).
 - **`AURORA_DEMO_PLANAR=1`**: the tiles must line up from one slab
   to the next.
+- **`AURORA_DEMO_PBR_METAL=1`**: three white metal spheres (PBR, metallic 1,
+  roughness 0.05, 0.3 and 0.6) and a polished slab ahead of the start
+  position. A white metal has no colour of its own: the polished one
+  mirrors the place and the sky, the rough ones their blur. Compare
+  with the sky behind them: the metal is as blue as the sky it reflects,
+  no more (`AURORA_DEMO_SKY=1,37` for a paler sky).
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary

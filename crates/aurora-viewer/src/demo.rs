@@ -3392,6 +3392,45 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_PBR_METAL=1: white metal (PBR, metallic 1) ahead of the
+    // start position, three spheres from polished to rough and a slab: a
+    // silver that reflects the place, not a tint of its own
+    if std::env::var_os("AURORA_DEMO_PBR_METAL").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let metal = |id: u32, pos: Vec3, scale: Vec3, path: _, mat: Uuid| {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                path,
+                Arc::new(t),
+                ExtraParams {
+                    render_materials: (0..6).map(|f| (f, mat)).collect(),
+                    ..Default::default()
+                },
+                "",
+            )
+        };
+        for (k, mat) in MAT_PBR_METAL.into_iter().enumerate() {
+            let y = 130.0 - 1.6 * k as f32;
+            add(metal(id, Vec3::new(136.0, y, floor + 0.8), Vec3::splat(1.2), sphere, mat));
+            id += 1;
+        }
+        add(metal(
+            id,
+            Vec3::new(137.5, 128.4, floor + 0.05),
+            Vec3::new(1.5, 4.5, 0.1),
+            boxp,
+            MAT_PBR_METAL[0],
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
     // of panels facing the start position, in place of the alpha panels
     if texanim {
@@ -5672,9 +5711,16 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
 /// bumps as normal map.
 const MAT_PBR_TILES: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0010);
 
+/// White metals of AURORA_DEMO_PBR_METAL, polished to rough.
+const MAT_PBR_METAL: [Uuid; 3] = [
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0011),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0012),
+    Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0013),
+];
+
 /// PBR materials of the demo (normally fetched as assets).
 pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
-    vec![(
+    let mut list = vec![(
         MAT_PBR_TILES,
         aurora_assets::PbrMaterial {
             base_color_texture: Some(TEX_TILES),
@@ -5683,7 +5729,18 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
             roughness_factor: 0.6,
             ..Default::default()
         },
-    )]
+    )];
+    for (mat, roughness) in MAT_PBR_METAL.into_iter().zip([0.05, 0.3, 0.6]) {
+        list.push((
+            mat,
+            aurora_assets::PbrMaterial {
+                metallic_factor: 1.0,
+                roughness_factor: roughness,
+                ..Default::default()
+            },
+        ));
+    }
+    list
 }
 
 /// Legacy materials of the test panels (normally fetched from the region).
