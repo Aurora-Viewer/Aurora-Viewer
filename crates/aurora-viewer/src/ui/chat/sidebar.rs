@@ -125,6 +125,14 @@ struct Picked {
     close: bool,
 }
 
+/// What the Contacts entry's second line says: the friends online (the tab
+/// shows People's friends) or what the contact list holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ContactsSub {
+    Friends,
+    Lists,
+}
+
 /// The column (or rail). `height`: what the window gives it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
@@ -135,6 +143,7 @@ pub(super) fn show(
     st: &mut ChatUi,
     actions: &mut Vec<ConvAction>,
     show_contacts_tab: bool,
+    contacts_sub: ContactsSub,
     docked: bool,
     rail: bool,
     height: f32,
@@ -181,7 +190,13 @@ pub(super) fn show(
                 let e = Entry {
                     icon: Icon::Glyph("users", p.violet_pale),
                     name: aurora_i18n::tr!("common-contacts"),
-                    sub: Some(aurora_i18n::tr!("ui-chat-contacts-sub").to_owned()),
+                    sub: Some(match contacts_sub {
+                        ContactsSub::Friends => aurora_i18n::tr!(
+                            "ui-chat-contacts-friends-sub",
+                            online = world.social.friends.iter().filter(|f| f.online).count() as i64
+                        ),
+                        ContactsSub::Lists => aurora_i18n::tr!("ui-chat-contacts-sub").to_owned(),
+                    }),
                     sub_icon: None,
                     current: st.contacts,
                     unread: 0,
@@ -230,6 +245,11 @@ pub(super) fn show(
                     .map(|(id, unread)| (id, unread, entry_name(world, &id, section)))
                     .filter(|(_, _, name)| matches(name))
                     .collect();
+                // a section without a conversation is not drawn at all: no
+                // head, no space (the human's choice of 2026-10-16)
+                if titled.is_empty() {
+                    continue;
+                }
                 section_head(ui, p, world, st, actions, section, rail);
                 for (id, unread, name) in titled {
                     if section == Kind::Private {

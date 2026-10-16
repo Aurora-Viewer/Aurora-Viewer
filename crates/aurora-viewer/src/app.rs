@@ -373,6 +373,9 @@ pub struct App {
     geom_changed: Option<Instant>,
     frame_start: Instant,
     people_ui: ui::people::PeopleUi,
+    /// People's friends tab as Conversations › Contacts shows it: its own
+    /// filter, selection and sheet.
+    contacts_people_ui: ui::people::PeopleUi,
     /// Avatars around us, swept once a second on `radar_clock`.
     radar: crate::world::radar::Radar,
     radar_clock: Instant,
@@ -846,6 +849,7 @@ impl App {
             geom_changed: None,
             frame_start: Instant::now(),
             people_ui: Default::default(),
+            contacts_people_ui: Default::default(),
             radar: Default::default(),
             radar_clock: Instant::now(),
             contacts_ui: Default::default(),
@@ -4624,6 +4628,7 @@ impl App {
         wanted.extend(self.search_ui.wanted_pics.drain());
         wanted.extend(self.group_profile_ui.wanted_pics.drain());
         wanted.extend(self.people_ui.wanted_pics.drain());
+        wanted.extend(self.contacts_people_ui.wanted_pics.drain());
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
         wanted.extend(self.region_ui.wanted_pics.drain());
@@ -4683,6 +4688,7 @@ impl App {
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
+        images.extend(self.contacts_people_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
         images.extend(self.appearance_ui.wanted_images.drain());
         images.extend(self.inventory_ui.wanted_images.drain());
@@ -9147,6 +9153,25 @@ impl App {
                             .answer_call_invite(crate::demo::DEMO_GROUP1, crate::world::calls::InviteAnswer::Decline);
                     }
                 }
+                // Conversations › Contacts in Aurora's look of People: its
+                // friends tab
+                let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
+                let friends_before = self.settings.friends_list.clone();
+                let contacts_radar = ui::people::RadarData {
+                    radar: &self.radar,
+                    settings: &mut self.settings.radar,
+                    voice: &voice_levels,
+                    draw_distance: self.settings.draw_distance,
+                    now: self.radar_clock.elapsed().as_secs_f64(),
+                    pics: &self.avatar_pics,
+                };
+                let friends = people_aurora.then_some(ui::people::FriendsPane {
+                    st: &mut self.contacts_people_ui,
+                    data: &contacts_radar,
+                    settings: &mut self.settings.friends_list,
+                    images: &self.ui_images,
+                });
+                let mut contacts_people = Vec::new();
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -9160,6 +9185,7 @@ impl App {
                     &mut self.contacts_ui,
                     &mut self.settings.contacts,
                     self.settings.show_contacts_tab,
+                    friends,
                     &mut open,
                 ) {
                     match c {
@@ -9200,6 +9226,7 @@ impl App {
                         }
                         ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
+                        ui::chat::ConvAction::People(pa) => contacts_people.push(pa),
                         ui::chat::ConvAction::OpenContacts => self.panels.contacts = true,
                         ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
                         ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
@@ -9233,6 +9260,9 @@ impl App {
                     }
                 }
                 self.panels.chat = open;
+                if self.settings.friends_list != friends_before {
+                    self.settings.save();
+                }
                 if let Some(ui::chat::history::HistoryAction::OpenFolder(dir)) = self.history_ui.show(
                     &ctx,
                     &p,
@@ -9322,7 +9352,8 @@ impl App {
                 if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
                 }
-                for pa in people {
+                // (and those of Conversations › Contacts, the same tab)
+                for pa in people.into_iter().chain(contacts_people) {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
                             // LLAvatarActions::startIM: they join the recent people

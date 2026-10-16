@@ -118,6 +118,7 @@ impl H {
                 contacts,
                 contacts_settings,
                 false,
+                None,
                 &mut open,
             ));
         });
@@ -154,6 +155,7 @@ impl H {
                 contacts,
                 contacts_settings,
                 false,
+                None,
                 &mut open,
             ));
         });

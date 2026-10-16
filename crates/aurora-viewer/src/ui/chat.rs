@@ -584,6 +584,8 @@ pub enum ConvAction {
     OpenPeople(u8),
     /// From the "Contacts" tab.
     Contacts(super::contacts::ContactsAction),
+    /// From the "Contacts" tab in Aurora's look: People's friends tab.
+    People(super::people::PeopleAction),
     /// Show the torn-off Contacts window (its entry in the list).
     OpenContacts,
     /// Block / unblock the avatar of a 1:1 conversation.
@@ -1741,9 +1743,13 @@ pub fn show(
     contacts: &mut super::contacts::ContactsUi,
     contacts_settings: &mut super::contacts::ContactsSettings,
     show_contacts_tab: bool,
+    // People's friends tab, the workspace's Contacts tab in Aurora's look of
+    // People (None: the contact list as it is)
+    friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let mut actions = Vec::new();
+    let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
         st.open(f);
@@ -1786,6 +1792,7 @@ pub fn show(
                 contacts: &mut *contacts,
                 contacts_settings: &mut *contacts_settings,
                 show_contacts_tab,
+                friends: friends.take(),
                 docked,
                 compact: style == crate::settings::ChatStyle::Compact,
             };
@@ -2897,6 +2904,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             });
@@ -2972,6 +2980,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             });
@@ -3049,6 +3058,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             })
@@ -3204,6 +3214,7 @@ mod tests {
                         &mut contacts,
                         &mut contacts_settings,
                         visible,
+                        None,
                         &mut open,
                     );
                 });

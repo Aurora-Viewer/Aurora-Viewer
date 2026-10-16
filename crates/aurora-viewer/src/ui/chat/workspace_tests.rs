@@ -40,6 +40,8 @@ struct Harness {
     contacts_settings: crate::ui::contacts::ContactsSettings,
     gestures: crate::gestures::Manager,
     actions: Vec<ConvAction>,
+    /// Preferences › Chat › Show the Contacts tab.
+    show_contacts: bool,
 }
 
 impl Harness {
@@ -62,6 +64,7 @@ impl Harness {
             contacts_settings: Default::default(),
             gestures: Default::default(),
             actions: Vec::new(),
+            show_contacts: false,
         }
     }
 
@@ -78,6 +81,7 @@ impl Harness {
             contacts_settings,
             gestures,
             actions,
+            show_contacts,
         } = self;
         let mut open = true;
         frames.run(events, |ui| {
@@ -93,7 +97,8 @@ impl Harness {
                 st,
                 contacts,
                 contacts_settings,
-                false,
+                *show_contacts,
+                None,
                 &mut open,
             ));
         })
@@ -312,6 +317,124 @@ fn a_conference_lists_its_offline_members() {
     );
     let note = aurora_i18n::tr!("ui-chat-members-present-only");
     assert!(texts.iter().all(|t| t.source != note), "a conference is not a role group");
+}
+
+/// The column draws only the sections that hold a conversation: with IMs
+/// alone, no "Groups" nor "Conferences" head, nor their "+" (the human's
+/// choice of 2026-10-16).
+#[test]
+fn empty_sections_are_not_drawn() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let texts = h.settle();
+    let head = |key: &'static str| aurora_i18n::text(key).to_uppercase();
+    assert!(texts.iter().any(|t| t.source == head("ui-chat-section-private")), "the IMs' head");
+    for key in ["ui-chat-section-groups", "ui-chat-section-conferences"] {
+        assert!(texts.iter().all(|t| t.source != head(key)), "{key} drawn while empty");
+    }
+    let add = |section: &str| super::super::sidebar::control_id(&format!("section-add-{section}"));
+    assert!(h.frames.ctx.read_response(add("Private")).is_some());
+    assert!(h.frames.ctx.read_response(add("Group")).is_none());
+    assert!(h.frames.ctx.read_response(add("Conference")).is_none());
+}
+
+/// Thirty friends, all online, named "Friend 00" to "Friend 29".
+fn add_friends(world: &mut World) {
+    for i in 0..30u128 {
+        let id = Uuid::from_u128(0xF000 + i);
+        world.social.friends.push(crate::world::social::Friend {
+            id,
+            online: true,
+            rights_given: 1,
+            rights_has: 1,
+        });
+        world.social.names.insert(id, format!("Friend {i:02}"));
+    }
+}
+
+/// The contact list shown in the workspace's Contacts tab fills the pane:
+/// inside a row of the layout it took one line's height and showed three
+/// friends of thirty (the human's report of 2026-10-16).
+#[test]
+fn the_contact_list_fills_the_contacts_pane() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_friends(&mut h.world);
+    h.show_contacts = true;
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    let texts = h.settle();
+    let rows: Vec<&crate::ui::widgets::elide_tests::Text> = texts.iter().filter(|t| t.source.starts_with("Friend ")).collect();
+    assert!(rows.len() >= 15, "{} friends shown", rows.len());
+    let lowest = rows.iter().map(|t| t.rect.bottom()).fold(f32::MIN, f32::max);
+    assert!(lowest > 20.0 + 560.0 - 120.0, "the list ends at {lowest}");
+}
+
+/// In Aurora's look of People the Contacts tab is People's friends tab:
+/// its rows, and the column's entry counting the friends online.
+#[test]
+fn the_contacts_tab_shows_peoples_friends() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_friends(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    let p = crate::theme::Theme::default().palette();
+    let radar = crate::world::radar::Radar::default();
+    let mut radar_settings = crate::ui::people::RadarSettings::default();
+    let (voice, pics) = (HashMap::new(), HashMap::new());
+    let data = crate::ui::people::RadarData {
+        radar: &radar,
+        settings: &mut radar_settings,
+        voice: &voice,
+        draw_distance: 64.0,
+        now: 0.0,
+        pics: &pics,
+    };
+    let mut people = crate::ui::people::PeopleUi::default();
+    let mut friends = crate::ui::people::FriendsSettings::default();
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        let mut open = true;
+        let Harness {
+            frames,
+            world,
+            st,
+            icons,
+            emoji,
+            contacts,
+            contacts_settings,
+            gestures,
+            actions,
+            ..
+        } = &mut h;
+        texts = frames.run(Vec::new(), |ui| {
+            actions.extend(show(
+                ui.ctx(),
+                &p,
+                icons,
+                emoji,
+                &pics,
+                &pics,
+                world,
+                gestures,
+                st,
+                contacts,
+                contacts_settings,
+                true,
+                Some(crate::ui::people::FriendsPane {
+                    st: &mut people,
+                    data: &data,
+                    settings: &mut friends,
+                    images: &pics,
+                }),
+                &mut open,
+            ));
+        });
+    }
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows");
+    let sub = aurora_i18n::tr!("ui-chat-contacts-friends-sub", online = 30);
+    assert!(texts.iter().any(|t| t.source == sub), "the column says {sub:?}");
+    // the contact list's own tabs are not there
+    let groups = aurora_i18n::tr!("ui-contacts-contact-sets");
+    assert!(texts.iter().all(|t| t.source != groups), "no contact list tabs");
 }
 
 /// Who types in the nearby chat shows above the field, their name in the

@@ -4,7 +4,8 @@
 //! `blocked.rs`: the tabs of Conversations › Contacts with all their
 //! rights and actions, `ui/contacts.rs` reused), each with the sheet of the
 //! person or group clicked (`sheet.rs`); `rows.rs` holds what their rows
-//! share. In Firestorm's look (Preferences › Aurora,
+//! share. The friends tab is also the Contacts tab of the Conversations
+//! workspace (`friends_pane`). In Firestorm's look (Preferences › Aurora,
 //! `Settings::classic_people`) Near you is the radar table (`radar.rs`) and
 //! the other tabs keep their simple lists below.
 
@@ -446,6 +447,57 @@ pub fn people_window(
         }
     }
     panels.people = open;
+    actions
+}
+
+/// What Conversations › Contacts shows in Aurora's look: the friends tab of
+/// this window (its list, and the sheet of the friend clicked), with a
+/// state of its own so that each window keeps its filter, selection and
+/// sheet.
+pub struct FriendsPane<'a, 'r> {
+    pub st: &'a mut PeopleUi,
+    pub data: &'a RadarData<'r>,
+    pub settings: &'a mut FriendsSettings,
+    /// Group insignias.
+    pub images: &'a HashMap<Uuid, egui::TextureHandle>,
+}
+
+/// The friends tab drawn in `ui` (Conversations › Contacts). No window
+/// widens for a sheet there: it shows beside the list when the pane has
+/// room, alone otherwise.
+pub fn friends_pane(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    pane: FriendsPane,
+    contacts: &mut ContactsUi,
+    contact_settings: &mut ContactsSettings,
+) -> Vec<PeopleAction> {
+    let FriendsPane {
+        st,
+        data,
+        settings,
+        images,
+    } = pane;
+    st.tab_shown(TAB_FRIENDS);
+    st.sheet_grow = false;
+    let mut actions = Vec::new();
+    let mut c = Ctx {
+        p,
+        world,
+        contacts: &mut *contacts,
+        contact_settings,
+        friends: settings,
+        images,
+        actions: &mut actions,
+    };
+    friends::tab(ui, &mut c, data, st);
+    for ask in std::mem::take(&mut st.asks) {
+        match ask {
+            Ask::RemoveFromSet(set, ids) => contacts.ask_remove_from_set(&set, ids),
+            Ask::NewSet => contacts.ask_new_set(),
+        }
+    }
     actions
 }
 

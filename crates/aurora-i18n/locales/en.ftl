@@ -3093,6 +3093,7 @@ ui-profile-partner = Partner:
 ui-chat-participants = Participants ({ $n })
 ui-chat-search-or-start = Search or start…
 ui-chat-contacts-sub = Friends and contact sets
+ui-chat-contacts-friends-sub = Friends · { $online } online
 ui-chat-in-earshot = { $n } in earshot
 ui-chat-head-in-earshot = { $n ->
     [one] { $n } person in earshot

@@ -15,7 +15,7 @@
 //! stay in the thread. The texts are the classic lines' (`chat_text_marked`:
 //! links, places, mentions, emoji, find highlights, selection).
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, presence, sender_name, view};
+use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, ChatLine, Origin};
@@ -369,8 +369,10 @@ fn compact_row(
     row.response.rect
 }
 
-/// The picture at the head of a group: the avatar's with its status, a box
-/// for an object, initials for a history line; clickable to the profile.
+/// The picture at the head of a group: the avatar's, a box for an object,
+/// initials for a history line; clickable to the profile. No status dot:
+/// the head and the column already show it (the human's choice of
+/// 2026-10-16), and a dot on every group of a busy chat said it again.
 fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, who: &Who, rect: egui::Rect) {
     let p = env.p;
     if who.object {
@@ -385,10 +387,6 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
     crate::ui::widgets::avatar_disc(ui, p, rect, pic, name, who.logged);
     if who.avatar.is_nil() {
         return;
-    }
-    let status = presence::of(env.world, &who.avatar);
-    if status != presence::Status::Unknown {
-        presence::paint_dot(ui.painter(), p, rect, status, p.field);
     }
     let r = ui.interact(rect, ui.id().with(("thread_pic", line.time, line.source)), egui::Sense::click());
     line_name_menu(&r, p, env.world, who.avatar, line);

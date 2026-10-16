@@ -33,6 +33,9 @@ pub(super) struct Env<'a> {
     pub contacts: &'a mut crate::ui::contacts::ContactsUi,
     pub contacts_settings: &'a mut crate::ui::contacts::ContactsSettings,
     pub show_contacts_tab: bool,
+    /// People's friends tab, the Contacts tab in Aurora's look of People;
+    /// None: the contact list.
+    pub friends: Option<crate::ui::people::FriendsPane<'a, 'a>>,
     pub docked: bool,
     pub compact: bool,
 }
@@ -48,6 +51,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         contacts,
         contacts_settings,
         show_contacts_tab,
+        friends,
         docked,
         compact,
     } = env;
@@ -68,22 +72,32 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     ui.interact(all, ui.id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        sidebar::show(ui, p, pics, world, st, actions, show_contacts_tab, docked, rail, h);
+        let contacts_sub = if friends.is_some() {
+            sidebar::ContactsSub::Friends
+        } else {
+            sidebar::ContactsSub::Lists
+        };
+        sidebar::show(ui, p, pics, world, st, actions, show_contacts_tab, contacts_sub, docked, rail, h);
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_height(h);
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             if st.contacts {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.vertical(|ui| {
+                let pane = ui.available_rect_before_wrap();
+                let pane = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), h));
+                contacts_pane(ui, p, pane, |ui| match friends {
+                    Some(friends) => {
+                        for a in crate::ui::people::friends_pane(ui, p, world, friends, contacts, contacts_settings) {
+                            actions.push(ConvAction::People(a));
+                        }
+                    }
+                    None => {
                         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                         let pics = crate::ui::contacts::Pics { avatars: pics, images };
                         for a in crate::ui::contacts::panel(ui, p, world, contacts, contacts_settings, &pics) {
                             actions.push(ConvAction::Contacts(a));
                         }
-                    });
+                    }
                 });
                 return;
             }
@@ -91,6 +105,30 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         });
     });
 }
+
+/// The Contacts tab's pane, at the right of the column: the conversation
+/// pane's ground, and its content over the whole height (inside a row of
+/// the layout, the lists took the height of one line).
+fn contacts_pane(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, content: impl FnOnce(&mut egui::Ui)) {
+    ui.allocate_rect(pane, egui::Sense::hover());
+    let corner = ui.visuals().window_corner_radius;
+    let radius = egui::CornerRadius {
+        se: corner.se,
+        ..egui::CornerRadius::ZERO
+    };
+    ui.painter().rect_filled(pane, radius, p.field.gamma_multiply(0.55));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("conversation_contacts")
+            .max_rect(pane.shrink2(egui::vec2(CONTACTS_MARGIN.x, CONTACTS_MARGIN.y)))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    content(&mut child);
+}
+
+/// The Contacts pane's margins: the conversation's head and lines keep
+/// about these.
+const CONTACTS_MARGIN: egui::Vec2 = egui::vec2(12.0, 10.0);
 
 /// The conversation shown, at the right of the column.
 #[allow(clippy::too_many_arguments)]
