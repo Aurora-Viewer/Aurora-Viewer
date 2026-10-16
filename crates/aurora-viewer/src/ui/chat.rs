@@ -35,6 +35,9 @@ pub struct ChatUi {
     pub input: String,
     pub focus_request: bool,
     pub has_focus: bool,
+    /// The local chat field keeps the keyboard after a message is sent
+    /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
+    pub keep_focus: bool,
     /// Conversation shown in the floater (None = local chat).
     pub selected: Option<uuid::Uuid>,
     /// Conversation whose entry the list scrolls to: one opened from
@@ -2606,6 +2609,11 @@ pub(crate) fn bar_input(
             },
         });
         st.input.clear();
+        if st.keep_focus {
+            // ready for the next message; only Enter on the empty bar or a
+            // click elsewhere gives the keyboard back to the world
+            st.focus_request = true;
+        }
     }
     // Enter on an empty bar returns to movement (like Firestorm).
     out

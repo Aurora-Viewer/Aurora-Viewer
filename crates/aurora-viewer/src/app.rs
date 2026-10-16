@@ -8898,6 +8898,7 @@ impl App {
                 // the dock leaves the Conversations button out of its default
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                 self.toolbar_ui.islands = !classic_bars;
+                self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 let ao_active = self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused;
                 let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
                     // hidden: the chat lines go down to the screen's bottom
