@@ -26,7 +26,7 @@ body:
     attributes:
       label: How it works in another viewer (if applicable)
       description: If this exists in another viewer, describe how it works there.
-      placeholder: In Firestorm / other viewers, this works by...
+      placeholder: In the Legacy Viewer / other viewers, this works by...
     validations:
       required: false
 

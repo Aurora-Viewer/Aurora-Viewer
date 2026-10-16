@@ -6391,11 +6391,9 @@ impl App {
         if stats.presented && !gfx.shown {
             gfx.shown = true;
             // On Windows, maximizing can show even a hidden window. Defer
-            // it until its client area already contains a rendered image.
-            if gfx.maximize_on_show {
-                gfx.window.set_maximized(true);
-            }
-            gfx.window.set_visible(true);
+            // it until its client area already contains a rendered image;
+            // shown once, with the focus (window_show.rs)
+            crate::window_show::show(&gfx.window, gfx.maximize_on_show);
             log::info!("startup window shown after the first presented frame");
         }
         if stats.presented && !self.update_acknowledged {

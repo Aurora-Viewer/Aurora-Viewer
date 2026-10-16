@@ -1455,7 +1455,7 @@ To check with these scenarios:
 - **`AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]`**: after the loading fade,
   meshes of 60,000 vertices keep entering the geometry arena until it
   holds `mb` megabytes of them (800 if the value is not a number), at 25 MB
-  a second unless told otherwise (Knotty beach loads about 22 MB a second
+  a second unless told otherwise (KB loads about 22 MB a second
   for 35 s). They are not drawn: the scenario only makes the arena outgrow
   its buffers, in the frames of the ordinary demo. The log gives each
   growth (`vertex arena grown to … MB`) and the end (`demo geometry: …
@@ -4049,6 +4049,13 @@ the variable.
   errors (ended sooner, or refused). Fifteen errors in a row, each one
   waited for 3 s longer than the one before, close the queue; when it is the
   agent's region the session ends with "connection lost", as in Firestorm.
+- `objects full= cache_hit= cache_miss=`: objects the simulators sent in full
+  (ObjectUpdate, ObjectUpdateCompressed), and those they announced by their
+  cache entry (ObjectUpdateCached) that the object cache held, or did not
+  and were asked for in full. Second after second, the curve of an
+  arrival: in a region already visited, whether it waits for the
+  announcements or for the objects missing from the cache (with
+  `left_max`: whether the main thread keeps up with them).
 
 Three more lines are written without the variable, to read next to
 `loop_max` and `gaps`:

@@ -255,6 +255,12 @@ impl MeshView {
     }
 }
 
+/// Disk cache file of a mesh asset; None without a disk cache (an empty
+/// `cache_dir`).
+fn cache_path(cache_dir: &std::path::Path, id: &Uuid) -> Option<PathBuf> {
+    (!cache_dir.as_os_str().is_empty()).then(|| cache_dir.join("mesh").join(format!("{id}.mesh")))
+}
+
 pub struct MeshStreamer {
     entries: HashMap<Uuid, MeshEntry>,
     /// The meshes `update` has something to do for (`MeshEntry::has_work`),
@@ -286,8 +292,12 @@ pub struct MeshStreamer {
 }
 
 impl MeshStreamer {
+    /// `cache_dir` empty: no disk cache (tests, which run in the crate's
+    /// folder: a relative `mesh/` wrote cache files among the sources).
     pub fn new(cache_dir: PathBuf) -> Self {
-        let _ = std::fs::create_dir_all(cache_dir.join("mesh"));
+        if !cache_dir.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(cache_dir.join("mesh"));
+        }
         MeshStreamer {
             entries: HashMap::new(),
             todo: Vec::new(),
@@ -539,11 +549,11 @@ impl MeshStreamer {
                 match e.stage {
                     Stage::New => {
                         e.stage = Stage::Reading;
-                        let path = self.cache_dir.join("mesh").join(format!("{id}.mesh"));
+                        let path = cache_path(&self.cache_dir, &id);
                         jobs.spawn(move || JobResult::MeshCache {
                             id,
-                            arrival: crate::cache::read_touch(path)
-                                .ok()
+                            arrival: path
+                                .and_then(|path| crate::cache::read_touch(path).ok())
                                 .and_then(MeshBytes::decode)
                                 .map(|bytes| Box::new(arrival(bytes, None, true))),
                         });
@@ -696,13 +706,12 @@ impl MeshStreamer {
     /// Bytes downloaded, parsed by their job.
     pub fn on_part(&mut self, id: Uuid, a: MeshArrival, jobs: &Jobs) {
         if self.keep(id, a, true) {
-            let Some(e) = self.entries.get(&id) else {
+            let (Some(e), Some(path)) = (self.entries.get(&id), cache_path(&self.cache_dir, &id)) else {
                 return;
             };
-            let path = self.cache_path(&id);
             let bytes = e.bytes.clone();
             jobs.spawn(move || {
-                let _ = crate::cache::write(path, &bytes.encode());
+                let _ = bytes.save(&path);
                 JobResult::Done
             });
         }
@@ -815,11 +824,6 @@ impl MeshStreamer {
             }
             Self::attend(&mut self.todo, id, e);
         }
-    }
-
-    /// Disk cache file of a mesh asset.
-    fn cache_path(&self, id: &Uuid) -> PathBuf {
-        self.cache_dir.join("mesh").join(format!("{id}.mesh"))
     }
 
     pub fn on_geometry_done(&mut self, id: &Uuid, lod: u8) {
@@ -1352,6 +1356,19 @@ mod tests {
         s.on_cache(near, None);
         s.update(&jobs, &fetcher, CAP, &rig);
         assert_eq!(s.entries[&near].inflight[0].1, None);
+    }
+
+    /// Without a cache folder (the tests' streamers) a mesh is neither read
+    /// from nor written to a disk cache: the tests run in the crate's folder,
+    /// where a relative `mesh/` put cache files among the sources.
+    #[test]
+    fn without_a_cache_folder_there_is_no_disk_cache() {
+        let id = Uuid::from_u128(1);
+        assert_eq!(cache_path(std::path::Path::new(""), &id), None);
+        assert_eq!(
+            cache_path(std::path::Path::new("cache"), &id),
+            Some(PathBuf::from("cache").join("mesh").join(format!("{id}.mesh")))
+        );
     }
 
     /// A fetcher whose requests go nowhere: its runtime is never driven.
