@@ -86,6 +86,9 @@ pub fn events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
+    if let Some(spot) = mode.strip_prefix("reach-") {
+        return reach_events(ctx, frame, id.with("demo_reach"), pos, spot);
+    }
     if matches!(frame, 660 | 664) || mode != "1" && matches!(frame, 1000 | 1004) {
         return vec![egui::Event::PointerMoved(pos), button(pos, true)];
     }
@@ -109,6 +112,59 @@ pub fn events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         }
     }
     Vec::new()
+}
+
+/// The middle of the widest gap between the bars' islands of the top row
+/// (`top`) or of the bottom one, at the height of the row.
+fn island_gap(ctx: &egui::Context, top: bool) -> Option<egui::Pos2> {
+    let screen = ctx.content_rect();
+    let names = ["menu", "bug", "place", "system", "account", "bell", "chat", "dock"];
+    let mut row: Vec<egui::Rect> = names
+        .iter()
+        .filter_map(|name| ctx.memory(|m| m.area_rect(egui::Id::new(("bars_island", *name)))))
+        .filter(|r| (r.center().y < screen.center().y) == top)
+        .collect();
+    row.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    let y = row.first()?.center().y;
+    row.windows(2)
+        .map(|w| (w[1].left() - w[0].right(), (w[0].right() + w[1].left()) / 2.0))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, x)| egui::pos2(x, y))
+}
+
+/// `AURORA_DEMO_WINDOWS=reach-top|reach-bottom|reach-right|reach-left|reach-down`:
+/// the real title bar of the inventory is dragged at frames 700–709 into
+/// the widest gap between the top islands, between the bottom ones, or far
+/// past the right, left or bottom edge of the screen, and released there.
+fn reach_events(ctx: &egui::Context, frame: u64, id: egui::Id, pos: egui::Pos2, spot: &str) -> Vec<egui::Event> {
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    if frame == 700 {
+        let target = match spot {
+            "top" => island_gap(ctx, true),
+            "bottom" => island_gap(ctx, false),
+            "left" => Some(egui::pos2(ctx.content_rect().left() - 2000.0, pos.y)),
+            "down" => Some(egui::pos2(pos.x, ctx.content_rect().bottom() + 2000.0)),
+            _ => Some(egui::pos2(ctx.content_rect().right() + 2000.0, pos.y)),
+        };
+        let Some(target) = target else {
+            return Vec::new();
+        };
+        ctx.data_mut(|d| d.insert_temp(id, (pos, target)));
+        return vec![egui::Event::PointerMoved(pos), button(pos, true)];
+    }
+    let Some((start, target)) = ctx.data(|d| d.get_temp::<(egui::Pos2, egui::Pos2)>(id)) else {
+        return Vec::new();
+    };
+    match frame {
+        701..=708 => vec![egui::Event::PointerMoved(start.lerp(target, (frame - 700) as f32 / 8.0))],
+        709 => vec![button(target, false)],
+        _ => Vec::new(),
+    }
 }
 
 /// AURORA_DEMO_MINIMIZED=1|expand: the real title bar of Conversations is

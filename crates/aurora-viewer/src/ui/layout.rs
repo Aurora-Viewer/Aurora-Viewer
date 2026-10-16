@@ -120,6 +120,175 @@ pub(crate) fn work_area(ctx: &egui::Context) -> Rect {
         .unwrap_or_else(|| default_work_area(ctx.content_rect()))
 }
 
+fn move_area_id() -> Id {
+    Id::new("layout_move_area")
+}
+
+/// Where the windows can be moved this frame: with the islands the whole
+/// screen, since the islands leave room between them, above and below;
+/// with the Legacy Viewer's full-width bars, the room between them. Call
+/// it with `set_work_area`.
+pub(crate) fn set_move_area(ctx: &egui::Context, area: Rect) {
+    ctx.data_mut(|d| d.insert_temp(move_area_id(), area));
+}
+
+/// Where the windows can be moved (`set_move_area`); the work area when
+/// nothing set it.
+pub(crate) fn move_area(ctx: &egui::Context) -> Rect {
+    ctx.data(|d| d.get_temp::<Rect>(move_area_id())).unwrap_or_else(|| work_area(ctx))
+}
+
+/// Height of a floater's title bar, and the width of it that stays in the
+/// room the windows move in at least: enough to grab it and bring the
+/// window back.
+pub(crate) const TITLE_BAR_H: f32 = 38.0;
+pub(crate) const TITLE_GRIP: f32 = 96.0;
+
+/// Which edges of the room stop the windows (`Settings::windows_stop_*`,
+/// all by default): a window stays whole on the screen on that side; off,
+/// it may cross that edge, its title bar kept within reach. The top edge
+/// always stops them: a title bar above it could not be grabbed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Edges {
+    pub left: bool,
+    pub right: bool,
+    pub bottom: bool,
+}
+
+impl Default for Edges {
+    fn default() -> Self {
+        Edges {
+            left: true,
+            right: true,
+            bottom: true,
+        }
+    }
+}
+
+fn edges_id() -> Id {
+    Id::new("layout_window_edges")
+}
+
+/// The edges that stop the windows this frame (the user's settings): call
+/// it with `set_move_area`.
+pub(crate) fn set_window_edges(ctx: &egui::Context, edges: Edges) {
+    ctx.data_mut(|d| d.insert_temp(edges_id(), edges));
+}
+
+/// The edges that stop the windows (`set_window_edges`); all of them when
+/// nothing set it.
+pub(crate) fn window_edges(ctx: &egui::Context) -> Edges {
+    ctx.data(|d| d.get_temp::<Edges>(edges_id())).unwrap_or_default()
+}
+
+/// The rect a window of `size` is kept in (`egui::Window::constrain_to`):
+/// whole in `area` on the sides whose edge stops it (`edges`); past the
+/// left or right edge otherwise but `TITLE_GRIP` of its title bar, past the
+/// bottom one but its whole title bar. Never above the top.
+pub(crate) fn reach(area: Rect, size: Vec2, edges: Edges) -> Rect {
+    let grip = TITLE_GRIP.min(size.x);
+    let over_x = (size.x - grip).max(0.0);
+    let over_y = (size.y - TITLE_BAR_H).max(0.0);
+    Rect::from_min_max(
+        Pos2::new(area.left() - if edges.left { 0.0 } else { over_x }, area.top()),
+        Pos2::new(
+            area.right() + if edges.right { 0.0 } else { over_x },
+            area.bottom() + if edges.bottom { 0.0 } else { over_y },
+        ),
+    )
+}
+
+/// `pos` of a window of `size`, moved within `reach`; a window larger than
+/// the room keeps its top left corner in it.
+pub(crate) fn keep_title_in(area: Rect, pos: Pos2, size: Vec2, edges: Edges) -> Pos2 {
+    let limits = reach(area, size, edges);
+    let right = (limits.right() - size.x).max(limits.left());
+    let bottom = (limits.bottom() - size.y).max(limits.top());
+    Pos2::new(pos.x.clamp(limits.left(), right), pos.y.clamp(limits.top(), bottom))
+}
+
+fn islands_id() -> Id {
+    Id::new("layout_bar_islands")
+}
+
+/// An island of the bars was drawn this frame at `rect` (`bars::islands`):
+/// the windows keep their title clear of them (`clear_of_islands`).
+pub(crate) fn island_drawn(ctx: &egui::Context, rect: Rect) {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|d| {
+        let islands = d.get_temp_mut_or_default::<(u64, Vec<Rect>)>(islands_id());
+        if islands.0 != frame {
+            *islands = (frame, Vec::new());
+        }
+        islands.1.push(rect);
+    });
+}
+
+/// The islands drawn this frame.
+pub(crate) fn islands(ctx: &egui::Context) -> Vec<Rect> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<(u64, Vec<Rect>)>(islands_id()))
+        .filter(|(drawn, _)| *drawn == frame)
+        .map(|(_, rects)| rects)
+        .unwrap_or_default()
+}
+
+/// How much of `title` (a title bar) shows in `area` beside the islands
+/// that cross its height.
+fn uncovered(title: Rect, area: Rect, islands: &[Rect]) -> f32 {
+    let (left, right) = (title.left().max(area.left()), title.right().min(area.right()));
+    if right <= left {
+        return 0.0;
+    }
+    let mut covered: Vec<(f32, f32)> = islands
+        .iter()
+        .filter(|i| i.top() < title.bottom() && i.bottom() > title.top())
+        .map(|i| (i.left().max(left), i.right().min(right)))
+        .filter(|(a, b)| b > a)
+        .collect();
+    covered.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut hidden = 0.0;
+    let mut end = left;
+    for (a, b) in covered {
+        if b > end {
+            hidden += b - a.max(end);
+            end = b;
+        }
+    }
+    (right - left) - hidden
+}
+
+/// Room kept between a window brought out from under the islands and them.
+const ISLAND_CLEARANCE: f32 = 8.0;
+
+/// `pos` of a window of `size`, moved off the islands when its title bar is
+/// hidden by them all but `TITLE_GRIP` (the islands and the windows share a
+/// layer: the last one clicked comes on top, and a title left under an
+/// island could not be grabbed again). It goes below the islands of the
+/// upper half of `area`, above those of the lower half, and stays within
+/// reach (`keep_title_in`).
+pub(crate) fn clear_of_islands(area: Rect, pos: Pos2, size: Vec2, edges: Edges, islands: &[Rect]) -> Pos2 {
+    let width = size.x;
+    let title = Rect::from_min_size(pos, Vec2::new(width, TITLE_BAR_H));
+    if uncovered(title, area, islands) >= TITLE_GRIP.min(width) {
+        return pos;
+    }
+    let crossing: Vec<&Rect> = islands
+        .iter()
+        .filter(|i| i.top() < title.bottom() && i.bottom() > title.top() && i.left() < title.right() && i.right() > title.left())
+        .collect();
+    let upper = crossing.iter().filter(|i| i.center().y < area.center().y);
+    let lower = crossing.iter().filter(|i| i.center().y >= area.center().y);
+    let y = if let Some(bottom) = upper.map(|i| i.bottom()).reduce(f32::max) {
+        bottom + ISLAND_CLEARANCE
+    } else if let Some(top) = lower.map(|i| i.top()).reduce(f32::min) {
+        top - ISLAND_CLEARANCE - TITLE_BAR_H
+    } else {
+        pos.y
+    };
+    keep_title_in(area, Pos2::new(pos.x, y), size, edges)
+}
+
 /// A screen smaller than this is not one to lay windows out in: the content
 /// rect of a minimized viewer window, or of the first frames before the
 /// surface has its size. Windows neither follow it nor record it.
@@ -336,8 +505,8 @@ pub(crate) fn frame(ctx: &egui::Context, p: &Palette, snap_enabled: bool) {
         alt: ctx.input(|i| i.modifiers.alt),
         time: ctx.input(|i| i.time),
     };
-    let (area, pixels_per_point) = (work_area(ctx), ctx.pixels_per_point());
-    let overlay = windows(ctx, |w| w.drive(area, pixels_per_point, pointer, snap_enabled));
+    let (area, room, edges, pixels_per_point) = (work_area(ctx), move_area(ctx), window_edges(ctx), ctx.pixels_per_point());
+    let overlay = windows(ctx, |w| w.drive(area, room, edges, pixels_per_point, pointer, snap_enabled));
     if let Some(overlay) = overlay {
         snap::overlay::paint(ctx, p, &overlay);
     }
@@ -726,5 +895,122 @@ mod tests {
         crate::ui::fonts::apply(&ctx, crate::ui::fonts::NOTO);
         super::restore(&ctx, &saved).expect("restore");
         assert_ne!(first_font(&ctx), "aurora-main", "egui keeps pending fonts now: the order is free");
+    }
+
+    const ALL: Edges = Edges {
+        left: true,
+        right: true,
+        bottom: true,
+    };
+    const NONE: Edges = Edges {
+        left: false,
+        right: false,
+        bottom: false,
+    };
+
+    /// By default every edge stops a window: it stays whole on the screen,
+    /// anywhere on it, never above the top.
+    #[test]
+    fn by_default_a_window_stays_whole_on_the_screen() {
+        let room = screen(1280.0, 720.0);
+        let size = Vec2::new(400.0, 300.0);
+        assert_eq!(Edges::default(), ALL);
+        assert_eq!(reach(room, size, ALL), room);
+        let keep = |x: f32, y: f32| keep_title_in(room, Pos2::new(x, y), size, ALL);
+        assert_eq!(keep(5000.0, 5000.0), Pos2::new(880.0, 420.0));
+        assert_eq!(keep(-5000.0, -5000.0), Pos2::new(0.0, 0.0));
+        assert_eq!(keep(300.0, 200.0), Pos2::new(300.0, 200.0));
+    }
+
+    /// An edge let open: a window crosses it, by the sides but `TITLE_GRIP`
+    /// of its title bar, by the bottom but its whole title bar; the other
+    /// edges still stop it, the top always does.
+    #[test]
+    fn an_open_edge_lets_a_window_cross_it_within_reach() {
+        let room = screen(1280.0, 720.0);
+        let size = Vec2::new(400.0, 300.0);
+        let fits = |edges: Edges, pos: Pos2| reach(room, size, edges).contains_rect(Rect::from_min_size(pos, size));
+        let only = |left, right, bottom| Edges { left, right, bottom };
+        // right open
+        assert!(fits(only(true, false, true), Pos2::new(1280.0 - TITLE_GRIP, 300.0)));
+        assert!(!fits(only(true, false, true), Pos2::new(1281.0 - TITLE_GRIP, 300.0)));
+        assert!(!fits(only(true, false, true), Pos2::new(-1.0, 300.0)), "the left still stops it");
+        assert!(!fits(only(true, false, true), Pos2::new(300.0, 421.0)), "the bottom still stops it");
+        // left open
+        assert!(fits(only(false, true, true), Pos2::new(-(400.0 - TITLE_GRIP), 300.0)));
+        assert!(!fits(only(false, true, true), Pos2::new(-(401.0 - TITLE_GRIP), 300.0)));
+        assert!(!fits(only(false, true, true), Pos2::new(881.0, 300.0)), "the right still stops it");
+        // bottom open: down to its title bar
+        assert!(fits(only(true, true, false), Pos2::new(300.0, 720.0 - TITLE_BAR_H)));
+        assert!(!fits(only(true, true, false), Pos2::new(300.0, 721.0 - TITLE_BAR_H)));
+        // all open: never above the top
+        assert!(!fits(NONE, Pos2::new(300.0, -1.0)));
+        // a saved place comes back by the same rules
+        for edges in [ALL, NONE, only(false, true, true), only(true, false, false)] {
+            for pos in [Pos2::new(5000.0, -300.0), Pos2::new(-5000.0, 5000.0), Pos2::new(640.0, 360.0)] {
+                assert!(fits(edges, keep_title_in(room, pos, size, edges)), "{edges:?} {pos:?}");
+            }
+        }
+        // a window narrower than the grip never crosses a side
+        assert_eq!(reach(room, Vec2::new(60.0, TITLE_BAR_H), NONE), room);
+    }
+
+    /// Islands of the top row at 8..44 px: one 600 px wide on the left, one
+    /// 200 px wide on the right, a gap between them.
+    fn top_islands() -> Vec<Rect> {
+        vec![
+            Rect::from_min_max(Pos2::new(8.0, 8.0), Pos2::new(608.0, 44.0)),
+            Rect::from_min_max(Pos2::new(1072.0, 8.0), Pos2::new(1272.0, 44.0)),
+        ]
+    }
+
+    /// A window can sit in the gap between two islands of the top row; one
+    /// whose title would be hidden under an island comes out below the row,
+    /// one under the bottom islands above them, the place it had across.
+    #[test]
+    fn a_title_left_under_the_islands_comes_out_of_them() {
+        let room = screen(1280.0, 720.0);
+        let islands = top_islands();
+        let window = Vec2::new(300.0, 200.0);
+        // in the gap, its title over the row: left as it is
+        let gap = Pos2::new(700.0, 10.0);
+        assert_eq!(clear_of_islands(room, gap, window, ALL, &islands), gap);
+        // straddling an island but with a grip in the gap: left as it is
+        let straddle = Pos2::new(500.0, 10.0);
+        assert_eq!(clear_of_islands(room, straddle, window, ALL, &islands), straddle);
+        // hidden under the left island: below the row, 8 px under it
+        let hidden = Pos2::new(100.0, 10.0);
+        assert_eq!(clear_of_islands(room, hidden, window, ALL, &islands), Pos2::new(100.0, 52.0));
+        // a minimized window wider than the room left beside the island
+        let minimized = Vec2::new(180.0, TITLE_BAR_H);
+        assert_eq!(clear_of_islands(room, Pos2::new(1080.0, 20.0), minimized, ALL, &islands).y, 52.0);
+        // a minimized one under the dock at the bottom: above it
+        let dock = [Rect::from_min_max(Pos2::new(400.0, 668.0), Pos2::new(880.0, 712.0))];
+        assert_eq!(
+            clear_of_islands(room, Pos2::new(500.0, 670.0), minimized, ALL, &dock),
+            Pos2::new(500.0, 668.0 - 8.0 - TITLE_BAR_H)
+        );
+        // a window let past the bottom, its title on the dock: above it too
+        assert_eq!(
+            clear_of_islands(room, Pos2::new(500.0, 670.0), window, NONE, &dock),
+            Pos2::new(500.0, 668.0 - 8.0 - TITLE_BAR_H)
+        );
+        // no island: nothing moves
+        assert_eq!(clear_of_islands(room, hidden, window, ALL, &[]), hidden);
+    }
+
+    /// What shows of a title bar beside the islands crossing its height.
+    #[test]
+    fn the_uncovered_width_of_a_title_bar() {
+        let room = screen(1280.0, 720.0);
+        let islands = top_islands();
+        let title = |x: f32, y: f32, w: f32| Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, TITLE_BAR_H));
+        assert_eq!(uncovered(title(700.0, 10.0, 300.0), room, &islands), 300.0);
+        assert_eq!(uncovered(title(500.0, 10.0, 300.0), room, &islands), 192.0);
+        assert_eq!(uncovered(title(100.0, 10.0, 300.0), room, &islands), 0.0);
+        // below the row: nothing hides it
+        assert_eq!(uncovered(title(100.0, 60.0, 300.0), room, &islands), 300.0);
+        // partly off the screen: only what is on it counts
+        assert_eq!(uncovered(title(1200.0, 300.0, 300.0), room, &islands), 80.0);
     }
 }

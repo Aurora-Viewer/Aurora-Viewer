@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::layout::{Edges, TITLE_BAR_H, TITLE_GRIP, keep_title_in};
 
 struct Fixture {
     ctx: egui::Context,
@@ -327,15 +328,26 @@ fn room() -> egui::Rect {
 #[test]
 fn title_bar_positions_are_kept_in_the_room() {
     let area = egui::Rect::from_min_max(egui::pos2(0.0, 30.0), egui::pos2(1280.0, 860.0));
-    let keep = |x, y, width| keep_title_in(area, egui::pos2(x, y), width);
+    let all = Edges::default();
+    let open = Edges {
+        left: false,
+        right: false,
+        bottom: false,
+    };
+    let keep = |x, y, edges| keep_title_in(area, egui::pos2(x, y), egui::vec2(440.0, 300.0), edges);
     // well inside: untouched
-    assert_eq!(keep(300.0, 200.0, 440.0), egui::pos2(300.0, 200.0));
-    // above the room, below it: the whole title bar comes back in
-    assert_eq!(keep(300.0, -700.0, 440.0).y, 30.0);
-    assert_eq!(keep(300.0, 5000.0, 440.0).y, 860.0 - TITLE_BAR_H);
-    // out by a side: a width to grab stays in
-    assert_eq!(keep(5000.0, 200.0, 440.0).x, 1280.0 - TITLE_GRIP);
-    assert_eq!(keep(-5000.0, 200.0, 440.0).x, -(440.0 - TITLE_GRIP));
+    assert_eq!(keep(300.0, 200.0, all), egui::pos2(300.0, 200.0));
+    // by default the whole window comes back in
+    assert_eq!(keep(300.0, -700.0, all).y, 30.0);
+    assert_eq!(keep(300.0, 5000.0, all).y, 860.0 - 300.0);
+    assert_eq!(keep(5000.0, 200.0, all).x, 1280.0 - 440.0);
+    assert_eq!(keep(-5000.0, 200.0, all).x, 0.0);
+    // edges let open: a width of its title bar to grab stays in, its
+    // whole title bar above the bottom, never above the top
+    assert_eq!(keep(300.0, -700.0, open).y, 30.0);
+    assert_eq!(keep(300.0, 5000.0, open).y, 860.0 - TITLE_BAR_H);
+    assert_eq!(keep(5000.0, 200.0, open).x, 1280.0 - TITLE_GRIP);
+    assert_eq!(keep(-5000.0, 200.0, open).x, -(440.0 - TITLE_GRIP));
     // a default place is brought back whole when the window fits
     assert_eq!(
         fit_in(area, egui::pos2(1100.0, 700.0), egui::vec2(440.0, 300.0)),
@@ -391,12 +403,12 @@ fn a_floater_cannot_be_put_with_its_title_out_of_reach() {
             f.show(vec![]);
         }
         let rect = f.show(vec![]);
-        let title = f.title();
+        // every edge stops it by default: the whole window comes back in
         assert!(
-            room().contains(title),
-            "sent to {pos:?} at {size:?}: title at {title:?}, window {rect:?}"
+            room().expand(0.5).contains_rect(rect),
+            "sent to {pos:?} at {size:?}: window {rect:?} out of {:?}",
+            room()
         );
-        assert!(rect.top() >= room().top() - 0.5, "sent to {pos:?} at {size:?}: {rect:?}");
         // one larger than the room is brought down to it: nothing of it is
         // left under a bar
         assert!(
