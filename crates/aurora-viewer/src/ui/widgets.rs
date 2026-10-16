@@ -1998,6 +1998,12 @@ pub fn paint_maturity_badge(
     let Some((letter, bg, fg)) = maturity_style(p, maturity) else {
         return false;
     };
+    // the square where epaint draws it (a 15 px badge centred on a whole
+    // pixel covers the next one down), the letter centred on that
+    let rect = {
+        use egui::emath::GuiRounding as _;
+        rect.round_to_pixels(painter.pixels_per_point())
+    };
     painter.rect_filled(rect, radius, bg);
     // centered on the letter itself, not on the text row
     let galley = painter.layout_no_wrap(letter.to_owned(), egui::FontId::proportional(rect.height() * 0.72), fg);
@@ -2073,16 +2079,29 @@ pub fn maturity_badges_up_to(ui: &mut egui::Ui, p: &Palette, preferred: u8, size
     }
 }
 
-/// The rectangle the glyphs of `galley` cover, relative to its origin (its
-/// layout rectangle when nothing is drawn).
+/// `v` (points) on the physical pixel grid, as epaint rounds each glyph's
+/// corner (`tessellate_glyphs`), a galley's position and a filled
+/// rectangle: half a pixel goes down and right.
+fn snap(v: f32, pixels_per_point: f32) -> f32 {
+    (v * pixels_per_point).round() / pixels_per_point
+}
+
+/// The rectangle the glyphs of `galley` cover where epaint draws them,
+/// relative to its origin (its
+/// layout rectangle when nothing is drawn). Each glyph's corner goes to the
+/// pixel there: the face's vertical shift (`fonts::optical_center_offset`,
+/// 0.59 px for Inter at 13 px, 0.98 for Noto Sans) is drawn rounded, and
+/// the ink of the layout alone stood up to half a pixel from the screen's.
 pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
+    let ppp = galley.pixels_per_point;
     let mut ink = egui::Rect::NOTHING;
     for row in &galley.rows {
         for g in &row.row.glyphs {
             if g.uv_rect.size.y <= 0.0 {
                 continue;
             }
-            let min = row.pos + g.pos.to_vec2() + g.uv_rect.offset;
+            let corner = g.pos + g.uv_rect.offset;
+            let min = row.pos + Vec2::new(snap(corner.x, ppp), snap(corner.y, ppp));
             ink = ink.union(egui::Rect::from_min_size(min, g.uv_rect.size));
         }
     }
@@ -2093,48 +2112,70 @@ pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
 /// includes ascender / descender room) is centered on `center`: digits in
 /// round badges then sit exactly in the middle.
 pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, center: egui::Pos2, color: Color32) {
+    use egui::emath::GuiRounding as _;
     let ink_center = ink_rect(&galley).center();
-    // whole pixels keep the glyphs crisp
-    let pos = (center - ink_center.to_vec2()).round();
+    // on the physical pixel, where epaint draws it (rounding in points left
+    // a fraction of a pixel at the scales above 1)
+    let pos = (center - ink_center.to_vec2()).round_to_pixels(painter.pixels_per_point());
     painter.galley(pos, galley, color);
 }
 
-/// The baseline of `galley`'s first line, from its origin: the same for
-/// any text of one font and size (a glyph from a fallback font sits on it
-/// too), unlike its ink.
-pub fn galley_baseline(galley: &egui::Galley) -> f32 {
+/// The baseline of `galley`'s first line where its letters stand on
+/// screen, from its origin: the same for any text of one font and size (a
+/// glyph from a fallback font sits on it too), unlike its ink. egui's
+/// layout baseline, moved by the face's vertical shift as epaint draws it
+/// (`drawn_shift`): two fonts whose shifts round differently (Inter at 13
+/// and at 10 px) stood a pixel apart on one layout baseline.
+pub fn galley_baseline(painter: &egui::Painter, galley: &egui::Galley) -> f32 {
     let Some(row) = galley.rows.first() else {
         return galley.size().y * 0.8;
     };
     // a glyph of the font's own face: one taken from a fallback face (other
     // scripts, symbols) sits on that face's baseline, lower or higher
     let own = row.row.glyphs.iter().find(|g| (g.font_face_ascent - g.font_ascent).abs() < 0.01);
-    match own.or(row.row.glyphs.first()) {
-        Some(g) => row.pos.y + g.pos.y,
-        None => galley.size().y * 0.8,
-    }
+    let Some(g) = own.or(row.row.glyphs.first()) else {
+        return galley.size().y * 0.8;
+    };
+    // the font of the first section: the texts set on a baseline have one
+    let font = galley.job.sections.first().map(|s| s.format.font_id.clone());
+    row.pos.y + g.pos.y + font.map_or(0.0, |f| drawn_shift(painter, f))
 }
 
-/// The baseline that centres the capitals of `font` on `center_y`: texts
-/// side by side placed on it (`paint_on_baseline`) line up whatever their
-/// letters. Centring each text on its own ink set a name without
-/// descenders higher than its neighbour with commas and brackets.
+/// How far below egui's layout baseline the flat letters of `font` stand
+/// on screen: the foot of its "H" as drawn (`ink_rect`).
+fn drawn_shift(painter: &egui::Painter, font: egui::FontId) -> f32 {
+    let probe = painter.layout_no_wrap("H".into(), font, Color32::PLACEHOLDER);
+    let Some((row, g)) = probe.rows.first().and_then(|row| row.row.glyphs.first().map(|g| (row, g))) else {
+        return 0.0;
+    };
+    if g.uv_rect.size.y <= 0.0 {
+        return 0.0;
+    }
+    ink_rect(&probe).bottom() - (row.pos.y + g.pos.y)
+}
+
+/// The baseline (where the letters stand, `galley_baseline`) that centres
+/// the capitals of `font` on `center_y`, on the pixel: texts side by side
+/// placed on it (`paint_on_baseline`) line up whatever their letters.
+/// Centring each text on its own ink set a name without descenders higher
+/// than its neighbour with commas and brackets.
 pub fn centered_baseline(painter: &egui::Painter, font: egui::FontId, center_y: f32) -> f32 {
     let probe = painter.layout_no_wrap("H".into(), font, Color32::PLACEHOLDER);
-    let base = galley_baseline(&probe);
-    let cap = (base - ink_rect(&probe).top()).max(0.0);
-    (center_y + cap / 2.0).round()
+    // the capitals as drawn: the shift of the face is in both ends
+    let cap = ink_rect(&probe).height().max(0.0);
+    snap(center_y + cap / 2.0, painter.pixels_per_point())
 }
 
-/// Where to paint `galley` so that its first line sits on `baseline`, its
-/// left edge at `left`.
-pub fn baseline_origin(galley: &egui::Galley, left: f32, baseline: f32) -> egui::Pos2 {
-    egui::Pos2::new(left, baseline - galley_baseline(galley)).round()
+/// Where to paint `galley` so that its first line stands on `baseline`, its
+/// left edge at `left`, on the pixel.
+pub fn baseline_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32, baseline: f32) -> egui::Pos2 {
+    use egui::emath::GuiRounding as _;
+    egui::Pos2::new(left, baseline - galley_baseline(painter, galley)).round_to_pixels(painter.pixels_per_point())
 }
 
 /// Paint `galley` from `left` with its first line on `baseline`.
 pub fn paint_on_baseline(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, baseline: f32, color: Color32) {
-    let pos = baseline_origin(&galley, left, baseline);
+    let pos = baseline_origin(painter, &galley, left, baseline);
     painter.galley(pos, galley, color);
 }
 

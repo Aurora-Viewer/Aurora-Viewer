@@ -156,8 +156,10 @@ fn paint_readout_text(ui: &egui::Ui, galley: std::sync::Arc<egui::Galley>, left_
     let digit = ui.painter().layout_no_wrap("0".to_owned(), font, color);
     let digits = crate::ui::widgets::ink_rect(&digit);
     let ink = crate::ui::widgets::ink_rect(&galley);
+    // on the physical pixel, where epaint draws it (`widgets::ink_rect`)
     let pos = Pos2::new(left_center.x - ink.left(), left_center.y - digits.center().y);
-    ui.painter().galley(pos.round(), galley, color);
+    let pos = egui::emath::GuiRounding::round_to_pixels(pos, ui.painter().pixels_per_point());
+    ui.painter().galley(pos, galley, color);
 }
 
 /// The width of a readout whose text is `text_w` wide.
@@ -1157,6 +1159,142 @@ mod tests {
                     at.y,
                     system.center().y
                 );
+            }
+        }
+    }
+
+    /// The interface fonts the alignment is checked with: the embedded
+    /// ones, and an installed one when there is one (Segoe UI on Windows:
+    /// a tall line box, 0.11 em of vertical shift).
+    pub(crate) fn alignment_fonts() -> Vec<String> {
+        let mut fonts: Vec<String> = crate::ui::fonts::BUILTINS.iter().map(|b| b.name.to_owned()).collect();
+        let system = crate::ui::fonts::system_fonts();
+        let pick = system.iter().find(|f| f.name == "Segoe UI").or_else(|| system.first());
+        match pick {
+            Some(f) => fonts.push(format!("system:{}", f.path.display())),
+            None => eprintln!("no system font: checked with the embedded ones only"),
+        }
+        fonts
+    }
+
+    /// The capitals' ink of each text painted, in physical pixels, where
+    /// epaint draws it: the galley's origin and each glyph's corner on the
+    /// pixel (`tessellate_text`, `tessellate_glyphs`).
+    pub(crate) fn capitals_ink(shapes: &[egui::epaint::ClippedShape], ppp: f32) -> Vec<(String, Rect)> {
+        fn walk(shape: &egui::Shape, ppp: f32, out: &mut Vec<(String, Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => {
+                    let origin = (t.pos.to_vec2() * ppp).round();
+                    let mut ink = Rect::NOTHING;
+                    for row in &t.galley.rows {
+                        for g in row.row.glyphs.iter().filter(|g| g.chr.is_uppercase() && g.uv_rect.size.y > 0.0) {
+                            let corner = ((g.pos + g.uv_rect.offset).to_vec2() * ppp).round();
+                            let min = origin + row.pos.to_vec2() * ppp + corner;
+                            ink = ink.union(Rect::from_min_size(min.to_pos2(), g.uv_rect.size * ppp));
+                        }
+                    }
+                    if ink.is_positive() {
+                        out.push((t.galley.text().to_owned(), ink));
+                    }
+                }
+                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, ppp, out)),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in shapes {
+            walk(&clipped.shape, ppp, &mut out);
+        }
+        out
+    }
+
+    /// The place island with each interface font, at the interface scales
+    /// 1, 1.25 and 1.5, its rating badge on: the badge centred in the
+    /// island, its letter in the badge, the parcel's capitals on the
+    /// badge's centre, all within half a pixel (an odd height in an even
+    /// one cannot do better), and the region on the parcel's baseline to
+    /// the pixel. With Inter, the badge's letter stood a pixel below the
+    /// parcel's capitals, and the region a pixel below the parcel at 1.25 and
+    /// 1.5: the shift of each face was measured where egui lays it out, not
+    /// where epaint draws it (rounded to the pixel).
+    #[test]
+    fn the_place_island_centres_its_badge_and_texts_with_every_font() {
+        let p = crate::theme::Theme::default().palette();
+        let icons = Icons::default();
+        let settings = crate::settings::Settings::default();
+        let mut st = status(true, false);
+        st.maturity = aurora_i18n::text("common-general");
+        for font in alignment_fonts() {
+            for zoom in [1.0f32, 1.25, 1.5] {
+                let ctx = egui::Context::default();
+                crate::ui::fonts::apply(&ctx, &font);
+                ctx.set_zoom_factor(zoom);
+                let mut panels = Panels::from_settings(&settings);
+                let mut audio = settings.audio.clone();
+                let mut audio_ui = crate::ui::audio::AudioUi::default();
+                let mut notif = crate::ui::notifications::NotifUi::default();
+                let mut shapes = Vec::new();
+                // the fonts and the zoom take effect at the next pass
+                for _ in 0..3 {
+                    let input = egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+                        ..Default::default()
+                    };
+                    let mut out = ctx.run_ui(input, |ui| {
+                        top(
+                            ui,
+                            &p,
+                            &icons,
+                            &mut panels,
+                            &st,
+                            &mut audio,
+                            &mut audio_ui,
+                            Default::default(),
+                            &mut notif,
+                            BellState::default(),
+                        );
+                    });
+                    out.textures_delta.clear();
+                    shapes = out.shapes;
+                }
+                let ppp = ctx.pixels_per_point();
+                assert_eq!(ppp, zoom);
+                let case = format!("{font} at {zoom}");
+                let island = ctx
+                    .memory(|m| m.area_rect(Id::new(("bars_island", "place"))))
+                    .expect("the place island");
+                let centre = island.center().y * ppp;
+                let badge = shapes
+                    .iter()
+                    .find_map(|c| match &c.shape {
+                        egui::Shape::Rect(r) if r.fill == p.violet && r.rect.width() < 20.0 => Some(r.rect),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{case}: no badge"));
+                // where epaint fills it
+                let badge = egui::emath::GuiRounding::round_to_pixels(badge, ppp);
+                let badge_c = badge.center().y * ppp;
+                let texts = capitals_ink(&shapes, ppp);
+                let text = |s: &str| {
+                    texts
+                        .iter()
+                        .find(|(t, ink)| t.starts_with(s) && island.contains(ink.center() / ppp))
+                        .map(|(_, ink)| *ink)
+                        .unwrap_or_else(|| panic!("{case}: no {s:?} in {texts:?}"))
+                };
+                let (letter, parcel, region) = (text("G"), text(st.parcel), text(st.region));
+                let report = format!(
+                    "{case}: island {centre}, badge {badge_c}, letter {}, parcel {} (foot {}), region foot {}",
+                    letter.center().y,
+                    parcel.center().y,
+                    parcel.bottom(),
+                    region.bottom()
+                );
+                eprintln!("{report}");
+                assert!((badge_c - centre).abs() <= 0.5, "{report}");
+                assert!((letter.center().y - badge_c).abs() <= 0.5, "{report}");
+                assert!((parcel.center().y - badge_c).abs() <= 0.5, "{report}");
+                assert!((parcel.bottom() - region.bottom()).abs() < 0.01, "{report}");
             }
         }
     }
