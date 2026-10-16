@@ -158,9 +158,20 @@ impl TexturePicker {
                 });
             }
         }
-        let size = Vec2::new(480.0, 600.0);
+        let size = Vec2::new(320.0, 720.0);
+        // Adopt the portrait default once for layouts saved by the wider picker.
+        // Later manual resizing remains part of the user's persisted layout.
+        let layout_id = egui::Id::new("texture_picker").with("portrait_default");
+        let adopt_default = ctx.data_mut(|data| {
+            let adopted = data.get_persisted::<bool>(layout_id).unwrap_or(false);
+            data.insert_persisted(layout_id, true);
+            !adopted
+        });
+        if adopt_default {
+            widgets::size_floater(ctx, "texture_picker", size);
+        }
         let mut floater = Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size);
-        floater.min_size = Vec2::new(460.0, 480.0);
+        floater.min_size = Vec2::new(320.0, 480.0);
         floater.show(ctx, p, &mut open, |ui| {
             let radius = ui.visuals().window_corner_radius;
             ui.horizontal_top(|ui| {
@@ -278,9 +289,11 @@ impl TexturePicker {
             let footer = if self.footer_height > 0.0 {
                 self.footer_height
             } else if self.extra_buttons {
-                130.0
+                // Keep the first frame within its saved height before the
+                // scaled controls' actual footer has been measured.
+                160.0
             } else {
-                65.0
+                90.0
             };
             let (body, _) = ui.allocate_exact_size(
                 Vec2::new(ui.available_width(), (ui.available_height() - footer).max(48.0)),
@@ -436,8 +449,10 @@ impl TexturePicker {
 
             ui.add_space(6.0);
             if self.extra_buttons {
-                let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 4.0;
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().button_padding.x = 3.0;
+                    let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 4.0;
                     for (label, asset) in [
                         (aurora_i18n::tr!("common-default"), self.default),
                         (
@@ -465,7 +480,10 @@ impl TexturePicker {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(11.0).color(p.muted));
-                    let response = ui.add_sized([ui.available_width(), 24.0], egui::TextEdit::singleline(&mut self.uuid_text));
+                    let response = ui.add_sized(
+                        [ui.available_width(), 24.0],
+                        egui::TextEdit::singleline(&mut self.uuid_text).font(egui::FontId::monospace(10.0)),
+                    );
                     if response.changed() {
                         match Uuid::parse_str(self.uuid_text.trim()) {
                             Ok(asset) if !asset.is_nil() || self.allow_none => self.select(asset, None, true),
@@ -723,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn picker_width_stays_bounded_with_long_names_empty_inventory_and_material_controls() {
+    fn portrait_picker_stays_bounded_with_long_names_empty_inventory_and_material_controls() {
         let p = crate::theme::Theme::default().palette();
         for (mode, font_scale) in (0..3).flat_map(|mode| [1.0, 2.0].map(move |scale| (mode, scale))) {
             let ctx = egui::Context::default();
@@ -792,9 +810,10 @@ mod tests {
                 );
                 output.textures_delta.clear();
                 let rect = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
-                assert!(rect.width() < 580.0, "mode {mode}, frame {frame}: {rect:?}");
-                assert!(rect.height() < 680.0, "mode {mode}, frame {frame}: {rect:?}");
+                assert!(rect.width() < 350.0, "mode {mode}, frame {frame}: {rect:?}");
+                assert!(rect.height() < 790.0, "mode {mode}, frame {frame}: {rect:?}");
                 if frame == 20 {
+                    assert!(rect.height() >= 720.0, "portrait default: mode {mode}: {rect:?}");
                     initial = Some(rect);
                 }
                 if frame > 20 {
@@ -808,6 +827,30 @@ mod tests {
                     );
                 }
             }
+
+            // A user can still resize the portrait picker and reopen it without
+            // having the new default applied over their choice again.
+            widgets::size_floater(&ctx, "texture_picker", Vec2::new(400.0, 600.0));
+            for n in 180..190 {
+                frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
+            }
+            let resized = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            assert!(resized.width() > initial.unwrap().width());
+            assert!(resized.height() < initial.unwrap().height());
+            if mode == 2 {
+                picker.open_materials("Material", asset);
+            } else {
+                picker.open_with_defaults("Texture", asset, Some(asset), true);
+            }
+            for n in 190..200 {
+                frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
+            }
+            let reopened = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            assert!((reopened.width() - resized.width()).abs() < 0.5, "resized width lost: {reopened:?}");
+            assert!(
+                (reopened.height() - resized.height()).abs() < 0.5,
+                "resized height lost: {reopened:?}"
+            );
         }
     }
 }
