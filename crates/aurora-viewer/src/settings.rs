@@ -1480,7 +1480,7 @@ impl Settings {
             self.audio.mic_gain = 1.0;
         }
         self.audio.mic_gain = self.audio.mic_gain.clamp(0.0, 2.0);
-        self.time_of_day = self.time_of_day.min(4);
+        self.time_of_day = self.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);
         self.env_manual_transition = if self.env_manual_transition.is_finite() {
             self.env_manual_transition.clamp(0.0, 60.0)
         } else {

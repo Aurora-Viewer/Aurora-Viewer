@@ -41,7 +41,8 @@ pub const TRANSITION_ALTITUDE: f32 = 5.0;
 pub enum LocalOrigin {
     /// A settings item (its asset).
     Item(Uuid),
-    /// Aurora's time of day preset (1..=4).
+    /// A time of day preset (1..=5): its library sky, or the built-in sky
+    /// with the preset's sun when that sky could not be fetched.
     Preset(u8),
     /// Edited in "Personal lighting".
     Personal,
@@ -156,6 +157,8 @@ struct Pending {
     state: PendingState,
     /// Restored day length and offset.
     timing: Option<(f64, f64)>,
+    /// The time of day preset whose library sky this is (0: none).
+    preset: u8,
 }
 
 /// LOCAL_ENV_STORAGE_FILE of LLEnvironment (in the account folder).
@@ -448,7 +451,7 @@ impl EnvSelector {
             if matches!(p.state, PendingState::Waiting) {
                 local = true;
                 p.state = match &settings {
-                    Some(s) => PendingState::Ready(s.clone(), None),
+                    Some(s) => PendingState::Ready(s.clone(), (p.preset != 0).then_some(LocalOrigin::Preset(p.preset))),
                     None => PendingState::Failed,
                 };
             }
@@ -517,10 +520,14 @@ impl EnvSelector {
         self.altitudes
     }
 
-    /// Time-of-day preset (0 = none) as the local environment: a fixed sky
-    /// with the preset sun, like Firestorm's World > Environment skies
+    /// Time-of-day preset (0 = none) as the local environment: its library
+    /// sky as a fixed local sky, as World > Environment does
     /// (setManualEnvironment(ENV_LOCAL, KNOWN_SKY_*)); 0 is "Use shared
-    /// environments" (setSharedEnvironment).
+    /// environments" (setSharedEnvironment). The sky shown stays until the
+    /// asset arrives, like any settings item picked. If it cannot be
+    /// fetched the Legacy Viewer keeps the sky shown (FailedToFindSettings);
+    /// Aurora shows its built-in sky with the preset's sun instead, so the
+    /// preset still does what its name says.
     pub fn set_time_of_day(&mut self, preset: u8) {
         if preset == self.local_preset {
             return;
@@ -530,8 +537,18 @@ impl EnvSelector {
             self.preset_dropped = false;
             return;
         }
-        let sky = SkyFrame::with_sun(super::env::time_of_day_sun(preset));
-        self.apply_sky(LocalOrigin::Preset(preset), sky);
+        let Some(asset) = super::env::time_of_day_sky(preset) else {
+            return;
+        };
+        self.pending
+            .retain(|p| !(p.kind == SettingsKind::Sky && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil()));
+        self.pending.push_back(Pending {
+            asset,
+            kind: SettingsKind::Sky,
+            state: PendingState::Waiting,
+            timing: None,
+            preset,
+        });
         self.local_preset = preset;
         self.preset_dropped = false;
     }
@@ -552,13 +569,22 @@ impl EnvSelector {
     /// asset is fetched, then applied by its own type. A newer pick from the
     /// same list replaces one still loading.
     pub fn request_local(&mut self, asset: Uuid, kind: SettingsKind) {
-        self.pending
-            .retain(|p| !(p.kind == kind && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil()));
+        let mut preset_replaced = false;
+        self.pending.retain(|p| {
+            let replaced = p.kind == kind && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil();
+            preset_replaced |= replaced && p.preset != 0;
+            !replaced
+        });
+        if preset_replaced {
+            // the preset's sky will not come: the panels no longer show it
+            self.drop_preset();
+        }
         self.pending.push_back(Pending {
             asset,
             kind,
             state: PendingState::Waiting,
             timing: None,
+            preset: 0,
         });
     }
 
@@ -597,6 +623,15 @@ impl EnvSelector {
             };
             match p.state {
                 PendingState::Ready(s, origin) => self.apply_settings(p.asset, &s, origin, p.timing),
+                PendingState::Failed if p.preset != 0 => {
+                    log::warn!(
+                        "library sky {} of time of day preset {} could not be loaded: built-in sky with the preset's sun",
+                        p.asset,
+                        p.preset
+                    );
+                    let sky = SkyFrame::with_sun(super::env::time_of_day_sun(p.preset));
+                    self.apply_sky(LocalOrigin::Preset(p.preset), sky);
+                }
                 PendingState::Failed => {
                     // onSetEnvAssetLoaded: FailedToFindSettings, nothing changes
                     log::warn!("environment settings {} could not be loaded", p.asset);
@@ -658,7 +693,14 @@ impl EnvSelector {
     fn apply_sky(&mut self, origin: LocalOrigin, sky: SkyFrame) {
         log::info!("local environment: sky {origin:?}");
         self.local_mut().sky = Some((origin, sky));
-        self.drop_preset();
+        match origin {
+            // the preset's own sky: the panels keep showing it
+            LocalOrigin::Preset(n) => {
+                self.local_preset = n;
+                self.preset_dropped = false;
+            }
+            _ => self.drop_preset(),
+        }
         self.local_dirty = true;
     }
 
@@ -761,6 +803,7 @@ impl EnvSelector {
                 kind: SettingsKind::Day,
                 state: PendingState::Waiting,
                 timing: Some((data["day_length"].as_i32() as f64, data["day_offset"].as_i32() as f64)),
+                preset: 0,
             });
         }
         for (kind, id_key, llsd_key) in [
@@ -773,6 +816,7 @@ impl EnvSelector {
                     kind,
                     state: PendingState::Waiting,
                     timing: None,
+                    preset: 0,
                 });
             } else if data.has(llsd_key)
                 && let Some(s) = Settings::from_llsd(&data[llsd_key])
@@ -787,6 +831,7 @@ impl EnvSelector {
                     kind,
                     state: PendingState::Ready(Arc::new(s), Some(origin)),
                     timing: None,
+                    preset: 0,
                 });
             }
         }
@@ -1170,10 +1215,20 @@ mod tests {
         });
         assert_eq!(sel.shown_source(), Some(Source::Legacy));
         sel.set_time_of_day(4);
+        library_sky_arrives(&mut sel, 4);
         sel.frame(&input(2.0));
         assert!(matches!(sel.shown_source(), Some(Source::Local(_))));
         let (sky, _) = sel.frame(&input(7.1));
         assert!(sky.sun_direction().z < 0.0, "midnight preset");
+    }
+
+    /// The library sky of a time of day preset arrives (here the built-in
+    /// sky with the preset's sun).
+    fn library_sky_arrives(sel: &mut EnvSelector, preset: u8) {
+        let id = super::super::env::time_of_day_sky(preset).expect("a preset");
+        assert_eq!(sel.wanted_settings(), vec![id]);
+        let sky = SkyFrame::with_sun(super::super::env::time_of_day_sun(preset));
+        sel.on_settings(id, Some(Arc::new(Settings::Sky(sky))));
     }
 
     const SKY: Uuid = Uuid::from_u128(0x51);
@@ -1327,6 +1382,7 @@ mod tests {
     fn presets_and_selector_share_the_local_sky() {
         let mut sel = region_selector();
         sel.set_time_of_day(2);
+        library_sky_arrives(&mut sel, 2);
         sel.frame(&input(1.0));
         assert_eq!(sel.local_view().sky, ListShown::Preset(2));
         assert_eq!(sel.take_preset_change(), None);
@@ -1346,6 +1402,74 @@ mod tests {
         sel.set_time_of_day(3);
         sel.set_time_of_day(0);
         assert!(!sel.has_local());
+    }
+
+    #[test]
+    fn each_preset_has_the_legacy_viewers_library_sky() {
+        use super::super::env::{TIME_OF_DAY_ORDER, TIME_OF_DAY_PRESETS, time_of_day_sky};
+        let ids: Vec<Uuid> = (1..=TIME_OF_DAY_PRESETS).filter_map(time_of_day_sky).collect();
+        assert_eq!(ids.len(), 5);
+        assert!(ids.iter().enumerate().all(|(i, a)| !ids[i + 1..].contains(a)), "one sky each");
+        assert_eq!(time_of_day_sky(0), None);
+        assert_eq!(time_of_day_sky(6), None);
+        // LLEnvironment::KNOWN_SKY_MIDDAY and KNOWN_SKY_LEGACY_MIDDAY
+        assert_eq!(
+            time_of_day_sky(2).map(|u| u.to_string()).as_deref(),
+            Some("c46226b4-0e43-5a56-9708-d27ca1df3292")
+        );
+        assert_eq!(
+            time_of_day_sky(5).map(|u| u.to_string()).as_deref(),
+            Some("6c83e853-e7f8-cad7-8ee6-5f31c453721c")
+        );
+        let mut order = TIME_OF_DAY_ORDER;
+        order.sort_unstable();
+        assert_eq!(order, [1, 2, 3, 4, 5], "the menu shows every preset once");
+    }
+
+    #[test]
+    fn a_preset_shows_its_library_sky_once_loaded() {
+        let mut sel = region_selector();
+        sel.set_time_of_day(2);
+        // the sky shown stays while the asset loads, the preset is already
+        // the one picked
+        assert!(sel.local_loading());
+        assert!((gamma(&mut sel, 1.0) - 0.7).abs() < 1e-6);
+        assert_eq!(sel.take_preset_change(), None);
+        // another preset picked meanwhile replaces it
+        sel.set_time_of_day(5);
+        let legacy = super::super::env::time_of_day_sky(5).expect("legacy midday");
+        assert_eq!(sel.wanted_settings(), vec![legacy]);
+        sel.on_settings(legacy, Some(sky_asset(1.6)));
+        assert!((gamma(&mut sel, 2.0) - 1.6).abs() < 1e-6);
+        assert_eq!(sel.local_view().sky, ListShown::Preset(5));
+        assert_eq!(sel.take_preset_change(), None);
+    }
+
+    #[test]
+    fn a_preset_whose_sky_cannot_be_loaded_shows_the_built_in_sky() {
+        let mut sel = region_selector();
+        sel.set_time_of_day(4);
+        let id = super::super::env::time_of_day_sky(4).expect("midnight");
+        sel.on_settings(id, None);
+        assert!(sel.take_failed().is_empty(), "no failure to report: the preset still shows");
+        let (sky, _) = sel.frame(&input(1.0));
+        assert!(sky.sun_direction().z < 0.0, "midnight sun");
+        assert_eq!(sel.local_view().sky, ListShown::Preset(4));
+        assert_eq!(sel.take_preset_change(), None);
+    }
+
+    #[test]
+    fn a_sky_item_picked_while_a_preset_loads_replaces_it() {
+        let mut sel = region_selector();
+        sel.set_time_of_day(1);
+        sel.request_local(SKY, SettingsKind::Sky);
+        assert_eq!(sel.wanted_settings(), vec![SKY]);
+        assert_eq!(sel.take_preset_change(), Some(0), "the panels no longer show the preset");
+        sel.set_time_of_day(0);
+        assert!(sel.local_loading(), "dropping the preset keeps the item loading");
+        sel.on_settings(SKY, Some(sky_asset(1.3)));
+        assert!((gamma(&mut sel, 1.0) - 1.3).abs() < 1e-6);
+        assert_eq!(sel.local_view().sky, ListShown::Item(SKY));
     }
 
     #[test]
