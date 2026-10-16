@@ -960,7 +960,7 @@ fn paint_row(ui: &egui::Ui, p: &Palette, row: &Row, cells: &[Rect], font: &egui:
         }
         if figure {
             let galley = ui.painter().layout_no_wrap(text, font.clone(), p.ink);
-            let at = egui::pos2(cell.right() - 14.0 - galley.size().x, cell.center().y - galley.size().y * 0.5);
+            let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, cell.right() - 14.0 - galley.size().x, cell.center().y);
             ui.painter().galley(at, galley, p.ink);
         } else {
             let left = egui::pos2(cell.left() + 6.0, cell.center().y);

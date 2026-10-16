@@ -935,13 +935,12 @@ fn paint_tip_row(ui: &egui::Ui, p: &Palette, icons: &Icons, rect: Rect, icon: &s
     let icon_rect = Rect::from_center_size(Pos2::new(rect.left() + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
     paint_icon(ui, icons, icon, icon_rect, ICON, p.muted);
     let label = text(ui, label.to_owned(), 12.0, p.ink);
-    let at = Pos2::new(icon_rect.right() + 8.0, rect.center().y - label.size().y / 2.0);
-    ui.painter().galley(at.round(), label, p.ink);
+    crate::ui::widgets::paint_row_text(ui.painter(), label, icon_rect.right() + 8.0, rect.center().y, p.ink);
     let value = ui
         .painter()
         .layout_no_wrap(value.to_owned(), FontId::new(size, crate::ui::fonts::semibold(ui.ctx())), color);
-    let at = Pos2::new(rect.right() - value.size().x, rect.center().y - value.size().y / 2.0);
-    ui.painter().galley(at.round(), value, color);
+    let left = rect.right() - value.size().x;
+    crate::ui::widgets::paint_row_text(ui.painter(), value, left, rect.center().y, color);
 }
 
 /// The share of packets lost as the tooltip reads it: "0 %", else one
@@ -1163,51 +1162,6 @@ mod tests {
         }
     }
 
-    /// The interface fonts the alignment is checked with: the embedded
-    /// ones, and an installed one when there is one (Segoe UI on Windows:
-    /// a tall line box, 0.11 em of vertical shift).
-    pub(crate) fn alignment_fonts() -> Vec<String> {
-        let mut fonts: Vec<String> = crate::ui::fonts::BUILTINS.iter().map(|b| b.name.to_owned()).collect();
-        let system = crate::ui::fonts::system_fonts();
-        let pick = system.iter().find(|f| f.name == "Segoe UI").or_else(|| system.first());
-        match pick {
-            Some(f) => fonts.push(format!("system:{}", f.path.display())),
-            None => eprintln!("no system font: checked with the embedded ones only"),
-        }
-        fonts
-    }
-
-    /// The capitals' ink of each text painted, in physical pixels, where
-    /// epaint draws it: the galley's origin and each glyph's corner on the
-    /// pixel (`tessellate_text`, `tessellate_glyphs`).
-    pub(crate) fn capitals_ink(shapes: &[egui::epaint::ClippedShape], ppp: f32) -> Vec<(String, Rect)> {
-        fn walk(shape: &egui::Shape, ppp: f32, out: &mut Vec<(String, Rect)>) {
-            match shape {
-                egui::Shape::Text(t) => {
-                    let origin = (t.pos.to_vec2() * ppp).round();
-                    let mut ink = Rect::NOTHING;
-                    for row in &t.galley.rows {
-                        for g in row.row.glyphs.iter().filter(|g| g.chr.is_uppercase() && g.uv_rect.size.y > 0.0) {
-                            let corner = ((g.pos + g.uv_rect.offset).to_vec2() * ppp).round();
-                            let min = origin + row.pos.to_vec2() * ppp + corner;
-                            ink = ink.union(Rect::from_min_size(min.to_pos2(), g.uv_rect.size * ppp));
-                        }
-                    }
-                    if ink.is_positive() {
-                        out.push((t.galley.text().to_owned(), ink));
-                    }
-                }
-                egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, ppp, out)),
-                _ => {}
-            }
-        }
-        let mut out = Vec::new();
-        for clipped in shapes {
-            walk(&clipped.shape, ppp, &mut out);
-        }
-        out
-    }
-
     /// The place island with each interface font, at the interface scales
     /// 1, 1.25 and 1.5, its rating badge on: the badge centred in the
     /// island, its letter in the badge, the parcel's capitals on the
@@ -1224,7 +1178,7 @@ mod tests {
         let settings = crate::settings::Settings::default();
         let mut st = status(true, false);
         st.maturity = aurora_i18n::text("common-general");
-        for font in alignment_fonts() {
+        for font in crate::ui::widgets::alignment_tests::fonts() {
             for zoom in [1.0f32, 1.25, 1.5] {
                 let ctx = egui::Context::default();
                 crate::ui::fonts::apply(&ctx, &font);
@@ -1274,7 +1228,7 @@ mod tests {
                 // where epaint fills it
                 let badge = egui::emath::GuiRounding::round_to_pixels(badge, ppp);
                 let badge_c = badge.center().y * ppp;
-                let texts = capitals_ink(&shapes, ppp);
+                let texts = crate::ui::widgets::alignment_tests::capitals_ink(&shapes, ppp);
                 let text = |s: &str| {
                     texts
                         .iter()

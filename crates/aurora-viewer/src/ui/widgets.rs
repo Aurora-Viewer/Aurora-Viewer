@@ -4,6 +4,8 @@
 use crate::theme::Palette;
 use egui::{Color32, CornerRadius, RichText, Sense, Stroke, Vec2};
 
+#[cfg(test)]
+pub(crate) mod alignment_tests;
 mod cascade;
 #[cfg(test)]
 mod cascade_tests;
@@ -67,7 +69,7 @@ pub(crate) fn paint_elided(ui: &egui::Ui, text: &str, left_center: egui::Pos2, w
         return true;
     }
     let galley = elided_galley(ui, RichText::new(text).font(font).color(color), width);
-    let pos = egui::pos2(left_center.x, left_center.y - galley.size().y * 0.5);
+    let pos = row_text_origin(ui.painter(), &galley, left_center.x, left_center.y);
     let cut = galley.elided;
     ui.painter().galley(pos, galley, color);
     cut
@@ -1119,7 +1121,7 @@ fn mark_fill(p: &Palette, on: bool, hot: bool) -> Color32 {
 
 fn mark_label(ui: &egui::Ui, p: &Palette, row: egui::Rect, mark: egui::Rect, galley: Option<std::sync::Arc<egui::Galley>>) {
     if let Some(galley) = galley {
-        let text = egui::pos2(mark.right() + ui.spacing().icon_spacing, row.center().y - galley.size().y / 2.0);
+        let text = row_text_origin(ui.painter(), &galley, mark.right() + ui.spacing().icon_spacing, row.center().y);
         ui.painter().galley(text, galley, p.ink);
     }
 }
@@ -1278,7 +1280,8 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 (rect.width() - 8.0).max(0.0),
                 font.clone(),
             );
-            ui.painter().galley(rect.center() - galley.size() / 2.0, galley, col);
+            let left = rect.center().x - galley.size().x / 2.0;
+            paint_row_text(ui.painter(), galley, left, rect.center().y, col);
             let resp = resp.on_hover_text(*label);
             if resp.clicked() && !sel {
                 *selected = i;
@@ -1340,7 +1343,7 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         if let Some(face) = face {
             ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
         }
-        let at = letters_in_middle(&galley, rect);
+        let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
         resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, sel, *label));
         if resp.clicked() && !sel {
@@ -1354,17 +1357,16 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
 /// Where to paint a one-line galley so that its letters, from the baseline
 /// up to the capitals, sit in the middle of `rect` — not its whole line box,
 /// whose room for the descenders leaves a word without any ("Chuchoter",
-/// "Dire") visibly high in a short segment.
-fn letters_in_middle(galley: &egui::Galley, rect: egui::Rect) -> egui::Pos2 {
+/// "Dire") visibly high in a short segment. The capitals as drawn
+/// (`centered_baseline`): taking them as three quarters of the ascent held
+/// for Inter only (Noto Sans and Segoe UI: two thirds, a pixel high).
+fn letters_in_middle(painter: &egui::Painter, galley: &egui::Galley, rect: egui::Rect) -> egui::Pos2 {
     let left = rect.center().x - galley.size().x / 2.0;
-    let Some((row, glyph)) = galley.rows.first().and_then(|r| r.row.glyphs.first().map(|g| (r, g))) else {
+    let Some(font) = galley.job.sections.first().map(|s| s.format.font_id.clone()) else {
         return egui::pos2(left, rect.center().y - galley.size().y / 2.0);
     };
-    let baseline = row.pos.y + glyph.pos.y;
-    // the capitals of the interface fonts reach about three quarters of
-    // the ascent
-    let middle = baseline - 0.75 * glyph.font_ascent / 2.0;
-    egui::pos2(left, (rect.center().y - middle).round())
+    let baseline = centered_baseline(painter, font, rect.center().y);
+    baseline_origin(painter, galley, left, baseline)
 }
 
 /// Column header row for list views.
@@ -1477,11 +1479,20 @@ fn underline(ui: &egui::Ui, p: &Palette, response: &egui::Response, selected: bo
     );
 }
 
-/// Paint `galley` from `left_center`, centered vertically on its ink like
-/// an icon beside it (a font's line box sits lower than its letters).
+/// Paint `galley` from `left_center`, its letters centred on the icon
+/// beside it (`row_text_origin`; a font's line box sits lower than its
+/// letters), its ink from `left_center.x`. A line used to centre its own
+/// ink: a name with descenders ("Shopping") then stood a pixel or two
+/// above one without ("Home") in the same row of favourites.
 pub fn paint_ink_left(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left_center: egui::Pos2, color: Color32) {
-    let center = left_center + Vec2::new(galley.size().x / 2.0, 0.0);
-    paint_ink_centered(painter, galley, center, color);
+    if galley.rows.len() != 1 {
+        let center = left_center + Vec2::new(galley.size().x / 2.0, 0.0);
+        paint_ink_centered(painter, galley, center, color);
+        return;
+    }
+    // the ink's left edge where the whole ink's centring put it
+    let left = left_center.x + galley.size().x / 2.0 - ink_rect(&galley).center().x;
+    paint_row_text(painter, galley, left, left_center.y, color);
 }
 
 /// Equal-sized dialog buttons; long script labels keep their full hover text.
@@ -1757,8 +1768,9 @@ pub fn action_button_keyed(
             ink,
         );
     }
-    // centered on the line, not on the ink: a row of buttons shares a baseline
-    let text = egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0).round();
+    // centred like the icon (`row_text_origin`): a row of buttons of one
+    // height shares a baseline
+    let text = row_text_origin(ui.painter(), &galley, left + lead, rect.center().y);
     let text_w = galley.size().x;
     ui.painter().galley(text, galley, ink);
     if let Some(b) = key {
@@ -1810,7 +1822,7 @@ pub fn action_menu_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &st
         ui.painter().image(texture.id(), r, uv, p.ink);
     }
     let width = galley.size().x;
-    let text = egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0).round();
+    let text = row_text_origin(ui.painter(), &galley, left + lead, rect.center().y);
     ui.painter().galley(text, galley, p.ink);
     if let Some(texture) = super::icons::global("chevron-down") {
         let x = left + lead + width + 5.0 + CHEVRON / 2.0;
@@ -2176,6 +2188,36 @@ pub fn baseline_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32
 /// Paint `galley` from `left` with its first line on `baseline`.
 pub fn paint_on_baseline(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, baseline: f32, color: Color32) {
     let pos = baseline_origin(painter, &galley, left, baseline);
+    painter.galley(pos, galley, color);
+}
+
+/// Where to paint `galley` from `left` so that its letters are centred on
+/// `center_y` like an icon or a box beside them, on the pixel: the middle
+/// between the middle of its capitals and the middle of its x-height (what
+/// `fonts::optical_center_offset` aims egui's text rows at), as epaint
+/// draws it. Centring egui's text row instead put the letters up to 1.9 px
+/// from there, with every font: the face's shift and the row's position
+/// are each rounded on their own (`ink_rect`), the position in points at
+/// the scales 1.25 and 1.5. A text of several lines keeps its block
+/// centred.
+pub fn row_text_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32, center_y: f32) -> egui::Pos2 {
+    use egui::emath::GuiRounding as _;
+    let ppp = painter.pixels_per_point();
+    let font = galley.job.sections.first().map(|s| s.format.font_id.clone());
+    let middle = match font {
+        Some(font) if galley.rows.len() == 1 => {
+            let height = |s: &str| ink_rect(&painter.layout_no_wrap(s.into(), font.clone(), Color32::PLACEHOLDER)).height();
+            galley_baseline(painter, galley) - (height("H") + height("x")) / 4.0
+        }
+        _ => galley.size().y / 2.0,
+    };
+    egui::Pos2::new(left, center_y - middle).round_to_pixels(ppp)
+}
+
+/// Paint `galley` from `left`, its letters centred on `center_y`
+/// (`row_text_origin`).
+pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, center_y: f32, color: Color32) {
+    let pos = row_text_origin(painter, &galley, left, center_y);
     painter.galley(pos, galley, color);
 }
 

@@ -476,12 +476,13 @@ fn pill_view(ui: &mut egui::Ui, p: &Palette, a: &Restart, lv: Color32, breathing
                 let font = FontId::new(12.0, crate::ui::fonts::semibold(ui.ctx()));
                 let g = ui.painter().layout_no_wrap(time, font, lv);
                 let (tr, _) = ui.allocate_exact_size(Vec2::new(g.size().x.max(30.0), 24.0), Sense::hover());
-                ui.painter().galley(Pos2::new(tr.left(), tr.center().y - g.size().y / 2.0), g, lv);
+                let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, tr.left(), tr.center().y);
+                ui.painter().galley(at, g, lv);
                 let label = aurora_i18n::tr!("region-restart-zero-title", region = a.region.as_str());
                 let g = ui.painter().layout_no_wrap(label, FontId::proportional(12.0), p.muted);
                 let (lr, _) = ui.allocate_exact_size(Vec2::new(g.size().x, 24.0), Sense::hover());
-                ui.painter()
-                    .galley(Pos2::new(lr.left(), lr.center().y - g.size().y / 2.0), g, p.muted);
+                let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, lr.left(), lr.center().y);
+                ui.painter().galley(at, g, p.muted);
                 let (cr, _) = ui.allocate_exact_size(Vec2::new(13.0, 24.0), Sense::hover());
                 paint_icon(
                     ui.painter(),
@@ -809,8 +810,8 @@ fn manager_row(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, inner: f32, o
             p.muted,
         );
         let (r, _) = ui.allocate_exact_size(Vec2::new(label.size().x, 22.0), Sense::hover());
-        ui.painter()
-            .galley(Pos2::new(r.left(), r.center().y - label.size().y / 2.0), label, p.muted);
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &label, r.left(), r.center().y);
+        ui.painter().galley(at, label, p.muted);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if widgets::action_button(
                 ui,
@@ -836,8 +837,8 @@ fn manager_row(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, inner: f32, o
             p.violet_light,
         );
         let (r, resp) = ui.allocate_exact_size(Vec2::new(g.size().x, 16.0), Sense::click());
-        ui.painter()
-            .galley(Pos2::new(r.left(), r.center().y - g.size().y / 2.0), g, p.violet_light);
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, r.left(), r.center().y);
+        ui.painter().galley(at, g, p.violet_light);
         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             out.push(Action::RegionEstate);
         }

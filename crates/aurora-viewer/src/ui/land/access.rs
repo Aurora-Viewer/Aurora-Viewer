@@ -334,8 +334,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
                                             egui::text::LayoutJob::simple_singleline(label, egui::FontId::proportional(12.0), p.ink);
                                         job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width() - dur_w - 10.0);
                                         let g = ui.painter().layout_job(job);
-                                        ui.painter()
-                                            .galley(egui::pos2(rect.left() + 5.0, rect.center().y - g.size().y / 2.0), g, p.ink);
+                                        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 5.0, rect.center().y);
+                                        ui.painter().galley(at, g, p.ink);
                                         if kind == AL_BAN {
                                             ui.painter().text(
                                                 egui::pos2(rect.right() - dur_w, rect.center().y),

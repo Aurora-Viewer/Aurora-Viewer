@@ -92,18 +92,20 @@ fn tab(
         x += icon_w;
     }
     let w = galley.size().x;
-    ui.painter()
-        .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, x, rect.center().y, ink);
     if let Some(g) = count {
-        let pos = Pos2::new(x + w + 5.0 + pad, rect.center().y - g.size().y / 2.0);
         if accent {
+            // an unread count: its digits in the middle of their pill
             let pill = Rect::from_min_size(
                 Pos2::new(x + w + 5.0, rect.center().y - 8.0),
                 Vec2::new(g.size().x + pad * 2.0, 16.0),
             );
             ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.violet);
+            crate::ui::widgets::paint_ink_centered(ui.painter(), g, pill.center(), count_ink);
+        } else {
+            let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, x + w + 5.0, rect.center().y);
+            ui.painter().galley(pos, g, count_ink);
         }
-        ui.painter().galley(pos.round(), g, count_ink);
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
     if enabled {
@@ -163,8 +165,7 @@ fn paint_filter_pill(ui: &egui::Ui, p: &Palette, rect: Rect, resp: &egui::Respon
         }
         x += icon_w;
     }
-    ui.painter()
-        .galley(Pos2::new(x, rect.center().y - galley.size().y / 2.0).round(), galley, ink);
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, x, rect.center().y, ink);
 }
 
 /// The width `dot_pill` takes.
@@ -217,13 +218,11 @@ pub fn dot_pill(
     x += 9.0 + 6.0;
     let g = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), ink);
     let w = g.size().x;
-    ui.painter()
-        .galley(Pos2::new(x, rect.center().y - g.size().y / 2.0).round(), g, ink);
+    crate::ui::widgets::paint_row_text(ui.painter(), g, x, rect.center().y, ink);
     x += w;
     if let Some(c) = count {
         let g = ui.painter().layout_no_wrap(c.to_owned(), font, ink);
-        ui.painter()
-            .galley(Pos2::new(x + 5.0, rect.center().y - g.size().y / 2.0).round(), g, ink);
+        crate::ui::widgets::paint_row_text(ui.painter(), g, x + 5.0, rect.center().y, ink);
     }
     let mut closed = false;
     if close {

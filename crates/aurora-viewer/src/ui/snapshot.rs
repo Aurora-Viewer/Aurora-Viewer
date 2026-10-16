@@ -1260,15 +1260,12 @@ fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool
     };
     let mut x = rect.left() + 8.0;
     let main_w = main.size().x;
-    ui.painter().galley(
-        Pos2::new(x, rect.center().y - main.size().y / 2.0),
-        main,
-        if on { text } else { p.ink },
-    );
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &main, x, rect.center().y);
+    ui.painter().galley(at, main, if on { text } else { p.ink });
     x += main_w + 4.0;
     if let Some(g) = sub {
-        ui.painter()
-            .galley(Pos2::new(x, rect.center().y - g.size().y / 2.0), g, text.gamma_multiply(0.8));
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+        ui.painter().galley(at, g, text.gamma_multiply(0.8));
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, label));
     resp

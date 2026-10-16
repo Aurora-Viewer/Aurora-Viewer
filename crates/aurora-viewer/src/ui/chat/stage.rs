@@ -712,13 +712,8 @@ fn label_pill(ui: &mut egui::Ui, p: &Palette, name: &str, icon: &str, label: &st
         egui::Rect::from_min_size(egui::pos2(rect.left() + 8.0, rect.center().y - 7.0), egui::Vec2::splat(14.0)),
         ink,
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 8.0 + 14.0 + 6.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(12.5),
-        ink,
-    );
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.5), ink);
+    crate::ui::widgets::paint_row_text(ui.painter(), galley, rect.left() + 8.0 + 14.0 + 6.0, rect.center().y, ink);
     resp
 }
 

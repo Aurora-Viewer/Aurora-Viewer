@@ -122,11 +122,8 @@ pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, sele
         .painter()
         .layout_no_wrap(short_date(n.timestamp, now), FontId::proportional(11.0), p.muted_dim);
     let date_w = date.size().x;
-    ui.painter().galley(
-        Pos2::new(rect.right() - 8.0 - date_w, rect.center().y - date.size().y / 2.0).round(),
-        date,
-        p.muted_dim,
-    );
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &date, rect.right() - 8.0 - date_w, rect.center().y);
+    ui.painter().galley(at, date, p.muted_dim);
     let text_w = (rect.right() - 8.0 - date_w - 10.0 - x).max(20.0);
     widgets::paint_elided(
         ui,
@@ -148,7 +145,8 @@ pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, sele
     if n.has_attachment && from_w + 30.0 < text_w {
         let dot = ui.painter().layout_no_wrap(" · ".into(), FontId::proportional(11.5), p.muted);
         let dot_w = dot.size().x;
-        ui.painter().galley(Pos2::new(x + from_w, sub_y - dot.size().y / 2.0), dot, p.muted);
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &dot, x + from_w, sub_y);
+        ui.painter().galley(at, dot, p.muted);
         if let Some(t) = crate::ui::icons::global("paperclip") {
             ui.painter().image(
                 t.id(),
