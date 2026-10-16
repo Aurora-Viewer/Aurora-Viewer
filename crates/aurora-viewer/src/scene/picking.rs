@@ -16,6 +16,36 @@ pub struct PickFace {
     pub accel: PickAccel,
 }
 
+/// The ray searches over their candidates (hover every frame, clicks) run
+/// the frame's way (frame_par.rs): the main thread starts on them at once
+/// and the pool's workers join as they wake up. A rayon `par_iter` called
+/// from the main thread, which is not a worker of the pool, slept until the
+/// last worker was done: 25 to 45 ms per frame in the demo crowd while
+/// other programs kept the cores busy, for a search of a fraction of a
+/// millisecond.
+const RAY_GRAIN: Grain = Grain { chunk: 32, per_helper: 8 };
+
+/// `hit` on every item of `items`, in parallel as above; the hits, in no
+/// particular order.
+fn ray_hits<T: Sync, H: Send>(items: &[T], hit: impl Fn(&T) -> Option<H> + Sync) -> Vec<H> {
+    frame_par::fold(items, RAY_GRAIN, Vec::new, |mut found, item| {
+        found.extend(hit(item));
+        found
+    })
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// The nearest of `hits` by distance (`.0`), the lowest object index
+/// (`.1`) among equals: the same answer whatever the order of the hits.
+fn nearest_hit<H>(hits: Vec<H>, key: impl Fn(&H) -> (f32, usize)) -> Option<H> {
+    hits.into_iter().min_by(|a, b| {
+        let (a, b) = (key(a), key(b));
+        a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1))
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FacePick {
     Surface,
@@ -98,24 +128,22 @@ impl Scene {
         };
         if let Some(ray) = ray {
             let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1) + 0.06).min(far);
-            let hit = candidates
-                .par_iter()
-                .filter_map(|&idx| {
-                    let g = self.gpu.get(idx)?;
-                    let o = world.objects.get(idx)?;
-                    if g.hud
-                        || g.is_avatar
-                        || g.rigged
-                        || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
-                        || (!build && o.click_action == crate::interaction::code::IGNORE)
-                        || !ray_may_hit(g, ray)
-                    {
-                        return None;
-                    }
-                    let hit = self.face_hit(world, idx, ray, now, true)?;
-                    (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
-                })
-                .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            let hits = ray_hits(&candidates, |&idx| {
+                let g = self.gpu.get(idx)?;
+                let o = world.objects.get(idx)?;
+                if g.hud
+                    || g.is_avatar
+                    || g.rigged
+                    || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                    || (!build && o.click_action == crate::interaction::code::IGNORE)
+                    || !ray_may_hit(g, ray)
+                {
+                    return None;
+                }
+                let hit = self.face_hit(world, idx, ray, now, true)?;
+                (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
+            });
+            let hit = nearest_hit(hits, |h| *h);
             if let Some((t, idx)) = hit {
                 return (Some(ray.0 + ray.1 * t), Some(idx));
             }
@@ -140,28 +168,25 @@ impl Scene {
             self.pick.ray_candidates(ray, &mut candidates);
         }
         let now = Instant::now();
-        candidates
-            .par_iter()
-            .filter_map(|&idx| {
-                let g = self.gpu.get(idx)?;
-                let o = world.objects.get(idx)?;
-                if g.hud != hud
-                    || g.rigged
-                    || o.extra.reflection_probe.is_some()
-                    || o.pcode != aurora_prim::params::LL_PCODE_VOLUME
-                    || !ray_may_hit(g, ray)
-                {
-                    return None;
-                }
-                let hit = self.face_hit(world, idx, ray, now, false)?;
-                if !hit.t.is_finite() || !hud && hit.t > far {
-                    return None;
-                }
-                let color = o.te.as_ref()?.faces.get(hit.face)?.color;
-                Some((hit.t, idx, o.full_id, [color[0], color[1], color[2]]))
-            })
-            .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)))
-            .map(|(_, _, id, rgb)| (id, rgb))
+        let hits = ray_hits(&candidates, |&idx| {
+            let g = self.gpu.get(idx)?;
+            let o = world.objects.get(idx)?;
+            if g.hud != hud
+                || g.rigged
+                || o.extra.reflection_probe.is_some()
+                || o.pcode != aurora_prim::params::LL_PCODE_VOLUME
+                || !ray_may_hit(g, ray)
+            {
+                return None;
+            }
+            let hit = self.face_hit(world, idx, ray, now, false)?;
+            if !hit.t.is_finite() || !hud && hit.t > far {
+                return None;
+            }
+            let color = o.te.as_ref()?.faces.get(hit.face)?.color;
+            Some((hit.t, idx, o.full_id, [color[0], color[1], color[2]]))
+        });
+        nearest_hit(hits, |h| (h.0, h.1)).map(|(_, _, id, rgb)| (id, rgb))
     }
 
     /// Exact edit surfaces along the whole cursor ray, including hidden and
@@ -181,22 +206,17 @@ impl Scene {
             self.pick.ray_candidates(ray, &mut candidates);
         }
         let now = Instant::now();
-        let mut hits: Vec<_> = candidates
-            .par_iter()
-            .filter_map(|&idx| {
-                let g = self.gpu.get(idx)?;
-                if g.hud != hud || !crate::build::selectable(world, idx) || !ray_may_hit(g, ray) {
-                    return None;
-                }
-                let hit = self.face_hit(world, idx, ray, now, true)?;
-                if !hit.t.is_finite()
-                    || (!hud && (ray.0 + ray.1 * hit.t).distance(world.agent.position) > crate::build::MAX_SELECT_DISTANCE)
-                {
-                    return None;
-                }
-                Some((idx, hit.t))
-            })
-            .collect();
+        let mut hits = ray_hits(&candidates, |&idx| {
+            let g = self.gpu.get(idx)?;
+            if g.hud != hud || !crate::build::selectable(world, idx) || !ray_may_hit(g, ray) {
+                return None;
+            }
+            let hit = self.face_hit(world, idx, ray, now, true)?;
+            if !hit.t.is_finite() || (!hud && (ray.0 + ray.1 * hit.t).distance(world.agent.position) > crate::build::MAX_SELECT_DISTANCE) {
+                return None;
+            }
+            Some((idx, hit.t))
+        });
         hits.sort_unstable_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
         hits.into_iter().map(|(idx, _)| idx).collect()
     }
@@ -902,12 +922,14 @@ impl Scene {
             };
             (t.is_finite() && t < limit).then_some((t, idx))
         };
-        let order = |a: &(f32, usize), b: &(f32, usize)| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1));
-        if let Some(indices) = among {
-            indices.par_iter().filter_map(|&idx| hit(idx)).min_by(order)
-        } else {
-            self.gpu.par_iter().enumerate().filter_map(|(idx, _)| hit(idx)).min_by(order)
-        }
+        let hits = match among {
+            Some(indices) => ray_hits(indices, |&idx| hit(idx)),
+            None => {
+                let all: Vec<usize> = (0..self.gpu.len()).collect();
+                ray_hits(&all, |&idx| hit(idx))
+            }
+        };
+        nearest_hit(hits, |h| *h)
     }
 
     pub fn interaction_at(&self, world: &World, point: Vec3, now: Instant, build: bool) -> Option<usize> {
