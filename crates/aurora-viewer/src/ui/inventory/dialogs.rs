@@ -1126,6 +1126,117 @@ mod tests {
     }
 
     #[test]
+    fn notecard_toolbar_preserves_unicode_selection_history_and_saved_attachments() {
+        use egui::text::{CCursor, CCursorRange};
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let (inv, mut st) = note_fixture();
+        let card = aurora_net::inventory::notecard::Notecard::decode(&crate::world::inventory::demo::note_asset(true)).expect("card");
+        let original = "Été 🐺\n\u{100000}\n\u{100001}\n\u{100002}";
+        st.load_document(7, true, &Ok(card.encode(original).expect("asset")));
+        st.notecard_view = super::super::markdown::View::Edit;
+        let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, vec![]);
+        }
+        ctx.memory_mut(|memory| memory.request_focus(editor));
+        document_frame(&ctx, &inv, &mut st, vec![]);
+        let mut state = egui::TextEdit::load_state(&ctx, editor).expect("editor");
+        state
+            .cursor
+            .set_char_range(Some(CCursorRange::two(CCursor::new(5), CCursor::new(0))));
+        state.store(&ctx, editor);
+        ctx.memory_mut(|memory| memory.request_focus(editor));
+        let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+        let button = label_center(&output, aurora_i18n::tr!("notecard-format-bold"));
+        click_document(&ctx, &inv, &mut st, button);
+        let draft = "**Été 🐺**\n\u{100000}\n\u{100001}\n\u{100002}";
+        assert_eq!(st.preview_text, Some(Ok(draft.into())));
+        assert!(st.preview_dirty);
+        assert!(ctx.memory(|memory| memory.has_focus(editor)));
+        let range = egui::TextEdit::load_state(&ctx, editor)
+            .expect("editor")
+            .cursor
+            .char_range()
+            .expect("selection");
+        assert_eq!(range.primary.index.0, 2);
+        assert_eq!(range.secondary.index.0, 7);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while egui::TextEdit::load_state(&ctx, editor.with("markdown")).is_none() {
+            document_frame(&ctx, &inv, &mut st, vec![]);
+            assert!(std::time::Instant::now() < deadline, "preview did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        ctx.memory_mut(|memory| memory.request_focus(editor.with("markdown")));
+        let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+        click_document(&ctx, &inv, &mut st, label_center(&output, aurora_i18n::tr!("notecard-format-bold")));
+        assert_eq!(
+            st.preview_text,
+            Some(Ok(draft.into())),
+            "preview selection must never format a stale source selection"
+        );
+        ctx.memory_mut(|memory| memory.request_focus(editor));
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers {
+                ctrl: true,
+                command: true,
+                ..Default::default()
+            },
+        };
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Z)]);
+        assert_eq!(st.preview_text, Some(Ok(original.into())));
+        assert!(!st.preview_dirty);
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Y)]);
+        assert_eq!(st.preview_text, Some(Ok(draft.into())));
+        let (_, actions) = document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::S)]);
+        let [InvAction::SaveContent { text, .. }] = &actions[..] else {
+            panic!("save current source")
+        };
+        assert_eq!(text, draft);
+        let saved = st.preview_source.as_ref().expect("source").encode(text).expect("encoded");
+        let saved = aurora_net::inventory::notecard::Notecard::decode(&saved).expect("saved card");
+        assert_eq!(saved.text, draft);
+        for marker in ['\u{100000}', '\u{100001}', '\u{100002}'] {
+            assert_eq!(
+                saved.attachment(marker).expect("saved attachment").item.id,
+                card.attachment(marker).expect("attachment").item.id
+            );
+        }
+    }
+
+    #[test]
+    fn notecard_toolbar_is_disabled_for_read_only_and_pending_saves_but_help_is_available() {
+        for pending in [false, true] {
+            let ctx = egui::Context::default();
+            let (inv, mut st) = note_fixture();
+            st.load_document(7, pending, &Ok(b"Source".to_vec()));
+            st.save_pending = pending;
+            st.notecard_view = super::super::markdown::View::Edit;
+            for _ in 0..5 {
+                document_frame(&ctx, &inv, &mut st, vec![]);
+            }
+            let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+            click_document(&ctx, &inv, &mut st, label_center(&output, aurora_i18n::tr!("notecard-format-bold")));
+            assert_eq!(st.preview_text, Some(Ok("Source".into())));
+            assert!(!st.preview_dirty);
+            let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+            click_document(
+                &ctx,
+                &inv,
+                &mut st,
+                label_center(&output, aurora_i18n::tr!("notecard-markdown-help")),
+            );
+            let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+            assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
+                if text.galley.text() == aurora_i18n::tr!("notecard-markdown-help-extra"))));
+        }
+    }
+
+    #[test]
     fn notecard_split_edit_geometry_stays_stable() {
         for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
             for long in [false, true] {

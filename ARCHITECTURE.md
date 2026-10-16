@@ -100,7 +100,10 @@ Markdown and split Edit views. Classic retains Firestorm's plain proportional
 text with embedded inventory. CommonMark is parsed once per source change on
 the worker pool and displayed as a selectable, read-only rich text editor.
 Edit places the raw source on the left and its live Markdown preview on the
-right, with independent scroll areas and a common save footer. The latest
+right, with independent scroll areas and a common save footer.
+`ui/inventory/markdown/formatting.rs` adds the Edit toolbar and syntax help;
+formatting transforms the source selection, preserves Unicode and embedded
+markers, and records one native undo step per action. The latest
 ready preview remains visible while a changed draft is being parsed;
 the existing embedded-item renderer keeps attachment actions in every view.
 All modes share the original source draft and permission-aware save lifecycle

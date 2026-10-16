@@ -515,6 +515,21 @@ notecard-view-markdown = Markdown
 notecard-view-source = Éditer
 notecard-source-heading = Texte brut
 notecard-preview-heading = Aperçu Markdown
+notecard-format-bold = Gras
+notecard-format-italic = Italique
+notecard-format-strike = Barré
+notecard-format-code = Code
+notecard-format-link = Lien
+notecard-format-heading = Titre
+notecard-format-bullet = Liste
+notecard-format-ordered = Liste num.
+notecard-format-quote = Citation
+notecard-format-code-block = Bloc de code
+notecard-format-placeholder = texte
+notecard-format-hint = Dans le texte brut, sélectionnez du texte puis un format, ou insérez un modèle sans sélection.
+notecard-markdown-help = Aide Markdown
+notecard-markdown-help-intro = Les boutons modifient le texte brut et l’aperçu suit vos changements. Recliquez pour retirer un style, un titre, une liste ou une citation. Ctrl+Z annule, Ctrl+Y rétablit.
+notecard-markdown-help-extra = Titres : de # à ######. Séparez les paragraphes par une ligne vide. Pour un tableau, utilisez des colonnes séparées par | et une ligne d’en-tête comme | --- | --- |. Les images affichent leur texte alternatif ; le HTML reste du texte. Les pièces jointes sont conservées à la sauvegarde (Ctrl+S).
 notecard-markdown-demo =
     # Bienvenue dans Aurora
     Une note avec du **gras**, de l’*italique*, du ~~barré~~ et du `code`.

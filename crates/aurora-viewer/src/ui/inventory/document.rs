@@ -8,11 +8,11 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY") else {
         return Vec::new();
     };
-    if matches!(mode.as_str(), "note-markdown" | "note-source" | "note-classic") {
+    if matches!(mode.as_str(), "note-markdown" | "note-source" | "note-classic" | "note-format") {
         if frame < 600 {
             st.notecard_view = match mode.as_str() {
                 "note-markdown" => super::markdown::View::Markdown,
-                "note-source" => super::markdown::View::Edit,
+                "note-source" | "note-format" => super::markdown::View::Edit,
                 _ => super::markdown::View::Classic,
             };
         }
@@ -24,6 +24,40 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
                 egui::Order::Middle,
                 egui::Id::new(preview_window_id(st.ui_id, item, 7)),
             ));
+        }
+        if mode == "note-format"
+            && let Some(item) = st.preview
+        {
+            let id = egui::Id::new(("inventory_document_text", st.ui_id, item));
+            if frame == 650
+                && let Some(Ok(text)) = &st.preview_text
+                && let Some(start) = text.find("- ").map(|at| at + 2)
+            {
+                let end = text[start..].find(char::is_whitespace).map_or(text.len(), |at| start + at);
+                let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(text[..start].chars().count()),
+                    egui::text::CCursor::new(text[..end].chars().count()),
+                )));
+                state.store(ctx, id);
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+            let button = match frame {
+                670 | 671 => Some("demo_format_bold"),
+                710 | 711 => Some("demo_format_help"),
+                _ => None,
+            };
+            if let Some(rect) = button.and_then(|key| ctx.data_mut(|data| data.get_temp::<egui::Rect>(id.with(key)))) {
+                return vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed: matches!(frame, 670 | 710),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ];
+            }
         }
         return Vec::new();
     }

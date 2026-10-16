@@ -260,7 +260,7 @@ pub fn target(view: &str) -> Option<Uuid> {
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
-        | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" => 8103,
+        | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" | "note-format" => 8103,
         "nocopy" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
@@ -317,8 +317,8 @@ pub fn seed_clipboard_tree(inv: &mut Inventory) {
 }
 
 pub fn note_asset(embedded: bool) -> Vec<u8> {
-    let markdown =
-        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-markdown" | "note-source" | "note-classic"));
+    let markdown = std::env::var("AURORA_DEMO_INVENTORY")
+        .is_ok_and(|mode| matches!(mode.as_str(), "note-markdown" | "note-source" | "note-classic" | "note-format"));
     let text = if markdown {
         aurora_i18n::tr!("notecard-markdown-demo")
     } else {

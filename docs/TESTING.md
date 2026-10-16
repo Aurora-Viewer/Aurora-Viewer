@@ -2943,6 +2943,16 @@ offline; the files and snapshots uploaded in demo stay offline.
   and its live Markdown preview on the right, with independent scrolling.
   Type headings, bold and Unicode in Edit and check that the right side
   updates without leaving the mode, then Ctrl+S from either pane.
+  The formatting toolbar applies bold, italic, strikethrough, inline code,
+  links, headings, lists, quotes and fenced code to the source selection.
+  Select Unicode text with the mouse, click Bold, then undo and redo:
+  the text, selection and attachments must survive, and Ctrl+S must save
+  the Markdown source. Repeat a style to remove it; without a selection,
+  the controls insert editable templates. Markdown help shows syntax and
+  limits. Formatting is disabled for read-only notes and pending saves.
+  `note-format` uses the same sample in Edit, selects the first list word
+  at frame 650, clicks Bold at 670–671 and opens Markdown help at 710–711;
+  capture frame 700 for the selection/preview or frame 800 for the help.
   Leave Edit idle with the source focused, including at a fractional UI
   scale (112.5%): neither pane's border may oscillate. A short note must
   not show scroll bars; a long note must still scroll in each pane.

@@ -512,6 +512,21 @@ notecard-view-markdown = Markdown
 notecard-view-source = Edit
 notecard-source-heading = Plain text
 notecard-preview-heading = Markdown preview
+notecard-format-bold = Bold
+notecard-format-italic = Italic
+notecard-format-strike = Strikethrough
+notecard-format-code = Code
+notecard-format-link = Link
+notecard-format-heading = Heading
+notecard-format-bullet = List
+notecard-format-ordered = Numbered list
+notecard-format-quote = Quote
+notecard-format-code-block = Code block
+notecard-format-placeholder = text
+notecard-format-hint = Select text in the source and choose a format, or insert a template without a selection.
+notecard-markdown-help = Markdown help
+notecard-markdown-help-intro = Buttons edit the source and the preview follows your changes. Click again to remove a style, heading, list or quote. Ctrl+Z undoes, Ctrl+Y redoes.
+notecard-markdown-help-extra = Headings: # through ######. Separate paragraphs with a blank line. For tables, separate columns with | and add a header row such as | --- | --- |. Images show their alt text; HTML stays text. Attachments are preserved when saving (Ctrl+S).
 notecard-markdown-demo =
     # Welcome to Aurora
     A notecard with **bold**, *italic*, ~~strikethrough~~ and `code`.

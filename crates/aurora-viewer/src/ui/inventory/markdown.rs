@@ -9,6 +9,8 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::theme::Palette;
 
+mod formatting;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum View {
     #[default]
@@ -83,6 +85,7 @@ pub(super) fn editor(
 ) -> super::embedded::EditorResult {
     use super::embedded::{self, Appearance};
 
+    let history = formatting::history_key(ui, id, editable);
     let preview_id = id.with("markdown");
     let mut preview = |ui: &mut egui::Ui, text: &mut String, source: Option<&mut aurora_net::inventory::notecard::Notecard>, size| {
         let Some(rendered) = cache.get(ui.ctx(), text) else {
@@ -111,29 +114,45 @@ pub(super) fn editor(
     };
     match view {
         View::Classic => scroll(ui, id, size, |ui, size| {
-            embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Classic)
-        }),
-        View::Markdown => preview(ui, text, source, size),
-        View::Edit => ui.columns(2, |columns| {
-            for (column, label) in columns.iter_mut().zip([
-                aurora_i18n::tr!("notecard-source-heading"),
-                aurora_i18n::tr!("notecard-preview-heading"),
-            ]) {
-                column.add(egui::Label::new(egui::RichText::new(label).color(p.muted)).truncate());
+            let mut result = embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Classic);
+            if let Some(redo) = history {
+                result.changed |= formatting::history(ui.ctx(), id, text, redo);
             }
-            let height = (size.y - ui_heading_height(&columns[0])).max(24.0);
-            let left_size = egui::vec2(columns[0].available_width(), height);
-            let mut result = scroll(&mut columns[0], id, left_size, |ui, size| {
-                embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Source)
-            });
-            // Parse after the source editor consumed this frame's input.
-            let right_size = egui::vec2(columns[1].available_width(), height);
-            let right = preview(&mut columns[1], text, source, right_size);
-            result.save |= right.save;
-            result.open = right.open.or(result.open);
-            result.copy = right.copy.or(result.copy);
             result
         }),
+        View::Markdown => preview(ui, text, source, size),
+        View::Edit => {
+            let top = ui.cursor().top();
+            let can_format = editable && !ui.ctx().memory(|memory| memory.has_focus(preview_id));
+            let command = formatting::toolbar(ui, p, id, can_format);
+            let toolbar_height = ui.cursor().top() - top;
+            ui.columns(2, |columns| {
+                for (column, label) in columns.iter_mut().zip([
+                    aurora_i18n::tr!("notecard-source-heading"),
+                    aurora_i18n::tr!("notecard-preview-heading"),
+                ]) {
+                    column.add(egui::Label::new(egui::RichText::new(label).color(p.muted)).truncate());
+                }
+                let height = (size.y - toolbar_height - ui_heading_height(&columns[0])).max(24.0);
+                let left_size = egui::vec2(columns[0].available_width(), height);
+                let mut result = scroll(&mut columns[0], id, left_size, |ui, size| {
+                    embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Source)
+                });
+                if let Some(redo) = history {
+                    result.changed |= formatting::history(columns[0].ctx(), id, text, redo);
+                }
+                if let Some(command) = command {
+                    result.changed |= formatting::apply(columns[0].ctx(), id, text, command);
+                }
+                // Parse after the source editor consumed this frame's input.
+                let right_size = egui::vec2(columns[1].available_width(), height);
+                let right = preview(&mut columns[1], text, source, right_size);
+                result.save |= right.save;
+                result.open = right.open.or(result.open);
+                result.copy = right.copy.or(result.copy);
+                result
+            })
+        }
     }
 }
 
