@@ -663,6 +663,53 @@ mod tests {
         assert!(!bench.chat.has_focus);
     }
 
+    /// With "keep the chat bar active" (`keep_focus`): a message sent leaves
+    /// the field with the keyboard, Enter on the empty field gives it back to
+    /// the world, and the next Enter (the viewer's chat shortcut) takes it
+    /// again. Off, a message sent lets the keyboard go, as before.
+    #[test]
+    fn the_chat_bar_can_keep_the_keyboard_after_sending() {
+        let mut bench = Bench::shown();
+        bench.chat.keep_focus = true;
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("one".into())]);
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        assert_eq!(out.expect("sent").message, "one");
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus, "the bar kept the keyboard after sending");
+        // the next message goes straight in
+        bench.frame(vec![egui::Event::Text("two".into())]);
+        assert_eq!(bench.chat.input, "two");
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        assert_eq!(out.expect("sent").message, "two");
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus);
+        // Enter on the empty bar: back to the world
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        assert!(out.is_none());
+        bench.frame(vec![]);
+        assert!(!bench.chat.has_focus, "Enter on the empty bar let the keyboard go");
+        // the viewer's Enter shortcut asks for the bar again
+        bench.chat.focus_request = true;
+        bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus, "the next Enter took the bar again");
+
+        // off: a message sent lets the keyboard go
+        let mut bench = Bench::shown();
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("three".into())]);
+        let (out, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+        assert!(out.is_some());
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        assert!(!bench.chat.has_focus, "off: the bar let the keyboard go after sending");
+    }
+
     /// The handle on the island's right edge sets its width, saved on
     /// release; a double click goes back to the default.
     #[test]
