@@ -591,11 +591,13 @@ closed torus primitive.
 `ui/inventory/view.rs`. The folders load in bounded batches; the expanded
 states of search and of navigation stay separate. `ui/texture_picker.rs`
 presents the visible rows, the long names truncated with a tooltip, a
-bounded preview, an adjustable split and the commands at the bottom of the
-window. The inventory column is reduced by a third by default. The
-collapsible "Local files" folder precedes the inventory for the diffuse and
-PBR material choices; it shares the drawing of the rows and filters
-textures / materials separately. `app/imports.rs` prepares the local images
+single selected preview above a virtual folder list. Inventory, Local and
+Aurora Library tabs preserve folder browsing; the latter scopes the real
+#Aurora/Textures Library subtree. Rows paint resource icons without requesting
+thumbnail assets. Default/Blank/Transparent/None appear below the list, with
+inapplicable choices disabled; a validated UUID sits directly below them.
+The collapsible "Local files" folder belongs to Local and filters textures /
+materials separately. Inventory roots are opened once and can stay collapsed. `app/imports.rs` prepares the local images
 and materials as soon as they are loaded on the workers, so that they can be
 selected before their first application.
 Its intentional choices are distinct from the confirmation:
@@ -683,7 +685,12 @@ dialogs and the rows of the user inventory and of object contents
 (density, hover, selection and name style). `build/ui/compact.rs` arranges
 building in seven sections in a narrow inspector: General contains identity, group/share/deed, sale and search, while Rights keeps everyone/next-owner permissions. The five tools share the navigation rail; titles follow the section/tool, and edit selection/actions stay at the bottom of the main panel. The inspector resizes on both axes, fills the chosen height and retains its geometry across sections, tools and folding. The object inventory fills the remaining section viewport; tool hint space uses the exact wrapped text galley, preventing frame-by-frame window growth. Each transform vector has its own caption-line copy/paste controls; linked editing, face selection, both-sided stretching and root-axis editing share the footer. Shape rows (including sculpted prims) and the material map/settings/UV grids reuse the existing editing commands. `build/ui/compact_tests.rs` covers the permission split, shared selection options, per-vector clipboard interactions in all manipulators, and actual pointer resizing with section/tool/fold transitions, stable narrow-tool geometry over repeated frames, and inventory filling/filtering after height changes.
 The footer also exposes World / Local / Reference through three persistent
-icon buttons, with a violet face for the active mode and muted inactive icons.
+icon buttons in a vertical column below an XYZ symbol, with a violet face for
+the active mode and muted inactive icons. Rez-under-land-group shares this
+footer in Edit and Create. Linked-prim and face navigation have separate arrows.
+The shared Floater supports a compact status row in its title; construction
+uses independent lock, no-mod and ownership states. Material projection/options
+are inline rather than collapsed.
 `build::can_transform` applies effective simulator
 Move / Modify flags to numeric controls and manipulators before any local echo,
 with whole-selection validation and checks during dragging and release.
@@ -693,6 +700,14 @@ Floating-point spinners in `build/ui/common.rs` retain the active drag value
 until release, so panels that submit only committed edits do not reset it each
 frame. Drafts are used only while their original widget is dragging or releasing;
 numeric transform previews still report their final commit on release.
+Float/integer build fields and color fields share themed increment/decrement
+buttons; steps respect bounds and disabled permissions and commit once per click.
+After confirmed simulator parent updates, whole-object selection and highlighting
+resolve and deduplicate actual roots, preventing old roots from keeping their
+root colors or duplicating outlines. Link requests report pending until all
+parents agree; only then is the outgoing ObjectLink order retained, independent
+of UDP arrival order. Existing linksets without a locally confirmed instruction
+still require simulator-side link-number verification.
 `build/ui/contents_selection.rs` owns the task list's Ctrl/Shift selection,
 focus and Delete/F2 dispatch before global object shortcuts. Rename requests
 focus once and commits on Enter, blur or leaving the panel, rechecking access

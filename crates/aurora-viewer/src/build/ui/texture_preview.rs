@@ -509,6 +509,8 @@ mod tests {
             for i in 0..10 {
                 positions = frame(&ctx, tool, world, env, i as f64 / 60.0, vec![]);
             }
+            click(&ctx, tool, world, env, 0.5, positions[aurora_i18n::tr!("picker-local-tab")]);
+            positions = frame(&ctx, tool, world, env, 0.75, vec![]);
             tool.out.clear();
             click(&ctx, tool, world, env, 1.0, positions["Local fixture"]);
             assert!(tool.ui.picker.open);

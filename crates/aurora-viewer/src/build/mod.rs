@@ -40,7 +40,7 @@ use geom::Cam;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// LL_PCODE_* / FLAGS_CREATE_SELECTED of object updates (llprimitive.h).
@@ -471,6 +471,8 @@ pub struct BuildTool {
     pub menu_selection: bool,
     /// Selection mode of `selection`.
     pub selection_linked: bool,
+    /// Ordered link instruction awaiting confirmed simulator parents.
+    pending_link: Option<(Vec<Uuid>, Instant)>,
     /// ObjectProperties of selected objects.
     pub props: HashMap<Uuid, ObjectProps>,
     pub cam: Cam,
@@ -521,6 +523,7 @@ impl Default for BuildTool {
             next_tag: 1,
             menu_selection: false,
             selection_linked: false,
+            pending_link: None,
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
@@ -651,8 +654,11 @@ pub fn highlighted_of(world: &World, selection: &[ObjKey], linked: bool) -> Vec<
             let root = root_of(world, idx) == idx;
             out.push((idx, root));
         } else {
-            for (i, p) in family(world, idx).into_iter().enumerate() {
-                out.push((p, i == 0));
+            let root = root_of(world, idx);
+            for p in family(world, root) {
+                if !out.iter().any(|(i, _)| *i == p) {
+                    out.push((p, p == root));
+                }
             }
         }
     }
@@ -980,9 +986,35 @@ impl BuildTool {
         self.select_type(world) != SelectType::World
     }
 
+    fn advance_link(&mut self, world: &mut World, now: Instant) {
+        if let Some((members, started)) = &self.pending_link {
+            if let Some(root) = members.first()
+                && world.objects.remember_link_order(*root, &members[1..])
+            {
+                self.status = aurora_i18n::tr!("build-mod-objects-linked", value0 = format!("{}", members.len()));
+                self.pending_link = None;
+                self.costs_stale();
+            } else if now.saturating_duration_since(*started) > Duration::from_secs(30) {
+                self.pending_link = None;
+                self.status = aurora_i18n::tr!("build-link-unconfirmed").into();
+            }
+        }
+    }
+
     /// Forget objects that are gone; drop a selection left far behind
     /// (LLSelectMgr::deselectAllIfTooFar).
     fn prune(&mut self, world: &World, now: Instant) {
+        // Parent changes are authoritative only after simulator object updates.
+        // Former roots become one whole-object selection after a successful link.
+        if !self.selection_linked
+            && self
+                .selection
+                .iter()
+                .any(|key| world.objects.index_of(key).is_some_and(|i| root_of(world, i) != i))
+        {
+            let roots = self.roots(world);
+            self.selection = roots.into_iter().filter_map(|i| world.objects.get(i).map(|o| o.key)).collect();
+        }
         self.selection.retain(|k| world.objects.index_of(k).is_some());
         if !self.selection.is_empty()
             && !self.attachment_selected(world)
@@ -1182,8 +1214,19 @@ impl BuildTool {
         }
         let Some((handle, _)) = first else { return };
         let ids: Vec<u32> = roots.iter().filter_map(|&r| world.objects.get(r).map(|o| o.key.local_id)).collect();
+        // New children precede the root's existing children (ObjectLink).
+        // Retain this instruction only after all simulator parents agree,
+        // so reordered UDP packets cannot redefine the newly created links.
+        let mut expected = vec![roots[0]];
+        expected.extend(roots.iter().skip(1).flat_map(|&r| family(world, r)));
+        expected.extend(family(world, roots[0]).into_iter().skip(1));
+        let members = expected
+            .into_iter()
+            .filter_map(|i| world.objects.get(i).map(|o| o.full_id))
+            .collect();
+        self.pending_link = Some((members, Instant::now()));
         self.send(BuildCmd::Link { handle, local_ids: ids });
-        self.status = aurora_i18n::tr!("build-mod-objects-linked", value0 = format!("{}", roots.len()));
+        self.status = aurora_i18n::tr!("build-link-pending").into();
         self.costs_stale();
     }
 
@@ -1343,6 +1386,7 @@ impl BuildTool {
         self.last_frame = Some(now);
         self.update_replacement(world, now);
         self.advance_bulk_permissions(world, now);
+        self.advance_link(world, now);
         if !self.open {
             return;
         }

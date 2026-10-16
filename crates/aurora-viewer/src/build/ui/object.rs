@@ -734,7 +734,7 @@ fn shape_pair(
 ) -> Edit {
     let mut edit = Edit::default();
     ui.horizontal(|ui| {
-        let label_width = (ui.available_width() - 156.0).max(70.0);
+        let label_width = (ui.available_width() - 182.0).max(70.0);
         ui.allocate_ui_with_layout(
             Vec2::new(label_width, 26.0),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -748,7 +748,7 @@ fn shape_pair(
             ui.allocate_ui_with_layout(Vec2::new(30.0, 26.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(axis).size(10.0).color(p.muted));
             });
-            edit = edit.or(spin(ui, value, increment, range, decimals, 36.0, false));
+            edit = edit.or(spin(ui, value, increment, range, decimals, 49.0, false));
         }
     });
     edit

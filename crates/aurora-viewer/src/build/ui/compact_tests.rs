@@ -285,7 +285,7 @@ impl Inspector {
 }
 
 #[test]
-fn coordinate_icons_select_one_mode_beside_linked_parts_in_every_edit_section() {
+fn coordinate_icons_select_one_mode_in_a_vertical_column_in_every_edit_section() {
     let mut inspector = Inspector::new();
     let click = |inspector: &mut Inspector, point| {
         inspector.show(vec![egui::Event::PointerMoved(point)]);
@@ -310,7 +310,15 @@ fn coordinate_icons_select_one_mode_beside_linked_parts_in_every_edit_section() 
                 .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
                 .unwrap()
                 .1;
-            let point = egui::pos2(rect.right() - 24.0 - (2 - mode) as f32 * 35.0, linked.center().y);
+            let target = inspector
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("build_grid_mode", mode))))
+                .unwrap();
+            assert!(
+                rect.contains_rect(target),
+                "Coordinate control outside inspector: {rect:?}, {target:?}"
+            );
+            let point = target.center();
             let face = texts
                 .iter()
                 .find(|(text, _)| text == aurora_i18n::tr!("build-compact-select-face"))
@@ -320,10 +328,7 @@ fn coordinate_icons_select_one_mode_beside_linked_parts_in_every_edit_section() 
                 face.top() > linked.bottom(),
                 "Face selection must leave room for the coordinate icons"
             );
-            assert!(
-                linked.right() < rect.right() - 110.0,
-                "Linked editing overlaps the coordinate icons"
-            );
+            assert!(linked.right() < rect.right() - 44.0, "Linked editing overlaps the coordinate icons");
             click(&mut inspector, point);
             assert_eq!(inspector.settings.grid_mode, mode, "Coordinate icon in section {section}");
             if mode == 2 {
@@ -500,9 +505,9 @@ fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
                 let before = values(&inspector, channel);
                 let (_, texts) = inspector.show(vec![]);
                 let (label, width, row) = match property {
-                    0 | 1 => (aurora_i18n::tr!("common-scale"), 94.0, property),
-                    2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 84.0, property - 2),
-                    _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 58.0, 0),
+                    0 | 1 => (aurora_i18n::tr!("common-scale"), 103.0, property),
+                    2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 75.0, property - 2),
+                    _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 71.0, 0),
                 };
                 let title = texts.iter().find(|(text, _)| text == label).unwrap().1;
                 let mut fields: Vec<_> = texts
@@ -712,7 +717,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
         let (rect, texts) = inspector.show(vec![]);
         assert!(
             (rect.size() - expanded.size()).length() < 1.0,
-            "Switching section changed the chosen size: {tab}"
+            "Switching section changed the chosen size: {tab}; {expanded:?} -> {rect:?}"
         );
         let title = sections().into_iter().find(|(id, _, _)| *id == tab).unwrap().2;
         assert_eq!(
@@ -727,8 +732,14 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             let matches: Vec<_> = texts.iter().filter(|(text, _)| text == label).collect();
             assert_eq!(matches.len(), 1, "Shared option missing or duplicated: {label}");
             assert!(
-                expanded.bottom() - matches[0].1.bottom() < 65.0,
-                "Shared option must be in the footer: {label}"
+                expanded.bottom() - matches[0].1.bottom()
+                    < if label == aurora_i18n::tr!("build-compact-both-sides") {
+                        95.0
+                    } else {
+                        65.0
+                    },
+                "Shared option must be in the footer: {label}; window={expanded:?}, control={:?}",
+                matches[0].1
             );
         }
     }
@@ -751,7 +762,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
         if expanding {
             assert!((rect.size() - expanded.size()).length() < 1.0);
         } else {
-            assert!(rect.height() < 60.0);
+            assert!(rect.height() < 85.0);
             assert!((rect.width() - expanded.width()).abs() < 1.0);
         }
     }
@@ -762,8 +773,14 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             (rect.size() - expanded.size()).length() < 1.0,
             "Switching tool changed the chosen size: {tool:?}"
         );
-        assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-duplicate")));
-        assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")));
+        assert_eq!(
+            texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-duplicate")),
+            tool == Tool::Create
+        );
+        assert_eq!(
+            texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")),
+            tool == Tool::Create
+        );
     }
 }
 

@@ -13,7 +13,6 @@ use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
 use crate::build::{BuildSettings, BuildTool, Tool};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
-use crate::ui::widgets::collapsing;
 use crate::ui::widgets::tabs;
 use crate::world::World;
 use aurora_assets::material::{AlphaMode, OVERRIDE_NULL_UUID, PbrOverride, TextureTransform};
@@ -530,9 +529,9 @@ fn uv_controls(
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             for (column, width, title) in [
-                (0, 94.0, aurora_i18n::tr!("common-scale")),
-                (1, 84.0, aurora_i18n::tr!("build-ui-texture-offset")),
-                (2, 58.0, aurora_i18n::tr!("build-ui-texture-rotation")),
+                (0, 103.0, aurora_i18n::tr!("common-scale")),
+                (1, 75.0, aurora_i18n::tr!("build-ui-texture-offset")),
+                (2, 71.0, aurora_i18n::tr!("build-ui-texture-rotation")),
             ] {
                 ui.allocate_ui_with_layout(egui::vec2(width, 78.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.label(RichText::new(title).size(10.0).color(p.muted));
@@ -554,7 +553,7 @@ fn uv_controls(
                                 increment,
                                 range,
                                 d,
-                                if column == 2 { 58.0 } else { 52.0 },
+                                if column == 2 { 71.0 } else { 65.0 },
                                 mixed[index],
                                 d.min(3),
                             ));
@@ -1173,78 +1172,72 @@ fn face_options(
             });
         });
     });
-    collapsing(
-        ui,
-        p,
-        "material_options",
-        aurora_i18n::tr!("build-compact-projection-options"),
-        false,
-        |ui| {
-            ui.vertical(|ui| {
-                let legacy0 = tool.face_legacy(env, world, sel[0].idx, sel[0].face, &sel[0].te);
-                let water = sel.iter().all(|x| is_hide_water(&x.te, legacy0.as_ref()));
-                if let Some(v) = check(ui, p, water, false, aurora_i18n::tr!("build-ui-texture-occlude-water"), true) {
-                    if v {
-                        tool.ui.confirm = Some(Confirm::HideWater);
-                    } else {
-                        tool.edit_faces(world, |f, _, _| f.texture = DEFAULT_TEXTURE);
-                    }
+    ui.add_space(8.0);
+    ui.vertical(|ui| {
+        ui.vertical(|ui| {
+            let legacy0 = tool.face_legacy(env, world, sel[0].idx, sel[0].face, &sel[0].te);
+            let water = sel.iter().all(|x| is_hide_water(&x.te, legacy0.as_ref()));
+            if let Some(v) = check(ui, p, water, false, aurora_i18n::tr!("build-ui-texture-occlude-water"), true) {
+                if v {
+                    tool.ui.confirm = Some(Confirm::HideWater);
+                } else {
+                    tool.edit_faces(world, |f, _, _| f.texture = DEFAULT_TEXTURE);
                 }
-            });
-            ui.vertical(|ui| {
-                if let Some(v) = check(
-                    ui,
-                    p,
-                    s.sync_materials,
-                    false,
-                    aurora_i18n::tr!("build-ui-texture-synchronize-materials"),
-                    true,
-                ) {
-                    s.sync_materials = v;
-                }
-                let mapping = [
-                    (aurora_i18n::tr!("common-default"), 0u8),
-                    (aurora_i18n::tr!("build-ui-texture-planar"), TEX_GEN_PLANAR),
-                ];
-                let (m, m_mixed) = same(sel.iter().map(|x| x.te.media_flags & TEM_TEX_GEN_MASK));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(v) = combo(ui, "texgen", if m_mixed { None } else { m }, &mapping, 90.0, true) {
-                        tool.edit_faces(world, |f, _, _| f.media_flags = (f.media_flags & !TEM_TEX_GEN_MASK) | v);
-                    }
-                });
-            });
-            ui.horizontal(|ui| {
-                let mut align = tool.ui.planar_align;
-                if ui
-                    .add_enabled_ui(planar, |ui| {
-                        let label = RichText::new(aurora_i18n::tr!("build-ui-texture-align-planar-faces")).size(12.0);
-                        crate::ui::widgets::checkbox(ui, p, &mut align, label)
-                    })
-                    .inner
-                    .changed()
-                {
-                    tool.ui.planar_align = align;
-                }
-                let objects = sel.iter().map(|x| x.idx).collect::<std::collections::BTreeSet<_>>().len();
-                if ui
-                    .add_enabled(
-                        planar && tool.ui.planar_align && objects > 1,
-                        egui::Button::new(RichText::new(aurora_i18n::tr!("common-align")).size(12.0)),
-                    )
-                    .on_hover_text(aurora_i18n::tr!("build-ui-texture-aligns-the-available-texture-layers"))
-                    .clicked()
-                {
-                    tool.align_planar_faces(world, sel.iter().map(|x| (x.idx, x.face)).collect());
-                }
-            });
-            if tool.ui.tex_tab == 1 {
-                ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-save")))
-                    .on_disabled_hover_text(aurora_i18n::tr!(
-                        "build-ui-texture-saving-materials-to-inventory-is-not-available-yet"
-                    ));
             }
-        },
-    );
+        });
+        ui.vertical(|ui| {
+            if let Some(v) = check(
+                ui,
+                p,
+                s.sync_materials,
+                false,
+                aurora_i18n::tr!("build-ui-texture-synchronize-materials"),
+                true,
+            ) {
+                s.sync_materials = v;
+            }
+            let mapping = [
+                (aurora_i18n::tr!("common-default"), 0u8),
+                (aurora_i18n::tr!("build-ui-texture-planar"), TEX_GEN_PLANAR),
+            ];
+            let (m, m_mixed) = same(sel.iter().map(|x| x.te.media_flags & TEM_TEX_GEN_MASK));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(v) = combo(ui, "texgen", if m_mixed { None } else { m }, &mapping, 90.0, true) {
+                    tool.edit_faces(world, |f, _, _| f.media_flags = (f.media_flags & !TEM_TEX_GEN_MASK) | v);
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            let mut align = tool.ui.planar_align;
+            if ui
+                .add_enabled_ui(planar, |ui| {
+                    let label = RichText::new(aurora_i18n::tr!("build-ui-texture-align-planar-faces")).size(12.0);
+                    crate::ui::widgets::checkbox(ui, p, &mut align, label)
+                })
+                .inner
+                .changed()
+            {
+                tool.ui.planar_align = align;
+            }
+            let objects = sel.iter().map(|x| x.idx).collect::<std::collections::BTreeSet<_>>().len();
+            if ui
+                .add_enabled(
+                    planar && tool.ui.planar_align && objects > 1,
+                    egui::Button::new(RichText::new(aurora_i18n::tr!("common-align")).size(12.0)),
+                )
+                .on_hover_text(aurora_i18n::tr!("build-ui-texture-aligns-the-available-texture-layers"))
+                .clicked()
+            {
+                tool.align_planar_faces(world, sel.iter().map(|x| (x.idx, x.face)).collect());
+            }
+        });
+        if tool.ui.tex_tab == 1 {
+            ui.add_enabled(false, egui::Button::new(aurora_i18n::tr!("common-save")))
+                .on_disabled_hover_text(aurora_i18n::tr!(
+                    "build-ui-texture-saving-materials-to-inventory-is-not-available-yet"
+                ));
+        }
+    });
 }
 
 /// "Paste" (FSPanelFace::onPasteFaces): the copied faces in order onto

@@ -55,7 +55,9 @@ pub struct TexturePicker {
     selected_lookup: Option<(u64, Option<Uuid>)>,
     tree: tree::Tree,
     local_open: [bool; 2],
-    list_fraction: f32,
+    source: usize,
+    library_lookup: Option<(u64, Uuid, Option<Uuid>)>,
+    uuid_error: bool,
     footer_height: f32,
     /// Images to stream (selected texture preview).
     pub wanted_images: HashSet<Uuid>,
@@ -87,7 +89,8 @@ impl TexturePicker {
         self.allow_none = false;
         self.extra_buttons = false;
         self.allow_local = false;
-        self.uuid_text.clear();
+        self.uuid_text = current.to_string();
+        self.uuid_error = false;
         self.footer_height = 0.0;
         self.preview = None;
         self.generation = self.generation.wrapping_add(1);
@@ -115,6 +118,8 @@ impl TexturePicker {
     }
 
     fn select(&mut self, asset: Uuid, item: Option<Uuid>, preview: bool) {
+        self.uuid_text = asset.to_string();
+        self.uuid_error = false;
         self.selected = Some(asset);
         self.selected_item = item;
         self.preview = preview.then_some(asset);
@@ -135,8 +140,6 @@ impl TexturePicker {
         let mut chosen = None;
         let mut open = true;
         let screen = ctx.content_rect();
-        self.tree
-            .prepare(&mut world.inventory, world.agent_id, self.materials, &self.filter);
         let lookup = (world.inventory.generation, self.selected);
         if self.selected_lookup != Some(lookup) {
             self.selected_lookup = Some(lookup);
@@ -155,51 +158,138 @@ impl TexturePicker {
                 });
             }
         }
-        // Keep the preview's space while reducing the original list by a third.
-        let size = Vec2::new(530.0, 480.0);
+        let size = Vec2::new(480.0, 600.0);
         let mut floater = Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size);
-        floater.min_size = Vec2::new(460.0, 400.0);
+        floater.min_size = Vec2::new(460.0, 480.0);
         floater.show(ctx, p, &mut open, |ui| {
+            let radius = ui.visuals().window_corner_radius;
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    let side = 132.0;
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, radius, p.field);
+                    if let Some(a) = self.selected.filter(|a| !self.materials && !a.is_nil()) {
+                        self.wanted_images.insert(a);
+                        if let Some(t) = images.get(&a) {
+                            ui.painter().image(
+                                t.id(),
+                                rect,
+                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                widgets::PICTURE_TINT,
+                            );
+                            let size = t.size();
+                            ui.label(RichText::new(format!("{} × {}", size[0], size[1])).size(11.0).color(p.muted));
+                        } else if a == BLANK_TEXTURE {
+                            // IMG_WHITE has known content while its metadata streams.
+                            // theme-guard: content — the blank texture is white
+                            ui.painter().rect_filled(rect, radius, egui::Color32::WHITE);
+                        } else if a == TRANSPARENT_TEXTURE {
+                            let cell = 12.0;
+                            for y in 0..(side / cell).ceil() as usize {
+                                for x in 0..(side / cell).ceil() as usize {
+                                    let tile = egui::Rect::from_min_size(
+                                        rect.min + egui::vec2(x as f32 * cell, y as f32 * cell),
+                                        Vec2::splat(cell),
+                                    )
+                                    .intersect(rect);
+                                    ui.painter()
+                                        .rect_filled(tile, 0.0, if (x + y) % 2 == 0 { p.field } else { p.raised });
+                                }
+                            }
+                        } else {
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                aurora_i18n::tr!("common-loading-2"),
+                                egui::FontId::proportional(11.5),
+                                p.muted,
+                            );
+                        }
+                    }
+
+                    if self.materials
+                        && let Some(icon) = super::icons::global("droplet-filled")
+                    {
+                        ui.painter().image(
+                            icon.id(),
+                            egui::Rect::from_center_size(rect.center(), Vec2::splat(48.0)),
+                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                            p.violet_light,
+                        );
+                    }
+                });
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-texture-picker-preview"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                    let name = self
+                        .selected_item
+                        .and_then(|id| world.inventory.items.get(&id))
+                        .map(|it| it.name.as_str())
+                        .or_else(|| {
+                            self.selected
+                                .and_then(|id| world.local_assets.get(&id))
+                                .map(|(name, _)| name.as_str())
+                        });
+                    if let Some(name) = name {
+                        ui.add(widgets::elided_label(
+                            ui,
+                            RichText::new(name).size(12.0).color(p.ink),
+                            ui.available_width(),
+                        ));
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            widgets::tabs(
+                ui,
+                p,
+                &mut self.source,
+                &[
+                    (aurora_i18n::tr!("picker-inventory-tab"), true),
+                    (aurora_i18n::tr!("picker-local-tab"), self.allow_local),
+                    (aurora_i18n::tr!("picker-aurora-tab"), true),
+                ],
+            );
+            if self.source == 1 && !self.allow_local {
+                self.source = 0;
+            }
+            let inv = &world.inventory;
+            if self.library_lookup.map(|(generation, root, _)| (generation, root)) != Some((inv.generation, inv.root)) {
+                self.library_lookup = Some((inv.generation, inv.root, super::texture_library::catalogue::root(inv)));
+            }
+            let library = self.library_lookup.and_then(|(_, _, root)| root);
+            let root = if self.source == 2 {
+                library.unwrap_or(Uuid::nil())
+            } else {
+                world.inventory.root
+            };
+            self.tree
+                .prepare_root(&mut world.inventory, world.agent_id, self.materials, &self.filter, root);
             let hint = if self.materials {
                 aurora_i18n::tr!("ui-texture-picker-filter-materials")
             } else {
                 aurora_i18n::tr!("common-filter-textures")
             };
             widgets::search_field(ui, &mut self.filter, hint, ui.available_width());
-            ui.add_space(8.0);
-            // Reserve the footer's measured natural height. Theme spacing or
-            // larger input fonts must never feed extra height back into the
-            // next frame's filling list and make the window grow endlessly.
+            ui.add_space(6.0);
             let footer = if self.footer_height > 0.0 {
                 self.footer_height
+            } else if self.extra_buttons {
+                130.0
             } else {
-                (if self.extra_buttons { 112.0 } else { 64.0 }) + 2.0 * ui.spacing().item_spacing.y
+                65.0
             };
             let (body, _) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), (ui.available_height() - footer).max(280.0)),
+                Vec2::new(ui.available_width(), (ui.available_height() - footer).max(48.0)),
                 egui::Sense::hover(),
             );
-            let fraction = if self.list_fraction > 0.0 { self.list_fraction } else { 0.59 };
-            let left_width = (body.width() * fraction).clamp(240.0, body.width() - 176.0);
-            let divider = egui::Rect::from_min_max(
-                egui::pos2(body.left() + left_width, body.top()),
-                egui::pos2(body.left() + left_width + 8.0, body.bottom()),
-            );
-            let drag = ui
-                .interact(divider, ui.id().with("split"), egui::Sense::drag())
-                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-                .on_hover_text(aurora_i18n::tr!("ui-texture-picker-adjust-list-width"));
-            if drag.dragged()
-                && let Some(pointer) = drag.interact_pointer_pos()
-            {
-                self.list_fraction = ((pointer.x - body.left()).clamp(240.0, body.width() - 176.0)) / body.width();
-            }
-            ui.painter()
-                .vline(divider.center().x, divider.y_range(), egui::Stroke::new(1.0, p.muted_dim));
             let mut list = ui.new_child(
                 egui::UiBuilder::new()
-                    .id_salt("texture_list")
-                    .max_rect(egui::Rect::from_min_max(body.min, egui::pos2(divider.left(), body.bottom())))
+                    .id_salt(("texture_list", self.source))
+                    .max_rect(body)
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
             list.spacing_mut().item_spacing.y = 0.0;
@@ -214,12 +304,12 @@ impl TexturePicker {
                 .collect();
             locals.sort_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(b.0)));
             let tab = usize::from(!self.filter.trim().is_empty());
-            let local_count = if self.allow_local {
+            let local_count = if self.allow_local && self.source == 1 {
                 1 + if self.local_open[tab] { locals.len() } else { 0 }
             } else {
                 0
             };
-            let row_count = local_count + rows.len();
+            let row_count = local_count + if self.source == 1 { 0 } else { rows.len() };
             let mut toggle = None;
             let mut toggle_local = false;
             let radius = ui.visuals().window_corner_radius;
@@ -327,6 +417,8 @@ impl TexturePicker {
                             } else if let Some(asset) = asset {
                                 self.selected = Some(asset);
                                 self.selected_item = (!local).then_some(id);
+                                self.uuid_text = asset.to_string();
+                                self.uuid_error = false;
                                 self.preview = (local || can_preview(&world.inventory, id)).then_some(asset);
                             }
                         }
@@ -341,112 +433,55 @@ impl TexturePicker {
             if toggle_local {
                 self.local_open[tab] = !self.local_open[tab];
             }
-            let mut preview = ui.new_child(
-                egui::UiBuilder::new()
-                    .id_salt("texture_preview")
-                    .max_rect(egui::Rect::from_min_max(egui::pos2(divider.right() + 4.0, body.top()), body.max))
-                    .layout(egui::Layout::top_down(egui::Align::Min)),
-            );
-            {
-                let ui = &mut preview;
-                ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-preview")).size(12.0).color(p.ink));
-                let reserve = if self.extra_buttons {
-                    if !self.materials && self.allow_none { 154.0 } else { 126.0 }
-                } else {
-                    60.0
-                };
-                let side = ui.available_width().min(188.0).min((body.height() - reserve).max(96.0));
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-                ui.painter().rect_filled(rect, radius, p.field);
-                if let Some(a) = self.selected.filter(|_| !self.materials) {
-                    self.wanted_images.insert(a);
-                    if let Some(t) = images.get(&a) {
-                        ui.painter().image(
-                            t.id(),
-                            rect,
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            widgets::PICTURE_TINT,
-                        );
-                        let size = t.size();
-                        ui.label(RichText::new(format!("{} × {}", size[0], size[1])).size(11.0).color(p.muted));
-                    } else if a == BLANK_TEXTURE {
-                        // IMG_WHITE has known content while its metadata streams.
-                        // theme-guard: content — the blank texture is white
-                        ui.painter().rect_filled(rect, radius, egui::Color32::WHITE);
-                    } else if a == TRANSPARENT_TEXTURE {
-                        let cell = 12.0;
-                        for y in 0..(side / cell).ceil() as usize {
-                            for x in 0..(side / cell).ceil() as usize {
-                                let tile =
-                                    egui::Rect::from_min_size(rect.min + egui::vec2(x as f32 * cell, y as f32 * cell), Vec2::splat(cell))
-                                        .intersect(rect);
-                                ui.painter()
-                                    .rect_filled(tile, 0.0, if (x + y) % 2 == 0 { p.field } else { p.raised });
-                            }
-                        }
-                    } else {
-                        ui.painter().text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            aurora_i18n::tr!("common-loading-2"),
-                            egui::FontId::proportional(11.5),
-                            p.muted,
-                        );
-                    }
-                }
-                let name = self
-                    .selected_item
-                    .and_then(|id| world.inventory.items.get(&id))
-                    .map(|item| &item.name)
-                    .or_else(|| self.selected.and_then(|id| world.local_assets.get(&id)).map(|(name, _)| name));
-                if let Some(name) = name {
-                    ui.add(widgets::elided_label(
-                        ui,
-                        RichText::new(name).size(12.0).color(p.ink),
-                        ui.available_width(),
-                    ));
-                }
-                if self.extra_buttons {
-                    ui.add_space(6.0);
-                    let half = (ui.available_width() - ui.spacing().item_spacing.x) * 0.5;
-                    ui.horizontal(|ui| {
-                        if let Some(default) = self.default
-                            && widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-default"), Vec2::new(half, 24.0)).clicked()
-                        {
-                            self.select(default, None, true);
-                        }
-                        let width = if self.default.is_some() { half } else { ui.available_width() };
-                        if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-blank"), Vec2::new(width, 24.0)).clicked() {
-                            self.select(if self.materials { BLANK_MATERIAL } else { BLANK_TEXTURE }, None, true);
-                        }
-                    });
-                    if !self.materials
-                        && widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-transparent"), Vec2::new(ui.available_width(), 24.0))
-                            .clicked()
-                    {
-                        self.select(TRANSPARENT_TEXTURE, None, true);
-                    }
-                    if self.allow_none
-                        && widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-none-2"), Vec2::new(ui.available_width(), 24.0))
-                            .clicked()
-                    {
-                        chosen = Some(Uuid::nil());
-                    }
-                }
-            }
-            // All footer rows live outside the columns. Their widths depend
-            // on the window only, never on texture names or preview content.
+
             ui.add_space(6.0);
-            let message = if self.selected_item.is_some_and(|id| !can_preview(&world.inventory, id)) {
+            if self.extra_buttons {
+                let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 4.0;
+                ui.horizontal(|ui| {
+                    for (label, asset) in [
+                        (aurora_i18n::tr!("common-default"), self.default),
+                        (
+                            aurora_i18n::tr!("common-blank"),
+                            Some(if self.materials { BLANK_MATERIAL } else { BLANK_TEXTURE }),
+                        ),
+                        (
+                            aurora_i18n::tr!("common-transparent"),
+                            (!self.materials).then_some(TRANSPARENT_TEXTURE),
+                        ),
+                        (aurora_i18n::tr!("common-none-2"), self.allow_none.then_some(Uuid::nil())),
+                    ] {
+                        if ui
+                            .add_enabled_ui(asset.is_some(), |ui| {
+                                widgets::flat_button_sized(ui, p, label, Vec2::new(width, 26.0))
+                            })
+                            .inner
+                            .clicked()
+                            && let Some(asset) = asset
+                        {
+                            self.select(asset, None, true);
+                        }
+                    }
+                });
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(11.0).color(p.muted));
+                    let response = ui.add_sized([ui.available_width(), 24.0], egui::TextEdit::singleline(&mut self.uuid_text));
+                    if response.changed() {
+                        match Uuid::parse_str(self.uuid_text.trim()) {
+                            Ok(asset) if !asset.is_nil() || self.allow_none => self.select(asset, None, true),
+                            _ => self.uuid_error = true,
+                        }
+                    }
+                });
+            }
+            let message = if self.uuid_error {
+                aurora_i18n::tr!("ui-texture-picker-invalid-uuid")
+            } else if self.selected_item.is_some_and(|id| !can_preview(&world.inventory, id)) {
                 aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")
+            } else if self.source == 2 && library.is_none() {
+                aurora_i18n::tr!("picker-empty-library")
             } else if self.tree.loading {
                 aurora_i18n::tr!("common-loading-2")
-            } else if self.tree.view.results.is_empty() {
-                if self.materials {
-                    aurora_i18n::tr!("ui-texture-picker-no-materials-in-the-loaded-inventory")
-                } else {
-                    aurora_i18n::tr!("ui-texture-picker-no-textures-in-the-loaded-inventory")
-                }
             } else {
                 ""
             };
@@ -457,34 +492,21 @@ impl TexturePicker {
                 status.left_center(),
                 status.width(),
                 egui::FontId::proportional(11.0),
-                p.muted,
+                if self.uuid_error { p.danger } else { p.muted },
             );
-            if self.extra_buttons {
-                widgets::divider(ui, p);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(12.0).color(p.muted));
-                    let width = (ui.available_width() - 104.0).max(120.0);
-                    ui.add_sized([width, 24.0], egui::TextEdit::singleline(&mut self.uuid_text));
-                    if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-apply"), Vec2::new(96.0, 24.0)).clicked() {
-                        match Uuid::parse_str(self.uuid_text.trim()) {
-                            Ok(id) => {
-                                self.select(id, None, true);
-                            }
-                            Err(_) => self.uuid_text = aurora_i18n::tr!("ui-texture-picker-invalid-uuid").into(),
-                        }
-                    }
-                });
-            }
-            widgets::divider(ui, p);
             ui.allocate_ui_with_layout(
                 Vec2::new(ui.available_width(), 26.0),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
-                    ui.add_enabled_ui(self.selected.is_some(), |ui| {
-                        if widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), Vec2::new(72.0, 26.0)).clicked() {
-                            chosen = self.selected;
-                        }
-                    });
+                    if ui
+                        .add_enabled_ui(self.selected.is_some() && !self.uuid_error, |ui| {
+                            widgets::primary_button_sized(ui, p, aurora_i18n::tr!("common-ok"), Vec2::new(72.0, 26.0))
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        chosen = self.selected;
+                    }
                     if widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(84.0, 26.0)).clicked() {
                         self.open = false;
                     }
@@ -554,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn local_folder_precedes_inventory_filters_by_type_and_previews_a_real_click() {
+    fn local_tab_filters_by_type_collapses_and_previews_a_real_click() {
         for materials in [false, true] {
             let ctx = egui::Context::default();
             crate::theme::Theme::default().apply(&ctx, 1.0);
@@ -601,6 +623,7 @@ mod tests {
                 picker.open_with_defaults("Texture", Uuid::nil(), None, false);
             }
             picker.allow_local = true;
+            picker.source = 1;
             let folder = aurora_i18n::tr!("ui-texture-picker-local-files");
             let inventory = aurora_i18n::tr!("common-my-inventory");
             let (first, second, excluded, asset) = if materials {
@@ -614,7 +637,7 @@ mod tests {
             }
             assert!(labels[folder].y < labels[first].y);
             assert!(labels[first].y < labels[second].y);
-            assert!(labels[second].y < labels[inventory].y);
+            assert!(!labels.contains_key(inventory));
             assert!(!labels.contains_key(excluded));
             click(&ctx, &mut picker, &mut world, 1.0, labels[first]);
             assert_eq!(picker.selected, Some(Uuid::from_u128(asset)));
@@ -624,7 +647,7 @@ mod tests {
             click(&ctx, &mut picker, &mut world, 2.0, labels[folder]);
             labels = frame(&ctx, &mut picker, &mut world, 2.1, vec![]);
             assert!(!labels.contains_key(second));
-            assert!(labels[folder].y < labels[inventory].y);
+            assert!(!labels.contains_key(inventory));
             picker.filter = "B".into();
             labels = frame(&ctx, &mut picker, &mut world, 3.0, vec![]);
             assert!(labels.contains_key(second));
@@ -634,7 +657,7 @@ mod tests {
             assert!(!labels.contains_key(second));
             world.local_assets.clear();
             labels = frame(&ctx, &mut picker, &mut world, 5.0, vec![]);
-            assert!(labels[folder].y < labels[inventory].y);
+            assert!(!labels.contains_key(inventory));
             picker.allow_local = false;
             labels = frame(&ctx, &mut picker, &mut world, 6.0, vec![]);
             assert!(!labels.contains_key(folder));
@@ -770,7 +793,7 @@ mod tests {
                 output.textures_delta.clear();
                 let rect = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
                 assert!(rect.width() < 580.0, "mode {mode}, frame {frame}: {rect:?}");
-                assert!(rect.height() < 600.0, "mode {mode}, frame {frame}: {rect:?}");
+                assert!(rect.height() < 680.0, "mode {mode}, frame {frame}: {rect:?}");
                 if frame == 20 {
                     initial = Some(rect);
                 }

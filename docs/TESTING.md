@@ -704,12 +704,13 @@ the two selected faces, materials unchanged after the fade.
 
 `faces-picker,object:99620` selects a face at 625 and opens its texture
 picker at 635, with a very long name in a "Project textures" subfolder.
-Capture at 660 then 960: the window keeps its initial width of 530 points,
-without growing on its own. The list keeps the folders, the names are
-truncated and their tooltip shows the whole text. The splitter adjusts the
-room given to the names, the preview stays bounded and the controls are
-grouped at the bottom. The collapsible "Local files" folder comes before the
-inventory in the diffuse texture and PBR material pickers. It lists the
+Capture at 660 then 960: the 480 × 600-point picker stays bounded without
+growing on its own. The selected preview sits above Inventory/Local/Aurora
+Library tabs and a virtual folder list. Rows use texture/material icons;
+only the selected texture requests a preview. Folder roots can be closed
+and stay closed across inventory updates. Presets form one row beneath the
+list, followed by the validated UUID. Local contains the collapsible
+"Local files" folder in diffuse texture and PBR material pickers. It lists the
 local previews already loaded, textures or materials depending on the choice
 requested, and follows the search filter. A click applies the local preview;
 "OK" keeps it, "Cancel" restores it. To show the synthetic local files,
@@ -4674,3 +4675,13 @@ AO interface integration validation (2026-10-16): scripts and formatting pass; C
 Human acceptance (2026-10-16): the maintainer approved the integrated AO interface and requested merging the bridge/AO branch. This approval does not add automated or observed grid coverage beyond the cases documented above. The movement helpers remain explicitly EXPERIMENTAL; simulator-specific animation transitions, manual migration and persisted group editing remain follow-up checks.
 
 Merge validation after main integration (2026-10-16, PR #493): PowerShell parsing, formatting and workspace/all-target Clippy pass; the full unfiltered workspace test run reports 3,210 passed, zero failures and 24 ignored. The previously excluded transparent-mesh GPU test now passes on this combined source. Bridge reception preserves the original datagram timestamp, with a buffered-motion regression; the toolbar catalogue lists each new feature once and retains the legacy move_lock alias. Shortcut coverage preserves the newer Ctrl+Space library binding when jump is rebound to Space. Object-menu regression expectations now recognize bridge script information as available. Public protocol capability names have two narrow, explained Gitleaks annotations. LSL lint reports zero errors/warnings; deterministic actual-source evaluations retain 15 quiet-discovery cases, 81 run cases, 50 passage cases and water/surface-return ownership and bounds checks; these are not Havok simulations.
+
+Construction inspector proposal (2026-10-16): use the General, Transform,
+Materials and Create demos to inspect title permission states, numeric step
+buttons, inline material options, shared rez-under-land-group, and the vertical
+coordinate column. On the grid, the human checks both picker resource types,
+all three sources, collapse/reopen, UUID acceptance/rejection and cancellation.
+Link two independent objects and wait for simulator confirmation: one root,
+child-colored outlines, one whole-object selection and consistent bounds.
+Compare linked-prim navigation with script-side link numbers, especially for
+pre-existing linksets; UDP ObjectUpdate carries ParentID but no link number.

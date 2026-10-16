@@ -7868,3 +7868,20 @@ movement-run-speed = Vitesse de course
 movement-flight-speed = Vitesse de vol
 ao-combine-group-choice = Jouer plusieurs animations ensemble
 ao-combine-track-choice = Ajouter un cycle indépendant
+
+# Construction inspector and resource picker
+numeric-increase = Augmenter
+numeric-decrease = Diminuer
+build-status-no-mod = No-mod
+build-status-other-owner = Autre propriétaire
+build-status-self = À vous
+build-status-editable = Modifiable
+build-linked-next = Prim liée suivante
+build-linked-previous = Prim liée précédente
+picker-inventory-tab = Inventaire
+picker-local-tab = Locale
+picker-aurora-tab = Librairie Aurora
+picker-empty-library = Votre librairie Aurora est vide.
+
+build-link-pending = Liaison demandée — en attente du simulateur.
+build-link-unconfirmed = La liaison n’a pas été confirmée par le simulateur.

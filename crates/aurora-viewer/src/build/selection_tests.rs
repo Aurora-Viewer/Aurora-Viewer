@@ -23,6 +23,52 @@ fn selected(tool: &BuildTool) -> Vec<u32> {
 }
 
 #[test]
+fn confirmed_link_reconciles_selection_colors_and_packet_order() {
+    let (mut world, mut tool, settings) = fixture();
+    let first = object(&world, 99610);
+    let handle = world.objects.get(first).unwrap().key.region;
+    let mut updates = Vec::new();
+    for local_id in [99870, 99871] {
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        update.local_id = local_id;
+        update.full_id = crate::demo::action_id(local_id);
+        update.parent_id = 0;
+        update.owner_id = world.agent_id;
+        updates.push(update);
+    }
+    world.apply(NetEvent::ObjectUpdates { handle, objects: updates });
+    for (id, extend) in [(99870, false), (99871, true)] {
+        let idx = object(&world, id);
+        tool.click_select(&mut world, &settings, Some(idx), extend);
+    }
+    tool.link(&mut world);
+    assert_eq!(tool.status, aurora_i18n::tr!("build-link-pending"));
+    assert_eq!(tool.highlighted(&world).iter().filter(|(_, root)| *root).count(), 2);
+    let mut sim = demo_sim::DemoSim::default();
+    for command in std::mem::take(&mut tool.out) {
+        if let NetCommand::Build(command) = command {
+            for mut event in sim.reply(&world, &command) {
+                if let NetEvent::ObjectUpdates { objects, .. } = &mut event {
+                    objects.reverse();
+                }
+                world.apply(event);
+            }
+        }
+    }
+    let highlighted = tool.highlighted(&world);
+    assert_eq!(highlighted.len(), 2);
+    assert_eq!(highlighted.iter().filter(|(_, root)| *root).count(), 1);
+    tool.advance_link(&mut world, Instant::now());
+    tool.prune(&world, Instant::now());
+    assert_eq!(selected(&tool), [99871]);
+    assert!(tool.pending_link.is_none());
+    let root = object(&world, 99871);
+    assert_eq!(family(&world, root), vec![root, object(&world, 99870)]);
+    assert_eq!(tool.highlighted(&world), highlighted);
+}
+
+#[test]
 fn typed_transforms_require_effective_move_rights_before_local_preview_or_commit() {
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
     let (mut world, mut tool, mut settings) = fixture();
