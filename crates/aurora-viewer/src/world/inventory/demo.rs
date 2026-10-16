@@ -500,3 +500,269 @@ pub fn seed_long_names(inv: &mut Inventory) {
     inv.generation += 1;
     inv.sort_all();
 }
+
+/// `AURORA_DEMO_INVENTORY=big[:<items>][,recent][,search=<text>][,toggle=<s>][,churn=<ms>]`:
+/// a big inventory (`seed_big`) to measure what the Inventory window costs.
+/// `recent` opens the Recent tab, `search` filters the list, `toggle` opens
+/// and closes the window every `s` seconds (closed and open alternate in one
+/// run), `churn` changes one item every `ms` milliseconds, as the server's
+/// inventory updates do.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Big {
+    pub items: usize,
+    pub recent: bool,
+    pub search: String,
+    pub toggle: f32,
+    pub churn_ms: u64,
+}
+
+pub fn parse_big(mode: &str) -> Option<Big> {
+    let mut parts = mode.split(',');
+    let head = parts.next()?;
+    let items = match head.strip_prefix("big") {
+        Some("") => 30_000,
+        Some(count) => count.strip_prefix(':')?.parse().ok()?,
+        None => return None,
+    };
+    let mut big = Big {
+        items,
+        recent: false,
+        search: String::new(),
+        toggle: 0.0,
+        churn_ms: 0,
+    };
+    for part in parts {
+        match part.split_once('=') {
+            None if part == "recent" => big.recent = true,
+            Some(("search", text)) => big.search = text.into(),
+            Some(("toggle", s)) => big.toggle = s.parse().unwrap_or(0.0),
+            Some(("churn", ms)) => big.churn_ms = ms.parse().unwrap_or(0),
+            _ => log::warn!("AURORA_DEMO_INVENTORY: unknown option {part}"),
+        }
+    }
+    Some(big)
+}
+
+pub fn big() -> Option<&'static Big> {
+    static BIG: std::sync::OnceLock<Option<Big>> = std::sync::OnceLock::new();
+    BIG.get_or_init(|| std::env::var("AURORA_DEMO_INVENTORY").ok().and_then(|mode| parse_big(&mode)))
+        .as_ref()
+}
+
+/// `AURORA_DEMO_INVENTORY=big[:<items>]`: the inventory of a long-time
+/// resident, `items` items (30,000 by default) in about a tenth as many
+/// folders, up to five levels deep: store brands, their products, extras and
+/// fit packs, and one flat folder of 2,000 loose objects. Mixed types,
+/// permissions, links and dates (a few hundred since the last day, for
+/// Recent). Returns the folders a resident would keep open: the loose
+/// objects, the first top folder, three of its brands and their products.
+pub fn seed_big(inv: &mut Inventory, agent: Uuid, items: usize) -> Vec<Uuid> {
+    const TOPS: [&str; 10] = [
+        "Clothing",
+        "Store purchases",
+        "Furniture",
+        "Hair",
+        "Shoes",
+        "Gadgets",
+        "Building kits",
+        "Textures archive",
+        "Landmarks archive",
+        "Old stuff",
+    ];
+    const BRAND: [&str; 12] = [
+        "Velvet", "North", "Silver", "Urban", "Lumen", "Cedar", "Atlas", "Nova", "Echo", "Moss", "Indigo", "Copper",
+    ];
+    const HOUSE: [&str; 8] = ["Atelier", "Works", "Design", "Studio", "Lab", "Forge", "House", "Craft"];
+    const PRODUCT: [&str; 10] = [
+        "Jacket", "Dress", "Sofa", "Lamp", "Boots", "Bob", "Pose pack", "Gazebo", "Wood set", "HUD",
+    ];
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let mut next_folder = 20_000_000_u128;
+    let mut add_folder = |inv: &mut Inventory, parent: Uuid, name: String| {
+        let id = Uuid::from_u128(next_folder);
+        next_folder += 1;
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name,
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&parent) {
+            folder.children.push(id);
+        }
+        id
+    };
+    let root = inv.root;
+    let loose = add_folder(inv, root, "Objects (unsorted)".into());
+    let tops: Vec<Uuid> = TOPS.iter().map(|name| add_folder(inv, root, (*name).into())).collect();
+    // About 11.7 folders per brand: the brand, 8 products, 2 extras and
+    // two thirds of a fit pack.
+    let brands_per_top = (items / 10 / 117).max(1);
+    let mut leaves = Vec::new();
+    let mut open = vec![loose, tops[0]];
+    for (t, top) in tops.iter().enumerate() {
+        for b in 0..brands_per_top {
+            let n = t * brands_per_top + b;
+            let brand_name = format!("{} {} {n:03}", BRAND[n % BRAND.len()], HOUSE[(n / BRAND.len()) % HOUSE.len()]);
+            let brand = add_folder(inv, *top, brand_name.clone());
+            if t == 0 && b < 3 {
+                open.push(brand);
+            }
+            for p in 0..8 {
+                let product = add_folder(inv, brand, format!("{brand_name} - {} {p:02}", PRODUCT[(n + p) % PRODUCT.len()]));
+                if t == 0 && b < 3 {
+                    open.push(product);
+                }
+                leaves.push(product);
+                if p % 4 == 0 {
+                    let extras = add_folder(inv, product, "Extras".into());
+                    leaves.push(extras);
+                    if (n + p) % 3 == 0 {
+                        leaves.push(add_folder(inv, extras, "Fit packs".into()));
+                    }
+                }
+            }
+        }
+    }
+    let mut list = Vec::with_capacity(items);
+    for n in 0..items {
+        let parent = if n < 2_000 { loose } else { leaves[n % leaves.len()] };
+        // Objects, clothing, body parts, textures, notecards, landmarks,
+        // scripts, animations, sounds, links.
+        let (asset_type, inv_type) = match n % 50 {
+            0..20 => (6, 6),
+            20..30 => (5, 18),
+            30..32 => (13, 18),
+            32..37 => (0, 0),
+            37..41 => (7, 7),
+            41..44 => (3, 3),
+            44..46 => (10, 10),
+            46..48 => (20, 19),
+            48 => (1, 1),
+            _ => (24, 6),
+        };
+        let id = Uuid::from_u128(21_000_000 + n as u128);
+        let mut owner_mask = actions::COPY | actions::MODIFY | actions::TRANSFER;
+        if n % 7 == 0 {
+            owner_mask &= !actions::COPY;
+        }
+        if n % 11 == 0 {
+            owner_mask &= !actions::MODIFY;
+        }
+        if n % 13 == 0 {
+            owner_mask &= !actions::TRANSFER;
+        }
+        list.push(InvItem {
+            id,
+            parent,
+            // a link points at an earlier object
+            asset_id: if asset_type == 24 {
+                Uuid::from_u128(21_000_000 + (n - n % 50) as u128)
+            } else {
+                Uuid::from_u128(22_000_000 + n as u128)
+            },
+            name: format!(
+                "{} {} {} {:04}{}",
+                BRAND[n % BRAND.len()],
+                HOUSE[n % HOUSE.len()],
+                PRODUCT[(n / 3) % PRODUCT.len()],
+                n,
+                if n % 5 == 0 { " (wear me)" } else { "" }
+            ),
+            desc: if n % 4 == 0 { format!("Version {}.{}", n % 9, n % 7) } else { String::new() },
+            asset_type,
+            inv_type,
+            flags: if asset_type == 6 && n % 9 == 0 { crate::ui::inventory::OBJECT_HAS_MULTIPLE_ITEMS } else { 0 },
+            owner: agent,
+            creator: if n % 10 == 0 { agent } else { Uuid::from_u128(30_000_000 + (n % 400) as u128) },
+            created_at: if n % 100 == 0 {
+                now - (n as i64 * 37) % 86_000
+            } else {
+                now - 86_400 - (n as i64 * 3_571) % (5 * 365 * 86_400)
+            },
+            base_mask: actions::COPY | actions::MODIFY | actions::TRANSFER,
+            owner_mask,
+            next_owner_mask: actions::COPY | actions::MODIFY | actions::TRANSFER,
+            ..Default::default()
+        });
+    }
+    inv.add_items(list);
+    inv.sort_all();
+    inv.generation += 1;
+    open
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn big_mode_reads_its_size_and_options() {
+        assert_eq!(parse_big("1"), None);
+        assert_eq!(parse_big("big").map(|b| b.items), Some(30_000));
+        assert_eq!(parse_big("big:5000").map(|b| b.items), Some(5_000));
+        assert_eq!(parse_big("bigger"), None);
+        let big = parse_big("big:800,recent,search=jacket,toggle=4,churn=250").expect("big mode");
+        assert_eq!(
+            big,
+            Big {
+                items: 800,
+                recent: true,
+                search: "jacket".into(),
+                toggle: 4.0,
+                churn_ms: 250,
+            }
+        );
+    }
+
+    #[test]
+    fn big_inventory_has_a_tenth_as_many_folders_up_to_five_levels() {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            Folder {
+                info: InvFolder {
+                    id: inv.root,
+                    name: "My Inventory".into(),
+                    type_default: 8,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        let open = seed_big(&mut inv, Uuid::from_u128(2), 12_000);
+        assert_eq!(inv.items.len(), 12_000);
+        assert!((1_000..1_400).contains(&inv.folders.len()), "{} folders", inv.folders.len());
+        let depth = |mut id: Uuid| {
+            let mut depth = 0;
+            while let Some(folder) = inv.folders.get(&id) {
+                id = folder.info.parent;
+                depth += 1;
+            }
+            depth
+        };
+        assert_eq!(inv.folders.keys().map(|id| depth(*id)).max(), Some(6));
+        let listed: usize = inv.folders.values().map(|f| f.items.len()).sum();
+        assert_eq!(listed, 12_000);
+        assert!(open.iter().all(|id| inv.folders.contains_key(id)));
+    }
+}

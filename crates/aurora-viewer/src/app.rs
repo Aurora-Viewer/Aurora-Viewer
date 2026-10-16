@@ -6496,6 +6496,11 @@ impl App {
             self.inventory_ui.thumbnail.pending = Some(request);
             self.inventory_image_action(request, item, ui::inventory::thumbnail::Input::Capture);
         }
+        if self.demo
+            && let Some(big) = crate::world::inventory::demo::big()
+        {
+            self.demo_big_inventory(big);
+        }
         if self.demo && self.frame_count == 2100 && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "image-photo-save") {
             let mut actions = Vec::new();
             self.inventory_ui.thumbnail.save_photo(&mut actions);
@@ -11405,6 +11410,13 @@ impl ApplicationHandler for App {
                         }
                         self.inventory_ui.expand_all = Some(true);
                     }
+                }
+                if let Some(big) = crate::world::inventory::demo::big() {
+                    let open = crate::world::inventory::demo::seed_big(&mut self.world.inventory, self.world.agent_id, big.items);
+                    self.settings.inventory = ui::inventory::InventoryPreferences::default();
+                    self.inventory_ui.open_folders(open);
+                    self.inventory_ui.tab = if big.recent { 2 } else { 0 };
+                    self.inventory_ui.search.clone_from(&big.search);
                 }
                 self.panels.inventory = true;
                 self.panels.perf = false;

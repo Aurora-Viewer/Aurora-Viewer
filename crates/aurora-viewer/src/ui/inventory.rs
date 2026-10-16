@@ -405,6 +405,11 @@ impl InventoryUi {
         }
     }
 
+    /// Open these folders (a demo scenario's starting state).
+    pub(crate) fn open_folders(&mut self, ids: impl IntoIterator<Item = Uuid>) {
+        self.plain.open_all(ids);
+    }
+
     /// Reveal a folder with its contents expanded for direct inventory management.
     pub fn show_folder(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original(inv, id);
