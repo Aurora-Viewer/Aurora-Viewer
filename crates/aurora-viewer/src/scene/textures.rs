@@ -2121,6 +2121,12 @@ impl TextureStreamer {
         Self::settle(&mut self.todo, &mut self.counts, id, e);
     }
 
+    /// The texture disk cache since the start: JPEG 2000 data found and
+    /// missed, and textures read back as BC7 without a decode.
+    pub fn cache_counts(&self) -> [u64; 3] {
+        [self.load.cache_hits, self.load.cache_misses, self.load.transcoded]
+    }
+
     pub fn on_job(&mut self, r: JobResult) {
         match r {
             JobResult::TextureTranscoded { id, info, finest, texture } => {
@@ -2802,6 +2808,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
         bc7,
         cache,
     } = job;
+    let timer = crate::deep_profile::timer();
     match aurora_assets::decode_j2k_timed(data, discard) {
         Ok((img, decode)) => {
             let start = Instant::now();
@@ -2840,6 +2847,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
             let as_blocks = matches!(&result, JobResult::Texture { staged: Some(s), .. } if s.format == TexelFormat::Bc7);
             let stages = [rgba_done, mips_done - before_mips, bc7_done - mips_done, start.elapsed() - bc7_done];
             meter.add(img.discard, pixels as u64, decode, stages, as_blocks);
+            crate::deep_profile::texture_decoded(timer, tried.then_some(stages[2]));
             result
         }
         Err(e) => {

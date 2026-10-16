@@ -148,6 +148,7 @@ impl Circuit {
         let mut buf = std::mem::take(&mut self.buf);
         let n = build_raw(&payload, zerocoded, seq, reliable.is_some(), false, &self.pending_acks, &mut buf);
         self.pending_acks.drain(..n);
+        crate::probe::message_out(&payload, buf.len());
         self.buf = buf;
         self.raw_send(sock, stats);
         if let Some(policy) = reliable {
@@ -247,6 +248,7 @@ impl Circuit {
             u.sent = now;
             let mut buf = std::mem::take(&mut self.buf);
             build_raw(&u.payload, u.zerocoded, seq, true, true, &[], &mut buf);
+            crate::probe::message_out(&u.payload, buf.len());
             self.buf = buf;
             self.raw_send(sock, stats);
             stats.resent.fetch_add(1, Ordering::Relaxed);
@@ -271,6 +273,7 @@ impl Circuit {
             self.next_seq = self.next_seq.wrapping_add(1);
             let mut buf = std::mem::take(&mut self.buf);
             build_raw(&w.buf, false, seq, false, false, &[], &mut buf);
+            crate::probe::message_out(&w.buf, buf.len());
             self.buf = buf;
             self.raw_send(sock, stats);
         }

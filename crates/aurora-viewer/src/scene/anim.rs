@@ -505,6 +505,11 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    /// Motions playing (`avatar summary`, AURORA_PROFILE).
+    pub fn motion_count(&self) -> usize {
+        self.motions.len()
+    }
+
     /// Freeze the last local pose for appearance hints; shape deltas are still
     /// applied independently when each hint is built.
     pub fn preview_pose(&self) -> (Vec<Quat>, Vec<Vec3>) {

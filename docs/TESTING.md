@@ -4396,6 +4396,126 @@ Three more lines are written without the variable, to read next to
   session. Neither the read nor the write is done by the session loop: their
   time must not show in `loop_max`.
 
+### Every 10 seconds
+
+With `AURORA_PROFILE=1`, six more lines every 10 s, in demo mode too, to
+rank what a long session costs by area. Counts are those of the 10 s,
+durations in ms; a duration's `n= p50= p95= max=` is read from buckets a
+quarter of a power of two wide: the percentiles are within 19 % (never above
+`max`, which is exact). The probes cost a relaxed atomic addition or two
+where they count (a packet, a request, a decode job) and nothing without the
+variable; the lines themselves are written by the main thread once in 10 s,
+the objects walked once for `avatar summary` (well under a millisecond for
+tens of thousands of objects), the threads listed by a thread of their own.
+
+- `msg summary`: UDP messages, `in` then `out`: messages and kilobits per
+  second, then the 15 heaviest types as `Name=count/kilobytes` (whole
+  packets, headers and appended acknowledgements included; resends count
+  again), `others=` for the rest. Then `objects`: objects received in full
+  uncompressed (`full`, ObjectUpdate) or compressed (`compressed`),
+  `terse` moves, `cached` announced by their cache entry, of which
+  `cache_hit` held by the object cache and `cache_miss` not, `requested` in
+  full (RequestMultipleObjects) and `killed`.
+- `http summary`: `queued` asset requests waiting for a slot at the end,
+  `queue_peak` the most during the 10 s; then one segment per kind of
+  request seen — `texture`, `mesh`, `anim`, `sound`, `material`,
+  `settings`, `landmark`, `asset` (bakes and others), `inventory` (folder
+  fetches) and `cap` (the other LLSD capability calls; the event queue polls
+  are not counted) — with `started`, `done`, `failed` (by class:
+  `failed_none` no response, `failed_4xx`, `failed_5xx`, `failed_other`),
+  `retries`, throughput, `in_flight` at the end and its `peak`, `latency`
+  from the request's slot to its result (retries included) and, for the
+  assets, `wait` in the queue before a slot. `hosts:` the 5 asset hosts
+  that sent the most: `host=responses/kilobytes errors= ttfb_avg= ttfb_max=`
+  (time to the response headers). A long `wait` with a short `latency`:
+  the queue is the limit, not the servers.
+- `asset summary`: `texture_decode` the decode jobs (JPEG 2000 to the
+  staged chain), `bc7` the BC7 encoding of those that tried it,
+  `decoding` the textures waiting for a decode or decoding and
+  `upload_wait` those decoded waiting for the GPU (average over the frames
+  and most), `j2k_cache` disk cache reads found or not and `bc7_cache_hit`
+  textures read back as BC7 without a decode; `mesh_decode` a level of
+  detail decoded into geometry, `mesh_parse` header and skin of the bytes
+  downloaded or read, `mesh_cache` disk cache reads found or not,
+  `meshes_fetching_max`; `jobs` the background jobs queued or running,
+  `geom_pending_max`; `gpu_upload` the MB per second of textures and of
+  geometry written to the GPU.
+- `avatar summary`: in the last frame, the avatars of the scene (`total`,
+  `max` over the 10 s), drawn in full (`full`, `full_in_view`), as impostors
+  (`impostors`, `impostors_in_view`, `pictures/s` taken), as silhouettes
+  over the complexity limit and hidden while loading; `complexity` sum,
+  largest and average over the avatars it is known for; `attachments` worn
+  (HUDs left out), those of the avatars drawn in full, `rigged` meshes and
+  their triangles in thousands (`rigged_tris_k`, then `full=` for the
+  avatars drawn in full) and `worn_tris_k_full` all the worn triangles of
+  the avatars drawn in full, at the level of detail built; `animations`
+  playing on the posed skeletons (and the most on one); `posed` skeletons
+  per frame and `skeletons_rebuilt` per frame (a shape, an attachment or
+  their age changed).
+- `memory summary` (MB): the process's `working_set`, its `peak`, its
+  `private` committed memory and its page faults per second; the GPU:
+  `budget` the system grants the process, `usage` what the driver counts,
+  `allocated` its live textures and buffers (VK_EXT_memory_budget, `-`
+  without it), `other` what `allocated` holds beyond the texture pages and
+  the geometry (render targets, shadow maps, tables); then the textures
+  (`texture_mb` their levels, `pages`, `pages_mb` allocated),
+  `texture_target_mb` and `pressure` of the texture budget, `geometry_mb`
+  the geometry arena and `geometry_used_mb` what is used of it.
+- `cpu summary` (Windows), written by the `aurora-probe` thread: the
+  process's CPU time as a share of one core and of all the cores,
+  `machine=` how busy all the cores were (every process: another program
+  loading the PC shows there), then each group of threads as a share of
+  one core, the busiest first: `main`, `aurora-render`, `aurora-worker`
+  (the frame's parallel loops), `aurora-jobs` (decodes, meshes, disk),
+  `aurora-net` (the network runtime), `aurora-pages`, `aurora-trash`,
+  audio, voice, `unnamed` (the driver's and the system's threads)…; a
+  pool gives its threads and its busiest one (`aurora-jobs=320%(14t
+  max=31%)`); the groups under 0.1 % of a core are only counted
+  (`quiet_groups=`). `main` near 100 %: the main thread is the limit; a pool near
+  its thread count × 100 %: that pool is; `machine` near 100 %: the PC is.
+
+### Teleports and region crossings
+
+With `AURORA_PROFILE=1`, a teleport or a region crossing writes one
+`teleport timeline:` or `crossing timeline:` line when it ends: its
+outcome and length, then every step as `+<ms since the start> <step>`, then
+`link:` what the circuits lost meanwhile (`lost` = `gaps` − `late`,
+`resent`, `given_up`, `dup`, `event_queue_errors`). Regions are named by
+their grid coordinates (`1000,1003`).
+
+- A teleport starts at the request sent (TeleportLocationRequest,
+  TeleportLandmarkRequest, TeleportLureRequest) or at a TeleportStart the
+  viewer did not ask for (`begun by the simulator`); its steps:
+  TeleportStart, each TeleportProgress with its text, TeleportFinish, the
+  new region's circuit (`UseCircuitCode sent`, or `already open for … s` when
+  it was a neighbour, and whether it was acknowledged), `circuit … up`
+  (UseCircuitCode acknowledged), the seed capability asked and its reply
+  (number of capabilities and time, or the error), `event queue … started`
+  and its first event, EstablishAgentCommunication, CompleteAgentMovement
+  sent, AgentMovementComplete received, the viewer applying the arrival
+  (seated or not, objects worn), RegionHandshake and its reply, the first
+  object update of the region, the first update of our avatar after the
+  arrival (and how far it was from where it was drawn), the previous region
+  kept as a neighbour or its circuit closed, the appearance or outfit
+  version asked, corrections of our avatar's position. It ends `arrived
+  (teleport screen hidden)`, `failed (TeleportFailed: <reason>)`, `failed (no
+  arrival 90 s after the teleport screen was shown)`, `arrived` 20 s after
+  AgentMovementComplete without a screen, `timed out` after 90 s, or
+  `interrupted by the next one`. A teleport inside the region ends 2 s after
+  its TeleportLocal.
+- A crossing starts at the CrossedRegion event; same steps from the
+  circuit on, then `arrived` 5 s after AgentMovementComplete (the
+  corrections and the first update of our avatar in those 5 s show how far
+  it snapped; between CrossedRegion and AgentMovementComplete no
+  AgentUpdate leaves: the avatar does not answer the keys), or `timed out`
+  after 30 s.
+- `region link:` lines, as they happen: EnableSimulator,
+  EstablishAgentCommunication, UseCircuitCode sent, circuit up (or not
+  acknowledged), event queue started or given up, DisableSimulator, circuit
+  closed (with how long it was open). Inside a timeline they are steps too.
+- The demo's remote teleport (`AURORA_DEMO_TP=remote`) writes a timeline
+  with its simulated steps only (no simulator: no messages).
+
 ### Object under the cursor
 
 With `AURORA_PROFILE=1`, one `hover summary` line per second as long as the

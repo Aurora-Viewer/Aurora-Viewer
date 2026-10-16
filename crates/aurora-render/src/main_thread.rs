@@ -122,6 +122,9 @@ pub struct Renderer {
     palettes_uploaded: u64,
     /// Bytes of vertices deformed in place this frame (profile).
     vertices_uploaded: u64,
+    /// Bytes of geometry written into the arena since the start (vertices,
+    /// skin weights, indices): what the profile reports per second.
+    pub geometry_uploaded: u64,
     skin_bind_buffer: wgpu::Buffer,
     /// Bumped when the palette or skin binding buffer is reallocated (the
     /// render thread rebuilds the records bind group).
@@ -346,6 +349,7 @@ impl Renderer {
             palette_buffer,
             palettes_uploaded: 0,
             vertices_uploaded: 0,
+            geometry_uploaded: 0,
             skin_bind_buffer,
             bind_generation: 0,
             gpu_cull,
@@ -570,11 +574,13 @@ impl Renderer {
     // ------------------------------------------------------------ resources
 
     pub fn upload_mesh(&mut self, vertices: &[Vertex], indices: &[u16]) -> Option<MeshAlloc> {
+        self.geometry_uploaded += (std::mem::size_of_val(vertices) + std::mem::size_of_val(indices)) as u64;
         self.geometry
             .alloc(&self.device, &mut self.writes, &mut self.uploads, vertices, None, indices)
     }
 
     pub fn upload_skinned_mesh(&mut self, vertices: &[Vertex], skin: &[SkinVertex], indices: &[u16]) -> Option<MeshAlloc> {
+        self.geometry_uploaded += (std::mem::size_of_val(vertices) + std::mem::size_of_val(skin) + std::mem::size_of_val(indices)) as u64;
         self.geometry
             .alloc(&self.device, &mut self.writes, &mut self.uploads, vertices, Some(skin), indices)
     }
@@ -582,6 +588,9 @@ impl Renderer {
     /// Upload a mesh staged by a background job (`mesh.data.ready()` must
     /// hold): the main thread only records the copies.
     pub fn upload_mesh_staged(&mut self, mesh: &StagedMesh) -> Option<MeshAlloc> {
+        let skin = if mesh.skinned { std::mem::size_of::<SkinVertex>() } else { 0 };
+        self.geometry_uploaded +=
+            (mesh.vertex_count as usize * (std::mem::size_of::<Vertex>() + skin) + mesh.index_count as usize * 2) as u64;
         self.geometry.alloc_staged(&self.device, &mut self.writes, &mut self.uploads, mesh)
     }
 
