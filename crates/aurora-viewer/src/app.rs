@@ -2132,6 +2132,14 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // LLAgent::init: the FLY control is set before the first
+                // AgentUpdate when the last session of this account ended
+                // flying (the arrival lands it where flying is blocked)
+                if !self.demo {
+                    self.world.agent.flying = crate::world::flying_at_exit::load(
+                        &crate::settings::account_dir(&l.agent_id).join(crate::world::flying_at_exit::FILE),
+                    );
+                }
                 self.restore_gestures(&l.raw);
                 self.net_profile.reset();
                 self.login_form.transition = None;
@@ -3554,6 +3562,12 @@ impl App {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64);
             self.settings.save();
+            // LLAppViewer::disconnectViewer: the next login flies if this
+            // session ends flying (world/flying_at_exit.rs)
+            crate::world::flying_at_exit::save(
+                &crate::settings::account_dir(&self.world.agent_id).join(crate::world::flying_at_exit::FILE),
+                self.world.agent.flying,
+            );
         }
     }
 

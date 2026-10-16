@@ -222,6 +222,9 @@ add the current hover height independently of pose updates. Camera roots
 start from the unshifted object position and add hover only when enabled,
 avoiding a one-frame mismatch and floating-point cancellation while dragging.
 `app/hover_height.rs` drives the lifecycle and the offline scenario.
+`world/flying_at_exit.rs` keeps, in the account's `flying_at_exit.json`,
+whether the last session ended flying; the app writes it at logout and sets
+the agent flying from it at login.
 
 Avatar name tag height is evaluated with each avatar's skeleton in
 `scene/anim.rs`: shape and mesh joint offsets, plus the upper translation
