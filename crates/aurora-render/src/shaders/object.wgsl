@@ -445,7 +445,23 @@ struct Material {
     // occlusion-roughness-metal map (softenLightF.glsl: ao = orm.r), 1 for
     // any other face
     ao: f32,
+    // the face's normal without its normal map, which offsets the shadow
+    // lookup (shadow_normal)
+    geo_n: vec3<f32>,
 };
+
+// The normal that moves a fragment's shadow lookup off its surface. The
+// Legacy Viewer moves it towards the light (sampleDirectionalShadow,
+// deferred/shadowUtil.glsl), which leaves the place read in the map
+// unchanged whatever the normal map; moved along the normal-mapped normal,
+// the lookup followed the relief of the map and drew its pattern along the
+// shadow edges. AURORA_SHADOW_FILTER=mapped brings that back, to compare.
+fn shadow_normal(m: Material) -> vec3<f32> {
+    if ((frame.light_mode.z & SHADOW_OFFSET_MAPPED) != 0u) {
+        return m.n;
+    }
+    return m.geo_n;
+}
 
 fn eval_material(in: VsOut, front: bool) -> Material {
     let rec = records[in.record];
@@ -465,6 +481,7 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         // SL multiplies texture and face color in sRGB, then linearizes
         m.color = vec4<f32>(srgb_to_linear(base_s.rgb * rec.base_color.rgb), base_s.a * rec.base_color.a);
     }
+    m.geo_n = n;
     m.n = perturb_normal(n, in.world_pos, in.uv_t, nrm_s.xyz);
     if (rec.tex.y == 1u) {
         m.n = n;
@@ -670,7 +687,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     } else if (classic) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         // softenLightF: scol = max(shadow, emissive)
-        let sh = max(shadow_factor(in.world_pos, m.n, in.view_depth), m.unlit);
+        let sh = max(shadow_factor(in.world_pos, shadow_normal(m), in.view_depth), m.unlit);
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
@@ -688,7 +705,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        let sh = max(shadow_factor(in.world_pos, m.n, in.view_depth), m.unlit);
+        let sh = max(shadow_factor(in.world_pos, shadow_normal(m), in.view_depth), m.unlit);
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
@@ -703,7 +720,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
-    col = debug_view(col, in.world_pos, m.n, in.view_depth, in.clip.xy);
+    col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
     s.color = vec4<f32>(light_tiles_checked(col, in.world_pos, in.clip.xy), m.color.a);
     s.n = m.n;
     s.roughness = m.roughness;

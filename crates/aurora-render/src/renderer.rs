@@ -3988,6 +3988,17 @@ impl Backend {
             (false, true) => 2,
             (false, false) => 0,
         };
+        // AURORA_SHADOW_FILTER, to compare with the shadow lookup of before:
+        // `gaps` its filter (4 x 4 taps up to two texels apart: lines along
+        // the edges), `mapped` its offset along the normal-mapped normal,
+        // `before` both (common.wgsl SHADOW_FILTER_GAPS, SHADOW_OFFSET_MAPPED)
+        static SHADOW_BEFORE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        main.light_sets.mode[2] |= *SHADOW_BEFORE.get_or_init(|| match std::env::var("AURORA_SHADOW_FILTER").as_deref().map(str::trim) {
+            Ok("gaps") => 0x100,
+            Ok("mapped") => 0x200,
+            Ok("before") => 0x300,
+            _ => 0,
+        });
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
