@@ -4923,6 +4923,11 @@ impl App {
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
+        // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
+        // the demo's start has settled (it takes it back at the start)
+        if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
+            self.chat_ui.conv_focus_request = true;
+        }
         if self.demo
             && self.frame_count == 800
             && let Ok(mode) = std::env::var("AURORA_DEMO_EXIT")
@@ -5903,6 +5908,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
+                || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -11568,6 +11574,15 @@ impl ApplicationHandler for App {
                 if text.trim() != "1" {
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
+            }
+            // AURORA_DEMO_EMOJI_CODES=<text>: the conversation window open, its
+            // input holding <text> with the keyboard and the caret at the
+            // end: a `:code` of two letters or more there opens the emoji
+            // suggestions (`ui/emoji/codes.rs`)
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_CODES") {
+                self.panels.chat = true;
+                *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
+                self.chat_ui.conv_focus_request = true;
             }
             // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
             // its lines selected (Ctrl+A, or across three lines)

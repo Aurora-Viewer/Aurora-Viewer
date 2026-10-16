@@ -275,7 +275,7 @@ fn chat_island(
     );
     // egui paints a placeholder in the weak text colour, whatever its own
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
-    let out = crate::ui::chat::bar_input(&mut child, chat, gestures, emoji.as_deref_mut(), |edit| {
+    let out = crate::ui::chat::bar_input(&mut child, p, chat, gestures, emoji.as_deref_mut(), |edit| {
         edit.frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .font(egui::FontId::proportional(12.5))

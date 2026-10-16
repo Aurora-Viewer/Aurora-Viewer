@@ -48,42 +48,13 @@ fn single_char(s: &str) -> Option<char> {
     it.next().is_none().then_some(c)
 }
 
-/// Replace `:shortcode:` (GitHub / gemoji names, e.g. `:hearts:`, `:smile:`) by the emoji.
+pub mod codes;
+
+/// Replace `:shortcode:` (GitHub / gemoji names, e.g. `:hearts:`, `:smile:`)
+/// by the emoji, by the rules of the chat fields ([`codes::expand`]: not
+/// inside a word, a time or a link).
 pub fn expand_shortcodes(text: &str) -> String {
-    if !text.contains(':') {
-        return text.to_owned();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find(':') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start + 1..];
-        match after.find(':') {
-            Some(end)
-                if end > 0
-                    && after[..end]
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+' || c == '-') =>
-            {
-                match emojis::get_by_shortcode(&after[..end]) {
-                    Some(e) => {
-                        out.push_str(e.as_str());
-                        rest = &after[end + 1..];
-                    }
-                    None => {
-                        out.push(':');
-                        rest = after;
-                    }
-                }
-            }
-            _ => {
-                out.push(':');
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+    codes::expand(text)
 }
 
 enum Glyph {
