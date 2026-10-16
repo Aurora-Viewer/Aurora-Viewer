@@ -25,9 +25,10 @@ pub(super) enum Action {
     Ordered,
     Quote,
     CodeBlock,
+    LslBlock,
 }
 
-const ACTIONS: [Action; 10] = [
+const ACTIONS: [Action; 11] = [
     Action::Bold,
     Action::Italic,
     Action::Strike,
@@ -38,6 +39,7 @@ const ACTIONS: [Action; 10] = [
     Action::Ordered,
     Action::Quote,
     Action::CodeBlock,
+    Action::LslBlock,
 ];
 
 impl Action {
@@ -53,6 +55,7 @@ impl Action {
             Self::Ordered => aurora_i18n::tr!("notecard-format-ordered"),
             Self::Quote => aurora_i18n::tr!("notecard-format-quote"),
             Self::CodeBlock => aurora_i18n::tr!("notecard-format-code-block"),
+            Self::LslBlock => aurora_i18n::tr!("notecard-format-lsl"),
         }
     }
 
@@ -69,6 +72,7 @@ impl Action {
             Self::Ordered => format!("1. {text}"),
             Self::Quote => format!("> {text}"),
             Self::CodeBlock => format!("```\n{text}\n```"),
+            Self::LslBlock => "```lsl\nllOwnerSay(\"Hello!\");\n```".into(),
         }
     }
 }
@@ -109,6 +113,7 @@ pub(super) fn toolbar(ui: &mut egui::Ui, p: &Palette, id: Id, editable: bool) ->
                     }
                 });
                 ui.label(aurora_i18n::tr!("notecard-markdown-help-extra"));
+                ui.label(aurora_i18n::tr!("notecard-markdown-help-code"));
             });
             ui.ctx().data_mut(|data| data.insert_temp(id.with("demo_format_help"), help.rect));
         });
@@ -224,7 +229,7 @@ fn transform(text: &str, selection: Range<usize>, action: Action) -> (String, Ra
         ..text.byte_index_from_char_index(CharIndex(selection.end.min(count))).0;
     if matches!(
         action,
-        Action::Heading | Action::Bullet | Action::Ordered | Action::Quote | Action::CodeBlock
+        Action::Heading | Action::Bullet | Action::Ordered | Action::Quote | Action::CodeBlock | Action::LslBlock
     ) {
         range.start = text[..range.start].rfind('\n').map_or(0, |at| at + 1);
         if range.end > range.start && text[..range.end].ends_with('\n') {
@@ -350,12 +355,15 @@ fn prefix(line: &str, action: Action) -> usize {
 
 fn block(text: &str, range: Range<usize>, action: Action) -> (String, Range<usize>) {
     let selected = &text[range.clone()];
-    if action == Action::CodeBlock {
+    if matches!(action, Action::CodeBlock | Action::LslBlock) {
+        let fence_line = |line: &str| {
+            let count = run(line, '`', false);
+            count >= 3 && (action == Action::CodeBlock || line[count..].trim().eq_ignore_ascii_case("lsl"))
+        };
         if let Some(before) = text[..range.start].strip_suffix('\n') {
             let opening = before.rsplit('\n').next().unwrap_or_default();
-            let closing = format!("\n{opening}");
-            if opening.len() >= 3
-                && opening.bytes().all(|c| c == b'`')
+            let closing = format!("\n{}", "`".repeat(run(opening, '`', false)));
+            if fence_line(opening)
                 && text[range.end..].starts_with(&closing)
                 && text[range.end + closing.len()..].chars().next().is_none_or(|c| c == '\n')
             {
@@ -368,21 +376,25 @@ fn block(text: &str, range: Range<usize>, action: Action) -> (String, Range<usiz
             }
         }
         let first = selected.lines().next().unwrap_or_default();
-        if first.len() >= 3 && first.bytes().all(|c| c == b'`') && selected.ends_with(&format!("\n{first}")) {
-            let inner = selected.get(first.len() + 1..selected.len() - first.len() - 1).unwrap_or_default();
+        let last = format!("\n{}", "`".repeat(run(first, '`', false)));
+        if fence_line(first) && selected.ends_with(&last) {
+            let inner = selected.get(first.len() + 1..selected.len() - last.len()).unwrap_or_default();
             return replace(text, range, inner, 0..inner.chars().count());
         }
-        let content = if selected.is_empty() {
+        let content = if selected.is_empty() && action == Action::LslBlock {
+            "default\n{\n    state_entry()\n    {\n        llOwnerSay(\"Hello!\");\n    }\n}"
+        } else if selected.is_empty() {
             aurora_i18n::tr!("notecard-format-placeholder")
         } else {
             selected
         };
         let marker = fence(content, 3);
-        let start = marker.len() + 1;
+        let language = if action == Action::LslBlock { "lsl" } else { "" };
+        let start = marker.len() + language.len() + 1;
         return replace(
             text,
             range,
-            &format!("{marker}\n{content}\n{marker}"),
+            &format!("{marker}{language}\n{content}\n{marker}"),
             start..start + content.chars().count(),
         );
     }
@@ -459,7 +471,14 @@ mod tests {
 
     #[test]
     fn multiline_actions_toggle_and_exclude_the_next_unselected_line() {
-        for action in [Action::Heading, Action::Bullet, Action::Ordered, Action::Quote, Action::CodeBlock] {
+        for action in [
+            Action::Heading,
+            Action::Bullet,
+            Action::Ordered,
+            Action::Quote,
+            Action::CodeBlock,
+            Action::LslBlock,
+        ] {
             let source = "Été\nsecond\nuntouched";
             let (formatted, range) = transform(source, 1..11, action);
             assert!(formatted.ends_with("\nuntouched"));
@@ -483,5 +502,8 @@ mod tests {
         let (code, range) = transform("```", 0..3, Action::CodeBlock);
         assert_eq!(code, "````\n```\n````");
         assert_eq!(transform(&code, range, Action::CodeBlock).0, "```");
+        let (code, range) = transform("llSay(0, \"Été 🐺\");", 0..18, Action::LslBlock);
+        assert!(code.starts_with("```lsl\n"));
+        assert_eq!(transform(&code, range, Action::LslBlock).0, "llSay(0, \"Été 🐺\");");
     }
 }

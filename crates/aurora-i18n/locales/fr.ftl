@@ -525,9 +525,11 @@ notecard-format-bullet = Liste
 notecard-format-ordered = Liste num.
 notecard-format-quote = Citation
 notecard-format-code-block = Bloc de code
+notecard-format-lsl = LSL
 notecard-format-placeholder = texte
 notecard-format-hint = Dans le texte brut, sélectionnez du texte puis un format, ou insérez un modèle sans sélection.
 notecard-markdown-help = Aide Markdown
+notecard-markdown-help-code = Utilisez un bloc ```lsl pour retrouver les couleurs de l’éditeur de scripts. Dans Éditer : Tab indente, Maj+Tab désindente, Entrée reprend l’indentation du code LSL et les accolades fermantes s’alignent. Ctrl+K commente les lignes LSL sélectionnées ; Ctrl+Maj+K ajoute ou retire un commentaire de bloc. Le texte collé reste inchangé.
 notecard-markdown-help-intro = Les boutons modifient le texte brut et l’aperçu suit vos changements. Recliquez pour retirer un style, un titre, une liste ou une citation. Ctrl+Z annule, Ctrl+Y rétablit.
 notecard-markdown-help-extra = Titres : de # à ######. Séparez les paragraphes par une ligne vide. Pour un tableau, utilisez des colonnes séparées par | et une ligne d’en-tête comme | --- | --- |. Les images affichent leur texte alternatif ; le HTML reste du texte. Les pièces jointes sont conservées à la sauvegarde (Ctrl+S).
 notecard-markdown-demo =
@@ -544,6 +546,22 @@ notecard-markdown-demo =
 
     ```text
     Un bloc de code brut
+    ```
+notecard-lsl-demo =
+    # LSL dans une note
+    Utilisez le bouton **LSL**, puis écrivez comme dans l’éditeur de scripts.
+
+    ```lsl
+    default
+    { "{" }
+        state_entry()
+    { "    {" }
+            // Couleurs et indentation LSL
+            integer count = 2;
+            vector tint = <1.0, 0.5, 0.0>;
+            llSay(PUBLIC_CHANNEL, "Bonjour 🐺");
+    { "    }" }
+    { "}" }
     ```
 inventory-preview-busy = Trop de documents sont en cours de chargement. Réessayez dans un instant.
 inventory-preview-timeout = Le chargement du document a expiré. Rouvrez-le pour réessayer.

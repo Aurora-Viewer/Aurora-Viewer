@@ -50,6 +50,7 @@ pub fn show_document(
     drag_inventory: &Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     prefs: &mut InventoryPreferences,
+    script_settings: &super::scripts::settings::ScriptSettings,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
     let facts = Facts {
@@ -62,7 +63,7 @@ pub fn show_document(
         touchable: Default::default(),
         names: Default::default(),
     };
-    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, prefs, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, prefs, script_settings, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     actions
 }
@@ -1252,6 +1253,7 @@ pub fn show(
     open: &mut bool,
     appearance_busy: bool,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    script_settings: &super::scripts::settings::ScriptSettings,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
     let mut facts = Facts::from_world(world, appearance_busy);
@@ -1321,7 +1323,7 @@ pub fn show(
     finish_hidden_rename(inv, st, prefs, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
-    dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, script_settings, &mut actions);
     st.thumbnail.show(
         ctx,
         p,
@@ -1392,6 +1394,7 @@ pub fn show(
             &mut w.state,
             images,
             prefs,
+            script_settings,
             &mut actions,
         );
         w.state.thumbnail.show(

@@ -675,7 +675,8 @@ mod tests {
                             &mut InventoryPreferences::default(),
                             &mut false,
                             false,
-                            &Default::default()
+                            &Default::default(),
+                            &Default::default(),
                         )
                         .is_empty()
                     );

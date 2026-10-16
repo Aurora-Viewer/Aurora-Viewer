@@ -2967,6 +2967,16 @@ offline; the files and snapshots uploaded in demo stay offline.
   Merely displaying an older window must not replace the last explicit
   choice, and switching views must preserve any unsaved source/attachments.
   Demo settings stay separate from the normal viewer's settings.
+  `note-lsl` / `note-lsl-markdown` show fenced LSL in Edit / Markdown. Capture
+  after frame 740: types, functions, events, constants, strings, numbers and
+  comments must use the script editor's colors, including customized colors.
+  The LSL toolbar button wraps selected lines or inserts an editable script
+  template. Type Tab/Shift+Tab with and without multiline selections; in LSL,
+  Enter keeps indentation, a closing brace aligns with its opener, Backspace
+  removes a four-column stop and Ctrl+K / Ctrl+Shift+K toggle comments. Check
+  undo/redo, Unicode, exact paste, live preview and Ctrl+S with attachments.
+  Prose/other languages must not gain LSL colors or brace/comment behavior;
+  Classic and read-only notes must retain their existing behavior.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal

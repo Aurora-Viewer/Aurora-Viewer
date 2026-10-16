@@ -41,6 +41,7 @@ struct Buffer<'a> {
     enter: Option<&'a str>,
     tab: Option<&'a str>,
     close: Option<&'a str>,
+    scope: &'a dyn Fn(&str, usize) -> Option<Range<usize>>,
 }
 
 impl TextBuffer for Buffer<'_> {
@@ -55,7 +56,11 @@ impl TextBuffer for Buffer<'_> {
     }
     fn insert_text(&mut self, text: &str, at: CharIndex) -> usize {
         if Some(text) == self.enter {
-            let insertion = newline(self.source, at);
+            let insertion = if (self.scope)(self.source, self.source.byte_index_from_char_index(at).0).is_some() {
+                newline(self.source, at)
+            } else {
+                "\n".into()
+            };
             self.source.insert_text(&insertion, at)
         } else if Some(text) == self.tab {
             let insertion = " ".repeat(next_stop(column(line_before(self.source, at))));
@@ -70,8 +75,13 @@ impl TextBuffer for Buffer<'_> {
             let line = line_before(self.source, cursor.index);
             let start = at - line.len();
             let whitespace = line.chars().all(|c| c == ' ' || c == '\t');
+            let scope = (self.scope)(self.source, at);
             cursor.index += self.source.insert_text("}", cursor.index);
-            if whitespace && let Some(open) = super::syntax::matching_open_brace(self.source, at) {
+            if whitespace
+                && let Some(scope) = scope
+                && let Some(open) = super::syntax::matching_open_brace(&self.source[scope.start..at + 1], at - scope.start)
+            {
+                let open = scope.start + open;
                 let opener = self.source[..open].rsplit('\n').next().unwrap_or_default();
                 let indent = &opener[..opener.find(|c| c != ' ' && c != '\t').unwrap_or(opener.len())];
                 if column(&self.source[start..at]) > column(indent) {
@@ -109,7 +119,19 @@ impl TextBuffer for Buffer<'_> {
 }
 
 pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl FnOnce(&mut egui::Ui, &mut dyn TextBuffer) -> R) -> R {
-    super::editing::keyboard(ui, id, source);
+    edit_scoped(ui, id, source, &|source, _| Some(0..source.len()), show).0
+}
+
+/// Tab stops and block indentation also serve Markdown source editors. Only
+/// a language scope enables script comments, auto-indent and brace matching.
+pub(crate) fn edit_scoped<R>(
+    ui: &mut egui::Ui,
+    id: Id,
+    source: &mut String,
+    scope: &dyn Fn(&str, usize) -> Option<Range<usize>>,
+    show: impl FnOnce(&mut egui::Ui, &mut dyn TextBuffer) -> R,
+) -> (R, bool) {
+    let changed = super::editing::keyboard(ui, id, source, scope);
     let active = ui.memory(|m| m.has_focus(id))
         && ui.input(|i| {
             i.events.iter().any(|event| {
@@ -125,7 +147,7 @@ pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl
             })
         });
     if !active {
-        return show(ui, source);
+        return (show(ui, source), changed);
     }
     // egui 0.36 has no insertion callback for Return / Tab. Route those keys
     // through a private per-frame token, expanded at the actual cursor after
@@ -161,6 +183,7 @@ pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl
             enter: tokens.as_ref().map(|t| t[0].as_str()),
             tab: tokens.as_ref().map(|t| t[1].as_str()),
             close: tokens.as_ref().map(|t| t[2].as_str()),
+            scope,
         },
     );
     ui.input_mut(|i| {
@@ -172,7 +195,7 @@ pub(super) fn edit<R>(ui: &mut egui::Ui, id: Id, source: &mut String, show: impl
             }
         }
     });
-    result
+    (result, changed)
 }
 
 enum Insertion {

@@ -194,6 +194,7 @@ impl App {
                 &self.world.inventory,
                 &self.ui_images,
                 &mut self.settings.inventory,
+                &self.settings.script_editor,
             ) {
                 if let InvAction::SaveContent { text, close, .. } = action {
                     saves.push((object, item, text, close));

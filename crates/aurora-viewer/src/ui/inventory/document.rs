@@ -10,12 +10,12 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     };
     if matches!(
         mode.as_str(),
-        "note-markdown" | "note-source" | "note-classic" | "note-format" | "note-remember"
+        "note-markdown" | "note-source" | "note-classic" | "note-format" | "note-remember" | "note-lsl" | "note-lsl-markdown"
     ) {
         if frame < 600 && mode != "note-remember" {
             st.notecard_view = Some(match mode.as_str() {
-                "note-markdown" => super::markdown::View::Markdown,
-                "note-source" | "note-format" => super::markdown::View::Edit,
+                "note-markdown" | "note-lsl-markdown" => super::markdown::View::Markdown,
+                "note-source" | "note-format" | "note-lsl" => super::markdown::View::Edit,
                 _ => super::markdown::View::Classic,
             });
         }
@@ -381,6 +381,7 @@ mod tests {
                                 &inv,
                                 &Default::default(),
                                 &mut InventoryPreferences::default(),
+                                &Default::default(),
                             );
                         }
                     },

@@ -522,9 +522,11 @@ notecard-format-bullet = List
 notecard-format-ordered = Numbered list
 notecard-format-quote = Quote
 notecard-format-code-block = Code block
+notecard-format-lsl = LSL
 notecard-format-placeholder = text
 notecard-format-hint = Select text in the source and choose a format, or insert a template without a selection.
 notecard-markdown-help = Markdown help
+notecard-markdown-help-code = Use a ```lsl block for the script editor’s colors. In Edit: Tab indents, Shift+Tab outdents, Enter keeps LSL indentation and closing braces align with their opener. Ctrl+K comments selected LSL lines; Ctrl+Shift+K toggles a block comment. Pasted text stays unchanged.
 notecard-markdown-help-intro = Buttons edit the source and the preview follows your changes. Click again to remove a style, heading, list or quote. Ctrl+Z undoes, Ctrl+Y redoes.
 notecard-markdown-help-extra = Headings: # through ######. Separate paragraphs with a blank line. For tables, separate columns with | and add a header row such as | --- | --- |. Images show their alt text; HTML stays text. Attachments are preserved when saving (Ctrl+S).
 notecard-markdown-demo =
@@ -541,6 +543,22 @@ notecard-markdown-demo =
 
     ```text
     A plain code block
+    ```
+notecard-lsl-demo =
+    # LSL in a notecard
+    Use the **LSL** button, then type as in the script editor.
+
+    ```lsl
+    default
+    { "{" }
+        state_entry()
+    { "    {" }
+            // LSL colors and indentation
+            integer count = 2;
+            vector tint = <1.0, 0.5, 0.0>;
+            llSay(PUBLIC_CHANNEL, "Hello 🐺");
+    { "    }" }
+    { "}" }
     ```
 inventory-preview-busy = Too many documents are loading. Try again in a moment.
 inventory-preview-timeout = Loading the document timed out. Reopen it to retry.

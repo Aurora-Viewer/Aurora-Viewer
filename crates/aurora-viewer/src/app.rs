@@ -9306,6 +9306,7 @@ impl App {
                     &mut open,
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
+                    &self.settings.script_editor,
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),

@@ -29,7 +29,11 @@ pub(super) enum Appearance<'a> {
     #[default]
     Classic,
     Source,
-    Markdown(&'a super::markdown::Rendered),
+    CodeSource(
+        Option<&'a super::markdown::Rendered>,
+        &'a super::super::scripts::settings::ScriptSettings,
+    ),
+    Markdown(&'a super::markdown::Rendered, &'a super::super::scripts::settings::ScriptSettings),
 }
 
 pub(super) fn clipboard(ctx: &egui::Context, id: egui::Id, source: &mut Notecard, text: &str, editable: bool) {
@@ -92,13 +96,13 @@ pub(super) fn editor(
     size: Vec2,
     appearance: Appearance<'_>,
 ) -> EditorResult {
-    let style = if matches!(appearance, Appearance::Source) {
+    let style = if matches!(appearance, Appearance::Source | Appearance::CodeSource(..)) {
         egui::TextStyle::Monospace
     } else {
         egui::TextStyle::Body
     };
     let font = style.resolve(ui.style());
-    let markdown = if let Appearance::Markdown(rendered) = &appearance {
+    let markdown = if let Appearance::Markdown(rendered, _) = &appearance {
         Some(*rendered)
     } else {
         None
@@ -154,8 +158,12 @@ pub(super) fn editor(
             }
             job.append(&segment[start..], 0.0, normal);
         };
-        if let Some(rendered) = markdown {
-            rendered.layout(ui, p, &mut append, &mut job);
+        if let Appearance::Markdown(rendered, settings) = &appearance {
+            rendered.layout(ui, p, settings, &mut append, &mut job);
+        } else if let Appearance::CodeSource(Some(rendered), settings) = &appearance
+            && rendered.source == buffer.as_str()
+        {
+            super::markdown::code::source_layout(rendered, p, settings, normal, &mut append, &mut job);
         } else {
             append(&mut job, buffer.as_str(), normal);
         }
@@ -168,11 +176,20 @@ pub(super) fn editor(
             .min_size(size)
             .desired_rows(1)
             .font(style.clone())
+            .lock_focus(editable && matches!(appearance, Appearance::CodeSource(..)))
             .layouter(&mut layouter)
             .show(ui)
     };
     let output = if editable {
-        show(ui, text)
+        if matches!(appearance, Appearance::CodeSource(..)) {
+            let (mut output, changed) = super::super::scripts::edit_code(ui, id, text, &super::markdown::code::scope, show);
+            if changed {
+                output.response.mark_changed();
+            }
+            output
+        } else {
+            show(ui, text)
+        }
     } else {
         show(ui, &mut markdown.map_or(text.as_str(), |rendered| rendered.text.as_str()))
     };

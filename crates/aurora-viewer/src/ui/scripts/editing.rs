@@ -31,13 +31,15 @@ fn selected_lines(source: &str, range: Range<usize>) -> Range<usize> {
     start..end
 }
 
-fn replacements(source: &str, selection: Range<usize>, command: SelectionCommand) -> Option<Vec<Replacement>> {
+fn replacements(source: &str, selection: Range<usize>, command: SelectionCommand, scope: Range<usize>) -> Option<Vec<Replacement>> {
     let lines = selected_lines(source, selection.clone());
     if matches!(command, SelectionCommand::BlockComment) {
         let empty = selection.is_empty();
         let at = selection.start;
         let mut range = if empty { lines } else { selection };
-        if let Some(comment) = super::syntax::block_comment_at(source, if empty { at } else { range.start })
+        let cursor = if empty { at } else { range.start };
+        if let Some(comment) = super::syntax::block_comment_at(&source[scope.clone()], cursor - scope.start)
+            .map(|range| scope.start + range.start..scope.start + range.end)
             && (empty || range.end <= comment.end)
         {
             range = comment;
@@ -149,9 +151,13 @@ fn replacements(source: &str, selection: Range<usize>, command: SelectionCommand
 /// One history entry for the whole operation, including its final selection.
 /// Keeping both cursors also preserves backward selections and repeated Tab.
 pub(super) fn selection_command(ctx: &egui::Context, id: Id, source: &mut String, command: SelectionCommand) -> bool {
+    selection_command_in(ctx, id, source, command, 0..source.len())
+}
+
+fn selection_command_in(ctx: &egui::Context, id: Id, source: &mut String, command: SelectionCommand, scope: Range<usize>) -> bool {
     let before = cursor(ctx, id);
     let selection = bytes(source, before);
-    let Some(edits) = replacements(source, selection.clone(), command) else {
+    let Some(edits) = replacements(source, selection.clone(), command, scope) else {
         return false;
     };
     if edits.is_empty() {
@@ -210,9 +216,9 @@ pub(super) fn selection_command(ctx: &egui::Context, id: Id, source: &mut String
 
 /// Commands run at an input boundary. If native cursor movement / typing came
 /// first, defer the suffix to the next frame so it uses egui's actual cursor.
-pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String) {
+pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String, scope: &dyn Fn(&str, usize) -> Option<Range<usize>>) -> bool {
     if !ui.memory(|m| m.has_focus(id)) {
-        return;
+        return false;
     }
     let queue_id = id.with("selection_keys");
     let mut events = ui
@@ -221,6 +227,7 @@ pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String) {
         .unwrap_or_default();
     events.extend(ui.input_mut(|i| std::mem::take(&mut i.events)));
     let mut native = Vec::new();
+    let mut changed = false;
     let mut events = events.into_iter();
     while let Some(event) = events.next() {
         let candidate = match &event {
@@ -259,7 +266,7 @@ pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String) {
                     egui::Event::Key { modifiers, pressed: true, .. } if modifiers.shift || modifiers.command
                 ) || matches!(e, egui::Event::PointerButton { pressed: true, .. })
             });
-            if matches!(command, SelectionCommand::Indent) && !source[selected].contains('\n') && !selection_input {
+            if matches!(command, SelectionCommand::Indent) && !source[selected.clone()].contains('\n') && !selection_input {
                 native.push(event);
                 continue;
             }
@@ -277,7 +284,14 @@ pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String) {
                 ui.ctx().request_repaint();
                 break;
             }
-            if !selection_command(ui.ctx(), id, source, command) {
+            let language = scope(source, selected.start).filter(|range| selected.end <= range.end);
+            if matches!(command, SelectionCommand::LineComment | SelectionCommand::BlockComment) && language.is_none() {
+                native.push(event);
+                continue;
+            }
+            if selection_command_in(ui.ctx(), id, source, command, language.unwrap_or(0..source.len())) {
+                changed = true;
+            } else {
                 ui.ctx().data_mut(|d| d.insert_temp(id.with("selection_error"), true));
             }
         } else {
@@ -285,6 +299,7 @@ pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String) {
         }
     }
     ui.input_mut(|i| i.events = native);
+    changed
 }
 
 pub(super) fn cursor(ctx: &egui::Context, id: Id) -> CCursorRange {

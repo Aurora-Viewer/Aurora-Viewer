@@ -9,6 +9,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::theme::Palette;
 
+pub(super) mod code;
 mod formatting;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -82,10 +83,12 @@ pub(super) fn editor(
     size: egui::Vec2,
     view: View,
     cache: &mut Cache,
+    settings: &super::super::scripts::settings::ScriptSettings,
 ) -> super::embedded::EditorResult {
     use super::embedded::{self, Appearance};
 
     let history = formatting::history_key(ui, id, editable);
+    let syntax = (view == View::Edit).then(|| cache.get(ui.ctx(), text)).flatten();
     let preview_id = id.with("markdown");
     let mut preview = |ui: &mut egui::Ui, text: &mut String, source: Option<&mut aurora_net::inventory::notecard::Notecard>, size| {
         let Some(rendered) = cache.get(ui.ctx(), text) else {
@@ -108,7 +111,7 @@ pub(super) fn editor(
                 source.as_deref(),
                 false,
                 size,
-                Appearance::Markdown(&rendered),
+                Appearance::Markdown(&rendered, settings),
             )
         })
     };
@@ -136,7 +139,17 @@ pub(super) fn editor(
                 let height = (size.y - toolbar_height - ui_heading_height(&columns[0])).max(24.0);
                 let left_size = egui::vec2(columns[0].available_width(), height);
                 let mut result = scroll(&mut columns[0], id, left_size, |ui, size| {
-                    embedded::editor(ui, p, icons, id, text, source.as_deref(), editable, size, Appearance::Source)
+                    embedded::editor(
+                        ui,
+                        p,
+                        icons,
+                        id,
+                        text,
+                        source.as_deref(),
+                        editable,
+                        size,
+                        Appearance::CodeSource(syntax.as_deref(), settings),
+                    )
                 });
                 if let Some(redo) = history {
                     result.changed |= formatting::history(columns[0].ctx(), id, text, redo);
@@ -193,6 +206,7 @@ struct Style {
     code: bool,
     quote: bool,
     link: Option<Arc<str>>,
+    role: Option<super::super::scripts::settings::ColorRole>,
 }
 
 struct Span {
@@ -201,6 +215,8 @@ struct Span {
 }
 
 pub(super) struct Rendered {
+    pub(super) source: String,
+    source_spans: Vec<(Range<usize>, super::super::scripts::settings::ColorRole)>,
     pub text: String,
     spans: Vec<Span>,
     pub links: Vec<(Range<usize>, Arc<str>)>,
@@ -233,6 +249,8 @@ impl Rendered {
 
     pub(super) fn parse(source: &str) -> Self {
         let mut rendered = Self {
+            source: source.into(),
+            source_spans: Vec::new(),
             text: String::new(),
             spans: Vec::new(),
             links: Vec::new(),
@@ -242,6 +260,7 @@ impl Rendered {
         let mut stack = Vec::new();
         let mut lists: Vec<Option<u64>> = Vec::new();
         let mut cell = 0;
+        let mut code = None;
         for (event, range) in Parser::new_ext(
             source,
             Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES,
@@ -261,9 +280,12 @@ impl Rendered {
                         Tag::Strong => style.strong = true,
                         Tag::Emphasis => style.italic = true,
                         Tag::Strikethrough => style.strike = true,
-                        Tag::CodeBlock(_) => {
+                        Tag::CodeBlock(kind) => {
                             rendered.newline(2);
                             style.code = true;
+                            if code::is_lsl(&kind) {
+                                code = Some(code::Block::new(&rendered));
+                            }
                         }
                         Tag::BlockQuote(_) => {
                             rendered.newline(2);
@@ -309,6 +331,11 @@ impl Rendered {
                     }
                 }
                 Event::End(tag) => {
+                    if tag == TagEnd::CodeBlock
+                        && let Some(code) = code.take()
+                    {
+                        code.finish(source, &mut rendered);
+                    }
                     match tag {
                         TagEnd::Paragraph => rendered.newline(if lists.is_empty() { 2 } else { 1 }),
                         TagEnd::Heading(_) | TagEnd::CodeBlock | TagEnd::BlockQuote(_) | TagEnd::Table => rendered.newline(2),
@@ -321,7 +348,13 @@ impl Rendered {
                     }
                     style = stack.pop().unwrap_or_default();
                 }
-                Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => rendered.push(&text, &style),
+                Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => {
+                    let start = rendered.text.len();
+                    rendered.push(&text, &style);
+                    if let Some(code) = &mut code {
+                        code.push(range, start..rendered.text.len());
+                    }
+                }
                 Event::Code(text) => rendered.push(
                     &text,
                     &Style {
@@ -353,7 +386,14 @@ impl Rendered {
         rendered
     }
 
-    pub(super) fn layout(&self, ui: &egui::Ui, p: &Palette, append: &mut dyn FnMut(&mut LayoutJob, &str, TextFormat), job: &mut LayoutJob) {
+    pub(super) fn layout(
+        &self,
+        ui: &egui::Ui,
+        p: &Palette,
+        settings: &super::super::scripts::settings::ScriptSettings,
+        append: &mut dyn FnMut(&mut LayoutJob, &str, TextFormat),
+        job: &mut LayoutJob,
+    ) {
         let body = egui::TextStyle::Body.resolve(ui.style());
         let bold = super::super::fonts::semibold(ui.ctx());
         for span in &self.spans {
@@ -366,7 +406,9 @@ impl Rendered {
             if s.heading > 0 {
                 font.size = body.size * [1.8, 1.55, 1.3, 1.15, 1.05, 1.0][usize::from(s.heading - 1).min(5)];
             }
-            let color = if s.link.is_some() {
+            let color = if let Some(role) = s.role {
+                settings.color(role, p)
+            } else if s.link.is_some() {
                 p.teal
             } else if s.quote {
                 p.muted

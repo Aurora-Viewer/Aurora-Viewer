@@ -420,6 +420,7 @@ pub(super) fn preview(
     st: &mut InventoryUi,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     prefs: &mut InventoryPreferences,
+    script_settings: &crate::ui::scripts::settings::ScriptSettings,
     actions: &mut Vec<InvAction>,
 ) {
     let Some(id) = st.preview else {
@@ -578,6 +579,7 @@ pub(super) fn preview(
                             editor_size,
                             view,
                             &mut st.notecard_markdown,
+                            script_settings,
                         );
                     } else {
                         egui::ScrollArea::both()
@@ -897,7 +899,18 @@ mod tests {
                     &Default::default(),
                     &mut actions,
                 );
-                preview(ctx, &p, &Icons::default(), inv, inv, st, &Default::default(), prefs, &mut actions);
+                preview(
+                    ctx,
+                    &p,
+                    &Icons::default(),
+                    inv,
+                    inv,
+                    st,
+                    &Default::default(),
+                    prefs,
+                    &Default::default(),
+                    &mut actions,
+                );
             },
         );
         (headless_output(output), actions)
@@ -1056,6 +1069,7 @@ mod tests {
                         &inv,
                         &Default::default(),
                         &mut prefs,
+                        &Default::default(),
                     );
                 }
             });
@@ -1219,6 +1233,158 @@ mod tests {
             }
             assert_eq!(st.preview_text, original);
             assert!(!st.preview_dirty);
+        }
+    }
+
+    #[test]
+    fn notecard_lsl_keyboard_preserves_source_history_and_saved_attachments() {
+        use egui::text::{CCursor, CCursorRange};
+        let ctx = egui::Context::default();
+        let (inv, mut st) = note_fixture();
+        let card = aurora_net::inventory::notecard::Notecard::decode(&crate::world::inventory::demo::note_asset(true)).expect("card");
+        let original = "Prose \"{ Été 🐺\n\n```lsl\ndefault\n{\n    state_entry()\n    {\n    }\n}\n```\n\u{100000}\n\u{100001}";
+        st.load_document(7, true, &Ok(card.encode(original).expect("asset")));
+        st.notecard_view = Some(NotecardView::Edit);
+        let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+        for _ in 0..5 {
+            document_frame(&ctx, &inv, &mut st, vec![]);
+        }
+        let at = original.find("    {").expect("event opener") + 5;
+        let caret = original[..at].chars().count();
+        let mut state = egui::TextEdit::load_state(&ctx, editor).expect("source editor");
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(caret))));
+        state.store(&ctx, editor);
+        ctx.memory_mut(|m| m.request_focus(editor));
+        document_frame(&ctx, &inv, &mut st, vec![]);
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let command = "llOwnerSay(\"Été 🐺\");";
+        document_frame(
+            &ctx,
+            &inv,
+            &mut st,
+            vec![
+                key(egui::Key::Enter, egui::Modifiers::NONE),
+                key(egui::Key::Tab, egui::Modifiers::NONE),
+                egui::Event::Text(command.into()),
+            ],
+        );
+        let mut expected = original.to_owned();
+        expected.insert_str(at, &format!("\n            {command}"));
+        assert_eq!(st.preview_text, Some(Ok(expected.clone())));
+        assert!(st.preview_dirty && ctx.memory(|m| m.has_focus(editor)));
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Tab, egui::Modifiers::SHIFT)]);
+        expected = expected.replace(&format!("            {command}"), &format!("        {command}"));
+        assert_eq!(st.preview_text, Some(Ok(expected.clone())));
+        for modifiers in [egui::Modifiers::COMMAND, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT] {
+            document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::K, modifiers)]);
+            assert_ne!(st.preview_text, Some(Ok(expected.clone())));
+            document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::K, modifiers)]);
+            assert_eq!(st.preview_text, Some(Ok(expected.clone())));
+        }
+        let line_start = expected.find("        llOwnerSay").expect("inserted line");
+        let line_end = line_start + expected[line_start..].find('\n').expect("next line") + 1;
+        let mut state = egui::TextEdit::load_state(&ctx, editor).expect("editor");
+        state.cursor.set_char_range(Some(CCursorRange::two(
+            CCursor::new(expected[..line_end].chars().count()),
+            CCursor::new(expected[..line_start].chars().count()),
+        )));
+        state.store(&ctx, editor);
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Tab, egui::Modifiers::NONE)]);
+        assert_ne!(st.preview_text, Some(Ok(expected.clone())));
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Tab, egui::Modifiers::SHIFT)]);
+        assert_eq!(st.preview_text, Some(Ok(expected.clone())));
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Z, egui::Modifiers::COMMAND)]);
+        assert_ne!(st.preview_text, Some(Ok(expected.clone())));
+        document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Y, egui::Modifiers::COMMAND)]);
+        assert_eq!(st.preview_text, Some(Ok(expected.clone())));
+        let (_, actions) = document_frame(&ctx, &inv, &mut st, vec![key(egui::Key::S, egui::Modifiers::COMMAND)]);
+        assert!(matches!(&actions[..], [InvAction::SaveContent {text, ..}] if text == &expected));
+        let bytes = st.start_content_save(Uuid::new_v4(), 7, expected.clone(), false).expect("save");
+        let saved = aurora_net::inventory::notecard::Notecard::decode(&bytes).expect("saved notecard");
+        assert_eq!(saved.text, expected);
+        for marker in ['\u{100000}', '\u{100001}'] {
+            assert_eq!(
+                saved.attachment(marker).expect("saved item").item.id,
+                card.attachment(marker).expect("original item").item.id
+            );
+        }
+    }
+
+    #[test]
+    fn notecard_lsl_braces_tabs_comments_and_paste_keep_their_scopes() {
+        use egui::text::{CCursor, CCursorRange};
+        for (before, event, after) in [
+            (
+                "Text \"{\n\n```lsl\ndefault\n{\n        ",
+                egui::Event::Text("}".into()),
+                "Text \"{\n\n```lsl\ndefault\n{\n}",
+            ),
+            (
+                "Text \"{\n\n```lsl\ndefault\n{\n        ",
+                egui::Event::Paste("}\n\t// exact 🐺".into()),
+                "Text \"{\n\n```lsl\ndefault\n{\n        }\n\t// exact 🐺",
+            ),
+            ("Prose {\n    ", egui::Event::Text("}".into()), "Prose {\n    }"),
+            (
+                "```lsl\n    ",
+                egui::Event::Key {
+                    key: egui::Key::Tab,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                "```lsl\n        ",
+            ),
+            (
+                "```lsl\n        ",
+                egui::Event::Key {
+                    key: egui::Key::Backspace,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                "```lsl\n    ",
+            ),
+            (
+                "Prose \"{\n```lsl\n/*\n  comment 🐺\n*/\n```",
+                egui::Event::Key {
+                    key: egui::Key::K,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                },
+                "Prose \"{\n```lsl\n\n  comment 🐺\n\n```",
+            ),
+        ] {
+            let ctx = egui::Context::default();
+            let (inv, mut st) = note_fixture();
+            st.load_document(7, true, &Ok(before.as_bytes().to_vec()));
+            st.notecard_view = Some(NotecardView::Edit);
+            for _ in 0..5 {
+                document_frame(&ctx, &inv, &mut st, vec![]);
+            }
+            let id = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+            let mut state = egui::TextEdit::load_state(&ctx, id).expect("editor");
+            let caret = if matches!(&event, egui::Event::Key { key: egui::Key::K, .. }) {
+                before[..before.find("comment").expect("comment") + 3].chars().count()
+            } else {
+                before.chars().count()
+            };
+            state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(caret))));
+            state.store(&ctx, id);
+            ctx.memory_mut(|m| m.request_focus(id));
+            document_frame(&ctx, &inv, &mut st, vec![]);
+            document_frame(&ctx, &inv, &mut st, vec![event]);
+            assert_eq!(st.preview_text, Some(Ok(after.into())));
         }
     }
 

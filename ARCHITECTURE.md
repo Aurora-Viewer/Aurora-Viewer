@@ -112,6 +112,12 @@ ready preview remains visible while a changed draft is being parsed;
 the existing embedded-item renderer keeps attachment actions in every view.
 All modes share the original source draft and permission-aware save lifecycle
 in `ui/inventory/document.rs`; formatted text never enters the asset encoder.
+`ui/inventory/markdown/code.rs` maps fenced LSL tokens back to the exact source
+and formatted preview. The document worker uses the script editor's lexer;
+drawing resolves the same current skin/custom script colors. Edit reuses
+`ui/scripts/indent.rs` and its selection commands, with LSL scopes for comment
+shortcuts, automatic indentation and brace matching. Tab stops and multiline
+Tab/Shift+Tab work throughout the source; pasted text remains untouched.
 
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
