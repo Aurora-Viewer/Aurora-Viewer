@@ -50,6 +50,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
+mod object_menu;
 mod own_motion;
 mod pay;
 mod plate_click;
@@ -328,6 +329,8 @@ pub struct App {
     context_menu_was: bool,
     /// "Delete" waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
+    /// The object menus' questions and script queue (app/object_menu.rs).
+    object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
     /// with the state of its "Do not show again" box.
     place_confirm: Option<(String, Vec3, bool)>,
@@ -826,6 +829,7 @@ impl App {
             mic_was: false,
             context_menu_was: false,
             delete_confirm: None,
+            object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
             script_dialogs_were: 0,
@@ -9653,6 +9657,7 @@ impl App {
                     self.build.release_menu_selection(&self.world);
                     self.flush_build();
                 }
+                self.object_menu_ui(&ctx, &p);
                 if let Some((id, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {

@@ -66,6 +66,7 @@ pub mod profile;
 pub mod region;
 pub mod region_restart;
 pub mod report_abuse;
+pub mod script_queue;
 pub mod scripts;
 pub mod search;
 pub mod shape;

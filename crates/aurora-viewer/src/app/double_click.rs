@@ -114,6 +114,10 @@ impl App {
         if ap.run {
             self.sync_run();
         }
+        if let Some(arrival) = ap.on_arrival {
+            let success = !user_cancel && ap.reached(self.world.agent.position);
+            self.autopilot_arrived(arrival, success, user_cancel);
+        }
         if self.demo && std::env::var_os("AURORA_DEMO_DOUBLECLICK").is_some() {
             log::info!(
                 "demo walk ended ({}): at {:?}, target {:?}",

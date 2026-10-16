@@ -171,12 +171,18 @@ impl DemoSim {
                 local_ids,
                 destination,
                 ..
-            } if *destination == aurora_net::build::derez::TRASH => {
+            } if *destination == aurora_net::build::derez::TRASH || *destination == aurora_net::build::derez::RETURN_TO_OWNER => {
                 vec![NetEvent::ObjectsKilled {
                     handle: *handle,
                     local_ids: local_ids.clone(),
                 }]
             }
+            // worn: it leaves the world (the demo has no inventory item to
+            // wear it from)
+            BuildCmd::Attach { handle, objects, .. } => vec![NetEvent::ObjectsKilled {
+                handle: *handle,
+                local_ids: objects.iter().map(|(id, _)| *id).collect(),
+            }],
             BuildCmd::SetPhysicsParams {
                 handle, local_id, params, ..
             } => {

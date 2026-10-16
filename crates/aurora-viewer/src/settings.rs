@@ -368,6 +368,12 @@ pub struct Settings {
     /// ChangeObjectBonusFactor is asked before Region / Estate sends a new
     /// object bonus (its "ignore" box turns it off; shown by default).
     pub confirm_object_bonus: bool,
+    /// The object menu asks before "Return" (ReturnToOwner), "Drop"
+    /// (AttachmentDrop) and the script actions on a selection
+    /// (ConfirmScriptModify); their "ignore" boxes turn these off.
+    pub confirm_return_to_owner: bool,
+    pub confirm_attachment_drop: bool,
+    pub confirm_script_modify: bool,
     /// RegionCheckTextureHeights: Region / Estate asks before sending
     /// elevation ranges whose low end is above the high one ("Don't ask"
     /// turns it off; on by default).
@@ -955,6 +961,9 @@ impl Default for Settings {
             confirm_teleports: true,
             confirm_no_transfer_settings: true,
             confirm_object_bonus: true,
+            confirm_return_to_owner: true,
+            confirm_attachment_drop: true,
+            confirm_script_modify: true,
             region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,

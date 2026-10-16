@@ -102,6 +102,35 @@ impl ParticleManager {
         self.sources.get(id).map(|s| s.ps.data())
     }
 
+    /// The particle a right click lands on (LLPipeline::
+    /// lineSegmentIntersectParticle, LLVOPartGroup::lineSegmentIntersect):
+    /// the source object of the nearest live particle the ray `origin` +
+    /// t·`dir` crosses for t in 0..`max`, each particle a quad of its size
+    /// facing the ray. Loading clouds and HUD particles are not picked.
+    pub fn pick(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<Uuid> {
+        let dir = dir.try_normalize()?;
+        let right = dir.cross(Vec3::Z).try_normalize().unwrap_or(Vec3::X);
+        let up = right.cross(dir);
+        let mut best: Option<(f32, Uuid)> = None;
+        for (id, s) in &self.sources {
+            if s.cloud {
+                continue;
+            }
+            for p in s.ps.particles() {
+                if p.flags & ps::LL_PART_HUD != 0 {
+                    continue;
+                }
+                let Some(t) = quad_hit(origin, dir, right, up, p.pos, p.size) else {
+                    continue;
+                };
+                if t <= max && best.is_none_or(|(b, _)| t < b) {
+                    best = Some((t, *id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     /// Release every source (region change, logout).
     pub fn clear(&mut self, textures: &mut TextureStreamer) {
         for (_, s) in self.sources.drain() {
@@ -300,9 +329,33 @@ impl ParticleManager {
     }
 }
 
+/// Distance along the ray (`dir` unit, perpendicular to the quad) to a
+/// particle quad centred on `pos`, `size` wide along `right` and `up`.
+fn quad_hit(origin: Vec3, dir: Vec3, right: Vec3, up: Vec3, pos: Vec3, size: glam::Vec2) -> Option<f32> {
+    let t = (pos - origin).dot(dir);
+    if t < 0.0 {
+        return None;
+    }
+    let local = origin + dir * t - pos;
+    (local.dot(right).abs() <= size.x * 0.5 && local.dot(up).abs() <= size.y * 0.5).then_some(t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_ray_picks_a_particle_quad_in_front_only() {
+        let (dir, right, up) = (Vec3::X, Vec3::NEG_Y, Vec3::Z);
+        let size = glam::Vec2::new(1.0, 0.5);
+        let at = Vec3::new(10.0, 0.0, 0.0);
+        assert_eq!(quad_hit(Vec3::ZERO, dir, right, up, at, size), Some(10.0));
+        // within the half sizes, sideways and up
+        assert!(quad_hit(Vec3::new(0.0, 0.45, 0.2), dir, right, up, at, size).is_some());
+        assert!(quad_hit(Vec3::new(0.0, 0.0, 0.3), dir, right, up, at, size).is_none());
+        // behind the eye
+        assert!(quad_hit(Vec3::new(11.0, 0.0, 0.0), dir, right, up, at, size).is_none());
+    }
 
     #[test]
     fn instances_are_ordered_far_first_then_by_source_order() {

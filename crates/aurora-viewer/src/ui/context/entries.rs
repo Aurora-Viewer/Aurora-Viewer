@@ -1,6 +1,7 @@
 //! Shared world menu entries and permissions, following Firestorm menu_*.xml.
 
 use super::{CtxAction, Facts, Target};
+use crate::build::script_queue::QueueKind;
 use crate::report_abuse::ReportTarget;
 use crate::world::objects::ObjKey;
 use glam::Vec3;
@@ -148,24 +149,20 @@ pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &
 #[allow(clippy::too_many_arguments)]
 fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3, point: Vec3) {
     let o = &f.object;
-    ui.item_if(
-        "click-filled",
-        aurora_i18n::tr!("ui-context-touch"),
-        o.touch,
-        CtxAction::Touch(key.local_id),
-    );
+    ui.item_if("click-filled", touch_label(o), o.touch, CtxAction::Touch(key.local_id));
     ui.item("pencil-filled", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
     ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
     // Object.Build: the Create tool (LLToolCompCreate), like the land menu
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item_if("package", aurora_i18n::tr!("common-open"), o.open, CtxAction::Open(id));
     ui.separator();
-    ui.item_if(
-        "armchair",
-        aurora_i18n::tr!("ui-context-sit-here"),
-        o.sit,
-        CtxAction::Sit { target: id, offset },
-    );
+    // enable_object_sit: the object's sit text when it has one
+    let sit = if o.sit_name.is_empty() {
+        aurora_i18n::tr!("ui-context-sit-here")
+    } else {
+        &o.sit_name
+    };
+    ui.item_if("armchair", sit, o.sit, CtxAction::Sit { target: id, offset });
     ui.separator();
     ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), o.stand, CtxAction::StandUp);
     ui.separator();
@@ -174,8 +171,13 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
         ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
         ui.separator();
-        // linking needs two selected objects: build tools only
-        ui.disabled("link", aurora_i18n::tr!("ui-context-link"));
+        // two objects or more: a right click on a selected one keeps them;
+        // one alone has nothing to link to
+        if o.roots > 1 {
+            ui.item_if("link", aurora_i18n::tr!("ui-context-link"), o.link, CtxAction::Link(id));
+        } else {
+            ui.disabled("link", aurora_i18n::tr!("ui-context-link"));
+        }
         ui.item_if("unlink", aurora_i18n::tr!("ui-context-unlink"), o.unlink, CtxAction::Unlink(id));
         ui.check(
             "cube-3d-sphere",
@@ -185,19 +187,23 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             CtxAction::EditLinkedParts(!f.edit_linked),
         );
         ui.separator();
-        ui.todo("refresh", aurora_i18n::tr!("ui-context-reset-scripts"));
-        ui.todo("player-play-filled", aurora_i18n::tr!("ui-context-run-scripts"));
-        ui.todo("player-stop-filled", aurora_i18n::tr!("ui-context-stop-scripts"));
-        ui.todo("trash-filled", aurora_i18n::tr!("ui-context-remove-scripts"));
+        // Tools.SelectedScriptAction (EditableSelected)
+        for (icon, label, action) in [
+            ("refresh", aurora_i18n::tr!("ui-context-reset-scripts"), QueueKind::Reset),
+            ("player-play-filled", aurora_i18n::tr!("ui-context-run-scripts"), QueueKind::Run),
+            ("player-stop-filled", aurora_i18n::tr!("ui-context-stop-scripts"), QueueKind::Stop),
+            ("trash-filled", aurora_i18n::tr!("ui-context-remove-scripts"), QueueKind::Delete),
+        ] {
+            ui.item_if(icon, label, o.scripts, CtxAction::Scripts { id, action });
+        }
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    // Pathfinding.Linksets.Select / Characters.Select: the pathfinding
+    // windows are not in Aurora yet
+    ui.todo("list-details-filled", aurora_i18n::tr!("ui-context-show-in-region-objects"));
+    ui.todo("walk", aurora_i18n::tr!("ui-context-show-in-characters"));
     ui.separator();
-    ui.submenu("shirt-filled", aurora_i18n::tr!("ui-context-wear"), true, |ui| {
-        ui.todo("shirt-filled", aurora_i18n::tr!("common-wear"));
-        ui.todo("circle-plus-filled", aurora_i18n::tr!("common-add"));
-        ui.todo("paperclip", aurora_i18n::tr!("common-attach-to"));
-        ui.todo("paperclip", aurora_i18n::tr!("common-attach-to-hud"));
-    });
+    put_on_submenu(ui, f, id);
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
         // Object.ReportAbuse: showFromObject on the object
         ui.item(
@@ -220,21 +226,136 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     );
     ui.todo("eye-off", aurora_i18n::tr!("ui-context-derender"));
     ui.todo("eye-closed", aurora_i18n::tr!("ui-context-derender-blacklist"));
-    ui.todo("arrow-back-up", aurora_i18n::tr!("ui-context-return"));
-    ui.item_if("hand-grab", aurora_i18n::tr!("ui-context-take"), o.take, CtxAction::Take(id));
-    ui.item_if(
-        "copy-filled",
-        aurora_i18n::tr!("ui-context-take-copy"),
-        o.take_copy,
-        CtxAction::TakeCopy(id),
-    );
+    // Object.EnableReturn: any object that is not worn
+    ui.item("arrow-back-up", aurora_i18n::tr!("ui-context-return"), CtxAction::Return(id));
+    if o.roots > 1 {
+        take_multiple_submenu(ui, o, id);
+    } else {
+        ui.item_if("hand-grab", aurora_i18n::tr!("ui-context-take"), o.take, CtxAction::Take(id));
+        ui.item_if(
+            "copy-filled",
+            aurora_i18n::tr!("ui-context-take-copy"),
+            o.take_copy,
+            CtxAction::TakeCopy(id),
+        );
+    }
     ui.item_if("coin-filled", aurora_i18n::tr!("common-pay"), o.pay, CtxAction::Pay(id));
     ui.item_if("shopping-cart-filled", aurora_i18n::tr!("common-buy"), o.buy, CtxAction::Buy(id));
     ui.todo("device-floppy-filled", aurora_i18n::tr!("common-save-as"));
     ui.separator();
     ui.item_if("trash-filled", aurora_i18n::tr!("common-delete"), o.delete, CtxAction::Delete(id));
     ui.separator();
-    ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    // Avatar.ResetSkeleton, shown for an animated object (its skeleton)
+    if let Some(skeleton) = o.animesh {
+        ui.item(
+            "bone-filled",
+            aurora_i18n::tr!("ui-context-reset-skeleton"),
+            CtxAction::ResetSkeleton {
+                avatar: skeleton,
+                animations: false,
+            },
+        );
+    }
+}
+
+/// "Touch", or the object's touch text (enable_object_touch).
+fn touch_label(o: &super::ObjectFacts) -> &str {
+    if o.touch_name.is_empty() {
+        aurora_i18n::tr!("ui-context-touch")
+    } else {
+        &o.touch_name
+    }
+}
+
+/// "Block particle owner" (Particle.Mute, EnableMuteParticle): the owner
+/// of the particle the right click landed on, when it is not us.
+fn particle_owner_item(ui: &mut Builder, f: &Facts, label: &str) {
+    ui.item_if(
+        "sparkles-filled",
+        label,
+        f.particle_owner.is_some(),
+        CtxAction::BlockParticleOwner(f.particle_owner.unwrap_or_default()),
+    );
+}
+
+/// "Put on" (menu_object.xml Put On): Wear, Add, and the attachment points
+/// by body part (LLVOAvatarSelf::buildMenus: groups 1 to 8 in submenus by
+/// pie slice, 9 the HUD), all enabled by object_is_wearable.
+fn put_on_submenu(ui: &mut Builder, f: &Facts, id: Uuid) {
+    let wear = f.object.wear;
+    ui.submenu("shirt-filled", aurora_i18n::tr!("ui-context-wear"), true, |ui| {
+        ui.item_if(
+            "shirt-filled",
+            aurora_i18n::tr!("common-wear"),
+            wear,
+            CtxAction::Wear { id, point: 0, add: false },
+        );
+        ui.item_if(
+            "circle-plus-filled",
+            aurora_i18n::tr!("common-add"),
+            wear,
+            CtxAction::Wear { id, point: 0, add: true },
+        );
+        let point = |c: &super::AttachChoice| CtxAction::Wear {
+            id,
+            point: c.id,
+            add: true,
+        };
+        ui.submenu("paperclip", aurora_i18n::tr!("common-attach-to"), true, |ui| {
+            for (group, label) in [
+                (1, aurora_i18n::tr!("ui-context-body-right-arm")),
+                (2, aurora_i18n::tr!("ui-context-body-head")),
+                (3, aurora_i18n::tr!("ui-context-body-left-arm")),
+                (5, aurora_i18n::tr!("ui-context-body-left-leg")),
+                (6, aurora_i18n::tr!("ui-context-body-torso")),
+                (7, aurora_i18n::tr!("ui-context-body-right-leg")),
+                (8, aurora_i18n::tr!("ui-context-body-enhanced-skeleton")),
+            ] {
+                ui.submenu("man-filled", label, true, |ui| {
+                    for c in f.attach_points.iter().filter(|c| c.group == group) {
+                        ui.item_if("man-filled", &c.label, wear, point(c));
+                    }
+                });
+            }
+        });
+        ui.submenu("device-desktop-filled", aurora_i18n::tr!("common-attach-to-hud"), true, |ui| {
+            for c in f.attach_points.iter().filter(|c| c.group == 9) {
+                ui.item_if("device-desktop-filled", &c.label, wear, point(c));
+            }
+        });
+    });
+}
+
+/// "Take multiple" (Object.VisibleTakeMultiple: two roots or more): as
+/// one item or one per root, taken or copied.
+fn take_multiple_submenu(ui: &mut Builder, o: &super::ObjectFacts, id: Uuid) {
+    ui.submenu("hand-grab", aurora_i18n::tr!("ui-context-take-multiple"), true, |ui| {
+        ui.item_if(
+            "hand-grab",
+            aurora_i18n::tr!("ui-context-take-combined"),
+            o.take,
+            CtxAction::Take(id),
+        );
+        ui.item_if(
+            "copy-filled",
+            aurora_i18n::tr!("ui-context-take-copy-combined"),
+            o.take_copy,
+            CtxAction::TakeCopy(id),
+        );
+        ui.item_if(
+            "hand-grab",
+            aurora_i18n::tr!("ui-context-take-separate"),
+            o.take,
+            CtxAction::TakeSeparate { id, copy: false },
+        );
+        ui.item_if(
+            "copy-filled",
+            aurora_i18n::tr!("ui-context-take-copy-separate"),
+            o.take_copy,
+            CtxAction::TakeSeparate { id, copy: true },
+        );
+    });
 }
 
 /// menu_attachment_self.xml
@@ -255,7 +376,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     }
     ui.item_if(
         "click-filled",
-        aurora_i18n::tr!("ui-context-touch"),
+        touch_label(&f.object),
         f.object.touch,
         CtxAction::Touch(key.local_id),
     );
@@ -265,6 +386,15 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.attachment_item.is_some(),
         CtxAction::AttachmentInventory(f.object.attachment_item.unwrap_or_default()),
     );
+    // Object.SetFavorite Add / Remove, the one that applies
+    if let (Some(item), Some(favorite)) = (f.object.attachment_item, f.object.favorite) {
+        let label = if favorite {
+            aurora_i18n::tr!("common-remove-from-favorites")
+        } else {
+            aurora_i18n::tr!("common-add-to-favorites")
+        };
+        ui.item("star-filled", label, CtxAction::AttachmentFavorite(item));
+    }
     ui.item_if(
         "pencil-filled",
         aurora_i18n::tr!("common-edit"),
@@ -322,10 +452,15 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         CtxAction::RefreshTextures(f.object.id),
     );
     ui.separator();
-    // "Delete" drops the attachment on the ground (Attachment.Drop)
-    ui.todo("trash-filled", aurora_i18n::tr!("common-delete"));
+    // Attachment.Drop: on the ground, where we may build
+    ui.item_if(
+        "arrow-bar-to-down",
+        aurora_i18n::tr!("ui-context-drop"),
+        f.object.drop,
+        CtxAction::Drop(key),
+    );
     ui.separator();
-    ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-block-particle-owner"));
+    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-block-particle-owner"));
 }
 
 /// menu_avatar_other.xml
@@ -631,7 +766,7 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item("mountain-filled", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);
     ui.separator();
-    ui.todo("sparkles-filled", aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }
 
 #[cfg(test)]
@@ -787,7 +922,7 @@ mod tests {
             "ui-context-show-textures",
             "ui-context-refresh-textures",
             "-",
-            "common-delete",
+            "ui-context-drop",
             "-",
             "ui-context-block-particle-owner",
         ]);
@@ -804,5 +939,214 @@ mod tests {
             seated: true,
             ..Facts::default()
         }));
+    }
+
+    const ID: Uuid = Uuid::from_u128(9);
+
+    fn object_target() -> Target {
+        Target::Object {
+            key: ObjKey { region: 1, local_id: 42 },
+            full_id: ID,
+            offset: Vec3::ZERO,
+        }
+    }
+
+    /// Every row of a menu with its submenus, depth first.
+    fn rows(entries: Vec<Entry>) -> Vec<Entry> {
+        let mut out = Vec::new();
+        for e in entries {
+            if let Kind::Submenu(children) = &e.kind {
+                out.extend(rows(children.clone()));
+            }
+            out.push(e);
+        }
+        out
+    }
+
+    fn row(entries: Vec<Entry>, key: &'static str) -> Entry {
+        let label = aurora_i18n::text(key);
+        rows(entries)
+            .into_iter()
+            .find(|e| e.label == label)
+            .unwrap_or_else(|| panic!("{key} missing"))
+    }
+
+    #[test]
+    fn the_object_menu_has_no_unavailable_row_left_but_the_big_windows() {
+        let f = Facts::default();
+        let left: Vec<String> = rows(world_menu(&object_target(), &f, Vec3::ZERO))
+            .into_iter()
+            .filter(|e| matches!(e.kind, Kind::Unavailable))
+            .map(|e| e.label)
+            .collect();
+        // the PBR material editor, the object profile, the pathfinding
+        // windows and the exporters are windows of their own; script info
+        // and derender belong to the resident menus' task
+        let expected = tr(&[
+            "ui-context-edit-pbr-material",
+            "common-profile",
+            "ui-context-script-information",
+            "ui-context-show-in-region-objects",
+            "ui-context-show-in-characters",
+            "ui-context-derender",
+            "ui-context-derender-blacklist",
+            "common-save-as",
+        ]);
+        let mut left_sorted = left.clone();
+        left_sorted.sort();
+        let mut expected_sorted = expected;
+        expected_sorted.sort();
+        assert_eq!(left_sorted, expected_sorted, "{left:?}");
+    }
+
+    #[test]
+    fn return_scripts_and_put_on_follow_the_object_facts() {
+        let mut f = Facts::default();
+        let menu = |f: &Facts| world_menu(&object_target(), f, Vec3::ZERO);
+        // Return: any object that is not worn
+        let ret = row(menu(&f), "ui-context-return");
+        assert!(ret.enabled && matches!(ret.kind, Kind::Action(CtxAction::Return(id)) if id == ID));
+        // the script actions need a prim we may modify
+        assert!(!row(menu(&f), "ui-context-reset-scripts").enabled);
+        f.object.scripts = true;
+        for (key, kind) in [
+            ("ui-context-reset-scripts", QueueKind::Reset),
+            ("ui-context-run-scripts", QueueKind::Run),
+            ("ui-context-stop-scripts", QueueKind::Stop),
+            ("ui-context-remove-scripts", QueueKind::Delete),
+        ] {
+            let r = row(menu(&f), key);
+            assert!(r.enabled);
+            assert!(matches!(r.kind, Kind::Action(CtxAction::Scripts { id, action }) if id == ID && action == kind));
+        }
+        // Put on: Wear replaces on its own point, Add and the points add
+        f.attach_points = vec![
+            crate::ui::context::AttachChoice {
+                id: 6,
+                label: "Right Hand".into(),
+                group: 1,
+                pie_slice: 3,
+            },
+            crate::ui::context::AttachChoice {
+                id: 33,
+                label: "Top".into(),
+                group: 9,
+                pie_slice: 0,
+            },
+        ];
+        assert!(!row(menu(&f), "common-wear").enabled);
+        f.object.wear = true;
+        assert!(matches!(
+            row(menu(&f), "common-wear").kind,
+            Kind::Action(CtxAction::Wear { point: 0, add: false, .. })
+        ));
+        assert!(matches!(
+            row(menu(&f), "common-add").kind,
+            Kind::Action(CtxAction::Wear { point: 0, add: true, .. })
+        ));
+        let entries = rows(menu(&f));
+        let hand = entries.iter().find(|e| e.label == "Right Hand").expect("body point");
+        assert!(hand.enabled && matches!(hand.kind, Kind::Action(CtxAction::Wear { point: 6, add: true, .. })));
+        let top = entries.iter().find(|e| e.label == "Top").expect("HUD point");
+        assert!(matches!(top.kind, Kind::Action(CtxAction::Wear { point: 33, add: true, .. })));
+        // the body point sits in its body part submenu
+        let Kind::Submenu(arm) = row(menu(&f), "ui-context-body-right-arm").kind else {
+            panic!("not a submenu");
+        };
+        assert_eq!(arm.iter().map(|e| e.label.as_str()).collect::<Vec<_>>(), ["Right Hand"]);
+    }
+
+    #[test]
+    fn a_kept_selection_links_and_takes_multiple() {
+        let mut f = Facts::default();
+        f.object.take = true;
+        f.object.take_copy = true;
+        let menu = |f: &Facts| world_menu(&object_target(), f, Vec3::ZERO);
+        // one object: Take / Take copy, nothing to link
+        assert!(!row(menu(&f), "ui-context-link").enabled);
+        assert!(matches!(row(menu(&f), "ui-context-take").kind, Kind::Action(CtxAction::Take(_))));
+        f.object.roots = 3;
+        f.object.link = true;
+        let link = row(menu(&f), "ui-context-link");
+        assert!(link.enabled && matches!(link.kind, Kind::Action(CtxAction::Link(id)) if id == ID));
+        let labels = labels(&menu(&f));
+        assert!(labels.contains(&format!("{}>", aurora_i18n::text("ui-context-take-multiple"))));
+        assert!(!labels.contains(&aurora_i18n::text("ui-context-take").to_string()));
+        assert!(matches!(
+            row(menu(&f), "ui-context-take-separate").kind,
+            Kind::Action(CtxAction::TakeSeparate { copy: false, .. })
+        ));
+        assert!(matches!(
+            row(menu(&f), "ui-context-take-copy-separate").kind,
+            Kind::Action(CtxAction::TakeSeparate { copy: true, .. })
+        ));
+    }
+
+    #[test]
+    fn touch_and_sit_say_the_objects_own_texts() {
+        let mut f = Facts::default();
+        f.object.touch = true;
+        f.object.touch_name = "Ring the bell".into();
+        f.object.sit_name = "Lie down".into();
+        let entries = world_menu(&object_target(), &f, Vec3::ZERO);
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.label == "Ring the bell" && matches!(e.kind, Kind::Action(CtxAction::Touch(42))))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.label == "Lie down" && matches!(e.kind, Kind::Action(CtxAction::Sit { .. })))
+        );
+    }
+
+    #[test]
+    fn the_particle_owner_and_the_animesh_skeleton_rows() {
+        let owner = Uuid::from_u128(77);
+        let mut f = Facts::default();
+        let menu = |f: &Facts| world_menu(&object_target(), f, Vec3::ZERO);
+        assert!(!row(menu(&f), "ui-context-ignore-particle-owner").enabled);
+        // no reset skeleton on a prim that drives no skeleton
+        assert!(!labels(&menu(&f)).contains(&aurora_i18n::text("ui-context-reset-skeleton").to_string()));
+        f.particle_owner = Some(owner);
+        f.object.animesh = Some(ID);
+        let block = row(menu(&f), "ui-context-ignore-particle-owner");
+        assert!(block.enabled && matches!(block.kind, Kind::Action(CtxAction::BlockParticleOwner(o)) if o == owner));
+        assert!(matches!(
+            row(menu(&f), "ui-context-reset-skeleton").kind,
+            Kind::Action(CtxAction::ResetSkeleton { avatar, animations: false }) if avatar == ID
+        ));
+        // the land menu blocks the same owner
+        let land = row(world_menu(&Target::Ground, &f, Vec3::ZERO), "ui-context-ignore-particle-owner");
+        assert!(land.enabled);
+        // and our attachments' menu
+        let key = ObjKey { region: 1, local_id: 42 };
+        let att = row(
+            world_menu(&Target::Attachment { key }, &f, Vec3::ZERO),
+            "ui-context-block-particle-owner",
+        );
+        assert!(att.enabled);
+    }
+
+    #[test]
+    fn our_attachment_drops_and_toggles_its_favorite() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let item = Uuid::from_u128(5);
+        let mut f = Facts::default();
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        assert!(!row(menu(&f), "ui-context-drop").enabled);
+        f.object.drop = true;
+        let drop = row(menu(&f), "ui-context-drop");
+        assert!(drop.enabled && matches!(drop.kind, Kind::Action(CtxAction::Drop(k)) if k == key));
+        // the favorite row, once the item is known: the one that applies
+        f.object.attachment_item = Some(item);
+        f.object.favorite = Some(false);
+        let add = row(menu(&f), "common-add-to-favorites");
+        assert!(matches!(add.kind, Kind::Action(CtxAction::AttachmentFavorite(i)) if i == item));
+        f.object.favorite = Some(true);
+        let entries = menu(&f);
+        assert!(!labels(&entries).contains(&aurora_i18n::text("common-add-to-favorites").to_string()));
+        row(entries, "common-remove-from-favorites");
     }
 }

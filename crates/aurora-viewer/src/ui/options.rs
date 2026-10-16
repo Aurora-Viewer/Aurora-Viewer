@@ -1952,6 +1952,31 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.confirm_no_transfer_settings),
                 );
             });
+            // the "ignore" boxes of ReturnToOwner, AttachmentDrop and
+            // ConfirmScriptModify (the object menus)
+            group(ui, p, aurora_i18n::tr!("ui-options-objects"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-return-to-owner"),
+                    aurora_i18n::tr!("ui-options-confirm-return-to-owner-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_return_to_owner),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-attachment-drop"),
+                    aurora_i18n::tr!("ui-options-confirm-attachment-drop-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_attachment_drop),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-confirm-script-modify"),
+                    aurora_i18n::tr!("ui-options-confirm-script-modify-help"),
+                    |ui| toggle(ui, p, &mut s.confirm_script_modify),
+                );
+            });
             // the "ignore" box of ChangeObjectBonusFactor and the "Don't ask"
             // of ConfirmTextureHeights (RegionCheckTextureHeights)
             group(ui, p, aurora_i18n::tr!("region-title"), |ui| {
