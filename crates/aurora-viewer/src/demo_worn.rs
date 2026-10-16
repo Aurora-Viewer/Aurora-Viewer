@@ -1,8 +1,10 @@
 //! Offline worn object (AURORA_DEMO_WORN): a two-prim linkset on the back
 //! of our avatar, with the flags and the inventory item the menus of worn
 //! objects depend on. It goes through the same ObjectUpdate, selection and
-//! touch paths as an attachment of the grid.
+//! touch paths as an attachment of the grid. Its `inventory`, `library`
+//! and `sound` modes double-click inventory rows (`double_clicks`).
 use super::*;
+use aurora_net::inventory::InvItem;
 
 pub const ROOT: u32 = 9300;
 pub const CHILD: u32 = 9301;
@@ -53,6 +55,80 @@ pub fn events() -> Vec<NetEvent> {
 /// The inventory item of the worn object ("Demo backpack").
 pub fn item_id() -> Uuid {
     root().full_id
+}
+
+/// Library hat, shirt and shape of `AURORA_DEMO_WORN=library`.
+const LIBRARY: [u128; 3] = [9_310_001, 9_310_002, 9_310_003];
+/// The chime of `AURORA_DEMO_WORN=sound`.
+const SOUND: u128 = 9_310_004;
+
+/// The inventory rows a mode double-clicks: (first frame, item). Two
+/// clicks a frame apart, and every pair far enough from the next one not
+/// to count as a triple click.
+pub fn double_clicks(mode: &str) -> Vec<(u64, Uuid)> {
+    match mode {
+        "inventory" => vec![(700, item_id()), (900, item_id())],
+        "library" => [700, 800, 900].into_iter().zip(LIBRARY.map(Uuid::from_u128)).collect(),
+        "sound" => vec![(700, Uuid::from_u128(SOUND))],
+        _ => Vec::new(),
+    }
+}
+
+fn demo_item(id: u128, parent: Uuid, owner: Uuid, name: &str, asset_type: i32, inv_type: i32, flags: u32) -> InvItem {
+    InvItem {
+        id: Uuid::from_u128(id),
+        parent,
+        asset_id: Uuid::from_u128(id + 1_000),
+        name: name.into(),
+        asset_type,
+        inv_type,
+        flags,
+        creator: owner,
+        owner,
+        base_mask: 0x7fffffff,
+        owner_mask: 0x7fffffff,
+        next_owner_mask: 0x7fffffff,
+        ..Default::default()
+    }
+}
+
+/// `AURORA_DEMO_WORN=library`: a hat, a shirt and a shape in the Library,
+/// to be copied into the inventory and worn by a double-click.
+pub fn seed_library(world: &mut crate::world::World) {
+    use crate::world::inventory::{FetchState, Folder};
+    let inv = &mut world.inventory;
+    if inv.lib_root.is_nil() {
+        inv.lib_root = Uuid::from_u128(8003);
+        inv.lib_owner = Uuid::from_u128(8004);
+    }
+    let root = inv.lib_root;
+    inv.folders.entry(root).or_insert_with(|| Folder {
+        info: aurora_net::inventory::InvFolder {
+            id: root,
+            name: aurora_i18n::tr!("common-library").into(),
+            type_default: 8,
+            version: 1,
+            ..Default::default()
+        },
+        children: Vec::new(),
+        items: Vec::new(),
+        state: FetchState::Fetched,
+        library: true,
+    });
+    let owner = inv.lib_owner;
+    inv.add_items(vec![
+        demo_item(LIBRARY[0], root, owner, aurora_i18n::tr!("demo-library-hat"), 6, 6, 2),
+        demo_item(LIBRARY[1], root, owner, aurora_i18n::tr!("demo-library-shirt"), 5, 18, 4),
+        demo_item(LIBRARY[2], root, owner, aurora_i18n::tr!("demo-library-shape"), 13, 18, 0),
+    ]);
+}
+
+/// `AURORA_DEMO_WORN=sound`: a sound item playing `chime`, in the inventory.
+pub fn seed_sound(world: &mut crate::world::World, chime: Uuid) {
+    let inv = &mut world.inventory;
+    let mut item = demo_item(SOUND, inv.root, world.agent_id, aurora_i18n::tr!("demo-trigger-sound"), 1, 1, 0);
+    item.asset_id = chime;
+    inv.add_items(vec![item]);
 }
 
 /// The inventory item the object is worn from, in the current outfit.

@@ -301,6 +301,8 @@ impl App {
                 self.scene.sounds.want(asset);
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), asset);
             }
+            InvAction::TriggerSound(asset) => self.send_sound_trigger(asset),
+            InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id) => {
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
@@ -591,6 +593,43 @@ impl App {
                 // load_document protects any drafts in the other windows.
                 self.send(NetCommand::PreviewInventoryItem(it));
             }
+        }
+    }
+
+    /// A Library wearable double-clicked: LLAppearanceMgr::wearItemsOnAvatar
+    /// copies it into the inventory (copy_inventory_item, the server's default
+    /// folder of its type) and wears the copy once it arrives (wear_on_avatar_cb).
+    fn wear_copy(&mut self, item: Uuid, replace: bool) {
+        let Some(owner) = self.world.inventory.items.get(&item).map(|it| it.owner) else {
+            return;
+        };
+        let request = Uuid::new_v4();
+        self.inventory_ui.wear_copies.insert(request, replace);
+        self.send(NetCommand::CopyInventoryItem {
+            request,
+            copy: aurora_net::inventory::operations::CopyItem {
+                item,
+                owner,
+                parent: Uuid::nil(),
+                name: String::new(),
+            },
+        });
+    }
+
+    /// wear_on_avatar_cb: the copy arrived, it is worn like any inventory item.
+    pub(super) fn wear_copied(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        let Some(replace) = self.inventory_ui.wear_copies.remove(&request) else {
+            return;
+        };
+        match result {
+            Ok(it) => {
+                let item = it.id;
+                log::info!("library copy arrived, wearing it: {item} in {}", it.parent);
+                // the server's inventory update may follow this callback
+                self.world.inventory.add_items(vec![it]);
+                self.apply_appearance_action(crate::world::appearance::Action::WearItem { item, replace, point: 0 });
+            }
+            Err(reason) => self.inventory_ui.message = reason,
         }
     }
 

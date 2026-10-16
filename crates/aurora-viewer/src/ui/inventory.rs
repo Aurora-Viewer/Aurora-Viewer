@@ -88,6 +88,14 @@ pub enum InvAction {
         start: bool,
     },
     Sound(Uuid),
+    /// Play a sound in the world, heard by everyone around (send_sound_trigger).
+    TriggerSound(Uuid),
+    /// Copy a Library wearable into the inventory, then wear the copy
+    /// (`replace` as for `Action::WearItem`).
+    WearCopy {
+        item: Uuid,
+        replace: bool,
+    },
     Restore(Uuid),
     Share {
         items: Vec<Uuid>,
@@ -260,6 +268,8 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    /// Library wearables being copied to be worn: copy request → replace.
+    pub wear_copies: std::collections::HashMap<Uuid, bool>,
     pub filters_open: bool,
     pub preferences_open: bool,
     filters_initialized: bool,
@@ -2309,6 +2319,69 @@ mod tests {
         assert!(
             matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == Uuid::from_u128(8100))
         );
+    }
+
+    /// LLSoundBridgeAction: a double-click plays a sound in the world, where
+    /// "Open" shows its preview; a null sound sends nothing.
+    #[test]
+    fn double_click_triggers_a_sound_in_the_world() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let sound = Uuid::from_u128(8105);
+        let asset = inv.items[&sound].asset_id;
+        let click = |inv: &Inventory| {
+            let mut actions = vec![];
+            context::double_click(
+                inv,
+                sound,
+                &mut InventoryUi::default(),
+                &InventoryPreferences::default(),
+                &Facts::default(),
+                &mut actions,
+            );
+            actions
+        };
+        assert!(matches!(&click(&inv)[..], [InvAction::TriggerSound(id)] if *id == asset));
+        if let Some(it) = inv.items.get_mut(&sound) {
+            it.asset_id = Uuid::nil();
+        }
+        assert!(click(&inv).is_empty());
+    }
+
+    /// LLAppearanceMgr::wearItemsOnAvatar: a Library wearable is copied into
+    /// the inventory, then the copy is worn, replacing as the double-click
+    /// preferences say (body parts always replace).
+    #[test]
+    fn double_click_on_a_library_wearable_copies_it_then_wears_it() {
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let library: Vec<_> = [8100u128, 8111, 8112]
+            .into_iter()
+            .map(|n| {
+                let mut it = inv.items[&Uuid::from_u128(n)].clone();
+                it.id = Uuid::from_u128(n + 500);
+                it.parent = inv.lib_root;
+                it.owner = inv.lib_owner;
+                it
+            })
+            .collect();
+        inv.add_items(library);
+        for (add, expected) in [(false, [true, true, true]), (true, [false, false, true])] {
+            let prefs = InventoryPreferences {
+                double_click_add_objects: add,
+                double_click_add_clothes: add,
+                ..Default::default()
+            };
+            for (n, replace) in [8600u128, 8611, 8612].into_iter().zip(expected) {
+                let mut actions = vec![];
+                let item = Uuid::from_u128(n);
+                context::double_click(&inv, item, &mut InventoryUi::default(), &prefs, &Facts::default(), &mut actions);
+                assert!(
+                    matches!(&actions[..], [InvAction::WearCopy { item: id, replace: r }] if *id == item && *r == replace),
+                    "item {n}, add {add}"
+                );
+            }
+        }
     }
 
     fn folder_window_frame(ctx: &egui::Context, inv: &mut Inventory, root: Uuid, st: &mut InventoryUi) -> egui::FullOutput {

@@ -863,6 +863,15 @@ impl Session<'_> {
         for completion in self.inventory_copies.expire(Instant::now()) {
             self.finish_inventory_copies(completion);
         }
+        for request in self.inventory_copies.expire_singles(Instant::now()) {
+            emit(
+                self.sh,
+                NetEvent::InventoryItemCopied {
+                    request,
+                    result: Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into()),
+                },
+            );
+        }
         let before = self.inventory_callbacks.len();
         self.inventory_callbacks
             .retain(|_, (sent, _)| sent.elapsed() < Duration::from_secs(60));
@@ -2008,6 +2017,7 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::CopyInventoryItem { request, copy } => self.copy_inventory_item(request, copy),
             NetCommand::FinishInventoryCopies { request, reply } => self.start_inventory_copies(request, reply),
             NetCommand::CopyNotecardInventory {
                 editor,

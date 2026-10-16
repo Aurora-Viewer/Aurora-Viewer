@@ -1247,6 +1247,30 @@ impl App {
                 self.world.inventory.add_items(items);
                 return;
             }
+            // the server's copy: the default folder of its type for a nil parent
+            if let NetCommand::CopyInventoryItem { request, copy } = &cmd {
+                let inv = &self.world.inventory;
+                let result = inv
+                    .items
+                    .get(&copy.item)
+                    .cloned()
+                    .map(|mut it| {
+                        it.id = uuid::Uuid::new_v4();
+                        it.owner = self.world.agent_id;
+                        it.parent = if copy.parent.is_nil() {
+                            crate::world::inventory::actions::system(inv, it.asset_type).unwrap_or(inv.root)
+                        } else {
+                            copy.parent
+                        };
+                        it
+                    })
+                    .ok_or_else(|| aurora_i18n::tr!("inventory-copy-unconfirmed").into());
+                if let Ok(it) = &result {
+                    self.world.inventory.add_items(vec![it.clone()]);
+                }
+                self.on_app_event(NetEvent::InventoryItemCopied { request: *request, result });
+                return;
+            }
             if let NetCommand::FinishInventoryCopies { request, reply } = &cmd {
                 let items = reply
                     .copies
@@ -1865,6 +1889,10 @@ impl App {
         } = ev
         {
             self.notecard_inventory_copied(editor, notecard, open, result);
+            return;
+        }
+        if let NetEvent::InventoryItemCopied { request, result } = ev {
+            self.wear_copied(request, result);
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
@@ -11889,10 +11917,19 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
                 crate::demo::worn::seed_inventory(&mut self.world);
-                // `inventory`: its row in sight, for the double-clicks
-                if std::env::var("AURORA_DEMO_WORN").is_ok_and(|mode| mode == "inventory") {
+                // `inventory`, `library`, `sound`: the rows to double-click in sight
+                let mode = std::env::var("AURORA_DEMO_WORN").unwrap_or_default();
+                if mode == "library" {
+                    crate::demo::worn::seed_library(&mut self.world);
+                }
+                if mode == "sound" {
+                    let (id, clip) = crate::demo::chime();
+                    self.scene.sounds.insert(id, clip);
+                    crate::demo::worn::seed_sound(&mut self.world, id);
+                }
+                if let Some(&(_, first)) = crate::demo::worn::double_clicks(&mode).first() {
                     self.panels.inventory = true;
-                    self.inventory_ui.show_original(&self.world.inventory, crate::demo::worn::item_id());
+                    self.inventory_ui.show_original(&self.world.inventory, first);
                 }
             }
             // HUD fixtures exercise screen-space rendering and the same

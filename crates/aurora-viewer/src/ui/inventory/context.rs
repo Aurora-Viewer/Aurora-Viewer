@@ -22,9 +22,12 @@ fn submit(st: &mut InventoryUi, actions: &mut Vec<InvAction>, plan: Result<Mutat
 }
 /// A double-click on an item row: the bridge's `openItem`
 /// (indra/newview/llinventorybridge.cpp, originally LGPL 2.1). Objects,
-/// clothing and body parts toggle (`wear_toggle`); every other type opens
-/// like the "Open" entry. A link acts on its target, like
-/// LLInvFVBridgeAction::doAction.
+/// clothing and body parts toggle (`wear_toggle`); one of the Library is
+/// copied into the inventory, then worn (LLAppearanceMgr::wearItemsOnAvatar,
+/// copy_inventory_item with wear_on_avatar_cb). A sound plays in the world
+/// for everyone (LLSoundBridgeAction: send_sound_trigger, where "Open"
+/// shows its preview). Every other type opens like the "Open" entry. A
+/// link acts on its target, like LLInvFVBridgeAction::doAction.
 pub(super) fn double_click(
     inv: &Inventory,
     id: Uuid,
@@ -33,13 +36,22 @@ pub(super) fn double_click(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    if let Some(original) = rules::original(inv, id)
-        && let Some(it) = inv.items.get(&original).filter(|it| matches!(it.asset_type, 5 | 6 | 13))
-    {
-        actions.extend(wear_toggle(it, facts.worn.contains(&original), prefs).map(InvAction::Appearance));
-        return;
+    let original = rules::original(inv, id);
+    match original.and_then(|original| inv.items.get(&original)) {
+        Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(it, facts.worn.contains(&it.id), prefs) {
+            Some(Wear::WearItem { item, replace, .. }) if rules::library(inv, item) => {
+                actions.push(InvAction::WearCopy { item, replace });
+            }
+            wear => actions.extend(wear.map(InvAction::Appearance)),
+        },
+        Some(it) if it.asset_type == 1 => {
+            // send_sound_trigger sends nothing for a null sound
+            if !it.asset_id.is_nil() {
+                actions.push(InvAction::TriggerSound(it.asset_id));
+            }
+        }
+        _ => open(inv, id, st, actions),
     }
-    open(inv, id, st, actions);
 }
 
 /// What a double-click does to a wearable, by LLObjectBridge::openItem and

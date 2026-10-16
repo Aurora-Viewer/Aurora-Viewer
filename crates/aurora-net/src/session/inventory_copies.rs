@@ -14,6 +14,8 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) struct Pending {
     batches: HashMap<Uuid, Batch>,
     callbacks: HashMap<u32, (Uuid, CopyItem)>,
+    /// Single copies by callback: their request and when they were sent.
+    singles: HashMap<u32, (Uuid, Instant)>,
 }
 
 struct Batch {
@@ -85,6 +87,27 @@ impl Pending {
         })
     }
 
+    /// The new item of a single copy (`NetCommand::CopyInventoryItem`).
+    fn accept_single(&mut self, callback: u32, item: &InvItem) -> Option<(Uuid, Result<InvItem, String>)> {
+        let (request, _) = self.singles.remove(&callback)?;
+        Some((
+            request,
+            if item.id.is_nil() {
+                Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into())
+            } else {
+                Ok(item.clone())
+            },
+        ))
+    }
+
+    /// Single copies the server never answered within the timeout.
+    pub(super) fn expire_singles(&mut self, now: Instant) -> Vec<Uuid> {
+        self.singles
+            .extract_if(|_, (_, sent)| now.duration_since(*sent) >= TIMEOUT)
+            .map(|(_, (request, _))| request)
+            .collect()
+    }
+
     pub(super) fn expire(&mut self, now: Instant) -> Vec<Completion> {
         let expired: Vec<_> = self
             .batches
@@ -120,6 +143,10 @@ impl Session<'_> {
         if self.accept_wearable_copy(callback, item) {
             return;
         }
+        if let Some((request, result)) = self.inventory_copies.accept_single(callback, item) {
+            emit(self.sh, NetEvent::InventoryItemCopied { request, result });
+            return;
+        }
         let request = self.inventory_copies.request_for(callback);
         if let Some(completion) = self.inventory_copies.accept(callback, item) {
             self.finish_inventory_copies(completion);
@@ -129,6 +156,24 @@ impl Session<'_> {
             emit(self.sh, NetEvent::InventoryProgress { request, progress });
         }
     }
+    /// copy_inventory_item with a callback (llviewerinventory.cpp): one
+    /// CopyInventoryItem, its new item reported by `InventoryItemCopied`.
+    pub(super) fn copy_inventory_item(&mut self, request: Uuid, copy: CopyItem) {
+        if self.main.is_none() || copy.item.is_nil() || copy.owner.is_nil() {
+            emit(
+                self.sh,
+                NetEvent::InventoryItemCopied {
+                    request,
+                    result: Err(aurora_i18n::tr!("inventory-copy-unconfirmed").into()),
+                },
+            );
+            return;
+        }
+        let callback = self.inventory_callback(false);
+        self.inventory_copies.singles.insert(callback, (request, Instant::now()));
+        self.send_main(&message(self.agent_id(), self.session_id(), callback, &copy), true);
+    }
+
     pub(super) fn start_inventory_copies(&mut self, request: Uuid, reply: Reply) {
         if reply.copies.is_empty() || self.main.is_none() || self.logout_started.is_some() {
             emit(
@@ -277,6 +322,24 @@ mod tests {
         assert_eq!(expired.len(), 1);
         assert!(expired[0].result.is_err());
         assert!(pending.callbacks.is_empty() && pending.batches.is_empty());
+    }
+
+    #[test]
+    fn a_single_copy_reports_its_new_item_once_or_expires() {
+        let mut pending = Pending::default();
+        pending.singles.insert(41, (id(1), Instant::now()));
+        assert!(pending.accept_single(42, &copied(104)).is_none(), "foreign callback");
+        let (request, result) = pending.accept_single(41, &copied(103)).expect("copied");
+        assert_eq!(request, id(1));
+        assert_eq!(result.expect("new item").id, id(103));
+        assert!(pending.accept_single(41, &copied(103)).is_none(), "reported once");
+        pending.singles.insert(43, (id(2), Instant::now()));
+        let (_, result) = pending.accept_single(43, &InvItem::default()).expect("answered");
+        assert!(result.is_err(), "a nil item is no copy");
+        pending.singles.insert(44, (id(3), Instant::now()));
+        assert!(pending.expire_singles(Instant::now()).is_empty());
+        assert_eq!(pending.expire_singles(Instant::now() + TIMEOUT), vec![id(3)]);
+        assert!(pending.singles.is_empty());
     }
 
     #[tokio::test]
