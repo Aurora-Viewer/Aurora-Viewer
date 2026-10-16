@@ -96,6 +96,9 @@ fn run_viewer() -> anyhow::Result<()> {
     // core for the render thread; decoding and meshing have their own pool
     // (scene/jobs.rs).
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    // the frame's threads one step above normal (frame_priority.rs)
+    use aurora_render::frame_priority::{PriorityMode, set_raised};
+    set_raised(PriorityMode::from_env() != PriorityMode::Normal);
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(threads.saturating_sub(1).max(2))
         .thread_name(|i| format!("aurora-worker-{i}"))

@@ -108,6 +108,8 @@ impl Shared {
 
     /// A pool worker: joins the loop unless the caller has already left it.
     fn help(&self) {
+        // (a helper the frame waits for: frame_priority.rs)
+        aurora_render::frame_priority::apply();
         let mut state = self.state.load(Ordering::Acquire);
         loop {
             if state & CLOSED != 0 {

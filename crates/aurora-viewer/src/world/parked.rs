@@ -115,6 +115,7 @@ impl World {
             }
             _ => Vec::new(),
         };
+        let started = std::time::Instant::now();
         let objects = self.objects.park_region(handle, &kept);
         self.move_rekeyed();
         let keys: Vec<ObjKey> = self.gltf_overrides.keys().filter(|k| k.region == handle).copied().collect();
@@ -123,9 +124,10 @@ impl World {
             .filter_map(|k| self.gltf_overrides.remove(&k).map(|sides| (k, sides)))
             .collect();
         log::info!(
-            "region {} is {gap:.0} m away: {} objects parked until it is closed or in reach again",
+            "region {} is {gap:.0} m away: {} objects parked in {:.2} ms until it is closed or in reach again",
             self.regions.get(&handle).map_or("", |r| r.name.as_str()),
-            objects.len()
+            objects.len(),
+            started.elapsed().as_secs_f64() * 1e3
         );
         self.parked.insert(
             handle,
@@ -143,6 +145,7 @@ impl World {
         let Some(p) = self.parked.remove(&handle) else {
             return;
         };
+        let started = std::time::Instant::now();
         let total = p.objects.len();
         // an object that came from elsewhere in the meantime is the newer
         // one: its parked self is dropped with what hung from it
@@ -158,15 +161,18 @@ impl World {
                 self.gltf_overrides.entry(key).or_insert(sides);
             }
         }
-        log::info!(
-            "region {} is in reach again: {} objects back, {} events to catch up",
-            self.regions.get(&handle).map_or("", |r| r.name.as_str()),
-            total - dropped.len(),
-            p.events.len()
-        );
+        let restored = started.elapsed();
+        let events = p.events.len();
         for ev in p.events {
             self.apply(ev);
         }
+        log::info!(
+            "region {} is in reach again: {} objects back in {:.2} ms, {events} events caught up in {:.2} ms",
+            self.regions.get(&handle).map_or("", |r| r.name.as_str()),
+            total - dropped.len(),
+            restored.as_secs_f64() * 1e3,
+            (started.elapsed() - restored).as_secs_f64() * 1e3
+        );
     }
 }
 
