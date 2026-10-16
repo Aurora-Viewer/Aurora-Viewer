@@ -1547,7 +1547,7 @@ To check with these scenarios:
   animations over the demo's standing one; with `worn`, each wears that
   many rigged meshes (those of the folder's `.mesh` files that have a
   skin), each with its texture: `avatars=30,worn=6` is a busy place. With
-  `pbr=1`, one prim in twelve wears a PBR material (the `.mat` files of
+  `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
   the folder's `mat` subfolder), whose textures are served from `tex`
   when it holds them, else one of the others in their place. Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to

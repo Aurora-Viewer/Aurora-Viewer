@@ -7,7 +7,7 @@
 //! own texture. `avatars` avatars (16 by default) stand nearby, each playing
 //! two animations and, with `worn`, wearing that many rigged meshes (the
 //! `.mesh` files of the folder that have a skin), each with its texture.
-//! With `pbr=1`, one prim in four wears a PBR material (the `.mat` files of
+//! With `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
 //! its `mat` subfolder); the textures they name are served from the `tex`
 //! subfolder when it holds them.
 //! Every asset is downloaded from the local asset server
@@ -168,7 +168,7 @@ pub struct ArrivalDemo {
     /// `avatars=`, and `worn=` rigged meshes each.
     avatars: u32,
     worn: u32,
-    /// `pbr=1`: PBR materials on a quarter of the prims.
+    /// `pbr=1`: PBR materials on one object in twelve.
     pbr: bool,
     files: Arc<OnceLock<Files>>,
     armed: Option<Instant>,
@@ -326,7 +326,7 @@ impl ArrivalDemo {
                     texture: id(KIND_TEXTURE, i as u32),
                     full_id: Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | (FIRST_LOCAL_ID + i as u32) as u128),
                     mesh: (i % 3 == 0).then(|| id(KIND_MESH, (i / 3) as u32)),
-                    // (on prims: one in four of those that are not meshes)
+                    // (one object in twelve, a prim)
                     material: (self.pbr && i % 3 == 1 && i % 4 == 1).then(|| id(KIND_MATERIAL, i as u32)),
                 }
             })
