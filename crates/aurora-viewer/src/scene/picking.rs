@@ -6,6 +6,7 @@ use super::*;
 use crate::media::pick::{self, FaceTris};
 use aurora_net::TouchSurface;
 use glam::Vec2;
+use rayon::prelude::*;
 use std::sync::atomic::Ordering::Relaxed;
 
 pub struct PickFace {

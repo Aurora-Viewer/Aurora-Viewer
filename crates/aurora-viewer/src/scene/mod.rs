@@ -57,7 +57,6 @@ use avatar::AvatarLibrary;
 use glam::{Mat4, Quat, Vec3, Vec4};
 use jobs::{AlphaKind, JobResult, Jobs};
 use meshes::{MaterialStreamer, MeshStreamer};
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
