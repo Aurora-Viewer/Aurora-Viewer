@@ -147,15 +147,22 @@ fn scroll(
     size: egui::Vec2,
     show: impl FnOnce(&mut egui::Ui, egui::Vec2) -> super::embedded::EditorResult,
 ) -> super::embedded::EditorResult {
-    egui::ScrollArea::both()
+    let out = egui::ScrollArea::both()
         .id_salt(id.with("scroll"))
         .max_height(size.y)
         .auto_shrink([false, false])
-        .show(ui, |ui| {
-            let size = egui::vec2(ui.available_width().min(size.x), size.y);
+        .show_viewport(ui, |ui, viewport| {
+            // Fill the viewport, not the outer area: a reserved scroll bar
+            // reduces both axes. Also cap the pixel-rounded child UI at the
+            // actual viewport so rounding cannot create another scroll bar.
+            let size = ui.available_size().min(viewport.size()).min(size);
+            ui.set_max_size(size);
             show(ui, size)
-        })
-        .inner
+        });
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("test_scroll_geometry"), (out.inner_rect, out.content_size)));
+    out.inner
 }
 
 #[derive(Clone, Default)]

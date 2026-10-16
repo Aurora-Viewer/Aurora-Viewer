@@ -2943,6 +2943,9 @@ offline; the files and snapshots uploaded in demo stay offline.
   and its live Markdown preview on the right, with independent scrolling.
   Type headings, bold and Unicode in Edit and check that the right side
   updates without leaving the mode, then Ctrl+S from either pane.
+  Leave Edit idle with the source focused, including at a fractional UI
+  scale (112.5%): neither pane's border may oscillate. A short note must
+  not show scroll bars; a long note must still scroll in each pane.
   Markdown is a selectable formatted preview with headings, emphasis, lists, quotes,
   code and links. Images show their alt text as a link without downloading.
   Newlines before and after embedded-item rows must remain newlines in both

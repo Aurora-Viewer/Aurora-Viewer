@@ -1126,6 +1126,70 @@ mod tests {
     }
 
     #[test]
+    fn notecard_split_edit_geometry_stays_stable() {
+        for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
+            for long in [false, true] {
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                ctx.set_pixels_per_point(scale);
+                let (inv, mut st) = note_fixture();
+                st.load_document(7, true, &Ok(crate::world::inventory::demo::note_asset(true)));
+                let text = st.preview_text.as_mut().expect("loaded").as_mut().expect("text");
+                text.insert_str(0, "# Heading\n\n**Bold** and `code`.\n\n");
+                if long {
+                    text.push_str(&"\nMore text".repeat(100));
+                }
+                st.notecard_view = super::super::markdown::View::Edit;
+                let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+                let panes = [editor, editor.with("markdown")];
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while st.notecard_markdown.get(&ctx, text).is_none() {
+                    assert!(std::time::Instant::now() < deadline, "preview did not finish");
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                let draft = st.preview_text.clone();
+                for focus in panes {
+                    ctx.memory_mut(|memory| memory.request_focus(focus));
+                    let mut sizes = [Vec::new(), Vec::new()];
+                    for frame in 0..240 {
+                        document_frame(&ctx, &inv, &mut st, vec![]);
+                        if frame >= 120 {
+                            for (pane, sizes) in panes.into_iter().zip(&mut sizes) {
+                                sizes.push(
+                                    ctx.data_mut(|data| data.get_temp::<egui::Rect>(pane.with("demo_rect")))
+                                        .expect("pane")
+                                        .size(),
+                                );
+                            }
+                        }
+                    }
+                    for sizes in sizes {
+                        let min = sizes.iter().copied().reduce(egui::Vec2::min).expect("frames");
+                        let max = sizes.iter().copied().reduce(egui::Vec2::max).expect("frames");
+                        assert!(
+                            (max - min).length() < 0.1,
+                            "pane oscillates at scale {scale}, long={long}: {min:?}..{max:?}"
+                        );
+                    }
+                    if !long {
+                        for pane in panes {
+                            let (viewport, content) = ctx
+                                .data_mut(|data| data.get_temp::<(egui::Rect, egui::Vec2)>(pane.with("test_scroll_geometry")))
+                                .expect("scroll area");
+                            assert!(
+                                content.x <= viewport.width().ceil() && content.y <= viewport.height().ceil(),
+                                "short note overflows at {scale}: {viewport:?}, {content:?}"
+                            );
+                        }
+                    }
+                }
+                assert_eq!(st.preview_text, draft);
+                assert!(!st.preview_dirty);
+            }
+        }
+    }
+
+    #[test]
     fn notecard_split_edit_refreshes_preview_and_saves_from_either_pane() {
         let ctx = egui::Context::default();
         let (inv, mut st) = note_fixture();
