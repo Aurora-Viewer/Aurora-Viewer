@@ -3032,6 +3032,7 @@ impl Session<'_> {
             let m: ObjectUpdate = pkt.decode()?;
             self.set_time_dilation(from, m.region_data.time_dilation);
             let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
+            self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
             if !objects.is_empty() {
                 emit(
                     self.sh,
@@ -3056,6 +3057,7 @@ impl Session<'_> {
                     Some(u)
                 })
                 .collect();
+            self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
             if !objects.is_empty() {
                 emit(
                     self.sh,

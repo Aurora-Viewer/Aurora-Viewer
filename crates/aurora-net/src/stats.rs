@@ -60,8 +60,12 @@ pub struct NetStats {
     pub eq_idle_polls: AtomicU64,
     pub eq_errors: AtomicU64,
     pub sim_count: AtomicU32,
+    /// Objects the simulators announced by their cache entry
+    /// (ObjectUpdateCached), found in the object cache or asked for in full.
     pub object_cache_hits: AtomicU64,
     pub object_cache_misses: AtomicU64,
+    /// Objects received in full (ObjectUpdate, ObjectUpdateCompressed).
+    pub objects_full: AtomicU64,
     /// Sequence numbers skipped by incoming packets, and packets that came
     /// after a later one (a resend, or out of order): the difference is what
     /// is still missing.
@@ -108,6 +112,7 @@ pub struct NetStatsSnapshot {
     pub sim_count: u32,
     pub object_cache_hits: u64,
     pub object_cache_misses: u64,
+    pub objects_full: u64,
     pub seq_gaps: u64,
     pub seq_late: u64,
     pub agent_updates: u64,
@@ -179,6 +184,7 @@ impl NetStats {
             sim_count: self.sim_count.load(Ordering::Relaxed),
             object_cache_hits: l(&self.object_cache_hits),
             object_cache_misses: l(&self.object_cache_misses),
+            objects_full: l(&self.objects_full),
             seq_gaps: l(&self.seq_gaps),
             seq_late: l(&self.seq_late),
             agent_updates: l(&self.agent_updates),
