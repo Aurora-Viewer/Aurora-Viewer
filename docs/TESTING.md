@@ -382,7 +382,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -391,7 +391,10 @@ when unfocused") is ignored during a screenshot.
   (`demo_link.rs`). The viewer then runs the grid's path: extrapolation,
   smoothing and, with Aurora's movement (Preferences › Aurora › Movement,
   "Instant"), the prediction of `own_motion.rs`. `jitter` delays each
-  message by up to that much more (order kept); `aurora` / `firestorm`
+  message by up to that much more (order kept); `stoplag` keeps the
+  stand-in's walk signal that long once it has stopped, as a busy
+  simulator is late to say it (with `trace`, the drawn animations of each
+  frame show whether the walk comes back after a stop); `aurora` / `firestorm`
   force the movement for the run without touching the saved choice;
   without them, the choice of Preferences applies and can be switched
   while walking. The log says, for each press and release of a walking
@@ -3383,6 +3386,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
+| `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
@@ -3768,6 +3772,13 @@ What the inventory must show with these scenarios:
 - **`AURORA_PROFILE_FRAMES=1`**: in addition, one `render profile` line and
   one `gpu profile` line per frame (renderer steps and GPU time per element
   of each frame).
+- **`AURORA_OWN_MOTION_TRACE=1`**: on a grid with Aurora's movement
+  (Preferences › Aurora › Movement, "Instant"), the `demo link trace` line
+  of `AURORA_DEMO_LINK=…,trace` for each frame where our avatar moves, is
+  led or still has a correction to fade (`t` counts from the launch); the
+  end of the line gives the flight, the simulator's height, the lead's,
+  the simulator's velocity and the drawn one, to read a take-off or a
+  landing.
 - **`AURORA_HOVER_CHECK=1`**: each answer about the object under the cursor
   (kept from a previous frame, or searched among the candidates of the
   picking index) is compared with the full search in the scene; the

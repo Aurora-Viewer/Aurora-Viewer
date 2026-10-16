@@ -118,15 +118,32 @@ impl App {
         }
     }
 
-    /// `AURORA_DEMO_LINK=…,trace`: one line per frame with the keys, the
-    /// drawn position, the simulator's, the lead, the correction left, the
-    /// camera and the drawn animations, to read a start or a stop.
-    pub(super) fn trace_demo_link(&self) {
-        let Some(link) = self.demo_link.as_ref().filter(|l| l.cfg.trace) else {
-            return;
-        };
+    /// `AURORA_DEMO_LINK=…,trace`, or `AURORA_OWN_MOTION_TRACE=1` on a grid
+    /// (only the frames where our avatar moves or a correction is left):
+    /// one line per frame with the keys, the drawn position, the
+    /// simulator's, the lead, the correction left, the camera and the drawn
+    /// animations, then the flight, the simulator's velocity and the drawn
+    /// velocity, to read a start, a stop, a take-off or a landing.
+    pub(super) fn trace_own_motion(&self) {
+        static GRID: std::sync::OnceLock<Option<Instant>> = std::sync::OnceLock::new();
+        let grid = *GRID.get_or_init(|| std::env::var_os("AURORA_OWN_MOTION_TRACE").map(|_| Instant::now()));
         let a = &self.world.agent;
         let (offset, lead) = a.drawn_offsets();
+        let t = match (self.demo_link.as_ref().filter(|l| l.cfg.trace), grid) {
+            (Some(link), _) => link.elapsed(),
+            (None, Some(start)) => {
+                let still = a.drawn_velocity().length() < 0.05
+                    && a.velocity.length() < 0.05
+                    && lead == Vec3::ZERO
+                    && offset.length() < 0.001
+                    && !self.world.agent.prediction.keys_held();
+                if !a.predicting() || still {
+                    return;
+                }
+                start.elapsed().as_secs_f64()
+            }
+            (None, None) => return,
+        };
         let anims: Vec<String> = self
             .world
             .animations_of(&self.world.agent_id)
@@ -134,8 +151,8 @@ impl App {
             .map(|p| p.id.to_string()[..8].to_string())
             .collect();
         log::info!(
-            "demo link trace: t={:.4} keys={} pos={:.4} {:.4} {:.4} server={:.4} {:.4} lead={:.4} {:.4} offset={:.4} {:.4} {:.4} cam={:.4} {:.4} {:.4} anims={}",
-            link.elapsed(),
+            "demo link trace: t={:.4} keys={} pos={:.4} {:.4} {:.4} server={:.4} {:.4} lead={:.4} {:.4} offset={:.4} {:.4} {:.4} cam={:.4} {:.4} {:.4} anims={} fly={} server_z={:.4} lead_z={:.4} svel={:.3} {:.3} {:.3} dvel={:.3} {:.3} {:.3}",
+            t,
             self.input.forward,
             a.position.x,
             a.position.y,
@@ -150,7 +167,16 @@ impl App {
             self.camera.position.x,
             self.camera.position.y,
             self.camera.position.z,
-            anims.join(",")
+            anims.join(","),
+            a.flying,
+            a.predicted_position().z,
+            lead.z,
+            a.velocity.x,
+            a.velocity.y,
+            a.velocity.z,
+            a.drawn_velocity().x,
+            a.drawn_velocity().y,
+            a.drawn_velocity().z
         );
     }
 
