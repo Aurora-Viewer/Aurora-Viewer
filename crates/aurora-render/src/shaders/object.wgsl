@@ -10,7 +10,24 @@ struct VsIn {
     @location(3) joints: vec4<u32>,
     @location(4) weights: vec4<f32>,
     @builtin(instance_index) instance: u32,
+    @builtin(vertex_index) vertex: u32,
 };
+
+// System avatar morphs share one static delta bank in the palette buffer.
+// anim.xy holds the geometry's first vertex and the bank's first matrix.
+fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
+    var result = mat2x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0));
+    if ((rec.flags.x & FLAG_LIP_SYNC) != 0u && in.vertex >= rec.anim.x && in.vertex - rec.anim.x < rec.anim.z) {
+        let delta = palettes[rec.anim.y + in.vertex - rec.anim.x];
+        let weights = palettes[rec.flags.y + 208u][0].xy;
+        result[0] = delta[0].xyz * weights.x + delta[2].xyz * weights.y;
+        result[1] = delta[1].xyz * weights.x + delta[3].xyz * weights.y;
+    }
+    return result;
+}
+
+fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0]; }
+fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.normal.xyz + lip_delta(rec, in)[1]; }
 
 // Skinning matrix of one mesh joint: owner joint world matrix times the
 // mesh's inverse bind matrix (LLSkinningUtil::initSkinningMatrixPalette).
@@ -314,13 +331,13 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
 fn vs_main(in: VsIn) -> VsOut {
     let rec = records[in.instance];
     let model = eye_model(rec, in);
-    let ep = model * vec4<f32>(in.pos, 1.0);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     // (lighting, shadows and fog keep region coordinates)
     let wp = vec4<f32>(ep.xyz + frame.eye.xyz, ep.w);
     var out: VsOut;
     out.clip = frame.eye_view_proj * ep;
     out.world_pos = wp.xyz;
-    out.normal = cofactor(model) * in.normal.xyz;
+    out.normal = cofactor(model) * vertex_normal(rec, in);
     var st = face_st(in, rec);
     let animated = has_tex_anim(rec);
     if (animated) {
@@ -394,7 +411,7 @@ fn fs_hud(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f3
 fn vs_depth(in: VsIn) -> DepthOut {
     let rec = records[in.instance];
     let model = eye_model(rec, in);
-    let ep = model * vec4<f32>(in.pos, 1.0);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthOut;
     out.clip = frame.eye_view_proj * ep;
     return out;
@@ -880,7 +897,7 @@ struct PickOut {
 fn vs_pick(in: VsIn) -> PickOut {
     let rec = records[in.instance];
     let model = eye_model(rec, in);
-    let ep = model * vec4<f32>(in.pos, 1.0);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: PickOut;
     out.clip = frame.eye_view_proj * ep;
     let st = face_st(in, rec);
@@ -940,7 +957,7 @@ struct ShadowParams {
 @vertex
 fn vs_shadow(in: VsIn) -> ShadowOut {
     let rec = records[in.instance];
-    let wp = skinned_model(rec, in) * vec4<f32>(in.pos, 1.0);
+    let wp = skinned_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: ShadowOut;
     out.clip = shadow_params.vp * wp;
     out.uv = diffuse_uv(face_st(in, rec), rec, shadow_params.anim_clock.xy);

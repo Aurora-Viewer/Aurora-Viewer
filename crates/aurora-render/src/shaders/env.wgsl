@@ -161,7 +161,7 @@ fn vs_terrain(in: VsIn) -> TerrainOut {
     // coordinates here, the depth differed by a rounding and patches of
     // terrain were rejected, showing the sky.
     let model = eye_model(rec, in);
-    let ep = model * vec4<f32>(in.pos, 1.0);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: TerrainOut;
     out.clip = frame.eye_view_proj * ep;
     // (lighting, shadows and fog keep region coordinates)

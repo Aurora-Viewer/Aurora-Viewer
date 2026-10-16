@@ -484,6 +484,20 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/texture_load.rs` | Measurement of the texture loads: time of the decoding tasks per step (codec, conversion, RGBA, mips, staging memory) and `texture load:` line of the log at the end of each load (duration, decodes per level, bytes downloaded, disk cache) |
 | `scene/texture_budget.rs` | Texture memory budget: current target (the setting, less when the rest of what the viewer holds on the card leaves less room under the budget that the driver grants it, `aurora-render/src/vram.rs`), and pressure level when the pages exceed it. Under pressure, `scene/textures.rs` shrinks the textures loaded more finely than their on-screen size, off-screen ones first, by copying their levels on the GPU (`TextureTable::shrink`), without decoding them again; the pages they leave are compacted without waiting. Override: `AURORA_TEXTURE_BUDGET_MB` |
 
+`aurora-audio/src/processing.rs` owns Sonora/WebRTC AEC3, AGC2, noise suppression
+and high-pass processing. Device callbacks only queue microphone samples and
+bounded 10 ms stereo reference blocks tapped after the final mixer gains.
+The capture device worker processes 48 kHz mono blocks before manual input gain
+and metering; preferences apply live without running DSP on the UI thread.
+`ui/options/audio.rs` owns Sound and voice preferences and the shared ear/noise
+controls in the microphone popup. `AudioSettings` persists the processing,
+camera/avatar listening and visualizer options with the Legacy Viewer defaults.
+`scene/lipsync.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble curves.
+Static deltas are shared in a reserved prefix of the GPU palette buffer; the
+extra matrix after each skeleton's anchors stores two live weights. Object,
+shadow and picking vertex passes apply the deltas before skinning, including
+shape-morphed system heads, without rebuilding meshes per speech frame.
+
 The voice indicators of the classic name tags are drawn by
 `ui/voice_tag.rs` (the name plates have their own outline and halo,
 `ui/nameplate.rs`): outline smoothed according to the speech level, colours

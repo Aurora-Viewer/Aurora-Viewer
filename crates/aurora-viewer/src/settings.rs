@@ -819,6 +819,18 @@ pub fn audio_channels() -> [&'static str; 7] {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AudioSettings {
+    /// VoiceEarLocation, VoiceAutomaticGainControl, VoiceEchoCancellation and
+    /// VoiceNoiseSuppressionLevel (panel_preferences_sound.xml).
+    pub voice_ear: VoiceEar,
+    pub voice_automatic_gain: bool,
+    pub voice_echo_cancellation: bool,
+    pub voice_noise_suppression: u8,
+    pub lip_sync: bool,
+    pub voice_visualizer: bool,
+    pub voice_visualizer_self: bool,
+    pub voice_visualizer_dot: bool,
+    pub voice_visualizers_in_calls: bool,
+    pub conversation_voice_indicator: bool,
     /// Volume 0..1 per channel (`AUDIO_CHANNELS`).
     pub volume: [f32; 7],
     pub muted: [bool; 7],
@@ -862,6 +874,16 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         AudioSettings {
+            voice_ear: VoiceEar::Camera,
+            voice_automatic_gain: true,
+            voice_echo_cancellation: true,
+            voice_noise_suppression: 4,
+            lip_sync: true,
+            voice_visualizer: true,
+            voice_visualizer_self: true,
+            voice_visualizer_dot: true,
+            voice_visualizers_in_calls: true,
+            conversation_voice_indicator: true,
             volume: [0.8, 0.5, 0.5, 0.5, 0.4, 0.5, 0.7],
             muted: [false; 7],
             enabled: [true; 7],
@@ -880,6 +902,27 @@ impl Default for AudioSettings {
             reject_group_calls: false,
             reject_adhoc_calls: false,
             reject_p2p_calls: false,
+        }
+    }
+}
+
+/// VoiceEarLocation (panel_preferences_sound.xml); SL exposes two choices.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VoiceEar {
+    #[default]
+    Camera,
+    Avatar,
+}
+
+impl AudioSettings {
+    pub fn world_voice_visualizer(&self, own: bool, in_call: bool, mouselook: bool) -> bool {
+        self.voice_visualizer && (!in_call || self.voice_visualizers_in_calls) && (!own || (self.voice_visualizer_self && !mouselook))
+    }
+    pub fn mic_processing(&self) -> aurora_audio::MicProcessing {
+        aurora_audio::MicProcessing {
+            automatic_gain: self.voice_automatic_gain,
+            echo_cancellation: self.voice_echo_cancellation,
+            noise_suppression: self.voice_noise_suppression.min(4),
         }
     }
 }

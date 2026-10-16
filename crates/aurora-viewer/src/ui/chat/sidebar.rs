@@ -356,6 +356,10 @@ pub(super) fn show(
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
                     let (sub, sub_icon) = sub_line(p, world, id, section, status);
+                    let sub_icon = sub_icon.filter(|_| {
+                        st.conversation_voice_indicator
+                            || (world.call_of(&id).is_none() && world.call_launched(&id).is_none() && world.calls.invite_for(&id).is_none())
+                    });
                     let e = Entry {
                         icon,
                         name: &name,
@@ -365,7 +369,7 @@ pub(super) fn show(
                         unread: if current { 0 } else { unread },
                         close: Some(close_tip(world, &id)),
                         ringing: world.calls.invite_for(&id).is_some(),
-                        in_call: world.call_of(&id).is_some() || world.call_launched(&id).is_some(),
+                        in_call: st.conversation_voice_indicator && (world.call_of(&id).is_some() || world.call_launched(&id).is_some()),
                     };
                     let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
                     if reveal == Some(id) {

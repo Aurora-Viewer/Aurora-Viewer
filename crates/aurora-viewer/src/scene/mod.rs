@@ -18,6 +18,7 @@ pub mod inspect;
 pub mod jobs;
 pub mod legacy_mat;
 pub mod lights;
+pub(crate) mod lipsync;
 mod list_index;
 pub mod loading;
 mod lod_watch;
@@ -703,6 +704,7 @@ pub struct Scene {
     palette_free: Vec<u32>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
+    pub lips: lipsync::LipSync,
     last_palette_gc: Instant,
     /// Periodic streaming summary in the log.
     last_diag: Instant,
@@ -946,6 +948,7 @@ impl Scene {
     pub fn new(cache_dir: std::path::PathBuf, avatar_lib: Arc<AvatarLibrary>) -> Scene {
         let (jobs, job_rx) = Jobs::new();
         let cache_dir_anim = cache_dir.clone();
+        let lips = lipsync::LipSync::new(&avatar_lib);
         Scene {
             jobs,
             job_rx,
@@ -1034,8 +1037,9 @@ impl Scene {
             object_signals: HashMap::new(),
             palette_slots: HashMap::new(),
             palette_free: Vec::new(),
-            palette_count: 0,
-            palettes: Vec::new(),
+            palette_count: lips.slots,
+            palettes: lips.matrices.clone(),
+            lips,
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
             staging: None,
@@ -1525,7 +1529,8 @@ impl Scene {
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
-        self.palette_count = 0;
+        self.palette_count = self.lips.slots;
+        self.lips.uploaded = false;
     }
 
     /// What is at a picked world point: an avatar (capsule test) or the most
@@ -2971,6 +2976,10 @@ impl Scene {
                     flags: [flags::SKINNED, palette, system_binds, 0],
                     ..Default::default()
                 };
+                if let Some((base, count)) = self.lips.parts.get(pi).copied().flatten() {
+                    rec.flags[0] |= flags::LIP_SYNC;
+                    rec.anim = [alloc.vertex_offset, base, count, 0];
+                }
                 let mut slot = aurora_render::textures::WHITE;
                 if jelly {
                     rec.base_color = [0.3, 0.3, 0.3, 1.0];

@@ -31,9 +31,9 @@ const NORMAL_SOFTEN_FACTOR: f32 = 0.65;
 #[derive(Debug, Clone)]
 pub struct MorphTarget {
     pub param: i32,
-    vertices: Vec<u32>,
-    d_positions: Vec<Vec3>,
-    d_normals: Vec<Vec3>,
+    pub(super) vertices: Vec<u32>,
+    pub(super) d_positions: Vec<Vec3>,
+    pub(super) d_normals: Vec<Vec3>,
     d_uvs: Vec<[f32; 2]>,
 }
 

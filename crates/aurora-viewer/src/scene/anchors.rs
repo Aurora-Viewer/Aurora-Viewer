@@ -432,6 +432,20 @@ impl Scene {
                 moved.push(base + lo..base + hi);
             }
         }
+        if !self.lips.uploaded {
+            renderer.set_palette_range(&self.palettes, 0..self.lips.matrices.len());
+            self.lips.uploaded = true;
+        }
+        for (id, slot) in &self.palette_slots {
+            let index = *slot as usize * PALETTE_JOINTS + super::lipsync::WEIGHTS;
+            let weights = self.lips.weights(id, now);
+            if let Some(previous) = self.palettes.get_mut(index)
+                && *previous != weights
+            {
+                *previous = weights;
+                moved.push(index..index + 1);
+            }
+        }
         renderer.set_palette_slots(&self.palettes, &posed, PALETTE_JOINTS);
         for range in moved {
             renderer.set_palette_range(&self.palettes, range);
