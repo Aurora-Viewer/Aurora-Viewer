@@ -95,6 +95,14 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/widgets.rs` gives the shared floaters and mini-map a click-and-drag
+background response: egui's click tolerance delays movement while the pointer
+can still be clicking, with child controls retaining priority. Deliberate
+movement keeps egui's existing drag, constraints and saved positions.
+`ui/widgets/movement_tests.rs` exercises pointer jitter, button activation and
+complete drags on expanded, fixed, inspector, minimized and bare windows at
+three interface scales.
+
 `ui/inventory/markdown.rs` provides each inventory/object notecard's Classic,
 Markdown and split Edit views. Classic retains Firestorm's plain proportional
 text with embedded inventory. CommonMark is parsed once per source change on

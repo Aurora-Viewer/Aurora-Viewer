@@ -13,6 +13,8 @@ mod cascade_tests;
 mod check_tests;
 #[cfg(test)]
 mod collapse_tests;
+#[cfg(test)]
+mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
 pub mod color;
 pub mod demo;
@@ -39,6 +41,16 @@ pub(crate) use workspace::{
 /// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
 pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
     ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+}
+
+/// Wait for egui's click tolerance before moving a window. Area's drag-only
+/// background otherwise starts moving even while a button above it is clicked.
+/// Keep its move ID and hit-test plane: children and resize handles stay on top,
+/// and layout's snapping and grouped movement retain the same drag lifecycle.
+/// This adds the requested tolerance to LLDragHandle::handleHover's immediate
+/// movement (indra/llui/lldraghandle.cpp).
+fn window_click_tolerance(response: &egui::Response) {
+    let _ = response.interact(Sense::CLICK | Sense::DRAG);
 }
 
 /// Keep status suffixes at normal weight and slightly darker than the name.
@@ -633,6 +645,7 @@ impl<'a> Floater<'a> {
             }
         });
         if let Some(response) = response {
+            window_click_tolerance(&response.response);
             if content_sized {
                 let too_tall = if scrolls {
                     still_too_tall
@@ -752,6 +765,7 @@ pub(crate) fn bare_window(
     }) else {
         return;
     };
+    window_click_tolerance(&shown.response);
     slot.shown(ctx, shown.response.rect, false);
     if let (Some(drag), Some(requested)) = (drag, resized) {
         drag.finish(ctx, window_id, requested, shown.response.rect);
