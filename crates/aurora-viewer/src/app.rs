@@ -6438,6 +6438,12 @@ impl App {
             }
         }
         self.frame_profile.lap(Lap::Limiter);
+        // the graph's frame time: from one end of the limiter to the next,
+        // the pace the frames really leave at. `dt` starts after the input
+        // events: a click or a mouse move handled before one frame and not
+        // the next made that one look shorter than the cap (spikes above
+        // the frame rate limit in the Performance window's graph)
+        let paced = self.frame_start.elapsed();
         self.frame_start = Instant::now();
         self.frame_count += 1;
         if self.demo
@@ -6638,7 +6644,8 @@ impl App {
         if self.demo {
             ui::perf::demo_traffic(&mut net);
         }
-        self.perf.frame(dt * 1000.0, net, &self.last_render, &self.scene.stats);
+        self.perf
+            .frame(paced.as_secs_f32().min(0.1) * 1000.0, net, &self.last_render, &self.scene.stats);
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
