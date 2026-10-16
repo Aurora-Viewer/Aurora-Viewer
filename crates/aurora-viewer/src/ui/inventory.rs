@@ -296,6 +296,10 @@ pub struct InventoryUi {
     rename: Option<InlineRename>,
     reveal: Option<Uuid>,
     reveal_path: HashSet<Uuid>,
+    /// Where the plain list was last scrolled, and that place to go back to
+    /// once a search is emptied with nothing selected to show.
+    plain_scroll: f32,
+    plain_scroll_restore: Option<f32>,
     roots_seen: HashSet<Uuid>,
     /// Received Items folders already shown once (closed on their arrival).
     received_seen: HashSet<Uuid>,
@@ -401,19 +405,42 @@ impl InventoryUi {
         self.selection.clear();
         self.selection.insert(id);
         self.reveal = Some(id);
-        self.reveal_path.clear();
-        let mut parent = rules::parent(inv, id);
-        while let Some(id) = parent {
-            if !self.reveal_path.insert(id) {
-                break;
+        self.reveal_path = ancestors(inv, id).into_iter().collect();
+    }
+
+    /// What the search field's clear button does, for a demo scenario
+    /// (`AURORA_DEMO_INVENTORY=search-clear`).
+    pub(crate) fn demo_clear_search(&mut self, inv: &Inventory) {
+        self.search.clear();
+        self.filters = view::Filters::default();
+        self.saved_filters = None;
+        self.search_cleared(inv, inv.root, true);
+    }
+
+    /// LLPanelMainInventory::onClearSearch (indra/newview/llpanelmaininventory.cpp):
+    /// once the search is emptied, the folders open before it come back (the
+    /// plain list keeps its own open state, which the search never touches),
+    /// the folders holding the selection open (LLOpenFoldersWithSelection) and
+    /// the selected row scrolls into sight (scrollToShowSelection). Without a
+    /// selection shown under `root`, the plain list goes back to where it was.
+    fn search_cleared(&mut self, inv: &Inventory, root: Uuid, show_library: bool) {
+        let mut shown = None;
+        let ids: Vec<Uuid> = self.selection.iter().copied().chain(self.selected).collect();
+        for id in ids {
+            let path = ancestors(inv, id);
+            let in_library = path.iter().any(|f| inv.folders.get(f).is_some_and(|f| f.library));
+            if !path.contains(&root) || (in_library && !show_library) {
+                continue;
             }
-            let Some(folder) = inv.folders.get(&id) else {
-                break;
-            };
-            if folder.library {
-                self.reveal_path.insert(inv.root);
+            self.reveal_path.extend(path);
+            self.result_tree.reveal(inv, id, self.tab);
+            if self.selected == Some(id) || shown.is_none() {
+                shown = Some(id);
             }
-            parent = (!folder.info.parent.is_nil()).then_some(folder.info.parent);
+        }
+        match shown {
+            Some(id) => self.reveal = Some(id),
+            None => self.plain_scroll_restore = Some(self.plain_scroll),
         }
     }
 
@@ -663,6 +690,28 @@ fn folder_row(
     });
 }
 
+/// The folders above `id`, nearest first. The Library is listed under My
+/// Inventory, so a Library item's path also holds the inventory root.
+fn ancestors(inv: &Inventory, id: Uuid) -> Vec<Uuid> {
+    let mut path = Vec::new();
+    let mut seen = HashSet::new();
+    let mut parent = rules::parent(inv, id);
+    while let Some(id) = parent {
+        if !seen.insert(id) {
+            break;
+        }
+        path.push(id);
+        let Some(folder) = inv.folders.get(&id) else {
+            break;
+        };
+        if folder.library && seen.insert(inv.root) {
+            path.push(inv.root);
+        }
+        parent = (!folder.info.parent.is_nil()).then_some(folder.info.parent);
+    }
+    path
+}
+
 fn folder_name(inv: &Inventory, id: Uuid) -> String {
     if id == inv.root {
         aurora_i18n::tr!("common-my-inventory").to_owned()
@@ -696,7 +745,9 @@ fn folder_window_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
+    if controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder")) {
+        st.search_cleared(inv, root, true);
+    }
     ui.add_space(3.0);
     let q = st.search.trim().to_lowercase();
     let filtered = !q.is_empty() || st.links_filter.is_some() || st.filters.active();
@@ -892,7 +943,12 @@ fn search_scroll(
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     tree_spacing(ui);
     let total = st.result_tree.rows.len();
-    let scroll = list_scroll(ui, height);
+    let mut scroll = list_scroll(ui, height);
+    // Only the rows in sight are drawn: bring a revealed one there first.
+    if let Some(index) = st.reveal.and_then(|id| st.result_tree.rows.iter().position(|row| row.id == id)) {
+        let pitch = 20.0 + ui.spacing().item_spacing.y;
+        scroll = scroll.vertical_scroll_offset((index as f32 * pitch - height / 2.0).max(0.0));
+    }
     let mut out = if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
@@ -1080,7 +1136,7 @@ fn inventory_contents(
     actions: &mut Vec<InvAction>,
 ) {
     controls::toolbar(ui, p, st, prefs);
-    controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
+    let search_cleared = controls::search(ui, p, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory"));
     ui.add_space(3.0);
     let mut tab_ids = vec![0];
     let mut labels = vec![(aurora_i18n::tr!("common-inventory"), true)];
@@ -1110,6 +1166,9 @@ fn inventory_contents(
     } else {
         inv.root
     };
+    if search_cleared {
+        st.search_cleared(inv, root, prefs.show_library);
+    }
     let filtered = st.result_view();
     if root.is_nil() {
         st.fetch_all = false;
@@ -2832,6 +2891,114 @@ mod tests {
         assert_eq!(st.reveal, Some(original));
         assert!(st.reveal_path.contains(&parent_id));
         assert!(st.expand_all.is_none());
+    }
+
+    /// The deepest item of the inventory outside the Library.
+    fn deepest_item(inv: &Inventory) -> (Uuid, Vec<Uuid>) {
+        inv.items
+            .keys()
+            .map(|id| (*id, ancestors(inv, *id)))
+            .filter(|(_, path)| path.contains(&inv.root) && !path.iter().any(|f| inv.folders[f].library))
+            .max_by_key(|(id, path)| (path.len(), *id))
+            .expect("an item")
+    }
+
+    #[test]
+    fn clearing_a_search_opens_the_folders_of_the_selection_and_scrolls_to_it() {
+        let ctx = egui::Context::default();
+        let mut inv = view_inventory(true);
+        let (item, path) = deepest_item(&inv);
+        assert!(path.len() >= 2, "a nested item: {path:?}");
+        let facts = Facts {
+            agent: Uuid::from_u128(2),
+            worn: HashSet::new(),
+            worn_labels: Default::default(),
+            points: vec![],
+            appearance_busy: false,
+            active_gestures: Default::default(),
+            touchable: Default::default(),
+            names: Default::default(),
+        };
+        let mut prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        // A folder the user had open before searching, away from the item.
+        let other = inv.folders[&inv.root]
+            .children
+            .iter()
+            .copied()
+            .find(|f| !path.contains(f))
+            .expect("another folder");
+        st.plain.set_open(other, true);
+        // Found by a search and selected there, then the search is emptied.
+        st.selected = Some(item);
+        st.selection.insert(item);
+        st.search_cleared(&inv, inv.root, prefs.show_library);
+        assert_eq!(st.reveal, Some(item));
+        assert!(path.iter().all(|f| st.reveal_path.contains(f)));
+        let mut offset = 0.0;
+        for frame in 0..10 {
+            headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 200.0))),
+                    time: Some(frame as f64 / 60.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    let root = inv.root;
+                    let scroll = rows::scroll(
+                        ui,
+                        &crate::theme::Theme::default().palette(),
+                        &Icons::default(),
+                        &mut inv,
+                        &mut st,
+                        &mut prefs,
+                        &facts,
+                        &mut vec![],
+                        180.0,
+                        root,
+                        true,
+                    );
+                    offset = scroll.state.offset.y;
+                },
+            ));
+        }
+        assert!(st.reveal.is_none(), "the selected item was drawn");
+        assert_eq!(st.selected, Some(item), "the selection is kept");
+        assert!(st.plain.is_open(other), "folders open before the search stay open");
+        assert!(path.iter().filter(|f| **f != inv.root).all(|f| st.plain.is_open(*f)));
+        let index = st.plain.position(item).expect("the item is listed") as f32;
+        // The tree's row spacing (`widgets::inventory_spacing`) is 1 point.
+        let pitch = rows::ROW_HEIGHT + 1.0;
+        assert!(
+            offset <= index * pitch && index * pitch < offset + 180.0,
+            "row {index} in sight at offset {offset}"
+        );
+    }
+
+    #[test]
+    fn clearing_a_search_without_a_shown_selection_goes_back_to_the_plain_place() {
+        let inv = view_inventory(false);
+        let mut st = InventoryUi {
+            plain_scroll: 340.0,
+            ..Default::default()
+        };
+        st.search_cleared(&inv, inv.root, true);
+        assert_eq!((st.reveal, st.plain_scroll_restore), (None, Some(340.0)));
+        // A Library item while the Library is hidden is not shown either.
+        let library_item = inv
+            .items
+            .keys()
+            .copied()
+            .find(|id| ancestors(&inv, *id).iter().any(|f| inv.folders[f].library));
+        if let Some(id) = library_item {
+            st.plain_scroll_restore = None;
+            st.selected = Some(id);
+            st.selection.insert(id);
+            st.search_cleared(&inv, inv.root, false);
+            assert_eq!((st.reveal, st.plain_scroll_restore), (None, Some(340.0)));
+            st.search_cleared(&inv, inv.root, true);
+            assert_eq!(st.reveal, Some(id));
+        }
     }
 
     #[test]

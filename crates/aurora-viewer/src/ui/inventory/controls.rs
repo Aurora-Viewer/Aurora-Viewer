@@ -138,7 +138,12 @@ fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     }
 }
 
-pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) {
+/// The search field and its field selector. True when the search text was
+/// emptied (by its clear button or by hand) or the filtered list was left:
+/// LLPanelMainInventory::onFilterEdit calls onClearSearch for an empty text.
+pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences, hint: &str) -> bool {
+    let searching = !st.search.trim().is_empty();
+    let filtered = st.result_view();
     ui.horizontal(|ui| {
         let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
         let field_width = (ui.available_width() - selector_width - ui.spacing().item_spacing.x).max(40.0);
@@ -186,6 +191,7 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut 
                 "ui-inventory-controls-case-insensitive-search-combines-terms-quotes-search-for-an"
             ));
     });
+    (searching && st.search.trim().is_empty()) || (filtered && !st.result_view())
 }
 
 pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {

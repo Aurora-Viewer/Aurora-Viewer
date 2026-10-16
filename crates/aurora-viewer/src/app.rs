@@ -6263,6 +6263,9 @@ impl App {
                 viewport.focused = Some(true);
             }
         }
+        if self.demo && self.frame_count == 700 && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "search-clear") {
+            self.inventory_ui.demo_clear_search(&self.world.inventory);
+        }
         if self.demo
             && self.capture.is_some()
             && let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY")
@@ -11888,6 +11891,7 @@ impl ApplicationHandler for App {
                         | "worn"
                         | "filtered"
                         | "large"
+                        | "search-clear"
                         | "long"
                         | "long-filtered"
                         | "resize-left"
@@ -11899,7 +11903,11 @@ impl ApplicationHandler for App {
                         | "received-missing"
                 );
                 if configured_view {
-                    crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
+                    crate::world::inventory::demo::seed_view(
+                        &mut self.world.inventory,
+                        self.world.agent_id,
+                        matches!(view.as_str(), "large" | "search-clear"),
+                    );
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
@@ -11938,6 +11946,17 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
+                    }
+                    if view == "search-clear" {
+                        // An item deep in a long folder, found and selected,
+                        // before the search is emptied at frame 700.
+                        let id = uuid::Uuid::from_u128(11200);
+                        if let Some(item) = self.world.inventory.items.get(&id) {
+                            self.inventory_ui.search.clone_from(&item.name);
+                        }
+                        self.inventory_ui.selected = Some(id);
+                        self.inventory_ui.selection.clear();
+                        self.inventory_ui.selection.insert(id);
                     }
                     if matches!(view.as_str(), "long" | "long-filtered" | "resize-left" | "resize-right") {
                         crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);

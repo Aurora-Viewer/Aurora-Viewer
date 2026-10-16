@@ -3444,6 +3444,10 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:
   system / date sort, filters, preferences, Recent / Worn tree,
   filter excluding objects or search of 1,500 items.
+- `search-clear`: an item of the 1,500-item folder found by a search and
+  selected; the search is emptied at frame 700, as its × does. Capture
+  before (frame 650) and after (frame 790): the folder stays open and the
+  selected row is in sight, not the top of a closed tree.
 - `long`, `long-filtered`: long names and horizontal scrolling in
   the full or filtered tree.
 - `resize-left`, `resize-right`: with a screenshot, drag the corresponding
