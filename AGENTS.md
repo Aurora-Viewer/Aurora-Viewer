@@ -19,7 +19,9 @@ else's work.
    human; **they** log in and test on the grid. For safety, anything done on
    AGNI is done by the human.
 2. **No secret in the repository**: no password, token, API key, capability
-   URL or personal data (e-mail address, real name…).
+   URL or personal data (e-mail address, real name…). Grid places are not
+   named either: the busy region of the human's measurements is **KB**, any
+   other is "a busy region", "a store", "a skybox"…
 3. **Never touch another agent's work in progress.** You work in your own
    worktree (section 3). If the build fails in code you did not change, do
    not "fix" it: report it.

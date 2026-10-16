@@ -1455,7 +1455,7 @@ To check with these scenarios:
 - **`AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]`**: after the loading fade,
   meshes of 60,000 vertices keep entering the geometry arena until it
   holds `mb` megabytes of them (800 if the value is not a number), at 25 MB
-  a second unless told otherwise (Knotty beach loads about 22 MB a second
+  a second unless told otherwise (KB loads about 22 MB a second
   for 35 s). They are not drawn: the scenario only makes the arena outgrow
   its buffers, in the frames of the ordinary demo. The log gives each
   growth (`vertex arena grown to … MB`) and the end (`demo geometry: …
