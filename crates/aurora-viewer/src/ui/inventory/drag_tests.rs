@@ -445,3 +445,40 @@ fn inventory_drag_same_parent_is_a_no_op_and_does_not_move_to_the_enclosing_root
     f.button(to, false, false);
     assert!(f.actions.is_empty());
 }
+
+/// Two real clicks on an object row put it on; once worn, the same
+/// double-click takes it off (LLObjectBridge::openItem).
+#[test]
+fn inventory_double_click_attaches_an_object_then_detaches_it_once_worn() {
+    use crate::world::appearance::Action as Wear;
+    let mut f = Fixture::new();
+    if let Some(it) = f.inv.items.get_mut(&id(101)) {
+        it.asset_type = 6;
+    }
+    f.settle();
+    let double_click = |f: &mut Fixture| {
+        f.click(101, false);
+        f.click(101, false);
+        let actions = std::mem::take(&mut f.actions);
+        // a second past the double-click delay: the next pair is no triple click
+        for _ in 0..4 {
+            f.settle();
+        }
+        actions
+    };
+    let attach = double_click(&mut f);
+    assert!(
+        matches!(&attach[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == id(101)),
+        "not worn: attach"
+    );
+    f.facts.worn.insert(id(101));
+    let detach = double_click(&mut f);
+    assert!(
+        matches!(&detach[..], [InvAction::Appearance(Wear::Remove(item))] if *item == id(101)),
+        "worn: detach, got {} actions",
+        detach.len()
+    );
+    // a single click only selects
+    f.click(101, false);
+    assert!(f.actions.is_empty());
+}

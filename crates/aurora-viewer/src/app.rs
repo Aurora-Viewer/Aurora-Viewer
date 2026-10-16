@@ -1252,6 +1252,30 @@ impl App {
                 self.world.inventory.add_items(items);
                 return;
             }
+            // the server's copy: the default folder of its type for a nil parent
+            if let NetCommand::CopyInventoryItem { request, copy } = &cmd {
+                let inv = &self.world.inventory;
+                let result = inv
+                    .items
+                    .get(&copy.item)
+                    .cloned()
+                    .map(|mut it| {
+                        it.id = uuid::Uuid::new_v4();
+                        it.owner = self.world.agent_id;
+                        it.parent = if copy.parent.is_nil() {
+                            crate::world::inventory::actions::system(inv, it.asset_type).unwrap_or(inv.root)
+                        } else {
+                            copy.parent
+                        };
+                        it
+                    })
+                    .ok_or_else(|| aurora_i18n::tr!("inventory-copy-unconfirmed").into());
+                if let Ok(it) = &result {
+                    self.world.inventory.add_items(vec![it.clone()]);
+                }
+                self.on_app_event(NetEvent::InventoryItemCopied { request: *request, result });
+                return;
+            }
             if let NetCommand::FinishInventoryCopies { request, reply } = &cmd {
                 let items = reply
                     .copies
@@ -1475,17 +1499,24 @@ impl App {
                 self.on_app_event(NetEvent::OutfitUpdated { request: *request, result });
                 return;
             }
+            // the demo backpack comes back with its prims; other outfit
+            // objects are invisible placeholders
             if let NetCommand::RezAttachments(items) = &cmd {
                 self.world.apply(NetEvent::ObjectUpdates {
                     handle: self.world.main_region.unwrap_or_default(),
-                    objects: items.iter().map(crate::demo::outfit_attachment).collect(),
+                    objects: items
+                        .iter()
+                        .flat_map(|item| crate::demo::worn::rez(item).unwrap_or_else(|| vec![crate::demo::outfit_attachment(item)]))
+                        .collect(),
                 });
                 return;
             }
+            // DetachAttachmentIntoInv names the item: the simulator kills the
+            // object worn from it, whatever its object id
             if let NetCommand::DetachAttachments(items) = &cmd {
                 let local_ids = items
                     .iter()
-                    .filter_map(|id| self.world.objects.index_of_uuid(id))
+                    .filter_map(|id| self.world.worn_attachment(id))
                     .filter_map(|idx| self.world.objects.get(idx))
                     .map(|o| o.key.local_id)
                     .collect();
@@ -1870,6 +1901,10 @@ impl App {
         } = ev
         {
             self.notecard_inventory_copied(editor, notecard, open, result);
+            return;
+        }
+        if let NetEvent::InventoryItemCopied { request, result } = ev {
+            self.wear_copied(request, result);
             return;
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
@@ -6070,6 +6105,7 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
             raw.events
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
@@ -11895,6 +11931,20 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
                 crate::demo::worn::seed_inventory(&mut self.world);
+                // `inventory`, `library`, `sound`: the rows to double-click in sight
+                let mode = std::env::var("AURORA_DEMO_WORN").unwrap_or_default();
+                if mode == "library" {
+                    crate::demo::worn::seed_library(&mut self.world);
+                }
+                if mode == "sound" {
+                    let (id, clip) = crate::demo::chime();
+                    self.scene.sounds.insert(id, clip);
+                    crate::demo::worn::seed_sound(&mut self.world, id);
+                }
+                if let Some(&(_, first)) = crate::demo::worn::double_clicks(&mode).first() {
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, first);
+                }
             }
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.
