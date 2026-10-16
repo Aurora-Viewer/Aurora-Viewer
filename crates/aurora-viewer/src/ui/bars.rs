@@ -1648,6 +1648,10 @@ fn paint_unread_pill(ui: &egui::Ui, p: &Palette, rect: egui::Rect, icon: f32, un
 /// Microphone button state (Firestorm "Speak" button with its arrow).
 #[derive(Default)]
 pub struct MicButton<'a> {
+    pub ear: crate::settings::VoiceEar,
+    pub noise_suppression: u8,
+    pub processing_changed: bool,
+    pub open_processing: bool,
     /// Toggle mode: microphone switched on.
     pub on: bool,
     /// Hold-to-talk mode (else click toggles).
@@ -1962,6 +1966,28 @@ fn mic_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, mic: &mut MicButton,
         ui.add_space(4.0);
         let size = Vec2::new(ui.available_width(), 28.0);
         let label = aurora_i18n::tr!("ui-bars-sound-and-voice-settings");
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(aurora_i18n::tr!("voice-listen-from")).size(12.0).color(p.muted));
+            mic.processing_changed |= super::options::ear_choice(ui, &mut mic.ear);
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(aurora_i18n::tr!("voice-noise-suppression")).size(12.0).color(p.muted));
+            mic.processing_changed |= super::options::noise_choice(ui, "mic_noise", &mut mic.noise_suppression, 145.0);
+        });
+        if super::widgets::action_button(
+            ui,
+            p,
+            "adjustments-filled",
+            aurora_i18n::tr!("voice-processing-open"),
+            super::widgets::ActionKind::Flat,
+            size,
+        )
+        .clicked()
+        {
+            mic.open_prefs = true;
+            mic.open_processing = true;
+            ui.close();
+        }
         if super::widgets::action_button(ui, p, "settings-filled", label, super::widgets::ActionKind::Flat, size).clicked() {
             mic.open_prefs = true;
             ui.close();

@@ -8,6 +8,7 @@ publish.workspace = true
 description = "Audio output engine for Aurora Viewer: volume-channel mixer, parcel music streaming, PCM sinks."
 
 [dependencies]
+sonora = "0.2.0"
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 cpal = "0.18.2"
 crossbeam-channel = "0.5.17"

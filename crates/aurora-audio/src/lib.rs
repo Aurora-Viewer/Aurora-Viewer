@@ -29,6 +29,7 @@ mod http;
 mod icy;
 mod mixer;
 mod output;
+mod processing;
 mod resample;
 mod stream;
 
@@ -42,6 +43,7 @@ pub use decode::SoundClip;
 pub use devices::{input_devices, output_devices};
 pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
+pub use processing::{EchoReference, MicProcessing};
 pub use stream::StreamStatus;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
@@ -66,6 +68,7 @@ struct Inner {
     cmd_tx: Sender<Command>,
     stream: Mutex<StreamController>,
     info: Arc<Mutex<OutputInfo>>,
+    echo_reference: EchoReference,
     // Dropped last: stops the device thread.
     output: output::OutputThread,
 }
@@ -110,13 +113,15 @@ impl AudioEngine {
         let (cmd_tx, cmd_rx) = bounded(COMMAND_QUEUE);
         let mixer = Arc::new(Mutex::new(Mixer::new(params.clone(), cmd_rx)));
         let info = Arc::new(Mutex::new(OutputInfo::default()));
-        let output = output::spawn(mixer, device, info.clone())?;
+        let echo_reference = EchoReference::default();
+        let output = output::spawn(mixer, device, info.clone(), echo_reference.clone())?;
         Ok(Self {
             inner: Arc::new(Inner {
                 params,
                 stream: Mutex::new(StreamController::new(cmd_tx.clone())),
                 cmd_tx,
                 info,
+                echo_reference,
                 output,
             }),
         })
@@ -126,6 +131,11 @@ impl AudioEngine {
     /// device is lost and reopened).
     pub fn output_info(&self) -> OutputInfo {
         self.inner.info.lock().clone()
+    }
+
+    /// Final playback reference for software microphone echo cancellation.
+    pub fn echo_reference(&self) -> EchoReference {
+        self.inner.echo_reference.clone()
     }
 
     /// Switches the output to the device called `name` (`None` = system

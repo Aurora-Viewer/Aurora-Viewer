@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use crate::AudioError;
 use crate::devices::{self, Direction};
 use crate::mixer::{ENGINE_CHANNELS, ENGINE_SAMPLE_RATE, Mixer};
+use crate::processing::{EchoReference, RenderTap};
 use crate::resample::Resampler;
 
 /// Description of the opened output device.
@@ -66,12 +67,17 @@ impl Drop for OutputThread {
 
 /// Starts the output thread on `device` (`None` = default) and waits until
 /// the first stream is playing. `info` is kept up to date by the thread.
-pub(crate) fn spawn(mixer: Arc<Mutex<Mixer>>, device: Option<String>, info: Arc<Mutex<OutputInfo>>) -> Result<OutputThread, AudioError> {
+pub(crate) fn spawn(
+    mixer: Arc<Mutex<Mixer>>,
+    device: Option<String>,
+    info: Arc<Mutex<OutputInfo>>,
+    reference: EchoReference,
+) -> Result<OutputThread, AudioError> {
     let (ready_tx, ready_rx) = bounded::<Result<(), AudioError>>(1);
     let (ctl_tx, ctl_rx) = unbounded::<OutputCmd>();
     let handle = thread::Builder::new()
         .name("aurora-audio-out".into())
-        .spawn(move || output_main(mixer, device, info, ready_tx, ctl_rx))
+        .spawn(move || output_main(mixer, device, info, ready_tx, ctl_rx, reference))
         .map_err(|e| AudioError::Device(e.to_string()))?;
     let mut out = OutputThread {
         ctl: Some(ctl_tx),
@@ -94,11 +100,12 @@ fn output_main(
     info: Arc<Mutex<OutputInfo>>,
     ready_tx: Sender<Result<(), AudioError>>,
     ctl: Receiver<OutputCmd>,
+    reference: EchoReference,
 ) {
     let mut ready = Some(ready_tx);
     loop {
         let mut reopen_now = false;
-        match open_stream(&mixer, wanted.as_deref()) {
+        match open_stream(&mixer, wanted.as_deref(), &reference) {
             Ok((stream, new_info, failed)) => {
                 log::info!(
                     "audio output: {} ({} Hz, {} ch)",
@@ -153,9 +160,13 @@ fn output_main(
 
 /// Opens `name` (or the default device). A named device that is missing or
 /// fails to open falls back to the default one.
-fn open_stream(mixer: &Arc<Mutex<Mixer>>, name: Option<&str>) -> Result<(cpal::Stream, OutputInfo, Arc<AtomicBool>), AudioError> {
+fn open_stream(
+    mixer: &Arc<Mutex<Mixer>>,
+    name: Option<&str>,
+    reference: &EchoReference,
+) -> Result<(cpal::Stream, OutputInfo, Arc<AtomicBool>), AudioError> {
     let picked = devices::pick(Direction::Output, name).ok_or(AudioError::NoDevice)?;
-    match open_device(mixer, &picked.device) {
+    match open_device(mixer, &picked.device, reference) {
         Ok((stream, mut info, failed)) => {
             info.fallback = picked.fallback;
             Ok((stream, info, failed))
@@ -163,7 +174,7 @@ fn open_stream(mixer: &Arc<Mutex<Mixer>>, name: Option<&str>) -> Result<(cpal::S
         Err(e) if name.is_some() && !picked.fallback => {
             log::warn!("audio output device {name:?} cannot be opened ({e}); using the default");
             let picked = devices::pick(Direction::Output, None).ok_or(AudioError::NoDevice)?;
-            let (stream, mut info, failed) = open_device(mixer, &picked.device)?;
+            let (stream, mut info, failed) = open_device(mixer, &picked.device, reference)?;
             info.fallback = true;
             Ok((stream, info, failed))
         }
@@ -171,18 +182,22 @@ fn open_stream(mixer: &Arc<Mutex<Mixer>>, name: Option<&str>) -> Result<(cpal::S
     }
 }
 
-fn open_device(mixer: &Arc<Mutex<Mixer>>, device: &cpal::Device) -> Result<(cpal::Stream, OutputInfo, Arc<AtomicBool>), AudioError> {
+fn open_device(
+    mixer: &Arc<Mutex<Mixer>>,
+    device: &cpal::Device,
+    reference: &EchoReference,
+) -> Result<(cpal::Stream, OutputInfo, Arc<AtomicBool>), AudioError> {
     let supported = device.default_output_config().map_err(|e| AudioError::Device(e.to_string()))?;
     let config = supported.config();
     let failed = Arc::new(AtomicBool::new(false));
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(device, &config, mixer, &failed),
-        SampleFormat::I16 => build::<i16>(device, &config, mixer, &failed),
-        SampleFormat::U16 => build::<u16>(device, &config, mixer, &failed),
-        SampleFormat::I32 => build::<i32>(device, &config, mixer, &failed),
-        SampleFormat::F64 => build::<f64>(device, &config, mixer, &failed),
-        SampleFormat::I8 => build::<i8>(device, &config, mixer, &failed),
-        SampleFormat::U8 => build::<u8>(device, &config, mixer, &failed),
+        SampleFormat::F32 => build::<f32>(device, &config, mixer, &failed, reference),
+        SampleFormat::I16 => build::<i16>(device, &config, mixer, &failed, reference),
+        SampleFormat::U16 => build::<u16>(device, &config, mixer, &failed, reference),
+        SampleFormat::I32 => build::<i32>(device, &config, mixer, &failed, reference),
+        SampleFormat::F64 => build::<f64>(device, &config, mixer, &failed, reference),
+        SampleFormat::I8 => build::<i8>(device, &config, mixer, &failed, reference),
+        SampleFormat::U8 => build::<u8>(device, &config, mixer, &failed, reference),
         other => Err(AudioError::Device(format!("unsupported device sample format {other:?}"))),
     }?;
     stream.play().map_err(|e| AudioError::Device(e.to_string()))?;
@@ -200,17 +215,23 @@ fn build<T>(
     config: &cpal::StreamConfig,
     mixer: &Arc<Mutex<Mixer>>,
     failed: &Arc<AtomicBool>,
+    reference: &EchoReference,
 ) -> Result<cpal::Stream, AudioError>
 where
     T: SizedSample + FromSample<f32>,
 {
     let mut adapter = OutputAdapter::new(config.sample_rate, usize::from(config.channels));
+    adapter.tap = Some(RenderTap::new(reference.clone()));
+    let reference = reference.clone();
     let mixer = mixer.clone();
     let failed = failed.clone();
     device
         .build_output_stream::<T, _, _>(
             *config,
-            move |data: &mut [T], _info| {
+            move |data: &mut [T], info| {
+                let timestamp = info.timestamp();
+                let delay = timestamp.playback.duration_since(timestamp.callback).as_millis().min(500) as i32;
+                reference.delay(delay);
                 let mut m = mixer.lock();
                 adapter.fill(&mut m, data);
             },
@@ -232,6 +253,7 @@ pub(crate) struct OutputAdapter {
     step: f64,
     mix_buf: Vec<f32>,
     out_buf: Vec<f32>,
+    tap: Option<RenderTap>,
 }
 
 impl OutputAdapter {
@@ -244,6 +266,7 @@ impl OutputAdapter {
             step: f64::from(ENGINE_SAMPLE_RATE) / f64::from(device_rate.max(1)),
             mix_buf: Vec::with_capacity(8192),
             out_buf: Vec::with_capacity(8192),
+            tap: None,
         }
     }
 
@@ -253,6 +276,9 @@ impl OutputAdapter {
             None => {
                 self.mix_buf.resize(frames * ENGINE_CHANNELS, 0.0);
                 mixer.render(&mut self.mix_buf);
+                if let Some(tap) = &mut self.tap {
+                    tap.write(&self.mix_buf);
+                }
                 &self.mix_buf
             }
             Some(rs) => {
@@ -264,6 +290,9 @@ impl OutputAdapter {
                         let need = (((frames - produced) as f64) * self.step).ceil() as usize + 4;
                         self.mix_buf.resize(need.min(8192) * ENGINE_CHANNELS, 0.0);
                         mixer.render(&mut self.mix_buf);
+                        if let Some(tap) = &mut self.tap {
+                            tap.write(&self.mix_buf);
+                        }
                         rs.push(&self.mix_buf);
                     }
                 }

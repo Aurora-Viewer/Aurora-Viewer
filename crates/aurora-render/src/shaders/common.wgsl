@@ -124,6 +124,7 @@ const FLAG_DOUBLE_SIDED: u32 = 2048u;
 // placed by the GPU: model relative to the anchor matrix palettes[flags.y]
 // (worn objects); skinned: skeleton placed by its own anchor
 const FLAG_ANCHORED: u32 = 4096u;
+const FLAG_LIP_SYNC: u32 = 8192u;
 // a skeleton's own anchor (skeleton space to world), from its first joint
 const SKELETON_ANCHOR: u32 = 160u;
 

@@ -277,6 +277,7 @@ pub fn draw(
     show_own: bool,
     tag_distance: f32,
     voice: &HashMap<uuid::Uuid, (f32, bool)>,
+    audio: &crate::settings::AudioSettings,
     voice_tags: &mut super::voice_tag::VoiceTags,
     complexity: Option<TagComplexity<'_>>,
     loading: Option<&HashMap<uuid::Uuid, f32>>,
@@ -339,8 +340,17 @@ pub fn draw(
                     distance: d,
                     // the distance fade of the classic tags
                     fade: (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0),
-                    content: plate_content(world, idx, o, in_voice.is_some(), complexity.as_ref(), too),
-                    voice: in_voice,
+                    content: plate_content(
+                        world,
+                        idx,
+                        o,
+                        in_voice.is_some()
+                            && audio.voice_visualizer_dot
+                            && audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false),
+                        complexity.as_ref(),
+                        too,
+                    ),
+                    voice: in_voice.filter(|_| audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false)),
                     loading: loading.and_then(|l| l.get(&id).copied()),
                     picture,
                 });
@@ -497,7 +507,8 @@ pub fn draw(
         let total_h: f32 = galleys.iter().map(|g| g.size().y).sum();
         let max_w = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max);
         y -= total_h;
-        let no_voice = is_avatar && in_voice.is_none();
+        let visualizer = audio.world_voice_visualizer(avatar == Some(world.agent_id), world.calls.active.is_some(), false);
+        let no_voice = visualizer && is_avatar && in_voice.is_none();
         let voice_w = if no_voice { super::voice_tag::ICON_WIDTH } else { 0.0 };
         let text_x = sp.x + voice_w * 0.5;
         if is_avatar {
@@ -533,8 +544,11 @@ pub fn draw(
                 mesh.add_triangle(0, 2, 3);
                 painter.add(mesh);
             }
-            if let Some(id) = avatar {
+            if let Some(id) = avatar.filter(|_| visualizer) {
                 voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
+                if audio.voice_visualizer_dot && in_voice.is_some() {
+                    painter.circle_filled(Pos2::new(r.left() + 12.0, r.center().y), 3.0, p.success.gamma_multiply(fade));
+                }
             }
             if no_voice && let Some(icon) = icons.get("microphone-off") {
                 let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
