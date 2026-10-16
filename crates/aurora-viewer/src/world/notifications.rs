@@ -110,6 +110,13 @@ pub enum Data {
         /// Offered while we were offline: answered by capability.
         offline: bool,
     },
+    /// A resident offers their calling card (OfferCallingCard): the answer
+    /// goes to the simulator of `region`.
+    CallingCard {
+        from: Uuid,
+        tx: Uuid,
+        region: aurora_net::RegionHandle,
+    },
     Inventory {
         from: Uuid,
         tx: Uuid,
@@ -254,7 +261,7 @@ impl Notification {
             Data::None => Follow::Restore,
             Data::Message { session, .. } => Follow::Conversation(*session),
             Data::Lure { from, .. } => place_link(&self.body).map_or(Follow::Conversation(*from), Follow::Place),
-            Data::TeleportRequest { from, .. } | Data::Friend { from, .. } => Follow::Conversation(*from),
+            Data::TeleportRequest { from, .. } | Data::Friend { from, .. } | Data::CallingCard { from, .. } => Follow::Conversation(*from),
             Data::Call { invite } if invite.p2p => Follow::Conversation(invite.from),
             Data::Call { invite } => Follow::Conversation(invite.session),
             Data::Inventory { object, .. } if !object.is_nil() && outcome == Outcome::Kept => Follow::Inventory(*object),
@@ -282,11 +289,14 @@ impl Notification {
         matches!(self.data, Data::Presence { online: true, .. } | Data::Message { .. })
     }
 
-    /// Closing it answers "no"; a link has no answer and a resident's
-    /// inventory offer is kept.
+    /// Closing it answers "no"; a link has no answer, a resident's
+    /// inventory offer is kept and a calling card offer gets no answer
+    /// (callingcard_offer_callback: "close button probably").
     pub fn close_declines(&self) -> bool {
         match &self.data {
-            Data::None | Data::Url(_) | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart => false,
+            Data::None | Data::Url(_) | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart | Data::CallingCard { .. } => {
+                false
+            }
             Data::Inventory { object, .. } => object.is_nil(),
             _ => true,
         }
@@ -547,6 +557,13 @@ impl Notifications {
                 }
             }
             (Data::Friend { from, tx, offline }, _) => out.push(self.friend_answer(*from, *tx, *offline, accept, calling_cards)),
+            // callingcard_offer_callback: Accept into the Calling Cards
+            // folder, Decline
+            (Data::CallingCard { tx, region, .. }, _) => out.push(NetCommand::AnswerCallingCard {
+                handle: *region,
+                transaction: *tx,
+                folder: accept.then_some(calling_cards),
+            }),
             (
                 Data::Inventory {
                     from,

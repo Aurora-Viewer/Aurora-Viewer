@@ -59,6 +59,7 @@ mod reset_skeleton;
 mod scripts;
 mod shape_editor;
 mod snapshot;
+mod social_menu_demo;
 mod task_notecards;
 mod texture_library;
 mod texture_refresh;
@@ -6768,6 +6769,7 @@ impl App {
             }
         }
         self.demo_worn_steps();
+        self.demo_social_menu_steps();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -8244,6 +8246,13 @@ impl App {
                 GroupAction::Invite { group, invites } => {
                     log::info!("group invite: {} resident(s) invited", invites.len());
                     self.send(NetCommand::InviteToGroup { group, invites });
+                }
+                // showForGroup: sendAgentDataUpdateRequest, clearGroupData,
+                // then updateLists: the properties first, roles and members
+                GroupAction::ReloadForInvite(group) => {
+                    self.send(NetCommand::RequestGroups);
+                    self.world.search.request_group(group);
+                    self.world.group_data.reload_for_invite(group);
                 }
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),

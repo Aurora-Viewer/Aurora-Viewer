@@ -3,6 +3,7 @@
 pub mod appearance;
 pub mod blocking;
 pub mod body;
+pub mod calling_cards;
 pub mod calls;
 pub mod chat_log;
 pub mod contact_sets;
@@ -1677,6 +1678,14 @@ impl World {
                 }
                 None
             }
+            NetEvent::CallingCardOffered { from, transaction, handle } => {
+                self.on_calling_card_offer(from, transaction, handle);
+                None
+            }
+            NetEvent::CallingCardAnswered { accepted } => {
+                self.on_calling_card_answer(accepted);
+                None
+            }
             ev @ (NetEvent::Groups(_)
             | NetEvent::ActiveGroup { .. }
             | NetEvent::GroupDropped(_)
@@ -2893,6 +2902,13 @@ impl World {
             let accept = matches!(r, notifications::Response::Accept);
             self.notifications.list.retain(|n| n.id != id);
             return (self.answer_teleport_invite(invite, accept), None);
+        }
+        // callingcard_offer_callback: a decline also sends our do not
+        // disturb response
+        if matches!(r, notifications::Response::Decline)
+            && let Some(notifications::Data::CallingCard { from, .. }) = &data
+        {
+            self.calling_card_declined(*from);
         }
         // friendship_offer_callback: formFriendship on accept
         if matches!(r, notifications::Response::Accept)

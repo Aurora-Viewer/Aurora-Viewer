@@ -202,6 +202,19 @@ impl World {
         !owner.is_nil() && self.mutes.is_muted(owner, "", flag::PARTICLES)
     }
 
+    /// "Block particles" of a resident's menu: only the particle flag of
+    /// their entry, turned on or off as the block list's own "Block
+    /// particles" does (FSPanelBlockList::toggleMute(LLMute::flagParticles)).
+    /// The rest of the entry, if any, stays as it was.
+    pub fn toggle_particle_block(&mut self, id: Uuid, name: &str) -> Result<(), String> {
+        if self.particles_blocked(&id) {
+            self.unblock(id, name, flag::PARTICLES);
+            Ok(())
+        } else {
+            self.block_flags(id, name, MuteType::Agent, flag::PARTICLES)
+        }
+    }
+
     /// Voice of a blocked resident.
     pub fn voice_blocked(&self, id: &Uuid) -> bool {
         self.mutes.is_muted(id, "", flag::VOICE_CHAT)
@@ -226,5 +239,40 @@ impl World {
     /// Legacy "First Last" name of an avatar (what the block list stores).
     pub fn legacy_name(&self, id: &Uuid) -> Option<String> {
         self.social.names.get(id).cloned().or_else(|| self.avatar_name(id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::avatar::AvatarLibrary;
+    use std::sync::Arc;
+
+    #[test]
+    fn block_particles_toggles_only_the_particle_flag() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(99);
+        w.mutes.reset(w.agent_id);
+        let jane = Uuid::from_u128(1);
+        // a new entry mutes only the particles
+        w.toggle_particle_block(jane, "Jane Doe").expect("blocked");
+        assert!(w.particles_blocked(&jane));
+        assert!(!w.mutes.text_muted(&jane, ""));
+        assert!(!w.voice_blocked(&jane));
+        assert!(matches!(
+            w.take_social_commands().last(),
+            Some(NetCommand::UpdateMute { flags, .. }) if *flags == flag::ALL & !flag::PARTICLES
+        ));
+        // again: the entry goes (nothing else was muted)
+        w.toggle_particle_block(jane, "Jane Doe").expect("unblocked");
+        assert!(!w.particles_blocked(&jane));
+        assert!(w.mutes.get(&jane).is_none());
+        // a resident blocked in full keeps the rest when their particles
+        // are let through
+        w.block(jane, "Jane Doe", MuteType::Agent).expect("blocked");
+        assert!(w.particles_blocked(&jane));
+        w.toggle_particle_block(jane, "Jane Doe").expect("particles allowed");
+        assert!(!w.particles_blocked(&jane));
+        assert!(w.mutes.text_muted(&jane, "") && w.voice_blocked(&jane));
     }
 }

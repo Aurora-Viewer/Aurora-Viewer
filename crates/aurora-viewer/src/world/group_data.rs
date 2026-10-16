@@ -190,6 +190,20 @@ impl GroupMgr {
         self.open(group, member);
     }
 
+    /// LLFloaterGroupInvite::showForGroup with request_update (a resident
+    /// invited from their menu): the group forgotten (clearGroupData), then
+    /// what LLPanelGroupInvite::updateLists asks, the roles, their members
+    /// and the members (the properties are the profile request).
+    pub fn reload_for_invite(&mut self, group: Uuid) {
+        if group.is_nil() {
+            return;
+        }
+        self.groups.remove(&group);
+        self.request_roles(group);
+        self.request_role_members(group);
+        self.request_members(group);
+    }
+
     /// Forget a group (LLGroupMgr::clearGroupData), after joining or leaving.
     pub fn clear(&mut self, group: &Uuid) {
         self.groups.remove(group);
@@ -776,6 +790,31 @@ mod tests {
 
     fn request_of(cmds: &[NetCommand], pick: fn(&NetCommand) -> Option<Uuid>) -> Uuid {
         cmds.iter().find_map(pick).expect("request sent")
+    }
+
+    #[test]
+    fn an_invitation_from_a_menu_asks_the_roles_and_members_again_without_titles_or_notices() {
+        let mut mgr = GroupMgr::default();
+        mgr.open(G, true);
+        mgr.take_commands();
+        mgr.reload_for_invite(G);
+        let cmds = mgr.take_commands();
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, NetCommand::GroupRoleDataRequest { group, .. } if *group == G))
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, NetCommand::GroupMembersRequest { group, .. } if *group == G))
+        );
+        assert!(
+            !cmds.iter().any(|c| matches!(
+                c,
+                NetCommand::GroupTitlesRequest { .. } | NetCommand::GroupNoticesListRequest(_) | NetCommand::GroupRoleMembersRequest { .. }
+            )),
+            "{cmds:?}"
+        );
+        assert!(!mgr.get(&G).is_some_and(|g| g.roles_complete || g.members_complete));
     }
 
     #[test]

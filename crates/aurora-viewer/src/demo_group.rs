@@ -148,6 +148,8 @@ pub fn my_powers() -> u64 {
     match scenario() {
         Scenario::Owner => u64::MAX,
         Scenario::Officer => DEFAULT_OFFICER,
+        // AURORA_DEMO_SOCIAL_MENU: someone to invite into it
+        _ if super::social_menu::step().is_some() => DEFAULT_OFFICER,
         _ => DEFAULT_MEMBER,
     }
 }

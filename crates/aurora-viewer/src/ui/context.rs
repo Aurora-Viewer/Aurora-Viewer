@@ -148,6 +148,10 @@ pub struct Facts {
     /// Rendering exception: 0 normal, 1 never fully, 2 always fully.
     pub render: u8,
     pub blocked: bool,
+    /// Their particles are blocked (LLMute::flagParticles).
+    pub particles_blocked: bool,
+    /// Our contact sets, for "Add to contact set" (getAllContactSets).
+    pub contact_sets: Vec<String>,
     pub friend: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
@@ -216,6 +220,14 @@ pub enum CtxAction {
     /// Block / unblock only a resident's voice (LLAvatarActions::
     /// toggleMuteVoice: LLMute::flagVoiceChat).
     ToggleVoiceMute(Uuid),
+    /// Block / unblock only a resident's particles (LLMute::flagParticles,
+    /// as the block list's "Block particles").
+    ToggleParticleMute(Uuid),
+    /// "Invite to group" (LLAvatarActions::inviteToGroup): the groups where
+    /// we may invite, then the chosen group's invitation window.
+    InviteToGroup(Uuid),
+    /// "Give my calling card" (LLAvatarGiveCard: OfferCallingCard).
+    GiveCallingCard(Uuid),
     /// "Create landmark" where the agent is (About Land's Landmark).
     CreateLandmark,
     /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).
@@ -308,10 +320,14 @@ pub enum CtxAction {
     GroupChatBlocked(Uuid, bool),
     /// Contact sets and nicknames (LGGContactSets).
     ContactSet(crate::ui::contacts::SetEdit),
+    /// "New contact set…" of an "Add to contact set" submenu: its name
+    /// asked (AddNewContactSet), then these residents added to it.
+    NewContactSet(Vec<Uuid>),
 }
 
-/// "Add to contact set": one entry per set (menu_fs_contacts_friends.xml,
-/// LLAvatarActions::addToContactSet).
+/// "Add to contact set": one entry per set, then "New contact set…"
+/// (menu_fs_contacts_friends.xml, LLAvatarActions::addToContactSet: the
+/// sets of FSFloaterAddToContactSet's list and its "+", AddNewContactSet).
 pub fn contact_set_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &[Uuid], label: &str) {
     let sets = world.contact_sets.set_names();
     menu::submenu(ui, p, "users-group", label, !ids.is_empty(), |ui| {
@@ -325,6 +341,10 @@ pub fn contact_set_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &
                     CtxAction::ContactSet(crate::ui::contacts::SetEdit::Add { set, ids: ids.to_vec() }),
                 );
             }
+        }
+        menu::separator(ui, p);
+        if menu::item(ui, p, "plus", aurora_i18n::tr!("ui-context-new-contact-set")) {
+            request(ui.ctx(), CtxAction::NewContactSet(ids.to_vec()));
         }
     });
 }
@@ -576,7 +596,10 @@ fn avatar_menu_reporting(
             add_friend(ui);
             remove_friend(ui);
             contact_set_submenu(ui, p, world, &[id], aurora_i18n::tr!("ui-context-add-to-contact-set"));
-            menu::todo(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
+            // Avatar.InviteToGroup (can_invite: always)
+            if menu::item(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group")) {
+                act(CtxAction::InviteToGroup(id));
+            }
             menu::separator(ui, p);
             zoom(ui);
             if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), here) {
