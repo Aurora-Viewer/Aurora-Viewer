@@ -3214,7 +3214,7 @@ impl World {
     /// Turn the drawn bodies of the standing avatars toward where they face
     /// or travel (LLVOAvatar::updateRootPositionAndRotation). Returns our
     /// own avatar's turn (+1 left, -1 right, 0) for the control flags.
-    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool) -> i8 {
+    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool, step_back: bool) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
         for (_, o) in self.objects.avatars() {
@@ -3223,6 +3223,16 @@ impl World {
             }
             let id = o.full_id;
             let is_self = id == self.agent_id && self.agent.has_local_control();
+            // the walk the simulator signals (mSignaledAnimations), ours
+            // with Aurora's movement
+            let walking = step_back && {
+                let signals = if id == self.agent_id {
+                    self.own_signals()
+                } else {
+                    self.animations.get(&id).map_or(&[][..], |v| v.as_slice())
+                };
+                signals.iter().any(|a| a.id == crate::own_motion::ANIM_WALK)
+            };
             let input = if is_self {
                 let a = &self.agent;
                 // (with Aurora's movement, the velocity it is drawn at)
@@ -3233,6 +3243,7 @@ impl World {
                     in_air: a.flying || velocity.z.abs() > 1.0,
                     mouselook_at: mouselook.then_some(cam_at),
                     flying: a.flying,
+                    step_back: walking,
                 }
             } else {
                 body::Input {
@@ -3241,6 +3252,7 @@ impl World {
                     in_air: o.velocity.z.abs() > 1.0,
                     mouselook_at: None,
                     flying: false,
+                    step_back: walking,
                 }
             };
             let no_rotate = self

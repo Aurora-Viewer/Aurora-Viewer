@@ -5524,7 +5524,8 @@ impl App {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
             }
             let at = self.camera.forward();
-            self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
+            let step_back = self.settings.walk_backwards_without_turning;
+            self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml, step_back);
             self.trace_own_motion();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
