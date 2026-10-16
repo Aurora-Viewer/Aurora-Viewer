@@ -4225,12 +4225,11 @@ impl App {
         self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
     }
 
+    /// LLAgent::toggleFlying → setFlying (indra/newview/llagent.cpp): only
+    /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
+    /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
         self.world.agent.flying = !self.world.agent.flying;
-        if !self.world.agent.flying {
-            // landing: a short UP_NEG nudge is implicit when FLY is cleared
-            self.net.send(NetCommand::OneShotControl(control::STOP));
-        }
     }
 
     /// A conversation the user opened (a contact, a name's menu, People)
@@ -5201,7 +5200,7 @@ impl App {
             }
             let at = self.camera.forward();
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
-            self.trace_demo_link();
+            self.trace_own_motion();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)
@@ -6439,6 +6438,12 @@ impl App {
             }
         }
         self.frame_profile.lap(Lap::Limiter);
+        // the graph's frame time: from one end of the limiter to the next,
+        // the pace the frames really leave at. `dt` starts after the input
+        // events: a click or a mouse move handled before one frame and not
+        // the next made that one look shorter than the cap (spikes above
+        // the frame rate limit in the Performance window's graph)
+        let paced = self.frame_start.elapsed();
         self.frame_start = Instant::now();
         self.frame_count += 1;
         if self.demo
@@ -6639,7 +6644,8 @@ impl App {
         if self.demo {
             ui::perf::demo_traffic(&mut net);
         }
-        self.perf.frame(dt * 1000.0, net, &self.last_render, &self.scene.stats);
+        self.perf
+            .frame(paced.as_secs_f32().min(0.1) * 1000.0, net, &self.last_render, &self.scene.stats);
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         self.gfx = Some(gfx);
@@ -9386,6 +9392,7 @@ impl App {
                     &mut open,
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
+                    &self.settings.script_editor,
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),

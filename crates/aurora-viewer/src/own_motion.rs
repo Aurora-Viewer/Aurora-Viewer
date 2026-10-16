@@ -155,12 +155,16 @@ impl Intent {
 /// Walk and run: the speeds the offline demo already used for SL (3.2 and
 /// 5.13 m/s); fly: 16 m/s, measured in the log of the border-crossing
 /// trial on Agni (2026-10-13). Crouch, nudge and climb are guesses. No
-/// ramp until one is seen: a lead that stops short of a simulator that
-/// slows down is caught up going on (`ease_out`), one that runs past a
-/// simulator that stops at once would have to come back.
+/// ramp on the land until one is seen: a lead that stops short of a
+/// simulator that slows down is caught up going on (`ease_out`), one that
+/// runs past a simulator that stops at once would have to come back. A
+/// flight gets going over half a second (Agni, 2026-10-16: from a hover,
+/// 90 % of its speed 0.55 s after the first report that moved); with no
+/// ramp a flight of a moment while walking (the jump key held) led by
+/// 2.9 m, then the drawn avatar stood still while the simulator caught up.
 const SEED_SPEED: [f32; 5] = [3.2, 5.13, 1.2, 1.0, 16.0];
 const SEED_CLIMB: f32 = 4.0;
-const SEED_RAMP: f32 = 0.0;
+const SEED_RAMP: [f32; 5] = [0.0, 0.0, 0.0, 0.0, 0.5];
 /// The simulator plays an input this long after the round trip: one of
 /// its physics steps (45 a second), to be confirmed on the grid.
 const SEED_DELAY: f32 = 1.0 / 45.0;
@@ -203,7 +207,7 @@ impl Default for Calibration {
             speed_samples: [0; 5],
             climb: [SEED_CLIMB; 2],
             climb_samples: [0; 2],
-            ramp: [SEED_RAMP; 5],
+            ramp: SEED_RAMP,
             ramp_samples: [0; 5],
             last: None,
             ramp_watch: None,
@@ -331,6 +335,12 @@ impl Calibration {
                 self.last = None;
                 return;
             }
+            // a speed of the land twice its usual one is not the keys' (a
+            // push, a slide, momentum the airborne test missed)
+            if intent.mode != Mode::Fly && horizontal > 2.0 * SEED_SPEED[intent.mode.index()] {
+                self.last = None;
+                return;
+            }
             (horizontal, None)
         } else {
             if velocity.z * intent.vertical <= 0.3 {
@@ -397,6 +407,17 @@ const FAILURES_TO_SUSPEND: usize = 3;
 const SUSPEND: f32 = 5.0;
 /// The keys' velocities kept: more than the longest delay.
 const HISTORY: f32 = 3.0;
+/// At the end of a flight the simulator keeps the flight's speed until the
+/// avatar lands (Firestorm only clears the FLY flag): the avatar coasts
+/// while the simulator moves it this much faster (m/s) than the keys ask.
+const COAST_MARGIN: f32 = 1.0;
+/// While it coasts, the lead goes from the flight's to the keys' at most
+/// this fast (m/s): the drawn avatar slows down by that much, instead of
+/// dropping to a walk's lead in one delay and catching up after.
+const COAST_DRAIN: f32 = 3.0;
+/// Vertical speed (m/s) of the simulator's reports beyond which our
+/// avatar is in the air: no speed of the land is learned from them.
+const AIRBORNE: f32 = 1.0;
 
 /// One frame of the prediction.
 #[derive(Debug, Clone, Copy)]
@@ -440,6 +461,12 @@ pub struct Prediction {
     /// Since the keys were released, the simulator was seen moving: its
     /// stop is the end of the motion (`settle`).
     moved_since_release: bool,
+    /// The flight ended and the simulator carries the avatar on at its
+    /// speed (`COAST_MARGIN`): the lead drains at `COAST_DRAIN`.
+    coasting: bool,
+    /// What the lead had left over the keys' when the coast ended (the
+    /// landing): handed to the caller as a correction (`settle`).
+    landed: Vec3,
 }
 
 impl Default for Prediction {
@@ -460,6 +487,8 @@ impl Default for Prediction {
             lead_max: 0.0,
             rtt: 0.0,
             moved_since_release: false,
+            coasting: false,
+            landed: Vec3::ZERO,
         }
     }
 }
@@ -506,7 +535,7 @@ impl Prediction {
 
     pub fn step(&mut self, s: Step) {
         self.rtt = s.rtt.clamp(0.0, 2.0);
-        self.flying = s.flying;
+        let was_flying = std::mem::replace(&mut self.flying, s.flying);
         let server = if s.flying {
             s.server_velocity
         } else {
@@ -533,8 +562,18 @@ impl Prediction {
         }
         self.failures
             .retain(|t| s.now.saturating_duration_since(*t).as_secs_f32() < FAILURE_WINDOW);
-        let ramp = self.last_mode.map_or(SEED_RAMP, |m| self.calibration.ramp(m));
+        let ramp = self.last_mode.map_or(0.0, |m| self.calibration.ramp(m));
         let target = self.intent.map_or(Vec3::ZERO, |i| self.calibration.target(&i));
+        // the end of a flight at speed: the simulator carries the avatar on
+        // until it lands, whatever the keys ask
+        let (carried, asked) = (horizontal(server).length(), horizontal(target).length());
+        if was_flying && !s.flying && carried > asked + COAST_MARGIN {
+            self.coasting = true;
+        }
+        let landed = self.coasting && (s.flying || carried <= asked + COAST_MARGIN);
+        if landed {
+            self.coasting = false;
+        }
         // the simulator's ramp, as a first order reaching 90 % in `ramp`
         let tau = ramp / std::f32::consts::LN_10;
         let k = if tau > 1e-3 { 1.0 - (-s.dt / tau).exp() } else { 1.0 };
@@ -554,8 +593,19 @@ impl Prediction {
         }
         let delay = self.calibration.delay(self.rtt);
         if driving {
-            self.lead = self.window(s.now, delay);
-            self.check_follow(server, delay + ramp, s);
+            let keyed = self.window(s.now, delay);
+            if self.coasting {
+                let gap = keyed - self.lead;
+                let most = COAST_DRAIN * s.dt.max(0.0);
+                self.lead += if gap.length() > most { gap.normalize_or_zero() * most } else { gap };
+            } else {
+                if landed {
+                    // what is left stays where it is drawn and fades
+                    self.landed += horizontal(self.lead - keyed);
+                }
+                self.lead = keyed;
+                self.check_follow(server, delay + ramp, s);
+            }
         } else {
             self.lead *= 0.5_f32.powf(s.dt / FADE_HALF_LIFE);
             if self.lead.length_squared() < 1e-6 {
@@ -609,6 +659,12 @@ impl Prediction {
     /// applied by the frame at `applied` (the delay is counted to that frame:
     /// until then the drawn simulator's position moves as before).
     pub fn on_report(&mut self, velocity: Vec3, received: Instant, applied: Instant) {
+        // in the air (a fall, a jump, the end of a flight) the simulator's
+        // speed is not the keys': a fall with a flight's momentum, forward
+        // held, taught a walk of 12 m/s on Agni
+        if self.coasting || (!self.flying && velocity.z.abs() > AIRBORNE) {
+            return;
+        }
         let held = self.since.map_or(0.0, |t| received.saturating_duration_since(t).as_secs_f32());
         self.calibration.observe(self.intent, held, self.rtt, velocity, received, applied);
     }
@@ -618,18 +674,20 @@ impl Prediction {
     /// physics step sooner than the lead expected). Dropped and returned,
     /// for the caller to keep where the avatar is drawn instead of walking
     /// it back.
+    /// The same for what the lead of a coast had left at the landing.
     pub fn settle(&mut self, server_velocity: Vec3) -> Vec3 {
+        let landed = std::mem::take(&mut self.landed);
         let server = if self.flying {
             server_velocity
         } else {
             horizontal(server_velocity)
         };
         if self.intent.is_some() || !self.moved_since_release || server.length() > 0.05 || self.lead == Vec3::ZERO {
-            return Vec3::ZERO;
+            return landed;
         }
         self.history.clear();
         self.moved_since_release = false;
-        std::mem::take(&mut self.lead)
+        landed + std::mem::take(&mut self.lead)
     }
 
     /// A key that moves the avatar is held.
@@ -665,26 +723,38 @@ pub fn glide(current: Vec3, velocity: Vec3, target: Vec3, dt: f32) -> (Vec3, Vec
 /// Deceleration (m/s²) of the last of a stop that `ease_out` stretches.
 const EASE_DECEL: f32 = 6.0;
 
+/// Beyond this the aim is not the end of our stop but a motion of the
+/// simulator's own (a push, a slide): the glide follows it.
+const EASE_RANGE: f32 = 0.5;
+
 /// After a release the drawn avatar only slows down. When the simulator
 /// stops a frame later than the lead expected (the release reached it a
 /// physics step later), the aim moves on a few centimetres after the glide
 /// had nearly stopped: rather than speeding up again for them, the avatar
 /// goes on at the speed it had and slows down as it reaches the aim.
-/// `glided` is the glide's answer from `current` at `velocity`.
+/// Horizontally and within `EASE_RANGE` only: the height is the glide's,
+/// so a fall the simulator makes alone (the end of a flight, a ledge) or
+/// a take-off is followed (an avatar nearly at rest kept its nearly zero
+/// speed and hung in the air until the next key). `glided` is the glide's
+/// answer from `current` at `velocity`.
 pub fn ease_out(current: Vec3, velocity: Vec3, glided: (Vec3, Vec3), aim: Vec3, dt: f32) -> (Vec3, Vec3) {
-    let ahead = aim - current;
+    let ahead = horizontal(aim - current);
+    let velocity = horizontal(velocity);
     let before = velocity.length();
-    if glided.1.length() <= before || ahead.dot(velocity) <= 0.0 {
+    let distance = ahead.length();
+    if horizontal(glided.1).length() <= before || ahead.dot(velocity) <= 0.0 || distance > EASE_RANGE {
         return glided;
     }
-    let distance = ahead.length();
     let speed = before.min((2.0 * EASE_DECEL * distance).sqrt());
     let step = speed * dt.max(0.0);
-    if step >= distance {
-        return (aim, Vec3::ZERO);
-    }
-    let direction = ahead / distance;
-    (current + direction * step, direction * speed)
+    let (x, y) = if step >= distance {
+        (aim.x, aim.y)
+    } else {
+        let moved = current + ahead / distance * step;
+        (moved.x, moved.y)
+    };
+    let flat = if step >= distance { Vec3::ZERO } else { ahead / distance * speed };
+    (Vec3::new(x, y, glided.0.z), Vec3::new(flat.x, flat.y, glided.1.z))
 }
 
 /// A correction smaller than this, at rest after a release, waits for the
@@ -753,6 +823,21 @@ fn rest_animation(id: &Uuid) -> bool {
     STANDS.contains(id) || *id == ANIM_HOVER
 }
 
+/// The longest a local start or stop waits for the simulator's own while
+/// what is drawn and reported says it is only late (`Locomotion::overlay`).
+const HOLD: f32 = 3.0;
+
+/// What says whether the simulator's signal is late or refuses a local
+/// start or stop (`Locomotion::overlay`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Moving {
+    pub flying: bool,
+    /// The simulator's last report moves our avatar.
+    pub simulator: bool,
+    /// The drawn avatar moves (its glide).
+    pub drawn: bool,
+}
+
 /// Our walk, run, crouch and fly animations started and stopped with the
 /// keys, over the simulator's signals.
 #[derive(Debug, Clone, Default)]
@@ -781,15 +866,21 @@ impl Locomotion {
 
     /// The list to draw instead of the simulator's `base`, or None to draw
     /// it as it is. `window`: how long a local start or stop waits for the
-    /// simulator to agree.
+    /// simulator to agree. Past it, a local stop is kept while the
+    /// simulator does not report our avatar moving, and a local start
+    /// while the drawn avatar moves (`moving`): the simulator's signal is
+    /// only late (a busy simulator, a slow link), and giving up then
+    /// brought the walk back for a moment after a stop, and the AO's with
+    /// it, or stopped it under a moving avatar; `HOLD` at most.
     pub fn overlay(
         &mut self,
         base: &[PlayingAnimation],
         wanted: Option<Uuid>,
-        flying: bool,
+        moving: Moving,
         window: f32,
         now: Instant,
     ) -> Option<Vec<PlayingAnimation>> {
+        let flying = moving.flying;
         if wanted != self.wanted || self.since.is_none() {
             if self.wanted.is_some() && wanted.is_none() {
                 self.released = Some(now);
@@ -802,6 +893,9 @@ impl Locomotion {
         }
         let start = self.since.unwrap_or(now);
         let recent = |t: Instant| now.saturating_duration_since(t).as_secs_f32() < window;
+        let within_hold = |t: Instant| now.saturating_duration_since(t).as_secs_f32() < HOLD;
+        let stop_held = |t: Instant| recent(t) || (!moving.simulator && within_hold(t));
+        let start_held = |t: Instant| recent(t) || (moving.drawn && within_hold(t));
         if let Some(a) = wanted
             && let Some(signal) = base.iter().find(|p| p.id == a)
             && let Some((shown, at)) = self.shown
@@ -823,7 +917,7 @@ impl Locomotion {
         }
         self.shown = None;
         match wanted {
-            Some(a) if !base.iter().any(|p| p.id == a) && recent(start) => {
+            Some(a) if !base.iter().any(|p| p.id == a) && start_held(start) => {
                 drawn.retain(|p| !MOVING.contains(&p.id) && !rest_animation(&p.id));
                 drawn.push(PlayingAnimation {
                     id: a,
@@ -834,7 +928,7 @@ impl Locomotion {
                 self.shown = Some((a, start));
                 changed = true;
             }
-            None if self.released.is_some_and(recent) && base.iter().any(|p| MOVING.contains(&p.id)) => {
+            None if self.released.is_some_and(stop_held) && base.iter().any(|p| MOVING.contains(&p.id)) => {
                 drawn.retain(|p| !MOVING.contains(&p.id));
                 if !drawn.iter().any(|p| rest_animation(&p.id)) {
                     let at = self.released.unwrap_or(now);
@@ -893,6 +987,68 @@ mod tests {
         let up = Intent::from_flags(control::FLY | control::UP_POS, 0.0, false).expect("climb");
         assert_eq!((up.mode, up.direction, up.vertical), (Mode::Fly, Vec3::ZERO, 1.0));
         assert_eq!(Intent::from_flags(control::FLY, 0.0, false), None);
+    }
+
+    /// The end of a flight at 16 m/s, forward held (Agni, 2026-10-16): the
+    /// simulator carries the avatar on at the flight's speed until it lands
+    /// 0.5 s later. The drawn avatar slows down by `COAST_DRAIN` at most
+    /// (it dropped to 4.9 m/s, then rushed at 27 when the lead fell to a
+    /// walk's at once), the simulator is not taken for one that does not
+    /// follow, no walk of 15 m/s is learned, and what the lead has left at
+    /// the landing is handed over as a correction.
+    #[test]
+    fn the_end_of_a_flight_coasts_without_a_dip() {
+        let mut p = Prediction::default();
+        let now = Instant::now();
+        let (rtt, dt) = (0.2, 1.0 / 100.0);
+        let fly = Some(Intent {
+            mode: Mode::Fly,
+            direction: Vec3::X,
+            vertical: 0.0,
+        });
+        let (mut server, mut previous_drawn, mut previous_speed) = (0.0_f32, None::<f32>, None::<f32>);
+        let mut worst_change = 0.0_f32;
+        let mut handed = Vec3::ZERO;
+        for n in 0..400 {
+            let t = n as f32 * dt;
+            let flying = t < 2.0;
+            // the simulator flies, then falls on with the flight's speed and
+            // walks from the landing (forward still held)
+            let v = if t < 2.5 { 16.0 } else { 3.2 };
+            p.step(Step {
+                intent: if flying { fly } else { walk(Vec3::X) },
+                server_velocity: Vec3::new(v, 0.0, if flying || t >= 2.5 { 0.0 } else { -5.0 }),
+                rtt,
+                flying,
+                dt,
+                now: at(now, t),
+            });
+            if !flying && t < 2.5 {
+                p.on_report(Vec3::new(v, 0.0, -5.0), at(now, t), at(now, t));
+            }
+            handed += p.settle(Vec3::X * v);
+            server += v * dt;
+            let drawn = server + p.lead().x + handed.x;
+            if let Some(previous) = previous_drawn {
+                let speed = (drawn - previous) / dt;
+                if (1.0..2.49).contains(&t) {
+                    if let Some(before) = previous_speed {
+                        worst_change = worst_change.max((speed - before).abs());
+                    }
+                    assert!(speed > 16.0 - COAST_DRAIN - 0.5, "t {t:.2}: drawn at {speed:.1} m/s");
+                }
+                previous_speed = Some(speed);
+            }
+            previous_drawn = Some(drawn);
+        }
+        // (the coast's slowing starts at once: the agent's glide smooths it)
+        assert!(
+            worst_change <= COAST_DRAIN + 0.1,
+            "the drawn speed jumped by {worst_change:.2} m/s in a frame"
+        );
+        assert!(p.failures.is_empty(), "taken for a simulator that does not follow");
+        assert_eq!(p.calibration.speed(Mode::Walk), SEED_SPEED[Mode::Walk.index()]);
+        assert!(handed.x > 0.0, "nothing handed over at the landing");
     }
 
     /// A press, the simulator following one round trip later, then a
@@ -1053,27 +1209,52 @@ mod tests {
         PlayingAnimation::from_signal(id, sequence, now, None)
     }
 
+    fn moving(flying: bool, simulator: bool, drawn: bool) -> Moving {
+        Moving { flying, simulator, drawn }
+    }
+
     #[test]
     fn the_walk_starts_with_the_key_and_the_simulator_keeps_its_cycle() {
         let mut l = Locomotion::default();
         let now = Instant::now();
         let stand = [signal(ANIM_STAND, 1, now)];
-        assert_eq!(l.overlay(&stand, None, false, 0.6, now), None);
+        assert_eq!(l.overlay(&stand, None, moving(false, false, false), 0.6, now), None);
         let pressed = at(now, 1.0);
-        let drawn = l.overlay(&stand, Some(ANIM_WALK), false, 0.6, pressed).expect("local walk");
+        let drawn = l
+            .overlay(&stand, Some(ANIM_WALK), moving(false, false, false), 0.6, pressed)
+            .expect("local walk");
         assert_eq!(drawn.len(), 1);
         assert_eq!((drawn[0].id, drawn[0].sequence_start), (ANIM_WALK, pressed));
         // the simulator's walk arrives: its cycle keeps the local start
         let server = [signal(ANIM_WALK, 2, at(now, 1.25))];
-        let drawn = l.overlay(&server, Some(ANIM_WALK), false, 0.6, at(now, 1.25)).expect("kept start");
+        let drawn = l
+            .overlay(&server, Some(ANIM_WALK), moving(false, false, false), 0.6, at(now, 1.25))
+            .expect("kept start");
         assert_eq!((drawn[0].id, drawn[0].sequence, drawn[0].sequence_start), (ANIM_WALK, 2, pressed));
         // and the simulator alone after that, still with that start
-        let drawn = l.overlay(&server, Some(ANIM_WALK), false, 0.6, at(now, 3.0)).expect("kept start");
+        let drawn = l
+            .overlay(&server, Some(ANIM_WALK), moving(false, false, false), 0.6, at(now, 3.0))
+            .expect("kept start");
         assert_eq!(drawn[0].continuous_start, pressed);
         // the simulator never agrees: the local walk gives up
         let mut l = Locomotion::default();
-        assert!(l.overlay(&stand, Some(ANIM_RUN), false, 0.6, now).is_some());
-        assert_eq!(l.overlay(&stand, Some(ANIM_RUN), false, 0.6, at(now, 0.7)), None);
+        assert!(l.overlay(&stand, Some(ANIM_RUN), moving(false, false, false), 0.6, now).is_some());
+        assert_eq!(
+            l.overlay(&stand, Some(ANIM_RUN), moving(false, false, false), 0.6, at(now, 0.7)),
+            None
+        );
+        // unless the drawn avatar is moving: its walk waits for the
+        // simulator's late signal, 3 s at most (no sliding feet)
+        let mut l = Locomotion::default();
+        assert!(l.overlay(&stand, Some(ANIM_RUN), moving(false, false, true), 0.6, now).is_some());
+        assert!(
+            l.overlay(&stand, Some(ANIM_RUN), moving(false, false, true), 0.6, at(now, 2.9))
+                .is_some()
+        );
+        assert_eq!(
+            l.overlay(&stand, Some(ANIM_RUN), moving(false, false, true), 0.6, at(now, 3.1)),
+            None
+        );
     }
 
     #[test]
@@ -1081,20 +1262,47 @@ mod tests {
         let mut l = Locomotion::default();
         let now = Instant::now();
         let walking = [signal(ANIM_WALK, 2, now)];
-        l.overlay(&walking, Some(ANIM_WALK), false, 0.6, now);
+        l.overlay(&walking, Some(ANIM_WALK), moving(false, false, false), 0.6, now);
         let released = at(now, 1.0);
-        let drawn = l.overlay(&walking, None, false, 0.6, released).expect("stopped");
+        let drawn = l
+            .overlay(&walking, None, moving(false, false, false), 0.6, released)
+            .expect("stopped");
         assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![ANIM_STAND]);
         // flying, the rest is the hover
         let mut l = Locomotion::default();
         let flying = [signal(ANIM_FLY, 3, now)];
-        l.overlay(&flying, Some(ANIM_FLY), true, 0.6, now);
-        let drawn = l.overlay(&flying, None, true, 0.6, released).expect("hover");
+        l.overlay(&flying, Some(ANIM_FLY), moving(true, false, false), 0.6, now);
+        let drawn = l.overlay(&flying, None, moving(true, false, false), 0.6, released).expect("hover");
         assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![ANIM_HOVER]);
-        // the simulator's own stop, or too long a wait: its list as it is
+        // the simulator's own stop, or its report that the avatar still
+        // moves once the wait is over: its list as it is
         let stand = [signal(ANIM_STAND, 4, at(now, 1.2))];
-        assert_eq!(l.overlay(&stand, None, true, 0.6, at(now, 1.2)), None);
-        assert_eq!(l.overlay(&flying, None, true, 0.6, at(now, 1.7)), None);
+        assert_eq!(l.overlay(&stand, None, moving(true, false, false), 0.6, at(now, 1.2)), None);
+        assert_eq!(l.overlay(&flying, None, moving(true, true, false), 0.6, at(now, 1.7)), None);
+    }
+
+    #[test]
+    fn a_late_stop_of_the_simulator_does_not_bring_the_walk_back() {
+        let mut l = Locomotion::default();
+        let now = Instant::now();
+        let walking = [signal(ANIM_WALK, 2, now)];
+        l.overlay(&walking, Some(ANIM_WALK), moving(false, true, false), 0.6, now);
+        let released = at(now, 1.0);
+        assert!(l.overlay(&walking, None, moving(false, true, false), 0.6, released).is_some());
+        // past the wait, its walk signal still there but the avatar still
+        // in its reports: the signal is only late, the stop is kept
+        let drawn = l
+            .overlay(&walking, None, moving(false, false, false), 0.6, at(now, 2.5))
+            .expect("still stopped");
+        assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![ANIM_STAND]);
+        // the avatar moves again in its reports (pushed, a key lost): its walk
+        assert_eq!(l.overlay(&walking, None, moving(false, true, false), 0.6, at(now, 2.6)), None);
+        // and never longer than the hold, whatever it reports
+        let mut l = Locomotion::default();
+        l.overlay(&walking, Some(ANIM_WALK), moving(false, true, false), 0.6, now);
+        l.overlay(&walking, None, moving(false, false, false), 0.6, released);
+        assert!(l.overlay(&walking, None, moving(false, false, false), 0.6, at(now, 3.9)).is_some());
+        assert_eq!(l.overlay(&walking, None, moving(false, false, false), 0.6, at(now, 4.1)), None);
     }
 
     #[test]
@@ -1103,7 +1311,9 @@ mod tests {
         let now = Instant::now();
         let typing = Uuid::from_u128(7);
         let base = [signal(ANIM_STAND, 1, now), signal(typing, 1, now)];
-        let drawn = l.overlay(&base, Some(ANIM_WALK), false, 0.6, now).expect("walk");
+        let drawn = l
+            .overlay(&base, Some(ANIM_WALK), moving(false, false, false), 0.6, now)
+            .expect("walk");
         assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![typing, ANIM_WALK]);
         assert_eq!(
             locomotion_animation(Intent::from_flags(control::FLY | control::UP_NEG, 0.0, false)),

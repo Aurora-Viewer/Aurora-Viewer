@@ -169,9 +169,15 @@ pub enum JobResult {
         finest: u8,
         texture: Box<JobResult>,
     },
+    /// A mesh's disk cache file, parsed (None: not there, or damaged).
     MeshCache {
         id: Uuid,
-        data: Option<Vec<u8>>,
+        arrival: Option<Box<super::meshes::MeshArrival>>,
+    },
+    /// Bytes of a mesh downloaded, parsed.
+    MeshPart {
+        id: Uuid,
+        arrival: Box<super::meshes::MeshArrival>,
     },
     Material {
         id: Uuid,

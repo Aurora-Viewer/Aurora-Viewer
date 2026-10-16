@@ -36,6 +36,9 @@ pub struct Config {
     pub vehicle: bool,
     /// One `demo link trace` line per frame (`trace`).
     pub trace: bool,
+    /// `stoplag=<ms>`: how long the stand-in keeps its walk signal once
+    /// stopped, as a busy simulator is late to say it (s).
+    pub stop_lag: f32,
 }
 
 impl Config {
@@ -52,6 +55,7 @@ impl Config {
             prediction: None,
             vehicle: false,
             trace: false,
+            stop_lag: 0.0,
         };
         for part in parts {
             match part {
@@ -59,10 +63,20 @@ impl Config {
                 "firestorm" => cfg.prediction = Some(false),
                 "vehicle" => cfg.vehicle = true,
                 "trace" => cfg.trace = true,
-                _ => match part.strip_prefix("jitter=").and_then(|ms| ms.parse::<f32>().ok()) {
-                    Some(ms) if ms.is_finite() && ms >= 0.0 => cfg.jitter = (ms / 1000.0).min(1.0),
-                    _ => log::warn!("AURORA_DEMO_LINK: unknown part {part:?}"),
-                },
+                _ => {
+                    let ms = |name: &str| {
+                        part.strip_prefix(name)
+                            .and_then(|ms| ms.parse::<f32>().ok())
+                            .filter(|ms| ms.is_finite() && *ms >= 0.0)
+                    };
+                    if let Some(ms) = ms("jitter=") {
+                        cfg.jitter = (ms / 1000.0).min(1.0);
+                    } else if let Some(ms) = ms("stoplag=") {
+                        cfg.stop_lag = (ms / 1000.0).min(5.0);
+                    } else {
+                        log::warn!("AURORA_DEMO_LINK: unknown part {part:?}");
+                    }
+                }
             }
         }
         Some(cfg)
@@ -107,6 +121,9 @@ pub struct DemoLink {
     last_report: Option<Instant>,
     reported_velocity: Vec3,
     animation: Option<Uuid>,
+    /// Since when the stand-in stands while its walk signal is kept
+    /// (`stoplag`).
+    stopped_at: Option<Instant>,
     sequence: i32,
     last_arrival: Instant,
     seed: u64,
@@ -162,6 +179,7 @@ impl DemoLink {
             last_report: None,
             reported_velocity: Vec3::ZERO,
             animation: None,
+            stopped_at: None,
             sequence: 0,
             last_arrival: now,
             seed: 0x9E37_79B9_7F4A_7C15,
@@ -379,6 +397,20 @@ impl DemoLink {
             }
         } else {
             ANIM_STAND
+        };
+        // (`stoplag`: the walk signal kept a while once stopped)
+        if animation != ANIM_STAND {
+            self.stopped_at = None;
+        }
+        let animation = if animation == ANIM_STAND && self.animation.is_some_and(|a| a != ANIM_STAND && !self.sim.flying) {
+            let since = *self.stopped_at.get_or_insert(now);
+            if now.saturating_duration_since(since).as_secs_f32() < self.cfg.stop_lag {
+                self.animation.unwrap_or(animation)
+            } else {
+                animation
+            }
+        } else {
+            animation
         };
         if self.animation != Some(animation) {
             self.animation = Some(animation);
@@ -625,6 +657,7 @@ mod tests {
     fn the_variable_reads_the_ping_and_its_options() {
         let c = Config::parse("200").expect("ping");
         assert_eq!((c.ping, c.jitter, c.prediction, c.vehicle), (0.2, 0.0, None, false));
+        assert_eq!(Config::parse("100,stoplag=800").map(|c| c.stop_lag), Some(0.8));
         let c = Config::parse("150, jitter=30, firestorm, vehicle").expect("all");
         assert_eq!((c.ping, c.jitter, c.prediction, c.vehicle), (0.15, 0.03, Some(false), true));
         assert_eq!(Config::parse("aurora"), None);

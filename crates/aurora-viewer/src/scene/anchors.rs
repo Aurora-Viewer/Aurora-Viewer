@@ -509,6 +509,70 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn attachment_rotations_place_spine_and_chest_linksets_in_rest_and_animated_poses() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for ev in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(ev);
+        }
+        let wearer = world.objects.index_of_uuid(&crate::demo::DEMO_AGENT).expect("wearer");
+        let local = |id| {
+            world
+                .objects
+                .iter()
+                .find(|(_, o)| o.key.local_id == id)
+                .map(|(i, _)| i)
+                .expect("worn prim")
+        };
+        let root = local(crate::demo::worn::ROOT);
+        let child = local(crate::demo::worn::CHILD);
+        let now = Instant::now();
+        let (wearer_pos, wearer_rot, _) = Scene::object_transform(&world, wearer, now, 0).expect("wearer frame");
+        for (point, offset, point_rot) in [
+            (1u8, Vec3::new(0.15, 0.0, -0.1), Quat::from_xyzw(0.5, 0.5, 0.5, 0.5)),
+            (9u8, Vec3::new(-0.15, 0.0, -0.1), Quat::from_xyzw(-0.5, -0.5, 0.5, 0.5)),
+        ] {
+            world.objects.get_mut(root).expect("root").state = point.rotate_left(4);
+            // Reference attachment frame: a child joint of mChest with
+            // the local position and setQuat rotation from avatar_lad.xml.
+            let chest = lib.skeleton.as_ref().expect("skeleton").find("mChest").expect("chest");
+            let rest_point = lib.skeleton.as_ref().expect("skeleton").joints[chest].world_position() + offset;
+            for pose in [
+                None,
+                Some(Mat4::from_rotation_translation(
+                    Quat::from_rotation_y(0.4),
+                    Vec3::new(0.1, -0.2, 0.3),
+                )),
+            ] {
+                world.avatar_poses.clear();
+                if let Some(pose) = pose {
+                    world.avatar_poses.insert(crate::demo::DEMO_AGENT, vec![pose; lib.rig.len()]);
+                }
+                let pose = pose.unwrap_or(Mat4::IDENTITY);
+                let (_, pose_rot, _) = pose.to_scale_rotation_translation();
+                let anchor = Mat4::from_rotation_translation(
+                    wearer_rot * pose_rot * point_rot,
+                    wearer_pos + wearer_rot * (pose.transform_point3(rest_point) - lib.pelvis),
+                );
+                let root_object = world.objects.get(root).expect("root");
+                let root_local = Mat4::from_rotation_translation(root_object.rotation, root_object.position);
+                for idx in [root, child] {
+                    let object = world.objects.get(idx).expect("prim");
+                    let local = Mat4::from_scale_rotation_translation(object.scale, object.rotation, object.position);
+                    let expected = anchor * if idx == root { local } else { root_local * local };
+                    let (pos, rot, hud) = Scene::object_transform(&world, idx, now, 0).expect("attachment frame");
+                    assert!(!hud);
+                    let actual = Mat4::from_scale_rotation_translation(object.scale, rot, pos);
+                    assert!(
+                        actual.abs_diff_eq(expected, 1e-4),
+                        "point {point}, prim {idx}: {actual:?} != {expected:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_body_point_has_its_anchor() {
         let lib = AvatarLibrary::load();
         assert!(lib.rig.len() <= ANCHOR_BASE, "the joints fit below the anchors");

@@ -95,6 +95,33 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/inventory/markdown.rs` provides each inventory/object notecard's Classic,
+Markdown and split Edit views. Classic retains Firestorm's plain proportional
+text with embedded inventory. CommonMark is parsed once per source change on
+the worker pool and displayed as a selectable, read-only rich text editor.
+Edit places the raw source on the left and its live Markdown preview on the
+right, with independent scroll areas and a common save footer.
+`InventoryPreferences::notecard_view` persists the last explicit tab choice
+for inventory and object notes. New document windows inherit it on first
+display; existing windows retain their own mode and draft. Old settings
+without the preference start in Classic.
+`ui/inventory/markdown/formatting.rs` adds the Edit toolbar and syntax help;
+formatting transforms the source selection, preserves Unicode and embedded
+markers, and records one native undo step per action. The latest
+ready preview remains visible while a changed draft is being parsed;
+the existing embedded-item renderer keeps attachment actions in every view.
+All modes share the original source draft and permission-aware save lifecycle
+in `ui/inventory/document.rs`; formatted text never enters the asset encoder.
+`ui/inventory/markdown/code.rs` maps fenced LSL tokens back to the exact source
+and formatted preview. The document worker uses the script editor's lexer;
+drawing resolves the same current skin/custom script colors. Edit reuses
+`ui/scripts/indent.rs` and its selection commands, with LSL scopes for comment
+shortcuts, automatic indentation and brace matching. Tab stops and multiline
+Tab/Shift+Tab work throughout the source; pasted text remains untouched.
+Code-block backgrounds use character ranges from the parser and the shaped
+text rows: one full-width surface per block, below native text/selection,
+including wrapped and empty rows. Inline code retains its glyph highlight.
+
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material
@@ -439,6 +466,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/anchors.rs` | What avatars wear, placed by the GPU: each bone palette ends with anchors, rigid world matrices written every frame — the first places the skeleton (skeleton space to world), the following ones the attachment points of the body as they are posed. The record of a worn prim contains its placement relative to the anchor of its point (`flags::ANCHORED`), that of a rigged mesh (worn mesh, bento, animesh worn or on the ground) and of an avatar's body reads the anchor of its skeleton: the vertex shaders compose. The GPU culling likewise composes the sphere of the worn prims (`CullObject::anchor`) and computes every frame that of the rigged meshes from the per-bone boxes of their geometry (`JointBoxes`, `object_flags::POSED`). The sync writes the anchors in use, sends them with the posed palettes, keeps the centre of the anchored objects up to date for the CPU (sorting of the transparent faces, hover, lights, impostors; the lists the CPU still builds test a rigged mesh with the extent of its skeleton) and no longer visits these objects as long as only their wearer moves. Left to the sync: HUDs, flexible prims, objects that move by themselves and what is linked to them |
 | `scene/texture_cache.rs` | Disk cache of the transcoded textures (`cache/tex/<id>.bc7`): BC7 mip chain produced by a decoding task, alpha class, picking mask and header of the JPEG2000 image; read back at the wanted level without decoding when returning to a region, written by the `aurora-texcache` thread; a file with no levels records that a texture must stay in RGBA8 |
 | `app/texture_refresh.rs` | "Refresh textures" of an object (every texture of its linkset), of an avatar (its bakes, then `avatartexturesrequest`) and "Force appearance update (rebake)" (`World::rebake`: IncrementCOFVersion then the bake request, `world/outfit.rs`). `TextureStreamer::refresh` forgets a texture once no read, decode or download of it is under way, removes its files in the disk cache and downloads it again; an upload decoded before is dropped (`Entry::epoch`) |
+| `scene/mesh_bytes.rs` | What is held of a mesh asset: the parts downloaded or read (its start, then the blocks drawn), each kept as it came and read from the part that holds a block, the disk cache file of those parts (`AMSH`, or a whole asset as it is), and the byte ranges still to download, joined when close |
 | `scene/fetch_priority.rs` | Rank of every asset request in the fetcher's queue (`aurora-net/src/fetch.rs`): an urgent lane first (the sky, animations, sounds, materials, our own bakes and worn meshes, a window's image), then meshes and textures together by their size on screen, what shows nothing yet first; ranks sent again when the view changes them, requests dropped when nothing uses the asset any more |
 | `scene/texture_load.rs` | Measurement of the texture loads: time of the decoding tasks per step (codec, conversion, RGBA, mips, staging memory) and `texture load:` line of the log at the end of each load (duration, decodes per level, bytes downloaded, disk cache) |
 | `scene/texture_budget.rs` | Texture memory budget: current target (the setting, less when the rest of what the viewer holds on the card leaves less room under the budget that the driver grants it, `aurora-render/src/vram.rs`), and pressure level when the pages exceed it. Under pressure, `scene/textures.rs` shrinks the textures loaded more finely than their on-screen size, off-screen ones first, by copying their levels on the GPU (`TextureTable::shrink`), without decoding them again; the pages they leave are compacted without waiting. Override: `AURORA_TEXTURE_BUDGET_MB` |

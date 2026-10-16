@@ -401,6 +401,8 @@ impl AgentState {
         let left = self.prediction.settle(self.velocity);
         if left != Vec3::ZERO {
             self.offset += left;
+            // (what a coast had left at its landing fades slowly)
+            self.slow_blend |= own_motion::slow_correction(self.offset.length());
         }
         self.lead = self.prediction.lead();
     }
@@ -571,13 +573,17 @@ impl AgentState {
             } else {
                 OBJECT_DAMPING_TIME
             };
-            // a few centimetres left at a stop wait for the next move
+            // a few centimetres left at a stop wait for the next move; not
+            // the height (a landing would leave the feet in the ground)
             let resting = !self.prediction.keys_held()
                 && self.lead == Vec3::ZERO
                 && !self.slow_blend
                 && self.offset.length() < own_motion::REST_OFFSET;
-            if !resting {
-                self.offset *= 0.5_f32.powf(dt / half_life);
+            let fade = 0.5_f32.powf(dt / half_life);
+            if resting {
+                self.offset.z *= fade;
+            } else {
+                self.offset *= fade;
             }
             let left = self.offset.length_squared();
             if left < min_distance || !self.offset.is_finite() {
@@ -1138,6 +1144,53 @@ mod tests {
             }
             let end = drawn.last().map_or(0.0, |d| d.1);
             assert!((end - server).abs() < own_motion::REST_OFFSET, "fps {fps}: {end} for {server}");
+        }
+    }
+
+    /// The end of a flight on Agni (2026-10-16): hovering at rest, no key,
+    /// the simulator drops our avatar 5.8 m to the ground. The drawn avatar
+    /// falls with it instead of hanging in the air until the next key, and
+    /// comes down where the simulator lands.
+    #[test]
+    fn a_fall_without_keys_is_followed() {
+        for fps in [60.0, 500.0] {
+            let start = Instant::now();
+            let at = |t: f32| start + Duration::from_secs_f32(t);
+            let mut agent = AgentState::default();
+            let hover = Vec3::new(78.4, 154.1, 35.3);
+            agent.on_server_update_at(hover, Vec3::ZERO, Vec3::ZERO, false, true, start);
+            agent.set_predicting(true);
+            // a few centimetres left of the last correction and a glide
+            // nearly at rest, as on the grid
+            agent.offset = Vec3::new(0.0, 0.0, 0.03);
+            agent.glide = Vec3::new(0.0, 0.0, -1e-4);
+            let dt = 1.0 / fps;
+            let (mut t, mut next_report) = (0.0_f32, 0.0_f32);
+            let mut lag = 0.0_f32;
+            while t < 2.5 {
+                t += dt;
+                if t >= next_report {
+                    next_report += 0.05;
+                    // free fall from t = 0.2 s, on the ground (29.5) after 1.1 s
+                    let fall = (t - 0.2).max(0.0);
+                    let (z, vz) = if fall < 1.09 {
+                        (35.3 - 4.9 * fall * fall, -9.8 * fall)
+                    } else {
+                        (29.5, 0.0)
+                    };
+                    let z = z.max(29.5);
+                    agent.on_server_update_at(Vec3::new(hover.x, hover.y, z), Vec3::Z * vz, Vec3::ZERO, false, true, at(t));
+                }
+                agent.predict_at(at(t), 1.0, 0.0);
+                agent.step_prediction(None, 0.2, dt, at(t));
+                agent.set_lead(agent.wanted_lead());
+                agent.update(&MoveInput::default(), false, dt, 5.0);
+                lag = lag.max(agent.position.z - agent.predicted_pos.z);
+            }
+            // (the glide trails a fall at 10 m/s by about 0.8 m, as
+            // Firestorm's damping does)
+            assert!(lag < 1.2, "fps {fps}: hung {lag:.2} m above the simulator's avatar");
+            assert!((agent.position.z - 29.5).abs() < 0.1, "fps {fps}: ended at {:.2}", agent.position.z);
         }
     }
 

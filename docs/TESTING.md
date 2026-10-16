@@ -382,7 +382,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -391,7 +391,10 @@ when unfocused") is ignored during a screenshot.
   (`demo_link.rs`). The viewer then runs the grid's path: extrapolation,
   smoothing and, with Aurora's movement (Preferences › Aurora › Movement,
   "Instant"), the prediction of `own_motion.rs`. `jitter` delays each
-  message by up to that much more (order kept); `aurora` / `firestorm`
+  message by up to that much more (order kept); `stoplag` keeps the
+  stand-in's walk signal that long once it has stopped, as a busy
+  simulator is late to say it (with `trace`, the drawn animations of each
+  frame show whether the walk comes back after a stop); `aurora` / `firestorm`
   force the movement for the run without touching the saved choice;
   without them, the choice of Preferences applies and can be switched
   while walking. The log says, for each press and release of a walking
@@ -1392,7 +1395,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
-| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
+| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1538,15 +1541,25 @@ To check with these scenarios:
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
-- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]`**:
+- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]`**:
   an arrival in a busy region, to measure what the loading shows first.
   `n` objects (1,200 by default) arrive all around our avatar, the nearest
   first and 600 a second, from 3 to 120 m away and larger with the
-  distance; one in three is a mesh and each has its own texture. Sixteen
-  avatars stand nearby, each playing two animations. Every asset is
+  distance; one in three is a mesh and each has its own texture. `avatars`
+  avatars (16 by default) stand nearby, each playing two downloaded
+  animations over the demo's standing one; with `worn`, each wears that
+  many rigged meshes (those of the folder's `.mesh` files that have a
+  skin), each with its texture: `avatars=30,worn=6` is a busy place. With
+  `pbr=1`, one object in twelve, a prim, wears a PBR material (the `.mat` files of
+  the folder's `mat` subfolder), whose textures are served from `tex`
+  when it holds them, else one of the others in their place. Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
-  (200 by default; about 70 for the asset hosts on a good link): the files
+  (200 by default; about 70 for the asset hosts on a good link); with
+  `bw=`, the bodies of all its connections share that many megabits a
+  second, one after the other, as on a link held by its throughput (about
+  100 on a home link measured on Agni, where 24 requests at a time fill
+  it): without it only the round trip limits the downloads. The files
   are those of the `tex` (`.j2c`), `mesh` (`.mesh`, static ones only) and
   `anim` (`.anim`) subfolders of `<folder>`, only read, under ids proper
   to the run so that no disk cache holds them (the run's files are left
@@ -1555,10 +1568,11 @@ To check with these scenarios:
   front, and the loading must follow.
   - The log tells when half, nine tenths and all of what is in front after
     the turn showed, weighted by its size on screen (`demo arrival: front
-    50% shown after … s`; a texture counts once it shows its first pixels,
-    a mesh once its header is read), the same for everything around
+    50% shown after … s`; an object counts once its geometry is built and
+    its texture shows its first pixels), the same for everything around
     (`demo arrival: all …`), when the animations arrived (`demo arrival:
-    animations …`), then the requests and megabytes served (`demo arrival:
+    animations …`), when what the avatars wear showed (`demo arrival: worn
+    …`, built and textured), then the requests and megabytes served (`demo arrival:
     done`). The `texture load:` line gives the decodes and their CPU.
   - A run lasts about 20 s at 200 ms; to compare two builds, alternate
     their runs (see [Profiling](#profiling)).
@@ -3062,6 +3076,53 @@ offline; the files and snapshots uploaded in demo stay offline.
   text at frame 650 then send Ctrl+S at frame 670; the refusal keeps
   the draft. Saving and closing / reopening keeps the text during
   the demo session, without creating an item in the personal inventory.
+- `note-classic`, `note-markdown`, `note-source`: the same Markdown sample
+  with an image, a landmark and an object in each display mode. Capture
+  after frame 740. Switch tabs, edit the source in Classic or Edit, then
+  save from Markdown and reopen: the Markdown syntax, Unicode text and
+  attachments must survive. Classic defaults to Firestorm's plain,
+  proportional, wrapping text; Edit shows the monospace source on the left
+  and its live Markdown preview on the right, with independent scrolling.
+  Type headings, bold and Unicode in Edit and check that the right side
+  updates without leaving the mode, then Ctrl+S from either pane.
+  The formatting toolbar applies bold, italic, strikethrough, inline code,
+  links, headings, lists, quotes and fenced code to the source selection.
+  Select Unicode text with the mouse, click Bold, then undo and redo:
+  the text, selection and attachments must survive, and Ctrl+S must save
+  the Markdown source. Repeat a style to remove it; without a selection,
+  the controls insert editable templates. Markdown help shows syntax and
+  limits. Formatting is disabled for read-only notes and pending saves.
+  `note-format` uses the same sample in Edit, selects the first list word
+  at frame 650, clicks Bold at 670–671 and opens Markdown help at 710–711;
+  capture frame 700 for the selection/preview or frame 800 for the help.
+  Leave Edit idle with the source focused, including at a fractional UI
+  scale (112.5%): neither pane's border may oscillate. A short note must
+  not show scroll bars; a long note must still scroll in each pane.
+  Markdown is a selectable formatted preview with headings, emphasis, lists, quotes,
+  code and links. Images show their alt text as a link without downloading.
+  Newlines before and after embedded-item rows must remain newlines in both
+  Markdown views; items written on the same source line must stay inline.
+  `note-remember` opens this same sample using the saved preference instead
+  of forcing a view. With no saved choice, Classic is selected. Choose
+  Markdown, open another inventory or object note, then restart the demo:
+  newly opened notes must still use Markdown. Repeat with Classic and Edit.
+  Merely displaying an older window must not replace the last explicit
+  choice, and switching views must preserve any unsaved source/attachments.
+  Demo settings stay separate from the normal viewer's settings.
+  `note-lsl` / `note-lsl-markdown` show fenced LSL in Edit / Markdown. Capture
+  after frame 740: types, functions, events, constants, strings, numbers and
+  comments must use the script editor's colors, including customized colors.
+  The LSL toolbar button wraps selected lines or inserts an editable script
+  template. Type Tab/Shift+Tab with and without multiline selections; in LSL,
+  Enter keeps indentation, a closing brace aligns with its opener, Backspace
+  removes a four-column stop and Ctrl+K / Ctrl+Shift+K toggle comments. Check
+  undo/redo, Unicode, exact paste, live preview and Ctrl+S with attachments.
+  Prose/other languages must not gain LSL colors or brace/comment behavior;
+  Classic and read-only notes must retain their existing behavior.
+  Fenced/indented code must have one continuous background across the block's
+  full width, including blank and wrapped rows. Repeat in both previews at a
+  narrow window width; inline code keeps its small highlight, selection stays
+  visible and neither scrolling nor switching views changes the saved source.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal
@@ -3336,6 +3397,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
+| `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
@@ -3721,6 +3783,13 @@ What the inventory must show with these scenarios:
 - **`AURORA_PROFILE_FRAMES=1`**: in addition, one `render profile` line and
   one `gpu profile` line per frame (renderer steps and GPU time per element
   of each frame).
+- **`AURORA_OWN_MOTION_TRACE=1`**: on a grid with Aurora's movement
+  (Preferences › Aurora › Movement, "Instant"), the `demo link trace` line
+  of `AURORA_DEMO_LINK=…,trace` for each frame where our avatar moves, is
+  led or still has a correction to fade (`t` counts from the launch); the
+  end of the line gives the flight, the simulator's height, the lead's,
+  the simulator's velocity and the drawn one, to read a take-off or a
+  landing.
 - **`AURORA_HOVER_CHECK=1`**: each answer about the object under the cursor
   (kept from a previous frame, or searched among the candidates of the
   picking index) is compared with the full search in the scene; the
@@ -4073,6 +4142,12 @@ line gives:
   was known` counts the first requests sent for a texture not seen on
   screen yet (out of view, or just arrived): they leave at the lowest
   rank and for the smallest range.
+
+While meshes download, a `mesh load:` line (`scene/meshes.rs`) gives every
+10 s the requests sent and the megabytes of mesh assets downloaded since
+the start of the session, and the meshes loaded, downloading and failed:
+beside the bytes of the `texture load:` line, what an arrival costs in
+meshes.
 
 The cost of decoding alone is measured outside the viewer on a folder of
 cached textures (read-only), per size class, on one thread then on as many

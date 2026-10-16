@@ -55,6 +55,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &mut true,
                     false,
                     &images,
+                    &Default::default(),
                 );
                 for action in &actions {
                     if let InvAction::Preview(item) = action {

@@ -36,6 +36,8 @@ md5 = "0.8.1"
 memmap2 = "0.9.11"
 parking_lot = "0.12.5"
 pollster = "1.0.1"
+# CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
+pulldown-cmark = { version = "0.13.4", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 rayon = "1.12.0"
 resvg = "0.48"
