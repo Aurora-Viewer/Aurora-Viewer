@@ -241,6 +241,7 @@ impl App {
             .filter(|&r| crate::ui::context::wearer(&self.world, r).is_none())
             .filter_map(|r| self.world.objects.get(r).map(|o| (o.key.region, o.key.local_id)))
             .collect();
+        self.release_action_selection();
         let Some(&(handle, _)) = roots.first() else { return };
         if roots.iter().any(|(h, _)| *h != handle) {
             self.world.notifications.push(
@@ -258,6 +259,15 @@ impl App {
         } else {
             self.object_menu_confirmed(ask);
         }
+    }
+
+    /// The selection an action of the closed menu made: it goes, unless the
+    /// build tools hold it (as after Take, Unlink).
+    fn release_action_selection(&mut self) {
+        if !self.build.open {
+            self.build.deselect_all(&self.world);
+        }
+        self.flush_build();
     }
 
     /// Attachment.Drop: asked first.
@@ -280,6 +290,7 @@ impl App {
             .highlighted(&self.world)
             .into_iter()
             .filter_map(|(i, _)| self.world.objects.get(i))
+            .filter(|o| !o.is_avatar())
             .map(|o| {
                 let name = self
                     .build
@@ -291,6 +302,7 @@ impl App {
                 (o.full_id, o.update_flags, name)
             })
             .collect();
+        self.release_action_selection();
         match script_queue::queue_objects(&prims) {
             Err(scripted) => {
                 self.world
@@ -317,9 +329,6 @@ impl App {
                     group_id: self.world.groups.active,
                 });
                 self.world.ui_sounds.push(UiSound::ObjectRezOut);
-                if !self.build.open {
-                    self.build.deselect_all(&self.world);
-                }
                 self.flush_build();
             }
             Confirm::Drop(key) => self.drop_attachment(key),
@@ -451,6 +460,18 @@ impl App {
             }
             self.flush_build();
         }
+    }
+
+    /// Demo: the open question answered yes, its "ignore" box left alone.
+    pub(super) fn object_menu_answer_yes(&mut self) {
+        if let Some((confirm, _)) = self.object_menu.confirm.take() {
+            self.object_menu_confirmed(confirm);
+        }
+    }
+
+    /// Demo: the lines of the script queue window.
+    pub(super) fn object_menu_queue_lines(&self) -> Vec<String> {
+        self.object_menu.queue.as_ref().map(|q| q.lines.clone()).unwrap_or_default()
     }
 
     /// Each frame: the question, the script queue and its window.

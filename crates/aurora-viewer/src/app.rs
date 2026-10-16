@@ -51,6 +51,7 @@ mod inventory_thumbnail;
 mod marketplace_listings;
 mod object_actions;
 mod object_menu;
+mod object_menu_demo;
 mod own_motion;
 mod pay;
 mod plate_click;
@@ -3883,6 +3884,7 @@ impl App {
         }
         self.demo_script_steps();
         self.world_click_demo_steps();
+        self.object_menu_demo_steps();
         // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
         if let Some(g) = &self.gfx
             && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())

@@ -80,6 +80,12 @@ impl DemoSim {
                     }
                 })
                 .unwrap_or_else(|| aurora_i18n::tr!("common-object").into());
+            let local_id = world
+                .objects
+                .index_of_uuid(&id)
+                .and_then(|i| world.objects.get(i))
+                .map(|o| o.key.local_id);
+            let (touch_name, sit_name) = local_id.and_then(crate::demo::object_menu::texts).unwrap_or_default();
             ObjectProps {
                 object_id: id,
                 full: true,
@@ -99,8 +105,8 @@ impl DemoSim {
                 inventory_serial: 1,
                 name,
                 description: String::new(),
-                touch_name: String::new(),
-                sit_name: String::new(),
+                touch_name: touch_name.into(),
+                sit_name: sit_name.into(),
             }
         })
     }
