@@ -7784,6 +7784,13 @@ impl App {
                 aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
+            // AURORA_RIGGED_BLEND=alt: the rigged blended faces sorted with
+            // the others, without depth, one second in three
+            if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
+                let old = self.sync_alt.is_multiple_of(3);
+                crate::scene::blend_order::set_sorted_now(old);
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
             if name_tags_env() == Some(NameTagsEnv::Alternate) {
                 let old = self.sync_alt.is_multiple_of(3);
