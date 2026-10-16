@@ -328,9 +328,50 @@ fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
 
+/// Firestorm's LLCoordFrame::getQuaternion (llcoordframe.cpp) uses forward,
+/// left, up axes. The inverse render view contains right, up, backward axes.
+/// Sending that render rotation directly turns the voice listener sideways.
+pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
+    let world = view.inverse();
+    Quat::from_mat3(&glam::Mat3::from_cols(
+        -world.z_axis.truncate(),
+        -world.x_axis.truncate(),
+        world.y_axis.truncate(),
+    ))
+    .normalize()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_listener_uses_forward_left_up_axes() {
+        use glam::Vec3;
+
+        for forward in [
+            Vec3::X,
+            Vec3::Y,
+            -Vec3::X,
+            -Vec3::Y,
+            Vec3::new(1.0, 2.0, 3.0).normalize(),
+            Vec3::Z,
+            -Vec3::Z,
+        ] {
+            let up = if forward.cross(Vec3::Z).length_squared() < 1e-6 {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
+            let view = glam::camera::rh::view::look_to_mat4(Vec3::new(8.0, 9.0, 10.0), forward, up);
+            let rotation = listener_rotation(view);
+            let left = up.cross(forward).normalize();
+            let above = forward.cross(left);
+            assert!((rotation * Vec3::X).abs_diff_eq(forward, 1e-5));
+            assert!((rotation * Vec3::Y).abs_diff_eq(left, 1e-5));
+            assert!((rotation * Vec3::Z).abs_diff_eq(above, 1e-5));
+        }
+    }
 
     #[test]
     fn own_tag_uses_local_mic_even_without_a_server_entry() {

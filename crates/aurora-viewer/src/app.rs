@@ -3737,7 +3737,7 @@ impl App {
             .map(|h| glam::DVec3::new((h >> 32) as f64, (h & 0xffff_ffff) as f64, 0.0))
             .unwrap_or_default();
         let global = |p: Vec3| origin + p.as_dvec3();
-        let cam_rot = glam::Quat::from_mat4(&self.camera.view().inverse());
+        let cam_rot = crate::voice::listener_rotation(self.camera.view());
         let grid = match self.settings.grid {
             crate::settings::GridChoice::SecondLifeBeta => "aditi",
             _ => "agni",

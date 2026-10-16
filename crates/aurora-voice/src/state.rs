@@ -218,7 +218,7 @@ mod tests {
         // Sub-10 cm moves are ignored.
         s.update(avatar + DVec3::new(0.05, 0.0, 0.0), Quat::IDENTITY, avatar, Quat::IDENTITY);
         assert_eq!(s.take_message(false), None);
-        // Tiny rotation (< 2 degrees) is ignored; a big one is not.
+        // Tiny avatar rotation (< 4 degrees) is ignored; a big one is not.
         s.update(avatar, Quat::from_rotation_z(0.01), avatar, Quat::IDENTITY);
         assert_eq!(s.take_message(false), None);
         s.update(avatar, Quat::from_rotation_z(0.5), avatar, Quat::IDENTITY);

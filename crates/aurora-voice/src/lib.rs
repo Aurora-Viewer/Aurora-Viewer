@@ -208,8 +208,8 @@ impl VoiceSession {
     /// head height, as Firestorm does); `listener_*` is the "ear": the camera,
     /// the avatar, or a mix, according to the user's ear-location setting.
     /// Updates are sent at most every 100 ms and only when they changed
-    /// (moves > 10 cm, turns > 2 degrees); the listener is kept within 50 m
-    /// of the avatar.
+    /// (moves > 10 cm, avatar turns > 4 degrees; listener turns have no angle
+    /// threshold); the listener is kept within 50 m of the avatar.
     pub fn set_position(&self, avatar_pos: DVec3, avatar_rot: Quat, listener_pos: DVec3, listener_rot: Quat) {
         self.shared
             .spatial
