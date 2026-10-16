@@ -61,20 +61,19 @@ impl App {
         let Some((origin, dir)) = ray else {
             return;
         };
-        // a particle nearer than what was hit (LLPickInfo::fetchResults)
-        let max = if picked.is_some() || point != Vec3::ZERO {
-            (point - origin).length()
-        } else {
-            self.settings.draw_distance
-        };
-        m.particle_owner = self
-            .scene
-            .particles
-            .pick(origin, dir, max)
-            .and_then(|source| self.world.objects.index_of_uuid(&source))
-            .and_then(|i| self.world.objects.get(i))
-            .map(|o| o.owner_id)
-            .filter(|owner| !owner.is_nil());
+        // a particle nearer than what was hit (LLPickInfo::fetchResults);
+        // none in front of a HUD
+        let hud = picked.is_some_and(|i| self.scene.gpu.get(i).is_some_and(|g| g.hud));
+        if !hud {
+            m.particle_owner = self
+                .scene
+                .particles
+                .pick(origin, dir, (point - origin).length())
+                .and_then(|source| self.world.objects.index_of_uuid(&source))
+                .and_then(|i| self.world.objects.get(i))
+                .map(|o| o.owner_id)
+                .filter(|owner| !owner.is_nil());
+        }
         if let Some(idx) = picked
             && let Some(o) = self.world.objects.get(idx)
             && !o.is_avatar()
@@ -130,7 +129,10 @@ impl App {
         } else {
             crate::build::family(w, root)
         };
-        f.scripts = prims.iter().any(|&i| flags_of(i) & flags::OBJECT_MODIFY != 0);
+        f.scripts = prims
+            .iter()
+            .filter(|&&i| w.objects.get(i).is_some_and(|o| !o.is_avatar()))
+            .any(|&i| flags_of(i) & flags::OBJECT_MODIFY != 0);
         let wearer = crate::ui::context::wearer(w, idx);
         // object_is_wearable / object_selected_and_point_valid
         let r = flags_of(root);
