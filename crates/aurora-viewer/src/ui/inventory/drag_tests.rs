@@ -215,21 +215,15 @@ fn draw_tree(
             ui.set_width(480.0);
             let zone = egui::Frame::new().show(ui, |ui| {
                 ui.set_min_size(Vec2::new(480.0, 550.0));
-                st.previous_visible = std::mem::take(&mut st.visible);
-                if let Some(filtered) = scrolling {
-                    if filtered {
-                        st.view
-                            .search(inv, root, "", prefs, &st.filters, 0, None, facts, facts.agent, view::now());
-                        prepare_result_tree(st, inv, root);
-                        search_scroll(ui, p, &Icons::default(), inv, st, prefs, facts, actions, 170.0);
-                    } else {
-                        let mut out = tree::scroll(ui, 170.0).show(ui, |ui| {
-                            folder_tree(ui, p, &Icons::default(), inv, root, 0, None, st, prefs, facts, actions);
-                        });
-                        drag::navigation::scroll(ui, &mut out, st.ui_id);
-                    }
+                st.visible.clear();
+                if scrolling == Some(true) {
+                    st.view
+                        .search(inv, root, "", prefs, &st.filters, 0, None, facts, facts.agent, view::now());
+                    prepare_result_tree(st, inv, root);
+                    search_scroll(ui, p, &Icons::default(), inv, st, prefs, facts, actions, 170.0);
                 } else {
-                    folder_tree(ui, p, &Icons::default(), inv, root, 0, None, st, prefs, facts, actions);
+                    let height = if scrolling.is_some() { 170.0 } else { 550.0 };
+                    rows::scroll(ui, p, &Icons::default(), inv, st, prefs, facts, actions, height, root, true);
                 }
             });
             drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);

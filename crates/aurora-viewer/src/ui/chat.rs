@@ -4,6 +4,7 @@ mod bubbles;
 mod call;
 mod completion;
 mod compose;
+mod conv_menu;
 mod find;
 mod head;
 mod header;
@@ -28,6 +29,7 @@ use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
@@ -58,8 +60,14 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV_SELECT`: a selection to make once lines are shown
     /// ("all", or "part" of three lines).
     pub demo_select: Option<String>,
+    /// `AURORA_DEMO_CONV_MENU=local|im|group|conference`: the conversation
+    /// of the list whose right-click menu the demo opens.
+    pub demo_menu: Option<String>,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
+    /// Textures the conversation wants by id (the groups' insignias), drawn
+    /// from the app's UI images.
+    pub wanted_images: HashSet<uuid::Uuid>,
     /// Names to resolve (mentions) — taken by the app.
     pub wanted_names: HashSet<uuid::Uuid>,
     /// Participants of the group / conference session shown.
@@ -77,6 +85,26 @@ pub struct ChatUi {
     /// A demo scenario's style, which the settings do not keep, until the
     /// preferences choose another.
     pub demo_style: Option<crate::settings::ChatStyle>,
+    /// `AURORA_DEMO_CONV=aurora:new`: open the menu of the column's "new
+    /// conversation" button once it is drawn.
+    pub demo_new_menu: bool,
+    /// `AURORA_DEMO_CONV=aurora:local:volume`: open the menu of the nearby
+    /// chat's volume once it is drawn.
+    pub demo_volume_menu: bool,
+    /// `AURORA_DEMO_CONV=aurora:local:channel`: the channel selector shown
+    /// without changing the preferences.
+    pub demo_channel: bool,
+    /// The workspace's layout last frame (None before the first): the
+    /// column as a rail, room for the members' panel. A threshold crossed
+    /// back needs a margin past it (`workspace::rail_now`), so a window
+    /// resized around one does not flip at every point.
+    layout_rail: Option<bool>,
+    layout_members_room: Option<bool>,
+    /// The workspace's width last frame, and whether this frame's change of
+    /// it comes from a drag of the window's edge: the layout then follows
+    /// the edge at once, without easing (`workspace::ease`).
+    layout_width: Option<f32>,
+    layout_dragged: bool,
     /// `style` was given once: a change after it is the preferences'.
     style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.
@@ -89,6 +117,9 @@ pub struct ChatUi {
     /// The times of the lines are shown (Preferences › Chat), given every
     /// frame by the app.
     pub timestamps: bool,
+    /// The nearby chat's field shows its channel selector (Preferences ›
+    /// Chat, off by default), given every frame by the app.
+    pub show_channel: bool,
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
@@ -105,11 +136,8 @@ pub struct ChatUi {
     pub members_open: bool,
     /// The stage of the call is reduced to its strip.
     pub stage_mini: bool,
-    /// Where the "New" line of each conversation sits: its first unread
-    /// line when it was opened, until it is left.
-    first_unread: HashMap<Option<uuid::Uuid>, u64>,
-    /// The conversation shown at the last frame.
-    shown: Option<Option<uuid::Uuid>>,
+    /// Where the "New" line of each conversation sits.
+    new_lines: workspace::NewLines,
     /// The search field of the column.
     side_filter: String,
     /// The nearby chat's volume: whisper, say or shout.
@@ -142,6 +170,12 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// A demo scene's lines, given while its conversation is in sight,
+    /// count as arrived while away: their "New" line shows.
+    pub fn demo_lines_unseen(&mut self) {
+        self.new_lines.forget();
+    }
+
     /// Show a conversation, its entry brought into the view of the list.
     pub fn open(&mut self, conversation: uuid::Uuid) {
         self.selected = Some(conversation);
@@ -286,6 +320,14 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
             Seg::Agent(id) => (name_of(id), Some(Link::Agent(id))),
             Seg::Mention(id) => (format!("@{}", name_of(id)), Some(Link::Agent(id))),
+            Seg::Labelled(label, inner) => (
+                label.into_owned(),
+                match *inner {
+                    Seg::Url(u) => Some(Link::Url(u.to_owned())),
+                    Seg::Agent(id) | Seg::Mention(id) => Some(Link::Agent(id)),
+                    _ => None,
+                },
+            ),
         })
         .collect()
 }
@@ -294,7 +336,7 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
 /// its explanation.
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
     use crate::link_trust::Trust;
-    match crate::link_trust::classify(url) {
+    match crate::link_trust::classify(&web_target(url)) {
         Trust::Trusted => ("circle-check-filled", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
         Trust::Unknown => (
             "alert-triangle-filled",
@@ -412,7 +454,7 @@ pub(crate) fn text_with_places(
 /// a warning (unless turned off), dangerous ones always after a warning
 /// (`CtxAction::OpenUrl`).
 pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
-    super::context::request(ctx, CtxAction::OpenUrl(url.to_owned()));
+    super::context::request(ctx, CtxAction::OpenUrl(web_target(url).into_owned()));
 }
 
 /// Who wrote a bubble line, drawn before the name.
@@ -587,6 +629,8 @@ pub enum ConvAction {
     OpenPeople(u8),
     /// From the "Contacts" tab.
     Contacts(super::contacts::ContactsAction),
+    /// From the "Contacts" tab in Aurora's look: People's friends tab.
+    People(super::people::PeopleAction),
     /// Show the torn-off Contacts window (its entry in the list).
     OpenContacts,
     /// Block / unblock the avatar of a 1:1 conversation.
@@ -632,8 +676,6 @@ pub enum ConvAction {
     },
     /// Open the inventory, to drag what to give from it.
     OpenInventory,
-    /// Play one of our active gestures.
-    PlayGesture(uuid::Uuid),
     /// The audio output of the call ("" = the system's default).
     SetOutputDevice(String),
     /// List the audio outputs again (their menu opens).
@@ -698,45 +740,169 @@ enum Seg<'a> {
     /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
     /// as the avatar's name, opens the profile (LLUrlEntryAgent).
     Agent(uuid::Uuid),
+    /// A link written with its own text, `[https://example.org Text]` or
+    /// `[secondlife:///app/... Text]` (LLUrlEntryHTTPLabel, LLUrlEntrySLLabel):
+    /// shown as the text, it acts as the link inside (a web link, an agent
+    /// link or another SL link; a place takes the text as its label).
+    Labelled(Cow<'a, str>, Box<Seg<'a>>),
 }
 
 fn segments(text: &str) -> Vec<Seg<'_>> {
     let mut out = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
-        let next = ["https://", "http://", "secondlife://"].iter().filter_map(|p| rest.find(p)).min();
-        let Some(i) = next else {
+        let Some((i, len, seg)) = next_link(rest) else {
             out.push(Seg::Text(rest));
             break;
         };
         if i > 0 {
             out.push(Seg::Text(&rest[..i]));
         }
-        let tail = &rest[i..];
-        let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
-        // trailing punctuation belongs to the sentence
-        while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ';', ':', '"', '\'']) {
-            end -= 1;
-        }
-        let link = &tail[..end.max(1)];
-        let seg = if let Some(rest) = link.strip_prefix("secondlife:///app/agent/") {
-            let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
-            match (uuid::Uuid::parse_str(id).ok(), action) {
-                (Some(id), "mention") => Seg::Mention(id),
-                (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
-                _ => Seg::Slurl(link),
-            }
-        } else if let Some(place) = crate::slurl::place_link(link) {
-            Seg::Place(link, place)
-        } else if link.starts_with("secondlife://") {
-            Seg::Slurl(link)
-        } else {
-            Seg::Url(link)
-        };
         out.push(seg);
-        rest = &tail[link.len()..];
+        rest = &rest[i + len..];
     }
     out
+}
+
+/// The first link of a text: where it starts, how long it is, and what it
+/// is. Links are found in the order of LLUrlRegistry::findUrl
+/// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[` of
+/// a link with its own text wins over the address inside it.
+fn next_link(text: &str) -> Option<(usize, usize, Seg<'_>)> {
+    let schemes = ["https://", "http://", "secondlife://"].iter().filter_map(|p| text.find(p));
+    let bare = schemes.chain(web_start(text)).min();
+    let labelled = text
+        .match_indices('[')
+        .map(|(i, _)| i)
+        .take_while(|&i| bare.is_none_or(|b| i < b))
+        .find_map(|i| labelled(&text[i..]).map(|(len, seg)| (i, len, seg)));
+    if labelled.is_some() {
+        return labelled;
+    }
+    let i = bare?;
+    let tail = &text[i..];
+    let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+    // trailing punctuation belongs to the sentence
+    while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ']', ';', ':', '"', '\'']) {
+        end -= 1;
+    }
+    let link = &tail[..end.max(1)];
+    Some((i, link.len(), link_seg(link)))
+}
+
+/// Where an address without its scheme starts, "www.example.org"
+/// (LLUrlEntryHTTPNoProtocol: `\bwww\.\S+\.([^\s<]*)?\b`).
+fn web_start(text: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = text[from..].find("www.").map(|i| i + from) {
+        let word_start = !text[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+        let host = text[i + 4..].split(|c: char| c.is_whitespace() || c == '<').next().unwrap_or("");
+        // a dot with something on both sides after "www."
+        let dotted = host
+            .trim_end_matches(|c: char| !c.is_alphanumeric())
+            .find('.')
+            .is_some_and(|d| d > 0);
+        if word_start && dotted {
+            return Some(i);
+        }
+        from = i + 4;
+    }
+    None
+}
+
+/// `[https://example.org Text]` at the start of `text`: its length and its
+/// segment. The pattern of LLUrlEntryHTTPLabel and LLUrlEntrySLLabel,
+/// `\[(https?|secondlife)://\S+[ \t]+[^\]]+\]`; the text is unescaped like
+/// getLabelFromWikiLink, and a text that is itself a link shows the address
+/// instead (LLUrlEntryHTTPLabel::getLabel), so it cannot pass for another
+/// destination.
+fn labelled(text: &str) -> Option<(usize, Seg<'_>)> {
+    let body = text.strip_prefix('[')?;
+    let known = ["https://", "http://", "secondlife://"]
+        .iter()
+        .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)));
+    let url_end = body.find(char::is_whitespace)?;
+    let url = &body[..url_end];
+    if !known || url.ends_with("://") {
+        return None;
+    }
+    let after = &body[url_end..];
+    let label_start = after.trim_start_matches([' ', '\t']);
+    let gap = after.len() - label_start.len();
+    if gap == 0 {
+        return None;
+    }
+    let close = label_start.find(']')?;
+    let label = label_start[..close].trim_end();
+    if label.trim().is_empty() {
+        return None;
+    }
+    let len = 1 + url_end + gap + close + 1;
+    let inner = link_seg(url);
+    let label = unescape(label);
+    if segments(&label).iter().any(|s| !matches!(s, Seg::Text(_))) {
+        return Some((len, inner));
+    }
+    Some((
+        len,
+        match inner {
+            Seg::Place(u, mut place) => {
+                place.label = label.into_owned();
+                Seg::Place(u, place)
+            }
+            inner => Seg::Labelled(label, Box::new(inner)),
+        },
+    ))
+}
+
+/// What a link is, from its address.
+fn link_seg(link: &str) -> Seg<'_> {
+    if let Some(rest) = link.strip_prefix("secondlife:///app/agent/") {
+        let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+        match (uuid::Uuid::parse_str(id).ok(), action) {
+            (Some(id), "mention") => Seg::Mention(id),
+            (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
+            _ => Seg::Slurl(link),
+        }
+    } else if let Some(place) = crate::slurl::place_link(link) {
+        Seg::Place(link, place)
+    } else if link.starts_with("secondlife://") {
+        Seg::Slurl(link)
+    } else {
+        Seg::Url(link)
+    }
+}
+
+/// `%XX` escapes decoded (LLURI::unescape).
+fn unescape(text: &str) -> Cow<'_, str> {
+    if !text.contains('%') {
+        return Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(v) = text.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Cow::Owned(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The address a web link opens: "www.example.org" gets its scheme
+/// (LLUrlEntryHTTPNoProtocol::getUrl).
+fn web_target(url: &str) -> Cow<'_, str> {
+    if url.contains("://") {
+        Cow::Borrowed(url)
+    } else {
+        Cow::Owned(format!("http://{url}"))
+    }
 }
 
 /// Right click on the sender of a chat line: the name menu, its report on
@@ -870,18 +1036,18 @@ pub(crate) fn chat_text_marked(
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
-                Seg::Url(u) => {
-                    link_badge(ui, p, u, size);
-                    let behind = select::atom_begin(ui);
-                    let r = ui.add(egui::Link::new(RichText::new(u).size(size).color(super::colors::c(k.chat_urls))));
-                    select::atom_end(ui, behind, u, r.rect);
-                    if r.on_hover_text(u).clicked() {
-                        open_web_link(ui.ctx(), u);
-                    }
-                }
+                Seg::Url(u) => web_link(ui, p, u, u, size),
                 Seg::Slurl(u) => {
                     select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
                 }
+                Seg::Labelled(label, inner) => match *inner {
+                    Seg::Url(u) => web_link(ui, p, u, &label, size),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size),
+                    Seg::Slurl(u) => {
+                        select::label(ui, RichText::new(label.as_ref()).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                    }
+                    _ => marked_run(ui, emoji, &label, size, color, italics, mark),
+                },
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Mention(id) => {
                     want_names.insert(id);
@@ -906,23 +1072,40 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Agent(id) => {
                     want_names.insert(id);
-                    let name = world.social.name_of(&id);
-                    let behind = select::atom_begin(ui);
-                    let r = ui.add(
-                        egui::Label::new(RichText::new(&name).size(size).color(super::colors::c(k.chat_slurl))).sense(egui::Sense::click()),
-                    );
-                    select::atom_end(ui, behind, &name, r.rect);
-                    name_menu(&r, p, world, id);
-                    if r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
-                        .clicked()
-                    {
-                        super::profile::request_open(ui.ctx(), id);
-                    }
+                    agent_link(ui, p, world, id, &world.social.name_of(&id), size);
                 }
             }
         }
     });
+}
+
+/// A web link of a text, its trust badge before it; `text` is the address
+/// or the text it was written with.
+fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
+    let k = super::colors::get();
+    link_badge(ui, p, url, size);
+    let behind = select::atom_begin(ui);
+    let r = ui.add(egui::Link::new(RichText::new(text).size(size).color(super::colors::c(k.chat_urls))));
+    select::atom_end(ui, behind, text, r.rect);
+    if r.on_hover_text(url).clicked() {
+        open_web_link(ui.ctx(), url);
+    }
+}
+
+/// An avatar link of a text (its name, or the text it was written with):
+/// opens the profile, the name menu on a right click.
+fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
+    let k = super::colors::get();
+    let behind = select::atom_begin(ui);
+    let r = ui.add(egui::Label::new(RichText::new(text).size(size).color(super::colors::c(k.chat_slurl))).sense(egui::Sense::click()));
+    select::atom_end(ui, behind, text, r.rect);
+    name_menu(&r, p, world, id);
+    if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+        .clicked()
+    {
+        super::profile::request_open(ui.ctx(), id);
+    }
 }
 
 /// Height of the input row: the emoji button, the field and the send button
@@ -1057,6 +1240,7 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
         .into_iter()
         .map(|s| match s {
             Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
+            Seg::Labelled(label, _) => label.into_owned(),
             Seg::Place(_, place) => place.label,
             Seg::Mention(id) => format!(" @{} ", world.social.name_of(&id)),
             Seg::Agent(id) => world.social.name_of(&id),
@@ -1133,9 +1317,8 @@ fn select_lines(
 ) -> ToField {
     // the lines' own area: egui also hands them a pointer a few points off
     // (interact_radius), on the strip between them and the field, which
-    // stays neutral (normal cursor, no selection, no keyboard)
+    // stays neutral (no selection, no keyboard)
     let area = content.rect.intersect(ui.clip_rect());
-    let pointer_in = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| area.contains(p));
     let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
     let pressed = ui.input(|i| i.pointer.primary_pressed());
     if pressed && pressed_in && content.is_pointer_button_down_on() {
@@ -1172,9 +1355,8 @@ fn select_lines(
     if content.clicked() && content.interact_pointer_pos().is_some_and(|p| area.contains(p)) {
         sel.clear();
     }
-    if (content.hovered() && pointer_in) || (content.dragged() && pressed_in) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-    }
+    // (no text cursor over the lines, though a drag selects them: the
+    // arrow, the hand on links and names; the human's choice of 2026-10-16)
     if content.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         sel.clear();
     }
@@ -1295,8 +1477,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     }
     let (layout, first_unread) = match &rows {
         Rows::Classic(_) => (view::Layout::Classic, None),
-        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.first_unread.get(&st.selected).copied()),
-        Rows::Thread(_) => (view::Layout::Aurora, st.first_unread.get(&st.selected).copied()),
+        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.new_lines.at(st.selected)),
+        Rows::Thread(_) => (view::Layout::Aurora, st.new_lines.at(st.selected)),
     };
     let mut to_field = ToField::Nothing;
     let (lines, clock) = match st.selected {
@@ -1355,6 +1537,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     return;
                 };
                 let mark = mark.filter(|_| row.hit);
+                find::forget_message(ui.ctx());
                 let mut draw = |ui: &mut egui::Ui| match &mut rows {
                     Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
                     Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
@@ -1382,6 +1565,12 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
+            if let Rows::Thread(th) = &mut rows {
+                let first = clock.first;
+                thread::message_menu(ui, &env, th, &content, &drawn, |seq| {
+                    seq.checked_sub(first).and_then(|i| lines.get(i as usize))
+                });
+            }
             shift
         });
     if out.inner != 0.0 {
@@ -1431,6 +1620,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     if let Some((year, month, day)) = look.marker {
         date_marker(ui, p, year, month, day);
     }
+    // (the current match's marker starts under the date)
+    find::note_message(ui, ui.cursor().top(), None);
     if let ChatKind::Invite(invite) = line.kind {
         invite_card::draw_line(ui, env, line, invite);
         return;
@@ -1744,9 +1935,13 @@ pub fn show(
     contacts: &mut super::contacts::ContactsUi,
     contacts_settings: &mut super::contacts::ContactsSettings,
     show_contacts_tab: bool,
+    // People's friends tab, the workspace's Contacts tab in Aurora's look of
+    // People (None: the contact list as it is)
+    friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> Vec<ConvAction> {
     let mut actions = Vec::new();
+    let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
         st.open(f);
@@ -1777,6 +1972,13 @@ pub fn show(
     if style.workspace() {
         floater = floater.flush_body();
     }
+    // about the least the window lays out without overflowing (the
+    // workspace's rail, head, 60 points of messages and field; the Legacy
+    // style's tabs and field): smaller, it grew back to its content during
+    // a resize and the messages, laid out for the smaller size first,
+    // hopped for a frame
+    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    floater.min_size = floater.min_size.max(least);
     floater.show(ctx, p, open, |ui| {
         if style.workspace() {
             let env = workspace::Env {
@@ -1789,6 +1991,7 @@ pub fn show(
                 contacts: &mut *contacts,
                 contacts_settings: &mut *contacts_settings,
                 show_contacts_tab,
+                friends: friends.take(),
                 docked,
                 compact: style == crate::settings::ChatStyle::Compact,
             };
@@ -1817,7 +2020,7 @@ pub fn show(
                     }
                 }
                 let local_shown = st.selected.is_none() && !st.contacts;
-                if list_entry(
+                let local = list_entry(
                     ui,
                     p,
                     aurora_i18n::tr!("common-nearby-chat"),
@@ -1827,9 +2030,10 @@ pub fn show(
                     if local_shown { 0 } else { world.chat_unread },
                     None,
                 )
-                .resp
-                .clicked()
-                {
+                .resp;
+                conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
+                conv_menu::attach(&local, p, world, &mut actions, None);
+                if local.clicked() {
                     st.select_tab(None);
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
@@ -1860,6 +2064,8 @@ pub fn show(
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
                         }
+                        conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
+                        conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         if entry.close {
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
@@ -1956,26 +2162,19 @@ pub fn show(
                     ui.add_space(4.0);
                 }
                 let input_h = INPUT_H;
-                // Ctrl+F opens the find bar of the conversation shown, when
-                // the keyboard is in this window, or nowhere with the
-                // pointer over it
+                // Ctrl+F opens the find field of the conversation shown (in
+                // the head's row), when the keyboard is in this window, or
+                // nowhere with the pointer over it
                 // each conversation's own field (cursor, undo), like its draft
                 let conv_input = egui::Id::new(("conv_input", st.selected));
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
                     search.open_find();
                 }
-                // exactly what the find bar takes under the lines (a row
-                // that overflows makes the resizable window grow every frame)
-                let find_h = if search.find.is_some() {
-                    find::BAR_H + 4.0 + ui.spacing().item_spacing.y
-                } else {
-                    0.0
-                };
                 // exactly what the input row takes under them: the spacing after
                 // the lines, the 4 points before the row and the row itself (a
                 // row that overflows makes the resizable window grow every frame)
-                let lines_h = (ui.available_height() - input_h - find_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
+                let lines_h = (ui.available_height() - input_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
                 let mut to_field = ToField::Nothing;
                 egui::Frame::new()
                     .fill(p.field)
@@ -1995,21 +2194,12 @@ pub fn show(
                         };
                         to_field = conversation_lines(ui, p, lines, st, Rows::Classic(style));
                     });
-                let search = st.searches.entry(st.selected).or_default();
-                let view = st.views.entry(st.selected).or_default();
                 match to_field {
                     ToField::Nothing => {}
                     ToField::Focus => st.conv_focus_request = true,
                     ToField::Text(t) => {
                         st.drafts.entry(st.selected).or_default().push_str(&t);
                         st.conv_focus_request = true;
-                    }
-                }
-                if let Some(f) = search.find.as_mut() {
-                    ui.add_space(4.0);
-                    if find::bar(ui, p, f, view) {
-                        search.find = None;
-                        ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                     }
                 }
                 let strip_top = ui.min_rect().bottom();
@@ -2363,8 +2553,13 @@ pub fn toasts(
 }
 
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
-/// at frame 700 (its profile opens).
+/// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
+/// on a conversation of the list (`conv_menu`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let menu = conv_menu::demo_events(ctx, frame);
+    if !menu.is_empty() {
+        return menu;
+    }
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();
     }
@@ -2659,6 +2854,63 @@ mod tests {
     }
 
     #[test]
+    fn links_written_with_their_own_text_show_the_text() {
+        let segs = segments("My channel: [https://www.youtube.com/@me YouTube], come!");
+        assert_eq!(segs[0], Seg::Text("My channel: "));
+        assert_eq!(
+            segs[1],
+            Seg::Labelled("YouTube".into(), Box::new(Seg::Url("https://www.youtube.com/@me")))
+        );
+        assert_eq!(segs[2], Seg::Text(", come!"));
+        // several words, a tab, an escape (getLabelFromWikiLink)
+        let segs = segments("[http://example.org\tMy%20shop  is open]");
+        assert_eq!(
+            segs,
+            vec![Seg::Labelled("My shop  is open".into(), Box::new(Seg::Url("http://example.org")))]
+        );
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!("[secondlife:///app/agent/{id}/about my friend]");
+        assert_eq!(segments(&t), vec![Seg::Labelled("my friend".into(), Box::new(Seg::Agent(id)))]);
+        let place = segments("[secondlife:///app/teleport/Ahern/1/2/3 the beach]");
+        assert!(matches!(&place[0], Seg::Place(_, p) if p.label == "the beach"));
+    }
+
+    #[test]
+    fn a_text_that_is_a_link_shows_the_real_address() {
+        // LLUrlEntryHTTPLabel::getLabel: no "[https://evil.example https://bank.example]"
+        let segs = segments("[https://evil.example https://bank.example]");
+        assert_eq!(segs, vec![Seg::Url("https://evil.example")]);
+        let segs = segments("[https://evil.example www.bank.example]");
+        assert_eq!(segs, vec![Seg::Url("https://evil.example")]);
+    }
+
+    #[test]
+    fn brackets_that_are_not_a_labelled_link_stay_text() {
+        for t in [
+            "[https://example.org]",
+            "[https://example.org ]",
+            "[note] text",
+            "[https://example.org\nText]",
+            "[ftp.example.org x]",
+        ] {
+            assert!(!segments(t).iter().any(|s| matches!(s, Seg::Labelled(..))), "{t}");
+        }
+        // the address alone is still a link, without the bracket
+        assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
+    }
+
+    #[test]
+    fn addresses_without_scheme_are_links() {
+        let segs = segments("see www.youtube.com/watch, or [www.youtube.com YouTube]");
+        assert_eq!(segs[1], Seg::Url("www.youtube.com/watch"));
+        assert_eq!(segs[3], Seg::Url("www.youtube.com"));
+        assert_eq!(web_target("www.youtube.com"), "http://www.youtube.com");
+        for t in ["awww.example.com", "www.", "www.example", "www .example.com"] {
+            assert!(segments(t).iter().all(|s| matches!(s, Seg::Text(_))), "{t}");
+        }
+    }
+
+    #[test]
     fn toast_text_shows_link_labels() {
         let id = uuid::Uuid::from_u128(5);
         let t = format!(
@@ -2918,6 +3170,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             });
@@ -2993,6 +3246,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             });
@@ -3070,6 +3324,7 @@ mod tests {
                     &mut contacts,
                     &mut contacts_settings,
                     false,
+                    None,
                     &mut open,
                 );
             })
@@ -3098,7 +3353,8 @@ mod tests {
         frame(&mut st, vec![egui::Event::PointerMoved(from), button(from, true)]);
         for k in 1..=4 {
             let at = from + (to - from) * (k as f32 / 4.0);
-            frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+            let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(at)]);
+            assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "the arrow while selecting");
         }
         let (texts, _) = frame(&mut st, vec![button(to, false)]);
         assert_eq!(painted(&texts, "hello there").rect, first, "the window stayed in place");
@@ -3167,9 +3423,9 @@ mod tests {
         // (in the workspace: the line of who is typing, above the box)
         let strip = egui::pos2(field.center().x, field.top() - if style.workspace() { 10.0 } else { 2.0 });
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(strip)]);
-        assert_ne!(out.cursor_icon, egui::CursorIcon::Text, "a normal cursor on the strip");
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "a normal cursor on the strip");
         let (_, out) = frame(&mut st, vec![egui::Event::PointerMoved(from)]);
-        assert_eq!(out.cursor_icon, egui::CursorIcon::Text, "the text cursor on the lines");
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "the arrow on the lines, no text cursor");
         frame(&mut st, vec![egui::Event::PointerMoved(strip), button(strip, true)]);
         for k in 1..=4 {
             let at = strip + (from - strip) * (k as f32 / 4.0);
@@ -3225,6 +3481,7 @@ mod tests {
                         &mut contacts,
                         &mut contacts_settings,
                         visible,
+                        None,
                         &mut open,
                     );
                 });

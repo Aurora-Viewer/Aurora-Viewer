@@ -1700,7 +1700,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOW_EDGES=<l\|r\|b…>` | Screen edges the windows may cross for the run |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
-| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged or swept in and out |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
@@ -1746,6 +1746,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
+| `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2016,7 +2017,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   in place. `detach` attaches first, then moves People with Alt held:
   Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
-- **`AURORA_DEMO_RESIZE=corner|edge|drag[,<window>]`**: from frame 600,
+- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real
   window (`corner`), 1 point inside its right edge, halfway down
   (`edge`), or presses that corner and holds it 40 × 30 further out until
@@ -2027,7 +2028,19 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   and the outline of the edges that move lights up in `violet_light`
   (the bottom and right ones for the corner, the right one alone for the
   edge), with the system resize cursor. Capture with
-  `AURORA_FPS_LIMIT=60` at frame 780.
+  `AURORA_FPS_LIMIT=60` at frame 780. `sweep` presses the corner and drags
+  it 500 points in by frame 700 (down to the window's minimum), then 900
+  points out by frame 900, a few points a frame; `sweep-h` does the same
+  on the height (400 in, 600 out); `sweep-fast` drags it 520 points in
+  and back out in 24 frames (about 45 points a frame), five times, then
+  rests at its start; released at frame 1000. With
+  `AURORA_DEMO_CONV=aurora:group` and `AURORA_CAPTURE_FRAMES` listing
+  frames (every 10 from 600 to 900, and runs of consecutive ones), what to
+  look for in the Conversations window: nothing jumps at a frame; around
+  600 points the column eases to the rail and back (back only past 640),
+  the members' panel eases in or out with its room (out only 40 points
+  under it), the head's buttons and the field follow the window's edge on
+  the same frame.
 - **`AURORA_DEMO_NOTIF=1`**: the "Aurora lantern" offer is from a
   resident: the object is already in the inventory (Objects folder) when
   the offer arrives. "Keep", or closing the offer in the list, leaves it
@@ -2183,6 +2196,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
+  `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
+  at frame 701 on the first conversation of that kind in the list (the
+  workspace's column or the tabs) opens its menu: capture at frame 780 with
+  `AURORA_FPS_LIMIT=60`. `im` (`AURORA_DEMO_CONV=aurora`): Close and Voice
+  call, the resident's menu of a name, then Invite to group, Show on map,
+  Share and Pay; `group` (`aurora` or `bubbles:group`): Close, Voice call,
+  the transcript, Group profile, Activate group (greyed for the active
+  one), Stop receiving its chat, Leave group; `conference`
+  (`aurora:conference`): Close, Hang up during its call, the transcript;
+  `local`: the transcript only. The transcript rows are greyed in the demo
+  (no transcript folder).
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
@@ -2351,14 +2376,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   demo does not save.
 - **`AURORA_DEMO_CONV=aurora[:flag…]`**: the Conversations window in
   Aurora's workspace (the default style), alone on screen (People and the
-  inventory closed), 960 x 560 px. Flags, joined by `:`: `im` (default:
+  inventory closed), 960 x 560 px. The column holds two groups: Northern
+  Wolves shows its insignia, Aurora Builders (none) the group glyph. Flags, joined by `:`: `im` (default:
   the friend's conversation over two days, the last three lines unread
   under the red "New" line, the friend typing), `busy` (Tess in do not
   disturb), `group` (Aurora Builders with its members' panel: MOD tag,
   an amber bar on the message that names us, a place link), `local` (the
   nearby chat: object tag and box, shout and whisper tags, our emote in
-  violet italics, notices with an icon, someone typing, the channel chip
-  and Whisper / Say / Shout); `compact` for the Compact style (one row
+  violet italics, notices with an icon, someone typing, the volume's
+  menu, Whisper / Say / Shout, at the left of the field; the channel chip
+  is hidden as by default); `compact` for the Compact style (one row
   per message, time, name and tags); `medium` (700 px), `narrow` (460
   px: the column becomes a rail of pictures) or a width in points;
   `call-incoming` (Tess calls: the banner and the pulsing entry),
@@ -2368,10 +2395,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   with Join, the green call button), `call-away` (in the group's call
   with the nearby chat shown: the column's call panel), `call-incoming-group`
   (Nova's group call ringing: Join / Ignore), `call-p2p` (our call to Tess),
-  `conference` (a voice conference with Tess and Nova). The calls are those of
+  `conference` (a voice conference with Tess and Nova), `new` (the menu of
+  the "new conversation" button beside the column's search field open:
+  Private message, Group chat, Conference), `volume` (with `local`: the
+  volume's menu open, above the field; with `narrow` the button keeps
+  its icon), `channel` (the "/0" channel chip shown, as Preferences ›
+  Chat › Show the channel selector does). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
-  validated mockups (variant A, and B with `compact`); the column's entries, the hover toolbar and the head's buttons all act
+  validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
   (the other `AURORA_DEMO_CONV` scenarios show the window in the saved
   style, Aurora by default).
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
@@ -2636,9 +2668,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     date marker at each change of day, then the new message in its
     normal colours; the file `Nova Example.txt` receives this message.
   - `find`: the same, then Ctrl+F (pointer over the window) and a word typed at
-    frame 300. What to see: the
-    search bar under the lines, "5 / 5", the matches on an amber
-    background and an amber stroke in front of the line of the current match.
+    frame 300 (the field empty at frame 303). What to see: the find field in
+    the head's row in place of the picture and the names, "5 / 5" and the
+    arrows inside it, the messages at their full height, the matches on an
+    amber background and an amber stroke along the current match's message
+    only (from its author's row to its last line, not the day and "New"
+    lines above it). `find:none` types a word that is not there ("No match"
+    in the warning colour, the arrows greyed), `find:legacy` the same in the
+    Legacy style (a cross at the field's end), `find:narrow` a window
+    narrow enough for the rail.
   - `history`: the History window on a file of 19,950 messages
     (page 200 / 200, the most recent); `history:find` types Ctrl+F and a
     word in it: counter "9976 / 9976" once the whole file has been gone
@@ -3091,6 +3129,19 @@ offline; the files and snapshots uploaded in demo stay offline.
   and close one by one, and only the rows in sight are drawn; `-open`
   expands them all. With `AURORA_PROFILE=1`, `ui` stays under 1 ms (it was
   about 17 ms, all open, before the tab used the result tree).
+- `big[:<items>]`: a long-time resident's inventory, 30,000 items by
+  default in about a tenth as many folders, five levels deep (store
+  brands, products, extras, fit packs) and a loose folder of 2,000 objects,
+  open with the first top folder, three of its brands and their products.
+  Options after commas: `recent` (Recent tab), `search=<text>`,
+  `toggle=<s>` (opens and closes the window every `s` seconds, to compare
+  closed and open in one run; each change is logged as
+  `demo inventory window open=…`) and `churn=<ms>` (one item changes every
+  `ms` milliseconds, like the server's inventory updates). With
+  `AURORA_PROFILE=1` and `AURORA_FPS_LIMIT=120`, read `u_inventory`: in the
+  dev build, the window open costs about 0.4 ms per frame (12.9 ms before
+  only the rows in sight were laid out) and no slow frame when it opens; an
+  update costs one frame of about 6 ms.
 - `animation-open`, `animation-properties`, `image`, `image-photo`,
   `image-picker`: the five reference panels.
 - `note-open`, `note-new`, `note-readonly`: editor of an existing note,
@@ -3263,9 +3314,11 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
-| `AURORA_DEMO_VOICE` | Voice states and colours of the two avatar name tags |
+| `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
+| `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -3279,10 +3332,22 @@ What the inventory must show with these scenarios:
   both name tags neutral, `off` shows the red struck-through microphone.
   `cycle` chains 4 s of speech, 3 s of listening, 2 s out of voice. Without
   this variable, our outline follows the real microphone when its button /
-  push-to-talk is active and voice is enabled. No saved setting is changed.
-  With the name plates (default style), the outline is green in the voice
-  channel and a tight green halo follows the level; out of voice, the plate
-  has neither a coloured outline nor a badge.
+  push-to-talk is active and voice is enabled (`AURORA_DEMO_TALK=1` turns
+  the microphone on; its meter is turned into the voice server's scale, so
+  a voice reads as loud as on the grid). No saved setting is changed.
+  With the name plates (default style), a speaking plate gets a ring that
+  follows the level: a whisper is a faint hairline hugging the plate with
+  almost no glow, a normal voice a green ring a few points away over a soft
+  glow, a shout a thick bright ring pushed out with a wide glow, sliding
+  through amber to red from -18 dBFS (RMS over 300 ms) to -12; normal
+  speech at a sane microphone gain reads -30 to -24 and stays green. Out of
+  voice, the plate has neither a coloured outline nor a badge. `sweep`
+  keeps our own plate on the real microphone and, with
+  `AURORA_DEMO_TAGS=voice`, makes Tess speak over the white wall, her voice
+  going whisper → normal → shout → normal every eight seconds, next to
+  Orion's normal voice over the dark scene: look at the ring on both
+  backgrounds, through the whole range, and at the start and end of speech
+  (never a jump).
 - **`AURORA_DEMO_CALL`**: the demo has no voice server; `demo_calls.rs`
   answers ChatSessionRequest (a channel for every call) and stands in for
   the voice session: the call connects after 1.5 s and the others talk in
@@ -3321,13 +3386,13 @@ What the inventory must show with these scenarios:
   - `voice`: Nova out of the voice channel (no microphone badge);
     Tess in the channel, silent (green microphone badge, no outline) and
     without a profile picture (the icon stays); Orion, a friend, is speaking
-    (green outline and halo that follows the level, microphone, green heart
+    (green ring that follows the level, microphone, green heart
     and triangle badges: he is shown as too complex;
     his name is in ink like everyone's unless Preferences › Colors › "Color
     the names by relation" is on); Lune
     is typing (three animated dots) and has no display name (two lines); La
     Brume is blocked (dimmed plate, name in italics, forbidden badge, no
-    status dot). Farther away, Sol is speaking (green outline) and Iris is
+    status dot). Farther away, Sol is speaking (a tighter ring) and Iris is
     typing; beyond, Vega is in the channel and Atlas is not (the far pill
     has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
@@ -3363,6 +3428,33 @@ What the inventory must show with these scenarios:
   - To be combined with `AURORA_DEMO_VOICE` for our own plate and that of
     Loup Violet (blocked in the demo), and with `AURORA_NAME_TAGS=classic`
     to compare with the classic name tags.
+- **`AURORA_DEMO_VOICE_MENU`**: at frame 600, opens the world menu on the
+  nearest name plate of a resident in our voice channel whose voice is not
+  blocked (with `AURORA_DEMO_TAGS=voice`: Orion, the speaking friend).
+  Its first row is the resident's voice: speaker, volume slider, percentage
+  (100 % = as they send it, 200 % at the end) and the voice mute button.
+  `louder` sets their volume to 160 % first, `muted` blocks their voice
+  first (the slider greyed at 0 %, the button lit). Capture at frame 620 or
+  later with `AURORA_FPS_LIMIT=60`; `AURORA_DEMO_PIE=1` shows the same row
+  in a panel under the pie menu. The list menus of the same residents get
+  the row too, opened with `AURORA_DEMO_POINTER` (right click `,r` at
+  frame 302, capture at frame 345): with `AURORA_DEMO_PEOPLE=rows`,
+  `150,439,r` is Nova in People › Near you (in voice) and `150,304,r` Lune
+  (out of voice: no row); with `AURORA_DEMO_PEOPLE=friends`, `150,240,r` is
+  Nova in Friends and `688,237,l` the "…" menu of her sheet. With
+  `AURORA_DEMO_CALL=group` and `AURORA_DEMO_CONV=aurora`, the menu of a
+  participant's name in the conversation has it once the call is connected
+  (`…;764,616,r` as the seventh point, capture at frame 720). Positions are
+  window pixels at the default capture size; the residents out of voice
+  never get the row.
+- **`AURORA_VOICE_LEVEL_LOG`**: once a second, a `voice level (own plate,
+  loudest over 1 s)` line with the loudest raw level of our own plate (and
+  its dBFS, the microphone meter's value), whether we spoke, the smoothed
+  level, the red threshold and the color reached. Our own plate must be
+  shown (Preferences, "Show my own name"); in demo with `AURORA_DEMO_TALK=1`
+  and without `AURORA_DEMO_VOICE` (or with `sweep`), it follows the real
+  microphone. On the grid it also confirms the scale of the levels against
+  what the other residents' plates show.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes

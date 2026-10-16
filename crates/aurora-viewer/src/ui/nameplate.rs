@@ -453,11 +453,40 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
 pub struct VoiceEnvelope {
     pub gate: f32,
     pub level: f32,
+    /// 0..1: how far past the overdriven level the voice goes, smoothed
+    /// like the level (`overdrive`).
+    pub heat: f32,
 }
 
 const VOICE_ATTACK: f32 = 0.04;
 const VOICE_RELEASE: f32 = 0.28;
 const GATE_RELEASE: f32 = 0.22;
+/// Raw level over the overdriven one at which a plate is fully red: 6 dB,
+/// so that the color slides instead of switching.
+const OVERDRIVE_SPAN: f32 = 0.03;
+/// A participant level for a microphone at full scale: WebRTC's
+/// `0.18 + 0.005 × 20 log10(rms)` with the RMS in 16-bit units
+/// (LLWebRTCVoiceClient::predUpdateOwnVolume, aurora_voice::transmit).
+const FULL_SCALE_LEVEL: f32 = 0.6315;
+/// Loudness (dBFS of the RMS over the 300 ms the level is averaged on) at
+/// which a plate starts turning red. The Legacy Viewer's 0.7 needs more
+/// than full scale, and the -10 dBFS the classic tag uses
+/// (`voice_tag::LEVEL_MAX`) asks a 300 ms average to stay near clipping:
+/// a real shout, peaks near full scale with the gaps between syllables in
+/// the average, reads -18 to -12 dBFS, normal speech at a sane microphone
+/// gain -30 to -24. Red from -18 to -12 then marks a shout and leaves
+/// normal speech green, with 6 dB to spare.
+const SHOUT_DBFS: f32 = -18.0;
+
+/// The participant level of a voice `dbfs` loud (RMS over 300 ms).
+pub fn level_at_dbfs(dbfs: f32) -> f32 {
+    FULL_SCALE_LEVEL + 0.005 * dbfs
+}
+
+/// The loudness (dBFS) a participant level stands for.
+pub fn dbfs_of(raw: f32) -> f32 {
+    (raw - FULL_SCALE_LEVEL) / 0.005
+}
 
 /// Raw participant level (what `aurora_voice` reports) to 0..1 over the
 /// range a voice really covers, as the classic tag's outline.
@@ -470,7 +499,88 @@ pub fn voice_level(raw: f32) -> f32 {
     }
 }
 
+/// How far a raw participant level goes past the overdriven level (0..1):
+/// 0 up to a shout (`SHOUT_DBFS`), 1 one `OVERDRIVE_SPAN` above. The
+/// speaking indicator of the Legacy Viewer turns red above
+/// LLVoiceClient::OVERDRIVEN_POWER_LEVEL (RED_THRESHOLD of
+/// llvoicevisualizer.cpp, llspeakers.cpp), which WebRTC's levels never
+/// reach: here it is where a real shout gets to.
+pub fn overdrive(raw: f32) -> f32 {
+    if raw.is_finite() {
+        ((raw - level_at_dbfs(SHOUT_DBFS)) / OVERDRIVE_SPAN).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// AURORA_VOICE_LEVEL_LOG=1 (temporary): once a second, the loudest moment
+/// of our own plate's voice in the log, to read a real voice's levels.
+pub fn level_log() -> bool {
+    static SET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SET.get_or_init(|| std::env::var_os("AURORA_VOICE_LEVEL_LOG").is_some())
+}
+
+/// The loudest moment of one plate's voice over a second, for
+/// `level_log`.
+#[derive(Debug, Default)]
+struct LevelProbe {
+    since: f64,
+    raw: f32,
+    level: f32,
+    heat: f32,
+    speaking: bool,
+    in_voice: bool,
+}
+
+impl LevelProbe {
+    fn take(&mut self, voice: Option<(f32, bool)>, envelope: &VoiceEnvelope, now: f64) {
+        if let Some((raw, speaking)) = voice {
+            self.in_voice = true;
+            self.speaking |= speaking;
+            if raw.is_finite() {
+                self.raw = self.raw.max(raw);
+            }
+        }
+        self.level = self.level.max(envelope.level);
+        self.heat = self.heat.max(envelope.heat);
+        if now - self.since < 1.0 {
+            return;
+        }
+        if self.in_voice {
+            let color = match self.heat {
+                h if h <= 0.0 => "green".to_owned(),
+                h if h < 0.5 => format!("green→amber {:.0}%", h * 200.0),
+                h => format!("amber→red {:.0}%", (h - 0.5) * 200.0),
+            };
+            log::info!(
+                "voice level (own plate, loudest over 1 s): raw {:.3} ({:.1} dBFS, mic meter {:.2}), speaking {}, smoothed {:.2}, red from {:.3} ({SHOUT_DBFS} dBFS), heat {:.2}: {color}",
+                self.raw,
+                dbfs_of(self.raw),
+                0.8 + dbfs_of(self.raw) / 100.0,
+                self.speaking,
+                self.level,
+                level_at_dbfs(SHOUT_DBFS),
+                self.heat,
+            );
+        } else {
+            log::info!("voice level (own plate): not in the voice channel");
+        }
+        *self = LevelProbe {
+            since: now,
+            ..LevelProbe::default()
+        };
+    }
+}
+
 impl VoiceEnvelope {
+    /// One frame later (`dt` seconds), from the raw participant level.
+    pub fn update_raw(&mut self, raw: f32, speaking: bool, dt: f32) {
+        let target = if speaking { overdrive(raw) } else { 0.0 };
+        let tau = if target > self.heat { VOICE_ATTACK } else { VOICE_RELEASE };
+        self.heat += (target - self.heat) * (1.0 - (-dt / tau).exp());
+        self.update(voice_level(raw), speaking, dt);
+    }
+
     /// One frame later (`dt` seconds): `level` is 0..1 (`voice_level`).
     pub fn update(&mut self, level: f32, speaking: bool, dt: f32) {
         let toward = |value: f32, target: f32, tau: f32| value + (target - value) * (1.0 - (-dt / tau).exp());
@@ -488,29 +598,25 @@ impl VoiceEnvelope {
     }
 
     /// The halo to draw now; None when silent.
-    pub fn halo(&self, scale: f32) -> Option<Halo> {
-        (self.gate > 0.0).then(|| {
-            let l = self.level;
-            // the mockup's `.speak.thin` rule
-            Halo {
-                blur: (3.0 + 11.0 * l) * scale,
-                spread: 2.0 * l * scale,
-                alpha: self.gate * (0.30 + 0.55 * l),
-                gate: self.gate,
-            }
+    pub fn halo(&self) -> Option<Halo> {
+        (self.gate > 0.0).then_some(Halo {
+            level: self.level,
+            gate: self.gate,
+            heat: self.heat,
         })
     }
 }
 
-/// A tight glow around the plate, in points, and the green outline that
-/// comes and goes with it.
+/// How loud a speaking plate shines: the smoothed level, the gate and the
+/// overdrive, all 0..1. `paint::voice_light` turns it into lights for the
+/// plate's size.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Halo {
-    pub blur: f32,
-    pub spread: f32,
-    pub alpha: f32,
-    /// 0..1: how far the outline has turned green.
+    pub level: f32,
+    /// 0..1: how far the plate has lit up (the outline turned green).
     pub gate: f32,
+    /// 0..1: how far past the overdriven level (`overdrive`), red at 1.
+    pub heat: f32,
 }
 
 /// One of the three typing dots at `time` seconds: (opacity, lift in mockup
@@ -620,6 +726,9 @@ pub struct Plates {
     pub hovered: Option<Uuid>,
     /// The last plate under the pointer, and when: it lingers a moment.
     hover_seen: Option<(Uuid, f64)>,
+    /// The plate whose voice goes to the log (`level_log`): our own.
+    pub probe: Option<Uuid>,
+    level_probe: LevelProbe,
 }
 
 impl Plates {
@@ -684,8 +793,11 @@ impl Plates {
                 entry.changed = now;
             }
             match tag.voice {
-                Some((raw, speaking)) => entry.voice.update(voice_level(raw), speaking, dt),
+                Some((raw, speaking)) => entry.voice.update_raw(raw, speaking, dt),
                 None => entry.voice = VoiceEnvelope::default(),
+            }
+            if self.probe == Some(tag.id) {
+                self.level_probe.take(tag.voice, &entry.voice, now);
             }
             // the blur comes and goes over the level's ease, not in one frame
             let step = dt / LEVEL_EASE as f32;
@@ -699,7 +811,7 @@ impl Plates {
                 level: entry.level,
                 from: (progress < 1.0).then_some(entry.from),
                 progress: progress * progress * (3.0 - 2.0 * progress),
-                halo: entry.voice.halo(SCALE),
+                halo: entry.voice.halo(),
                 glass: entry.glass,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
