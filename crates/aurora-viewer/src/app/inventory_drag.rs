@@ -332,6 +332,10 @@ impl App {
             self.build.expect_created(&self.world);
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
+        if let BuildCmd::RezInventory(item) = &drop.command {
+            self.settings.texture_library.record(item.item.id);
+            self.settings.save();
+        }
         if let BuildCmd::UpdateTaskInventory { item, .. } = &drop.command {
             self.build.contents_changed(item.parent_id);
             if self.build.open {
@@ -403,6 +407,39 @@ mod tests {
         let object = rez(prepare(&w, item(8100), eye, (point, Some(object(&w))), false, false, true).unwrap());
         assert!(object.remove);
         assert!(object.source_folder.is_nil());
+    }
+
+    #[test]
+    fn library_object_cards_rez_the_actual_inventory_item_with_hidden_assets_and_group_flags() {
+        let mut w = world();
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), w.avatar_lib.clone());
+        crate::demo::texture_library::seed(&mut w.inventory, &mut scene, w.agent_id, false);
+        let mut catalogue = crate::ui::texture_library::catalogue::Catalogue::default();
+        catalogue.prepare(&mut w.inventory);
+        let point = Vec3::new(140.0, 130.0, 32.0);
+        let eye = point + Vec3::Z * 4.0;
+        let objects: Vec<_> = catalogue.entries.iter().filter(|entry| entry.kind.object()).collect();
+        assert_eq!(objects.len(), 4);
+        for entry in objects {
+            assert!(crate::ui::texture_library::catalogue::resource(&w.inventory, entry.id).is_none());
+            for target in [None, Some(object(&w))] {
+                let drop = prepare(&w, entry.id, eye, (point, target), false, false, true).expect("library rez");
+                let item = &w.inventory.items[&entry.id];
+                assert_eq!(drop.consume, (item.owner_mask & rules::COPY == 0).then_some(item.id));
+                let request = rez(drop);
+                assert_eq!(request.item.id, entry.id);
+                assert_eq!(request.item.flags, item.flags);
+                assert_eq!(request.item.parent, item.parent);
+                assert_eq!(request.item.owner_mask, item.owner_mask);
+                assert_eq!(request.source_folder, item.parent);
+                assert!(request.item.asset_id.is_nil());
+                assert_eq!(request.ray_end, point);
+                assert_eq!(
+                    request.target,
+                    target.map_or(Uuid::nil(), |idx| w.objects.get(idx).unwrap().full_id)
+                );
+            }
+        }
     }
 
     #[test]

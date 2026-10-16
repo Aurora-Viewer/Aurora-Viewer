@@ -170,7 +170,11 @@ pub(super) fn editor(
             if !output.text_clip_rect.intersects(rect) {
                 continue;
             }
-            if let Some(icon) = icons.get(item_icon(attachment.item.asset_type, attachment.item.inv_type)) {
+            if let Some(icon) = icons.get(item_icon(
+                attachment.item.asset_type,
+                attachment.item.inv_type,
+                attachment.item.flags,
+            )) {
                 painter.image(
                     icon.id(),
                     egui::Rect::from_min_size(pos, Vec2::splat(16.0)),

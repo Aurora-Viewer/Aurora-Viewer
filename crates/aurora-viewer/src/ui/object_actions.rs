@@ -120,7 +120,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                                         named_row(
                                             ui,
                                             p,
-                                            super::inventory::item_icon(item.asset_type as i32, item.inv_type as i32),
+                                            super::inventory::item_icon(item.asset_type as i32, item.inv_type as i32, item.flags),
                                             &permission_name(&item.name, item.next_owner_mask),
                                         );
                                     }
@@ -324,7 +324,9 @@ pub fn show_contents(
                                     for item in items {
                                         ui.horizontal(|ui| {
                                             ui.spacing_mut().item_spacing.x = 4.0;
-                                            if let Some(t) = icons.get(super::inventory::item_icon(item.asset_type, item.inv_type)) {
+                                            if let Some(t) =
+                                                icons.get(super::inventory::item_icon(item.asset_type, item.inv_type, item.flags))
+                                            {
                                                 ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
                                             } else {
                                                 ui.add_space(16.0);

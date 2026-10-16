@@ -462,8 +462,13 @@ impl InventoryUi {
 
 use tree::folder_icon;
 
-pub fn item_icon(asset_type: i32, inv_type: i32) -> &'static str {
+/// II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS / LLInventoryIcon::getIconName
+/// (Firestorm indra/{llinventory,newview}, originally LGPL 2.1).
+pub const OBJECT_HAS_MULTIPLE_ITEMS: u32 = 0x200000;
+
+pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
     match (asset_type, inv_type) {
+        (6, _) if flags & OBJECT_HAS_MULTIPLE_ITEMS != 0 => "Inv_Object_Multi",
         (_, 15) => "Inv_Snapshot",
         (0, _) => "Inv_Texture",
         (1, _) => "Inv_Sound",
@@ -507,7 +512,7 @@ fn item_row(
     st.visible.push(*id);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        icon(ui, icons, item_icon(it.asset_type, it.inv_type), p);
+        icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p);
         if rename_row(ui, p, inv, *id, st, prefs, actions) {
             return;
         }
@@ -1454,6 +1459,16 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_group_icons_follow_item_flags_without_changing_other_types() {
+        assert_eq!(item_icon(6, 6, 0), "Inv_Object");
+        assert_eq!(item_icon(6, 6, OBJECT_HAS_MULTIPLE_ITEMS | 0x100), "Inv_Object_Multi");
+        assert_eq!(item_icon(6, 6, 0x100), "Inv_Object");
+        assert_eq!(item_icon(0, 0, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_Texture");
+        assert_eq!(item_icon(0, 15, 0), "Inv_Snapshot");
+        assert_eq!(item_icon(24, 24, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_LinkItem");
+    }
 
     #[test]
     fn worn_labels_follow_actual_points_and_inventory_links() {
