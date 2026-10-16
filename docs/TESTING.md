@@ -2603,6 +2603,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
   (the other `AURORA_DEMO_CONV` scenarios show the window in the saved
   style, Aurora by default).
+  Sent-message recall: send two messages, then type an unfinished draft.
+  Ctrl+Up walks back through sent messages; Ctrl+Down walks forward and
+  restores the draft. Repeat in a private IM, a group and a conference:
+  each has its own list. With `aurora:local`, send from the bottom chat bar
+  and recall in the nearby conversation, then send from the conversation
+  and recall in the bar. The entries are shared; their drafts and browsing
+  remain independent. Check all four chat styles, repeated Ctrl+Up at the
+  oldest entry, consecutive duplicate sends, channel prefixes and emoji.
+  No count limit or disk persistence; closing an IM/group/conference
+  discards its recall, while hiding Conversations keeps it.
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user

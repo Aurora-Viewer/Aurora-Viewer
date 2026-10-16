@@ -10,6 +10,7 @@ mod find;
 mod head;
 mod header;
 pub mod history;
+mod input_history;
 mod invite_card;
 mod members;
 pub(crate) mod select;
@@ -52,6 +53,8 @@ pub struct ChatUi {
     /// What is being typed in each conversation's field (None = nearby
     /// chat): another tab keeps its own, like each FSFloaterIM's editor.
     drafts: HashMap<Option<uuid::Uuid>, String>,
+    /// Sent text per conversation; both nearby chat fields share None.
+    input_history: HashMap<Option<uuid::Uuid>, input_history::History>,
     /// The field of the conversation shown takes the keyboard (its tab was
     /// clicked, a letter key started the nearby chat).
     pub conv_focus_request: bool,
@@ -186,11 +189,12 @@ impl ChatUi {
         self.contacts = false;
     }
 
-    /// A conversation closed: its filter, find bar, rows and draft go with it.
+    /// A conversation closed: its filter, find bar, rows, draft and recall go with it.
     pub fn forget(&mut self, conversation: uuid::Uuid) {
         self.searches.remove(&Some(conversation));
         self.views.remove(&Some(conversation));
         self.drafts.remove(&Some(conversation));
+        self.input_history.remove(&Some(conversation));
     }
 
     /// What is typed in a conversation's field (None = nearby chat).
@@ -2246,6 +2250,7 @@ pub fn show(
                         // leave exactly the send button + spacing (else the row overflows
                         // and the resizable window grows every frame)
                         let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+                        let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = super::emoji::codes::keys(ui, conv_input);
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
@@ -2254,6 +2259,9 @@ pub fn show(
                                 .min_size(egui::vec2(field_w, INPUT_H))
                                 .vertical_align(egui::Align::Center)
                         });
+                        if recalled {
+                            output.response.mark_changed();
+                        }
                         super::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
                         if st.selected.is_none() {
                             completion::complete(ui, &mut output, &mut draft, gestures);
@@ -2310,6 +2318,7 @@ pub fn show(
                     let text = draft.trim().to_owned();
                     if !text.is_empty() {
                         sent = true;
+                        st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
                         match st.selected {
                             None => {
                                 let (channel, message) = parse_channel(&text);
@@ -2821,12 +2830,16 @@ pub(crate) fn bar_input(
     // the shortcuts (Enter, Ctrl / Shift + Enter, /channel) are a tooltip:
     // written in the empty field they crowded the bar (the human's request)
     let build = identified(build);
+    let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
     let nav = super::emoji::codes::keys(ui, bar_input_id());
     let mut emoji = emoji;
     let mut output = match emoji.as_deref_mut() {
         Some(emoji) => emoji.text_field(ui, &mut st.input, build),
         None => build(egui::TextEdit::singleline(&mut st.input)).show(ui),
     };
+    if recalled {
+        output.response.mark_changed();
+    }
     super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
     completion::complete(ui, &mut output, &mut st.input, gestures);
     let resp = output
@@ -2848,6 +2861,7 @@ pub(crate) fn bar_input(
         resp.surrender_focus();
     }
     if enter && !st.input.trim().is_empty() {
+        st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
         let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
         let (channel, message) = parse_channel(st.input.trim());
         out = Some(OutgoingChat {
