@@ -296,6 +296,10 @@ pub struct InventoryUi {
     rename: Option<InlineRename>,
     reveal: Option<Uuid>,
     reveal_path: HashSet<Uuid>,
+    /// Where the plain list was last scrolled, and that place to go back to
+    /// once a search is emptied.
+    plain_scroll: f32,
+    plain_scroll_restore: Option<f32>,
     roots_seen: HashSet<Uuid>,
     /// Received Items folders already shown once (closed on their arrival).
     received_seen: HashSet<Uuid>,
@@ -2087,6 +2091,137 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn clearing_search_with_nothing_to_reveal_returns_the_list_to_its_place() {
+        let id = Uuid::from_u128;
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let palette = crate::theme::Theme::default().palette();
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        let mut folders = vec![aurora_net::inventory::InvFolder {
+            id: id(1),
+            name: "Inventory".into(),
+            type_default: -1,
+            ..Default::default()
+        }];
+        folders.extend((1000..1200).map(|n| aurora_net::inventory::InvFolder {
+            id: id(n),
+            parent: inv.root,
+            name: format!("A folder {n}"),
+            type_default: -1,
+            ..Default::default()
+        }));
+        inv.created_folders(folders);
+        for folder in inv.folders.values_mut() {
+            folder.state = FetchState::Fetched;
+        }
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: id(100),
+            parent: id(1150),
+            name: "Needle item".into(),
+            asset_type: 6,
+            inv_type: 6,
+            ..Default::default()
+        }]);
+        let mut st = InventoryUi {
+            filters_initialized: true,
+            ..Default::default()
+        };
+        let mut prefs = InventoryPreferences::default();
+        let mut field = egui::Rect::NOTHING;
+        let mut time = 0.0;
+        let mut frame = |st: &mut InventoryUi, events| {
+            time += 0.05;
+            st.visible.clear();
+            let output = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(440.0, 420.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    inventory_contents(
+                        ui,
+                        &palette,
+                        &Icons::default(),
+                        &mut inv,
+                        st,
+                        &mut prefs,
+                        &Facts::default(),
+                        &mut vec![],
+                    );
+                },
+            ));
+            if let Some(rect) = output
+                .shapes
+                .iter()
+                .filter_map(|shape| match &shape.shape {
+                    egui::Shape::Rect(rect) if rect.fill == palette.field && rect.rect.height() < 40.0 => Some(rect.rect),
+                    _ => None,
+                })
+                .max_by(|a, b| a.width().total_cmp(&b.width()))
+            {
+                field = rect;
+            }
+            field
+        };
+        frame(&mut st, vec![]);
+        frame(&mut st, vec![]);
+        // Scroll the plain list well down, then search.
+        let list = egui::pos2(220.0, 300.0);
+        for _ in 0..4 {
+            frame(
+                &mut st,
+                vec![
+                    egui::Event::PointerMoved(list),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -600.0),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        for _ in 0..30 {
+            frame(&mut st, vec![]);
+        }
+        let mut before = st.visible.clone();
+        before.sort();
+        assert!(!before.contains(&id(1000)), "the plain list is scrolled down: {before:?}");
+        st.search = "Needle".into();
+        for _ in 0..3 {
+            frame(&mut st, vec![]);
+        }
+        assert!(st.visible.contains(&id(100)), "the search shows its one result");
+        // Cleared with its × and nothing selected: no row to reveal.
+        let clear = frame(&mut st, vec![]).right_center() - Vec2::new(14.0, 0.0);
+        let click = |pressed| {
+            vec![
+                egui::Event::PointerMoved(clear),
+                egui::Event::PointerButton {
+                    pos: clear,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ]
+        };
+        frame(&mut st, click(true));
+        frame(&mut st, click(false));
+        for _ in 0..3 {
+            frame(&mut st, vec![]);
+        }
+        assert!(st.search.is_empty() && st.selected.is_none());
+        let mut after = st.visible.clone();
+        after.sort();
+        assert_eq!(after, before, "the plain list is back where it was before the search");
     }
 
     #[test]
