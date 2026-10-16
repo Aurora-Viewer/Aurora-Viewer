@@ -6064,6 +6064,7 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
+            raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
             raw.events
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
@@ -11888,6 +11889,11 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
                 crate::demo::worn::seed_inventory(&mut self.world);
+                // `inventory`: its row in sight, for the double-clicks
+                if std::env::var("AURORA_DEMO_WORN").is_ok_and(|mode| mode == "inventory") {
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, crate::demo::worn::item_id());
+                }
             }
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.

@@ -50,6 +50,11 @@ pub fn events() -> Vec<NetEvent> {
     }]
 }
 
+/// The inventory item of the worn object ("Demo backpack").
+pub fn item_id() -> Uuid {
+    root().full_id
+}
+
 /// The inventory item the object is worn from, in the current outfit.
 pub fn seed_inventory(world: &mut crate::world::World) {
     use crate::world::appearance::{self, Action};

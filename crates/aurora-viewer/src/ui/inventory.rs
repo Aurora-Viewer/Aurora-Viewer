@@ -553,6 +553,7 @@ fn item_row(
         task_drop::target(ui, p, &r, inv, it.parent, prefs, actions);
         drag::target(ui, p, &r, inv, it.parent, st, prefs, facts, actions);
         super::widgets::demo::rez_row(&r, it.id);
+        super::widgets::demo::worn_row(&r, it.id);
         let r = r.on_hover_ui(|ui| {
             ui.label(&it.name);
             ui.label(inventory_path(inv, it.parent));
@@ -578,7 +579,7 @@ fn item_row(
             st.reveal_path.clear();
         }
         if r.double_clicked() {
-            context::open(inv, *id, st, prefs, actions);
+            context::double_click(inv, *id, st, prefs, facts, actions);
         }
         super::menu::context_menu(&r, p, |ui| context::show(ui, p, inv, *id, st, prefs, facts, actions));
     });
@@ -2244,11 +2245,70 @@ mod tests {
         };
         for (id, replace) in [(8100, false), (8111, false), (8112, true)] {
             let mut actions = vec![];
-            context::open(&inv, Uuid::from_u128(id), &mut InventoryUi::default(), &prefs, &mut actions);
+            context::double_click(
+                &inv,
+                Uuid::from_u128(id),
+                &mut InventoryUi::default(),
+                &prefs,
+                &Facts::default(),
+                &mut actions,
+            );
             assert!(
                 matches!(actions.as_slice(), [InvAction::Appearance(crate::world::appearance::Action::WearItem { replace: actual, .. })] if *actual == replace)
             );
         }
+    }
+
+    /// LLObjectBridge::openItem / LLWearableBridge::openItem: a second
+    /// double-click on what is worn takes it off, through a link too; a worn
+    /// body part stays put.
+    #[test]
+    fn double_click_takes_off_what_is_worn_except_body_parts() {
+        use crate::world::appearance::Action as Wear;
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let mut physics = inv.items[&Uuid::from_u128(8111)].clone();
+        physics.id = Uuid::from_u128(8190);
+        physics.flags = 15;
+        inv.add_items(vec![physics]);
+        let worn: HashSet<Uuid> = [8100, 8111, 8112, 8190].into_iter().map(Uuid::from_u128).collect();
+        let facts = Facts {
+            worn,
+            ..Default::default()
+        };
+        let click = |id: u128| {
+            let mut actions = vec![];
+            context::double_click(
+                &inv,
+                Uuid::from_u128(id),
+                &mut InventoryUi::default(),
+                &InventoryPreferences::default(),
+                &facts,
+                &mut actions,
+            );
+            actions
+        };
+        // object, its link (acts on the original), clothing, physics
+        for (row, item) in [(8100, 8100), (8113, 8100), (8111, 8111), (8190, 8190)] {
+            assert!(
+                matches!(&click(row)[..], [InvAction::Appearance(Wear::Remove(id))] if *id == Uuid::from_u128(item)),
+                "row {row}"
+            );
+        }
+        assert!(click(8112).is_empty(), "a worn body part is only replaced");
+        // not worn: the same rows put the item on again, replacing by default
+        let mut actions = vec![];
+        context::double_click(
+            &inv,
+            Uuid::from_u128(8113),
+            &mut InventoryUi::default(),
+            &InventoryPreferences::default(),
+            &Facts::default(),
+            &mut actions,
+        );
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == Uuid::from_u128(8100))
+        );
     }
 
     fn folder_window_frame(ctx: &egui::Context, inv: &mut Inventory, root: Uuid, st: &mut InventoryUi) -> egui::FullOutput {

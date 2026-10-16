@@ -71,6 +71,49 @@ pub fn rez_events(ctx: &egui::Context, frame: u64, destination: egui::Pos2) -> V
     }
 }
 
+/// `AURORA_DEMO_WORN=inventory`: the inventory row of the worn demo object.
+fn worn_item() -> Option<uuid::Uuid> {
+    static ITEM: std::sync::OnceLock<Option<uuid::Uuid>> = std::sync::OnceLock::new();
+    *ITEM.get_or_init(|| {
+        std::env::var("AURORA_DEMO_WORN")
+            .is_ok_and(|mode| mode == "inventory")
+            .then(crate::demo::worn::item_id)
+    })
+}
+
+/// Record the real row of the worn demo object, double-clicked by `worn_events`.
+pub fn worn_row(response: &egui::Response, item: uuid::Uuid) {
+    if worn_item() == Some(item) {
+        response
+            .ctx
+            .data_mut(|d| d.insert_temp(egui::Id::new("demo_worn_row"), response.rect.center()));
+    }
+}
+
+/// `AURORA_DEMO_WORN=inventory`: two clicks on the real row of the worn
+/// object at frames 700–703 (it detaches), then again at 900–903 (it is
+/// worn again), far enough apart not to count as a triple click.
+pub fn worn_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    if worn_item().is_none() || !matches!(frame, 700..=703 | 900..=903) {
+        return Vec::new();
+    }
+    let Some(pos) = ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("demo_worn_row"))) else {
+        return Vec::new();
+    };
+    if matches!(frame, 700 | 900) {
+        log::info!("demo worn inventory: double-click on the item row at frame {frame}");
+    }
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: frame.is_multiple_of(2),
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
 pub fn events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Ok(mode) = std::env::var("AURORA_DEMO_WINDOWS") else {
         return Vec::new();

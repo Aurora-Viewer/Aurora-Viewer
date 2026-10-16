@@ -1013,7 +1013,7 @@ memory; replacing the root does not automatically copy the Linkset Data.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-click |
 
 ### Details
 
@@ -1075,7 +1075,7 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|inspect`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|inspect|inventory`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -1091,9 +1091,19 @@ access to a grid.
 - `inspect`: "Inspect" at frame 740: the window lists the root and the
   linked prim, their figures and the totals; the prim of the highlighted
   row is outlined in yellow, the others in blue.
+- `inventory`: the inventory opens on the item, double-clicked on its real
+  row at frames 700–703 (the backpack detaches, its worn label leaves the
+  row) and again at 900–903 (it is worn again), like the Legacy Viewer's
+  double-click (LLObjectBridge::openItem). The log writes
+  `demo worn inventory: double-click on the item row at frame …`. The other
+  objects of the demo outfit show as worn after the first change: the demo
+  lists them in the current outfit without wearing them at start. By hand,
+  also double-click a worn piece of clothing (it comes off) and a worn body
+  part (nothing happens: a body part is only replaced).
 
 The steps are counted in frames: capture with `AURORA_FPS_LIMIT=60`,
-around frames 720 (menu), 770 (edit, inspect) and 850 (move).
+around frames 720 (menu), 770 (edit, inspect), 850 (move) and 680, 800,
+1000 (inventory).
 
 To check with these scenarios:
 
