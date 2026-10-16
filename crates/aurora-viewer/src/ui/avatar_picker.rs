@@ -186,8 +186,8 @@ impl AvatarPicker {
                                     .painter()
                                     .layout_no_wrap(extra.clone(), egui::FontId::proportional(11.0), p.muted);
                                 let x = rect.right() - 6.0 - g.size().x;
-                                ui.painter()
-                                    .galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g.clone(), p.muted);
+                                let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+                                ui.painter().galley(at, g.clone(), p.muted);
                                 g.size().x + 12.0
                             };
                             let g = egui::WidgetText::from(RichText::new(name).size(12.0).color(p.ink)).into_galley(
@@ -196,8 +196,8 @@ impl AvatarPicker {
                                 (w - 12.0 - extra_w).max(20.0),
                                 egui::TextStyle::Body,
                             );
-                            ui.painter()
-                                .galley(egui::pos2(rect.left() + 6.0, rect.center().y - g.size().y * 0.5), g, p.ink);
+                            let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 6.0, rect.center().y);
+                            ui.painter().galley(at, g, p.ink);
                             if r.clicked() {
                                 let add = ui.input(|i| i.modifiers.ctrl || i.modifiers.command) && self.multiple;
                                 if !add {

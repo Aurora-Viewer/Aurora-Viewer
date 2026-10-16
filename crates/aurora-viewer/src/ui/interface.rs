@@ -203,15 +203,15 @@ pub fn hint(ctx: &egui::Context, p: &Palette, binding: Option<&crate::keybinds::
             }
             x = icon.right() + GAP;
             let w = hidden.size().x;
-            ui.painter()
-                .galley(Pos2::new(x, cy - hidden.size().y / 2.0).round(), hidden.clone(), p.muted);
+            let at = crate::ui::widgets::row_text_origin(ui.painter(), &hidden, x, cy);
+            ui.painter().galley(at, hidden.clone(), p.muted);
             x += w + GAP;
             if !caps.is_empty() {
                 super::widgets::keycap::paint_row(ui, p, &caps, Pos2::new(x, cy), p.panel);
                 x += super::widgets::keycap::row_width(&caps) + GAP;
             }
-            ui.painter()
-                .galley(Pos2::new(x, cy - recall.size().y / 2.0).round(), recall.clone(), p.muted);
+            let at = crate::ui::widgets::row_text_origin(ui.painter(), &recall, x, cy);
+            ui.painter().galley(at, recall.clone(), p.muted);
         });
 }
 

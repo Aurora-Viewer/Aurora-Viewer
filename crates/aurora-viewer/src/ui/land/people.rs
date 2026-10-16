@@ -416,8 +416,8 @@ fn owners_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
                 let center = egui::pos2(x + g.size().x + caret_w - CARET / 2.0, rect.center().y);
                 widgets::paint_glyph(ui.painter(), widgets::sort_caret(sort_asc), center, CARET, p.muted);
             }
-            ui.painter()
-                .galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, p.muted_dim);
+            let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+            ui.painter().galley(at, g, p.muted_dim);
             if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 s.owner_sort = Some(if sort_col == i { (i, !sort_asc) } else { (i, true) });
             }

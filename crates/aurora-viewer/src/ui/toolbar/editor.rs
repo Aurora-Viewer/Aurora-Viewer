@@ -432,11 +432,8 @@ fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::P
                     p.on_accent,
                 );
             }
-            painter.galley(
-                egui::pos2(icon.right() + 6.0, rect.center().y - galley.size().y / 2.0),
-                galley,
-                p.on_accent,
-            );
+            let at = crate::ui::widgets::row_text_origin(painter, &galley, icon.right() + 6.0, rect.center().y);
+            painter.galley(at, galley, p.on_accent);
         });
 }
 

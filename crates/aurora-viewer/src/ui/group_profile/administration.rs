@@ -328,15 +328,12 @@ fn nav_item(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count: Opti
     }
     let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
     let g = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
-    ui.painter()
-        .galley(Pos2::new(rect.left() + 35.0, rect.center().y - g.size().y / 2.0).round(), g, ink);
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 35.0, rect.center().y);
+    ui.painter().galley(at, g, ink);
     if let Some(n) = count {
         let g = ui.painter().layout_no_wrap(n.to_string(), FontId::proportional(11.0), p.muted_dim);
-        ui.painter().galley(
-            Pos2::new(rect.right() - 10.0 - g.size().x, rect.center().y - g.size().y / 2.0).round(),
-            g,
-            p.muted_dim,
-        );
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.right() - 10.0 - g.size().x, rect.center().y);
+        ui.painter().galley(at, g, p.muted_dim);
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -1240,11 +1237,8 @@ fn bans(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, d: &G
                 if *date > 0.0 {
                     let text = crate::world::profiles::slt_date(*date as u32);
                     let g = ui.painter().layout_no_wrap(text, FontId::proportional(12.0), p.muted);
-                    ui.painter().galley(
-                        Pos2::new(row.right() - 8.0 - g.size().x, row.center().y - g.size().y / 2.0).round(),
-                        g,
-                        p.muted,
-                    );
+                    let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, row.right() - 8.0 - g.size().x, row.center().y);
+                    ui.painter().galley(at, g, p.muted);
                 }
             }
         });

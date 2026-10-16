@@ -20,7 +20,66 @@ fn submit(st: &mut InventoryUi, actions: &mut Vec<InvAction>, plan: Result<Mutat
         }
     }
 }
-pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences, actions: &mut Vec<InvAction>) {
+/// A double-click on an item row: the bridge's `openItem`
+/// (indra/newview/llinventorybridge.cpp, originally LGPL 2.1). Objects,
+/// clothing and body parts toggle (`wear_toggle`); one of the Library is
+/// copied into the inventory, then worn (LLAppearanceMgr::wearItemsOnAvatar,
+/// copy_inventory_item with wear_on_avatar_cb). A sound plays in the world
+/// for everyone (LLSoundBridgeAction: send_sound_trigger, where "Open"
+/// shows its preview). Every other type opens like the "Open" entry. A
+/// link acts on its target, like LLInvFVBridgeAction::doAction.
+pub(super) fn double_click(
+    inv: &Inventory,
+    id: Uuid,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let original = rules::original(inv, id);
+    match original.and_then(|original| inv.items.get(&original)) {
+        Some(it) if matches!(it.asset_type, 5 | 6 | 13) => match wear_toggle(it, facts.worn.contains(&it.id), prefs) {
+            Some(Wear::WearItem { item, replace, .. }) if rules::library(inv, item) => {
+                actions.push(InvAction::WearCopy { item, replace });
+            }
+            wear => actions.extend(wear.map(InvAction::Appearance)),
+        },
+        Some(it) if it.asset_type == 1 => {
+            // send_sound_trigger sends nothing for a null sound
+            if !it.asset_id.is_nil() {
+                actions.push(InvAction::TriggerSound(it.asset_id));
+            }
+        }
+        _ => open(inv, id, st, actions),
+    }
+}
+
+/// What a double-click does to a wearable, by LLObjectBridge::openItem and
+/// LLWearableBridge::openItem: a worn object detaches and worn clothing
+/// comes off (LLAppearanceMgr::removeItemFromAvatar); a worn body part
+/// stays, since it can only be replaced (`canRemoveFromAvatar`). Anything
+/// not worn is put on, added or replacing as the double-click preferences
+/// say (FSDoubleClickAddInventoryObjects / FSDoubleClickAddInventoryClothing);
+/// physics and body parts always replace.
+pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs: &InventoryPreferences) -> Option<Wear> {
+    if worn {
+        return (it.asset_type != 13).then_some(Wear::Remove(it.id));
+    }
+    let replace = match it.asset_type {
+        6 => !prefs.double_click_add_objects,
+        5 if it.flags & 0xff != 15 => !prefs.double_click_add_clothes,
+        _ => true,
+    };
+    Some(Wear::WearItem {
+        item: it.id,
+        replace,
+        point: 0,
+    })
+}
+
+/// The "Open" entry, and the double-click of what is not worn: objects,
+/// clothing and body parts never come here (`double_click`).
+pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
     if let Some(original) = rules::original(inv, id)
         && inv.items.get(&original).is_some_and(|it| it.asset_type == 21)
     {
@@ -47,18 +106,6 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &Inve
         actions.push(InvAction::Profile(it.creator));
     } else if it.asset_type == 3 && !it.asset_id.is_nil() {
         actions.push(InvAction::TeleportLandmark(it.asset_id));
-    } else if matches!(it.asset_type, 5 | 6 | 13) {
-        actions.push(InvAction::Appearance(Wear::WearItem {
-            item: original,
-            replace: match it.asset_type {
-                6 => !prefs.double_click_add_objects,
-                // Physics and body parts remain replacements, like
-                // LLWearableBridge::performAction / LLInvFVBridgeAction.
-                5 if it.flags & 0xff != 15 => !prefs.double_click_add_clothes,
-                _ => true,
-            },
-            point: 0,
-        }));
     } else if it.asset_type == 10 {
         actions.push(InvAction::Preview(original));
     } else if it.asset_type == 56 && crate::world::env_select::SettingsKind::from_flags(it.flags).is_some() {
@@ -359,7 +406,7 @@ pub(super) fn show(
                     ("folder-open-filled", aurora_i18n::tr!("common-open"))
                 };
                 if menu::item_if(ui, p, icon, label, opens) {
-                    open(inv, id, st, prefs, actions);
+                    open(inv, id, st, actions);
                 }
                 if let Some(landmark) = original.filter(|it| it.asset_type == 3)
                     && menu::item_if(
@@ -839,7 +886,7 @@ mod tests {
                 ..Default::default()
             }]);
             let mut actions = Vec::new();
-            open(&inv, id, &mut st, &InventoryPreferences::default(), &mut actions);
+            open(&inv, id, &mut st, &mut actions);
             assert!(matches!(actions.as_slice(), [InvAction::Preview(item)] if *item == id));
             assert_eq!(st.preview, Some(document));
             assert!(st.preview_dirty);

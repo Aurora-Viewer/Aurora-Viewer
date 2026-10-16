@@ -294,7 +294,8 @@ fn owners_list(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World
                         let mut job = egui::text::LayoutJob::simple_singleline(name, egui::FontId::proportional(12.0), p.ink);
                         job.wrap = egui::text::TextWrapping::truncate_at_width(name_w - 8.0);
                         let g = ui.painter().layout_job(job);
-                        ui.painter().galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, p.ink);
+                        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+                        ui.painter().galley(at, g, p.ink);
                         x += name_w;
                         ui.painter().text(
                             egui::pos2(x, rect.center().y),

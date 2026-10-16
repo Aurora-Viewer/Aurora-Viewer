@@ -60,7 +60,7 @@ pub fn pill(ui: &mut egui::Ui, p: &Palette, tone: Tone, icon: &str, label: &str)
     if !icon.is_empty() {
         icon_at(ui, icon, egui::pos2(rect.left() + PAD + ICON / 2.0, rect.center().y), ICON, ink);
     }
-    let pos = egui::pos2(rect.left() + PAD + lead, rect.center().y - galley.size().y / 2.0).round();
+    let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + PAD + lead, rect.center().y);
     ui.painter().galley(pos, galley, ink);
     resp
 }
@@ -329,7 +329,7 @@ pub fn page_tabs<P: Copy + PartialEq>(
                 ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
             }
             icon_at(ui, it.icon, egui::pos2(rect.left() + 12.0 + 7.0, rect.center().y), 14.0, ink);
-            let pos = egui::pos2(rect.left() + 12.0 + 14.0 + 6.0, rect.center().y - galley.size().y / 2.0).round();
+            let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 12.0 + 14.0 + 6.0, rect.center().y);
             ui.painter().galley(pos, galley, ink);
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, it.label));
             if let Some(why) = it.disabled {
@@ -572,8 +572,8 @@ pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: 
         let at = egui::pos2(rect.left() + name_end + 6.0, top + first_row_h / 2.0);
         icon_at(ui, "lock-filled", egui::pos2(at.x + 6.0, at.y), 11.0, p.amber);
         let tag = ui.painter().layout_job(semibold(ui, who, 11.0, p.amber));
-        ui.painter()
-            .galley(egui::pos2(at.x + 16.0, at.y - tag.size().y / 2.0).round(), tag, p.amber);
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &tag, at.x + 16.0, at.y);
+        ui.painter().galley(at, tag, p.amber);
     }
     let mut clicked = false;
     if let Some((g, link_at)) = desc_g {
@@ -663,7 +663,7 @@ pub fn nav_compact(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, lit:
         icon_tint,
     );
     if let Some(g) = galley {
-        let pos = egui::pos2(rect.left() + 8.0 + ICON + 9.0, rect.center().y - g.size().y / 2.0).round();
+        let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 8.0 + ICON + 9.0, rect.center().y);
         ui.painter().galley(pos, g, ink);
     }
     r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, lit, label));
@@ -938,11 +938,8 @@ pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_
         if row.timed { p.amber } else { p.muted },
     );
     let exp_w = exp_g.size().x;
-    ui.painter().galley(
-        egui::pos2(rect.right() - 8.0 - exp_w, rect.center().y - exp_g.size().y / 2.0),
-        exp_g,
-        p.muted,
-    );
+    let at = crate::ui::widgets::row_text_origin(ui.painter(), &exp_g, rect.right() - 8.0 - exp_w, rect.center().y);
+    ui.painter().galley(at, exp_g, p.muted);
     let text_left = disc.right() + 9.0;
     let text_w = (rect.right() - 16.0 - exp_w - text_left).max(20.0);
     let mut job = semibold(ui, row.name, 12.5, p.ink);

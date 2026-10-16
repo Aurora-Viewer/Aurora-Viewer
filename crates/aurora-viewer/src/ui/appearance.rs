@@ -190,11 +190,8 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     };
     paint(egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5), galley);
     if let Some(marker) = marker {
-        painter.galley(
-            egui::pos2(rect.right() - marker.size().x - 3.0, rect.center().y - marker.size().y * 0.5),
-            marker,
-            marker_color,
-        );
+        let at = crate::ui::widgets::row_text_origin(&painter, &marker, rect.right() - marker.size().x - 3.0, rect.center().y);
+        painter.galley(at, marker, marker_color);
     }
     response.on_hover_text(match worn {
         Some(label) => format!("{text} ({label})"),
