@@ -660,6 +660,11 @@ The "Invisible" status (right to see us online withdrawn from each friend, then 
 is in `world/status.rs`.
 `ui/widgets/unread.rs` is the one unread counter (islands, dock, Firestorm's
 bars, Conversations list): dark red, its digits' ink centred to the pixel.
+Text beside an icon, a badge or in a box is placed where epaint draws it
+(`widgets::ink_rect`, `galley_baseline`, `row_text_origin`: each glyph and
+the face's vertical shift rounded to the pixel); `ui/widgets/alignment_tests.rs`
+checks the shared widgets with every embedded font and a system font at
+several scales.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares
