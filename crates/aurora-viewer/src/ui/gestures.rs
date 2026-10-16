@@ -165,19 +165,13 @@ pub fn show(
             ui.horizontal(|ui| {
                 ui.add_space(check_width + ui.spacing().item_spacing.x);
                 for (column, key) in [(0, "common-name"), (1, "gesture-trigger"), (2, "gesture-key")] {
-                    let heading = format!(
-                        "{}{}",
-                        aurora_i18n::text(key),
-                        if state.sort == column {
-                            if state.descending { " ↓" } else { " ↑" }
-                        } else {
-                            ""
-                        }
-                    );
-                    if ui
-                        .add_sized([columns[usize::from(column)], 24.0], egui::Button::new(heading).truncate())
-                        .clicked()
+                    let mut heading = egui::Button::new(aurora_i18n::text(key)).truncate();
+                    if state.sort == column
+                        && let Some(caret) = crate::ui::icons::global(widgets::sort_caret(!state.descending))
                     {
+                        heading = heading.right_text(egui::Image::new((caret.id(), Vec2::splat(10.0))).tint(p.muted));
+                    }
+                    if ui.add_sized([columns[usize::from(column)], 24.0], heading).clicked() {
                         if state.sort == column {
                             state.descending = !state.descending;
                         } else {

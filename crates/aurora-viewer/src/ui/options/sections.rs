@@ -204,7 +204,7 @@ mod tests {
         let inventory = include_str!("../inventory/controls.rs");
         pages[1].1.remove("inventory");
         pages[1].1.extend(accessed(body(inventory, "preferences"), "prefs", "inventory."));
-        pages[TAB_AUDIO].1.extend(accessed(body(options, "audio_page"), "s", ""));
+        pages[TAB_AUDIO].1.extend(accessed(body(include_str!("audio.rs"), "page"), "s", ""));
         pages[TAB_SHORTCUTS].1.extend(accessed(body(options, "keys_page"), "s", ""));
         pages[9].1.extend(accessed(body(options, "debug_page"), "s", ""));
         pages[TAB_CAMERA].1.extend(accessed(include_str!("camera.rs"), "s", ""));

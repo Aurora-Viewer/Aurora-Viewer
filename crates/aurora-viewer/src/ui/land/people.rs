@@ -403,17 +403,19 @@ fn owners_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: 
             if label.is_empty() {
                 continue;
             }
-            let arrow = if sort_col == i {
-                if sort_asc { " ↑" } else { " ↓" }
-            } else {
-                ""
-            };
-            let g = ui.painter().layout_job(semibold(ui, &format!("{label}{arrow}"), 11.0, p.muted_dim));
+            const CARET: f32 = 9.0;
+            let sorted = sort_col == i;
+            let caret_w = if sorted { widgets::caret_room(CARET) } else { 0.0 };
+            let g = ui.painter().layout_job(semibold(ui, label, 11.0, p.muted_dim));
             let x = if right {
-                rect.right() - 6.0 - g.size().x
+                rect.right() - 6.0 - g.size().x - caret_w
             } else {
                 rect.left() + 6.0
             };
+            if sorted {
+                let center = egui::pos2(x + g.size().x + caret_w - CARET / 2.0, rect.center().y);
+                widgets::paint_glyph(ui.painter(), widgets::sort_caret(sort_asc), center, CARET, p.muted);
+            }
             ui.painter()
                 .galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, p.muted_dim);
             if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {

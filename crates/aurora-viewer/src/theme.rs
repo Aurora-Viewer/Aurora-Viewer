@@ -150,6 +150,14 @@ impl Theme {
 
     pub fn apply(&self, ctx: &egui::Context, extra_font_scale: f32) {
         let p = self.palette();
+        // `v.text_options` stays at epaint's dark-theme defaults on purpose
+        // (compared live in demo and chosen by the human on 2026-10-16):
+        // coverage → alpha 2c − c² suits light text on the dark glass, where
+        // lighter curves (gamma 0.75, linear) wash out the small grey labels
+        // and heavier ones (gamma 0.4) clog them; hinting on (off is
+        // blurrier); sub-pixel binning on, which keeps the letter spacing
+        // even at 11–12 points. The hinting target changes nothing for Inter
+        // and Roboto, which ship their own TrueType hinting.
         let mut v = Visuals::dark();
         let br = CornerRadius::same(self.button_radius);
         let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);

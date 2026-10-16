@@ -2,6 +2,9 @@
 //! right (label column + control column), flat Aurora style.
 
 mod accessibility;
+mod audio;
+pub use audio::AudioSection;
+pub(crate) use audio::{ear_choice, noise_choice};
 mod aurora;
 mod camera;
 mod commands;
@@ -69,6 +72,8 @@ pub struct OptionsUi {
     confirm_erase_logs: bool,
     /// The page opens scrolled to its end (`AURORA_DEMO_OPTIONS=<n>:end`).
     pub scroll_to_end: bool,
+    pub audio_section: Option<AudioSection>,
+    pub restart_voice: bool,
 }
 
 impl OptionsUi {
@@ -210,6 +215,8 @@ fn category(ui: &mut egui::Ui, p: &Palette, _icons: &Icons, label: &str, icon: &
 /// Tabler icon of a settings group (by its title).
 fn group_icon(title: &str) -> Option<&'static str> {
     Some(match title {
+        value if value == aurora_i18n::text("voice-processing") => "adjustments-filled",
+        value if value == aurora_i18n::text("voice-indicators") => "wave-sine",
         value if value == aurora_i18n::text("ui-options-presets") => "gauge-filled",
         value if value == aurora_i18n::text("ui-options-quality") => "adjustments-filled",
         value if value == aurora_i18n::text("common-light") => "sun-filled",
@@ -809,7 +816,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width() - 8.0);
                         r.changed |= match st.tab {
-                            TAB_AUDIO => audio_page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
+                            TAB_AUDIO => audio::page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
                             8 => keys_page(ui, p, s, st),
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
@@ -2140,9 +2147,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
         }
         2 => {
             group(ui, p, aurora_i18n::tr!("ui-options-bundled-fonts"), |ui| {
-                for builtin in [fonts::NOTO, fonts::INTER, fonts::ROBOTO] {
-                    let sel = s.font == builtin || (s.font.is_empty() && builtin == fonts::NOTO);
-                    let label = if builtin == fonts::NOTO {
+                for builtin in fonts::BUILTINS.iter().map(|b| b.name) {
+                    let sel = s.font == builtin || (s.font.is_empty() && builtin == fonts::DEFAULT);
+                    let label = if builtin == fonts::DEFAULT {
                         aurora_i18n::tr!("ui-options-default", builtin = builtin.to_string())
                     } else {
                         builtin.to_owned()
@@ -2623,329 +2630,6 @@ pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devi
     (changed, list.inner.is_some())
 }
 
-/// "Sound and voice": devices, the volumes of the top-right panel (same
-/// settings, so both stay in sync), voice and microphone behaviour.
-fn audio_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, audio_changed: &mut bool, refresh: &mut bool) -> bool {
-    let mut c = false;
-    let a = &mut s.audio;
-    group(ui, p, aurora_i18n::tr!("ui-options-devices"), |ui| {
-        let out = row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-audio-output"),
-            aurora_i18n::tr!("ui-options-speakers-or-headset-used-by-the-viewer"),
-            |ui| device_combo(ui, "audio_out", &mut a.output_device, &st.output_devices, SLIDER_W).0,
-        );
-        let inp = row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-microphone"),
-            aurora_i18n::tr!("ui-options-input-used-for-voice"),
-            |ui| device_combo(ui, "audio_in", &mut a.input_device, &st.input_devices, SLIDER_W).0,
-        );
-        c |= out | inp;
-        *audio_changed |= out | inp;
-        row(ui, p, "", "", |ui| {
-            if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-refresh-list")).clicked() {
-                *refresh = true;
-            }
-            false
-        });
-    });
-    group(ui, p, aurora_i18n::tr!("ui-options-volumes"), |ui| {
-        for (i, name) in crate::settings::audio_channels().iter().enumerate() {
-            let changed = row(ui, p, name, "", |ui| {
-                let mut ch = false;
-                ui.spacing_mut().slider_width = SLIDER_W - 40.0;
-                ch |= ui
-                    .add_enabled(
-                        !a.muted[i] && a.enabled[i],
-                        egui::Slider::new(&mut a.volume[i], 0.0..=1.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .trailing_fill(true)
-                            .show_value(false),
-                    )
-                    .changed();
-                ui.label(RichText::new(format!("{:>3.0} %", a.volume[i] * 100.0)).size(12.0).color(p.muted));
-                let mut on = !a.muted[i];
-                if super::widgets::switch(ui, p, &mut on)
-                    .on_hover_text(if on {
-                        aurora_i18n::tr!("common-cut")
-                    } else {
-                        aurora_i18n::tr!("ui-options-restore")
-                    })
-                    .changed()
-                {
-                    a.muted[i] = !on;
-                    ch = true;
-                }
-                if i > 0 {
-                    ch |= super::widgets::checkbox(ui, p, &mut a.enabled[i], "")
-                        .on_hover_text(aurora_i18n::tr!("ui-options-enable-this-channel"))
-                        .changed();
-                }
-                ch
-            });
-            c |= changed;
-            *audio_changed |= changed;
-        }
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-auto-music"),
-            aurora_i18n::tr!("ui-options-play-parcel-music-when-entering"),
-            |ui| toggle(ui, p, &mut a.music_autoplay),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-collision-sounds"),
-            aurora_i18n::tr!("ui-options-collisions-between-objects-and-avatars-as-in-firestorm-enabled"),
-            |ui| toggle(ui, p, &mut a.collision_sounds),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-gesture-sounds"),
-            aurora_i18n::tr!("ui-options-sounds-played-by-other-avatars-gestures"),
-            |ui| toggle(ui, p, &mut a.gesture_sounds),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-interface-sounds"),
-            aurora_i18n::tr!("ui-options-all-interface-sounds-clicks-windows-conversations-l-teleportation-menus"),
-            |ui| toggle(ui, p, &mut a.ui_sounds),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-auto-media"),
-            aurora_i18n::tr!("ui-options-auto-play-parcel-media-after-standing-still-for-5"),
-            |ui| toggle(ui, p, &mut a.media_autoplay),
-        );
-    });
-    c |= ui_sounds_group(ui, p, a, st);
-    group(ui, p, aurora_i18n::tr!("common-voice"), |ui| {
-        let v = row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-enable-voice"),
-            aurora_i18n::tr!("ui-options-connect-to-regional-voice-chat-webrtc"),
-            |ui| toggle(ui, p, &mut a.voice_enabled),
-        );
-        c |= v;
-        *audio_changed |= v;
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-microphone-button"),
-            aurora_i18n::tr!("ui-options-toggle-click-once-to-enable-again-to-disable-hold"),
-            |ui| {
-                let mut ch = false;
-                ch |= ui
-                    .selectable_value(&mut a.mic_hold, false, aurora_i18n::tr!("ui-options-toggle"))
-                    .changed();
-                ch |= ui
-                    .selectable_value(&mut a.mic_hold, true, aurora_i18n::tr!("common-hold-to-talk"))
-                    .changed();
-                ch
-            },
-        );
-        let g = row(ui, p, aurora_i18n::tr!("ui-options-microphone-gain"), "", |ui| {
-            slider(ui, &mut a.mic_gain, 0.0..=2.0, "×")
-        });
-        c |= g;
-        *audio_changed |= g;
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-microphone-level"),
-            aurora_i18n::tr!("ui-options-speak-to-test"),
-            |ui| {
-                let lvl = st.mic_level.clamp(0.0, 1.0);
-                let col = if lvl > 0.85 {
-                    p.danger
-                } else if lvl > 0.6 {
-                    p.amber
-                } else {
-                    p.teal
-                };
-                super::widgets::level(ui, p, "mic_level", lvl, SLIDER_W, col);
-                false
-            },
-        );
-        // VoiceCallsRejectGroup / AdHoc / P2P (panel_preferences_sound.xml)
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-reject-group-calls"),
-            aurora_i18n::tr!("ui-options-reject-group-calls-hint"),
-            |ui| toggle(ui, p, &mut a.reject_group_calls),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-reject-adhoc-calls"),
-            aurora_i18n::tr!("ui-options-reject-adhoc-calls-hint"),
-            |ui| toggle(ui, p, &mut a.reject_adhoc_calls),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-reject-p2p-calls"),
-            aurora_i18n::tr!("ui-options-reject-p2p-calls-hint"),
-            |ui| toggle(ui, p, &mut a.reject_p2p_calls),
-        );
-    });
-    group(ui, p, aurora_i18n::tr!("ui-options-push-to-talk"), |ui| {
-        let kb = s.keybinds.clone();
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-push-to-talk-key"),
-            aurora_i18n::tr!("ui-options-key-or-mouse-button-middle-click-by-default-also"),
-            |ui| {
-                for slot in 0..2 {
-                    binding_cell(ui, p, &kb, st, crate::keybinds::Action::PushToTalk, slot);
-                }
-                false
-            },
-        );
-    });
-    let m = &mut s.media;
-    group(ui, p, aurora_i18n::tr!("ui-options-media-web-and-video"), |ui| {
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-enable-media"),
-            aurora_i18n::tr!("ui-options-parcel-and-prim-web-pages-and-videos-audiostreamingmedia"),
-            |ui| toggle(ui, p, &mut m.enabled),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-prim-media"),
-            aurora_i18n::tr!("ui-options-shared-media-displayed-on-object-faces-primmediamasterenabled"),
-            |ui| toggle(ui, p, &mut m.prim_media),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-on-other-avatars"),
-            aurora_i18n::tr!("ui-options-media-on-other-people-s-attachments-mediashowonothers-disabled-by"),
-            |ui| toggle(ui, p, &mut m.show_on_others),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-first-click-interaction"),
-            aurora_i18n::tr!("ui-options-the-first-click-goes-directly-to-the-page-when"),
-            |ui| toggle(ui, p, &mut m.first_click_interact),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-hud-media"),
-            aurora_i18n::tr!("ui-options-auto-play-hud-media-mediaautoplayhuds"),
-            |ui| toggle(ui, p, &mut m.autoplay_huds),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-scripted-media"),
-            aurora_i18n::tr!("ui-options-allow-scripts-to-start-parcel-media-permallowscriptedmedia-disabled-by"),
-            |ui| toggle(ui, p, &mut m.allow_scripted),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-simultaneous-players"),
-            aurora_i18n::tr!("ui-options-maximum-pages-videos-loaded-at-once-plugininstancestotal"),
-            |ui| {
-                ui.spacing_mut().slider_width = SLIDER_W - 40.0;
-                let mut n = m.max_instances as u32;
-                let ch = ui
-                    .add(
-                        egui::Slider::new(&mut n, 1..=16)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .trailing_fill(true),
-                    )
-                    .changed();
-                m.max_instances = n as usize;
-                ch
-            },
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-plugins-folder"),
-            aurora_i18n::tr!("ui-options-folder-containing-llplugin-blank-aurora-s-own-plugins"),
-            |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut m.plugin_dir)
-                        .desired_width(SLIDER_W)
-                        .hint_text(aurora_i18n::tr!("ui-options-plugins-folder-automatic")),
-                )
-                .changed()
-            },
-        );
-        use crate::media::pack::PackState;
-        let megabytes = |bytes: u64| aurora_i18n::integer((bytes / (1024 * 1024)) as i64);
-        // plugins found: their folder; otherwise where Aurora's pack stands
-        let (status, download, retry) = if !st.media_plugins.is_empty() {
-            let text = aurora_i18n::tr!(
-                "status-active-player-s",
-                value0 = st.media_plugins.to_string(),
-                value1 = format!("{}", st.media_running)
-            );
-            (text, None, false)
-        } else {
-            match st.media_pack {
-                PackState::Downloading(d) if !d.preparing => {
-                    let text = aurora_i18n::tr!(
-                        "media-plugins-downloading",
-                        received = megabytes(d.received),
-                        total = megabytes(d.total)
-                    );
-                    (text, Some(d.received as f32 / d.total.max(1) as f32), false)
-                }
-                PackState::Downloading(_) => (aurora_i18n::tr!("media-plugins-installing").to_string(), Some(1.0), false),
-                PackState::Failed(failure) => (media_pack_error(failure).to_string(), None, true),
-                PackState::Idle | PackState::Ready => (aurora_i18n::tr!("media-plugins-missing").to_string(), None, false),
-            }
-        };
-        row(ui, p, aurora_i18n::tr!("ui-options-plugins"), "", |ui| {
-            if let Some(fraction) = download {
-                super::widgets::progress(ui, p, "media_pack", fraction, SLIDER_W, &status, None);
-                return false;
-            }
-            if retry
-                && ui
-                    .button(RichText::new(aurora_i18n::tr!("media-plugins-retry")).size(12.0))
-                    .clicked()
-            {
-                st.media_pack_retry = true;
-            }
-            // the path of a folder, of any length: cut to the row (whole on
-            // hover), it made the window wider on this tab
-            let room = ui.available_width();
-            ui.add(super::widgets::elided_label(
-                ui,
-                RichText::new(status).size(12.0).color(p.muted),
-                room,
-            ));
-            false
-        });
-    });
-    if let Some((a, slot)) = st.clear.take() {
-        s.keybinds.set(a, slot, None);
-        c = true;
-    }
-    c
-}
-
-/// One binding button: click to capture, right click to clear.
 fn binding_cell(
     ui: &mut egui::Ui,
     p: &Palette,

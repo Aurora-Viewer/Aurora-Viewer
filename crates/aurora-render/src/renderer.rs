@@ -6012,7 +6012,12 @@ mod tests {
                 center + offset,
             )
         };
-        let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); (SKELETON + SKELETON_ANCHOR + 2) as usize];
+        const LIP_BANK: u32 = SKELETON + 209;
+        let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); LIP_BANK as usize + vertices.len()];
+        palettes[(SKELETON + 208) as usize] = [[0.7, 0.3, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
+        for (i, vertex) in vertices.iter().enumerate() {
+            palettes[LIP_BANK as usize + i] = [[0.02, 0.0, vertex.pos[0] * 0.09, 0.0], [0.0; 4], [0.0, -0.03, 0.02, 0.0], [0.0; 4]];
+        }
         for j in 0..4 {
             let m = Mat4::from_rotation_translation(
                 Quat::from_rotation_x(0.21 * j as f32 - 0.3),
@@ -6046,6 +6051,14 @@ mod tests {
             record(local, [flags::ANCHORED, SKELETON + SKELETON_ANCHOR + 1, 0, 0]),
             // terrain patch (drawn with vs_terrain by the scene pass)
             record(place(Vec3::new(0.1, 0.4, -0.9), 0.1) * Mat4::from_scale(Vec3::splat(3.0)), [0; 4]),
+            // Lip morphs must have exactly the same depth in both vertex passes.
+            DrawRecord {
+                anim: [0, LIP_BANK, vertices.len() as u32, 0],
+                ..record(
+                    place(Vec3::new(0.0, 0.2, 0.8), 0.4),
+                    [flags::SKINNED | flags::LIP_SYNC, SKELETON, 0, 0],
+                )
+            },
         ];
         const TERRAIN: u32 = 4;
         let storage = wgpu::BufferUsages::STORAGE;

@@ -3765,7 +3765,7 @@ impl App {
             .map(|h| glam::DVec3::new((h >> 32) as f64, (h & 0xffff_ffff) as f64, 0.0))
             .unwrap_or_default();
         let global = |p: Vec3| origin + p.as_dvec3();
-        let cam_rot = glam::Quat::from_mat4(&self.camera.view().inverse());
+        let cam_rot = crate::voice::listener_rotation(self.camera.view());
         let grid = match self.settings.grid {
             crate::settings::GridChoice::SecondLifeBeta => "aditi",
             _ => "agni",
@@ -3786,6 +3786,8 @@ impl App {
             parcel: self.world.parcel.as_deref(),
             input_device: &self.settings.audio.input_device,
             mic_gain: self.settings.audio.mic_gain,
+            processing: self.settings.audio.mic_processing(),
+            ear: self.settings.audio.voice_ear,
             transmit,
             avatar: (global(self.world.agent.position), self.world.agent.body_rotation()),
             listener: (global(self.camera.position), cam_rot),
@@ -8528,6 +8530,9 @@ impl App {
         if res.refresh_devices {
             self.devices_listed = false;
         }
+        if std::mem::take(&mut self.options_ui.restart_voice) {
+            self.voice.restart();
+        }
         if res.reset_camera {
             self.reset_camera_all();
         }
@@ -8707,6 +8712,12 @@ impl App {
                 let me = self.world.agent_id;
                 self.world.calls.voice_peers.clear();
                 self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
+                let audio = &self.settings.audio;
+                self.scene.lips.set_levels(
+                    &voice_levels,
+                    audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
+                    Instant::now(),
+                );
                 // the look-at crosshairs under the name tags (none over a held
                 // photo, nor the walk mark)
                 if !held {
@@ -8743,6 +8754,7 @@ impl App {
                         !self.camera.mouselook(),
                         self.settings.name_tag_distance,
                         &voice_levels,
+                        &self.settings.audio,
                         &mut self.voice_tags,
                         {
                             let s = &self.settings;
@@ -8946,6 +8958,8 @@ impl App {
                         .flatten()
                         .next(),
                     input_device: self.settings.audio.input_device.clone(),
+                    ear: self.settings.audio.voice_ear,
+                    noise_suppression: self.settings.audio.voice_noise_suppression,
                     output_device: self.settings.audio.output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
@@ -9122,14 +9136,16 @@ impl App {
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
-                if mic.mode_changed || mic.devices_changed {
+                if mic.mode_changed || mic.devices_changed || mic.processing_changed {
                     // the audio engine and the voice follow the settings
                     self.settings.audio.mic_hold = mic.hold;
+                    self.settings.audio.voice_ear = mic.ear;
+                    self.settings.audio.voice_noise_suppression = mic.noise_suppression;
                     self.settings.audio.input_device = std::mem::take(&mut mic.input_device);
                     self.settings.audio.output_device = std::mem::take(&mut mic.output_device);
                     self.settings.save();
                 }
-                let (open_prefs, list_devices) = (mic.open_prefs, mic.list_devices);
+                let (open_prefs, list_devices, open_processing) = (mic.open_prefs, mic.list_devices, mic.open_processing);
                 if list_devices {
                     self.options_ui.output_devices = aurora_audio::output_devices();
                     self.options_ui.input_devices = aurora_audio::input_devices();
@@ -9137,6 +9153,12 @@ impl App {
                 if open_prefs {
                     self.panels.settings = true;
                     self.options_ui.tab = ui::options::TAB_AUDIO;
+                    self.options_ui.scroll_to_end = false;
+                    self.options_ui.audio_section = Some(if open_processing {
+                        ui::options::AudioSection::Processing
+                    } else {
+                        ui::options::AudioSection::Voice
+                    });
                 }
                 a.chat = chat;
                 if !matches!(side_action, BarAction::None) {
@@ -9257,6 +9279,7 @@ impl App {
                 let mut contact_actions = Vec::new();
                 self.chat_ui.set_style(self.settings.chat_style);
                 self.chat_ui.voice_on = self.settings.audio.voice_enabled;
+                self.chat_ui.conversation_voice_indicator = self.settings.audio.conversation_voice_indicator;
                 self.chat_ui.mic = (!self.settings.audio.mic_hold).then_some(self.mic_on);
                 if self.world.calls.active.is_some() {
                     self.chat_ui.volumes.clone_from(&self.world.calls.volumes);
@@ -10540,6 +10563,26 @@ impl ApplicationHandler for App {
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
+            if let Ok(modes) = std::env::var("AURORA_DEMO_VOICE_PREFS") {
+                for mode in modes.split(',') {
+                    let a = &mut self.settings.audio;
+                    match mode.trim() {
+                        "avatar" => a.voice_ear = crate::settings::VoiceEar::Avatar,
+                        "raw" => {
+                            a.voice_automatic_gain = false;
+                            a.voice_echo_cancellation = false;
+                            a.voice_noise_suppression = 0;
+                        }
+                        "no-lips" => a.lip_sync = false,
+                        "no-indicators" => a.voice_visualizer = false,
+                        "no-self" => a.voice_visualizer_self = false,
+                        "no-dot" => a.voice_visualizer_dot = false,
+                        "no-call-visuals" => a.voice_visualizers_in_calls = false,
+                        "no-conversation" => a.conversation_voice_indicator = false,
+                        _ => {}
+                    }
+                }
+            }
             if self.update_demo.is_some() {
                 // The update preview stays offline on a synthetic login screen.
                 return;
@@ -10559,6 +10602,16 @@ impl ApplicationHandler for App {
                     self.options_ui.ask_reset_section();
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
+                    self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
+                        match filter {
+                            "voice" => Some(ui::options::AudioSection::Voice),
+                            "processing" => Some(ui::options::AudioSection::Processing),
+                            "indicators" => Some(ui::options::AudioSection::Indicators),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                 }
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {

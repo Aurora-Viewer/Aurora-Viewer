@@ -26,6 +26,7 @@ use parking_lot::Mutex;
 use crate::AudioError;
 use crate::devices::{self, Direction};
 use crate::mixer::ENGINE_SAMPLE_RATE;
+use crate::processing::{BLOCK, EchoReference, MicProcessing, Processor};
 use crate::resample::Resampler;
 
 /// Sample rate of the captured audio (mono).
@@ -52,6 +53,8 @@ const GAIN_RAMP_SAMPLES: f32 = 480.0;
 
 /// State shared by the handle, the device thread and the writer.
 struct MicShared {
+    processing: Mutex<Option<(MicProcessing, Option<EchoReference>)>>,
+    capture_delay_ms: AtomicU32,
     /// Requested gain (f32 bits).
     gain: AtomicU32,
     /// Smoothed RMS of the gained signal, 0..1 (f32 bits).
@@ -66,6 +69,8 @@ struct MicShared {
 impl MicShared {
     fn new() -> Self {
         Self {
+            processing: Mutex::new(None),
+            capture_delay_ms: AtomicU32::new(0),
             gain: AtomicU32::new(1.0f32.to_bits()),
             rms: AtomicU32::new(0),
             captured: AtomicU64::new(0),
@@ -292,7 +297,15 @@ impl MicCapture {
     pub fn virtual_input() -> (MicFeed, Self) {
         let (writer, mic) = Self::with_ring();
         *mic.inner.shared.device.lock() = "virtual".to_string();
-        (MicFeed { writer }, mic)
+        (
+            MicFeed {
+                writer,
+                processor: None,
+                input: [0.0; BLOCK],
+                fill: 0,
+            },
+            mic,
+        )
     }
 
     /// Switches to another input device (`None` = system default), keeping
@@ -321,6 +334,11 @@ impl MicCapture {
     pub fn set_gain(&self, gain: f32) {
         let gain = if gain.is_finite() { gain.clamp(0.0, MAX_INPUT_GAIN) } else { 1.0 };
         self.inner.shared.gain.store(gain.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Enables WebRTC processing on the capture worker, before manual gain.
+    pub fn set_processing(&self, config: MicProcessing, reference: Option<EchoReference>) {
+        *self.inner.shared.processing.lock() = Some((config, reference));
     }
 
     /// The software input gain.
@@ -378,6 +396,9 @@ fn tuning_level(rms: f32) -> f32 {
 /// Producer end of [`MicCapture::virtual_input`].
 pub struct MicFeed {
     writer: MicWriter,
+    processor: Option<Processor>,
+    input: [f32; BLOCK],
+    fill: usize,
 }
 
 impl std::fmt::Debug for MicFeed {
@@ -390,7 +411,29 @@ impl MicFeed {
     /// Queues 48 kHz mono samples (as if captured). Returns how many were
     /// queued; the rest is dropped when the buffer is full.
     pub fn push(&mut self, samples: &[f32]) -> usize {
-        self.writer.write(samples)
+        let settings = self.writer.shared.processing.lock().clone();
+        let Some((config, reference)) = settings else {
+            return self.writer.write(samples);
+        };
+        if let Some(p) = &mut self.processor {
+            p.update(config, reference);
+        } else {
+            self.processor = Some(Processor::new(config, reference));
+        }
+        let mut queued = 0;
+        let mut output = [0.0; BLOCK];
+        for &sample in samples {
+            self.input[self.fill] = if sample.is_finite() { sample.clamp(-1.0, 1.0) } else { 0.0 };
+            self.fill += 1;
+            if self.fill == BLOCK {
+                if let Some(p) = &mut self.processor {
+                    p.process(&self.input, &mut output);
+                }
+                queued += self.writer.write(&output);
+                self.fill = 0;
+            }
+        }
+        queued
     }
 
     /// `true` while a [`MicCapture`] clone is alive.
@@ -408,9 +451,15 @@ fn capture_main(
 ) {
     let mut ready = Some(ready_tx);
     let mut warned = false;
+    let mut processor: Option<Processor> = None;
+    let mut input = [0.0; BLOCK];
+    let mut output = [0.0; BLOCK];
+    let mut fill = 0;
     loop {
         let mut reopen_now = false;
-        match open_input(&writer, wanted.as_deref()) {
+        let (raw_prod, mut raw_cons) = rtrb::RingBuffer::new(RING_SAMPLES);
+        let raw_prod = Arc::new(Mutex::new(raw_prod));
+        match open_input(&raw_prod, wanted.as_deref(), &shared) {
             Ok((stream, name, fallback, failed)) => {
                 log::info!("audio input: {name}");
                 warned = false;
@@ -420,8 +469,38 @@ fn capture_main(
                     let _ = tx.send(Ok(()));
                 }
                 let mut last = shared.captured.load(Ordering::Relaxed);
+                let mut last_check = std::time::Instant::now();
                 loop {
-                    match ctl.recv_timeout(Duration::from_millis(250)) {
+                    if let Some((config, reference)) = shared.processing.lock().clone() {
+                        if let Some(p) = &mut processor {
+                            p.update(config, reference);
+                        } else {
+                            processor = Some(Processor::new(config, reference));
+                        }
+                    }
+                    // Bound capture latency if a driver or a settings change stalls processing.
+                    if raw_cons.slots() > 5760 {
+                        let discard = raw_cons.slots().saturating_sub(1920);
+                        if let Ok(chunk) = raw_cons.read_chunk(discard) {
+                            chunk.commit_all();
+                        }
+                        fill = 0;
+                    }
+                    while let Ok(sample) = raw_cons.pop() {
+                        input[fill] = if sample.is_finite() { sample.clamp(-1.0, 1.0) } else { 0.0 };
+                        fill += 1;
+                        if fill == BLOCK {
+                            if let Some(p) = &mut processor {
+                                p.capture_delay(shared.capture_delay_ms.load(Ordering::Relaxed) as i32 + (raw_cons.slots() / 48) as i32);
+                                p.process(&input, &mut output);
+                            } else {
+                                output.copy_from_slice(&input);
+                            }
+                            writer.lock().write(&output);
+                            fill = 0;
+                        }
+                    }
+                    match ctl.recv_timeout(Duration::from_millis(5)) {
                         Ok(MicCmd::SetDevice(name)) => {
                             if name != wanted {
                                 wanted = name;
@@ -435,11 +514,14 @@ fn capture_main(
                                 break;
                             }
                             // No data for 250 ms: the meter must not freeze.
-                            let now = shared.captured.load(Ordering::Relaxed);
-                            if now == last {
-                                shared.set_rms(0.0);
+                            if last_check.elapsed() >= Duration::from_millis(250) {
+                                let now = shared.captured.load(Ordering::Relaxed);
+                                if now == last {
+                                    shared.set_rms(0.0);
+                                }
+                                last = now;
+                                last_check = std::time::Instant::now();
                             }
-                            last = now;
                         }
                         Err(RecvTimeoutError::Disconnected) => return,
                     }
@@ -447,6 +529,8 @@ fn capture_main(
                 drop(stream);
                 shared.device.lock().clear();
                 writer.lock().reset_meter();
+                processor = None;
+                fill = 0;
             }
             Err(e) => {
                 if let Some(tx) = ready.take() {
@@ -476,32 +560,36 @@ type Opened = (cpal::Stream, String, bool, Arc<AtomicBool>);
 
 /// Opens `name` (or the default input). A named device that is missing or
 /// fails to open falls back to the default one.
-fn open_input(writer: &Arc<Mutex<MicWriter>>, name: Option<&str>) -> Result<Opened, AudioError> {
+fn open_input(writer: &Arc<Mutex<rtrb::Producer<f32>>>, name: Option<&str>, shared: &Arc<MicShared>) -> Result<Opened, AudioError> {
     let picked = devices::pick(Direction::Input, name).ok_or(AudioError::NoDevice)?;
-    match open_input_device(writer, &picked.device) {
+    match open_input_device(writer, &picked.device, shared) {
         Ok((stream, failed)) => Ok((stream, devices::device_name(&picked.device), picked.fallback, failed)),
         Err(e) if name.is_some() && !picked.fallback => {
             log::warn!("audio input device {name:?} cannot be opened ({e}); using the default");
             let picked = devices::pick(Direction::Input, None).ok_or(AudioError::NoDevice)?;
-            let (stream, failed) = open_input_device(writer, &picked.device)?;
+            let (stream, failed) = open_input_device(writer, &picked.device, shared)?;
             Ok((stream, devices::device_name(&picked.device), true, failed))
         }
         Err(e) => Err(e),
     }
 }
 
-fn open_input_device(writer: &Arc<Mutex<MicWriter>>, device: &cpal::Device) -> Result<(cpal::Stream, Arc<AtomicBool>), AudioError> {
+fn open_input_device(
+    writer: &Arc<Mutex<rtrb::Producer<f32>>>,
+    device: &cpal::Device,
+    shared: &Arc<MicShared>,
+) -> Result<(cpal::Stream, Arc<AtomicBool>), AudioError> {
     let supported = device.default_input_config().map_err(|e| AudioError::Device(e.to_string()))?;
     let config = supported.config();
     let failed = Arc::new(AtomicBool::new(false));
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_input::<f32>(device, &config, writer, &failed),
-        SampleFormat::I16 => build_input::<i16>(device, &config, writer, &failed),
-        SampleFormat::U16 => build_input::<u16>(device, &config, writer, &failed),
-        SampleFormat::I32 => build_input::<i32>(device, &config, writer, &failed),
-        SampleFormat::F64 => build_input::<f64>(device, &config, writer, &failed),
-        SampleFormat::I8 => build_input::<i8>(device, &config, writer, &failed),
-        SampleFormat::U8 => build_input::<u8>(device, &config, writer, &failed),
+        SampleFormat::F32 => build_input::<f32>(device, &config, writer, &failed, shared),
+        SampleFormat::I16 => build_input::<i16>(device, &config, writer, &failed, shared),
+        SampleFormat::U16 => build_input::<u16>(device, &config, writer, &failed, shared),
+        SampleFormat::I32 => build_input::<i32>(device, &config, writer, &failed, shared),
+        SampleFormat::F64 => build_input::<f64>(device, &config, writer, &failed, shared),
+        SampleFormat::I8 => build_input::<i8>(device, &config, writer, &failed, shared),
+        SampleFormat::U8 => build_input::<u8>(device, &config, writer, &failed, shared),
         other => Err(AudioError::Device(format!("unsupported input sample format {other:?}"))),
     }?;
     stream.play().map_err(|e| AudioError::Device(e.to_string()))?;
@@ -511,8 +599,9 @@ fn open_input_device(writer: &Arc<Mutex<MicWriter>>, device: &cpal::Device) -> R
 fn build_input<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    writer: &Arc<Mutex<MicWriter>>,
+    writer: &Arc<Mutex<rtrb::Producer<f32>>>,
     failed: &Arc<AtomicBool>,
+    shared: &Arc<MicShared>,
 ) -> Result<cpal::Stream, AudioError>
 where
     T: SizedSample,
@@ -521,14 +610,20 @@ where
     let mut adapter = InputAdapter::new(config.sample_rate, usize::from(config.channels));
     let writer = writer.clone();
     let failed = failed.clone();
+    let shared = shared.clone();
     device
         .build_input_stream::<T, _, _>(
             *config,
-            move |data: &[T], _info| {
+            move |data: &[T], info| {
+                let timestamp = info.timestamp();
+                shared.capture_delay_ms.store(
+                    timestamp.callback.duration_since(timestamp.capture).as_millis().min(500) as u32,
+                    Ordering::Relaxed,
+                );
                 // Only one stream exists at a time: never contended.
                 if let Some(mut w) = writer.try_lock() {
                     let mono = adapter.convert(data);
-                    w.write(mono);
+                    let _ = w.push_partial_slice(mono);
                 }
             },
             move |err| match err.kind() {
@@ -545,6 +640,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_gain_and_meter_follow_processing_and_zero_still_mutes() {
+        let (mut feed, mic) = MicCapture::virtual_input();
+        mic.set_processing(MicProcessing::default(), None);
+        mic.set_gain(0.0);
+        feed.push(&sine(1440, 0.1));
+        let mut output = [0.0; 1440];
+        assert_eq!(mic.read(&mut output), output.len());
+        assert!(output[480..].iter().all(|&v| v == 0.0));
+        feed.push(&[0.0; 14_400]);
+        assert_eq!(mic.level(), 0.0);
+    }
 
     fn sine(n: usize, amp: f32) -> Vec<f32> {
         (0..n)

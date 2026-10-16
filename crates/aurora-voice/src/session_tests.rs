@@ -314,6 +314,16 @@ fn wait_for(what: &str, timeout: Duration, mut cond: impl FnMut() -> bool) {
 #[test]
 fn loopback_webrtc_session() {
     LOOPBACK_ONLY.store(true, std::sync::atomic::Ordering::Relaxed);
+    check_loopback_channel(ChannelKind::Local { parcel_local_id: Some(5) });
+    // Resident, group and conference calls all use this non-spatial channel.
+    check_loopback_channel(ChannelKind::Multiagent {
+        channel_id: "test-private-call".into(),
+        credentials: "test-call-credentials".into(),
+    });
+    LOOPBACK_ONLY.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn check_loopback_channel(channel: ChannelKind) {
     let server_rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -330,7 +340,7 @@ fn loopback_webrtc_session() {
         signaling_cap_url: None,
         agent_id: me,
         voice_server_type: "webrtc".into(),
-        channel: ChannelKind::Local { parcel_local_id: Some(5) },
+        channel: channel.clone(),
         grid: "agni".into(),
         stun_servers: Some(vec![]),
     };
@@ -365,15 +375,25 @@ fn loopback_webrtc_session() {
     {
         let bodies = state.provision_bodies.lock();
         let body = &bodies[0];
-        assert_eq!(body.get("channel_type").as_str(), "local");
-        assert_eq!(body.get("parcel_local_id"), &Llsd::Integer(5));
+        match &channel {
+            ChannelKind::Local { .. } => {
+                assert_eq!(body.get("channel_type").as_str(), "local");
+                assert_eq!(body.get("parcel_local_id"), &Llsd::Integer(5));
+            }
+            ChannelKind::Multiagent { channel_id, credentials } => {
+                assert_eq!(body.get("channel_type").as_str(), "multiagent");
+                assert_eq!(body.get("channel").as_str(), channel_id);
+                assert_eq!(body.get("credentials").as_str(), credentials);
+                assert!(!body.has("parcel_local_id"));
+            }
+        }
         assert_eq!(body.get("voice_server_type").as_str(), "webrtc");
         assert!(body.get("jsep").get("sdp").as_str().contains(protocol::OPUS_FMTP));
     }
-    wait_for("position update", Duration::from_secs(5), || {
-        state.data_messages.lock().iter().any(|m| m.starts_with(r#"{"sp":"#))
-    });
-    {
+    if channel.is_spatial() {
+        wait_for("position update", Duration::from_secs(5), || {
+            state.data_messages.lock().iter().any(|m| m.starts_with(r#"{"sp":"#))
+        });
         let msgs = state.data_messages.lock();
         assert_eq!(msgs[0], r#"{"j":{"p":true}}"#);
         let pos = msgs.iter().find(|m| m.starts_with(r#"{"sp":"#)).unwrap();
@@ -388,12 +408,34 @@ fn loopback_webrtc_session() {
 
     check_transmission(&session, &state);
 
+    // Exercise the periodic position path as well as the initial join.
+    session.set_position(
+        DVec3::new(256_110.0, 256_200.0, 22.0),
+        Quat::from_rotation_z(1.0),
+        DVec3::new(256_111.0, 256_200.0, 24.0),
+        Quat::from_rotation_z(1.0),
+    );
+    if channel.is_spatial() {
+        wait_for("moved position", Duration::from_secs(5), || {
+            state.data_messages.lock().iter().any(|m| m.contains(r#""sp":{"x":25611000"#))
+        });
+    } else {
+        std::thread::sleep(UPDATE_PERIOD * 3);
+        let msgs = state.data_messages.lock();
+        assert_eq!(msgs[0], r#"{"j":{"p":true}}"#);
+        for msg in msgs.iter() {
+            let value: serde_json::Value = serde_json::from_str(msg).unwrap();
+            for key in ["sp", "sh", "lp", "lh"] {
+                assert!(value.get(key).is_none(), "private call leaked spatial data: {msg}");
+            }
+        }
+    }
+
     drop(session);
     wait_for("logout", Duration::from_secs(10), || !state.logouts.lock().is_empty());
     let logout = state.logouts.lock()[0].clone();
     assert_eq!(logout.get("viewer_session").as_str(), "test-viewer-session");
     assert_eq!(logout.get("logout"), &Llsd::Boolean(true));
-    LOOPBACK_ONLY.store(false, std::sync::atomic::Ordering::Relaxed);
     let peers: Vec<_> = state.peers.lock().drain(..).collect();
     for pc in peers {
         let _ = server_rt.block_on(pc.close());

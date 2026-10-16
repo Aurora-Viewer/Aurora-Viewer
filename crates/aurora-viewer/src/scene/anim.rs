@@ -18,14 +18,14 @@ pub const FETCH_KIND_ANIM: u64 = 4 << 60;
 
 /// Palette entries reserved per skeleton instance: its joints, then the
 /// anchors of the objects it wears (anchors.rs).
-pub const PALETTE_JOINTS: usize = 208;
+pub const PALETTE_JOINTS: usize = 209;
 
 /// First anchor matrix of a palette; the joints are below it.
 pub const ANCHOR_BASE: usize = aurora_render::SKELETON_ANCHOR as usize;
 
 /// Anchor matrices per palette: the wearer's root, then one per attachment
 /// point of the body (47 in avatar_lad.xml).
-pub const ANCHORS: usize = PALETTE_JOINTS - ANCHOR_BASE;
+pub const ANCHORS: usize = super::lipsync::WEIGHTS - ANCHOR_BASE;
 
 pub struct Rig {
     pub parent: Vec<Option<usize>>,

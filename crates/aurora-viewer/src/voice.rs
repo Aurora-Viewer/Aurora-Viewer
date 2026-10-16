@@ -44,6 +44,8 @@ pub struct VoiceInputs<'a> {
     pub parcel: Option<&'a aurora_net::ParcelInfo>,
     pub input_device: &'a str,
     pub mic_gain: f32,
+    pub processing: aurora_audio::MicProcessing,
+    pub ear: crate::settings::VoiceEar,
     pub transmit: bool,
     /// Global positions (metres) and rotations of the avatar and the camera.
     pub avatar: (DVec3, Quat),
@@ -85,6 +87,16 @@ pub struct Voice {
 }
 
 impl Voice {
+    /// Drop capture and the transport; update reconnects to the wanted channel.
+    pub fn restart(&mut self) {
+        self.session = None;
+        self.mic = None;
+        self.muted.clear();
+        self.volumes.clear();
+        self.connected = false;
+        self.own_level = 0.0;
+        self.status.clear();
+    }
     /// The channel wanted now, its kind for the server, or why there is none.
     fn wanted(v: &VoiceInputs) -> Result<(ChannelKey, ChannelKind, String, Option<String>), String> {
         if !v.enabled {
@@ -166,6 +178,7 @@ impl Voice {
             }
             // one gain only (they multiply): on the capture, so the meter shows it
             m.set_gain(v.mic_gain);
+            m.set_processing(v.processing, v.engine.map(AudioEngine::echo_reference));
             self.mic_level = m.level();
             self.mic_meter = (m.level() / OVERDRIVEN_POWER_LEVEL).clamp(0.0, 1.0);
         } else {
@@ -220,7 +233,8 @@ impl Voice {
             return;
         };
         s.set_transmit(v.transmit && self.mic.is_some());
-        s.set_position(v.avatar.0, v.avatar.1, v.listener.0, v.listener.1);
+        let (avatar, listener) = listening_positions(v.avatar, v.listener, v.ear);
+        s.set_position(avatar.0, avatar.1, listener.0, listener.1);
         let status = s.status();
         self.connected = matches!(status, VoiceStatus::Connected);
         self.light = match status {
@@ -324,13 +338,108 @@ fn tag_levels(participants: Vec<aurora_voice::Participant>, agent_id: Uuid, own_
     levels
 }
 
+/// LLVoiceWebRTC spatial ears: avatar head offset and a 50 m camera tether.
+fn listening_positions(mut avatar: (DVec3, Quat), camera: (DVec3, Quat), ear: crate::settings::VoiceEar) -> ((DVec3, Quat), (DVec3, Quat)) {
+    avatar.0.z += 1.0;
+    let listener = match ear {
+        crate::settings::VoiceEar::Avatar => avatar,
+        crate::settings::VoiceEar::Camera => (avatar.0 + (camera.0 - avatar.0).clamp_length_max(50.0), camera.1),
+    };
+    (avatar, listener)
+}
+
 fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
+}
+
+/// Firestorm's LLCoordFrame::getQuaternion (llcoordframe.cpp) uses forward,
+/// left, up axes. The inverse render view contains right, up, backward axes.
+/// Sending that render rotation directly turns the voice listener sideways.
+pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
+    let world = view.inverse();
+    Quat::from_mat3(&glam::Mat3::from_cols(
+        -world.z_axis.truncate(),
+        -world.x_axis.truncate(),
+        world.y_axis.truncate(),
+    ))
+    .normalize()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_ears_follow_the_head_and_camera_ears_are_tethered() {
+        use crate::settings::VoiceEar;
+        let body = (DVec3::new(10.0, 20.0, 30.0), Quat::from_rotation_z(0.6));
+        let camera = (DVec3::new(1010.0, 20.0, 31.0), Quat::IDENTITY);
+        let (head, ear) = listening_positions(body, camera, VoiceEar::Avatar);
+        assert_eq!(head.0, DVec3::new(10.0, 20.0, 31.0));
+        assert_eq!(ear, head);
+        let (_, ear) = listening_positions(body, camera, VoiceEar::Camera);
+        assert!((ear.0.distance(head.0) - 50.0).abs() < 1e-8);
+        assert_eq!(ear.1, camera.1);
+    }
+
+    #[test]
+    fn voice_preferences_keep_defaults_and_survive_round_trip() {
+        use crate::settings::{AudioSettings, VoiceEar};
+        let mut a: AudioSettings = serde_json::from_str("{\"mic_gain\":0.75}").expect("old preferences");
+        assert_eq!(a.voice_ear, VoiceEar::Camera);
+        assert_eq!(a.mic_processing(), aurora_audio::MicProcessing::default());
+        assert!(
+            a.lip_sync
+                && a.voice_visualizer
+                && a.voice_visualizer_self
+                && a.voice_visualizer_dot
+                && a.voice_visualizers_in_calls
+                && a.conversation_voice_indicator
+        );
+        a.voice_ear = VoiceEar::Avatar;
+        a.voice_noise_suppression = 2;
+        a.voice_echo_cancellation = false;
+        a.lip_sync = false;
+        a.voice_visualizer_self = false;
+        a.conversation_voice_indicator = false;
+        let restored: AudioSettings = serde_json::from_str(&serde_json::to_string(&a).expect("encode")).expect("decode");
+        assert_eq!(restored, a);
+        assert!(!a.world_voice_visualizer(true, false, false));
+        assert!(a.world_voice_visualizer(false, true, false));
+        a.voice_visualizers_in_calls = false;
+        assert!(!a.world_voice_visualizer(false, true, false));
+        assert!(a.world_voice_visualizer(false, false, false));
+        a.voice_visualizer = false;
+        assert!(!a.world_voice_visualizer(false, false, false));
+    }
+
+    #[test]
+    fn voice_listener_uses_forward_left_up_axes() {
+        use glam::Vec3;
+
+        for forward in [
+            Vec3::X,
+            Vec3::Y,
+            -Vec3::X,
+            -Vec3::Y,
+            Vec3::new(1.0, 2.0, 3.0).normalize(),
+            Vec3::Z,
+            -Vec3::Z,
+        ] {
+            let up = if forward.cross(Vec3::Z).length_squared() < 1e-6 {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
+            let view = glam::camera::rh::view::look_to_mat4(Vec3::new(8.0, 9.0, 10.0), forward, up);
+            let rotation = listener_rotation(view);
+            let left = up.cross(forward).normalize();
+            let above = forward.cross(left);
+            assert!((rotation * Vec3::X).abs_diff_eq(forward, 1e-5));
+            assert!((rotation * Vec3::Y).abs_diff_eq(left, 1e-5));
+            assert!((rotation * Vec3::Z).abs_diff_eq(above, 1e-5));
+        }
+    }
 
     #[test]
     fn own_tag_uses_local_mic_even_without_a_server_entry() {

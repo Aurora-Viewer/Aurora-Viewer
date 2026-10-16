@@ -1751,6 +1751,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
+| `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or as the bars open it on its Network section (full for this opening, the section unfolded and scrolled to) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
@@ -2178,7 +2179,21 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   frame 800 (capture only 740, without `AURORA_CAPTURE_EXIT`). Combine with
   `AURORA_DEMO_LOGIN=empty` for the login screen: Log out is
   disabled. The choices are simulated offline, with no login request.
-- **`AURORA_DEMO_OPTIONS=<section>`**: for example `8` for Shortcuts
+- **`AURORA_DEMO_VOICE_PREFS=<modes>`**: comma-separated `avatar`, `raw`
+  (AGC, AEC and noise suppression off; high-pass remains enabled), `no-lips`,
+  `no-indicators`, `no-self`, `no-dot`, `no-call-visuals`, `no-conversation`.
+  Combine with `AURORA_DEMO_VOICE=speaking|cycle` and `AURORA_PROFILE=1` for
+  matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
+  check that hiding world indicators leaves the call's controls intact.
+- **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
+  jump to the corresponding Sound and voice card for offline captures. Changes
+  apply live, persist, and reset with the audio page. The microphone popup
+  exposes camera/avatar ears and all five noise levels; its processing shortcut
+  opens the same card. `AURORA_DEMO_VOICE=cycle` exercises the world indicators
+  and GPU lip sync; disable each preference and check the other indicators
+  (call participants and nearby people) remain functional. Private/group call
+  spatial audio and real microphone quality require human grid testing.
+  For example `8` for Shortcuts
   (HUD move key). `8:<query>` opens Shortcuts with its search filled in,
   for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
   `8:zzzz` shows the empty result. The field stays above the scrolling list,

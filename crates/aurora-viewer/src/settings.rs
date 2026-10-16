@@ -688,7 +688,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 15;
+const SETTINGS_VERSION: u32 = 16;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -829,6 +829,18 @@ pub fn audio_channels() -> [&'static str; 7] {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AudioSettings {
+    /// VoiceEarLocation, VoiceAutomaticGainControl, VoiceEchoCancellation and
+    /// VoiceNoiseSuppressionLevel (panel_preferences_sound.xml).
+    pub voice_ear: VoiceEar,
+    pub voice_automatic_gain: bool,
+    pub voice_echo_cancellation: bool,
+    pub voice_noise_suppression: u8,
+    pub lip_sync: bool,
+    pub voice_visualizer: bool,
+    pub voice_visualizer_self: bool,
+    pub voice_visualizer_dot: bool,
+    pub voice_visualizers_in_calls: bool,
+    pub conversation_voice_indicator: bool,
     /// Volume 0..1 per channel (`AUDIO_CHANNELS`).
     pub volume: [f32; 7],
     pub muted: [bool; 7],
@@ -872,6 +884,16 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         AudioSettings {
+            voice_ear: VoiceEar::Camera,
+            voice_automatic_gain: true,
+            voice_echo_cancellation: true,
+            voice_noise_suppression: 4,
+            lip_sync: true,
+            voice_visualizer: true,
+            voice_visualizer_self: true,
+            voice_visualizer_dot: true,
+            voice_visualizers_in_calls: true,
+            conversation_voice_indicator: true,
             volume: [0.8, 0.5, 0.5, 0.5, 0.4, 0.5, 0.7],
             muted: [false; 7],
             enabled: [true; 7],
@@ -890,6 +912,27 @@ impl Default for AudioSettings {
             reject_group_calls: false,
             reject_adhoc_calls: false,
             reject_p2p_calls: false,
+        }
+    }
+}
+
+/// VoiceEarLocation (panel_preferences_sound.xml); SL exposes two choices.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum VoiceEar {
+    #[default]
+    Camera,
+    Avatar,
+}
+
+impl AudioSettings {
+    pub fn world_voice_visualizer(&self, own: bool, in_call: bool, mouselook: bool) -> bool {
+        self.voice_visualizer && (!in_call || self.voice_visualizers_in_calls) && (!own || (self.voice_visualizer_self && !mouselook))
+    }
+    pub fn mic_processing(&self) -> aurora_audio::MicProcessing {
+        aurora_audio::MicProcessing {
+            automatic_gain: self.voice_automatic_gain,
+            echo_cancellation: self.voice_echo_cancellation,
+            noise_suppression: self.voice_noise_suppression.min(4),
         }
     }
 }
@@ -986,7 +1029,7 @@ impl Default for Settings {
             window_maximized: false,
             machine_id: uuid::Uuid::new_v4().to_string(),
             mfa_hash: String::new(),
-            font: "Noto Sans".into(),
+            font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
@@ -1416,6 +1459,11 @@ impl Settings {
             // new default: Contacts shown in Conversations (every file wrote
             // the old "hidden" default)
             self.show_contacts_tab = true;
+        }
+        if self.settings_version < 16 && self.font == crate::ui::fonts::NOTO {
+            // Inter is the default interface font again: every file wrote
+            // the former default, Noto Sans (version 3 had moved Inter to it)
+            self.font = crate::ui::fonts::DEFAULT.into();
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -2136,6 +2184,48 @@ mod tests {
         chosen.camera.ignore_sim_constraints = false;
         let c = chosen.sanitized().camera;
         assert!(!c.disable_constraints && !c.ignore_sim_constraints);
+    }
+
+    /// Inter reaches the earlier files once (they all wrote Noto Sans, and
+    /// those before version 3 Inter); chosen again afterwards, Noto Sans
+    /// stays, and so does any other font.
+    #[test]
+    fn inter_is_the_default_font_and_once_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().font, "Inter");
+        for (version, font, now) in [
+            (15, "Noto Sans", "Inter"),
+            (2, "Inter", "Inter"),
+            (15, "Roboto", "Roboto"),
+            (
+                15,
+                "system:C:\\Windows\\Fonts\\segoeui.ttf",
+                "system:C:\\Windows\\Fonts\\segoeui.ttf",
+            ),
+            (16, "Noto Sans", "Noto Sans"),
+        ] {
+            let old = Settings {
+                settings_version: version,
+                font: font.into(),
+                ..Settings::default()
+            };
+            assert_eq!(old.sanitized().font, now, "version {version}, {font}");
+        }
+    }
+
+    /// A file written before both defaults changed (version 14) gets both:
+    /// the Contacts tab of version 15 and the Inter font of version 16.
+    #[test]
+    fn a_version_14_file_gets_the_contacts_tab_and_inter() {
+        let old = Settings {
+            settings_version: 14,
+            font: "Noto Sans".into(),
+            show_contacts_tab: false,
+            ..Settings::default()
+        };
+        let now = old.sanitized();
+        assert!(now.show_contacts_tab);
+        assert_eq!(now.font, "Inter");
+        assert_eq!(now.settings_version, SETTINGS_VERSION);
     }
 
     #[test]

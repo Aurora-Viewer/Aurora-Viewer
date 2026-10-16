@@ -110,6 +110,7 @@ pub struct ChatUi {
     style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.
     pub voice_on: bool,
+    pub conversation_voice_indicator: bool,
     /// The microphone in toggle mode (None: hold to talk), for the call's
     /// mute button.
     pub mic: Option<bool>,

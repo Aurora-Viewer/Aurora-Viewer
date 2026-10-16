@@ -44,7 +44,7 @@ impl Permissions {
     }
 
     pub fn append_to(self, job: &mut LayoutJob, p: &Palette) {
-        let font = FontId::monospace(12.0);
+        let font = FontId::proportional(12.0);
         for (index, (bit, letter)) in [(perm::COPY, "C"), (perm::MODIFY, "M"), (perm::TRANSFER, "T")]
             .into_iter()
             .enumerate()
@@ -77,7 +77,7 @@ impl Permissions {
     }
 
     pub fn append_suffix(self, job: &mut LayoutJob, p: &Palette) {
-        job.append(" ", 0.0, TextFormat::simple(FontId::monospace(12.0), p.muted));
+        job.append(" ", 0.0, TextFormat::simple(FontId::proportional(12.0), p.muted));
         self.append_to(job, p);
     }
 

@@ -80,6 +80,8 @@ pub mod flags {
     /// placed by its own anchor, `palettes[flags[1] + SKELETON_ANCHOR]`,
     /// and `model` (the identity) is not read.
     pub const ANCHORED: u32 = 4096;
+    /// System avatar Aah/Ooh morphs, evaluated before skinning.
+    pub const LIP_SYNC: u32 = 8192;
 }
 
 /// Layout of a skeleton's palette in the palettes buffer: its joints, then
@@ -1328,6 +1330,7 @@ mod tests {
         let wgsl = include_str!("shaders/common.wgsl");
         assert!(wgsl.contains(&format!("const FLAG_ANCHORED: u32 = {}u;", flags::ANCHORED)));
         assert!(wgsl.contains(&format!("const FLAG_SKINNED: u32 = {}u;", flags::SKINNED)));
+        assert!(wgsl.contains(&format!("const FLAG_LIP_SYNC: u32 = {}u;", flags::LIP_SYNC)));
         let mut record = DrawRecord::default();
         assert_eq!(record.anchor(), None);
         record.set_anchor(Some(371));
