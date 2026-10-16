@@ -101,11 +101,12 @@ impl Live {
 impl Windows {
     /// One frame of the gestures; see `layout::frame`. `area`: the work
     /// area, what a window snaps to; `room`: where it moves
-    /// (`layout::move_area`).
+    /// (`layout::move_area`), `edges` stopping it.
     pub(super) fn drive(
         &mut self,
         area: Rect,
         room: Rect,
+        edges: super::Edges,
         pixels_per_point: f32,
         pointer: Pointer,
         snap_enabled: bool,
@@ -187,17 +188,17 @@ impl Windows {
             return None;
         }
 
-        // where egui has the dragged window this frame: alone, anywhere its
-        // title bar stays in the room (`layout::reach`, as
-        // `widgets::Floater` constrains it); a group stays whole inside the
-        // room, so the window stops where its block does
+        // where egui has the dragged window this frame: alone, within reach
+        // in the room (`layout::reach`, as `widgets::Floater` constrains
+        // it); a group stays whole inside the room, so the window stops
+        // where its block does
         let block = moved.start.iter().fold(Rect::NOTHING, |all, (_, rect)| all.union(*rect));
         let limits = if moved.start.len() > 1 {
             let limits = snap::block_limits(room, start, block);
             self.live.limits = Some((window, limits));
             limits
         } else {
-            super::reach(room, start.size())
+            super::reach(room, start.size(), edges)
         };
         let travel = constrained(start.translate(pointer.total), limits, pixels_per_point) - start.min;
         for (id, rect) in moved.start.iter().skip(1) {

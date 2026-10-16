@@ -132,10 +132,10 @@ fn island_gap(ctx: &egui::Context, top: bool) -> Option<egui::Pos2> {
         .map(|(_, x)| egui::pos2(x, y))
 }
 
-/// `AURORA_DEMO_WINDOWS=reach-top|reach-bottom|reach-right`: the real title
-/// bar of the inventory is dragged at frames 700–709 into the widest gap
-/// between the top islands, between the bottom ones, or far past the right
-/// edge of the screen, and released there.
+/// `AURORA_DEMO_WINDOWS=reach-top|reach-bottom|reach-right|reach-left|reach-down`:
+/// the real title bar of the inventory is dragged at frames 700–709 into
+/// the widest gap between the top islands, between the bottom ones, or far
+/// past the right, left or bottom edge of the screen, and released there.
 fn reach_events(ctx: &egui::Context, frame: u64, id: egui::Id, pos: egui::Pos2, spot: &str) -> Vec<egui::Event> {
     let button = |pos, pressed| egui::Event::PointerButton {
         pos,
@@ -147,6 +147,8 @@ fn reach_events(ctx: &egui::Context, frame: u64, id: egui::Id, pos: egui::Pos2, 
         let target = match spot {
             "top" => island_gap(ctx, true),
             "bottom" => island_gap(ctx, false),
+            "left" => Some(egui::pos2(ctx.content_rect().left() - 2000.0, pos.y)),
+            "down" => Some(egui::pos2(pos.x, ctx.content_rect().bottom() + 2000.0)),
             _ => Some(egui::pos2(ctx.content_rect().right() + 2000.0, pos.y)),
         };
         let Some(target) = target else {

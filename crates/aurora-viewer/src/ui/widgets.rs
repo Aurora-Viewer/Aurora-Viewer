@@ -110,13 +110,14 @@ fn minimized_width(expanded: f32) -> f32 {
 /// larger screen or another layout comes back within reach. None when it
 /// stands well and nothing asks for it elsewhere.
 fn title_in_reach(ctx: &egui::Context, id: egui::Id, area: egui::Rect, asked: Option<egui::Pos2>) -> Option<egui::Pos2> {
-    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, islands, keep_title_in};
+    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, islands, keep_title_in, window_edges};
     let state = egui::AreaState::load(ctx, id).filter(|s| s.size.is_some());
     let size = state.as_ref().and_then(|s| s.size).unwrap_or(egui::vec2(TITLE_GRIP, TITLE_BAR_H));
     let pos = asked.or_else(|| state.as_ref().map(|s| s.left_top_pos()))?;
-    let mut kept = keep_title_in(area, pos, size);
+    let edges = window_edges(ctx);
+    let mut kept = keep_title_in(area, pos, size, edges);
     if !ctx.input(|i| i.pointer.any_down()) {
-        kept = clear_of_islands(area, kept, size, &islands(ctx));
+        kept = clear_of_islands(area, kept, size, edges, &islands(ctx));
     }
     (asked.is_some() || kept != pos).then_some(kept)
 }
@@ -385,14 +386,15 @@ impl<'a> Floater<'a> {
         let mut asked = opening.as_ref().map(|o| o.pos).or(slot.pos);
         // A window moves anywhere in the room the bars leave it
         // (`layout::move_area`: the whole screen with the islands, between
-        // the Legacy Viewer's bars otherwise), partly out of it if need be,
-        // its title bar in (`layout::reach`); a window dragged with its
-        // group has the group's limits.
+        // the Legacy Viewer's bars otherwise), past the edges the user lets
+        // it cross, its title bar within reach (`layout::reach`); a window
+        // dragged with its group has the group's limits.
         let room = super::layout::move_area(ctx);
         let size = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
             .unwrap_or(self.default_size);
-        w = w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size)));
+        let edges = super::layout::window_edges(ctx);
+        w = w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size, edges)));
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             asked = Some(pos);
             if self.cascade.is_some() {

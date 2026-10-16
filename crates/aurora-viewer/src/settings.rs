@@ -341,6 +341,12 @@ pub struct Settings {
     /// Windows snap to each other and to the edges while they are moved or
     /// resized (Firestorm SnapEnabled, on).
     pub snap_windows: bool,
+    /// Windows stop at the left, right and bottom edges of the screen (on):
+    /// off, a window may cross that edge, its title bar kept within reach
+    /// (`ui::layout::Edges`). It never crosses the top edge.
+    pub windows_stop_left: bool,
+    pub windows_stop_right: bool,
+    pub windows_stop_bottom: bool,
     pub show_perf: bool,
     pub show_chat: bool,
     pub show_minimap: bool,
@@ -920,6 +926,9 @@ impl Default for Settings {
             ui_scale: 1.0,
             use_pie_menu: false,
             snap_windows: true,
+            windows_stop_left: true,
+            windows_stop_right: true,
+            windows_stop_bottom: true,
             // First launch (no settings file): the radar (People on its
             // first tab, top left), the mini-map (top right), Performance
             // under it and Conversations (bottom right) are open, as asked
