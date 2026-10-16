@@ -1093,7 +1093,8 @@ access to a grid.
   row is outlined in yellow, the others in blue.
 - `inventory`: the inventory opens on the item, double-clicked on its real
   row at frames 700–703 (the backpack detaches, its worn label leaves the
-  row) and again at 900–903 (it is worn again), like the Legacy Viewer's
+  row) and again at 900–903 (it is worn again, as the demo's invisible
+  placeholder attachment: the label comes back, not the two prims), like the Legacy Viewer's
   double-click (LLObjectBridge::openItem). The log writes
   `demo worn inventory: double-click on the item row at frame …`. The other
   objects of the demo outfit show as worn after the first change: the demo
