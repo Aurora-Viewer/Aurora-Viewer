@@ -153,8 +153,11 @@ impl App {
                     .and_then(|idx| Some((*self.scene.avatar_complexity.get(id)?, self.scene.too_complex.contains(&idx))));
                 f.render = self.settings.render_exception(id);
                 f.blocked = w.is_avatar_blocked(id);
+                f.particles_blocked = w.particles_blocked(id);
+                f.contact_sets = w.contact_sets.set_names();
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
+                f.worn = !super::inspect::worn_roots(w, id).is_empty();
             }
             _ => {}
         }
@@ -346,6 +349,14 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::ToggleParticleMute(id) => {
+                let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
+                if let Err(e) = self.world.toggle_particle_block(id, &name) {
+                    self.world.system_message(e);
+                }
+            }
+            CtxAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
+            CtxAction::GiveCallingCard(id) => self.world.offer_calling_card(id),
             CtxAction::ToggleBlockObject { id, name } => {
                 // the whole object is blocked: its root (LLMute of getRootEdit)
                 let root = self
@@ -375,6 +386,8 @@ impl App {
                 }
             }
             CtxAction::Inspect(id) => self.inspect_object(id),
+            CtxAction::InspectAvatar(id) => self.inspect_avatar(id),
+            CtxAction::Derender { id, permanent } => self.derender(id, permanent),
             CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
             CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
             CtxAction::Rebake => self.rebake(),
@@ -539,6 +552,7 @@ impl App {
             }
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
             CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
+            CtxAction::NewContactSet(ids) => self.contacts_ui.ask_new_set_for(ids),
             CtxAction::ShowHistory(conversation) => {
                 let (title, file) = self.world.transcript_of(conversation);
                 self.history_ui.show_file(title, file);

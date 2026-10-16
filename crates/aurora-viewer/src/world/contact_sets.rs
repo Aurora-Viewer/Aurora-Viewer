@@ -101,6 +101,12 @@ impl ContactSets {
         name.is_empty() || [EXTRA_AVS, PSEUDONYM, NO_SETS, ALL_SETS, GLOBAL_SETTINGS].contains(&name)
     }
 
+    /// Changes from now on stay in memory (the demo's captures leave the
+    /// demo account's file as it was).
+    pub fn keep_in_memory(&mut self) {
+        self.path = None;
+    }
+
     /// loadFromDisk: the per-account file, or a new empty one.
     pub fn load(path: PathBuf) -> ContactSets {
         let mut cs = ContactSets {
