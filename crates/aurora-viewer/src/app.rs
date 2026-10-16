@@ -9188,6 +9188,9 @@ impl App {
                         self.settings.chat_toast_seconds,
                         self.settings.chat_timestamps,
                         !classic_bars,
+                        // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
+                        // for the session, nothing saved
+                        !(self.settings.classic_chat_lines || crate::demo::chat_lines_scenario() == Some(true)),
                     );
                 }
                 // the hidden interface: how to bring it back (the islands), or
@@ -10811,6 +10814,14 @@ impl ApplicationHandler for App {
                 self.panels.chat = false;
                 self.panels.minimap = false;
                 self.panels.perf = false;
+            }
+            // AURORA_DEMO_CHAT_LINES: the lines above the chat bar, the
+            // Conversations window closed (it hides them while it shows the
+            // local chat)
+            if crate::demo::chat_lines_scenario().is_some() {
+                self.panels.chat = false;
+                self.panels.people = false;
+                self.panels.inventory = false;
             }
             if std::env::var_os("AURORA_DEMO_UI").is_some() {
                 self.panels.people = true;

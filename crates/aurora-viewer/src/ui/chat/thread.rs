@@ -221,8 +221,9 @@ fn tags(ui: &mut egui::Ui, p: &Palette, th: &Thread, line: &ChatLine, who: &Who)
     }
 }
 
-/// A tag: small semi-bold capitals, on a pill of `fill` when given.
-fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: Color32) {
+/// A tag: small semi-bold capitals, on a pill of `fill` when given (also
+/// the cards of the nearby chat lines, `console.rs`).
+pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: Color32) {
     let font = egui::FontId::new(if fill.is_some() { 9.5 } else { 10.0 }, crate::ui::fonts::semibold(ui.ctx()));
     let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, color);
     let pad = if fill.is_some() { 5.0 } else { 0.0 };
