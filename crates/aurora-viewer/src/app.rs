@@ -5714,7 +5714,7 @@ impl App {
                     self.egui_ctx.pixels_per_point(),
                 );
             }
-            let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
+            let over_ui = self.ui_takes_pointer();
             let mods = crate::build::Mods {
                 shift: self.shift,
                 ctrl: self.ctrl,
@@ -7512,10 +7512,10 @@ impl App {
                             .and_then(|&(idx, face)| self.world.objects.get(idx)?.te.as_ref().map(|te| te.face(face as usize).texture))
                             .unwrap_or_default();
                         if materials {
-                            self.build
-                                .ui
-                                .picker
-                                .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), uuid::Uuid::nil());
+                            self.build.ui.picker.open_materials(
+                                aurora_i18n::tr!("build-ui-texture-choose-material"),
+                                crate::demo::pbr_materials().first().map(|(id, _)| *id).unwrap_or_default(),
+                            );
                             self.build.ui.pick_target = Some(crate::build::ui::PickTarget::PbrMaterial);
                             self.build.ui.tex_tab = 1;
                         } else {
@@ -12605,7 +12605,7 @@ impl ApplicationHandler for App {
                     return;
                 }
                 let pressed = *state == ElementState::Pressed;
-                let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
+                let over_ui = self.ui_takes_pointer();
                 // shortcut being captured: middle / side buttons bind, left / right cancel
                 if self.options_ui.capture.is_some() {
                     if pressed {
@@ -12626,7 +12626,7 @@ impl ApplicationHandler for App {
                 // (in its turn behind a click that waits for its depth)
                 self.mouse_input(*button, pressed, over_ui);
             }
-            WindowEvent::MouseWheel { delta, .. } if !self.exit_prompt.open && !self.egui_ctx.is_pointer_over_egui() && self.in_world() => {
+            WindowEvent::MouseWheel { delta, .. } if !self.exit_prompt.open && !self.ui_takes_pointer() && self.in_world() => {
                 let steps = match delta {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,

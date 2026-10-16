@@ -354,6 +354,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         tool.ui.texture_edit = Some(Session::capture(tool, world, env, target));
     }
     tool.ui.picker.allow_local = matches!(tool.ui.pick_target, Some(PickTarget::Diffuse | PickTarget::PbrMaterial));
+    tool.ui.picker.prepare_material_preview(ctx, env.scene);
     let accepted = tool.ui.picker.show(ctx, p, world, env.images);
     if let Some(id) = accepted {
         tool.preview_texture(world, env, id);

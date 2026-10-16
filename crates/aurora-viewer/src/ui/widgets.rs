@@ -34,6 +34,13 @@ pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,
 };
 
+/// Whether UI owns a world-pointer event at `pos` (logical points). Resize
+/// grips consume the press outside their window too, as LLResizeHandle and
+/// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
+pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+}
+
 /// Keep status suffixes at normal weight and slightly darker than the name.
 pub(crate) fn name_with_suffix(name: &str, suffix: &str, font_id: egui::FontId, color: Color32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();

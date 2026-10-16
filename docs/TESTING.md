@@ -704,19 +704,23 @@ the two selected faces, materials unchanged after the fade.
 
 `faces-picker,object:99620` selects a face at 625 and opens its texture
 picker at 635, with a very long name in a "Project textures" subfolder.
-Capture at 660 then 960: the 480 × 600-point picker stays bounded without
+Capture at 660 then 960: the 320 × 720-point picker (limited to the work area) stays bounded without
 growing on its own. The selected preview sits above Inventory/Local/Aurora
 Library tabs and a virtual folder list. Rows use texture/material icons;
-only the selected texture requests a preview. Folder roots can be closed
-and stay closed across inventory updates. Presets form one row beneath the
-list, followed by the validated UUID. Local contains the collapsible
+only the selected resource requests a preview. Folder roots can be closed
+and stay closed across inventory updates. Presets form two rows beneath the
+list (Default/Blank, Transparent/None), followed by a BOM selector for textures
+and the validated, vertically centered UUID. BOM shows its placeholder until
+selected, then the bake's name; it applies the canonical magic UUID. Local contains the collapsible
 "Local files" folder in diffuse texture and PBR material pickers. It lists the
 local previews already loaded, textures or materials depending on the choice
 requested, and follows the search filter. A click applies the local preview;
 "OK" keeps it, "Cancel" restores it. To show the synthetic local files,
 combine this scenario with `AURORA_DEMO_IMPORTS=local`.
 `faces-picker-material,object:99620` opens the same picker for a PBR
-material: only the local material must be listed. These files appear without
+material, with the demo's tiled PBR material selected: the preview is a GPU-rendered
+sphere with the material's maps, while list rows remain icons. Only local materials
+must be listed in Local. These files appear without
 having been applied to an object beforehand. The import window closes when
 the picker opens to clear the view.
 

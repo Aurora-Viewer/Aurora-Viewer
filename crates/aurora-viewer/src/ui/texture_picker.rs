@@ -25,6 +25,25 @@ const TRANSPARENT_TEXTURE: Uuid = aurora_prim::te::TRANSPARENT_TEXTURE;
 /// BLANK_MATERIAL_ASSET_ID.
 const BLANK_MATERIAL: Uuid = Uuid::from_u128(0x968cbad0_4dad_d64e_71b5_72bf13ad051a);
 
+/// LLFloaterTexturePicker::onBakeTextureSelect: keep the magic bake UUID
+/// in the texture entry; its current image is only used by the preview.
+fn bom_choices() -> [(&'static str, Uuid); 11] {
+    let names = [
+        aurora_i18n::tr!("picker-bom-head"),
+        aurora_i18n::tr!("picker-bom-upper"),
+        aurora_i18n::tr!("picker-bom-lower"),
+        aurora_i18n::tr!("picker-bom-eyes"),
+        aurora_i18n::tr!("picker-bom-skirt"),
+        aurora_i18n::tr!("picker-bom-hair"),
+        aurora_i18n::tr!("picker-bom-leftarm"),
+        aurora_i18n::tr!("picker-bom-leftleg"),
+        aurora_i18n::tr!("picker-bom-aux1"),
+        aurora_i18n::tr!("picker-bom-aux2"),
+        aurora_i18n::tr!("picker-bom-aux3"),
+    ];
+    std::array::from_fn(|index| (names[index], crate::scene::avatar::BAKES[index].2))
+}
+
 fn inventory_asset(inv: &Inventory, id: Uuid, materials: bool) -> Option<Uuid> {
     // LLTextureCtrl: linked rows use their original asset; a material with
     // a null inventory asset is the blank material, not "no material".
@@ -59,6 +78,8 @@ pub struct TexturePicker {
     library_lookup: Option<(u64, Uuid, Option<Uuid>)>,
     uuid_error: bool,
     footer_height: f32,
+    material_previews: super::texture_library::previews::Previews,
+    material_model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     /// Images to stream (selected texture preview).
     pub wanted_images: HashSet<Uuid>,
     /// Build floater options: list materials, the default asset, "None".
@@ -92,6 +113,7 @@ impl TexturePicker {
         self.uuid_text = current.to_string();
         self.uuid_error = false;
         self.footer_height = 0.0;
+        self.material_model = None;
         self.preview = None;
         self.generation = self.generation.wrapping_add(1);
     }
@@ -117,12 +139,37 @@ impl TexturePicker {
         self.preview.take()
     }
 
+    /// Reuse the library's worker-built GPU preview for this selection only.
+    pub(crate) fn prepare_material_preview(&mut self, ctx: &egui::Context, scene: &mut crate::scene::Scene) {
+        self.material_previews.poll();
+        self.material_model = if self.open && self.materials {
+            self.selected
+                .filter(|asset| !asset.is_nil())
+                .and_then(|asset| self.material_previews.model(asset, scene, &mut self.wanted_images, ctx))
+        } else {
+            None
+        };
+    }
+
     fn select(&mut self, asset: Uuid, item: Option<Uuid>, preview: bool) {
         self.uuid_text = asset.to_string();
         self.uuid_error = false;
         self.selected = Some(asset);
         self.selected_item = item;
         self.preview = preview.then_some(asset);
+        self.material_model = None;
+    }
+
+    fn preview_texture(&self, world: &World) -> Option<Uuid> {
+        let asset = self.selected.filter(|asset| !self.materials && !asset.is_nil())?;
+        if let Some((slot, _)) = crate::scene::avatar::bake_slot_for(&asset) {
+            world
+                .objects
+                .index_of_uuid(&world.agent_id)
+                .and_then(|avatar| world.bake_texture(avatar, slot))
+        } else {
+            Some(asset)
+        }
     }
 
     /// The asset chosen with "OK" (the picker closes). Nil: "None".
@@ -172,14 +219,27 @@ impl TexturePicker {
         }
         let mut floater = Floater::new("texture_picker", self.title.clone(), screen.center() - size * 0.5, size);
         floater.min_size = Vec2::new(320.0, 480.0);
+        let preview_texture = self.preview_texture(world);
         floater.show(ctx, p, &mut open, |ui| {
             let radius = ui.visuals().window_corner_radius;
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     let side = 132.0;
+                    if self.materials
+                        && let Some(model) = self.material_model.clone()
+                    {
+                        aurora_render::preview::paint_hint(
+                            ui,
+                            ui.id().with("selected_material_preview"),
+                            model,
+                            super::texture_library::previews::view(p),
+                            Vec2::splat(side),
+                        );
+                        return;
+                    }
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
                     ui.painter().rect_filled(rect, radius, p.field);
-                    if let Some(a) = self.selected.filter(|a| !self.materials && !a.is_nil()) {
+                    if let Some(a) = preview_texture {
                         self.wanted_images.insert(a);
                         if let Some(t) = images.get(&a) {
                             ui.painter().image(
@@ -218,14 +278,17 @@ impl TexturePicker {
                         }
                     }
 
-                    if self.materials
-                        && let Some(icon) = super::icons::global("droplet-filled")
-                    {
-                        ui.painter().image(
-                            icon.id(),
-                            egui::Rect::from_center_size(rect.center(), Vec2::splat(48.0)),
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            p.violet_light,
+                    if self.materials || (self.selected.is_some() && preview_texture.is_none()) {
+                        ui.painter().text(
+                            rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            if self.selected.is_some_and(|asset| !asset.is_nil()) {
+                                aurora_i18n::tr!("common-loading-2")
+                            } else {
+                                aurora_i18n::tr!("common-none-2")
+                            },
+                            egui::FontId::proportional(11.5),
+                            p.muted,
                         );
                     }
                 });
@@ -243,6 +306,12 @@ impl TexturePicker {
                             self.selected
                                 .and_then(|id| world.local_assets.get(&id))
                                 .map(|(name, _)| name.as_str())
+                        })
+                        .or_else(|| {
+                            bom_choices()
+                                .into_iter()
+                                .find(|(_, asset)| Some(*asset) == self.selected)
+                                .map(|(name, _)| name)
                         });
                     if let Some(name) = name {
                         ui.add(widgets::elided_label(
@@ -291,7 +360,7 @@ impl TexturePicker {
             } else if self.extra_buttons {
                 // Keep the first frame within its saved height before the
                 // scaled controls' actual footer has been measured.
-                200.0
+                if self.materials { 200.0 } else { 240.0 }
             } else {
                 90.0
             };
@@ -478,12 +547,32 @@ impl TexturePicker {
                         }
                     });
                 }
+                if !self.materials {
+                    let choices = bom_choices();
+                    let current = choices.iter().find(|(_, asset)| Some(*asset) == self.selected);
+                    let label = current.map_or(aurora_i18n::tr!("picker-bom"), |(name, _)| *name);
+                    egui::ComboBox::from_id_salt("picker_bom")
+                        .width(ui.available_width())
+                        .selected_text(RichText::new(label).size(12.0))
+                        .show_ui(ui, |ui| {
+                            for (name, asset) in choices {
+                                if ui
+                                    .selectable_label(self.selected == Some(asset), RichText::new(name).size(12.0))
+                                    .clicked()
+                                {
+                                    self.select(asset, None, true);
+                                }
+                            }
+                        });
+                }
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(11.0).color(p.muted));
                     let response = ui.add_sized(
                         [ui.available_width(), 24.0],
-                        egui::TextEdit::singleline(&mut self.uuid_text).font(egui::FontId::monospace(10.0)),
+                        egui::TextEdit::singleline(&mut self.uuid_text)
+                            .font(egui::FontId::monospace(10.0))
+                            .vertical_align(egui::Align::Center),
                     );
                     if response.changed() {
                         match Uuid::parse_str(self.uuid_text.trim()) {
@@ -592,6 +681,92 @@ mod tests {
                 ],
             );
         }
+    }
+
+    #[test]
+    fn construction_material_picker_previews_only_the_selected_material() {
+        let ctx = egui::Context::default();
+        let avatars = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), avatars);
+        let assets = [Uuid::from_u128(101), Uuid::from_u128(102)];
+        let maps = [Uuid::from_u128(201), Uuid::from_u128(202)];
+        for (index, asset) in assets.into_iter().enumerate() {
+            scene.materials.insert(
+                asset,
+                aurora_assets::PbrMaterial {
+                    base_color_texture: Some(maps[index]),
+                    metallic_factor: index as f32,
+                    ..Default::default()
+                },
+            );
+        }
+        let mut picker = TexturePicker::default();
+        picker.open_materials("Material", assets[0]);
+        for (index, asset) in assets.into_iter().enumerate() {
+            picker.wanted_images.clear();
+            picker.select(asset, None, false);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                picker.prepare_material_preview(&ctx, &mut scene);
+                if picker.material_model.is_some() {
+                    break;
+                }
+                assert!(std::time::Instant::now() < deadline, "material preview worker did not finish");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            let model = picker.material_model.as_ref().unwrap();
+            assert_eq!(model.parts[0].material.metallic, index as f32);
+            assert_eq!(picker.wanted_images, HashSet::from([maps[index]]));
+            for frame in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1200.0, 800.0))),
+                        ..Default::default()
+                    },
+                    |_| {
+                        picker.show(&ctx, &crate::theme::Theme::default().palette(), &mut world, &HashMap::new());
+                    },
+                );
+                output.textures_delta.clear();
+                if frame == 2 {
+                    assert!(
+                        output.shapes.iter().any(|shape| matches!(shape.shape, egui::Shape::Callback(_))),
+                        "GPU material preview missing"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn construction_bom_selector_keeps_the_magic_uuid_and_resets_for_an_ordinary_texture() {
+        let ctx = egui::Context::default();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut picker = TexturePicker::default();
+        picker.open_with_defaults("Texture", BLANK_TEXTURE, None, true);
+        let mut labels = HashMap::new();
+        for n in 0..5 {
+            labels = frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
+        }
+        click(&ctx, &mut picker, &mut world, 1.0, labels[aurora_i18n::tr!("picker-bom")]);
+        labels = frame(&ctx, &mut picker, &mut world, 1.1, vec![]);
+        let (name, magic) = bom_choices()[0];
+        click(&ctx, &mut picker, &mut world, 1.2, labels[name]);
+        assert_eq!(picker.selected, Some(magic));
+        assert_eq!(picker.take_preview(), Some(magic));
+        assert_eq!(picker.uuid_text, magic.to_string());
+        assert_eq!(
+            picker.preview_texture(&world),
+            None,
+            "a magic bake id is never downloaded as an ordinary texture"
+        );
+        labels = frame(&ctx, &mut picker, &mut world, 1.3, vec![]);
+        assert!(labels.contains_key(name));
+        click(&ctx, &mut picker, &mut world, 1.4, labels[aurora_i18n::tr!("common-blank")]);
+        labels = frame(&ctx, &mut picker, &mut world, 1.5, vec![]);
+        assert!(labels.contains_key(aurora_i18n::tr!("picker-bom")));
+        assert_eq!(picker.selected, Some(BLANK_TEXTURE));
     }
 
     #[test]

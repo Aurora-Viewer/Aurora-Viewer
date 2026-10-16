@@ -313,6 +313,8 @@ fn grid_mode_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
     ];
     ui.spacing_mut().item_spacing.x = 3.0;
     let (axes, _) = ui.allocate_exact_size(Vec2::new(34.0, 26.0), egui::Sense::hover());
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("build_grid_axes"), axes));
     // The XYZ content uses the same axis palette as the build manipulator.
     let origin = axes.center() + egui::vec2(-2.0, 5.0);
     for (end, color) in [
@@ -329,7 +331,7 @@ fn grid_mode_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
         } else {
             crate::ui::widgets::ActionKind::Flat
         };
-        let response = crate::ui::widgets::action_button(ui, p, "", "", kind, Vec2::new(32.0, 28.0));
+        let response = crate::ui::widgets::action_button(ui, p, "", "", kind, Vec2::new(34.0, 28.0));
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::new(("build_grid_mode", mode)), response.rect));
@@ -360,11 +362,25 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
         let selected = !tool.selection.is_empty();
         let width = ui.available_width();
         ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
             ui.allocate_ui_with_layout(
                 Vec2::new((width - 42.0).max(180.0), 124.0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
+                    ui.set_min_width((width - 42.0).max(180.0));
                     ui.spacing_mut().icon_width = 13.0;
+                    widgets::checkbox(
+                        ui,
+                        p,
+                        &mut s.scale_uniform,
+                        RichText::new(aurora_i18n::tr!("build-compact-both-sides")).size(10.5),
+                    );
+                    widgets::checkbox(
+                        ui,
+                        p,
+                        &mut s.actual_root,
+                        RichText::new(aurora_i18n::tr!("build-compact-root-axis")).size(10.5),
+                    );
                     ui.horizontal(|ui| {
                         let mut linked = s.edit_linked;
                         if widgets::checkbox(
@@ -420,18 +436,6 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                         p,
                         &mut s.rez_under_land_group,
                         RichText::new(aurora_i18n::tr!("rez-under-land-group")).size(10.5),
-                    );
-                    widgets::checkbox(
-                        ui,
-                        p,
-                        &mut s.scale_uniform,
-                        RichText::new(aurora_i18n::tr!("build-compact-both-sides")).size(10.5),
-                    );
-                    widgets::checkbox(
-                        ui,
-                        p,
-                        &mut s.actual_root,
-                        RichText::new(aurora_i18n::tr!("build-compact-root-axis")).size(10.5),
                     );
                 },
             );

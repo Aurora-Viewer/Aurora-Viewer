@@ -220,6 +220,18 @@ pub fn texture_inventory(world: &mut World) {
         ..Default::default()
     }]);
     world.inventory.generation += 1;
+    if let Some((asset_id, _)) = crate::demo::pbr_materials().first() {
+        world.inventory.add_items(vec![InvItem {
+            id: Uuid::from_u128(99873),
+            parent: project,
+            asset_id: *asset_id,
+            asset_type: 57,
+            inv_type: 26,
+            owner_mask: aurora_net::build::perm::COPY,
+            name: aurora_i18n::tr!("build-ui-texture-material").to_owned(),
+            ..Default::default()
+        }]);
+    }
 }
 
 /// Optional direct object selection, used for animated-shape captures.

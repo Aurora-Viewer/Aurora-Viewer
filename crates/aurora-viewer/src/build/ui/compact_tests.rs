@@ -285,7 +285,7 @@ impl Inspector {
 }
 
 #[test]
-fn coordinate_icons_select_one_mode_in_a_vertical_column_in_every_edit_section() {
+fn construction_coordinate_icons_select_one_mode_and_keep_the_right_edge() {
     let mut inspector = Inspector::new();
     let click = |inspector: &mut Inspector, point| {
         inspector.show(vec![egui::Event::PointerMoved(point)]);
@@ -298,44 +298,59 @@ fn coordinate_icons_select_one_mode_in_a_vertical_column_in_every_edit_section()
             }]);
         }
     };
-    for section in [6, 1, 5, 3, 2, 0, 4] {
-        inspector.tool.tab = section;
-        for _ in 0..3 {
-            inspector.show(vec![]);
-        }
-        for mode in [1, 2, 0] {
-            let (rect, texts) = inspector.show(vec![]);
-            let linked = texts
-                .iter()
-                .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
-                .unwrap()
-                .1;
-            let target = inspector
-                .ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("build_grid_mode", mode))))
-                .unwrap();
-            assert!(
-                rect.contains_rect(target),
-                "Coordinate control outside inspector: {rect:?}, {target:?}"
-            );
-            let point = target.center();
-            let face = texts
-                .iter()
-                .find(|(text, _)| text == aurora_i18n::tr!("build-compact-select-face"))
-                .unwrap()
-                .1;
-            assert!(
-                face.top() > linked.bottom(),
-                "Face selection must leave room for the coordinate icons"
-            );
-            assert!(linked.right() < rect.right() - 44.0, "Linked editing overlaps the coordinate icons");
-            click(&mut inspector, point);
-            assert_eq!(inspector.settings.grid_mode, mode, "Coordinate icon in section {section}");
-            if mode == 2 {
-                assert_eq!(inspector.tool.grid_objects, inspector.tool.selection);
+    for width in [344.0, 520.0] {
+        crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(width, 684.0));
+        for section in [6, 1, 5, 3, 2, 0, 4] {
+            inspector.tool.tab = section;
+            for _ in 0..3 {
+                inspector.show(vec![]);
             }
-            click(&mut inspector, point);
-            assert_eq!(inspector.settings.grid_mode, mode, "Clicking the active mode must keep it selected");
+            for mode in [1, 2, 0] {
+                let (rect, texts) = inspector.show(vec![]);
+                let linked = texts
+                    .iter()
+                    .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
+                    .unwrap()
+                    .1;
+                let target = inspector
+                    .ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("build_grid_mode", mode))))
+                    .unwrap();
+                assert!(
+                    rect.contains_rect(target),
+                    "Coordinate control outside inspector: {rect:?}, {target:?}"
+                );
+                let point = target.center();
+                let axes = inspector
+                    .ctx
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("build_grid_axes")))
+                    .unwrap();
+                assert!(
+                    (axes.right() - target.right()).abs() < 0.5,
+                    "axes and coordinate icons must share their right edge"
+                );
+                assert!(
+                    rect.right() - target.right() < 16.0,
+                    "coordinate column must stay against the window's right edge: {rect:?}, {target:?}"
+                );
+                let face = texts
+                    .iter()
+                    .find(|(text, _)| text == aurora_i18n::tr!("build-compact-select-face"))
+                    .unwrap()
+                    .1;
+                assert!(
+                    face.top() > linked.bottom(),
+                    "Face selection must leave room for the coordinate icons"
+                );
+                assert!(linked.right() < rect.right() - 44.0, "Linked editing overlaps the coordinate icons");
+                click(&mut inspector, point);
+                assert_eq!(inspector.settings.grid_mode, mode, "Coordinate icon in section {section}");
+                if mode == 2 {
+                    assert_eq!(inspector.tool.grid_objects, inspector.tool.selection);
+                }
+                click(&mut inspector, point);
+                assert_eq!(inspector.settings.grid_mode, mode, "Clicking the active mode must keep it selected");
+            }
         }
     }
 }
@@ -612,7 +627,7 @@ fn object_contents_inventory_fills_the_panel_and_follows_height_changes_and_filt
     let gap_to_footer = |surface: egui::Rect, texts: &[(String, egui::Rect)]| {
         let footer = texts
             .iter()
-            .find(|(text, _)| text == aurora_i18n::tr!("build-compact-linked"))
+            .find(|(text, _)| text == aurora_i18n::tr!("build-compact-both-sides"))
             .unwrap()
             .1;
         footer.top() - surface.bottom()
@@ -732,12 +747,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             let matches: Vec<_> = texts.iter().filter(|(text, _)| text == label).collect();
             assert_eq!(matches.len(), 1, "Shared option missing or duplicated: {label}");
             assert!(
-                expanded.bottom() - matches[0].1.bottom()
-                    < if label == aurora_i18n::tr!("build-compact-both-sides") {
-                        95.0
-                    } else {
-                        65.0
-                    },
+                expanded.bottom() - matches[0].1.bottom() < 170.0,
                 "Shared option must be in the footer: {label}; window={expanded:?}, control={:?}",
                 matches[0].1
             );
