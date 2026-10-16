@@ -674,7 +674,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 13;
+const SETTINGS_VERSION: u32 = 14;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1387,6 +1387,12 @@ impl Settings {
             // workspace takes their place; the Firestorm lines, a choice, stay
             self.chat_style = ChatStyle::Aurora;
         }
+        if self.settings_version < 14 {
+            // new defaults: unrestricted camera, no camera collisions (every
+            // file wrote the old "off" defaults)
+            self.camera.disable_constraints = true;
+            self.camera.ignore_sim_constraints = true;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -2066,6 +2072,28 @@ mod tests {
             };
             assert_eq!(chosen.sanitized().chat_style, style);
         }
+    }
+
+    /// The unrestricted camera and the camera collisions turned off reach the
+    /// earlier files once (they all wrote the old "off"); turned off again
+    /// afterwards, they stay off.
+    #[test]
+    fn camera_constraints_are_off_by_default_and_once_for_earlier_files() {
+        let c = Settings::default().sanitized().camera;
+        assert!(c.disable_constraints && c.ignore_sim_constraints);
+        let mut old = Settings {
+            settings_version: 13,
+            ..Settings::default()
+        };
+        old.camera.disable_constraints = false;
+        old.camera.ignore_sim_constraints = false;
+        let c = old.sanitized().camera;
+        assert!(c.disable_constraints && c.ignore_sim_constraints);
+        let mut chosen = Settings::default();
+        chosen.camera.disable_constraints = false;
+        chosen.camera.ignore_sim_constraints = false;
+        let c = chosen.sanitized().camera;
+        assert!(!c.disable_constraints && !c.ignore_sim_constraints);
     }
 
     #[test]
