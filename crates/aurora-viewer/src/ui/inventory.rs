@@ -273,6 +273,8 @@ pub struct InventoryUi {
     creators: HashSet<Uuid>,
     fetch_poll: Option<std::time::Instant>,
     fetch_generation: Option<(Uuid, u64, bool, bool, bool)>,
+    /// The clipboard's folders were all loaded at this inventory generation.
+    clipboard_loaded: Option<(u64, Vec<Uuid>)>,
     pub ui_id: Uuid,
     pub demo_menu: Option<Uuid>,
     pub fetch_all: bool,
@@ -1172,7 +1174,14 @@ pub fn show(
     script_settings: &super::scripts::settings::ScriptSettings,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
-    let mut facts = Facts::from_world(world, appearance_busy);
+    // What is worn, the attachment points and the names are read for the
+    // windows and dialogs that show them, not every frame while closed.
+    let shown = *open || st.dialog.is_some() || st.move_to.is_some() || !st.windows.is_empty() || st.demo_menu.is_some();
+    let mut facts = if shown {
+        Facts::from_world(world, appearance_busy)
+    } else {
+        Facts::default()
+    };
     fn property_names(st: &InventoryUi, world: &World, names: &mut std::collections::HashMap<Uuid, String>) {
         if let Some(EditDialog::Properties(id)) = st.dialog
             && let Some(it) = world.inventory.items.get(&id)
@@ -1193,7 +1202,8 @@ pub fn show(
         }
     }
     property_names(st, world, &mut facts.names);
-    if matches!(prefs.search_field, view::SearchField::Creator | view::SearchField::All)
+    if shown
+        && matches!(prefs.search_field, view::SearchField::Creator | view::SearchField::All)
         && (!st.search.trim().is_empty() || st.windows.iter().any(|w| !w.state.search.trim().is_empty()))
     {
         if st.creator_generation != Some(world.inventory.generation) {
@@ -1218,10 +1228,20 @@ pub fn show(
         // when the inventory window is closed, independently of search scopes.
         st.fetch_all = !rules::request_tree(inv, inv.root);
     }
-    for id in st.clipboard.clone() {
-        if inv.folders.contains_key(&id) {
-            rules::request_tree(inv, id);
+    // Copied folders load their whole tree for the paste; once loaded, they
+    // are not walked again every frame until the inventory changes.
+    if st
+        .clipboard_loaded
+        .as_ref()
+        .is_none_or(|(generation, ids)| *generation != inv.generation || *ids != st.clipboard)
+    {
+        let mut loaded = true;
+        for id in &st.clipboard {
+            if inv.folders.contains_key(id) {
+                loaded &= rules::request_tree(inv, *id);
+            }
         }
+        st.clipboard_loaded = loaded.then(|| (inv.generation, st.clipboard.clone()));
     }
     let screen = ctx.content_rect();
     super::widgets::Floater::new(
