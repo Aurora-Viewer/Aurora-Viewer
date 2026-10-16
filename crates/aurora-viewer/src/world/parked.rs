@@ -117,6 +117,9 @@ impl World {
         };
         let objects = self.objects.park_region(handle, &kept);
         self.move_rekeyed();
+        // what is parked cannot be seen: a look-at of an avatar left there
+        // would follow us (on our head when it looked at us)
+        self.forget_gone_look_ats();
         let keys: Vec<ObjKey> = self.gltf_overrides.keys().filter(|k| k.region == handle).copied().collect();
         let overrides = keys
             .into_iter()
