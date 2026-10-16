@@ -949,6 +949,22 @@ fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
 // softens its shadows in screen space (RenderShadowBlurSize).
 const SHADOW_PENUMBRA: f32 = 0.03;
 
+// frame.light_mode.z: the shadow filter of before, with its gaps
+// (AURORA_SHADOW_FILTER=gaps, to compare).
+const SHADOW_FILTER_GAPS: u32 = 0x100u;
+// frame.light_mode.z: the shadow lookup of an object offset along its
+// normal-mapped normal, as before (AURORA_SHADOW_FILTER=mapped; object.wgsl
+// shadow_normal).
+const SHADOW_OFFSET_MAPPED: u32 = 0x200u;
+
+// Taps per axis for a filter spanning `span` (tile coordinates), so that
+// two taps are never more than a texel apart: 4 when they already are not,
+// up to 7 (a span of six texels, the most `cascade_shadow` gives).
+// Mirrored by `shadow_cull::shadow_taps`, which the tests check.
+fn shadow_taps(span: f32, texel: f32) -> u32 {
+    return clamp(u32(ceil(span / texel - 1e-3)) + 1u, 4u, 7u);
+}
+
 // Shadow of one cascade (1 lit, 0 shadowed); -1 when the point is outside
 // its tile, so that a blend never takes light from a cascade that does not
 // see the point.
@@ -967,14 +983,26 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     // of its matrix is the light's right axis divided by it
     let radius = 1.0 / max(length(vec3<f32>(m[0].x, m[1].x, m[2].x)), 1e-6);
     let half_uv = SHADOW_PENUMBRA * 0.5 / radius;
-    // 4x4 taps spread over the penumbra, kept between half a texel and two
-    // texels apart so the bilinear compare taps blend without gaps
+    // The penumbra spans three spacings of 4 taps, a spacing kept between
+    // half a texel and two texels. A bilinear compare tap only blends over
+    // one texel: taps more than a texel apart leave flat steps between their
+    // ramps, which show as parallel lines along every shadow edge (in the
+    // finest cascade, where the penumbra covers four to six texels). There
+    // the same span takes as many taps as it covers texels, at most 7 x 7,
+    // so that the ramps meet: the same penumbra, without the lines.
     let spacing = clamp(half_uv * (2.0 / 3.0), 0.5 * texel, 2.0 * texel);
+    let span = 3.0 * spacing;
+    var taps = shadow_taps(span, texel);
+    if ((frame.light_mode.z & SHADOW_FILTER_GAPS) != 0u) {
+        taps = 4u;
+    }
+    let step = span / f32(taps - 1u);
+    let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
     var sum = 0.0;
-    for (var y = 0; y < 4; y++) {
-        for (var x = 0; x < 4; x++) {
-            let o = (vec2<f32>(f32(x), f32(y)) - 1.5) * spacing;
+    for (var y = 0u; y < taps; y++) {
+        for (var x = 0u; x < taps; x++) {
+            let o = (vec2<f32>(f32(x), f32(y)) - center) * step;
             // clamped to the centers of the tile's edge texels: the same
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
@@ -982,7 +1010,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
             sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - 0.0005);
         }
     }
-    return sum / 16.0;
+    return sum / f32(taps * taps);
 }
 
 // The view shown instead of the image (frame.light_mode.z, Preferences ›
@@ -995,7 +1023,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
 // occluded (and everywhere when the effect is off), whatever the exposure
 // of the sky; cubed, the occlusion being too faint to read as it is.
 fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> vec3<f32> {
-    let view = frame.light_mode.z;
+    let view = frame.light_mode.z & 0xffu;
     if (view == 0u) {
         return col;
     }

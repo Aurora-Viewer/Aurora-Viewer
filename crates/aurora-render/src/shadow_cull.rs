@@ -233,8 +233,17 @@ pub fn cascade_reach(splits: [f32; 3], pixel_splits: bool) -> ([f32; 3], [f32; 3
 const BLEND_BAND: f32 = 0.15;
 
 /// Texels around a lookup that `cascade_shadow` (common.wgsl) may read:
-/// 4x4 taps at most two texels apart, each a bilinear footprint.
+/// taps over three spacings of at most two texels, each a bilinear
+/// footprint.
 const FILTER_TEXELS: f32 = 6.0;
+
+/// Taps per axis of the shadow filter for a span of `span_texels`
+/// (`shadow_taps` in common.wgsl): never more than a texel apart, since a
+/// bilinear compare tap only blends over one texel and wider gaps draw
+/// parallel lines along the shadow edges; 4 when they already are not.
+pub fn shadow_taps(span_texels: f32) -> u32 {
+    ((span_texels - 1e-3).ceil().max(0.0) as u32 + 1).clamp(4, 7)
+}
 
 /// Caster planes of the three cascades. `near[k]`, `far[k]`: the distances
 /// from the camera between which a pixel may read cascade `k`
@@ -670,5 +679,54 @@ mod tests {
         assert!(!casts_into(&caster_planes(&corners, -Vec3::Z, 0.0), Vec3::new(8.0, 9.0, 50.0), 0.2));
         assert_eq!(caster_planes(&corners, Vec3::ZERO, 0.0), CASTER_PLANES_ALL);
         assert_eq!(caster_planes(&[Vec3::ONE; 8], -Vec3::Z, 0.0), CASTER_PLANES_ALL);
+    }
+
+    /// One axis of `cascade_shadow`'s filter across a straight shadow edge:
+    /// texels below `edge` are in shadow, each tap a bilinear compare
+    /// (linear between the two texel centres around it).
+    fn filtered_edge(p: f32, span: f32, taps: u32, edge: i32) -> f32 {
+        let lit = |i: i32| if i < edge { 0.0 } else { 1.0 };
+        let step = span / (taps - 1) as f32;
+        let center = 0.5 * (taps - 1) as f32;
+        (0..taps)
+            .map(|k| {
+                let s = p + (k as f32 - center) * step - 0.5;
+                let i = s.floor();
+                let f = s - i;
+                lit(i as i32) * (1.0 - f) + lit(i as i32 + 1) * f
+            })
+            .sum::<f32>()
+            / taps as f32
+    }
+
+    /// The shadow filter's taps are never more than a texel apart, and its
+    /// result rises steadily across a shadow edge: no flat step, which drew
+    /// parallel lines along the edges when 4 taps covered up to six texels.
+    #[test]
+    fn shadow_filter_has_no_steps_across_an_edge() {
+        for span in [0.5f32, 1.5, 3.0, 3.01, 4.0, 4.5, 5.0, 6.0] {
+            let taps = shadow_taps(span);
+            assert!(span / (taps - 1) as f32 <= 1.0 + 1e-4, "span {span}: {taps} taps");
+            if span <= 3.0 {
+                assert_eq!(taps, 4, "span {span}: the filter of before when it had no gap");
+            }
+            // across the edge, the result must rise at every sub-texel move
+            let mut prev = filtered_edge(-span, span, taps, 0);
+            let mut x = -span + 0.05;
+            while x < span {
+                let v = filtered_edge(x, span, taps, 0);
+                assert!(v > prev - 1e-6, "span {span}: {v} after {prev} at {x}");
+                if x > -0.5 * span + 0.6 && x < 0.5 * span - 0.6 {
+                    assert!(v > prev + 1e-3, "span {span}: flat step at {x} ({v})");
+                }
+                prev = v;
+                x += 0.05;
+            }
+        }
+        // what 4 taps two texels apart did: flat between the ramps
+        let flat = (0..20)
+            .map(|i| filtered_edge(-1.9 + 0.05 * i as f32, 6.0, 4, 0))
+            .collect::<Vec<_>>();
+        assert!(flat.windows(2).any(|w| (w[1] - w[0]).abs() < 1e-6));
     }
 }

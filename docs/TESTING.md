@@ -3710,6 +3710,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
+| `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
@@ -4105,6 +4106,19 @@ What the inventory must show with these scenarios:
     cascades moves, and the shadows close to the camera are sharper there
     (they were reading a farther cascade than the terrain and the small
     neighbouring objects).
+- **`AURORA_SHADOW_FILTER=gaps|mapped|before`**: the sun shadow lookup as it
+  was before its edges were cleaned (`cascade_shadow` in `common.wgsl`,
+  `shadow_normal` in `object.wgsl`). `gaps`: 4 × 4 filter taps up to two
+  texels apart, so flat steps between their ramps drew parallel lines along
+  every shadow edge in the two finer cascades (now as many taps as texels
+  covered, at most 7 × 7: the same penumbra). `mapped`: the lookup of an
+  object moved off its surface along its normal-mapped normal, so the
+  relief of the normal map showed as a row of dots along the shadow edges
+  (now the face's own normal). `before`: both. To look at with
+  `AURORA_DEMO_TOD=2`, `AURORA_DEMO_PBR_OVERRIDE=1` and
+  `AURORA_DEBUG_SHADOWS=1`: the edge of the torus's shadow across the
+  "Normal + specular" panel is a row of dots with `mapped`, and the shadow
+  of our avatar on the plaza has several parallel edges with `gaps`.
 - **`AURORA_DEBUG_SHADOWS=1`**: instead of the image, objects and terrain
   show the cascade each pixel reads — red, green then blue from the finest,
   mixed where two cascades are blended, black beyond the shadow distance —
