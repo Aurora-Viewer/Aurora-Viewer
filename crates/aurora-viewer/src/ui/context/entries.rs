@@ -744,7 +744,7 @@ mod tests {
 
     #[test]
     fn inspect_and_derender_act_on_the_avatar_or_on_the_worn_object() {
-        let find = |entries: Vec<Entry>, key: &str, permanent: bool| {
+        let find = |entries: Vec<Entry>, key: &'static str, permanent: bool| {
             entries
                 .into_iter()
                 .find(|e| {

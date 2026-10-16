@@ -70,16 +70,14 @@ struct Hidden {
     update: Option<ObjectUpdate>,
 }
 
-/// What an object update becomes.
-pub enum Filtered {
-    Pass(ObjectUpdate),
-    /// Dropped; `newly` the first time this key is hidden (what already
-    /// hangs from it in the world must go too).
-    Hidden {
-        key: ObjKey,
-        by: Uuid,
-        newly: bool,
-    },
+/// An object update dropped: the key it hides, the entry that hides it,
+/// and whether this key is hidden for the first time (what already hangs
+/// from it in the world must go too).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dropped {
+    pub key: ObjKey,
+    pub by: Uuid,
+    pub newly: bool,
 }
 
 /// Objects to put back after entries left the list: their last updates, and
@@ -252,10 +250,11 @@ impl Derender {
     }
 
     /// LLViewerObjectList::processObjectUpdate / createObject: the update
-    /// of a derendered object, or of what hangs from one, is dropped.
-    pub fn filter(&mut self, region: RegionHandle, u: ObjectUpdate) -> Filtered {
+    /// of a derendered object, or of what hangs from one, is dropped (and
+    /// kept, to put the object back without waiting for the simulator).
+    pub fn filter(&mut self, region: RegionHandle, u: &ObjectUpdate) -> Option<Dropped> {
         if self.is_empty() {
-            return Filtered::Pass(u);
+            return None;
         }
         let key = ObjKey {
             region,
@@ -274,17 +273,14 @@ impl Derender {
         } else {
             None
         };
-        match by {
-            Some(by) => {
-                let newly = self.hidden.insert(key, Hidden { by, update: Some(u) }).is_none();
-                Filtered::Hidden { key, by, newly }
-            }
-            None => {
-                // it was hidden with a parent it has left (unlinked, detached)
-                self.hidden.remove(&key);
-                Filtered::Pass(u)
-            }
-        }
+        let Some(by) = by else {
+            // it was hidden with a parent it has left (unlinked, detached)
+            self.hidden.remove(&key);
+            return None;
+        };
+        let update = Some(u.clone());
+        let newly = self.hidden.insert(key, Hidden { by, update }).is_none();
+        Some(Dropped { key, by, newly })
     }
 
     /// Objects taken out of the world by `by`, with what they looked like.
@@ -592,17 +588,17 @@ mod tests {
     fn a_derendered_object_and_what_hangs_from_it_are_dropped_until_removed() {
         let mut list = Derender::default();
         // nothing listed: everything passes
-        assert!(matches!(list.filter(1, update(10, 100, 0)), Filtered::Pass(_)));
+        assert!(list.filter(1, &update(10, 100, 0)).is_none());
         let avatar = Uuid::from_u128(100);
         list.add(avatar, entry(Kind::Resident, false));
-        assert!(matches!(list.filter(1, update(10, 100, 0)), Filtered::Hidden { newly: true, .. }));
+        assert!(matches!(list.filter(1, &update(10, 100, 0)), Some(Dropped { newly: true, .. })));
         // its attachment, then a prim linked to the attachment
-        assert!(matches!(list.filter(1, update(11, 101, 10)), Filtered::Hidden { by, .. } if by == avatar));
-        assert!(matches!(list.filter(1, update(12, 102, 11)), Filtered::Hidden { .. }));
+        assert!(matches!(list.filter(1, &update(11, 101, 10)), Some(Dropped { by, .. }) if by == avatar));
+        assert!(list.filter(1, &update(12, 102, 11)).is_some());
         // the same key again is not new
-        assert!(matches!(list.filter(1, update(10, 100, 0)), Filtered::Hidden { newly: false, .. }));
+        assert!(matches!(list.filter(1, &update(10, 100, 0)), Some(Dropped { newly: false, .. })));
         // another region's object with the same local id is not hidden
-        assert!(matches!(list.filter(2, update(11, 201, 0)), Filtered::Pass(_)));
+        assert!(list.filter(2, &update(11, 201, 0)).is_none());
         assert_eq!(list.hidden_count(), 3);
 
         let restore = list.remove(&[avatar]);
@@ -610,7 +606,7 @@ mod tests {
         assert_eq!(restore.requests.get(&1), Some(&vec![10, 11, 12]));
         assert_eq!(list.take_requests(), vec![(1, vec![10, 11, 12])]);
         assert!(list.is_empty());
-        assert!(matches!(list.filter(1, update(10, 100, 0)), Filtered::Pass(_)));
+        assert!(list.filter(1, &update(10, 100, 0)).is_none());
     }
 
     /// The demo's plaza in a world: Violet Wolf (9001) wears a hat (9100)

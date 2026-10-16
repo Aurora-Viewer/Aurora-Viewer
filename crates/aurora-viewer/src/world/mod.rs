@@ -1495,15 +1495,12 @@ impl World {
                 let mut land_changed = false;
                 let land_watches = self.land.watches(handle);
                 for u in objects {
-                    let u = match self.derender.filter(handle, u) {
-                        derender::Filtered::Pass(u) => u,
-                        derender::Filtered::Hidden { key, by, newly } => {
-                            if newly {
-                                self.hide_key(key, by);
-                            }
-                            continue;
+                    if let Some(dropped) = self.derender.filter(handle, &u) {
+                        if dropped.newly {
+                            self.hide_key(dropped.key, dropped.by);
                         }
-                    };
+                        continue;
+                    }
                     land_changed |= land_watches
                         && u.pcode == aurora_prim::params::LL_PCODE_VOLUME
                         && self
