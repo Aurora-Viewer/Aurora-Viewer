@@ -291,7 +291,7 @@ impl TexturePicker {
             } else if self.extra_buttons {
                 // Keep the first frame within its saved height before the
                 // scaled controls' actual footer has been measured.
-                160.0
+                200.0
             } else {
                 90.0
             };
@@ -449,46 +449,35 @@ impl TexturePicker {
 
             ui.add_space(6.0);
             if self.extra_buttons {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.spacing_mut().button_padding.x = 3.0;
-                    let presets = [
-                        (aurora_i18n::tr!("common-default"), self.default),
-                        (
-                            aurora_i18n::tr!("common-blank"),
-                            Some(if self.materials { BLANK_MATERIAL } else { BLANK_TEXTURE }),
-                        ),
-                        (
-                            aurora_i18n::tr!("common-transparent"),
-                            (!self.materials).then_some(TRANSPARENT_TEXTURE),
-                        ),
-                        (aurora_i18n::tr!("common-none-2"), self.allow_none.then_some(Uuid::nil())),
-                    ];
-                    let widths = presets.map(|(label, _)| {
-                        ui.fonts_mut(|fonts| {
-                            fonts
-                                .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), p.ink)
-                                .size()
-                                .x
-                        }) + ui.spacing().button_padding.x * 2.0
-                    });
-                    let available = ui.available_width() - ui.spacing().item_spacing.x * 3.0;
-                    let total: f32 = widths.iter().sum();
-                    let scale = (available / total).clamp(0.0, 1.0);
-                    let extra = ((available - total) / 4.0).max(0.0);
-                    for ((label, asset), width) in presets.into_iter().zip(widths) {
-                        if ui
-                            .add_enabled_ui(asset.is_some(), |ui| {
-                                widgets::flat_button_sized(ui, p, label, Vec2::new(width * scale + extra, 26.0))
-                            })
-                            .inner
-                            .clicked()
-                            && let Some(asset) = asset
-                        {
-                            self.select(asset, None, true);
+                let presets = [
+                    (aurora_i18n::tr!("common-default"), self.default),
+                    (
+                        aurora_i18n::tr!("common-blank"),
+                        Some(if self.materials { BLANK_MATERIAL } else { BLANK_TEXTURE }),
+                    ),
+                    (
+                        aurora_i18n::tr!("common-transparent"),
+                        (!self.materials).then_some(TRANSPARENT_TEXTURE),
+                    ),
+                    (aurora_i18n::tr!("common-none-2"), self.allow_none.then_some(Uuid::nil())),
+                ];
+                for row in presets.chunks(2) {
+                    ui.horizontal(|ui| {
+                        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                        for &(label, asset) in row {
+                            if ui
+                                .add_enabled_ui(asset.is_some(), |ui| {
+                                    widgets::flat_button_sized(ui, p, label, Vec2::new(width, 26.0))
+                                })
+                                .inner
+                                .clicked()
+                                && let Some(asset) = asset
+                            {
+                                self.select(asset, None, true);
+                            }
                         }
-                    }
-                });
+                    });
+                }
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-texture-picker-uuid")).size(11.0).color(p.muted));
