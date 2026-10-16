@@ -77,12 +77,6 @@ pub const VARIANTS: &[Variant] = &[
         target: smooth(false, false, false),
         ..DEFAULT
     },
-    Variant {
-        name: "crisp-nobin",
-        binning: false,
-        target: smooth(false, false, false),
-        ..DEFAULT
-    },
     // hinting made for 1-bit rendering, drawn anti-aliased
     Variant {
         name: "mono",
@@ -310,6 +304,57 @@ mod tests {
         // a scale or a font out of reach is left out, not the variant
         let odd = Switch::parse("default,scale=9,font=Comic").expect("default");
         assert_eq!((odd.variant, odd.scale, odd.font), (Some(0), None, None));
+    }
+
+    /// The font atlas after laying out a line with `defs` and `options`.
+    fn atlas(defs: egui::FontDefinitions, options: egui::epaint::TextOptions) -> Vec<u8> {
+        let mut fonts = egui::epaint::Fonts::new(options, defs);
+        let font = FontId::proportional(11.0);
+        let _ = fonts
+            .with_pixels_per_point(1.0)
+            .layout_no_wrap("Portez ce vieux whisky".into(), font, egui::Color32::WHITE);
+        let image = fonts.image();
+        image.pixels.iter().flat_map(|c| c.to_array()).collect()
+    }
+
+    /// The atlas of a line in `ttf` drawn the way of `variant`.
+    fn drawn(ttf: &'static [u8], variant: &str) -> Vec<u8> {
+        let v = VARIANTS.iter().find(|v| v.name == variant).expect("variant");
+        let mut face = egui::FontData::from_static(ttf);
+        if let Some(target) = v.target {
+            face.tweak.hinting_target = target;
+        }
+        let mut defs = egui::FontDefinitions::empty();
+        defs.font_data.insert("face".into(), std::sync::Arc::new(face));
+        defs.families.insert(egui::FontFamily::Proportional, vec!["face".into()]);
+        let options = egui::epaint::TextOptions {
+            subpixel_binning: v.binning,
+            font_hinting: v.hinting,
+            color_transfer_function: v.transfer,
+            ..Default::default()
+        };
+        atlas(defs, options)
+    }
+
+    /// What each knob changes in the glyphs. Binning, hinting and the
+    /// coverage curve change every font. The hinting target only changes a
+    /// font hinted by ttfautohint (Noto Sans, horizontal grid-fitting of
+    /// `crisp`); Inter and Roboto ship their own TrueType instructions,
+    /// which skrifa runs the same way for every anti-aliased target, and
+    /// `light`, `crisp` and `mono` draw them exactly as `default` (measured
+    /// with epaint 0.36.2 / skrifa 0.44).
+    #[test]
+    fn what_each_variant_changes_in_the_glyphs() {
+        let inter: &'static [u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
+        let noto: &'static [u8] = include_bytes!("../assets/fonts/NotoSans-Regular.ttf");
+        let default = drawn(inter, "default");
+        for variant in ["nobin", "nohint", "gamma-0.75", "linear", "gamma-0.4"] {
+            assert_ne!(drawn(inter, variant), default, "{variant}");
+        }
+        for variant in ["light", "crisp", "mono"] {
+            assert_eq!(drawn(inter, variant), default, "{variant}: Inter's hinting follows the target now");
+        }
+        assert_ne!(drawn(noto, "crisp"), drawn(noto, "default"));
     }
 
     #[test]

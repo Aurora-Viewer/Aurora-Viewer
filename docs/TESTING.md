@@ -2202,9 +2202,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   temporary comparison of the ways epaint rasterizes the interface text
   (`demo_text_render.rs`), to choose one. `default` is egui's dark theme
   as today; `nobin` draws each glyph at a whole pixel (no sub-pixel
-  binning); `light`, `crisp`, `crisp-nobin`, `mono` change the hinting
-  target of every face (FreeType "light", horizontal grid-fitting, 1-bit
-  hinting); `nohint` turns hinting off; `gamma-0.75`, `linear` and
+  binning); `light`, `crisp`, `mono` change the hinting target of every
+  face (FreeType "light", horizontal grid-fitting, 1-bit hinting: only
+  Noto Sans changes, Inter and Roboto keep their own TrueType hinting);
+  `nohint` turns hinting off; `gamma-0.75`, `linear` and
   `gamma-0.4` change the curve from glyph coverage to alpha (lighter or
   heavier strokes); `nobin-gamma-0.75` combines two. `cycle` shows each in
   turn every 4 s. `scale` is the interface zoom of the launch (as
