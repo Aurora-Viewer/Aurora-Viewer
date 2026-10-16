@@ -4959,6 +4959,11 @@ impl App {
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
+        // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
+        // the demo's start has settled (it takes it back at the start)
+        if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
+            self.chat_ui.conv_focus_request = true;
+        }
         if self.demo
             && self.frame_count == 800
             && let Ok(mode) = std::env::var("AURORA_DEMO_EXIT")
@@ -5940,6 +5945,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
+                || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -8933,8 +8939,8 @@ impl App {
                         &favorites,
                     )
                 };
-                // what the bars leave: where the windows are laid out, moved
-                // and snapped this frame (above the dock with the islands)
+                // what the bars leave: where the windows are laid out and
+                // snapped this frame (above the dock with the islands)
                 let mut area = ui::layout::bars_room(ui.available_rect_before_wrap(), bottom_top, classic_bars);
                 // the favourites' row under the islands keeps the windows under it
                 if !classic_bars && let Some(row) = ui::bars::islands::favorites_row_bottom(ui.ctx()) {
@@ -8995,6 +9001,25 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                // the islands leave room between them, above and below: the
+                // windows move over the whole screen; the Legacy Viewer's
+                // bars are full width, the windows stay between them
+                ui::layout::set_move_area(ui.ctx(), if classic_bars { area } else { ui.ctx().content_rect() });
+                let mut edges = ui::layout::Edges {
+                    left: self.settings.windows_stop_left,
+                    right: self.settings.windows_stop_right,
+                    bottom: self.settings.windows_stop_bottom,
+                };
+                // AURORA_DEMO_WINDOW_EDGES=<l|r|b…>: those edges let open for
+                // the run, nothing saved
+                if self.demo
+                    && let Ok(open) = std::env::var("AURORA_DEMO_WINDOW_EDGES")
+                {
+                    edges.left &= !open.contains('l');
+                    edges.right &= !open.contains('r');
+                    edges.bottom &= !open.contains('b');
+                }
+                ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
                 if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
@@ -11615,6 +11640,15 @@ impl ApplicationHandler for App {
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
             }
+            // AURORA_DEMO_EMOJI_CODES=<text>: the conversation window open, its
+            // input holding <text> with the keyboard and the caret at the
+            // end: a `:code` of two letters or more there opens the emoji
+            // suggestions (`ui/emoji/codes.rs`)
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_CODES") {
+                self.panels.chat = true;
+                *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
+                self.chat_ui.conv_focus_request = true;
+            }
             // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
             // its lines selected (Ctrl+A, or across three lines)
             if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_SELECT") {
@@ -11869,12 +11903,15 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
-                    // The color dialog owns Escape before camera shortcuts.
-                    // egui already received the event above.
+                    // The color dialog and an emoji picker own Escape before
+                    // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
                     if pressed
                         && code == KeyCode::Escape
-                        && (self.build.ui.color_picker.is_open() || self.script_editors.color_open() || eyedropper)
+                        && (self.build.ui.color_picker.is_open()
+                            || self.script_editors.color_open()
+                            || eyedropper
+                            || ui::emoji::picker_open(&self.egui_ctx))
                     {
                         return;
                     }

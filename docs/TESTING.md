@@ -1697,6 +1697,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_WINDOWS=<mode>` | Collapse, move and restore of the inventory title bar |
+| `AURORA_DEMO_WINDOW_EDGES=<l\|r\|b…>` | Screen edges the windows may cross for the run |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
 | `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged |
@@ -1743,6 +1744,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
+| `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
@@ -1777,6 +1779,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
   window. A payment only moves the demo balance (no L$, no request sent).
   `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
+  `empty`: no amount typed (the field's "0" hint, in the figures' size).
   `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
@@ -1973,6 +1976,20 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Take screenshots at `620,740,900,1120` to check content, collapse, move and
   restored dimensions. The "−" button stays usable; the other
   title bar buttons and the content do not trigger the title bar double-click.
+  `reach-top`, `reach-bottom`, `reach-right`, `reach-left` and `reach-down`
+  instead drag the inventory by its title bar at frames 700–709 (no
+  collapse) into the widest gap between the top islands, between the bottom
+  ones, or far past the right, left or bottom edge, and release it there:
+  with the islands the windows move over the whole screen, a title left
+  under an island comes out below the top row (above the bottom one), and
+  by default every edge stops the window whole on the screen. Capture at
+  `690,760` with `AURORA_FPS_LIMIT=60`.
+- **`AURORA_DEMO_WINDOW_EDGES=<l|r|b…>`**: the left (`l`), right (`r`) or
+  bottom (`b`) edge lets the windows cross it for the run (Preferences ›
+  Interface, "Windows stop at the screen edges", not saved): past a side
+  `TITLE_GRIP` (96 points) of the title bar stays on screen, past the bottom
+  the whole title bar. With `AURORA_DEMO_WINDOWS=reach-right` (`r`),
+  `reach-left` (`l`) or `reach-down` (`b`).
 - **`AURORA_DEMO_MINIMIZED=1|expand`**: double-clicks the real title bar of
   Conversations at frames 600–605; the window becomes a bar 200 points wide
   at most, outlined in the accent while messages are unread (the demo group
@@ -2174,6 +2191,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   colour), inverted in my own bubbles (light, violet text), nothing outside
   the selected characters; with the classic lines
   (Preferences › Aurora › Conversations) as with the bubbles.
+- **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
+  input holding `<text>` with the keyboard and the caret at the end
+  (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens
+  above the field: the emoji of the codes starting with "hea" (heart first),
+  the first one lit; the arrows move the choice, Tab or Enter take it (Enter
+  is not sent), Escape closes the list until the letters change. Typing the
+  closing `:` of a known code (`:smile:`) turns it into its emoji; a time
+  (`12:30:`), a word before the colon or a link stay as typed.
 - **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
   local chat with its emoji picker shown (first tab, smileys); any value
   other than `1` is put in the input field, as if picked. With
