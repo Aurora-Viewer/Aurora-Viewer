@@ -279,7 +279,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
-| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off |
+| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
@@ -525,12 +525,16 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CAMERA=close,1180,380,35`, `AURORA_FPS_LIMIT=60` and a capture
   at frame 860: crosshairs, names and lines among the crowd, hidden by the
   avatars in front of them.
-  **`AURORA_DEMO_LOOKAT=leave`** (issue #482): the crosshairs shown, the
-  cursor held as with `1`; at frame 230 Violet Wolf looks at us (his mark
-  and name on our head), at frame 800 he logs off (his avatar is killed).
-  With `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=760,900`: his mark
-  on our head, then gone with him. The log gives `demo lookat leave: frame
-  800, remote look-ats 0`.
+  **`AURORA_DEMO_LOOKAT=leave`** (issue #482): `own` with the real cursor
+  (`leave,x,y` holds it like `own,x,y`); at frame 230 Violet Wolf looks at
+  us (his mark and name on our head), at frame 800 he logs off (his avatar
+  is killed). With `leave,0.15,0.3`, `AURORA_FPS_LIMIT=60` and
+  `AURORA_CAPTURE_FRAMES=760,900`: his mark on our head, then gone with
+  him. The log gives `demo lookat leave: frame 800, remote look-ats 0`.
+  Our own mark follows the cursor, and goes back ahead of us when the
+  cursor rests: after 1 s on a point under the cursor, 2 s over the sky or
+  with the Legacy aim (the hover and free-look timeouts of the attention
+  table, as in the Legacy Viewer).
 - **`AURORA_DEMO_KEYBOARD=system|wasd|zqsd|qwertz|fallback`**: fresh default
   values of the movement keys and of the letter shortcuts with the Windows
   layout, a simulated US QWERTY / French AZERTY / German QWERTZ, or a failed

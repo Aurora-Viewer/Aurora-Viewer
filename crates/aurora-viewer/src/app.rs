@@ -7105,8 +7105,8 @@ impl App {
         // =own: the crosshairs shown, ours too, the real cursor; =own,x,y:
         // the cursor at (x, y), fractions of the window, moving by a pixel
         // (the head follows a cursor that moves); =targets: own
-        // with every other avatar looking somewhere new every 2 s; =leave:
-        // the crosshairs shown, Violet Wolf looks at us, then logs off
+        // with every other avatar looking somewhere new every 2 s; =leave
+        // (or leave,x,y): own, Violet Wolf looks at us, then logs off
         if self.demo
             && let Ok(value) = std::env::var("AURORA_DEMO_LOOKAT")
         {
@@ -7121,11 +7121,11 @@ impl App {
             if mode == "leave" {
                 self.demo_look_at_leave();
             }
-            // the cursor is pinned for captures; "own" and "targets" leave
-            // the real one alone
+            // the cursor is pinned for captures; "own", "targets" and
+            // "leave" leave the real one alone (where the human aims)
             let pin = match (mode, pinned.as_slice()) {
-                ("own", [x, y]) => Some((*x, *y, (self.frame_count % 2) as f32)),
-                ("own" | "targets", _) => None,
+                ("own" | "leave", [x, y]) => Some((*x, *y, (self.frame_count % 2) as f32)),
+                ("own" | "targets" | "leave", _) => None,
                 _ => Some((0.15, 0.3, (self.frame_count % 2) as f32)),
             };
             if let (Some((x, y, wiggle)), Some(g)) = (pin, self.gfx.as_ref()) {
