@@ -96,10 +96,6 @@ pub mod tags;
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
 pub mod tex_refresh;
-/// The ways of rasterizing the interface text, compared live
-/// (AURORA_DEMO_TEXT_RENDER).
-#[path = "demo_text_render.rs"]
-pub mod text_render;
 /// Toasts of friends and messages, and the list under the bell
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]

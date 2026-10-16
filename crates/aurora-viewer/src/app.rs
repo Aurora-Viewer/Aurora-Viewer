@@ -472,8 +472,6 @@ pub struct App {
     /// The system's fallback fonts were still being looked for when the
     /// fonts were installed: installed again once they are there.
     system_fonts_pending: bool,
-    /// AURORA_DEMO_TEXT_RENDER: the text rendering comparison.
-    text_render: Option<crate::demo::text_render::TextRender>,
     /// Profile pictures by avatar id (egui textures).
     avatar_pics: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     /// The same textures by picture, for the residents who share one.
@@ -636,9 +634,6 @@ fn apply_test_overrides(settings: &mut Settings) {
     }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
-    }
-    if std::env::var_os("AURORA_DEMO").is_some() {
-        crate::demo::text_render::override_settings(settings);
     }
 }
 
@@ -925,7 +920,6 @@ impl App {
             devices_listed: false,
             emoji: ui::emoji::Emoji::load(),
             system_fonts_pending,
-            text_render: None,
             avatar_pics: Default::default(),
             avatar_pic_images: Default::default(),
             ui_images: Default::default(),
@@ -5960,9 +5954,6 @@ impl App {
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
-        if let Some(text_render) = &mut self.text_render {
-            text_render.before_pass(&self.egui_ctx, &self.settings.font);
-        }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
@@ -6182,9 +6173,6 @@ impl App {
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
             // the glass blurs the world: there is none behind the login screen
-            if let Some(text_render) = &self.text_render {
-                text_render.paint(ui.ctx(), &self.palette);
-            }
             if self.in_world() {
                 ui::menu::glaze(ui.ctx(), &self.palette);
             }
@@ -10529,7 +10517,6 @@ impl ApplicationHandler for App {
         });
         if std::env::var_os("AURORA_DEMO").is_some() {
             self.demo = true;
-            self.text_render = crate::demo::text_render::TextRender::from_env();
             if self.update_demo.is_some() {
                 // The update preview stays offline on a synthetic login screen.
                 return;

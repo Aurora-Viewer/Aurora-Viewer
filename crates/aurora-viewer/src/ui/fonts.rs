@@ -4,7 +4,7 @@
 //! system's fonts (`fallback`).
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub mod fallback;
 
@@ -187,13 +187,7 @@ fn optical_center_offset(font: &[u8]) -> f32 {
 /// `fallback::ready()` (the viewer does it at the start of a frame).
 pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
     let system = fallback::ready();
-    let mut defs = definitions_for(choice, system.unwrap_or_default());
-    if let Some(target) = *HINTING_TARGET.lock().unwrap_or_else(std::sync::PoisonError::into_inner) {
-        for data in defs.font_data.values_mut() {
-            Arc::make_mut(data).tweak.hinting_target = target;
-        }
-    }
-    ctx.set_fonts(defs);
+    ctx.set_fonts(definitions_for(choice, system.unwrap_or_default()));
     system.is_some()
 }
 
@@ -231,16 +225,6 @@ fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontD
         }
     }
     defs
-}
-
-/// How every face grid-fits its outlines (`FontTweak::hinting_target`),
-/// when something other than egui's default is asked for: only the text
-/// rendering comparison of the demo (`demo::text_render`) sets it, then
-/// calls `apply` again.
-static HINTING_TARGET: Mutex<Option<egui::epaint::text::HintingTarget>> = Mutex::new(None);
-
-pub fn set_hinting_target(target: Option<egui::epaint::text::HintingTarget>) {
-    *HINTING_TARGET.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = target;
 }
 
 /// Name of the semi-bold family and of its face.
