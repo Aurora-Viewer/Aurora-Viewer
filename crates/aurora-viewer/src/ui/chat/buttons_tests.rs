@@ -278,8 +278,9 @@ fn has(actions: &[ConvAction], f: impl Fn(&ConvAction) -> bool) -> bool {
     actions.iter().any(f)
 }
 
-/// Column (Aurora, Compact): the search filters and finds a resident; each
-/// section's "+" starts its kind of conversation; the entries show theirs.
+/// Column (Aurora, Compact): the search filters and finds a resident; the
+/// "new conversation" button beside it starts each kind of conversation;
+/// the entries show theirs.
 #[test]
 fn the_column_searches_and_starts_conversations() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -297,23 +298,29 @@ fn the_column_searches_and_starts_conversations() {
         h.st.picker.open = false;
         h.st.side_filter.clear();
         h.settle();
-        h.press(control_id("section-add-Private"));
-        assert!(h.st.picker.open && h.st.start == Start::Im, "{style:?}: + of the IMs");
+        h.press(control_id("new-conversation"));
+        h.press_text(aurora_i18n::tr!("ui-chat-start-private"));
+        assert!(h.st.picker.open && h.st.start == Start::Im, "{style:?}: a private message");
         h.st.picker.open = false;
         h.settle();
-        h.press(control_id("section-add-Conference"));
-        assert!(
-            h.st.picker.open && h.st.start == Start::Conference,
-            "{style:?}: + of the conferences"
-        );
+        h.press(control_id("new-conversation"));
+        h.press_text(aurora_i18n::tr!("ui-chat-start-conference"));
+        assert!(h.st.picker.open && h.st.start == Start::Conference, "{style:?}: a conference");
         h.st.picker.open = false;
         h.settle();
-        h.press(control_id("section-add-Group"));
+        h.press(control_id("new-conversation"));
+        h.press_text(aurora_i18n::tr!("ui-chat-start-group"));
         h.press_text("Builders");
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::StartGroupChat(g) if *g == GROUP)),
-            "{style:?}: + of the groups"
+            "{style:?}: a group's chat"
         );
+        for section in ["Private", "Group", "Conference"] {
+            assert!(
+                h.shown(control_id(&format!("section-add-{section}"))).is_none(),
+                "{style:?}: no + on the {section} section"
+            );
+        }
         h.press(entry_id(Pinned::Conversation(MEETING)));
         assert_eq!(h.st.selected, Some(MEETING), "{style:?}");
         h.press(entry_id(Pinned::Local));

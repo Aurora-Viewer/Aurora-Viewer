@@ -53,9 +53,8 @@ pub(super) fn search_id() -> egui::Id {
 
 /// The search field of the column (the mockup's `.search`): a filled
 /// box with its magnifier, no outline.
-fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String) {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, SEARCH_H), egui::Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field);
     let glass = egui::Rect::from_center_size(egui::pos2(rect.left() + 15.0, rect.center().y), egui::Vec2::splat(13.0));
     super::thread::paint_icon(ui.painter(), "search-filled", glass, p.muted_dim);
@@ -80,6 +79,50 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String) {
             .frame(egui::Frame::NONE)
             .desired_width(field.width()),
     );
+}
+
+/// Height of the search field, and the side of the button beside it.
+const SEARCH_H: f32 = 30.0;
+
+/// The one button that starts a conversation, beside the search field (the
+/// sections lost their "+" with the empty ones, the human's choice of
+/// 2026-10-16): a private message or a conference (the resident picker),
+/// or the chat of one of our groups.
+fn new_conversation(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>) {
+    let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(SEARCH_H), egui::Sense::hover());
+    let resp = ui.interact(rect, control_id("new-conversation"), egui::Sense::click());
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let face = if resp.hovered() || open { p.raised } else { p.field };
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
+    super::thread::paint_icon(
+        ui.painter(),
+        "plus",
+        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)),
+        if resp.hovered() || open { p.ink } else { p.muted },
+    );
+    let resp = resp.on_hover_text(aurora_i18n::tr!("ui-chat-new-conversation"));
+    if std::mem::take(&mut st.demo_new_menu) {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+    }
+    crate::ui::menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+        if crate::ui::menu::item(ui, p, "message-circle-filled", aurora_i18n::tr!("ui-chat-start-private")) {
+            st.start_picker(super::Start::Im);
+        }
+        crate::ui::menu::submenu(ui, p, "users-group", aurora_i18n::tr!("ui-chat-start-group"), true, |ui| {
+            let groups = world.groups.sorted();
+            if groups.is_empty() {
+                crate::ui::menu::info(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-chat-no-groups"));
+            }
+            for g in groups {
+                if crate::ui::menu::item(ui, p, "users-group", &g.name) {
+                    actions.push(ConvAction::StartGroupChat(g.id));
+                }
+            }
+        });
+        if crate::ui::menu::item(ui, p, "users", aurora_i18n::tr!("ui-chat-start-conference")) {
+            st.start_picker(super::Start::Conference);
+        }
+    });
 }
 
 /// What an entry of the column is.
@@ -172,7 +215,13 @@ pub(super) fn show(
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
     if !rail {
-        search_box(ui, p, &mut st.side_filter);
+        let row = egui::vec2(ui.available_width(), SEARCH_H);
+        ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let width = (ui.available_width() - SEARCH_H - 4.0).max(40.0);
+            search_box(ui, p, &mut st.side_filter, width);
+            new_conversation(ui, p, world, st, actions);
+        });
         ui.add_space(4.0);
     }
     let filter = st.side_filter.trim().to_lowercase();
@@ -250,7 +299,7 @@ pub(super) fn show(
                 if titled.is_empty() {
                     continue;
                 }
-                section_head(ui, p, world, st, actions, section, rail);
+                section_head(ui, p, section, rail);
                 for (id, unread, name) in titled {
                     if section == Kind::Private {
                         st.wanted_pics.insert(id);
@@ -438,10 +487,9 @@ fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
     world.session_title(id)
 }
 
-/// The head of a section, with its "+": start an IM (the resident picker),
-/// a group's chat (the list of our groups), a conference (several
-/// residents).
-fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, section: Kind, rail: bool) {
+/// The head of a section (a conversation is started from the button beside
+/// the search field, `new_conversation`).
+fn section_head(ui: &mut egui::Ui, p: &Palette, section: Kind, rail: bool) {
     if rail {
         ui.add_space(6.0);
         let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -453,60 +501,12 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, 
         ui.add_space(4.0);
         return;
     }
-    let (title, tip) = match section {
-        Kind::Private => (aurora_i18n::tr!("ui-chat-section-private"), aurora_i18n::tr!("ui-chat-new-im")),
-        Kind::Group => (
-            aurora_i18n::tr!("ui-chat-section-groups"),
-            aurora_i18n::tr!("ui-chat-new-group-chat"),
-        ),
-        Kind::Conference => (
-            aurora_i18n::tr!("ui-chat-section-conferences"),
-            aurora_i18n::tr!("ui-chat-new-conference"),
-        ),
+    let title = match section {
+        Kind::Private => aurora_i18n::tr!("ui-chat-section-private"),
+        Kind::Group => aurora_i18n::tr!("ui-chat-section-groups"),
+        Kind::Conference => aurora_i18n::tr!("ui-chat-section-conferences"),
     };
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.add_space(6.0);
-        ui.label(section_title(ui, p, title));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(4.0);
-            let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(18.0), egui::Sense::hover());
-            let resp = ui.interact(rect, control_id(&format!("section-add-{section:?}")), egui::Sense::click());
-            super::thread::paint_icon(
-                ui.painter(),
-                "plus",
-                rect.shrink(2.0),
-                if resp.hovered() { p.ink } else { p.muted_dim },
-            );
-            let resp = resp.on_hover_text(tip);
-            match section {
-                Kind::Private => {
-                    if resp.clicked() {
-                        st.start_picker(super::Start::Im);
-                    }
-                }
-                Kind::Conference => {
-                    if resp.clicked() {
-                        st.start_picker(super::Start::Conference);
-                    }
-                }
-                Kind::Group => {
-                    crate::ui::menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                        let groups = world.groups.sorted();
-                        if groups.is_empty() {
-                            crate::ui::menu::info(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-chat-no-groups"));
-                        }
-                        for g in groups {
-                            if crate::ui::menu::item(ui, p, "users-group", &g.name) {
-                                actions.push(ConvAction::StartGroupChat(g.id));
-                            }
-                        }
-                    });
-                }
-            }
-        });
-    });
-    ui.add_space(2.0);
+    plain_head(ui, p, title);
 }
 
 fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {

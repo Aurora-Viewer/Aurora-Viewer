@@ -320,8 +320,9 @@ fn a_conference_lists_its_offline_members() {
 }
 
 /// The column draws only the sections that hold a conversation: with IMs
-/// alone, no "Groups" nor "Conferences" head, nor their "+" (the human's
-/// choice of 2026-10-16).
+/// alone, no "Groups" nor "Conferences" head (the human's choice of
+/// 2026-10-16); conversations start from the one button beside the search
+/// field.
 #[test]
 fn empty_sections_are_not_drawn() {
     let mut h = Harness::new(ChatStyle::Aurora);
@@ -331,10 +332,8 @@ fn empty_sections_are_not_drawn() {
     for key in ["ui-chat-section-groups", "ui-chat-section-conferences"] {
         assert!(texts.iter().all(|t| t.source != head(key)), "{key} drawn while empty");
     }
-    let add = |section: &str| super::super::sidebar::control_id(&format!("section-add-{section}"));
-    assert!(h.frames.ctx.read_response(add("Private")).is_some());
-    assert!(h.frames.ctx.read_response(add("Group")).is_none());
-    assert!(h.frames.ctx.read_response(add("Conference")).is_none());
+    let new = super::super::sidebar::control_id("new-conversation");
+    assert!(h.frames.ctx.read_response(new).is_some(), "the new conversation button");
 }
 
 /// Thirty friends, all online, named "Friend 00" to "Friend 29".

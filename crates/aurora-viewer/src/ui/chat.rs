@@ -74,6 +74,9 @@ pub struct ChatUi {
     /// A demo scenario's style, which the settings do not keep, until the
     /// preferences choose another.
     pub demo_style: Option<crate::settings::ChatStyle>,
+    /// `AURORA_DEMO_CONV=aurora:new`: open the menu of the column's "new
+    /// conversation" button once it is drawn.
+    pub demo_new_menu: bool,
     /// `style` was given once: a change after it is the preferences'.
     style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.

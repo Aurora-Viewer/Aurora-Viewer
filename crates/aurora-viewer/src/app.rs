@@ -10904,6 +10904,7 @@ impl ApplicationHandler for App {
                     self.chat_ui.selected = crate::demo::aurora_conversation(scene);
                     self.chat_ui.members_open = view == crate::demo::Bubbles::Group;
                     self.chat_ui.stage_mini = scene.call == Some(crate::demo::AuroraCall::Mini);
+                    self.chat_ui.demo_new_menu = scene.new_menu;
                     // the window alone, to compare with the mockups
                     self.panels.people = false;
                     self.panels.inventory = false;
