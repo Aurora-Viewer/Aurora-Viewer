@@ -24,6 +24,12 @@ impl Edit {
     }
 }
 
+#[derive(Clone, Copy)]
+struct SpinnerDrag {
+    widget: egui::Id,
+    value: f32,
+}
+
 pub fn label(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
     ui.label(RichText::new(t).size(12.0).color(p.muted))
 }
@@ -80,6 +86,19 @@ pub fn spin_with_min_decimals(
     tentative: bool,
     min_decimals: usize,
 ) -> Edit {
+    // Commit-only fields are read from the object again each frame. Keep the
+    // gesture's value until release, without sending intermediate server edits.
+    let draft_id = ui.next_auto_id().with("build_spinner_drag");
+    let draft = ui
+        .data_mut(|data| {
+            let draft = data.get_temp::<SpinnerDrag>(draft_id);
+            data.remove::<SpinnerDrag>(draft_id);
+            draft
+        })
+        .filter(|draft| ui.is_enabled() && (ui.ctx().is_being_dragged(draft.widget) || ui.ctx().drag_stopped_id() == Some(draft.widget)));
+    if let Some(draft) = draft {
+        *v = draft.value;
+    }
     // Firestorm's spinner modifiers: Alt ×10, Ctrl ×0.1, Shift ×0.01
     let m = ui.input(|i| i.modifiers);
     let speed = increment
@@ -103,6 +122,9 @@ pub fn spin_with_min_decimals(
         dv = dv.custom_formatter(|_, _| "—".into());
     }
     let r = ui.add_sized([width, 26.0], dv);
+    if r.dragged() {
+        ui.data_mut(|data| data.insert_temp(draft_id, SpinnerDrag { widget: r.id, value: *v }));
+    }
     let mut e = Edit::default();
     if r.changed() {
         e.changed = true;
@@ -111,6 +133,7 @@ pub fn spin_with_min_decimals(
         }
     }
     if r.drag_stopped() {
+        e.changed |= draft.is_some();
         e.commit = true;
     }
     e

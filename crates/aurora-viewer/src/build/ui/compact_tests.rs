@@ -424,6 +424,150 @@ fn empty_legacy_texture_channels_can_be_selected_and_their_scale_edited() {
 }
 
 #[test]
+fn material_spinner_drags_commit_all_uv_channels_and_glow_only_on_release() {
+    fn values(inspector: &Inspector, channel: usize) -> [f32; 5] {
+        let object = inspector
+            .world
+            .objects
+            .get(inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap())
+            .unwrap();
+        if inspector.tool.ui.tex_tab == 1 {
+            let over = BuildTool::gltf_override(&inspector.world, inspector.world.objects.index_of(&object.key).unwrap(), 0);
+            let t = over.transforms[channel.saturating_sub(1)];
+            return [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation];
+        }
+        let material = inspector
+            .tool
+            .ui
+            .legacy_pending
+            .get(&(object.full_id, 0))
+            .and_then(|(_, m)| m.clone())
+            .unwrap_or_default();
+        let te = object.te.as_ref().unwrap().face(0);
+        match channel {
+            1 => [
+                material.normal_st[0],
+                material.normal_st[1],
+                material.normal_st[2],
+                material.normal_st[3],
+                material.normal_rot,
+            ],
+            2 => [
+                material.specular_st[0],
+                material.specular_st[1],
+                material.specular_st[2],
+                material.specular_st[3],
+                material.specular_rot,
+            ],
+            _ => [te.scale_s, te.scale_t, te.offset_s, te.offset_t, te.rotation],
+        }
+    }
+    fn drag(inspector: &mut Inspector, point: egui::Pos2) {
+        inspector.tool.out.clear();
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        let mut end = point;
+        for delta in [10.0, 20.0, 30.0] {
+            end = point + egui::vec2(delta, 0.0);
+            inspector.show(vec![egui::Event::PointerMoved(end)]);
+            assert!(inspector.tool.out.is_empty(), "Dragging must not send intermediate edits");
+        }
+        for _ in 0..3 {
+            inspector.show(vec![]);
+            assert!(inspector.tool.out.is_empty());
+        }
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: end,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        assert_eq!(inspector.tool.out.len(), 1, "Release must submit the retained value once");
+        inspector.show(vec![]);
+        assert_eq!(inspector.tool.out.len(), 1, "An idle frame must not submit again");
+    }
+    for pbr in [false, true] {
+        for channel in 0..if pbr { 5 } else { 3 } {
+            let mut inspector = Inspector::new();
+            inspector.tool.tab = 3;
+            inspector.tool.edit_mode = EditMode::Face;
+            inspector.tool.ui.tex_tab = usize::from(pbr);
+            inspector.tool.ui.bp_channel = channel;
+            inspector.tool.ui.pbr_channel = channel;
+            let key = inspector.tool.selection[0];
+            inspector.tool.faces.insert(key, vec![0]);
+            let idx = inspector.world.objects.index_of(&key).unwrap();
+            if pbr {
+                inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, uuid::Uuid::from_u128(9100))];
+            }
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 800.0));
+            for _ in 0..4 {
+                inspector.show(vec![]);
+            }
+            for property in 0..5 {
+                let before = values(&inspector, channel);
+                let (_, texts) = inspector.show(vec![]);
+                let (label, width, row) = match property {
+                    0 | 1 => (aurora_i18n::tr!("common-scale"), 94.0, property),
+                    2 | 3 => (aurora_i18n::tr!("build-ui-texture-offset"), 84.0, property - 2),
+                    _ => (aurora_i18n::tr!("build-ui-texture-rotation"), 58.0, 0),
+                };
+                let title = texts.iter().find(|(text, _)| text == label).unwrap().1;
+                let mut fields: Vec<_> = texts
+                    .iter()
+                    .filter(|(text, rect)| {
+                        aurora_i18n::parse_number(text).is_some()
+                            && rect.top() > title.bottom()
+                            && rect.top() < title.bottom() + 70.0
+                            && rect.left() >= title.left()
+                            && rect.right() < title.left() + width
+                    })
+                    .collect();
+                fields.sort_by(|a, b| a.1.top().total_cmp(&b.1.top()));
+                let point = fields
+                    .get(row)
+                    .unwrap_or_else(|| panic!("Missing UV field {property}, PBR={pbr}, channel={channel}"))
+                    .1
+                    .center();
+                drag(&mut inspector, point);
+                let after = values(&inspector, channel);
+                assert!(
+                    after[property] > before[property],
+                    "UV drag lost its value: PBR={pbr}, channel={channel}, field={property}: {before:?} -> {after:?}"
+                );
+                for other in (0..5).filter(|other| *other != property) {
+                    assert!((after[other] - before[other]).abs() < 1e-5, "Dragging one UV field changed another");
+                }
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let glow = texts
+                .iter()
+                .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-glow"))
+                .unwrap()
+                .1;
+            let point = texts
+                .iter()
+                .find(|(text, rect)| {
+                    aurora_i18n::parse_number(text).is_some()
+                        && rect.left() > glow.right()
+                        && (rect.center().y - glow.center().y).abs() < 10.0
+                })
+                .unwrap()
+                .1
+                .center();
+            drag(&mut inspector, point);
+            assert!(inspector.world.objects.get(idx).unwrap().te.as_ref().unwrap().face(0).glow > 0.0);
+        }
+    }
+}
+
+#[test]
 fn narrow_grab_panel_keeps_its_height_across_frames_and_wrapped_status_messages() {
     let mut inspector = Inspector::new();
     let mut original = inspector.show(vec![]).0;

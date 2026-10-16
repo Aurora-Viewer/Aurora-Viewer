@@ -688,6 +688,10 @@ Move / Modify flags to numeric controls and manipulators before any local echo,
 with whole-selection validation and checks during dragging and release.
 Blinn-Phong UV controls remain available for empty normal/specular channels;
 non-default map transforms remain in RenderMaterials even before assigning maps.
+Floating-point spinners in `build/ui/common.rs` retain the active drag value
+until release, so panels that submit only committed edits do not reset it each
+frame. Drafts are used only while their original widget is dragging or releasing;
+numeric transform previews still report their final commit on release.
 `build/ui/contents_selection.rs` owns the task list's Ctrl/Shift selection,
 focus and Delete/F2 dispatch before global object shortcuts. Rename requests
 focus once and commits on Enter, blur or leaving the panel, rechecking access

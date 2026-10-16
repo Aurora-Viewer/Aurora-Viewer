@@ -275,7 +275,15 @@ fn grid_mode_button(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
     ];
     let (_, icon, label) = choices.iter().find(|(mode, _, _)| *mode == s.grid_mode).unwrap_or(&choices[0]);
     let title = aurora_i18n::tr!("build-compact-grid-mode", mode = *label);
-    let response = icon_button(ui, p, icon, &title, true);
+    let response = crate::ui::widgets::action_button(ui, p, "", "", crate::ui::widgets::ActionKind::Flat, Vec2::new(32.0, 28.0));
+    glyph(
+        ui,
+        egui::Rect::from_center_size(response.rect.center(), Vec2::splat(22.0)),
+        icon,
+        p.ink,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
+    let response = response.on_hover_text(title);
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
         for (mode, icon, label) in choices {
             if menu::check(ui, p, icon, label, s.grid_mode == mode, true) {
@@ -480,7 +488,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             .into_galley(ui, Some(egui::TextWrapMode::Wrap), (width - 24.0).max(1.0), egui::TextStyle::Body)
         });
         let footer_height = if editing {
-            115.0 + if tool.status.is_empty() { 0.0 } else { 20.0 }
+            119.0 + if tool.status.is_empty() { 0.0 } else { 20.0 }
         } else {
             // Measure the same galley that is displayed below. A fixed 40 px
             // estimate made Grab's wrapped hint overflow by 4 px, growing the
