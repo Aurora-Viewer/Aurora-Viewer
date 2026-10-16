@@ -1761,6 +1761,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
+| `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set" and "Block particles" |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>` | "Places" on a tab |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -2854,6 +2855,26 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
+- **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles`**:
+  a resident's "Invite to group", "Add to contact set" and "Block
+  particles", on the wolf (unblocked for the scenario, owner of the
+  plaza's fountain, and our abilities in "Aurora Builders" an officer's).
+  Capture with `AURORA_FPS_LIMIT=60` (and `AURORA_DEMO_PIE=0` for the list
+  menu). `menu`: the wolf's world menu at frame 600, from its name plate
+  (capture 680); add `AURORA_DEMO_POINTER="886,344,s"` (default window)
+  and capture 720 to see the submenu: each contact set, then "New contact
+  set…". `picker`: "Invite to group" at frame 600, the groups where we may
+  invite (only "Aurora Builders", in bold as the active group, OK greyed
+  until one is chosen; capture 680). `invite`: the picker answered at frame
+  640: "Invite to Aurora Builders" with the wolf in the list and the roles
+  (capture 780), without the group's profile. `new-set`: "New contact
+  set…" at frame 600, its name asked (capture 680); `new-set-done`: named
+  "Pack" at frame 640, People › Contact sets on it with the wolf (capture
+  780). The scenario keeps the contact sets in memory: the demo account's
+  file is left as it was. `particles`: capture 690 shows the fountain's
+  particles; "Block particles" at frame 700 makes them go at once, and the
+  menu opened at frame 720 shows the entry checked (capture 780); the log
+  says `demo social menu: particles of … blocked: true`.
 - **`AURORA_DEMO_PLACE=1|lagoon|nordheim|grove|flaw|unknown|landmark|history`**:
   "Places" on a place profile, as after a click on a place link.
   `1`: the home of Violet Wolf on Aurora Demo (the parcel of "About
