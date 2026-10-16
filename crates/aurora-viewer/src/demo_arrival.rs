@@ -163,8 +163,14 @@ impl ArrivalDemo {
         let objects = n as usize;
         let spawned = std::thread::Builder::new().name("demo-arrival-files".into()).spawn(move || {
             let textures = list_files(&folder.join("tex"), "j2c", 4096..8 << 20, objects, |_| true);
-            let meshes = list_files(&folder.join("mesh"), "mesh", 4096..512 << 10, MESHES, |p| static_mesh(p));
-            let anims = list_files(&folder.join("anim"), "anim", 512..256 << 10, (AVATARS * ANIMS_EACH) as usize, |_| true);
+            let meshes = list_files(&folder.join("mesh"), "mesh", 4096..512 << 10, MESHES, static_mesh);
+            let anims = list_files(
+                &folder.join("anim"),
+                "anim",
+                512..256 << 10,
+                (AVATARS * ANIMS_EACH) as usize,
+                |_| true,
+            );
             log::info!(
                 "demo arrival: {} textures, {} static meshes, {} animations to serve",
                 textures.len(),
@@ -239,10 +245,7 @@ impl ArrivalDemo {
                 let d = 3.0 + 117.0 * u.powf(1.6);
                 let a = i as f32 * 2.399_963;
                 let size = 0.6 + d * 0.05 + (i % 4) as f32 * 0.4;
-                let (x, y) = (
-                    (start.x + a.cos() * d).clamp(2.0, 254.0),
-                    (start.y + a.sin() * d).clamp(2.0, 254.0),
-                );
+                let (x, y) = ((start.x + a.cos() * d).clamp(2.0, 254.0), (start.y + a.sin() * d).clamp(2.0, 254.0));
                 Placed {
                     pos: Vec3::new(x, y, height(x, y) + size * 0.5),
                     size,

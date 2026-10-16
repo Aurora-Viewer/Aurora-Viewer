@@ -1392,6 +1392,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
+| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1537,6 +1538,30 @@ To check with these scenarios:
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
+- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,n=<objects>][,turn=<s>]`**:
+  an arrival in a busy region, to measure what the loading shows first.
+  `n` objects (1,200 by default) arrive all around our avatar, the nearest
+  first and 600 a second, from 3 to 120 m away and larger with the
+  distance; one in three is a mesh and each has its own texture. Sixteen
+  avatars stand nearby, each playing two animations. Every asset is
+  downloaded from the local asset server (`demo_asset_server.rs`, bound to
+  this machine only), which answers each request after `net` milliseconds
+  (200 by default; about 70 for the asset hosts on a good link): the files
+  are those of the `tex` (`.j2c`), `mesh` (`.mesh`, static ones only) and
+  `anim` (`.anim`) subfolders of `<folder>`, only read, under ids proper
+  to the run so that no disk cache holds them (the run's files are left
+  in `cache\demo`, named `dea221a0-…`). `turn` seconds after the first
+  objects (3 by default) the avatar turns round: what was behind is now in
+  front, and the loading must follow.
+  - The log tells when half, nine tenths and all of what is in front after
+    the turn showed, weighted by its size on screen (`demo arrival: front
+    50% shown after … s`; a texture counts once it shows its first pixels,
+    a mesh once its header is read), the same for everything around
+    (`demo arrival: all …`), when the animations arrived (`demo arrival:
+    animations …`), then the requests and megabytes served (`demo arrival:
+    done`). The `texture load:` line gives the decodes and their CPU.
+  - A run lasts about 20 s at 200 ms; to compare two builds, alternate
+    their runs (see [Profiling](#profiling)).
 
 ## Interface
 

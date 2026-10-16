@@ -9,10 +9,10 @@
 //! cached on disk and decoded off the main thread.
 
 use super::Scene;
+use super::fetch_priority::urgent;
 use super::jobs::{JobResult, Jobs};
 use crate::world::World;
 use aurora_audio::{AudioEngine, Channel, SoundClip};
-use super::fetch_priority::urgent;
 use aurora_net::fetch::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_net::objects::AttachedSound;
 use glam::Vec3;

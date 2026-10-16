@@ -9,10 +9,10 @@
 //! parsed settings: the day cycle editor starts a new day from the default
 //! day's (setEditDefaultDayCycle).
 
+use super::fetch_priority::urgent;
 use super::jobs::{JobResult, Jobs};
 use crate::world::eep::Settings;
 use aurora_llsd::Llsd;
-use super::fetch_priority::urgent;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use std::collections::HashMap;
 use std::path::PathBuf;

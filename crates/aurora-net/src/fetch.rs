@@ -40,11 +40,14 @@ impl ByteRange {
     }
 }
 
-/// Which slots a request may take. Firestorm gives each kind of asset its
-/// own connections (`LLAppCoreHttp::init_data`, llappcorehttp.cpp: 12 for
-/// the assets, 8 for the textures, 8 for the meshes), so an animation never
-/// waits behind a region's meshes. Here they share one pool, ordered by
-/// lane then priority, and a few slots are kept for the urgent lane.
+/// Where a request waits. Firestorm gives each kind of asset its own
+/// connections (`LLAppCoreHttp::init_data`, llappcorehttp.cpp: 12 for the
+/// assets, 8 for the textures, 8 for the meshes), so an animation never
+/// waits behind a region's meshes. Here they share one pool and the urgent
+/// lane goes first: it waits for the next slot to free up, a few
+/// milliseconds with 24 requests under way. Slots kept for it were tried
+/// and left out: idle once its few requests were served, they slowed a
+/// whole arrival by a sixth (the 4 of 24 the bulk could not take).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Lane {
     /// Meshes and textures, ordered together by their size on screen.
@@ -65,12 +68,6 @@ pub struct FetchRequest {
     pub priority: f32,
     pub lane: Lane,
     pub accept: &'static str,
-}
-
-/// Slots only the urgent lane may take, out of `max_concurrent` (none on a
-/// small pool: the bulk lane would have none left).
-pub fn urgent_slots(max_concurrent: usize) -> usize {
-    (max_concurrent / 6).min(4)
 }
 
 #[derive(Debug)]
@@ -338,7 +335,8 @@ impl FetchQueue {
         // (the stale nodes left by new priorities, swept now and then)
         if self.heap.len() > 2 * self.waiting.len() + 64 {
             let waiting = &self.waiting;
-            self.heap.retain(|n| waiting.get(&n.key).is_some_and(|(_, g)| *g == n.generation) || n.generation == self.generation);
+            self.heap
+                .retain(|n| waiting.get(&n.key).is_some_and(|(_, g)| *g == n.generation) || n.generation == self.generation);
         }
         self.generation
     }
@@ -455,10 +453,7 @@ async fn dispatcher(
     stats: Arc<NetStats>,
     policy: RetryPolicy,
 ) {
-    // the bulk lane takes its own slots; the urgent lane those or its own
-    let urgent = urgent_slots(max_concurrent);
-    let bulk_sem = Arc::new(Semaphore::new(max_concurrent.saturating_sub(urgent).max(1)));
-    let urgent_sem = Arc::new(Semaphore::new(urgent));
+    let sem = Arc::new(Semaphore::new(max_concurrent));
     let mut queue = FetchQueue::default();
     loop {
         // Drain incoming messages without blocking when we have work.
@@ -479,22 +474,16 @@ async fn dispatcher(
             queue.apply(msg);
         }
         stats.http_queued.store(queue.len() as u32, Ordering::Relaxed);
-        let Some(lane) = queue.next_lane() else {
+        if queue.next_lane().is_none() {
             continue;
-        };
+        }
 
-        // Wait for a slot the most urgent request may take, but keep
-        // accepting messages meanwhile: one may bring a more urgent request.
-        // (an urgent request takes its reserved slots first, leaving the
-        // others to the bulk)
-        let (permit, sem) = tokio::select! {
+        // Wait for a free slot, but keep accepting messages meanwhile: one
+        // may bring a more urgent request, or rank the waiting ones anew.
+        let permit = tokio::select! {
             biased;
-            p = urgent_sem.clone().acquire_owned(), if lane == Lane::Urgent => match p {
-                Ok(p) => (p, urgent_sem.clone()),
-                Err(_) => return,
-            },
-            p = bulk_sem.clone().acquire_owned() => match p {
-                Ok(p) => (p, bulk_sem.clone()),
+            p = sem.clone().acquire_owned() => match p {
+                Ok(p) => p,
                 Err(_) => return,
             },
             m = rx.recv() => {
@@ -512,6 +501,7 @@ async fn dispatcher(
         let http = http.clone();
         let res_tx = res_tx.clone();
         let stats = stats.clone();
+        let sem = sem.clone();
         tokio::spawn(async move {
             stats.http_in_flight.fetch_add(1, Ordering::Relaxed);
             let result = do_fetch(&http, &req, policy, &sem, permit, &stats).await;
@@ -707,6 +697,64 @@ mod tests {
         assert_eq!(ByteRange { start: 4095, end: None }.header(), "bytes=4095-");
         assert_eq!(ByteRange { start: 10, end: Some(19) }.requested_len(), Some(10));
         assert_eq!(ByteRange { start: 10, end: None }.requested_len(), None);
+    }
+
+    fn request(key: u64, priority: f32, lane: Lane) -> FetchRequest {
+        FetchRequest {
+            key,
+            url: String::new(),
+            range: None,
+            priority,
+            lane,
+            accept: "*/*",
+        }
+    }
+
+    fn drain(q: &mut FetchQueue) -> Vec<u64> {
+        std::iter::from_fn(|| q.pop().map(|r| r.key)).collect()
+    }
+
+    #[test]
+    fn the_urgent_lane_goes_first_then_the_highest_rank_then_the_oldest() {
+        let mut q = FetchQueue::default();
+        q.push(request(1, 5000.0, Lane::Bulk));
+        q.push(request(2, 1.0, Lane::Urgent));
+        q.push(request(3, 9000.0, Lane::Bulk));
+        q.push(request(4, 5000.0, Lane::Bulk));
+        q.push(request(5, 3.0, Lane::Urgent));
+        assert_eq!(q.next_lane(), Some(Lane::Urgent));
+        assert_eq!(drain(&mut q), [5, 2, 3, 1, 4]);
+        assert_eq!(q.next_lane(), None);
+    }
+
+    #[test]
+    fn a_waiting_request_is_ranked_again_or_dropped() {
+        let mut q = FetchQueue::default();
+        for key in 1..=4 {
+            q.push(request(key, key as f32, Lane::Bulk));
+        }
+        assert!(q.reprioritise(1, 100.0));
+        assert!(q.cancel(3));
+        assert!(!q.cancel(3));
+        // the same key again replaces the waiting request
+        q.push(request(2, 50.0, Lane::Bulk));
+        assert_eq!(q.len(), 3);
+        assert_eq!(q.pop().map(|r| (r.key, r.priority)), Some((1, 100.0)));
+        // once sent, nothing more happens to it
+        assert!(!q.reprioritise(1, 1.0));
+        assert_eq!(drain(&mut q), [2, 4]);
+    }
+
+    #[test]
+    fn places_left_by_new_ranks_are_swept() {
+        let mut q = FetchQueue::default();
+        q.push(request(1, 1.0, Lane::Bulk));
+        q.push(request(2, 2.0, Lane::Bulk));
+        for i in 0..1000 {
+            q.reprioritise(1, i as f32);
+        }
+        assert!(q.heap.len() <= 2 * q.len() + 65, "{}", q.heap.len());
+        assert_eq!(drain(&mut q), [1, 2]);
     }
 
     #[test]

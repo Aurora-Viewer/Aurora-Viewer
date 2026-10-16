@@ -2,10 +2,10 @@
 //! bones), animation asset streaming and per-avatar pose evaluation into
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
+use super::fetch_priority::urgent;
 use super::jobs::Jobs;
 use crate::world::PlayingAnimation;
 use aurora_assets::{Animation, Skeleton};
-use super::fetch_priority::urgent;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use std::collections::HashMap;

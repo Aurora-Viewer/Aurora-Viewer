@@ -1,10 +1,10 @@
 //! Mesh and GLTF material asset streaming (whole-asset fetch + disk cache).
 
 use super::GeomKey;
+use super::fetch_priority::{self, urgent};
 use super::jobs::{JobResult, Jobs, mesh_to_faces};
 use aurora_assets::material::PbrOverride;
 use aurora_assets::{MeshHeader, PbrMaterial, SkinInfo};
-use super::fetch_priority::{self, urgent};
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::StagingPool;
 use std::collections::{HashMap, HashSet};
@@ -937,6 +937,8 @@ mod tests {
             todo: Vec::new(),
             by_key: HashMap::new(),
             next_key: 1,
+            moved: Vec::new(),
+            dropped: Vec::new(),
             cache_dir: PathBuf::new(),
             fetching: 0,
             logged_failures: 0,
@@ -965,6 +967,39 @@ mod tests {
     }
 
     const CAP: Option<&str> = Some("https://assets.example/cap");
+
+    #[test]
+    fn a_mesh_download_follows_its_nearest_user_and_goes_with_the_last() {
+        let mut s = mesh_streamer();
+        let id = Uuid::from_u128(5);
+        let key = mesh_fetching(&mut s, id);
+        s.need(id, 40.0, false);
+        if let Some(e) = s.entries.get_mut(&id) {
+            e.fetch_key = key;
+            e.sent = fetch_priority::mesh(40.0);
+        }
+        // a user a little nearer: not worth telling the fetcher
+        s.need(id, 50.0, false);
+        assert!(s.moved.is_empty());
+        // one much nearer: ranked again; a farther one changes nothing
+        s.need(id, 400.0, false);
+        s.need(id, 10.0, false);
+        assert_eq!(s.moved, [(key, fetch_priority::mesh(400.0))]);
+        // worn by us: asked again in the urgent lane
+        s.need(id, 10.0, true);
+        assert_eq!(s.entries[&id].lane(), (Lane::Urgent, urgent::OWN));
+        assert!(s.moved[1].1.is_nan());
+        // no object wants it any more: the waiting download goes
+        s.unwant(&id);
+        assert_eq!(s.dropped, [key]);
+        assert_eq!(s.entries[&id].state, 6);
+        assert!(!s.by_key.contains_key(&key));
+        assert!(!s.entries[&id].has_work());
+        // wanted again: downloaded again, at its new rank
+        s.want(id, 1);
+        assert_eq!(s.entries[&id].state, 5);
+        assert_eq!(s.entries[&id].lane(), (Lane::Bulk, fetch_priority::mesh(0.0)));
+    }
 
     #[test]
     fn update_only_visits_the_meshes_that_have_work() {

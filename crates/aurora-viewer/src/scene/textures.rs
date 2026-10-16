@@ -15,13 +15,13 @@
 //! the main thread no longer needs (decoded levels, the J2C data of
 //! evicted textures) is freed by the trash thread (`Jobs::discard`).
 
+use super::fetch_priority;
 use super::jobs::{AlphaKind, JobResult, Jobs, SculptMap, Trash, classify_alpha, to_rgba};
 use super::texture_budget::{self, Pressure};
 use super::texture_cache::{self, Transcoded};
 use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
-use super::fetch_priority;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
@@ -751,6 +751,12 @@ fn wanted(full: f32, levels: Option<u8>, e: &Entry, (in_view, away): (f32, f32))
     )
 }
 
+/// A bake of our own avatar: its URL holds `/texture/<our agent>/` (the
+/// appearance service's `texture/<avatar>/<bake>/<texture>`, `bake_source`).
+fn own_bake(own_bakes: &str, source: &TexSource) -> bool {
+    matches!(source, TexSource::Bake { url } if !own_bakes.is_empty() && url.contains(own_bakes))
+}
+
 /// Size of a texture at full resolution: that of its file, else from what
 /// it holds on the GPU (demo textures have no file), else unknown.
 fn full_size(e: &Entry) -> Option<(u32, u32)> {
@@ -1311,7 +1317,7 @@ impl TextureStreamer {
             refresh: false,
             epoch: 0,
         });
-        e.urgent = matches!(&e.source, TexSource::Bake { url } if !self.own_bakes.is_empty() && url.contains(&self.own_bakes));
+        e.urgent = own_bake(&self.own_bakes, &e.source);
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         slot
     }
@@ -1321,7 +1327,11 @@ impl TextureStreamer {
     pub fn set_agent(&mut self, agent: &Uuid) {
         if *agent != self.own_agent {
             self.own_agent = *agent;
-            self.own_bakes = if agent.is_nil() { String::new() } else { format!("/texture/{agent}/") };
+            self.own_bakes = if agent.is_nil() {
+                String::new()
+            } else {
+                format!("/texture/{agent}/")
+            };
         }
     }
 
@@ -1934,7 +1944,7 @@ impl TextureStreamer {
         // view could take the slot of the one in front of the camera.
         let free = max_decodes.saturating_sub(*decodes);
         if to_decode.len() > free {
-            to_decode.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            to_decode.sort_unstable_by_key(|d| std::cmp::Reverse(d.0));
             to_decode.truncate(free);
         }
         for (_, id, discard) in to_decode {
@@ -2896,6 +2906,8 @@ mod tests {
             alpha: AlphaKind::Opaque,
             unused_since: None,
             fetch_key: 0,
+            sent: 0.0,
+            urgent: false,
             dirty_cache: false,
             last_error: None,
             error_logged: false,
@@ -3109,6 +3121,48 @@ mod tests {
         assert_eq!(s.pressure.step(), step);
         s.entries.extend(entries.into_iter().map(|(id, e)| (Uuid::from_u128(id), e)));
         s
+    }
+
+    #[test]
+    fn a_waiting_download_follows_the_view_and_goes_with_its_last_user() {
+        let waiting = |key: u64, refs: u32, sent_px: f32| {
+            let mut e = entry(None, 300.0);
+            e.refs = refs;
+            e.fetching = true;
+            e.fetch_key = key;
+            e.sent = fetch_priority::texture(sent_px, false);
+            e
+        };
+        // asked for while far, now large on screen; nothing uses the second
+        // any more; the third has not moved
+        let mut s = pressed(
+            0,
+            vec![(1, waiting(11, 1, 10.0)), (2, waiting(12, 0, 300.0)), (3, waiting(13, 1, 300.0))],
+        );
+        for (key, n) in [(11, 1), (12, 2), (13, 3)] {
+            s.by_fetch_key.insert(key, Uuid::from_u128(n));
+        }
+        s.recompute_wants();
+        assert_eq!(s.moved, [(11, fetch_priority::texture(300.0, false))]);
+        assert_eq!(s.dropped, [12]);
+        assert!(!s.entries[&Uuid::from_u128(2)].fetching);
+        assert!(!s.by_fetch_key.contains_key(&12));
+        assert!(s.by_fetch_key.contains_key(&13));
+    }
+
+    #[test]
+    fn our_own_bakes_are_urgent() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let me = Uuid::from_u128(0xA1);
+        s.set_agent(&me);
+        let bake = |avatar: Uuid| TexSource::Bake {
+            url: format!("https://appearance.example/texture/{avatar}/head/{}", Uuid::from_u128(7)),
+        };
+        assert!(own_bake(&s.own_bakes, &bake(me)));
+        assert!(!own_bake(&s.own_bakes, &bake(Uuid::from_u128(0xB2))));
+        assert!(!own_bake(&s.own_bakes, &TexSource::Asset));
+        // before login, nothing is ours
+        assert!(!own_bake("", &bake(me)));
     }
 
     #[test]
