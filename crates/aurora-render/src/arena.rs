@@ -120,6 +120,29 @@ impl MeshAlloc {
     }
 }
 
+/// Capacity of a full buffer that must take `need` more elements: twice
+/// its size, or more until `need` fits, within `max`. None when even `max`
+/// leaves no room for it.
+fn grown_capacity(old: u32, need: u32, max: u32) -> Option<u32> {
+    let mut cap = old.saturating_mul(2).max(1);
+    while cap - old < need && cap < u32::MAX {
+        cap = cap.saturating_mul(2);
+    }
+    if cap > max {
+        cap = max;
+    }
+    (cap > old && cap - old >= need).then_some(cap)
+}
+
+/// Capacity for a growth ahead of need to `wanted` elements: None when the
+/// buffer is already that large, else `wanted` rounded up to whole
+/// megabytes of elements (a few sizes, not one per wish), within `max`.
+fn ahead_capacity(old: u32, wanted: u32, max: u32) -> Option<u32> {
+    const STEP: u32 = 1 << 20;
+    let cap = wanted.div_ceil(STEP).saturating_mul(STEP).min(max);
+    (cap > old).then_some(cap)
+}
+
 /// A full buffer is replaced by one twice its size, its content copied on
 /// the GPU. What holds the frame then is not the copy (32 MB: 0.2 ms) but
 /// the first use of the new buffer: fresh video memory costs about 21 µs
@@ -128,7 +151,10 @@ impl MeshAlloc {
 /// the doubling: growing by less, or ahead of need a slice of the copy per
 /// frame (tried: same stalls, more of them), allocates more buffers and
 /// pays more. Only smaller buffers would make these stalls small, and a
-/// draw reads one vertex buffer.
+/// draw reads one vertex buffer. What can be done is to pay it while
+/// nothing is shown: behind a loading or teleport screen the arena grows
+/// at once to what the region needed at the last visit, or ahead of need
+/// (`grow_ahead`, driven by the viewer's scene/geometry_need.rs).
 pub struct GeometryArena {
     pub vertex_buffer: wgpu::Buffer,
     /// Parallel stream of `SkinVertex` (same element offsets as vertices).
@@ -187,19 +213,35 @@ impl GeometryArena {
         }
     }
 
+    /// The capacities (vertices, indices) the arena holds.
+    pub fn capacity(&self) -> (u32, u32) {
+        (self.vertices.capacity(), self.indices.capacity())
+    }
+
+    fn max_vertices(&self) -> u32 {
+        (self.max_buffer_size / VERTEX_SIZE).min(u32::MAX as u64) as u32
+    }
+
+    fn max_indices(&self) -> u32 {
+        (self.max_buffer_size / 2).min(u32::MAX as u64) as u32 & !1
+    }
+
     fn grow_vertices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.vertices.capacity();
-        let mut new_cap = old.saturating_mul(2);
-        while new_cap - old < need {
-            new_cap = new_cap.saturating_mul(2);
-        }
-        if new_cap as u64 * VERTEX_SIZE > self.max_buffer_size {
-            new_cap = (self.max_buffer_size / VERTEX_SIZE) as u32;
-            if new_cap <= old || new_cap - old < need {
+        match grown_capacity(old, need, self.max_vertices()) {
+            Some(cap) => {
+                self.grow_vertices_to(device, writes, uploads, cap);
+                true
+            }
+            None => {
                 self.refused("vertex", old as u64 * VERTEX_SIZE);
-                return false;
+                false
             }
         }
+    }
+
+    fn grow_vertices_to(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, new_cap: u32) {
+        let old = self.vertices.capacity();
         let nb = Self::make(device, "vertex arena", new_cap as u64 * VERTEX_SIZE, wgpu::BufferUsages::VERTEX);
         let ns = Self::make(device, "skin arena", new_cap as u64 * SKIN_SIZE, wgpu::BufferUsages::VERTEX);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow vb") });
@@ -212,22 +254,24 @@ impl GeometryArena {
         self.skin_buffer = ns;
         self.vertices.grow(new_cap);
         log::info!("vertex arena grown to {} MB", new_cap as u64 * VERTEX_SIZE / (1024 * 1024));
-        true
     }
 
     fn grow_indices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.indices.capacity();
-        let mut new_cap = old.saturating_mul(2);
-        while new_cap - old < need {
-            new_cap = new_cap.saturating_mul(2);
-        }
-        if new_cap as u64 * 2 > self.max_buffer_size {
-            new_cap = (self.max_buffer_size / 2) as u32 & !1;
-            if new_cap <= old || new_cap - old < need {
+        match grown_capacity(old, need, self.max_indices()) {
+            Some(cap) => {
+                self.grow_indices_to(device, writes, uploads, cap);
+                true
+            }
+            None => {
                 self.refused("index", old as u64 * 2);
-                return false;
+                false
             }
         }
+    }
+
+    fn grow_indices_to(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, new_cap: u32) {
+        let old = self.indices.capacity();
         let nb = Self::make(device, "index arena", new_cap as u64 * 2, wgpu::BufferUsages::INDEX);
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow ib") });
         enc.copy_buffer_to_buffer(&self.index_buffer, 0, &nb, 0, old as u64 * 2);
@@ -235,7 +279,32 @@ impl GeometryArena {
         self.index_buffer = nb;
         self.indices.grow(new_cap);
         log::info!("index arena grown to {} MB", new_cap as u64 * 2 / (1024 * 1024));
-        true
+    }
+
+    /// Grow the arena now, while nothing it costs can be seen (a loading or
+    /// teleport screen), so that it holds `vertices` and `indices` without
+    /// growing again in the middle of the scene: each buffer is replaced at
+    /// most once, by one of the size asked for (within the largest buffer
+    /// of the GPU). Nothing happens for a buffer that is already as large.
+    /// Returns whether a buffer was replaced.
+    pub fn grow_ahead(
+        &mut self,
+        device: &wgpu::Device,
+        writes: &mut GpuWrites,
+        uploads: &mut UploadQueue,
+        vertices: u32,
+        indices: u32,
+    ) -> bool {
+        let mut grown = false;
+        if let Some(cap) = ahead_capacity(self.vertices.capacity(), vertices, self.max_vertices()) {
+            self.grow_vertices_to(device, writes, uploads, cap);
+            grown = true;
+        }
+        if let Some(cap) = ahead_capacity(self.indices.capacity(), indices & !1, self.max_indices()) {
+            self.grow_indices_to(device, writes, uploads, cap);
+            grown = true;
+        }
+        grown
     }
 
     /// Vertex and index ranges for a mesh, growing the arena when full.
@@ -813,6 +882,30 @@ mod tests {
             eprintln!("{mb} MB: first use {first:.2} ms, second {second:.2} ms, 32 MB copied into it {copy:.2} ms");
             assert!(second < first, "the first use of a buffer is the one that costs");
         }
+    }
+
+    #[test]
+    fn a_full_buffer_doubles_until_the_mesh_fits() {
+        let max = 1 << 26;
+        assert_eq!(grown_capacity(1000, 10, max), Some(2000));
+        // a mesh larger than the buffer: doubled again
+        assert_eq!(grown_capacity(1000, 2500, max), Some(4000));
+        // capped at the largest buffer, as long as the mesh fits there
+        assert_eq!(grown_capacity(max / 2 + 10, 100, max), Some(max));
+        assert_eq!(grown_capacity(max - 50, 100, max), None);
+        assert_eq!(grown_capacity(max, 1, max), None);
+    }
+
+    #[test]
+    fn growth_ahead_rounds_to_whole_steps_and_never_shrinks() {
+        let step = 1 << 20;
+        let max = 64 * step;
+        assert_eq!(ahead_capacity(2 * step, step, max), None);
+        assert_eq!(ahead_capacity(2 * step, 2 * step, max), None);
+        assert_eq!(ahead_capacity(2 * step, 2 * step + 1, max), Some(3 * step));
+        assert_eq!(ahead_capacity(2 * step, 20 * step - 7, max), Some(20 * step));
+        assert_eq!(ahead_capacity(2 * step, 100 * step, max), Some(max));
+        assert_eq!(ahead_capacity(max, 100 * step, max), None);
     }
 
     #[test]

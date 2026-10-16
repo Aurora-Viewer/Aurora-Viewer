@@ -589,6 +589,14 @@ impl Renderer {
         self.geometry.free(m);
     }
 
+    /// Grow the geometry arena now to hold that many vertices and indices
+    /// (`GeometryArena::grow_ahead`): while a loading screen hides what
+    /// the growth costs the GPU.
+    pub fn grow_geometry_ahead(&mut self, vertices: u32, indices: u32) -> bool {
+        self.geometry
+            .grow_ahead(&self.device, &mut self.writes, &mut self.uploads, vertices, indices)
+    }
+
     /// Deform an existing allocation without touching indices or draw records.
     /// The write is queued with this frame; the render thread never waits.
     pub fn update_mesh_vertices(&mut self, mesh: MeshAlloc, vertices: &[Vertex]) -> bool {

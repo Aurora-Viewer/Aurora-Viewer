@@ -11,6 +11,7 @@ pub mod complexity;
 pub mod drawn;
 pub mod fetch_priority;
 mod flexible;
+pub mod geometry_need;
 pub mod hover;
 pub mod hud;
 pub mod impostors;

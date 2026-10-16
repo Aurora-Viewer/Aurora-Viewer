@@ -104,6 +104,9 @@ pub mod tex_refresh;
 /// (AURORA_DEMO_TOASTS).
 #[path = "demo_toasts.rs"]
 pub mod toasts;
+/// Fast camera turns (AURORA_DEMO_TURN).
+#[path = "demo_turn.rs"]
+pub mod turn;
 /// A worn object of ours (AURORA_DEMO_WORN).
 #[path = "demo_worn.rs"]
 pub mod worn;
