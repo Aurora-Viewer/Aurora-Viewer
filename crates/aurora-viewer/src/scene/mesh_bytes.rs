@@ -15,7 +15,8 @@
 //! with flags for those present; one file of parts does the same without
 //! holes.
 
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 const MAGIC: &[u8; 4] = b"AMSH";
 const VERSION: u8 = 1;
@@ -81,6 +82,41 @@ impl MeshBytes {
 
     pub fn into_parts(self) -> Vec<(usize, Arc<Vec<u8>>)> {
         self.parts
+    }
+
+    /// Add what `other` holds: a whole asset holds everything.
+    pub fn merge(&mut self, other: MeshBytes) {
+        if self.whole {
+            return;
+        }
+        if other.whole {
+            *self = other;
+            return;
+        }
+        for (start, data) in other.parts {
+            self.add(start, data);
+        }
+    }
+
+    /// Write what is held to the cache file at `path`, with what the file
+    /// already holds: a file is never replaced by less (a whole asset by a
+    /// few blocks, after a read of it that failed; or the blocks of a later
+    /// write by those of an earlier one finishing after it, the writes being
+    /// jobs). Nothing is written when the file already holds it all.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        // (one write at a time: the read and the write of two jobs on the
+        // same file must not cross)
+        static WRITING: Mutex<()> = Mutex::new(());
+        let _one = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(mut held) = std::fs::read(path).ok().and_then(MeshBytes::decode) else {
+            return crate::cache::write(path, &self.encode());
+        };
+        let before = (held.whole, held.parts.len(), held.held());
+        held.merge(self.clone());
+        if (held.whole, held.parts.len(), held.held()) == before {
+            return Ok(());
+        }
+        crate::cache::write(path, &held.encode())
     }
 
     /// The part that starts the asset (its header).
@@ -212,6 +248,48 @@ mod tests {
         many.extend_from_slice(&1000u32.to_le_bytes());
         assert!(MeshBytes::decode(many).is_none());
         assert!(MeshBytes::decode(Vec::new()).is_none());
+    }
+
+    /// A cache file is never replaced by less: a whole asset stays whole
+    /// when a few blocks of it are written after a read of it that failed,
+    /// and blocks written first are kept when an earlier write, with fewer
+    /// of them, lands after.
+    #[test]
+    fn a_cache_write_never_replaces_more_with_less() {
+        let dir = std::env::temp_dir().join(format!("aurora-mesh-save-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("asset.mesh");
+        let read = || MeshBytes::decode(std::fs::read(&path).expect("file")).expect("cache file");
+
+        // a whole asset on disk, then a few of its blocks
+        let whole = part(0, 6000);
+        MeshBytes::whole(whole.clone()).save(&path).expect("whole");
+        let mut blocks = MeshBytes::default();
+        blocks.add(0, Arc::new(whole[..300].to_vec()));
+        blocks.add(5000, Arc::new(whole[5000..5040].to_vec()));
+        blocks.save(&path).expect("blocks");
+        let back = read();
+        assert!(back.is_whole(), "the whole asset was replaced by blocks");
+        assert_eq!(back.held(), 6000);
+
+        // parts: the later write (more) first, the earlier one (less) after
+        std::fs::remove_file(&path).expect("remove");
+        let mut later = MeshBytes::default();
+        later.add(0, part(0, 300));
+        later.add(5000, part(7, 40));
+        let mut earlier = MeshBytes::default();
+        earlier.add(0, part(0, 300));
+        later.save(&path).expect("later");
+        earlier.save(&path).expect("earlier");
+        assert!(read().holds((5000, 40)), "the earlier write dropped a block");
+        // and a block not held yet is added to the file
+        let mut other = MeshBytes::default();
+        other.add(9000, part(3, 10));
+        other.save(&path).expect("other");
+        let back = read();
+        assert!(back.holds((9000, 10)) && back.holds((5000, 40)) && back.holds((0, 300)));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
