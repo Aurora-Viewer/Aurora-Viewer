@@ -2814,6 +2814,7 @@ ui-options-microphone = Microphone
 demo-env-midday = Midday
 keybinds-middle = Middle
 common-midday = Midday
+common-midday-legacy = Midday (Legacy)
 build-ui-floaters-mini = Mini
 common-mini-map = Mini-map
 ui-options-mini-map-at-startup = Mini-map at startup

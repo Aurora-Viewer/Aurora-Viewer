@@ -251,14 +251,16 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
     resp.on_hover_text(tip).clicked()
 }
 
-/// Local time of day choices (index = `Panels::time_of_day`).
-pub fn time_of_day() -> [&'static str; 5] {
+/// Local time of day choices (index = `Panels::time_of_day`; shown in the
+/// order of `world::env::TIME_OF_DAY_ORDER`).
+pub fn time_of_day() -> [&'static str; 6] {
     [
         aurora_i18n::tr!("ui-bars-shared-environments-region"),
         aurora_i18n::tr!("ui-bars-sunrise"),
         aurora_i18n::tr!("common-midday"),
         aurora_i18n::tr!("ui-bars-sunset"),
         aurora_i18n::tr!("common-midnight"),
+        aurora_i18n::tr!("common-midday-legacy"),
     ]
 }
 
@@ -720,10 +722,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 *action = BarAction::SharedEnvironment;
             }
             menu::separator(ui, p);
-            let icons = ["", "sunrise-filled", "sun-high-filled", "sunset-2-filled", "moon-filled"];
-            for (i, label) in time_of_day().iter().enumerate().skip(1) {
-                if menu::check(ui, p, icons[i], label, panels.time_of_day == i as u8, true) {
-                    panels.time_of_day = i as u8;
+            let icons = [
+                "",
+                "sunrise-filled",
+                "sun-high-filled",
+                "sunset-2-filled",
+                "moon-filled",
+                "sun-high-filled",
+            ];
+            let labels = time_of_day();
+            for i in crate::world::env::TIME_OF_DAY_ORDER {
+                let n = i as usize;
+                if menu::check(ui, p, icons[n], labels[n], panels.time_of_day == i, true) {
+                    panels.time_of_day = i;
                 }
             }
             menu::separator(ui, p);
