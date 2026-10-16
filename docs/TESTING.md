@@ -382,7 +382,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -391,7 +391,10 @@ when unfocused") is ignored during a screenshot.
   (`demo_link.rs`). The viewer then runs the grid's path: extrapolation,
   smoothing and, with Aurora's movement (Preferences › Aurora › Movement,
   "Instant"), the prediction of `own_motion.rs`. `jitter` delays each
-  message by up to that much more (order kept); `aurora` / `firestorm`
+  message by up to that much more (order kept); `stoplag` keeps the
+  stand-in's walk signal that long once it has stopped, as a busy
+  simulator is late to say it (with `trace`, the drawn animations of each
+  frame show whether the walk comes back after a stop); `aurora` / `firestorm`
   force the movement for the run without touching the saved choice;
   without them, the choice of Preferences applies and can be switched
   while walking. The log says, for each press and release of a walking

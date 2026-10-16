@@ -753,6 +753,10 @@ fn rest_animation(id: &Uuid) -> bool {
     STANDS.contains(id) || *id == ANIM_HOVER
 }
 
+/// The longest a local stop waits for the simulator's own while it does not
+/// report our avatar moving (`Locomotion::overlay`).
+const STOP_HOLD: f32 = 3.0;
+
 /// Our walk, run, crouch and fly animations started and stopped with the
 /// keys, over the simulator's signals.
 #[derive(Debug, Clone, Default)]
@@ -781,12 +785,17 @@ impl Locomotion {
 
     /// The list to draw instead of the simulator's `base`, or None to draw
     /// it as it is. `window`: how long a local start or stop waits for the
-    /// simulator to agree.
+    /// simulator to agree. A local stop is kept past it while the
+    /// simulator does not report our avatar moving (`sim_moving`): its
+    /// walk signal is only late (a busy simulator, a slow link), and
+    /// giving up then brought the walk back for a moment, and the AO's
+    /// with it, before the simulator's own stop; `STOP_HOLD` at most.
     pub fn overlay(
         &mut self,
         base: &[PlayingAnimation],
         wanted: Option<Uuid>,
         flying: bool,
+        sim_moving: bool,
         window: f32,
         now: Instant,
     ) -> Option<Vec<PlayingAnimation>> {
@@ -802,6 +811,7 @@ impl Locomotion {
         }
         let start = self.since.unwrap_or(now);
         let recent = |t: Instant| now.saturating_duration_since(t).as_secs_f32() < window;
+        let held = |t: Instant| recent(t) || (!sim_moving && now.saturating_duration_since(t).as_secs_f32() < STOP_HOLD);
         if let Some(a) = wanted
             && let Some(signal) = base.iter().find(|p| p.id == a)
             && let Some((shown, at)) = self.shown
@@ -834,7 +844,7 @@ impl Locomotion {
                 self.shown = Some((a, start));
                 changed = true;
             }
-            None if self.released.is_some_and(recent) && base.iter().any(|p| MOVING.contains(&p.id)) => {
+            None if self.released.is_some_and(held) && base.iter().any(|p| MOVING.contains(&p.id)) => {
                 drawn.retain(|p| !MOVING.contains(&p.id));
                 if !drawn.iter().any(|p| rest_animation(&p.id)) {
                     let at = self.released.unwrap_or(now);
@@ -1058,22 +1068,26 @@ mod tests {
         let mut l = Locomotion::default();
         let now = Instant::now();
         let stand = [signal(ANIM_STAND, 1, now)];
-        assert_eq!(l.overlay(&stand, None, false, 0.6, now), None);
+        assert_eq!(l.overlay(&stand, None, false, false, 0.6, now), None);
         let pressed = at(now, 1.0);
-        let drawn = l.overlay(&stand, Some(ANIM_WALK), false, 0.6, pressed).expect("local walk");
+        let drawn = l.overlay(&stand, Some(ANIM_WALK), false, false, 0.6, pressed).expect("local walk");
         assert_eq!(drawn.len(), 1);
         assert_eq!((drawn[0].id, drawn[0].sequence_start), (ANIM_WALK, pressed));
         // the simulator's walk arrives: its cycle keeps the local start
         let server = [signal(ANIM_WALK, 2, at(now, 1.25))];
-        let drawn = l.overlay(&server, Some(ANIM_WALK), false, 0.6, at(now, 1.25)).expect("kept start");
+        let drawn = l
+            .overlay(&server, Some(ANIM_WALK), false, false, 0.6, at(now, 1.25))
+            .expect("kept start");
         assert_eq!((drawn[0].id, drawn[0].sequence, drawn[0].sequence_start), (ANIM_WALK, 2, pressed));
         // and the simulator alone after that, still with that start
-        let drawn = l.overlay(&server, Some(ANIM_WALK), false, 0.6, at(now, 3.0)).expect("kept start");
+        let drawn = l
+            .overlay(&server, Some(ANIM_WALK), false, false, 0.6, at(now, 3.0))
+            .expect("kept start");
         assert_eq!(drawn[0].continuous_start, pressed);
         // the simulator never agrees: the local walk gives up
         let mut l = Locomotion::default();
-        assert!(l.overlay(&stand, Some(ANIM_RUN), false, 0.6, now).is_some());
-        assert_eq!(l.overlay(&stand, Some(ANIM_RUN), false, 0.6, at(now, 0.7)), None);
+        assert!(l.overlay(&stand, Some(ANIM_RUN), false, false, 0.6, now).is_some());
+        assert_eq!(l.overlay(&stand, Some(ANIM_RUN), false, false, 0.6, at(now, 0.7)), None);
     }
 
     #[test]
@@ -1081,20 +1095,43 @@ mod tests {
         let mut l = Locomotion::default();
         let now = Instant::now();
         let walking = [signal(ANIM_WALK, 2, now)];
-        l.overlay(&walking, Some(ANIM_WALK), false, 0.6, now);
+        l.overlay(&walking, Some(ANIM_WALK), false, false, 0.6, now);
         let released = at(now, 1.0);
-        let drawn = l.overlay(&walking, None, false, 0.6, released).expect("stopped");
+        let drawn = l.overlay(&walking, None, false, false, 0.6, released).expect("stopped");
         assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![ANIM_STAND]);
         // flying, the rest is the hover
         let mut l = Locomotion::default();
         let flying = [signal(ANIM_FLY, 3, now)];
-        l.overlay(&flying, Some(ANIM_FLY), true, 0.6, now);
-        let drawn = l.overlay(&flying, None, true, 0.6, released).expect("hover");
+        l.overlay(&flying, Some(ANIM_FLY), true, false, 0.6, now);
+        let drawn = l.overlay(&flying, None, true, false, 0.6, released).expect("hover");
         assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![ANIM_HOVER]);
-        // the simulator's own stop, or too long a wait: its list as it is
+        // the simulator's own stop, or its report that the avatar still
+        // moves once the wait is over: its list as it is
         let stand = [signal(ANIM_STAND, 4, at(now, 1.2))];
-        assert_eq!(l.overlay(&stand, None, true, 0.6, at(now, 1.2)), None);
-        assert_eq!(l.overlay(&flying, None, true, 0.6, at(now, 1.7)), None);
+        assert_eq!(l.overlay(&stand, None, true, false, 0.6, at(now, 1.2)), None);
+        assert_eq!(l.overlay(&flying, None, true, true, 0.6, at(now, 1.7)), None);
+    }
+
+    #[test]
+    fn a_late_stop_of_the_simulator_does_not_bring_the_walk_back() {
+        let mut l = Locomotion::default();
+        let now = Instant::now();
+        let walking = [signal(ANIM_WALK, 2, now)];
+        l.overlay(&walking, Some(ANIM_WALK), false, true, 0.6, now);
+        let released = at(now, 1.0);
+        assert!(l.overlay(&walking, None, false, true, 0.6, released).is_some());
+        // past the wait, its walk signal still there but the avatar still
+        // in its reports: the signal is only late, the stop is kept
+        let drawn = l.overlay(&walking, None, false, false, 0.6, at(now, 2.5)).expect("still stopped");
+        assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![ANIM_STAND]);
+        // the avatar moves again in its reports (pushed, a key lost): its walk
+        assert_eq!(l.overlay(&walking, None, false, true, 0.6, at(now, 2.6)), None);
+        // and never longer than the hold, whatever it reports
+        let mut l = Locomotion::default();
+        l.overlay(&walking, Some(ANIM_WALK), false, true, 0.6, now);
+        l.overlay(&walking, None, false, false, 0.6, released);
+        assert!(l.overlay(&walking, None, false, false, 0.6, at(now, 3.9)).is_some());
+        assert_eq!(l.overlay(&walking, None, false, false, 0.6, at(now, 4.1)), None);
     }
 
     #[test]
@@ -1103,7 +1140,7 @@ mod tests {
         let now = Instant::now();
         let typing = Uuid::from_u128(7);
         let base = [signal(ANIM_STAND, 1, now), signal(typing, 1, now)];
-        let drawn = l.overlay(&base, Some(ANIM_WALK), false, 0.6, now).expect("walk");
+        let drawn = l.overlay(&base, Some(ANIM_WALK), false, false, 0.6, now).expect("walk");
         assert_eq!(drawn.iter().map(|p| p.id).collect::<Vec<_>>(), vec![typing, ANIM_WALK]);
         assert_eq!(
             locomotion_animation(Intent::from_flags(control::FLY | control::UP_NEG, 0.0, false)),
