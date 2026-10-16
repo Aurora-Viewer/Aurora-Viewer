@@ -29,6 +29,7 @@ use crate::objects;
 use crate::stats::NetStats;
 use crate::terrain;
 use crate::throttle::{self, Throttle};
+use crate::transition;
 use crate::types::*;
 use aurora_llsd::Llsd;
 use aurora_msg::msgs::{self, *};
@@ -101,6 +102,10 @@ struct Sim {
     /// Packets received and packets that failed to decode (diagnostics).
     packets_in: u64,
     decode_failures: u64,
+    /// The UseCircuitCode was acknowledged or given up (`region link`).
+    link_up: bool,
+    /// When the seed capability was last asked for (timelines).
+    caps_asked_at: Option<Instant>,
 }
 
 impl Sim {
@@ -126,6 +131,8 @@ impl Sim {
             handshake_warned: false,
             packets_in: 0,
             decode_failures: 0,
+            link_up: false,
+            caps_asked_at: None,
         }
     }
 }
@@ -482,6 +489,7 @@ impl Session<'_> {
             sim.ucc_sent_at = Instant::now();
             sim.ucc_login = login;
         }
+        transition::link(|| format!("UseCircuitCode sent to region {} ({addr})", transition::grid(handle)));
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
 
@@ -519,6 +527,7 @@ impl Session<'_> {
     }
 
     fn send_complete_agent_movement(&mut self, addr: SocketAddr) {
+        transition::step(|| format!("CompleteAgentMovement sent to region {}", transition::grid(self.handle_of(addr))));
         let mut m = CompleteAgentMovement::default();
         m.agent_data.agent_id = self.agent_id();
         m.agent_data.session_id = self.session_id();
@@ -584,6 +593,8 @@ impl Session<'_> {
             return;
         }
         sim.caps_requested = true;
+        sim.caps_asked_at = Some(Instant::now());
+        transition::step(|| format!("seed capability asked of region {}", transition::grid(sim.handle)));
         let http = self.sh.caps_http.clone();
         let tx = self.caps_tx.clone();
         // (one request per simulator: a new seed takes the place of the old)
@@ -610,6 +621,7 @@ impl Session<'_> {
             Ok(c) => c,
             Err(e) => {
                 log::warn!("capabilities for {addr} failed for good: {e}");
+                transition::step(|| format!("seed capability of region {} failed: {e}", transition::grid(self.handle_of(addr))));
                 // asked again when the region is entered again
                 // (set_main), not before: every attempt was made
                 if let Some(sim) = self.sims.get_mut(&addr) {
@@ -633,7 +645,16 @@ impl Session<'_> {
             return;
         };
         log::info!("{} capabilities for {} ({})", caps.len(), addr, sim.name);
+        transition::step(|| {
+            format!(
+                "seed capability of region {}: {} capabilities in {:.0} ms",
+                transition::grid(sim.handle),
+                caps.len(),
+                sim.caps_asked_at.map_or(0.0, |t| t.elapsed().as_secs_f32() * 1000.0)
+            )
+        });
         if let Some(eq) = caps.get("EventQueueGet").cloned() {
+            transition::link(|| format!("event queue of region {} started", transition::grid(sim.handle)));
             if let Some(t) = sim.eq_task.take() {
                 t.abort();
             }
@@ -815,6 +836,13 @@ impl Session<'_> {
     fn remove_sim(&mut self, addr: SocketAddr) {
         self.object_cache.forget(addr);
         if let Some(sim) = self.sims.remove(&addr) {
+            transition::link(|| {
+                format!(
+                    "circuit to region {} ({addr}) closed after {:.0} s",
+                    transition::grid(sim.handle),
+                    sim.ucc_sent_at.elapsed().as_secs_f32()
+                )
+            });
             emit(self.sh, NetEvent::RegionRemoved { handle: sim.handle });
         }
         if self.main == Some(addr) {
@@ -907,6 +935,23 @@ impl Session<'_> {
         let mut ucc_failed = false;
         for (addr, s) in self.sims.iter_mut() {
             let dropped = s.circuit.take_dropped();
+            if !s.link_up
+                && let Some(q) = s.ucc_seq
+            {
+                let given_up = dropped.contains(&q);
+                if given_up || !s.circuit.is_unacked(q) {
+                    s.link_up = true;
+                    let ms = s.ucc_sent_at.elapsed().as_secs_f32() * 1000.0;
+                    transition::link(|| {
+                        let region = transition::grid(s.handle);
+                        if given_up {
+                            format!("circuit to region {region} ({addr}) not acknowledged: UseCircuitCode given up after {ms:.0} ms")
+                        } else {
+                            format!("circuit to region {region} ({addr}) up: UseCircuitCode acknowledged after {ms:.0} ms")
+                        }
+                    });
+                }
+            }
             if !s.pending_cam {
                 continue;
             }
@@ -939,6 +984,7 @@ impl Session<'_> {
             self.send_complete_agent_movement(addr);
         }
         self.check_region_handshake();
+        transition::tick(&self.sh.stats);
         if let Some(t) = self.cam_requested_at {
             // diagnostic: no AgentUpdate is sent until AgentMovementComplete
             if !self.agent_moved && !self.cam_warned && t.elapsed() > Duration::from_secs(5) {
@@ -1140,6 +1186,11 @@ impl Session<'_> {
                 m.info.session_id = self.session_id();
                 m.info.landmark_id = uuid::Uuid::nil();
                 self.send_main(&m, true);
+                transition::begin(
+                    transition::Kind::Teleport,
+                    || "TeleportLandmarkRequest (home) sent".to_string(),
+                    &self.sh.stats,
+                );
             }
             NetCommand::CancelRegionRestart => {
                 // LLPanelRegionInfo::sendEstateOwnerMessage("restart", {"-1"}),
@@ -1166,6 +1217,11 @@ impl Session<'_> {
                 m.info.position = position;
                 m.info.look_at = look_at;
                 self.send_main(&m, true);
+                transition::begin(
+                    transition::Kind::Teleport,
+                    || format!("TeleportLocationRequest sent (region {})", transition::grid(handle)),
+                    &self.sh.stats,
+                );
             }
             NetCommand::TeleportToRegion { name, position } => {
                 // LLWorldMapMessage::sendNamedRegionRequest: the reply gives the grid position
@@ -1205,6 +1261,11 @@ impl Session<'_> {
                 // TELEPORT_FLAGS_VIA_GODLIKE_LURE | DISABLE_CANCEL, else VIA_LURE
                 m.info.teleport_flags = if godlike { (1 << 8) | (1 << 11) } else { 1 << 2 };
                 self.send_main(&m, true);
+                transition::begin(
+                    transition::Kind::Teleport,
+                    || "TeleportLureRequest sent".to_string(),
+                    &self.sh.stats,
+                );
             }
             NetCommand::AcceptFriendship { transaction, folder } => {
                 let mut m = AcceptFriendship::default();
@@ -1655,6 +1716,11 @@ impl Session<'_> {
                 m.info.session_id = self.session_id();
                 m.info.landmark_id = asset;
                 self.send_main(&m, true);
+                transition::begin(
+                    transition::Kind::Teleport,
+                    || "TeleportLandmarkRequest sent".to_string(),
+                    &self.sh.stats,
+                );
             }
             NetCommand::FetchInventory { folders, owner, library } => self.fetch_inventory(folders, owner, library),
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
@@ -2472,7 +2538,7 @@ impl Session<'_> {
         tokio::spawn(async move {
             for chunk in folders.chunks(16) {
                 let body = crate::inventory::fetch_request_body(chunk, owner);
-                match caps::post_llsd(&http, &url, &body).await {
+                match caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory).await {
                     Ok(v) => {
                         let contents = crate::inventory::parse_fetch_response(&v);
                         let _ = events.send(NetEvent::InventoryContents(contents));
@@ -2649,6 +2715,7 @@ impl Session<'_> {
     /// LLAppearanceMgr::serverAppearanceUpdateCoro: POST the COF version;
     /// the server bakes the outfit and sends a new AvatarAppearance.
     fn request_server_appearance(&mut self, cof_version: i32) {
+        transition::step(|| format!("appearance asked (UpdateAvatarAppearance, outfit version {cof_version})"));
         let Some(url) = self.main_cap("UpdateAvatarAppearance") else {
             log::warn!("no UpdateAvatarAppearance capability: appearance not requested");
             emit(
@@ -2714,6 +2781,7 @@ impl Session<'_> {
     /// answers it ({"version": n}); retried as Firestorm does (BAKE_RETRY_*:
     /// five more times, 1, 3, 7, 15 then 31 s apart).
     fn increment_cof_version(&mut self) {
+        transition::step(|| "outfit version increment asked (IncrementCOFVersion)".to_string());
         /// BAKE_RETRY_MAX_COUNT (llappearancemgr.cpp).
         const BAKE_RETRY_MAX: u32 = 5;
         let Some(url) = self.main_cap("IncrementCOFVersion") else {
@@ -2760,6 +2828,7 @@ impl Session<'_> {
     }
 
     fn request_objects(&mut self, addr: SocketAddr, ids: &[u32]) {
+        crate::probe::objects(crate::probe::ObjectKind::Requested, ids.len());
         for chunk in ids.chunks(255) {
             let mut m = RequestMultipleObjects::default();
             m.agent_data.agent_id = self.agent_id();
@@ -2784,6 +2853,7 @@ impl Session<'_> {
     /// gets better before a new login, so the session ends now with the
     /// "connection lost" message; a neighbour only loses its own events.
     fn on_eq_lost(&mut self, addr: SocketAddr) {
+        transition::link(|| format!("event queue of region {} gave up", transition::grid(self.handle_of(addr))));
         // (a queue replaced since, after a new seed capability, is not lost)
         if !self
             .sims
@@ -2808,6 +2878,9 @@ impl Session<'_> {
 
     fn on_eq_event(&mut self, e: EqEvent) {
         log::debug!("EQ {} from {}", e.message, e.sim);
+        if transition::running() && self.main == Some(e.sim) {
+            transition::step_once("first event", || format!("first event queue event of the region ({})", e.message));
+        }
         let b = &e.body;
         if self.on_inventory_eq(&e) {
             return;
@@ -2830,11 +2903,20 @@ impl Session<'_> {
                     let port = info["Port"].as_i32() as u16;
                     let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+                    transition::link(|| {
+                        let known = if self.sims.contains_key(&addr) {
+                            ", circuit already open"
+                        } else {
+                            ""
+                        };
+                        format!("EnableSimulator region {} ({addr}){known}", transition::grid(handle))
+                    });
                     self.add_sim(addr, handle, size, false);
                 }
             }
             "EstablishAgentCommunication" => {
                 let ipport = b["sim-ip-and-port"].as_str();
+                transition::link(|| format!("EstablishAgentCommunication for {ipport}"));
                 let seed = b["seed-capability"].as_str().to_owned();
                 if let Ok(addr) = ipport.parse::<SocketAddr>() {
                     if let Some(sim) = self.sims.get_mut(&addr) {
@@ -2845,6 +2927,13 @@ impl Session<'_> {
             }
             "TeleportFinish" => {
                 let info = &b["Info"][0];
+                transition::step(|| {
+                    format!(
+                        "TeleportFinish to region {}, flags {:#x}",
+                        transition::grid(info["RegionHandle"].as_u64()),
+                        info["TeleportFlags"].as_u64()
+                    )
+                });
                 emit(
                     self.sh,
                     NetEvent::TeleportFinished {
@@ -2866,6 +2955,11 @@ impl Session<'_> {
             }
             "CrossedRegion" => {
                 let rd = &b["RegionData"][0];
+                transition::begin(
+                    transition::Kind::Crossing,
+                    || format!("CrossedRegion to region {}", transition::grid(rd["RegionHandle"].as_u64())),
+                    &self.sh.stats,
+                );
                 self.switch_region(
                     rd["RegionHandle"].as_u64(),
                     ip_from_llsd(&rd["SimIP"]),
@@ -2880,9 +2974,20 @@ impl Session<'_> {
             }
             "TeleportFailed" => {
                 let reason = b["Info"][0]["Reason"].as_str().to_owned();
+                transition::end(
+                    Some(transition::Kind::Teleport),
+                    &format!("failed (TeleportFailed: {reason})"),
+                    &self.sh.stats,
+                );
                 emit(self.sh, NetEvent::TeleportFailed { reason });
             }
             "DisableSimulator" => {
+                transition::link(|| {
+                    format!(
+                        "DisableSimulator from region {} (event queue)",
+                        transition::grid(self.handle_of(e.sim))
+                    )
+                });
                 if self.main != Some(e.sim) {
                     self.remove_sim(e.sim);
                 }
@@ -2923,6 +3028,18 @@ impl Session<'_> {
             return;
         };
         let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+        if let Some(sim) = self.sims.get(&addr) {
+            transition::step(|| {
+                format!(
+                    "circuit to region {} already open for {:.1} s (UseCircuitCode {}), capabilities {}",
+                    transition::grid(handle),
+                    sim.ucc_sent_at.elapsed().as_secs_f32(),
+                    if sim.link_up { "acknowledged" } else { "not acknowledged yet" },
+                    if sim.caps.is_empty() { "not known yet" } else { "known" }
+                )
+            });
+        }
+        let previous = self.main.filter(|m| *m != addr);
         self.add_sim(addr, handle, size, false);
         if let Some(sim) = self.sims.get_mut(&addr) {
             sim.handle = handle;
@@ -2938,6 +3055,9 @@ impl Session<'_> {
         }
         self.agent_moved = false;
         self.set_main(addr, Some(seed));
+        if let Some(previous) = previous.filter(|p| self.sims.contains_key(p)) {
+            transition::step(|| format!("previous region {} kept as a neighbour", transition::grid(self.handle_of(previous))));
+        }
         self.complete_agent_movement(addr);
     }
 
@@ -2960,6 +3080,7 @@ impl Session<'_> {
             return;
         };
         sim.packets_in += 1;
+        crate::probe::message_in(pkt.id, data.len());
         if !sim.circuit.on_receive(pkt.flags, pkt.sequence, &pkt.acks) {
             stats.duplicates.fetch_add(1, Ordering::Relaxed);
             return;
@@ -3048,8 +3169,12 @@ impl Session<'_> {
         } else if id == ObjectUpdate::ID {
             let m: ObjectUpdate = pkt.decode()?;
             self.set_time_dilation(from, m.region_data.time_dilation);
+            if transition::running() && self.main == Some(from) {
+                transition::step_once("first objects", || "first object update of the region (ObjectUpdate)".to_string());
+            }
             let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
+            crate::probe::objects(crate::probe::ObjectKind::Full, objects.len());
             if !objects.is_empty() {
                 emit(
                     self.sh,
@@ -3062,6 +3187,11 @@ impl Session<'_> {
         } else if id == ObjectUpdateCompressed::ID {
             let m: ObjectUpdateCompressed = pkt.decode()?;
             self.set_time_dilation(from, m.region_data.time_dilation);
+            if transition::running() && self.main == Some(from) {
+                transition::step_once("first objects", || {
+                    "first object update of the region (ObjectUpdateCompressed)".to_string()
+                });
+            }
             let mut cache = self.object_cache.get_mut(from);
             let objects: Vec<_> = m
                 .object_data
@@ -3075,6 +3205,7 @@ impl Session<'_> {
                 })
                 .collect();
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
+            crate::probe::objects(crate::probe::ObjectKind::Compressed, objects.len());
             if !objects.is_empty() {
                 emit(
                     self.sh,
@@ -3088,6 +3219,7 @@ impl Session<'_> {
             let m: ImprovedTerseObjectUpdate = pkt.decode()?;
             self.set_time_dilation(from, m.region_data.time_dilation);
             let updates: Vec<_> = m.object_data.iter().filter_map(objects::parse_terse).collect();
+            crate::probe::objects(crate::probe::ObjectKind::Terse, updates.len());
             if !updates.is_empty() {
                 emit(
                     self.sh,
@@ -3100,6 +3232,11 @@ impl Session<'_> {
         } else if id == ObjectUpdateCached::ID {
             let m: ObjectUpdateCached = pkt.decode()?;
             self.set_time_dilation(from, m.region_data.time_dilation);
+            if transition::running() && self.main == Some(from) {
+                transition::step_once("first objects", || {
+                    "first object update of the region (ObjectUpdateCached)".to_string()
+                });
+            }
             // cache hits (same CRC) are applied locally, misses requested
             let mut hits = Vec::new();
             let mut misses = Vec::new();
@@ -3122,6 +3259,9 @@ impl Session<'_> {
             }
             self.sh.stats.object_cache_hits.fetch_add(hits.len() as u64, Ordering::Relaxed);
             self.sh.stats.object_cache_misses.fetch_add(misses.len() as u64, Ordering::Relaxed);
+            crate::probe::objects(crate::probe::ObjectKind::Cached, m.object_data.len());
+            crate::probe::objects(crate::probe::ObjectKind::CacheHit, hits.len());
+            crate::probe::objects(crate::probe::ObjectKind::CacheMiss, misses.len());
             if !hits.is_empty() {
                 emit(
                     self.sh,
@@ -3183,6 +3323,7 @@ impl Session<'_> {
             emit(self.sh, NetEvent::ObjectProperties(vec![build_cmds::parse_family(&m)]));
         } else if id == KillObject::ID {
             let m: KillObject = pkt.decode()?;
+            crate::probe::objects(crate::probe::ObjectKind::Killed, m.object_data.len());
             emit(
                 self.sh,
                 NetEvent::ObjectsKilled {
@@ -3447,8 +3588,18 @@ impl Session<'_> {
         } else if id == RegionHandshake::ID {
             let m: RegionHandshake = pkt.decode()?;
             self.on_region_handshake(from, m);
+            if self.main == Some(from) {
+                transition::step(|| format!("RegionHandshake from region {}, reply sent", transition::grid(self.handle_of(from))));
+            }
         } else if id == AgentMovementComplete::ID {
             let m: AgentMovementComplete = pkt.decode()?;
+            transition::step(|| format!("AgentMovementComplete from region {}", transition::grid(m.data.region_handle)));
+            // (a crossing settles in a few seconds; a teleport ends when the
+            // viewer hides its screen, this is the longest it waits)
+            transition::arrived(match transition::current() {
+                Some(transition::Kind::Crossing) => Duration::from_secs(5),
+                _ => Duration::from_secs(20),
+            });
             self.agent_moved = true;
             self.cam_requested_at = None;
             // gLastVersionChannel: the server version the Region / Estate
@@ -3626,6 +3777,7 @@ impl Session<'_> {
                 );
                 self.finished = true;
             } else {
+                transition::link(|| format!("DisableSimulator from region {}", transition::grid(self.handle_of(from))));
                 self.remove_sim(from);
             }
         } else if id == ParcelOverlay::ID {
@@ -3655,6 +3807,11 @@ impl Session<'_> {
                         t.info.position = pos;
                         t.info.look_at = Vec3::X;
                         self.send_main(&t, true);
+                        transition::begin(
+                            transition::Kind::Teleport,
+                            || format!("TeleportLocationRequest sent (region {}, found by name)", transition::grid(handle)),
+                            &self.sh.stats,
+                        );
                     }
                     // a name search answers with prefix matches and an empty
                     // end-of-list marker; other replies come from map browsing
@@ -3933,9 +4090,19 @@ impl Session<'_> {
                 },
             );
         } else if id == TeleportStart::ID {
+            if transition::current() == Some(transition::Kind::Teleport) {
+                transition::step(|| "TeleportStart".to_string());
+            } else {
+                transition::begin(
+                    transition::Kind::Teleport,
+                    || "TeleportStart (begun by the simulator)".to_string(),
+                    &self.sh.stats,
+                );
+            }
             emit(self.sh, NetEvent::TeleportStarted);
         } else if id == TeleportProgress::ID {
             let m: TeleportProgress = pkt.decode()?;
+            transition::step(|| format!("TeleportProgress '{}'", field_str(&m.info.message)));
             emit(
                 self.sh,
                 NetEvent::TeleportProgress {
@@ -3944,6 +4111,11 @@ impl Session<'_> {
             );
         } else if id == TeleportFailed::ID {
             let m: TeleportFailed = pkt.decode()?;
+            transition::end(
+                Some(transition::Kind::Teleport),
+                &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
+                &self.sh.stats,
+            );
             emit(
                 self.sh,
                 NetEvent::TeleportFailed {
@@ -4045,6 +4217,8 @@ impl Session<'_> {
             emit(self.sh, NetEvent::PreloadSounds(m.data_block.iter().map(|b| b.sound_id).collect()));
         } else if id == TeleportLocal::ID {
             let m: TeleportLocal = pkt.decode()?;
+            transition::step(|| "TeleportLocal (inside the region)".to_string());
+            transition::arrived(Duration::from_secs(2));
             // process_teleport_local: flying from the teleport flags, then an
             // agent update at once (send_agent_update(true, true))
             const TELEPORT_FLAGS_IS_FLYING: u32 = 1 << 13;

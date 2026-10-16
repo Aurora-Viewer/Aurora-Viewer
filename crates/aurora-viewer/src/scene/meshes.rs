@@ -550,12 +550,15 @@ impl MeshStreamer {
                     Stage::New => {
                         e.stage = Stage::Reading;
                         let path = cache_path(&self.cache_dir, &id);
-                        jobs.spawn(move || JobResult::MeshCache {
-                            id,
-                            arrival: path
+                        jobs.spawn(move || {
+                            let bytes = path
                                 .and_then(|path| crate::cache::read_touch(path).ok())
-                                .and_then(MeshBytes::decode)
-                                .map(|bytes| Box::new(arrival(bytes, None, true))),
+                                .and_then(MeshBytes::decode);
+                            crate::deep_profile::mesh_cache_read(bytes.is_some());
+                            let timer = crate::deep_profile::timer();
+                            let arrival = bytes.map(|bytes| Box::new(arrival(bytes, None, true)));
+                            crate::deep_profile::mesh_parsed(timer.filter(|_| arrival.is_some()));
+                            JobResult::MeshCache { id, arrival }
                         });
                         break 'visit;
                     }
@@ -658,7 +661,12 @@ impl MeshStreamer {
             let bytes = e.bytes.clone();
             let rig = rig.clone();
             let pool = staging.cloned();
-            jobs.spawn(move || build_mesh_lod(id, lod, &bytes, &header, skin, &rig, pool.as_deref()));
+            jobs.spawn(move || {
+                let timer = crate::deep_profile::timer();
+                let built = build_mesh_lod(id, lod, &bytes, &header, skin, &rig, pool.as_deref());
+                crate::deep_profile::mesh_built(timer);
+                built
+            });
         }
     }
 
@@ -685,9 +693,11 @@ impl MeshStreamer {
                 };
                 let header = e.header.clone();
                 let want_skin = e.skin.is_none() && !e.skin_bad;
-                jobs.spawn(move || JobResult::MeshPart {
-                    id,
-                    arrival: Box::new(arrival(bytes, header, want_skin)),
+                jobs.spawn(move || {
+                    let timer = crate::deep_profile::timer();
+                    let arrival = Box::new(arrival(bytes, header, want_skin));
+                    crate::deep_profile::mesh_parsed(timer);
+                    JobResult::MeshPart { id, arrival }
                 });
             }
             _ => {

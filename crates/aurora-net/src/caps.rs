@@ -1,5 +1,6 @@
 //! Capabilities: seed resolution and the `EventQueueGet` long-poll.
 
+use crate::probe::{self, HttpKind};
 use aurora_llsd::{Llsd, from_xml, llsd_map, to_xml};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -212,40 +213,53 @@ pub async fn post_llsd(http: &reqwest::Client, url: &str, body: &Llsd) -> Result
     request_llsd(http, url, body, false).await
 }
 
+/// [`post_llsd`] counted under another kind than `cap` by the HTTP probe
+/// (AURORA_PROFILE: inventory fetches).
+pub async fn post_llsd_as(http: &reqwest::Client, url: &str, body: &Llsd, kind: HttpKind) -> Result<Llsd, CapsError> {
+    let req = http.post(url).header("Content-Type", "application/llsd+xml").body(to_xml(body));
+    send_llsd(req, kind).await
+}
+
 /// GET of an LLSD XML document (getAndSuspend).
 pub async fn get_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsError> {
-    let resp = http
-        .get(url)
-        .header("Accept", "application/llsd+xml")
-        .send()
-        .await
-        .map_err(|e| CapsError::Http(e.to_string()))?;
-    let status = resp.status();
-    if !status.is_success() {
-        return Err(CapsError::Status(status.as_u16()));
-    }
-    let bytes = resp.bytes().await.map_err(|e| CapsError::Http(e.to_string()))?;
-    if bytes.is_empty() {
-        return Ok(Llsd::Undef);
-    }
-    Ok(from_xml(&bytes)?)
+    send_llsd(http.get(url), HttpKind::Cap).await
 }
 
 /// POST, or PUT (RenderMaterials writes, LLMaterialMgr::processPutQueue), of LLSD XML.
 pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, CapsError> {
     let req = if put { http.put(url) } else { http.post(url) };
-    let resp = req
-        .header("Content-Type", "application/llsd+xml")
-        .header("Accept", "application/llsd+xml")
-        .body(to_xml(body))
-        .send()
-        .await
-        .map_err(|e| CapsError::Http(e.to_string()))?;
+    send_llsd(req.header("Content-Type", "application/llsd+xml").body(to_xml(body)), HttpKind::Cap).await
+}
+
+/// Send a capability request that answers in LLSD XML, timed by the HTTP
+/// probe under `kind` (AURORA_PROFILE).
+async fn send_llsd(req: reqwest::RequestBuilder, kind: HttpKind) -> Result<Llsd, CapsError> {
+    let timed = probe::HttpRequest::start(kind);
+    let finish = |timed: Option<probe::HttpRequest>, status: u16, bytes: usize, ok: bool| {
+        if let Some(t) = timed {
+            t.finish(status, bytes, ok);
+        }
+    };
+    let resp = match req.header("Accept", "application/llsd+xml").send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            finish(timed, 0, 0, false);
+            return Err(CapsError::Http(e.to_string()));
+        }
+    };
     let status = resp.status();
     if !status.is_success() {
+        finish(timed, status.as_u16(), 0, false);
         return Err(CapsError::Status(status.as_u16()));
     }
-    let bytes = resp.bytes().await.map_err(|e| CapsError::Http(e.to_string()))?;
+    let bytes = match resp.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            finish(timed, 0, 0, false);
+            return Err(CapsError::Http(e.to_string()));
+        }
+    };
+    finish(timed, status.as_u16(), bytes.len(), true);
     if bytes.is_empty() {
         return Ok(Llsd::Undef);
     }
