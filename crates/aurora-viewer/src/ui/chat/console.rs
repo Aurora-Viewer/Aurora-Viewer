@@ -1,0 +1,393 @@
+//! The nearby chat lines above the chat bar, Aurora's look: the recent lines
+//! grouped by sender in cards like the Conversations window's messages (the
+//! sender's picture, their name, the time and the volume on a head row, the
+//! lines under it), on the same faded glass as the Legacy Viewer's one-line
+//! look (`toasts`, Preferences › Aurora › Nearby chat lines). They let clicks
+//! through to the world like the lines did: the name, the picture and the
+//! links get their own small click areas (`bubble_sender_link`,
+//! `bubble_link`). No status dot on the picture, as in the Conversations
+//! thread (the human's choice).
+
+use std::collections::{HashMap, HashSet};
+
+use egui::Color32;
+
+use super::{BubbleJob, JobLook, Link, bubble_link, bubble_sender_link, color_for, hhmm, line_extras, line_job, thread};
+use crate::theme::Palette;
+use crate::world::{ChatKind, ChatLine, World};
+use aurora_net::ChatType;
+
+/// The widest a card gets.
+const WIDTH: f32 = 470.0;
+/// Side of the sender's picture.
+const PICTURE: f32 = 26.0;
+/// Between the picture and the text.
+const GAP: f32 = 8.0;
+/// Text size of the lines.
+const TEXT: f32 = 13.0;
+
+/// The lines of one sender in a row (a notice is a group of its own).
+pub(super) fn groups<'a>(lines: &[&'a ChatLine]) -> Vec<Vec<&'a ChatLine>> {
+    let mut out: Vec<Vec<&'a ChatLine>> = Vec::new();
+    for &line in lines {
+        match out.last_mut() {
+            Some(group) if same_sender(group[group.len() - 1], line) => group.push(line),
+            _ => out.push(vec![line]),
+        }
+    }
+    out
+}
+
+/// Two lines under one head: the same resident or object, said in a row;
+/// notices stand alone.
+fn same_sender(a: &ChatLine, b: &ChatLine) -> bool {
+    !a.kind.is_notice()
+        && !b.kind.is_notice()
+        && a.source == b.source
+        && a.from == b.from
+        && is_object(a.kind) == is_object(b.kind)
+        && (a.kind == ChatKind::Own) == (b.kind == ChatKind::Own)
+}
+
+fn is_object(kind: ChatKind) -> bool {
+    matches!(kind, ChatKind::Object(_) | ChatKind::ObjectIm)
+}
+
+/// How much of a line is still shown: it fades over its last 3 s.
+fn alpha(seconds: f32, line: &ChatLine, now: std::time::SystemTime) -> f32 {
+    let age = now.duration_since(line.time).map(|d| d.as_secs_f32()).unwrap_or(0.0);
+    ((seconds - age) / 3.0).clamp(0.0, 1.0)
+}
+
+/// The colour of a head's name: ours in the theme's teal, an object's in
+/// its kind's colour, a resident's in ink (the Conversations thread's).
+fn name_color(p: &Palette, line: &ChatLine) -> Color32 {
+    if is_object(line.kind) {
+        return crate::ui::colors::sender_color(line);
+    }
+    if line.kind == ChatKind::Own {
+        return p.teal;
+    }
+    p.ink
+}
+
+/// The recent nearby chat in cards (see the module).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn cards(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &World,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    want_names: &mut HashSet<uuid::Uuid>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
+    bottom: f32,
+    seconds: f32,
+    times: bool,
+) {
+    let now = std::time::SystemTime::now();
+    let mut recent: Vec<&ChatLine> = world
+        .chat
+        .iter()
+        .rev()
+        .take(6)
+        .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
+        .collect();
+    if recent.is_empty() {
+        return;
+    }
+    recent.reverse();
+    let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
+    let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
+    egui::Area::new(egui::Id::new("chat_toasts"))
+        .anchor(
+            egui::Align2::LEFT_BOTTOM,
+            egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
+        )
+        .interactable(false)
+        .order(egui::Order::Background)
+        .show(ctx, |ui| {
+            ui.set_max_width(WIDTH);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for group in groups(&recent) {
+                let card_alpha = group.iter().map(|l| alpha(seconds, l, now)).fold(0.0_f32, f32::max);
+                let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * card_alpha) as u8);
+                let radius = ui.visuals().window_corner_radius;
+                let glass = p.panel_alpha < 255;
+                let mut slot = None;
+                let card = egui::Frame::new()
+                    .fill(if glass { Color32::TRANSPARENT } else { tint })
+                    .corner_radius(radius)
+                    .inner_margin(egui::Margin::symmetric(9, 6))
+                    .show(ui, |ui| {
+                        slot = Some(ui.painter().add(egui::Shape::Noop));
+                        ui.multiply_opacity(card_alpha);
+                        card(
+                            ui,
+                            p,
+                            world,
+                            pics,
+                            want_names,
+                            wanted_pics,
+                            &group,
+                            seconds,
+                            now,
+                            card_alpha,
+                            times,
+                            &mut links,
+                            &mut names,
+                        );
+                    });
+                if glass && let Some(slot) = slot {
+                    ui.painter().set(
+                        slot,
+                        aurora_render::glass_panel_faded(card.response.rect, f32::from(radius.nw), tint, card_alpha),
+                    );
+                }
+                ui.add_space(4.0);
+            }
+        });
+    for (k, (rect, link, col)) in links.iter().enumerate() {
+        bubble_link(ctx, p, world, k, *rect, link, *col);
+    }
+    for (k, (rect, line)) in names.into_iter().enumerate() {
+        bubble_sender_link(ctx, p, world, k, rect, line);
+    }
+}
+
+/// One card: the head (picture, name, tags, time) and the lines; a notice
+/// is its line alone, in italics.
+#[allow(clippy::too_many_arguments)]
+fn card<'a>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    want_names: &mut HashSet<uuid::Uuid>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
+    group: &[&'a ChatLine],
+    seconds: f32,
+    now: std::time::SystemTime,
+    card_alpha: f32,
+    times: bool,
+    links: &mut Vec<(egui::Rect, Link, Color32)>,
+    names: &mut Vec<(egui::Rect, &'a ChatLine)>,
+) {
+    let first = group[0];
+    if first.kind.is_notice() {
+        body(
+            ui,
+            p,
+            world,
+            want_names,
+            first,
+            WIDTH - 18.0,
+            alpha(seconds, first, now) / card_alpha.max(0.01),
+            links,
+        );
+        return;
+    }
+    let text_w = WIDTH - 18.0 - PICTURE - GAP;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let (pic, _) = ui.allocate_exact_size(egui::vec2(PICTURE, PICTURE), egui::Sense::hover());
+        picture(ui, p, pics, wanted_pics, first, pic);
+        names.push((pic, first));
+        ui.add_space(GAP);
+        // (as wide as its text: a short line keeps a small card)
+        ui.vertical(|ui| {
+            ui.set_max_width(text_w);
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+                let galley = ui.painter().layout(first.from.clone(), font, name_color(p, first), text_w * 0.6);
+                let (r, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                ui.painter().galley(r.min, galley, p.ink);
+                names.push((r, first));
+                tags(ui, p, first);
+                if times {
+                    ui.label(egui::RichText::new(hhmm(first.time)).size(10.5).color(p.muted_dim));
+                }
+            });
+            for &line in group {
+                let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
+                body(ui, p, world, want_names, line, text_w, fade, links);
+            }
+        });
+    });
+}
+
+/// The tags after a name: IM, shouts, whispers (the Conversations thread's).
+fn tags(ui: &mut egui::Ui, p: &Palette, line: &ChatLine) {
+    match line.kind {
+        ChatKind::Im => thread::tag(ui, aurora_i18n::tr!("people-sheet-im"), Some(p.raised), p.muted),
+        ChatKind::Local(ChatType::Shout) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-shouts"), None, p.warn),
+        ChatKind::Local(ChatType::Whisper) => thread::tag(ui, aurora_i18n::tr!("ui-chat-tag-whispers"), None, p.muted),
+        _ => {}
+    }
+}
+
+/// The sender's picture: the resident's profile picture in a disc (initials
+/// while it loads), an object's cube on a tile.
+fn picture(
+    ui: &egui::Ui,
+    p: &Palette,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    wanted_pics: &mut HashSet<uuid::Uuid>,
+    line: &ChatLine,
+    rect: egui::Rect,
+) {
+    if is_object(line.kind) {
+        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+        thread::paint_icon(ui.painter(), "box", rect.shrink(6.0), crate::ui::colors::sender_color(line));
+        return;
+    }
+    let id = line.source;
+    if !id.is_nil() {
+        wanted_pics.insert(id);
+    }
+    crate::ui::widgets::avatar_disc(ui, p, rect, pics.get(&id), &line.from, false);
+}
+
+/// A line's text under the head, with its links and their badges; `fade`
+/// is its own fading within the card's.
+#[allow(clippy::too_many_arguments)]
+fn body(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    line: &ChatLine,
+    width: f32,
+    fade: f32,
+    links: &mut Vec<(egui::Rect, Link, Color32)>,
+) {
+    let BubbleJob {
+        job,
+        links: line_links,
+        badges,
+        ..
+    } = line_job(line, p, world, want_names, width, TEXT, false, JobLook::Body);
+    let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+    let mut painter = ui.painter().clone();
+    painter.multiply_opacity(fade);
+    painter.galley(rect.min, galley.clone(), p.ink);
+    let col = color_for(line.kind, p).gamma_multiply(fade);
+    line_extras(ui, p, world, &galley, rect.min, TEXT, fade, badges, line_links, col, links);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::Origin;
+
+    fn line(kind: ChatKind, from: &str, source: u128) -> ChatLine {
+        ChatLine {
+            time: std::time::SystemTime::now(),
+            from: from.into(),
+            text: "hi".into(),
+            kind,
+            source: uuid::Uuid::from_u128(source),
+            origin: Origin::Live,
+        }
+    }
+
+    /// Lines of one sender said in a row share a card; another sender, an
+    /// object of the same name or a notice starts a new one.
+    #[test]
+    fn lines_in_a_row_of_one_sender_share_a_card() {
+        let said = ChatKind::Local(ChatType::Normal);
+        let a1 = line(said, "Nova", 1);
+        let a2 = line(said, "Nova", 1);
+        let b = line(said, "Orion", 2);
+        let notice = line(ChatKind::System, "", 0);
+        let object = line(ChatKind::Object(ChatType::Normal), "Nova", 1);
+        let a3 = line(said, "Nova", 1);
+        let lines = [&a1, &a2, &b, &notice, &object, &a3];
+        let sizes: Vec<usize> = groups(&lines).iter().map(Vec::len).collect();
+        assert_eq!(sizes, vec![2, 1, 1, 1, 1]);
+    }
+
+    /// A card's body leaves the name to the head, except an emote's, whose
+    /// name is part of its sentence.
+    #[test]
+    fn the_body_leaves_the_name_to_the_head_except_an_emotes() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let job = |l: &ChatLine| {
+            line_job(l, &p, &world, &mut HashSet::new(), 400.0, TEXT, true, JobLook::Body)
+                .job
+                .text
+        };
+        let mut said = line(ChatKind::Local(ChatType::Shout), "Nova", 1);
+        said.text = "Doors open!".into();
+        assert_eq!(job(&said), "Doors open!");
+        let mut emote = line(ChatKind::Local(ChatType::Normal), "Orion", 2);
+        emote.text = "/me waves".into();
+        assert_eq!(job(&emote), "Orion waves");
+    }
+
+    /// The picture and the name of a card open the profile; its text, and
+    /// the room beside a short card, let the click through to the world.
+    #[test]
+    fn a_cards_picture_and_name_open_the_profile_and_the_rest_reaches_the_world() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut notice = line(ChatKind::System, "", 0);
+        notice.text = "Nova est en ligne.".into();
+        let mut said = line(ChatKind::Local(ChatType::Normal), "Orion Exemple", 7);
+        said.text = "Bienvenue dans la démo".into();
+        world.chat.extend([notice, said]);
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1536.0, 864.0));
+        let frame = |events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    cards(
+                        ui.ctx(),
+                        &p,
+                        &world,
+                        &HashMap::new(),
+                        &mut HashSet::new(),
+                        &mut HashSet::new(),
+                        800.0,
+                        20.0,
+                        false,
+                    )
+                },
+            );
+            out.textures_delta.clear();
+        };
+        frame(Vec::new());
+        frame(Vec::new());
+        let area = |k: usize| ctx.memory(|m| m.area_rect(egui::Id::new(("chat_toast_sender", k))));
+        let picture = area(0).expect("the picture is clickable");
+        let name = area(1).expect("the name is clickable");
+        // the notice has neither
+        assert!(area(2).is_none());
+        let click = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for at in [picture.center(), name.center()] {
+            frame(vec![egui::Event::PointerMoved(at), click(at, true)]);
+            frame(vec![click(at, false)]);
+            assert_eq!(crate::ui::profile::take_open_request(&ctx), Some(uuid::Uuid::from_u128(7)));
+        }
+        let text = egui::pos2(name.left() + 20.0, name.bottom() + 8.0);
+        frame(vec![egui::Event::PointerMoved(text)]);
+        assert!(!ctx.is_pointer_over_egui(), "the message lets the pointer through");
+        let beside = egui::pos2(WIDTH + 40.0, name.center().y);
+        frame(vec![egui::Event::PointerMoved(beside)]);
+        assert!(!ctx.is_pointer_over_egui(), "beside the card");
+    }
+}

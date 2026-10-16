@@ -4,6 +4,7 @@ mod bubbles;
 mod call;
 mod completion;
 mod compose;
+mod console;
 mod find;
 mod head;
 mod header;
@@ -441,6 +442,18 @@ fn pic_side(size: f32) -> f32 {
     size + 3.0
 }
 
+/// How a chat line is laid out: the full-width bar's "Name: text", the
+/// islands' pill (name in semi-bold, no colon), or the body alone under the
+/// head of a card (`console.rs`: the name, the time and the volume are in
+/// the head; an emote keeps its name, which is part of its sentence).
+#[derive(Clone, Copy)]
+enum JobLook<'a> {
+    Line,
+    Pill(&'a egui::FontFamily),
+    Body,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn line_job(
     line: &crate::world::ChatLine,
     p: &Palette,
@@ -449,8 +462,13 @@ fn line_job(
     width: f32,
     size: f32,
     times: bool,
-    pill: Option<&egui::FontFamily>,
+    look: JobLook<'_>,
 ) -> BubbleJob {
+    let pill = match look {
+        JobLook::Pill(family) => Some(family),
+        _ => None,
+    };
+    let body_only = matches!(look, JobLook::Body);
     let col = color_for(line.kind, p);
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
@@ -458,7 +476,7 @@ fn line_job(
         font_id: egui::FontId::proportional(size - 3.0),
         ..Default::default()
     };
-    if times {
+    if times && !body_only {
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
@@ -477,13 +495,14 @@ fn line_job(
     let text_fmt = egui::TextFormat {
         color: col,
         font_id: egui::FontId::proportional(size),
-        italics: emote || (pill.is_some() && line.kind.is_notice()),
+        italics: emote || ((pill.is_some() || body_only) && line.kind.is_notice()),
         ..Default::default()
     };
     // (before the name, after it, body)
     let (before, after, body) = match line.kind {
         ChatKind::System | ChatKind::Invite(_) => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
+        _ if body_only => ("", "", &line.text[..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
         ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
         ChatKind::Local(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
@@ -499,7 +518,9 @@ fn line_job(
     };
     let mut sender = None;
     let mut name = None;
-    if !line.kind.is_notice() {
+    // the body of a card: no name, except an emote's, in its own colour
+    let name_fmt = if body_only { text_fmt.clone() } else { name_fmt };
+    if !line.kind.is_notice() && (!body_only || emote) {
         job.append(before, 0.0, name_fmt.clone());
         let who = match line.kind {
             ChatKind::Object(_) | ChatKind::ObjectIm => Some(Sender::Object),
@@ -507,8 +528,8 @@ fn line_job(
             _ => None,
         };
         // room for the picture, painted over it once laid out (none in a
-        // pill)
-        let who = who.filter(|_| pill.is_none());
+        // pill nor in a card, whose head has it)
+        let who = who.filter(|_| pill.is_none() && !body_only);
         let lead = if who.is_some() { pic_side(size) + 4.0 } else { 0.0 };
         sender = who.map(|w| (job.text.chars().count(), w));
         let start = job.text.chars().count();
@@ -2222,7 +2243,9 @@ fn bubble_sender(
 
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
-/// `want_names` / `wanted_pics`.
+/// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
+/// (`console.rs`), else the Legacy Viewer's one-line look (pills over the
+/// islands when `pills`).
 #[allow(clippy::too_many_arguments)]
 pub fn toasts(
     ctx: &egui::Context,
@@ -2235,7 +2258,12 @@ pub fn toasts(
     seconds: f32,
     times: bool,
     pills: bool,
+    cards: bool,
 ) {
+    if cards {
+        console::cards(ctx, p, world, pics, want_names, wanted_pics, bottom, seconds, times);
+        return;
+    }
     let now = std::time::SystemTime::now();
     let recent: Vec<_> = world
         .chat
@@ -2288,7 +2316,16 @@ pub fn toasts(
                             badges,
                             sender,
                             name,
-                        } = line_job(line, p, world, want_names, 540.0, size, times, family.as_ref());
+                        } = line_job(
+                            line,
+                            p,
+                            world,
+                            want_names,
+                            540.0,
+                            size,
+                            times,
+                            family.as_ref().map_or(JobLook::Line, JobLook::Pill),
+                        );
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
@@ -2305,29 +2342,6 @@ pub fn toasts(
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
                             bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
                         }
-                        // link badges over their invisible glyph
-                        for (at, badge) in badges {
-                            let Some(g) = range_rects(&galley, rect.min, at..at + 1).first().copied() else {
-                                continue;
-                            };
-                            let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
-                            match badge {
-                                LinkBadge::Web(url) => paint_link_badge(painter, p, b, &url, alpha),
-                                LinkBadge::Rating(access) => {
-                                    let mut faded = painter.clone();
-                                    faded.multiply_opacity(alpha);
-                                    let name = super::bars::maturity_name(access);
-                                    let radius = super::widgets::inner_radius(ui.visuals());
-                                    super::widgets::paint_maturity_badge(&faded, p, name, b.shrink(1.0), radius);
-                                }
-                            }
-                        }
-                        // the regions of the places shown, asked if unknown
-                        for (_, link) in &line_links {
-                            if let Link::Place(_, place) = link {
-                                super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
-                            }
-                        }
                         // the islands' pills: the sender's name acts like the
                         // conversations' (Firestorm's toast links it)
                         if pills
@@ -2337,11 +2351,7 @@ pub fn toasts(
                             names.push((r, line));
                         }
                         let col = color_for(line.kind, p).gamma_multiply(alpha);
-                        for (range, link) in line_links {
-                            for r in range_rects(&galley, rect.min, range) {
-                                links.push((r, link.clone(), col));
-                            }
-                        }
+                        line_extras(ui, p, world, &galley, rect.min, size, alpha, badges, line_links, col, &mut links);
                     });
                 if glass && let Some(slot) = slot {
                     let rect = bubble.response.rect;
@@ -2356,6 +2366,53 @@ pub fn toasts(
     }
     for (k, (rect, line)) in names.into_iter().enumerate() {
         bubble_sender_link(ctx, p, world, k, rect, line);
+    }
+}
+
+/// What a laid-out chat line carries besides its text: the badge of each
+/// link painted over its invisible glyph, the regions of the places shown
+/// asked when unknown, and each link's rects (`links`), for their click
+/// areas (`bubble_link`). Shared by the pills and the cards (`console.rs`).
+#[allow(clippy::too_many_arguments)]
+fn line_extras(
+    ui: &egui::Ui,
+    p: &Palette,
+    world: &World,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    size: f32,
+    alpha: f32,
+    badges: Vec<(usize, LinkBadge)>,
+    line_links: Vec<(std::ops::Range<usize>, Link)>,
+    col: Color32,
+    links: &mut Vec<(egui::Rect, Link, Color32)>,
+) {
+    let painter = ui.painter();
+    for (at, badge) in badges {
+        let Some(g) = range_rects(galley, origin, at..at + 1).first().copied() else {
+            continue;
+        };
+        let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
+        match badge {
+            LinkBadge::Web(url) => paint_link_badge(painter, p, b, &url, alpha),
+            LinkBadge::Rating(access) => {
+                let mut faded = painter.clone();
+                faded.multiply_opacity(alpha);
+                let name = super::bars::maturity_name(access);
+                let radius = super::widgets::inner_radius(ui.visuals());
+                super::widgets::paint_maturity_badge(&faded, p, name, b.shrink(1.0), radius);
+            }
+        }
+    }
+    for (_, link) in &line_links {
+        if let Link::Place(_, place) = link {
+            super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
+        }
+    }
+    for (range, link) in line_links {
+        for r in range_rects(galley, origin, range) {
+            links.push((r, link.clone(), col));
+        }
     }
 }
 
@@ -2728,7 +2785,19 @@ mod tests {
             source: uuid::Uuid::from_u128(7),
             origin: Origin::Live,
         };
-        let job = |l: &crate::world::ChatLine, pill| line_job(l, &p, &world, &mut HashSet::new(), 540.0, 12.0, false, pill).job;
+        let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
+            line_job(
+                l,
+                &p,
+                &world,
+                &mut HashSet::new(),
+                540.0,
+                12.0,
+                false,
+                pill.map_or(JobLook::Line, JobLook::Pill),
+            )
+            .job
+        };
         let said = line(ChatKind::Local(ChatType::Normal), "Orion Exemple", "Bienvenue");
         let pill = job(&said, Some(&family));
         assert_eq!(pill.text, "Orion ExempleBienvenue");
@@ -2820,6 +2889,7 @@ mod tests {
                         20.0,
                         false,
                         true,
+                        false,
                     )
                 },
             );
