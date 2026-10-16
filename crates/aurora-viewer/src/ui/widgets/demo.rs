@@ -144,13 +144,14 @@ pub fn minimized_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     }
 }
 
-/// AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h[,<window>]: the resize
+/// AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]: the resize
 /// marks of a real window (`conversations` by default; the id of another
 /// floater, such as `about_land_aurora`, or `minimap`) from frame 600: the
 /// pointer rests in its bottom-right corner (`corner`) or on its right edge
 /// (`edge`), or presses that corner and holds it 40 x 30 further out
 /// (`drag`) or drags it in then out over the frames (`sweep` the width,
-/// `sweep-h` the height: `sweep_offset`), released at frame 1000.
+/// `sweep-h` the height: `sweep_offset`; `sweep-fast` the width, in and
+/// out quickly: `fast_offset`), released at frame 1000.
 pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Ok(value) = std::env::var("AURORA_DEMO_RESIZE") else {
         return Vec::new();
@@ -186,13 +187,18 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
                 _ => Vec::new(),
             }
         }
-        "sweep" | "sweep-h" => {
+        "sweep" | "sweep-h" | "sweep-fast" => {
             let start = egui::Id::new("demo_resize_start");
             let Some(from) = ctx.data(|d| d.get_temp::<egui::Pos2>(start)) else {
                 ctx.data_mut(|d| d.insert_temp(start, corner));
                 return vec![egui::Event::PointerMoved(corner), button(corner, true)];
             };
-            let to = from + sweep_offset(frame, mode.trim() == "sweep-h");
+            let to = from
+                + if mode.trim() == "sweep-fast" {
+                    fast_offset(frame)
+                } else {
+                    sweep_offset(frame, mode.trim() == "sweep-h")
+                };
             match frame {
                 ..1000 => vec![egui::Event::PointerMoved(to)],
                 1000 => vec![button(to, false)],
@@ -216,6 +222,20 @@ fn sweep_offset(frame: u64, height: bool) -> egui::Vec2 {
         _ => outward - inward,
     };
     if height { egui::vec2(0.0, d) } else { egui::vec2(d, 0.0) }
+}
+
+/// `sweep-fast`: the corner held from frame 600 goes 520 points in and back
+/// out in 24 frames (about 45 points a frame, a quick flick), five times,
+/// then rests at its start.
+fn fast_offset(frame: u64) -> egui::Vec2 {
+    let t = frame.saturating_sub(600);
+    let d = if t >= 120 {
+        0.0
+    } else {
+        let k = (t % 24) as f32 / 12.0;
+        -520.0 * if k <= 1.0 { k } else { 2.0 - k }
+    };
+    egui::vec2(d, 0.0)
 }
 
 /// AURORA_DEMO_SNAP=1|group|size|free|detach: Conversations dragged by its

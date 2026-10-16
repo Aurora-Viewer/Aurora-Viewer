@@ -89,6 +89,11 @@ pub struct ChatUi {
     /// resized around one does not flip at every point.
     layout_rail: Option<bool>,
     layout_members_room: Option<bool>,
+    /// The workspace's width last frame, and whether this frame's change of
+    /// it comes from a drag of the window's edge: the layout then follows
+    /// the edge at once, without easing (`workspace::ease`).
+    layout_width: Option<f32>,
+    layout_dragged: bool,
     /// `style` was given once: a change after it is the preferences'.
     style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.

@@ -603,3 +603,53 @@ fn the_new_line_waits_for_the_focus() {
     nl.frame(None, 4, true, 0, &lines, 0);
     assert_eq!(nl.at(None), Some(3));
 }
+
+/// The window's right edge dragged quickly in past the rail's threshold and
+/// back out: the column takes its width at once on every frame (never
+/// between the two, which kept the content wider than the window), and the
+/// window follows the pointer all the way (the human's report of
+/// 2026-10-16: it "shrinks a bit" and catches up).
+#[test]
+fn a_dragged_edge_is_followed_at_once() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, 560.0));
+    h.settle();
+    let wide = h.rect(entry_id(Pinned::Local)).width();
+    let window = |h: &Harness| {
+        h.frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new("conversations")))
+            .expect("the window")
+    };
+    let start = window(&h);
+    let grab = egui::pos2(start.right() - 1.0, start.center().y);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame(vec![egui::Event::PointerMoved(grab)]);
+    h.frame(vec![button(grab, true)]);
+    let mut widths = Vec::new();
+    let mut gaps = Vec::new();
+    for dx in [
+        -40.0, -80.0, -120.0, -160.0, -200.0, -160.0, -120.0, -80.0, -40.0, 0.0, -100.0, -200.0,
+    ] {
+        let at = grab + egui::vec2(dx, 0.0);
+        h.frame(vec![egui::Event::PointerMoved(at)]);
+        widths.push(h.rect(entry_id(Pinned::Local)).width());
+        gaps.push(window(&h).right() - at.x);
+    }
+    h.frame(vec![button(grab + egui::vec2(-200.0, 0.0), false)]);
+    let narrow = widths.iter().copied().fold(f32::MAX, f32::min);
+    assert!(narrow < wide - 50.0, "the rail was reached: {widths:?}");
+    assert!(
+        widths.iter().all(|w| (w - wide).abs() < 1.0 || (w - narrow).abs() < 1.0),
+        "no column between its widths during the drag: {widths:?}"
+    );
+    assert!(
+        gaps.iter().all(|g| (g - gaps[0]).abs() < 1.5),
+        "the window follows the pointer: {gaps:?}"
+    );
+}

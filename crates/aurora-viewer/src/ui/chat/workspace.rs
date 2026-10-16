@@ -26,19 +26,23 @@ const MESSAGES_MIN: f32 = 360.0;
 /// points the column and the rail swapped at every point).
 const HYSTERESIS: f32 = 40.0;
 /// Time the column and the members' panel take to reach their new width
-/// once the window's size crossed a threshold: the messages slide instead
-/// of jumping 170 or 210 points in one frame.
+/// once the window's size crossed a threshold without a drag (a window
+/// maximised or restored, docked): the messages slide instead of jumping
+/// 170 or 210 points in one frame. While its edge is dragged the layout
+/// follows the edge at once: easing behind it, the content looked shrunk
+/// and catching up (the human's report of 2026-10-16).
 const LAYOUT_EASE: f32 = 0.15;
 
-/// A width easing to `target` in `LAYOUT_EASE`, linearly. It moves on the
-/// frame its target changes, a frame's step already: egui's
-/// `animate_value_with_time` gives the old value then, so while the window
-/// was dragged narrower past a threshold the messages lost both the window's
-/// step and none of the column's, and wrapped again for that one frame.
-fn ease(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
+/// A width easing to `target` in `LAYOUT_EASE`, linearly, or at once when
+/// `instant` (a drag of the window's edge). It moves on the frame its
+/// target changes, a frame's step already: egui's `animate_value_with_time`
+/// gives the old value then, and the messages, narrowed by the window
+/// alone for that frame, wrapped again.
+fn ease(ctx: &egui::Context, id: egui::Id, target: f32, instant: bool) -> f32 {
     let (now, dt) = ctx.input(|i| (i.time, f64::from(i.stable_dt.min(0.1))));
     // (from, to, start)
-    let Some((from, to, start)) = ctx.data(|d| d.get_temp::<(f32, f32, f64)>(id)) else {
+    let stored = ctx.data(|d| d.get_temp::<(f32, f32, f64)>(id)).filter(|_| !instant);
+    let Some((from, to, start)) = stored else {
         ctx.data_mut(|d| d.insert_temp(id, (target, target, now)));
         return target;
     };
@@ -110,12 +114,16 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     } = env;
     let size = ui.available_size();
     let h = size.y.max(160.0);
+    // the window's edge dragged: its width changes under a held button
+    st.layout_dragged = ui.input(|i| i.pointer.primary_down()) && st.layout_width.is_some_and(|w| (w - size.x).abs() > 0.1);
+    st.layout_width = Some(size.x);
     let rail_wanted = rail_now(st.layout_rail, size.x);
     st.layout_rail = Some(rail_wanted);
     let column = ease(
         ui.ctx(),
         ui.id().with("column_width"),
         if rail_wanted { sidebar::RAIL } else { sidebar::WIDTH },
+        st.layout_dragged,
     );
     // the entries take the rail's look once the column is closer to it
     let rail = column < (sidebar::RAIL + sidebar::WIDTH) / 2.0;
@@ -234,6 +242,7 @@ fn pane(
         ui.ctx(),
         ui.id().with("members_width"),
         if members_room { members::WIDTH } else { 0.0 },
+        st.layout_dragged,
     );
     {
         let w: &World = world;

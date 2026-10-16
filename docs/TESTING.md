@@ -1999,7 +1999,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   in place. `detach` attaches first, then moves People with Alt held:
   Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
-- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h[,<window>]`**: from frame 600,
+- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real
   window (`corner`), 1 point inside its right edge, halfway down
   (`edge`), or presses that corner and holds it 40 × 30 further out until
@@ -2013,7 +2013,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `AURORA_FPS_LIMIT=60` at frame 780. `sweep` presses the corner and drags
   it 500 points in by frame 700 (down to the window's minimum), then 900
   points out by frame 900, a few points a frame; `sweep-h` does the same
-  on the height (400 in, 600 out); released at frame 1000. With
+  on the height (400 in, 600 out); `sweep-fast` drags it 520 points in
+  and back out in 24 frames (about 45 points a frame), five times, then
+  rests at its start; released at frame 1000. With
   `AURORA_DEMO_CONV=aurora:group` and `AURORA_CAPTURE_FRAMES` listing
   frames (every 10 from 600 to 900, and runs of consecutive ones), what to
   look for in the Conversations window: nothing jumps at a frame; around
