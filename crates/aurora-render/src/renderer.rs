@@ -1028,6 +1028,47 @@ fn msaa_prepass() -> MsaaPrepass {
     })
 }
 
+/// AURORA_PBR_OCCLUSION: whether a PBR face's reflection and ambient take
+/// the occlusion of its material (the red of the packed map, as pbrIbl).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum PbrOcclusion {
+    On,
+    /// `0`: left out, as before.
+    Off,
+    /// `alt`: left out one second in three, to compare the two on screen.
+    Alternate,
+}
+
+impl PbrOcclusion {
+    fn parse(v: Option<&str>) -> PbrOcclusion {
+        match v.map(str::trim) {
+            Some("0") => PbrOcclusion::Off,
+            Some("alt") => PbrOcclusion::Alternate,
+            _ => PbrOcclusion::On,
+        }
+    }
+
+    fn from_env() -> PbrOcclusion {
+        static MODE: std::sync::OnceLock<PbrOcclusion> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| PbrOcclusion::parse(std::env::var("AURORA_PBR_OCCLUSION").ok().as_deref()))
+    }
+
+    /// Whether the frame drawn `secs` whole seconds after the start applies it.
+    fn applied(self, secs: u64) -> bool {
+        match self {
+            PbrOcclusion::On => true,
+            PbrOcclusion::Off => false,
+            PbrOcclusion::Alternate => !secs.is_multiple_of(3),
+        }
+    }
+}
+
+fn pbr_occlusion_now() -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    PbrOcclusion::from_env().applied(secs)
+}
+
 /// AURORA_PROFILE: the summary also wants the time each step waited.
 fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3641,7 +3682,8 @@ impl Backend {
         } else {
             0.0
         };
-        u.sky_ll = [ll_mode, s.distance_multiplier, 0.0, 0.0];
+        // z: the PBR materials' occlusion applied (eval_material)
+        u.sky_ll = [ll_mode, s.distance_multiplier, if pbr_occlusion_now() { 1.0 } else { 0.0 }, 0.0];
         u.sky_obj_light = s.object_sunlight.extend(0.0).to_array();
         u.sky_optics = [s.moisture_level, s.droplet_radius, s.ice_level, 0.0];
         u.sky_optics_tex = [s.rainbow_texture, s.halo_texture, 0, 0];
@@ -5839,6 +5881,18 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pbr_occlusion_is_on_unless_turned_off_and_alternates_one_second_in_three() {
+        assert_eq!(PbrOcclusion::parse(None), PbrOcclusion::On);
+        assert_eq!(PbrOcclusion::parse(Some(" 0 ")), PbrOcclusion::Off);
+        assert_eq!(PbrOcclusion::parse(Some("alt")), PbrOcclusion::Alternate);
+        assert_eq!(PbrOcclusion::parse(Some("1")), PbrOcclusion::On);
+        assert!((0..6).all(|s| PbrOcclusion::On.applied(s)));
+        assert!((0..6).all(|s| !PbrOcclusion::Off.applied(s)));
+        let alt: Vec<bool> = (0..6).map(|s| PbrOcclusion::Alternate.applied(s)).collect();
+        assert_eq!(alt, [false, true, true, false, true, true]);
+    }
 
     /// The object vertex shader's arithmetic, in single precision like the
     /// GPU, against the exact position: a 20 cm object 40 cm in front of a
