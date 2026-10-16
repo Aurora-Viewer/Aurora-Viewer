@@ -2128,9 +2128,19 @@ mod tests {
         assert_eq!(s.preset, CameraPreset::Custom);
     }
 
+    /// The camera limits on, as in the Legacy Viewer (Aurora turns them off
+    /// by default).
+    fn constrained() -> CameraSettings {
+        CameraSettings {
+            disable_constraints: false,
+            ignore_sim_constraints: false,
+            ..CameraSettings::default()
+        }
+    }
+
     #[test]
     fn border_crossing_moves_the_camera_with_the_agent() {
-        let s = CameraSettings::default();
+        let s = constrained();
         let mut w = world_at(Vec3::new(1.0, 128.0, 25.0));
         let mut cam = Camera::default();
         cam.set_collide_plane(Vec4::new(1.0, 0.0, 0.0, -20.0), &s);
@@ -2149,7 +2159,7 @@ mod tests {
 
     #[test]
     fn collide_plane_keeps_the_camera_in_front_of_a_wall() {
-        let s = CameraSettings::default();
+        let s = constrained();
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
         let mut cam = Camera::default();
         // a wall at x = 126.5 facing +x, the avatar on its positive side
@@ -2158,7 +2168,7 @@ mod tests {
         assert!(cam.position.x > 126.5, "{:?}", cam.position);
         let unconstrained = CameraSettings {
             disable_constraints: true,
-            ..CameraSettings::default()
+            ..constrained()
         };
         settle(&mut cam, &mut w, &unconstrained);
         assert!(cam.position.x < 126.0, "{:?}", cam.position);
@@ -2250,6 +2260,10 @@ mod tests {
     }
 
     fn focused_object() -> (World, Camera, CameraSettings, usize) {
+        focused_object_with(CameraSettings::default())
+    }
+
+    fn focused_object_with(s: CameraSettings) -> (World, Camera, CameraSettings, usize) {
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
         for ev in crate::demo::events() {
             w.apply(ev);
@@ -2266,7 +2280,6 @@ mod tests {
         });
         let idx = w.objects.index_of_uuid(&id).unwrap();
         let g = focus_object_geom(&w, &id, Instant::now()).unwrap();
-        let s = CameraSettings::default();
         let mut cam = Camera {
             focus_on_avatar: false,
             ..Default::default()
@@ -2324,7 +2337,7 @@ mod tests {
 
     #[test]
     fn manual_zoom_keeps_fov_constraints_with_edit_tracking_disabled() {
-        let (mut w, mut cam, s, _) = focused_object();
+        let (mut w, mut cam, s, _) = focused_object_with(constrained());
         let mut f = frame(1.0 / 60.0);
         f.build_mode = true;
         f.edit_tracking = Some(false);

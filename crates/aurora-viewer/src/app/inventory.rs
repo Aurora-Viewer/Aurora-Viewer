@@ -626,6 +626,7 @@ impl App {
                 Err(reason) => {
                     self.inventory_ui.message.clone_from(&reason);
                     self.appearance_ui.message = reason;
+                    self.reload_outfit();
                 }
             }
             return;
@@ -643,7 +644,18 @@ impl App {
             Err(reason) => {
                 self.inventory_ui.message.clone_from(&reason);
                 self.appearance_ui.message = reason;
+                self.reload_outfit();
             }
+        }
+    }
+
+    /// A refused outfit change asks again for the current outfit, the
+    /// outfits and their missing link targets (`AppearanceUi::reload`):
+    /// "still loading" lasts until they arrive, not for the session.
+    fn reload_outfit(&mut self) {
+        let worn = self.world.worn_attachment_items();
+        for command in self.appearance_ui.reload(&mut self.world.inventory, self.world.agent_id, &worn) {
+            self.send(command);
         }
     }
 }

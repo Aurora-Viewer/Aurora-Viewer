@@ -2914,9 +2914,14 @@ impl Session<'_> {
         self.add_sim(addr, handle, size, false);
         if let Some(sim) = self.sims.get_mut(&addr) {
             sim.handle = handle;
-            // A new seed means new capabilities.
+            // A new seed means new capabilities, and the old ones are
+            // dropped until they arrive (LLViewerRegion::setSeedCapability
+            // clears mCapabilities): a request sent on the child agent's
+            // capabilities meanwhile could fail, inventory and outfit
+            // changes first.
             if sim.seed.as_deref() != Some(seed.as_str()) {
                 sim.caps_requested = false;
+                sim.caps = Arc::default();
             }
         }
         self.agent_moved = false;

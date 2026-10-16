@@ -86,6 +86,28 @@ impl AppearanceUi {
         for f in inv.folders.values_mut().filter(|f| matches!(f.info.type_default, 46..=48)) {
             f.state = crate::world::inventory::FetchState::Unknown;
         }
+        // asked again right away: with this window closed nothing else
+        // would, and every outfit change would wait for them
+        for id in [model::cof(inv), model::system_folder(inv, model::FT_MY_OUTFITS), model::base(inv)]
+            .into_iter()
+            .flatten()
+        {
+            inv.request(id);
+        }
+    }
+
+    /// An outfit change refused because the outfit is not loaded (a fetch
+    /// lost while the agent changed region): what it needs is asked again,
+    /// the link targets included, so that the next try goes through even
+    /// with this window closed.
+    pub fn reload(
+        &mut self,
+        inv: &mut crate::world::inventory::Inventory,
+        agent: Uuid,
+        worn: &HashSet<Uuid>,
+    ) -> Vec<aurora_net::NetCommand> {
+        self.requested_items.clear();
+        self.prepare(inv, agent, worn)
     }
 }
 
@@ -990,6 +1012,40 @@ pub fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refused outfit change (no capabilities in the region just entered)
+    /// used to leave the current outfit unloaded: "still loading" for every
+    /// later change while the Appearance window stayed closed.
+    #[test]
+    fn a_refused_outfit_change_loads_the_outfit_again() {
+        use crate::world::inventory::FetchState;
+        let mut inv = crate::world::inventory::Inventory::default();
+        let agent = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut inv, agent);
+        let cof = model::cof(&inv).expect("current outfit");
+        let mut st = AppearanceUi::default();
+        st.refresh(&mut inv);
+        assert_eq!(inv.folders[&cof].state, FetchState::Fetching);
+        assert!(inv.queue.contains(&(cof, false)));
+        assert!(model::plan(&inv, Action::Add(Uuid::from_u128(723)), &HashMap::new()).is_err());
+        // the fetch failed too, and a link target is missing: the next
+        // refused change asks for both
+        inv.queue.clear();
+        inv.failed(&[cof]);
+        let target = model::folder_links(&inv, cof)
+            .into_iter()
+            .find(|l| !l.folder)
+            .expect("COF link")
+            .target;
+        inv.items.remove(&target);
+        let commands = st.reload(&mut inv, agent, &HashSet::new());
+        assert!(inv.queue.contains(&(cof, false)));
+        assert!(
+            commands
+                .iter()
+                .any(|c| matches!(c, aurora_net::NetCommand::FetchItems { items, .. } if items.contains(&target)))
+        );
+    }
 
     #[test]
     fn outfits_worn_and_editor_show_actual_attachment_points() {

@@ -8644,6 +8644,8 @@ impl App {
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
                 self.plates.friends_only_full =
                     self.settings.plates_friends_only_full || (self.demo && std::env::var_os("AURORA_DEMO_FRIEND_PLATES").is_some());
+                // AURORA_VOICE_LEVEL_LOG=1 (temporary): our own plate's voice level in the log
+                self.plates.probe = ui::nameplate::level_log().then_some(self.world.agent_id);
                 self.update_plate_hover(&ctx);
                 self.name_tags = if held {
                     Vec::new()
