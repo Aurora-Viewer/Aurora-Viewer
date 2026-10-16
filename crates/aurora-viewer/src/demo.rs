@@ -85,6 +85,10 @@ pub mod search;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
+/// A resident's "Invite to group", "Add to contact set" and "Block
+/// particles" (AURORA_DEMO_SOCIAL_MENU).
+#[path = "demo_social_menu.rs"]
+pub mod social_menu;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
@@ -1751,6 +1755,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
+                || social_menu::step().is_some()
             {
                 text.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
@@ -3437,6 +3442,10 @@ pub fn events() -> Vec<NetEvent> {
             "",
         );
         o.particles = aurora_net::objects::ParticleUpdate::Set(fountain_particles());
+        // AURORA_DEMO_SOCIAL_MENU: the wolf's, for "Block particles"
+        if social_menu::step().is_some() {
+            o.owner_id = social_menu::RESIDENT;
+        }
         add(o);
         id += 1;
     }

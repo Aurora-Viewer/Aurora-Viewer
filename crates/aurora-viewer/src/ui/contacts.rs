@@ -166,6 +166,8 @@ pub struct ContactsUi {
     dialog: Option<Dialog>,
     /// "Add to contact set" of the friend menu: (set, avatars).
     add_to_set: Option<(String, Vec<Uuid>)>,
+    /// The residents a new set asked from a menu gets once created.
+    new_set_members: Vec<Uuid>,
     picker: AvatarPicker,
     /// What the picker is open for.
     pick_for: Option<PickFor>,
@@ -264,7 +266,22 @@ impl ContactsUi {
 
     /// A new contact set, its name asked first.
     pub fn ask_new_set(&mut self) {
+        self.ask_new_set_for(Vec::new());
+    }
+
+    /// "New contact set…" of a resident's menu: the new set's name asked
+    /// (AddNewContactSet), then these residents added to it.
+    pub fn ask_new_set_for(&mut self, ids: Vec<Uuid>) {
+        self.new_set_members = ids;
         self.dialog = Some(Dialog::AddSet(aurora_i18n::tr!("ui-contacts-new-contact-set-2").into()));
+    }
+
+    /// The new set's prompt answered with `name` (the demo's captures).
+    pub fn demo_answer_new_set(&mut self, world: &mut World, name: &str) {
+        if matches!(self.dialog, Some(Dialog::AddSet(_))) {
+            self.dialog = None;
+            create_set(world, self, name);
+        }
     }
 
     /// Delete a contact set, confirmed first.
@@ -2129,11 +2146,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         })),
         Dialog::RejectingTeleports => {}
         Dialog::OfferTeleport { to, message } => actions.push(ContactsAction::SendTeleportOffer { to, message }),
-        Dialog::AddSet(name) => {
-            if world.contact_sets.add_set(&name) {
-                st.set_choice = Some(name.trim().to_owned());
-            }
-        }
+        Dialog::AddSet(name) => create_set(world, st, &name),
         Dialog::RemoveSet(set) => {
             world.contact_sets.remove_set(&set, is_friend);
             st.set_choice = None;
@@ -2144,6 +2157,21 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         }
         Dialog::SetAlias { ids, alias } => world.contact_sets.set_pseudonym(&ids, &alias, is_friend),
     }
+}
+
+/// AddNewContactSet answered: the set created and shown, with the
+/// residents of the menu that asked for it (none from the lists' "+").
+fn create_set(world: &mut World, st: &mut ContactsUi, name: &str) {
+    let members = std::mem::take(&mut st.new_set_members);
+    if !world.contact_sets.add_set(name) {
+        return;
+    }
+    let name = name.trim().to_owned();
+    if !members.is_empty() {
+        let social = &world.social;
+        world.contact_sets.add_to_set(&members, &name, |id| social.is_friend(id));
+    }
+    st.set_choice = Some(name);
 }
 
 /// IM_FRIENDSHIP_OFFERED as sent by LLAvatarActions::requestFriendship.
@@ -2248,5 +2276,26 @@ mod tests {
         };
         assert_eq!(to.len(), MAX_LURES);
         assert_eq!(message.chars().count(), LURE_MESSAGE_MAX);
+    }
+
+    #[test]
+    fn a_new_set_asked_from_a_menu_gets_its_resident() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut st = ContactsUi::default();
+        st.ask_new_set_for(vec![id(7)]);
+        assert!(matches!(st.dialog, Some(Dialog::AddSet(_))));
+        create_set(&mut world, &mut st, " Circle ");
+        assert_eq!(world.contact_sets.friend_sets(&id(7)), vec!["Circle".to_string()]);
+        assert_eq!(st.set_choice.as_deref(), Some("Circle"));
+        // the lists' "+" creates an empty set, even after a menu's one
+        st.ask_new_set_for(vec![id(8)]);
+        st.ask_new_set();
+        create_set(&mut world, &mut st, "Other");
+        assert!(world.contact_sets.is_valid("Other"));
+        assert!(world.contact_sets.friend_sets(&id(8)).is_empty());
+        // a name already taken creates nothing and adds nobody
+        st.ask_new_set_for(vec![id(9)]);
+        create_set(&mut world, &mut st, "Circle");
+        assert!(world.contact_sets.friend_sets(&id(9)).is_empty());
     }
 }
