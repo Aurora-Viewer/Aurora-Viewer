@@ -331,6 +331,12 @@ impl Calibration {
                 self.last = None;
                 return;
             }
+            // a speed of the land twice its usual one is not the keys' (a
+            // push, a slide, momentum the airborne test missed)
+            if intent.mode != Mode::Fly && horizontal > 2.0 * SEED_SPEED[intent.mode.index()] {
+                self.last = None;
+                return;
+            }
             (horizontal, None)
         } else {
             if velocity.z * intent.vertical <= 0.3 {
@@ -397,6 +403,17 @@ const FAILURES_TO_SUSPEND: usize = 3;
 const SUSPEND: f32 = 5.0;
 /// The keys' velocities kept: more than the longest delay.
 const HISTORY: f32 = 3.0;
+/// At the end of a flight the simulator keeps the flight's speed until the
+/// avatar lands (Firestorm only clears the FLY flag): the avatar coasts
+/// while the simulator moves it this much faster (m/s) than the keys ask.
+const COAST_MARGIN: f32 = 1.0;
+/// While it coasts, the lead goes from the flight's to the keys' at most
+/// this fast (m/s): the drawn avatar slows down by that much, instead of
+/// dropping to a walk's lead in one delay and catching up after.
+const COAST_DRAIN: f32 = 3.0;
+/// Vertical speed (m/s) of the simulator's reports beyond which our
+/// avatar is in the air: no speed of the land is learned from them.
+const AIRBORNE: f32 = 1.0;
 
 /// One frame of the prediction.
 #[derive(Debug, Clone, Copy)]
@@ -440,6 +457,12 @@ pub struct Prediction {
     /// Since the keys were released, the simulator was seen moving: its
     /// stop is the end of the motion (`settle`).
     moved_since_release: bool,
+    /// The flight ended and the simulator carries the avatar on at its
+    /// speed (`COAST_MARGIN`): the lead drains at `COAST_DRAIN`.
+    coasting: bool,
+    /// What the lead had left over the keys' when the coast ended (the
+    /// landing): handed to the caller as a correction (`settle`).
+    landed: Vec3,
 }
 
 impl Default for Prediction {
@@ -460,6 +483,8 @@ impl Default for Prediction {
             lead_max: 0.0,
             rtt: 0.0,
             moved_since_release: false,
+            coasting: false,
+            landed: Vec3::ZERO,
         }
     }
 }
@@ -506,7 +531,7 @@ impl Prediction {
 
     pub fn step(&mut self, s: Step) {
         self.rtt = s.rtt.clamp(0.0, 2.0);
-        self.flying = s.flying;
+        let was_flying = std::mem::replace(&mut self.flying, s.flying);
         let server = if s.flying {
             s.server_velocity
         } else {
@@ -535,6 +560,16 @@ impl Prediction {
             .retain(|t| s.now.saturating_duration_since(*t).as_secs_f32() < FAILURE_WINDOW);
         let ramp = self.last_mode.map_or(SEED_RAMP, |m| self.calibration.ramp(m));
         let target = self.intent.map_or(Vec3::ZERO, |i| self.calibration.target(&i));
+        // the end of a flight at speed: the simulator carries the avatar on
+        // until it lands, whatever the keys ask
+        let (carried, asked) = (horizontal(server).length(), horizontal(target).length());
+        if was_flying && !s.flying && carried > asked + COAST_MARGIN {
+            self.coasting = true;
+        }
+        let landed = self.coasting && (s.flying || carried <= asked + COAST_MARGIN);
+        if landed {
+            self.coasting = false;
+        }
         // the simulator's ramp, as a first order reaching 90 % in `ramp`
         let tau = ramp / std::f32::consts::LN_10;
         let k = if tau > 1e-3 { 1.0 - (-s.dt / tau).exp() } else { 1.0 };
@@ -554,8 +589,19 @@ impl Prediction {
         }
         let delay = self.calibration.delay(self.rtt);
         if driving {
-            self.lead = self.window(s.now, delay);
-            self.check_follow(server, delay + ramp, s);
+            let keyed = self.window(s.now, delay);
+            if self.coasting {
+                let gap = keyed - self.lead;
+                let most = COAST_DRAIN * s.dt.max(0.0);
+                self.lead += if gap.length() > most { gap.normalize_or_zero() * most } else { gap };
+            } else {
+                if landed {
+                    // what is left stays where it is drawn and fades
+                    self.landed += horizontal(self.lead - keyed);
+                }
+                self.lead = keyed;
+                self.check_follow(server, delay + ramp, s);
+            }
         } else {
             self.lead *= 0.5_f32.powf(s.dt / FADE_HALF_LIFE);
             if self.lead.length_squared() < 1e-6 {
@@ -609,6 +655,12 @@ impl Prediction {
     /// applied by the frame at `applied` (the delay is counted to that frame:
     /// until then the drawn simulator's position moves as before).
     pub fn on_report(&mut self, velocity: Vec3, received: Instant, applied: Instant) {
+        // in the air (a fall, a jump, the end of a flight) the simulator's
+        // speed is not the keys': a fall with a flight's momentum, forward
+        // held, taught a walk of 12 m/s on Agni
+        if self.coasting || (!self.flying && velocity.z.abs() > AIRBORNE) {
+            return;
+        }
         let held = self.since.map_or(0.0, |t| received.saturating_duration_since(t).as_secs_f32());
         self.calibration.observe(self.intent, held, self.rtt, velocity, received, applied);
     }
@@ -618,18 +670,20 @@ impl Prediction {
     /// physics step sooner than the lead expected). Dropped and returned,
     /// for the caller to keep where the avatar is drawn instead of walking
     /// it back.
+    /// The same for what the lead of a coast had left at the landing.
     pub fn settle(&mut self, server_velocity: Vec3) -> Vec3 {
+        let landed = std::mem::take(&mut self.landed);
         let server = if self.flying {
             server_velocity
         } else {
             horizontal(server_velocity)
         };
         if self.intent.is_some() || !self.moved_since_release || server.length() > 0.05 || self.lead == Vec3::ZERO {
-            return Vec3::ZERO;
+            return landed;
         }
         self.history.clear();
         self.moved_since_release = false;
-        std::mem::take(&mut self.lead)
+        landed + std::mem::take(&mut self.lead)
     }
 
     /// A key that moves the avatar is held.
@@ -929,6 +983,68 @@ mod tests {
         let up = Intent::from_flags(control::FLY | control::UP_POS, 0.0, false).expect("climb");
         assert_eq!((up.mode, up.direction, up.vertical), (Mode::Fly, Vec3::ZERO, 1.0));
         assert_eq!(Intent::from_flags(control::FLY, 0.0, false), None);
+    }
+
+    /// The end of a flight at 16 m/s, forward held (Agni, 2026-10-16): the
+    /// simulator carries the avatar on at the flight's speed until it lands
+    /// 0.5 s later. The drawn avatar slows down by `COAST_DRAIN` at most
+    /// (it dropped to 4.9 m/s, then rushed at 27 when the lead fell to a
+    /// walk's at once), the simulator is not taken for one that does not
+    /// follow, no walk of 15 m/s is learned, and what the lead has left at
+    /// the landing is handed over as a correction.
+    #[test]
+    fn the_end_of_a_flight_coasts_without_a_dip() {
+        let mut p = Prediction::default();
+        let now = Instant::now();
+        let (rtt, dt) = (0.2, 1.0 / 100.0);
+        let fly = Some(Intent {
+            mode: Mode::Fly,
+            direction: Vec3::X,
+            vertical: 0.0,
+        });
+        let (mut server, mut previous_drawn, mut previous_speed) = (0.0_f32, None::<f32>, None::<f32>);
+        let mut worst_change = 0.0_f32;
+        let mut handed = Vec3::ZERO;
+        for n in 0..400 {
+            let t = n as f32 * dt;
+            let flying = t < 2.0;
+            // the simulator flies, then falls on with the flight's speed and
+            // walks from the landing (forward still held)
+            let v = if t < 2.5 { 16.0 } else { 3.2 };
+            p.step(Step {
+                intent: if flying { fly } else { walk(Vec3::X) },
+                server_velocity: Vec3::new(v, 0.0, if flying || t >= 2.5 { 0.0 } else { -5.0 }),
+                rtt,
+                flying,
+                dt,
+                now: at(now, t),
+            });
+            if !flying && t < 2.5 {
+                p.on_report(Vec3::new(v, 0.0, -5.0), at(now, t), at(now, t));
+            }
+            handed += p.settle(Vec3::X * v);
+            server += v * dt;
+            let drawn = server + p.lead().x + handed.x;
+            if let Some(previous) = previous_drawn {
+                let speed = (drawn - previous) / dt;
+                if (1.0..2.49).contains(&t) {
+                    if let Some(before) = previous_speed {
+                        worst_change = worst_change.max((speed - before).abs());
+                    }
+                    assert!(speed > 16.0 - COAST_DRAIN - 0.5, "t {t:.2}: drawn at {speed:.1} m/s");
+                }
+                previous_speed = Some(speed);
+            }
+            previous_drawn = Some(drawn);
+        }
+        // (the coast's slowing starts at once: the agent's glide smooths it)
+        assert!(
+            worst_change <= COAST_DRAIN + 0.1,
+            "the drawn speed jumped by {worst_change:.2} m/s in a frame"
+        );
+        assert!(p.failures.is_empty(), "taken for a simulator that does not follow");
+        assert_eq!(p.calibration.speed(Mode::Walk), SEED_SPEED[Mode::Walk.index()]);
+        assert!(handed.x > 0.0, "nothing handed over at the landing");
     }
 
     /// A press, the simulator following one round trip later, then a

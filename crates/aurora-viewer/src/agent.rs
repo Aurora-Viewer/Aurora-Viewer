@@ -401,6 +401,8 @@ impl AgentState {
         let left = self.prediction.settle(self.velocity);
         if left != Vec3::ZERO {
             self.offset += left;
+            // (what a coast had left at its landing fades slowly)
+            self.slow_blend |= own_motion::slow_correction(self.offset.length());
         }
         self.lead = self.prediction.lead();
     }
