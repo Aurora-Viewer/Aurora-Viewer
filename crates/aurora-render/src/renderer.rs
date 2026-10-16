@@ -695,6 +695,9 @@ struct Pipelines {
     /// Blended faces lit before their invisible fragments are dropped, for
     /// frames that ask for it ([`BlendDiscard::Alternate`] only).
     blend_late: Option<wgpu::RenderPipeline>,
+    /// Blended faces of rigged meshes, drawn before the others and writing
+    /// depth (`DrawLists::blend_depth`).
+    blend_depth: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
     glow_max: wgpu::RenderPipeline,
@@ -1397,6 +1400,51 @@ fn cull_cmds_to_view(view_proj: Mat4, list: &[DrawCmd]) -> Vec<DrawCmd> {
         })
         .copied()
         .collect()
+}
+
+/// A part of scene pass B, drawing over the color of pass A. `last`: the
+/// part that resolves the multisampled color (the others keep it for the
+/// next part); `write_depth`: the part of the rigged blended faces, the
+/// others only read the depth (also sampled through the frame group).
+fn begin_scene_b<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    t: &Targets,
+    label: &'static str,
+    last: bool,
+    write_depth: bool,
+) -> wgpu::RenderPass<'a> {
+    let (view, resolve) = match &t.color_msaa {
+        Some(msaa) => (msaa, Some(&t.color)),
+        None => (&t.color, None),
+    };
+    let single = resolve.is_none();
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: resolve.filter(|_| last),
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: if single || !last {
+                    wgpu::StoreOp::Store
+                } else {
+                    wgpu::StoreOp::Discard
+                },
+            },
+        })],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: t.depth_msaa.as_ref().unwrap_or(&t.depth_ss),
+            depth_ops: write_depth.then_some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, d: PipeDesc) -> wgpu::RenderPipeline {
@@ -2453,11 +2501,11 @@ impl Backend {
             },
         };
         let blend_discard = BlendDiscard::from_env();
-        let blend_pipe = |label: &'static str, early: bool| {
+        let blend_pipe = |label: &'static str, early: bool, depth_write: bool| {
             pipe(PipeDesc {
                 blend: Some(suppress),
                 write_mask: wgpu::ColorWrites::ALL,
-                depth_write: false,
+                depth_write,
                 depth_compare: wgpu::CompareFunction::Greater,
                 constants: if early {
                     &[("BLEND_EARLY_DISCARD", 1.0)]
@@ -2467,8 +2515,11 @@ impl Backend {
                 ..base(label, "vs_main", "fs_blend")
             })
         };
-        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late);
-        let blend_late = (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false));
+        let blend = blend_pipe("blend", blend_discard != BlendDiscard::Late, false);
+        let blend_late = (blend_discard == BlendDiscard::Alternate).then(|| blend_pipe("blend late discard", false, false));
+        // LLDrawPoolAlpha::forwardRender(true): rigged alpha writes depth
+        // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
+        let blend_depth = blend_pipe("blend rigged", true, true);
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -2773,6 +2824,7 @@ impl Backend {
             water,
             blend,
             blend_late,
+            blend_depth,
             particles,
             glow,
             glow_max,
@@ -4973,7 +5025,6 @@ impl Backend {
             t.slot_prepass[slot].set(prepass_wanted);
         }
         // ---- scene pass A: sky, terrain, opaque, masked
-        let single = self.targets.color_msaa.is_none();
         {
             let (view, resolve) = match &self.targets.color_msaa {
                 Some(msaa) => (msaa, Some(&self.targets.color)),
@@ -5092,34 +5143,64 @@ impl Backend {
         );
 
         mark(&mut encoder, MARK_COPY_END);
-        // ---- scene pass B: SSR, water, blended faces, particles
+        // ---- scene pass B: SSR, water, blended faces, particles. The
+        // blended faces of rigged meshes come first and write depth
+        // (`DrawLists::blend_depth`, LLDrawPoolAlpha::forwardRender(true)):
+        // the pass is cut around them, the rest of it only reads the depth.
+        let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
+        let (b0, bn) = rg.blend;
+        let n_depth = (lists.blend_depth as u32).min(bn);
+        let split = n_depth > 0;
+        let blend_pipe = self
+            .pipelines
+            .blend_late
+            .as_ref()
+            .filter(|_| f.blend_late_discard)
+            .unwrap_or(&self.pipelines.blend);
+        // blended faces `from..to`, back to front; a glowing one adds its glow
+        // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
+        let blended = |pass: &mut wgpu::RenderPass, pipe: &wgpu::RenderPipeline, from: u32, to: u32| {
+            let mut start = from;
+            for i in from..to {
+                if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
+                    continue;
+                }
+                draw(pass, pipe, (b0 + start as u64 * stride, i + 1 - start));
+                draw(pass, &self.pipelines.glow, (b0 + i as u64 * stride, 1));
+                start = i + 1;
+            }
+            draw(pass, pipe, (b0 + start as u64 * stride, to - start));
+        };
+        // the other blended faces, the overlays and the particles
+        let rest = |pass: &mut wgpu::RenderPass| {
+            blended(pass, blend_pipe, n_depth, bn);
+            // debug overlays (before the particles, which rebind vertex buffer 0)
+            draw(pass, &self.pipelines.debug_red, rg.debug_red);
+            draw(pass, &self.pipelines.debug_blue, rg.debug_blue);
+            if let Some(wire) = &self.pipelines.select_child_wire {
+                draw(pass, wire, rg.select_child);
+            }
+            if let Some(wire) = &self.pipelines.select_root_wire {
+                draw(pass, wire, rg.select_root);
+            }
+            if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
+                for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
+                    draw(pass, wire, r);
+                }
+                for b in 0..MAIN_BINS {
+                    draw_bin(pass, Some(wire), b, b);
+                }
+            }
+            pass_mark(pass, MARK_BLEND_END);
+            // particles last: they rebind vertex buffer 0
+            if n_particles > 0 {
+                pass.set_pipeline(&self.pipelines.particles);
+                pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
+                pass.draw(0..6, 0..n_particles);
+            }
+        };
         {
-            let (view, resolve) = match &self.targets.color_msaa {
-                Some(msaa) => (msaa, Some(&self.targets.color)),
-                None => (&self.targets.color, None),
-            };
-            let depth = self.targets.depth_msaa.as_ref().unwrap_or(&self.targets.depth_ss);
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("scene b"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: resolve,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: if single { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
-                    },
-                })],
-                // read-only depth: also sampled through the frame bind group
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: None,
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split, false);
             bind_mesh(&mut pass, &self.groups.b);
             if let (Some(ssr), Some(gbg)) = (&self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
@@ -5133,7 +5214,6 @@ impl Backend {
                 if glow_skip & 2 == 0 {
                     draw(&mut pass, &self.pipelines.glow_max, rg.glow);
                 }
-                let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
                 let (g0, gn) = rg.glow_alpha;
                 for i in 0..(if glow_skip & 4 == 0 { gn as u64 } else { 0 }) {
                     draw(&mut pass, &self.pipelines.glow_suppress, (g0 + i * stride, 1));
@@ -5141,50 +5221,21 @@ impl Backend {
                 }
             }
             pass_mark(&mut pass, MARK_GLOW_END);
-            // blended faces back to front; a glowing one adds its glow right
-            // after itself, so later layers in front dim it (LLDrawPoolAlpha)
-            let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
-            let (b0, bn) = rg.blend;
-            let blend_pipe = self
-                .pipelines
-                .blend_late
-                .as_ref()
-                .filter(|_| f.blend_late_discard)
-                .unwrap_or(&self.pipelines.blend);
-            let mut start = 0u32;
-            for i in 0..bn {
-                if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
-                    continue;
-                }
-                draw(&mut pass, blend_pipe, (b0 + start as u64 * stride, i + 1 - start));
-                draw(&mut pass, &self.pipelines.glow, (b0 + i as u64 * stride, 1));
-                start = i + 1;
+            if !split {
+                rest(&mut pass);
             }
-            draw(&mut pass, blend_pipe, (b0 + start as u64 * stride, bn - start));
-            // debug overlays (before the particles, which rebind vertex buffer 0)
-            draw(&mut pass, &self.pipelines.debug_red, rg.debug_red);
-            draw(&mut pass, &self.pipelines.debug_blue, rg.debug_blue);
-            if let Some(wire) = &self.pipelines.select_child_wire {
-                draw(&mut pass, wire, rg.select_child);
+        }
+        if split {
+            {
+                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
+                // (the frame group without the scene copy and the depth:
+                // the depth is written here, and fs_blend reads neither)
+                bind_mesh(&mut pass, &self.groups.a);
+                blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
             }
-            if let Some(wire) = &self.pipelines.select_root_wire {
-                draw(&mut pass, wire, rg.select_root);
-            }
-            if let (true, Some(wire)) = (f.wireframe, &self.pipelines.debug_wire) {
-                for r in [rg.terrain, rg.opaque, rg.opaque_2s, rg.mask, rg.mask_2s, rg.blend] {
-                    draw(&mut pass, wire, r);
-                }
-                for b in 0..MAIN_BINS {
-                    draw_bin(&mut pass, Some(wire), b, b);
-                }
-            }
-            pass_mark(&mut pass, MARK_BLEND_END);
-            // particles last: they rebind vertex buffer 0
-            if n_particles > 0 {
-                pass.set_pipeline(&self.pipelines.particles);
-                pass.set_vertex_buffer(0, self.particle_buffer.slice(..));
-                pass.draw(0..6, 0..n_particles);
-            }
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
+            bind_mesh(&mut pass, &self.groups.b);
+            rest(&mut pass);
         }
 
         prof.mark("scene_b");

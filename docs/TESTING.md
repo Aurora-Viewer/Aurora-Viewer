@@ -1522,6 +1522,7 @@ To check with these scenarios:
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
+| `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
@@ -1578,6 +1579,13 @@ To check with these scenarios:
     (`AURORA_BLEND_EARLY_DISCARD`): it only pays off where empty
     areas are in one piece on screen. `32,24,90,256` (large empty
     stretches) shows it, `32,24,60,16` (fine strands) gains nothing.
+- **`AURORA_DEMO_LASHES=1`** (with `AURORA_DEMO_HAIR`, for example
+  `1,48,20`): our avatar also wears a small red ball, a blended rigged
+  mesh, inside the head shell on the side the default camera sees: the
+  eyelashes behind a fringe of mesh hair, nearer the camera than the
+  centre of the hair. The ball must not show through the strands; with
+  `AURORA_RIGGED_BLEND=sorted` it does (the bug of before). Capture at frame
+  620 and look at the back of the head.
 - **`AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]`**: after the loading fade,
   meshes of 60,000 vertices keep entering the geometry arena until it
   holds `mb` megabytes of them (800 if the value is not a number), at 25 MB
@@ -3731,6 +3739,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
+| `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
 
@@ -3862,6 +3871,15 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
+- **`AURORA_RIGGED_BLEND=sorted|alt`**: by default the blended faces of
+  rigged meshes (mesh hair, eyelashes, clothes, animesh) are drawn before
+  the other blended faces, back to front among themselves, and write depth,
+  as the Legacy Viewer's alpha pass does (`LLDrawPoolAlpha::render`); a
+  layer in front then hides what is behind it whatever the order of the two
+  objects. `sorted`: the former way, everything sorted by the distance of
+  its object and nothing writing depth (eyelashes showed through mesh
+  hair); `alt`: the former way during one `perf summary` line out of three
+  (`xmode=old`). See `AURORA_DEMO_LASHES`.
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
   CJK, Arabic, mathematical letters…) become squares again. To compare with
