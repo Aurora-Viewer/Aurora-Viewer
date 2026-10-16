@@ -358,7 +358,7 @@ mod tests {
         let mut step_at = egui::Pos2::ZERO;
         let mut show = |events: Vec<egui::Event>, enabled| {
             let mut result = Edit::default();
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0))),
                     events,
@@ -371,6 +371,7 @@ mod tests {
                     });
                 },
             );
+            output.textures_delta.clear();
             (value, result, step_at)
         };
         let (_, _, point) = show(vec![], true);
