@@ -1137,6 +1137,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
+| `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
@@ -1199,6 +1200,22 @@ To check with these scenarios:
   at frame 700 (the log shows `skeleton reset: <id>`). Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=650` (deformed) or
   `780` (reset).
+- **`AURORA_DEMO_DERENDER`**: the avatar in front of the start position
+  (Violet Wolf, unblocked for the scenario) wears a hat and an orb. At
+  frame 700 its menu opens (`menu`: Inspect, Derender temporarily and
+  Derender & blacklist enabled, Script information greyed: it needs the
+  LSL bridge). `inspect` chooses "Inspect" at frame 740: the Inspect
+  window lists the hat and the orb. `avatar` chooses "Derender
+  temporarily" at frame 740: the avatar, its hat, orb and name plate
+  vanish; the Asset blacklist window opens at frame 800 with the resident,
+  and "Clear temporary" at frame 900 brings everything back. `hat` opens
+  the menu of the hat and chooses "Derender & blacklist": only the hat
+  vanishes; the window lists it as a permanent object (written to the demo
+  account's `asset_blacklist.xml`), removed at frame 900, which brings it
+  back. By hand: blacklist something, quit and relaunch the demo: it stays
+  away until removed in World › Asset blacklist. Screenshots with
+  `AURORA_FPS_LIMIT=60`, `AURORA_DEMO_CAMERA=close,830,330,40` (on the
+  avatar) and `AURORA_CAPTURE_FRAMES=720,780,830,950`.
 
 ## Rendering and environment
 

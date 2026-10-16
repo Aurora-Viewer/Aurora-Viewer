@@ -197,6 +197,12 @@ fn shape(path: u8, profile: u8, sy: u8, hollow: u16, cut_end: u16) -> aurora_pri
     .to_params()
 }
 
+/// The hat Violet Wolf wears (AURORA_DEMO_DERENDER=hat): `prim`'s id of
+/// local id 9100.
+pub fn wolf_hat() -> Uuid {
+    Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | 9100)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prim(
     id: u32,
@@ -1839,8 +1845,9 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             );
             // The animesh fixture needs its wearer visible in full, and
             // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click
-            // fixtures need the same visible, unblocked wearer.
+            // and derender fixtures need the same visible, unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
+                || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
                 || social_menu::step().is_some()

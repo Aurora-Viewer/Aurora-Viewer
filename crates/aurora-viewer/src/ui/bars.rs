@@ -731,6 +731,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 }
             }
         });
+        // menu_viewer.xml: World › Asset Blacklist, after the explorers
+        flip_window(
+            ui,
+            p,
+            "eye-off",
+            aurora_i18n::tr!("blacklist-title"),
+            super::blacklist::WINDOW,
+            &mut panels.asset_blacklist,
+        );
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
         if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), "Ctrl+Shift+C") {

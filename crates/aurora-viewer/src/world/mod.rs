@@ -7,6 +7,7 @@ pub mod calling_cards;
 pub mod calls;
 pub mod chat_log;
 pub mod contact_sets;
+pub mod derender;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
@@ -266,6 +267,8 @@ pub struct World {
     pub mutes: mutes::MuteList,
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
+    /// Derendered objects and residents, and the asset blacklist.
+    pub derender: derender::Derender,
     /// Our groups and the group / conference chat sessions.
     pub groups: groups::GroupChats,
     /// Voice calls with residents, groups and conferences.
@@ -475,6 +478,7 @@ impl World {
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
+            derender: derender::Derender::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
             status: status::Status::default(),
@@ -590,6 +594,7 @@ impl World {
         self.objects.remove_region(handle, &kept);
         self.move_rekeyed();
         self.gltf_overrides.retain(|k, _| k.region != handle);
+        self.derender.forget_region(handle);
     }
 
     /// What is stored by object key follows the objects that changed key
@@ -717,6 +722,8 @@ impl World {
         if show_progress {
             self.ui_sounds.push(UiSound::TeleportOut);
         }
+        // teleportCore: gObjectList.resetDerenderList()
+        self.clear_temporary_derenders();
     }
 
     /// Offset of a region's origin relative to the render origin (main region).
@@ -1388,6 +1395,7 @@ impl World {
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
+                self.derender = derender::Derender::load(account.join(derender::FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
@@ -1507,6 +1515,12 @@ impl World {
                 let mut land_changed = false;
                 let land_watches = self.land.watches(handle);
                 for u in objects {
+                    if let Some(dropped) = self.derender.filter(handle, &u) {
+                        if dropped.newly {
+                            self.hide_key(dropped.key, dropped.by);
+                        }
+                        continue;
+                    }
                     land_changed |= land_watches
                         && u.pcode == aurora_prim::params::LL_PCODE_VOLUME
                         && self
@@ -1613,6 +1627,7 @@ impl World {
                     if self.kill_is_ignored(&key) {
                         continue;
                     }
+                    self.derender.forget_key(&key);
                     land_changed |= land_watches
                         && self
                             .objects
