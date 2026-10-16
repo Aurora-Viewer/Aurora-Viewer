@@ -3655,12 +3655,13 @@ impl Scene {
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
-        self.blend_tmp.extend(self.banlines.cmds.iter().map(|(d, c)| blend_order::BlendEntry {
-            distance: *d,
-            cmd: *c,
-            glow: false,
-            rigged: false,
-        }));
+        self.blend_tmp
+            .extend(self.banlines.cmds.iter().map(|(d, c)| blend_order::BlendEntry {
+                distance: *d,
+                cmd: *c,
+                glow: false,
+                rigged: false,
+            }));
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));

@@ -76,7 +76,11 @@ pub fn sort(entries: &mut [BlendEntry], rigged_apart: bool) -> usize {
             .then(a.cmd.record.cmp(&b.cmd.record))
             .then(a.cmd.first_index.cmp(&b.cmd.first_index))
     });
-    if rigged_apart { entries.iter().take_while(|e| e.rigged).count() } else { 0 }
+    if rigged_apart {
+        entries.iter().take_while(|e| e.rigged).count()
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -119,7 +123,12 @@ mod tests {
 
     #[test]
     fn sorted_mode_keeps_one_back_to_front_list_without_depth() {
-        let mut e = [entry(1, 5.0, false), entry(2, 3.10, true), entry(3, 9.0, false), entry(4, 3.20, true)];
+        let mut e = [
+            entry(1, 5.0, false),
+            entry(2, 3.10, true),
+            entry(3, 9.0, false),
+            entry(4, 3.20, true),
+        ];
         assert_eq!(sort(&mut e, false), 0);
         assert_eq!(records(&e), [3, 1, 4, 2]);
     }

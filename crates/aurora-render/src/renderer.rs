@@ -1406,7 +1406,13 @@ fn cull_cmds_to_view(view_proj: Mat4, list: &[DrawCmd]) -> Vec<DrawCmd> {
 /// part that resolves the multisampled color (the others keep it for the
 /// next part); `write_depth`: the part of the rigged blended faces, the
 /// others only read the depth (also sampled through the frame group).
-fn begin_scene_b<'a>(encoder: &'a mut wgpu::CommandEncoder, t: &Targets, label: &'static str, last: bool, write_depth: bool) -> wgpu::RenderPass<'a> {
+fn begin_scene_b<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    t: &Targets,
+    label: &'static str,
+    last: bool,
+    write_depth: bool,
+) -> wgpu::RenderPass<'a> {
     let (view, resolve) = match &t.color_msaa {
         Some(msaa) => (msaa, Some(&t.color)),
         None => (&t.color, None),
@@ -1420,7 +1426,11 @@ fn begin_scene_b<'a>(encoder: &'a mut wgpu::CommandEncoder, t: &Targets, label: 
             resolve_target: resolve.filter(|_| last),
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Load,
-                store: if single || !last { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard },
+                store: if single || !last {
+                    wgpu::StoreOp::Store
+                } else {
+                    wgpu::StoreOp::Discard
+                },
             },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
