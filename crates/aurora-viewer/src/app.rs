@@ -6824,6 +6824,42 @@ impl App {
                 self.open_context_menu();
             }
         }
+        // AURORA_DEMO_VOICE_MENU=1|louder|muted: the world menu of the nearest
+        // name tag of a resident in our voice channel at frame 600, its voice
+        // row first; `louder` sets their volume to 160 % before, `muted`
+        // blocks their voice (as the row's button does)
+        if self.demo
+            && self.frame_count == 600
+            && let Ok(mode) = std::env::var("AURORA_DEMO_VOICE_MENU")
+        {
+            // (not the demo's blocked wolf: his voice is muted with the rest)
+            let w = &self.world;
+            let tag = self
+                .name_tags
+                .iter()
+                .rev()
+                .find(|t| t.id != w.agent_id && w.calls.hears(&t.id) && !w.voice_blocked(&t.id))
+                .map(|t| (t.id, t.rect.center()));
+            match tag {
+                Some((id, at)) => {
+                    match mode.trim() {
+                        "louder" => self.world.calls.set_volume(id, 0.8),
+                        "muted" => {
+                            let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
+                            let voice = crate::world::mutes::flag::VOICE_CHAT;
+                            if let Err(e) = self.world.block_flags(id, &name, crate::world::mutes::MuteType::Agent, voice) {
+                                log::warn!("demo voice menu: {e}");
+                            }
+                        }
+                        _ => {}
+                    }
+                    let ppp = self.egui_ctx.pixels_per_point();
+                    self.cursor_pos = (at.x * ppp, at.y * ppp);
+                    self.open_context_menu();
+                }
+                None => log::warn!("demo voice menu: no name tag of a resident in voice on screen"),
+            }
+        }
         // AURORA_DEMO_STATUSMENU=invisible: the status menu, invisible (shown
         // only: no right is changed, nothing is saved), once logged in
         if self.demo && self.frame_count == 60 && std::env::var("AURORA_DEMO_STATUSMENU").is_ok_and(|v| v == "invisible") {
