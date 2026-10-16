@@ -983,11 +983,13 @@ impl World {
         // feet do not slide
         let gliding = self.agent.drawn_velocity().truncate().length() > GLIDE_WALKING;
         let wanted = crate::own_motion::locomotion_animation(intent).or(if gliding { self.own_locomotion.wanted() } else { None });
-        // (the simulator's last report: does it still move our avatar)
-        let sim_moving = self.agent.velocity.truncate().length() > GLIDE_WALKING;
-        self.own_drawn = self
-            .own_locomotion
-            .overlay(base, wanted, self.agent.flying, sim_moving, window, now);
+        let moving = crate::own_motion::Moving {
+            flying: self.agent.flying,
+            // (the simulator's last report: does it still move our avatar)
+            simulator: self.agent.velocity.truncate().length() > GLIDE_WALKING,
+            drawn: gliding,
+        };
+        self.own_drawn = self.own_locomotion.overlay(base, wanted, moving, window, now);
     }
 
     /// Our avatar's signals as the AO and the pose take them: the
