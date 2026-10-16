@@ -1392,7 +1392,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
-| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
+| `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1538,12 +1538,15 @@ To check with these scenarios:
     spaced accordingly: their textures cover more of the screen and ask
     for finer levels, as the walls and floors of a region do. 400 objects
     of 3 m give levels close to those of a grid arrival.
-- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>]`**:
+- **`AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>]`**:
   an arrival in a busy region, to measure what the loading shows first.
   `n` objects (1,200 by default) arrive all around our avatar, the nearest
   first and 600 a second, from 3 to 120 m away and larger with the
-  distance; one in three is a mesh and each has its own texture. Sixteen
-  avatars stand nearby, each playing two animations. Every asset is
+  distance; one in three is a mesh and each has its own texture. `avatars`
+  avatars (16 by default) stand nearby, each playing two downloaded
+  animations over the demo's standing one; with `worn`, each wears that
+  many rigged meshes (those of the folder's `.mesh` files that have a
+  skin), each with its texture: `avatars=30,worn=6` is a busy place. Every asset is
   downloaded from the local asset server (`demo_asset_server.rs`, bound to
   this machine only), which answers each request after `net` milliseconds
   (200 by default; about 70 for the asset hosts on a good link); with
@@ -1562,7 +1565,8 @@ To check with these scenarios:
     50% shown after … s`; an object counts once its geometry is built and
     its texture shows its first pixels), the same for everything around
     (`demo arrival: all …`), when the animations arrived (`demo arrival:
-    animations …`), then the requests and megabytes served (`demo arrival:
+    animations …`), when what the avatars wear showed (`demo arrival: worn
+    …`, built and textured), then the requests and megabytes served (`demo arrival:
     done`). The `texture load:` line gives the decodes and their CPU.
   - A run lasts about 20 s at 200 ms; to compare two builds, alternate
     their runs (see [Profiling](#profiling)).
