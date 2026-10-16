@@ -1332,6 +1332,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
+| `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1368,6 +1369,16 @@ To check with these scenarios:
   number of objects).
 - **`AURORA_DEMO_PLANAR=1`**: the tiles must line up from one slab
   to the next.
+- **`AURORA_DEMO_PBR_METAL=1`**: three white metal spheres (PBR, metallic 1,
+  roughness 0.05, 0.3 and 0.6) and a polished slab ahead of the start
+  position. A white metal has no colour of its own: the polished one
+  mirrors the place and the sky, the rough ones their blur. Compare
+  with the sky behind them: the metal is as blue as the sky it reflects,
+  no more (`AURORA_DEMO_SKY=1,37` for a paler sky). Left of the spheres, a
+  polished metal cube whose packed map (occlusion, roughness, metal) has
+  an occlusion of 0 but for a disc on each face: the cube is dark and only
+  reflects the sky in the discs, as in the Legacy Viewer
+  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three).
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
@@ -3743,6 +3754,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
+| `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3818,6 +3830,15 @@ What the inventory must show with these scenarios:
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
 
+- **`AURORA_PBR_OCCLUSION=0|alt`**: by default the reflection of a PBR
+  face (and, on skies that are not classic, its ambient light) is
+  multiplied by the occlusion of its material, the red channel of its
+  packed occlusion-roughness-metal map, as the Legacy Viewer's `pbrIbl`
+  (`ao = orm.r`). A face without that map reads white: no change. `0`
+  leaves the occlusion out, as before; `alt` leaves it out one second in
+  three, without `AURORA_PROFILE`, to see the difference
+  (`AURORA_DEMO_PBR_METAL=1`: the cube left of the spheres turns from dark
+  with bright discs to an even mirror).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
