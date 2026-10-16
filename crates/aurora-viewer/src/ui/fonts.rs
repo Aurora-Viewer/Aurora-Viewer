@@ -1,6 +1,7 @@
-//! UI fonts: Noto Sans (default), Inter and Roboto are embedded (SIL OFL,
-//! see assets/fonts/LICENSE-*.txt); installed system fonts are listed too.
-//! Characters none of them has come from the system's fonts (`fallback`).
+//! UI fonts: Inter (default), Noto Sans and Roboto are embedded with their
+//! semi-bold face (SIL OFL, see assets/fonts/LICENSE-*.txt); installed
+//! system fonts are listed too. Characters none of them has come from the
+//! system's fonts (`fallback`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,10 +12,51 @@ pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";
 pub const ROBOTO: &str = "Roboto";
 
+/// The interface font of a new profile, and of a choice that cannot be
+/// loaded any more.
+pub const DEFAULT: &str = INTER;
+
 static INTER_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
 static INTER_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
 static NOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-Regular.ttf");
+static NOTO_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-SemiBold.ttf");
 static ROBOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
+// Roboto has no static SemiBold: Medium is its emphasis weight
+static ROBOTO_MEDIUM_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Medium.ttf");
+
+/// An embedded interface font: its regular face and the face of its
+/// semi-bold texts.
+pub struct Builtin {
+    pub name: &'static str,
+    regular: &'static [u8],
+    semibold: &'static [u8],
+}
+
+/// The embedded fonts, in the order of the Preferences.
+pub const BUILTINS: [Builtin; 3] = [
+    Builtin {
+        name: INTER,
+        regular: INTER_TTF,
+        semibold: INTER_SEMIBOLD_TTF,
+    },
+    Builtin {
+        name: NOTO,
+        regular: NOTO_TTF,
+        semibold: NOTO_SEMIBOLD_TTF,
+    },
+    Builtin {
+        name: ROBOTO,
+        regular: ROBOTO_TTF,
+        semibold: ROBOTO_MEDIUM_TTF,
+    },
+];
+
+/// The embedded font of a setting; "" (files older than the setting) is
+/// the default one.
+pub fn builtin(choice: &str) -> Option<&'static Builtin> {
+    let name = if choice.is_empty() { DEFAULT } else { choice };
+    BUILTINS.iter().find(|b| b.name == name)
+}
 
 #[derive(Debug, Clone)]
 pub struct SystemFont {
@@ -144,34 +186,45 @@ fn optical_center_offset(font: &[u8]) -> f32 {
 /// are then missing from this call, which has to be made again once
 /// `fallback::ready()` (the viewer does it at the start of a frame).
 pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
-    let data: Option<egui::FontData> = match choice {
-        INTER => Some(egui::FontData::from_static(INTER_TTF)),
-        NOTO | "" => Some(egui::FontData::from_static(NOTO_TTF)),
-        ROBOTO => Some(egui::FontData::from_static(ROBOTO_TTF)),
-        other => other
-            .strip_prefix("system:")
-            .and_then(|p| std::fs::read(p).ok())
-            .map(egui::FontData::from_owned),
-    };
-    let data = data.unwrap_or_else(|| {
-        log::warn!("font '{choice}' unavailable, using Noto Sans");
-        egui::FontData::from_static(NOTO_TTF)
-    });
     let system = fallback::ready();
-    let mut defs = definitions(data, system.unwrap_or_default());
-    // the embedded sans-serifs are close enough to share Inter's semi-bold
-    // face; a system font keeps its own design (and its `wght` axis when it
-    // is a variable font, see `semibold_format`)
-    if matches!(choice, INTER | NOTO | ROBOTO | "") {
-        let mut face = egui::FontData::from_static(INTER_SEMIBOLD_TTF);
+    ctx.set_fonts(definitions_for(choice, system.unwrap_or_default()));
+    system.is_some()
+}
+
+/// The fonts of `choice`: an embedded font with its own semi-bold face,
+/// or a system font that keeps its own design for the semi-bold texts too
+/// (its `wght` axis when it is a variable font, see `semibold_format`,
+/// else its regular face). A system font that cannot be read gives way to
+/// the default font.
+fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontDefinitions {
+    let file = match choice.strip_prefix("system:") {
+        Some(path) => std::fs::read(path)
+            .inspect_err(|e| log::warn!("font '{path}' unavailable ({e}), using {DEFAULT}"))
+            .ok(),
+        None => None,
+    };
+    let (regular, semibold) = match file {
+        Some(bytes) => (egui::FontData::from_owned(bytes), None),
+        None => {
+            let b = builtin(choice).unwrap_or_else(|| {
+                if !choice.starts_with("system:") {
+                    log::warn!("unknown font '{choice}', using {DEFAULT}");
+                }
+                &BUILTINS[0]
+            });
+            (egui::FontData::from_static(b.regular), Some(b.semibold))
+        }
+    };
+    let mut defs = definitions(regular, system);
+    if let Some(semibold) = semibold {
+        let mut face = egui::FontData::from_static(semibold);
         face.tweak.y_offset_factor = optical_center_offset(&face.font);
         defs.font_data.insert(SEMIBOLD.into(), Arc::new(face));
         if let Some(f) = defs.families.get_mut(&semibold_family()) {
             f.insert(0, SEMIBOLD.into());
         }
     }
-    ctx.set_fonts(defs);
-    system.is_some()
+    defs
 }
 
 /// Name of the semi-bold family and of its face.
@@ -182,7 +235,7 @@ fn semibold_family() -> egui::FontFamily {
 }
 
 /// Family of the semi-bold texts (the name on an avatar's name plate):
-/// Inter SemiBold with the embedded fonts, else the interface font. A
+/// the semi-bold face of the embedded font, else the interface font. A
 /// context without the viewer's fonts (tests) gets the proportional
 /// family, since egui panics on a family it does not know.
 pub fn semibold(ctx: &egui::Context) -> egui::FontFamily {
@@ -229,21 +282,67 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
 }
 
 /// Is `c` drawn by the fonts shipped with the viewer, whatever the system?
-/// The default proportional family: Noto Sans, then egui's own fallbacks.
+/// One of the embedded interface fonts, or egui's own fallbacks.
 #[cfg(test)]
 fn embedded_has(c: char) -> bool {
     let has = |font: &[u8]| ttf_parser::Face::parse(font, 0).is_ok_and(|face| face.glyph_index(c).is_some());
     let defs = egui::FontDefinitions::default();
     let fallbacks = defs.families.get(&egui::FontFamily::Proportional).into_iter().flatten();
-    has(NOTO_TTF) || fallbacks.filter_map(|name| defs.font_data.get(name)).any(|d| has(&d.font))
+    BUILTINS.iter().any(|b| has(b.regular) || has(b.semibold))
+        || fallbacks.filter_map(|name| defs.font_data.get(name)).any(|d| has(&d.font))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Noto Sans with these system faces: the default font when the
+    /// baseline and right-to-left tests below were written.
     fn noto(system: &[fallback::SystemFace]) -> egui::FontDefinitions {
         definitions(egui::FontData::from_static(NOTO_TTF), system)
+    }
+
+    /// Text the interface font must draw without a square, script by
+    /// script: what residents write besides the demo scenario's names.
+    const SCRIPTS: &[(&str, &str)] = &[
+        (
+            "Latin with accents",
+            "Ça va ? Été, forêt, ÀÉÎÕÜ çñß Łőű Žluťoučký kůň Ĳ ſ «guillemets» ‘’ “” – — … € £ ¥ © ® ™ ° ± × ÷ ½ №",
+        ),
+        ("Vietnamese", "Tiếng Việt: Xin chào thế giới, ước mơ, Đường phố ỹ ỵ ở ẫ ặ ằ"),
+        ("Greek", "Ελληνικά: Γειά σου κόσμε! ΆΈΉ ώ"),
+        ("Cyrillic", "Русский: Привет, мир! ЁЇЄҐ ё"),
+        (
+            "CJK",
+            "日本語 こんにちは カタカナ · 한국어 안녕하세요 · 中文 你好，世界 · 繁體中文 · ｆｕｌｌｗｉｄｔｈ",
+        ),
+        ("Arabic", "العربية: مرحبا بالعالم ۞ ۩"),
+        ("Hebrew", "עברית: שלום עולם"),
+        ("Thai", "ภาษาไทย สวัสดี ๑"),
+        ("Devanagari", "हिन्दी नमस्ते ॐ"),
+        ("symbols", "░▒▓█ ╔═╗ → ⇒ ↑↓ ≤ ≥ ★ ♛ ♪ ✿ ❀ ∞ ①② ⅓ 𝓐𝐀 ღ"),
+        ("emoji", "😀 🎉 ❤ 👍 🫠 🐺 🦊 ✨ 🌙"),
+    ];
+
+    /// The characters of `text` egui draws with no font of the family.
+    fn squares(defs: egui::FontDefinitions, family: egui::FontFamily, text: &str) -> String {
+        drawable(defs, family, text)
+            .into_iter()
+            .filter(|(c, ok)| !ok && !c.is_whitespace())
+            .map(|(c, _)| c)
+            .collect()
+    }
+
+    /// For each character of `text`, the name of the first face of the
+    /// family that draws it.
+    fn faces_drawing(defs: egui::FontDefinitions, family: egui::FontFamily, text: &str) -> Vec<(char, Option<String>)> {
+        let mut fonts = egui::epaint::Fonts::new(Default::default(), defs);
+        let mut font = fonts.fonts.font(&family);
+        let known = font.characters();
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .map(|c| (c, known.get(&c).and_then(|faces| faces.first().cloned())))
+            .collect()
     }
 
     /// Which characters egui draws with these definitions, in a font of the
@@ -264,12 +363,12 @@ mod tests {
 
     #[test]
     fn embedded_fonts_cover_latin_greek_cyrillic_only() {
-        for c in "Aé ΩЯ €ℓ".chars() {
+        for c in "Aé ΩЯ €ℓ →".chars() {
             assert!(embedded_has(c), "{c:?}");
         }
         // the reported square (#127: a group title wrapped in U+10E6), and
         // the other usual ones of display names
-        for c in "ღ𝓐𝐀中あ한بא░→".chars() {
+        for c in "ღ𝓐𝐀中あ한بא░".chars() {
             assert!(
                 !embedded_has(c),
                 "{c:?} is embedded: the system fallback is no longer needed for it"
@@ -309,11 +408,7 @@ mod tests {
         let complete = fallback::CANDIDATES.iter().all(|c| system.iter().any(|f| f.has(c.probe)));
         let text = demo_text().join(" ");
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            let missing: String = drawable(noto(system), family.clone(), &text)
-                .into_iter()
-                .filter(|(c, ok)| !ok && !c.is_whitespace())
-                .map(|(c, _)| c)
-                .collect();
+            let missing = squares(definitions_for(DEFAULT, system), family.clone(), &text);
             if complete {
                 assert!(missing.is_empty(), "{family}: no font for {missing:?}");
             } else if !missing.is_empty() {
@@ -322,25 +417,135 @@ mod tests {
         }
     }
 
-    /// The same with each built-in interface font as the primary one: the
-    /// system faces must not depend on the font chosen in Preferences.
+    /// The text of the demo scenario and of every script, with each
+    /// embedded interface font as the primary one, in its regular and
+    /// semi-bold families: the system faces must not depend on the font
+    /// chosen in Preferences, nor on the weight.
     #[test]
-    fn demo_characters_are_drawn_whatever_the_builtin_font() {
+    fn every_script_is_drawn_whatever_the_builtin_font_and_weight() {
         let system = fallback::wait();
         if !fallback::CANDIDATES.iter().all(|c| system.iter().any(|f| f.has(c.probe))) {
             eprintln!("system fonts incomplete: not checked");
             return;
         }
-        let text = demo_text().join(" ");
-        for (name, ttf) in [(INTER, INTER_TTF), (NOTO, NOTO_TTF), (ROBOTO, ROBOTO_TTF)] {
-            let defs = definitions(egui::FontData::from_static(ttf), system);
-            let missing: String = drawable(defs, egui::FontFamily::Proportional, &text)
-                .into_iter()
-                .filter(|(c, ok)| !ok && !c.is_whitespace())
-                .map(|(c, _)| c)
-                .collect();
-            assert!(missing.is_empty(), "{name}: no font for {missing:?}");
+        let text = demo_text()
+            .into_iter()
+            .chain(SCRIPTS.iter().map(|(_, t)| *t))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for b in &BUILTINS {
+            for family in [egui::FontFamily::Proportional, semibold_family()] {
+                let missing = squares(definitions_for(b.name, system), family.clone(), &text);
+                assert!(missing.is_empty(), "{} ({family}): no font for {missing:?}", b.name);
+            }
         }
+    }
+
+    /// The scripts the embedded fonts are chosen for (Latin with its
+    /// accents, Vietnamese, Greek, Cyrillic) are drawn by every embedded
+    /// face itself, regular and semi-bold: never by a system face of
+    /// another design in the middle of a word.
+    #[test]
+    fn every_embedded_face_draws_latin_vietnamese_greek_and_cyrillic() {
+        for b in &BUILTINS {
+            for (weight, ttf) in [("regular", b.regular), ("semi-bold", b.semibold)] {
+                let face = ttf_parser::Face::parse(ttf, 0).expect("embedded font");
+                for (script, text) in &SCRIPTS[..4] {
+                    let lacking: String = text
+                        .chars()
+                        .filter(|c| !c.is_whitespace() && face.glyph_index(*c).is_none())
+                        .collect();
+                    assert!(lacking.is_empty(), "{} {weight}, {script}: {lacking:?}", b.name);
+                }
+            }
+        }
+    }
+
+    /// What Inter lacks is drawn by the faces that drew it when Noto Sans
+    /// was the default: the system face of its script, or egui's emoji.
+    /// Inter draws more of it itself (arrows, ≤ ≥, ★ ♪ ①); the few
+    /// characters only Noto Sans had (small capitals ᴏ ᴜ, ℙ) come from a
+    /// system face, never a square. Without the complete system fonts, only
+    /// the order of the faces is compared.
+    #[test]
+    fn what_inter_lacks_comes_from_the_same_faces_as_with_noto() {
+        let system = fallback::wait();
+        let text = demo_text()
+            .into_iter()
+            .chain(SCRIPTS.iter().map(|(_, t)| *t))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for family in [egui::FontFamily::Proportional, semibold_family()] {
+            let inter = faces_drawing(definitions_for(INTER, system), family.clone(), &text);
+            let noto = faces_drawing(definitions_for(NOTO, system), family.clone(), &text);
+            let own = |face: &Option<String>| matches!(face.as_deref(), Some("aurora-main" | SEMIBOLD));
+            let (mut gained, mut lost) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+            for ((c, with_inter), (_, with_noto)) in inter.iter().zip(&noto) {
+                match (own(with_inter), own(with_noto)) {
+                    (false, false) => assert_eq!(with_inter, with_noto, "{family}: {c:?}"),
+                    (false, true) => {
+                        assert!(with_inter.is_some(), "{family}: Noto Sans draws {c:?}, Inter a square");
+                        lost.insert(*c);
+                    }
+                    (true, false) => {
+                        gained.insert(*c);
+                    }
+                    (true, true) => {}
+                }
+            }
+            eprintln!("{family}: Inter draws {gained:?} itself (fallback faces with Noto Sans), {lost:?} come from the fallbacks");
+        }
+    }
+
+    #[test]
+    fn each_builtin_font_has_its_own_semibold_face() {
+        let face = |defs: &egui::FontDefinitions, name: &str| defs.font_data.get(name).map(|d| d.font.to_vec());
+        for choice in ["", INTER, NOTO, ROBOTO, "system:Z:\\no such font.ttf", "Retired Font"] {
+            let defs = definitions_for(choice, &[]);
+            let b = builtin(choice).unwrap_or(&BUILTINS[0]);
+            assert_eq!(face(&defs, "aurora-main").as_deref(), Some(b.regular), "{choice}");
+            assert_eq!(face(&defs, SEMIBOLD).as_deref(), Some(b.semibold), "{choice}");
+            assert_eq!(defs.families[&semibold_family()][0], SEMIBOLD, "{choice}");
+        }
+        assert_eq!(builtin("").map(|b| b.name), Some(INTER));
+        // the semi-bold faces are a heavier design of the same family
+        for b in &BUILTINS {
+            let weight = |ttf| ttf_parser::Face::parse(ttf, 0).expect("embedded font").weight().to_number();
+            let family = |ttf| font_family_name(ttf).expect("family name");
+            assert_eq!(weight(b.regular), 400, "{}", b.name);
+            assert!((500..=600).contains(&weight(b.semibold)), "{}", b.name);
+            assert_eq!(family(b.regular), b.name);
+            assert_eq!(family(b.semibold), b.name);
+        }
+    }
+
+    /// A system font keeps its own design for the semi-bold texts: its
+    /// regular face first in their family, no embedded semi-bold face.
+    #[test]
+    fn a_system_font_has_no_embedded_semibold_face() {
+        let Some(font) = system_fonts().into_iter().next() else {
+            eprintln!("no system font: not checked");
+            return;
+        };
+        let defs = definitions_for(&format!("system:{}", font.path.display()), &[]);
+        assert!(!defs.font_data.contains_key(SEMIBOLD));
+        assert_eq!(defs.families[&semibold_family()][0], "aurora-main");
+        assert_eq!(
+            defs.font_data["aurora-main"].font.as_ref(),
+            std::fs::read(&font.path).expect("font file")
+        );
+    }
+
+    /// Typographic family name of an embedded face (name ID 16, else 1).
+    fn font_family_name(ttf: &[u8]) -> Option<String> {
+        let face = ttf_parser::Face::parse(ttf, 0).ok()?;
+        let name = |id| {
+            face.names()
+                .into_iter()
+                .find(|n| n.name_id == id && n.is_unicode())
+                .and_then(|n| n.to_string())
+        };
+        name(16).or_else(|| name(1))
     }
 
     #[test]

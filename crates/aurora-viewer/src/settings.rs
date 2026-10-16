@@ -682,7 +682,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 15;
+const SETTINGS_VERSION: u32 = 16;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1020,7 +1020,7 @@ impl Default for Settings {
             window_maximized: false,
             machine_id: uuid::Uuid::new_v4().to_string(),
             mfa_hash: String::new(),
-            font: "Noto Sans".into(),
+            font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
@@ -1450,6 +1450,11 @@ impl Settings {
             // new default: Contacts shown in Conversations (every file wrote
             // the old "hidden" default)
             self.show_contacts_tab = true;
+        }
+        if self.settings_version < 16 && self.font == crate::ui::fonts::NOTO {
+            // Inter is the default interface font again: every file wrote
+            // the former default, Noto Sans (version 3 had moved Inter to it)
+            self.font = crate::ui::fonts::DEFAULT.into();
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -2170,6 +2175,48 @@ mod tests {
         chosen.camera.ignore_sim_constraints = false;
         let c = chosen.sanitized().camera;
         assert!(!c.disable_constraints && !c.ignore_sim_constraints);
+    }
+
+    /// Inter reaches the earlier files once (they all wrote Noto Sans, and
+    /// those before version 3 Inter); chosen again afterwards, Noto Sans
+    /// stays, and so does any other font.
+    #[test]
+    fn inter_is_the_default_font_and_once_for_earlier_files() {
+        assert_eq!(Settings::default().sanitized().font, "Inter");
+        for (version, font, now) in [
+            (15, "Noto Sans", "Inter"),
+            (2, "Inter", "Inter"),
+            (15, "Roboto", "Roboto"),
+            (
+                15,
+                "system:C:\\Windows\\Fonts\\segoeui.ttf",
+                "system:C:\\Windows\\Fonts\\segoeui.ttf",
+            ),
+            (16, "Noto Sans", "Noto Sans"),
+        ] {
+            let old = Settings {
+                settings_version: version,
+                font: font.into(),
+                ..Settings::default()
+            };
+            assert_eq!(old.sanitized().font, now, "version {version}, {font}");
+        }
+    }
+
+    /// A file written before both defaults changed (version 14) gets both:
+    /// the Contacts tab of version 15 and the Inter font of version 16.
+    #[test]
+    fn a_version_14_file_gets_the_contacts_tab_and_inter() {
+        let old = Settings {
+            settings_version: 14,
+            font: "Noto Sans".into(),
+            show_contacts_tab: false,
+            ..Settings::default()
+        };
+        let now = old.sanitized();
+        assert!(now.show_contacts_tab);
+        assert_eq!(now.font, "Inter");
+        assert_eq!(now.settings_version, SETTINGS_VERSION);
     }
 
     #[test]
