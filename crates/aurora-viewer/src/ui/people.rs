@@ -5,7 +5,7 @@
 //! rights and actions, `ui/contacts.rs` reused), each with the sheet of the
 //! person or group clicked (`sheet.rs`); `rows.rs` holds what their rows
 //! share. The friends tab is also the Contacts tab of the Conversations
-//! workspace (`friends_pane`). In Firestorm's look (Preferences › Aurora,
+//! workspace (`friends_pane`). In the Legacy look (Preferences › Aurora,
 //! `Settings::classic_people`) Near you is the radar table (`radar.rs`) and
 //! the other tabs keep their simple lists below.
 
