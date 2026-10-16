@@ -132,7 +132,9 @@ fn slot_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, active
     resp
 }
 
-fn speaker_icon(volume: f32, muted: bool) -> &'static str {
+/// The speaker of a volume (0..1), struck through when muted: the audio
+/// panel's channels and the residents' voice rows of the menus.
+pub(crate) fn speaker_icon(volume: f32, muted: bool) -> &'static str {
     if muted {
         "volume-off"
     } else if volume <= 0.001 {

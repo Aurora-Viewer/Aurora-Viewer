@@ -1067,6 +1067,13 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
         c |= row(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-chat-keep-focus"),
+            aurora_i18n::tr!("ui-options-chat-keep-focus-hint"),
+            |ui| toggle(ui, p, &mut s.chat_keep_focus),
+        );
+        c |= row(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-chat-bubble-duration"),
             aurora_i18n::tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
             |ui| slider(ui, &mut s.chat_toast_seconds, 0.0..=60.0, " s"),

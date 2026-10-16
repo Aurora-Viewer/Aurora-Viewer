@@ -6503,6 +6503,11 @@ impl App {
             self.inventory_ui.thumbnail.pending = Some(request);
             self.inventory_image_action(request, item, ui::inventory::thumbnail::Input::Capture);
         }
+        if self.demo
+            && let Some(big) = crate::world::inventory::demo::big()
+        {
+            self.demo_big_inventory(big);
+        }
         if self.demo && self.frame_count == 2100 && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "image-photo-save") {
             let mut actions = Vec::new();
             self.inventory_ui.thumbnail.save_photo(&mut actions);
@@ -6829,6 +6834,42 @@ impl App {
             if let Some(p) = at {
                 self.cursor_pos = p;
                 self.open_context_menu();
+            }
+        }
+        // AURORA_DEMO_VOICE_MENU=1|louder|muted: the world menu of the nearest
+        // name tag of a resident in our voice channel at frame 600, its voice
+        // row first; `louder` sets their volume to 160 % before, `muted`
+        // blocks their voice (as the row's button does)
+        if self.demo
+            && self.frame_count == 600
+            && let Ok(mode) = std::env::var("AURORA_DEMO_VOICE_MENU")
+        {
+            // (not the demo's blocked wolf: his voice is muted with the rest)
+            let w = &self.world;
+            let tag = self
+                .name_tags
+                .iter()
+                .rev()
+                .find(|t| t.id != w.agent_id && w.calls.hears(&t.id) && !w.voice_blocked(&t.id))
+                .map(|t| (t.id, t.rect.center()));
+            match tag {
+                Some((id, at)) => {
+                    match mode.trim() {
+                        "louder" => self.world.calls.set_volume(id, 0.8),
+                        "muted" => {
+                            let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
+                            let voice = crate::world::mutes::flag::VOICE_CHAT;
+                            if let Err(e) = self.world.block_flags(id, &name, crate::world::mutes::MuteType::Agent, voice) {
+                                log::warn!("demo voice menu: {e}");
+                            }
+                        }
+                        _ => {}
+                    }
+                    let ppp = self.egui_ctx.pixels_per_point();
+                    self.cursor_pos = (at.x * ppp, at.y * ppp);
+                    self.open_context_menu();
+                }
+                None => log::warn!("demo voice menu: no name tag of a resident in voice on screen"),
             }
         }
         // AURORA_DEMO_STATUSMENU=invisible: the status menu, invisible (shown
@@ -8627,6 +8668,10 @@ impl App {
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
+                // who gets the voice row of the avatar menus
+                let me = self.world.agent_id;
+                self.world.calls.voice_peers.clear();
+                self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
                 // the look-at crosshairs under the name tags (none over a held
                 // photo, nor the walk mark)
                 if !held {
@@ -8646,6 +8691,8 @@ impl App {
                 // AURORA_DEMO_FRIEND_PLATES=1: the setting for this run, without saving it
                 self.plates.friends_only_full =
                     self.settings.plates_friends_only_full || (self.demo && std::env::var_os("AURORA_DEMO_FRIEND_PLATES").is_some());
+                // AURORA_VOICE_LEVEL_LOG=1 (temporary): our own plate's voice level in the log
+                self.plates.probe = ui::nameplate::level_log().then_some(self.world.agent_id);
                 self.update_plate_hover(&ctx);
                 self.name_tags = if held {
                     Vec::new()
@@ -8707,7 +8754,16 @@ impl App {
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
-                let parcel_name = if self.demo && ui::bars::demo::get().on && !classic_bars {
+                // AURORA_DEMO_PARCEL_NAME=<text>: any parcel name ("\n" is a
+                // line break), to check how odd names sit in the place island
+                let demo_parcel = if self.demo {
+                    std::env::var("AURORA_DEMO_PARCEL_NAME").ok().map(|v| v.replace("\\n", "\n"))
+                } else {
+                    None
+                };
+                let parcel_name = if let Some(name) = demo_parcel.as_deref() {
+                    name
+                } else if self.demo && ui::bars::demo::get().on && !classic_bars {
                     aurora_i18n::tr!("demo-bars-parcel")
                 } else {
                     self.world.parcel_name.as_str()
@@ -8905,6 +8961,7 @@ impl App {
                 // the dock leaves the Conversations button out of its default
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                 self.toolbar_ui.islands = !classic_bars;
+                self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 let ao_active = self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused;
                 let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
                     // hidden: the chat lines go down to the screen's bottom
@@ -11439,6 +11496,13 @@ impl ApplicationHandler for App {
                         self.inventory_ui.expand_all = Some(true);
                     }
                 }
+                if let Some(big) = crate::world::inventory::demo::big() {
+                    let open = crate::world::inventory::demo::seed_big(&mut self.world.inventory, self.world.agent_id, big.items);
+                    self.settings.inventory = ui::inventory::InventoryPreferences::default();
+                    self.inventory_ui.open_folders(open);
+                    self.inventory_ui.tab = if big.recent { 2 } else { 0 };
+                    self.inventory_ui.search.clone_from(&big.search);
+                }
                 self.panels.inventory = true;
                 self.panels.perf = false;
                 self.panels.appearance = false;
@@ -11549,7 +11613,7 @@ impl ApplicationHandler for App {
                     } else {
                         self.inventory_ui.demo_menu = Some(id);
                     }
-                } else if !configured_view {
+                } else if !configured_view && crate::world::inventory::demo::big().is_none() {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                 }
                 for cmd in

@@ -168,6 +168,12 @@ pub fn dropdown_placed(
     body: impl FnOnce(&mut Ui),
 ) -> bool {
     use egui::containers::menu::MenuConfig;
+    // a click on a voice row's slider or mute button leaves the menu open
+    let close = if close == PopupCloseBehavior::CloseOnClick && clicks_kept_row(&resp.ctx, Popup::default_response_id(resp)) {
+        PopupCloseBehavior::CloseOnClickOutside
+    } else {
+        close
+    };
     // the tag hands the same style and rule to the sub-menus
     let config = MenuConfig::new().close_behavior(close).style(style(p));
     let mut popup = Popup::menu(resp);
@@ -525,6 +531,134 @@ fn dot(ui: &Ui, p: &Palette, row: &egui::Response, color: Color32) {
     let c = row.rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0);
     ui.painter().circle_filled(c, ICON * 0.38, color);
     ui.painter().circle_stroke(c, ICON * 0.38, Stroke::new(1.0, p.raised));
+}
+
+/// What a resident's voice row shows: the avatar inspector's volume_slider
+/// and mute_btn (LLInspectAvatar::updateVolumeSlider, inspect_avatar.xml).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoiceVolume {
+    /// 0..1, 0.5 heard as they send it (LLSpeakerVolumeStorage).
+    pub volume: f32,
+    /// Their voice is blocked (LLMute::flagVoiceChat): the slider shows 0,
+    /// greyed, as the inspector does.
+    pub muted: bool,
+    /// The mute button works: not a Linden (the inspector greys it).
+    pub can_mute: bool,
+}
+
+/// A change made on a [`voice_volume`] row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VoiceEdit {
+    Volume(f32),
+    ToggleMute,
+}
+
+/// The percentage next to the slider: 0.5 (as sent) is 100 %, its top end
+/// 200 %, like the volume menu of a call's participants.
+pub fn volume_percent(volume: f32) -> i32 {
+    (volume.clamp(0.0, 1.0) * 200.0).round() as i32
+}
+
+const VOICE_ROW_H: f32 = 28.0;
+const VOICE_PERCENT_W: f32 = 38.0;
+const VOICE_BUTTON: f32 = 20.0;
+
+/// A resident's voice as the first row of their menu: the speaker in the
+/// icon column, the volume slider, its percentage and the voice mute button
+/// at the right end. Dragging or clicking it leaves the menu open; the
+/// change is returned at once (applied live by the app).
+pub fn voice_volume(ui: &mut Ui, p: &Palette, v: VoiceVolume) -> Option<VoiceEdit> {
+    let natural = MIN_W + 40.0;
+    let w = if ui.is_sizing_pass() {
+        natural
+    } else {
+        ui.available_width().max(natural)
+    };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, VOICE_ROW_H), Sense::hover());
+    let (key, frame) = (keep_open_id(ui.layer_id()), ui.ctx().cumulative_frame_nr());
+    ui.ctx().data_mut(|d| d.insert_temp(key, (frame, rect)));
+    if !ui.is_rect_visible(rect) {
+        return None;
+    }
+    let shown = if v.muted { 0.0 } else { v.volume };
+    let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(ICON));
+    let tint = if v.muted { p.muted_dim } else { p.violet_light };
+    paint_icon(ui.painter(), super::audio::speaker_icon(shown, v.muted), icon_rect, tint);
+    // the mute button where the other rows draw their check mark
+    let button = egui::Rect::from_center_size(rect.right_center() - Vec2::new(PAD + 6.0, 0.0), Vec2::splat(VOICE_BUTTON));
+    let percent_right = button.left() - 6.0;
+    let slider = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + PAD + ICON + PAD, rect.top()),
+        egui::pos2(percent_right - VOICE_PERCENT_W, rect.bottom()),
+    );
+    let mut edit = None;
+    let mut value = shown;
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("voice_volume_slider")
+            .max_rect(slider)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.spacing_mut().slider_width = slider.width();
+    let r = child
+        .add_enabled(
+            !v.muted,
+            egui::Slider::new(&mut value, 0.0..=1.0).show_value(false).trailing_fill(true),
+        )
+        .on_hover_text(aurora_i18n::tr!("ui-call-voice-volume"));
+    if r.changed() && !v.muted {
+        edit = Some(VoiceEdit::Volume(value));
+    }
+    ui.painter().text(
+        egui::pos2(percent_right, rect.center().y),
+        egui::Align2::RIGHT_CENTER,
+        format!("{} %", volume_percent(value)),
+        FontId::proportional(11.5),
+        if v.muted { p.muted_dim } else { p.muted },
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("voice_volume_mute")
+            .max_rect(button)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let clicked = if v.can_mute {
+        let tip = if v.muted {
+            aurora_i18n::tr!("ui-call-unmute-voice")
+        } else {
+            aurora_i18n::tr!("ui-call-mute-voice")
+        };
+        super::widgets::icon_toggle(&mut child, p, "microphone-off", tip, v.muted)
+    } else {
+        super::widgets::icon_button(
+            &mut child,
+            p,
+            "microphone-off",
+            aurora_i18n::tr!("ui-call-mute-voice-linden"),
+            false,
+        )
+    };
+    if clicked {
+        edit = Some(VoiceEdit::ToggleMute);
+    }
+    edit
+}
+
+/// egui temp data: where the voice row of the menu in `layer` was drawn,
+/// and in which frame.
+fn keep_open_id(layer: LayerId) -> Id {
+    Id::new("aurora_menu_keep_open").with(layer.id)
+}
+
+/// A click this frame lands on the voice row the menu `popup` drew last
+/// frame: a menu that closes on any click stays open for it.
+fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
+    let layer = LayerId::new(egui::Order::Foreground, popup);
+    let Some((frame, rect)) = ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(keep_open_id(layer))) else {
+        return false;
+    };
+    frame + 1 >= ctx.cumulative_frame_nr()
+        && ctx.input(|i| i.pointer.any_click() && i.pointer.interact_pos().is_some_and(|pos| rect.contains(pos)))
 }
 
 /// Thin line between groups of entries.

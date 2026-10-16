@@ -2096,6 +2096,45 @@ pub fn paint_ink_centered(painter: &egui::Painter, galley: std::sync::Arc<egui::
     painter.galley(pos, galley, color);
 }
 
+/// The baseline of `galley`'s first line, from its origin: the same for
+/// any text of one font and size (a glyph from a fallback font sits on it
+/// too), unlike its ink.
+pub fn galley_baseline(galley: &egui::Galley) -> f32 {
+    let Some(row) = galley.rows.first() else {
+        return galley.size().y * 0.8;
+    };
+    // a glyph of the font's own face: one taken from a fallback face (other
+    // scripts, symbols) sits on that face's baseline, lower or higher
+    let own = row.row.glyphs.iter().find(|g| (g.font_face_ascent - g.font_ascent).abs() < 0.01);
+    match own.or(row.row.glyphs.first()) {
+        Some(g) => row.pos.y + g.pos.y,
+        None => galley.size().y * 0.8,
+    }
+}
+
+/// The baseline that centres the capitals of `font` on `center_y`: texts
+/// side by side placed on it (`paint_on_baseline`) line up whatever their
+/// letters. Centring each text on its own ink set a name without
+/// descenders higher than its neighbour with commas and brackets.
+pub fn centered_baseline(painter: &egui::Painter, font: egui::FontId, center_y: f32) -> f32 {
+    let probe = painter.layout_no_wrap("H".into(), font, Color32::PLACEHOLDER);
+    let base = galley_baseline(&probe);
+    let cap = (base - ink_rect(&probe).top()).max(0.0);
+    (center_y + cap / 2.0).round()
+}
+
+/// Where to paint `galley` so that its first line sits on `baseline`, its
+/// left edge at `left`.
+pub fn baseline_origin(galley: &egui::Galley, left: f32, baseline: f32) -> egui::Pos2 {
+    egui::Pos2::new(left, baseline - galley_baseline(galley)).round()
+}
+
+/// Paint `galley` from `left` with its first line on `baseline`.
+pub fn paint_on_baseline(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, baseline: f32, color: Color32) {
+    let pos = baseline_origin(&galley, left, baseline);
+    painter.galley(pos, galley, color);
+}
+
 /// A picture fitted in `size` keeping its aspect, or a placeholder (a
 /// Tabler `icon` over a caption) while there is none.
 pub fn picture(

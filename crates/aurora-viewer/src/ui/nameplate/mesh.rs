@@ -217,11 +217,17 @@ impl Outline {
 
     /// A line of `width` along the inside of the outline.
     pub fn stroke(&self, mesh: &mut Mesh, width: f32, color: Color32) {
+        self.line(mesh, -width, 0.0, color);
+    }
+
+    /// A line from `inner` to `outer` away from the outline (inside when
+    /// negative), antialiased on both sides.
+    pub fn line(&self, mesh: &mut Mesh, inner: f32, outer: f32, color: Color32) {
         let f = self.feather * 0.5;
-        let a = self.ring(mesh, -width - f, Color32::TRANSPARENT);
-        let b = self.ring(mesh, -width + f, color);
-        let c = self.ring(mesh, -f, color);
-        let d = self.ring(mesh, f, Color32::TRANSPARENT);
+        let a = self.ring(mesh, inner - f, Color32::TRANSPARENT);
+        let b = self.ring(mesh, inner + f, color);
+        let c = self.ring(mesh, outer - f, color);
+        let d = self.ring(mesh, outer + f, Color32::TRANSPARENT);
         self.band(mesh, a, b);
         self.band(mesh, b, c);
         self.band(mesh, c, d);
@@ -269,9 +275,30 @@ pub enum Border {
     Around(Color32, f32),
 }
 
-/// The plate itself: its surface, its border, and around it the lights
-/// (drop shadow, voice halo), which never reach under the surface.
-pub fn plate(mesh: &mut Mesh, rect: Rect, pixels_per_point: f32, fill: Color32, border: Border, lights: &[Glow]) {
+/// A line standing away from the plate, over its lights.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ring {
+    /// From the plate's edge to the line.
+    pub gap: f32,
+    pub width: f32,
+    pub color: Color32,
+}
+
+/// The plate itself: its surface, its border, around it the lights (drop
+/// shadow, voice halo), which never reach under the surface, and over them
+/// the `rings`.
+pub fn plate(mesh: &mut Mesh, rect: Rect, pixels_per_point: f32, fill: Color32, border: Border, lights: &[Glow], rings: &[Ring]) {
+    lit_plate(mesh, rect, pixels_per_point, fill, border, lights);
+    let o = Outline::pill(rect, pixels_per_point);
+    for r in rings.iter().filter(|r| r.color.a() > 0 && r.width > 0.0) {
+        // thinner than a pixel, a line is a fainter pixel
+        let width = r.width.max(o.feather);
+        let color = r.color.gamma_multiply((r.width / o.feather).min(1.0));
+        o.line(mesh, r.gap, r.gap + width, color);
+    }
+}
+
+fn lit_plate(mesh: &mut Mesh, rect: Rect, pixels_per_point: f32, fill: Color32, border: Border, lights: &[Glow]) {
     let o = Outline::pill(rect, pixels_per_point);
     let n = o.points() as usize;
     // a light that has not moved is a halo: it needs the closer rings
@@ -405,7 +432,7 @@ mod tests {
             (Border::Around(Color32::GREEN, 0.8), &lights()[..]),
         ] {
             let mut mesh = Mesh::default();
-            plate(&mut mesh, rect, 1.0, fill, border, lights);
+            plate(&mut mesh, rect, 1.0, fill, border, lights, &[]);
             assert!(mesh.is_valid() && !mesh.indices.is_empty());
             let reach = lights.iter().map(Glow::reach).fold(0.0, f32::max);
             let n = Outline::pill(rect, 1.0).points() as usize;
@@ -434,6 +461,39 @@ mod tests {
             let (above, below) = (alpha_at(rect.top() - d), alpha_at(rect.bottom() + d));
             assert!(below > above, "{below} <= {above}");
         }
+    }
+
+    #[test]
+    fn a_ring_stands_away_from_the_plate_over_its_lights() {
+        let rect = pill();
+        let fill = Color32::from_rgba_premultiplied(10, 12, 20, 130);
+        let border = Border::Inside(Color32::from_white_alpha(30), 1.0);
+        let mut lit = Mesh::default();
+        plate(&mut lit, rect, 1.0, fill, border, &lights(), &[]);
+        let ring = Ring {
+            gap: 4.0,
+            width: 2.0,
+            color: Color32::GREEN,
+        };
+        let mut mesh = Mesh::default();
+        plate(&mut mesh, rect, 1.0, fill, border, &lights(), &[ring]);
+        assert!(mesh.is_valid());
+        // the plate and its lights first, then the ring, drawn over them
+        assert_eq!(mesh.vertices[..lit.vertices.len()], lit.vertices[..]);
+        let added = &mesh.vertices[lit.vertices.len()..];
+        for v in added {
+            let d = pill_distance(rect, v.pos);
+            assert!((3.49..=6.51).contains(&d), "{d}");
+            if (4.49..=5.51).contains(&d) {
+                assert_eq!(v.color, Color32::GREEN);
+            }
+        }
+        // thinner than a pixel, a ring is a fainter pixel
+        let mut thin = Mesh::default();
+        let hair = Ring { width: 0.5, ..ring };
+        plate(&mut thin, rect, 1.0, fill, border, &lights(), &[hair]);
+        let hair_alpha = thin.vertices[lit.vertices.len()..].iter().map(|v| v.color.a()).max();
+        assert_eq!(hair_alpha, Some(128));
     }
 
     #[test]

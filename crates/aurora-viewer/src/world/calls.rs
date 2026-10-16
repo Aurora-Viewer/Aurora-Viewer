@@ -212,6 +212,10 @@ pub struct Calls {
     /// kept.
     pub volumes: std::collections::BTreeMap<Uuid, f32>,
     volumes_path: Option<std::path::PathBuf>,
+    /// The residents of our voice channel this frame (nearby voice or the
+    /// call's), set by the app from the voice session: who gets the volume
+    /// row at the top of their menus.
+    pub voice_peers: std::collections::HashSet<Uuid>,
 }
 
 /// The file of the voice volumes, in the account's folder
@@ -234,6 +238,22 @@ impl Calls {
             })
             .unwrap_or_default();
         self.volumes_path = Some(path);
+    }
+
+    /// A resident's volume, 0.5 (heard as sent) when none is kept.
+    pub fn volume(&self, id: &Uuid) -> f32 {
+        self.volumes.get(id).copied().unwrap_or(0.5)
+    }
+
+    /// The resident is in our voice channel (LLVoiceClient::getVoiceEnabled
+    /// = isParticipant): one of the voice session's participants, or a
+    /// member of the connected call.
+    pub fn hears(&self, id: &Uuid) -> bool {
+        self.voice_peers.contains(id)
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|c| c.state == CallState::Connected && c.members.iter().any(|m| m.id == *id))
     }
 
     /// A resident's volume; back at 0.5 it is forgotten.
@@ -1279,7 +1299,36 @@ mod tests {
         again.load_volumes(path);
         assert_eq!(again.volumes.len(), 1);
         assert!((again.volumes[&a] - 0.8).abs() < 1e-6);
+        assert!((again.volume(&a) - 0.8).abs() < 1e-6);
+        assert_eq!(again.volume(&b), 0.5, "a forgotten resident is heard as sent");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn residents_are_heard_in_nearby_voice_or_once_the_call_connects() {
+        let mut w = world();
+        let (other, nearby) = (Uuid::from_u128(2), Uuid::from_u128(7));
+        assert!(!w.calls.hears(&other) && !w.calls.hears(&nearby));
+        w.calls.voice_peers.insert(nearby);
+        assert!(w.calls.hears(&nearby));
+        w.start_call(other);
+        w.on_call_event(NetEvent::CallReply {
+            method: CallMethod::Call,
+            session: Uuid::from_u128(1 ^ 2),
+            result: Ok(credentials()),
+        });
+        let member = |id| CallMember {
+            id,
+            level: 0.0,
+            speaking: false,
+            muted: false,
+        };
+        let me = member(w.agent_id);
+        // still ringing: they are not in the channel yet
+        w.call_voice_update(ChannelStatus::Connected, vec![me]);
+        assert!(!w.calls.hears(&other));
+        w.call_voice_update(ChannelStatus::Connected, vec![me, member(other)]);
+        assert!(w.calls.hears(&other));
     }
 
     #[test]

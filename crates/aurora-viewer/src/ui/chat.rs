@@ -29,6 +29,7 @@ use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
@@ -36,6 +37,9 @@ pub struct ChatUi {
     pub input: String,
     pub focus_request: bool,
     pub has_focus: bool,
+    /// The local chat field keeps the keyboard after a message is sent
+    /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
+    pub keep_focus: bool,
     /// Conversation shown in the floater (None = local chat).
     pub selected: Option<uuid::Uuid>,
     /// Conversation whose entry the list scrolls to: one opened from
@@ -316,6 +320,14 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
             Seg::Agent(id) => (name_of(id), Some(Link::Agent(id))),
             Seg::Mention(id) => (format!("@{}", name_of(id)), Some(Link::Agent(id))),
+            Seg::Labelled(label, inner) => (
+                label.into_owned(),
+                match *inner {
+                    Seg::Url(u) => Some(Link::Url(u.to_owned())),
+                    Seg::Agent(id) | Seg::Mention(id) => Some(Link::Agent(id)),
+                    _ => None,
+                },
+            ),
         })
         .collect()
 }
@@ -324,7 +336,7 @@ fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(Str
 /// its explanation.
 fn link_badge_look(p: &Palette, url: &str) -> (&'static str, Color32, String) {
     use crate::link_trust::Trust;
-    match crate::link_trust::classify(url) {
+    match crate::link_trust::classify(&web_target(url)) {
         Trust::Trusted => ("circle-check-filled", p.success, aurora_i18n::tr!("ui-chat-trusted-site").into()),
         Trust::Unknown => (
             "alert-triangle-filled",
@@ -442,7 +454,7 @@ pub(crate) fn text_with_places(
 /// a warning (unless turned off), dangerous ones always after a warning
 /// (`CtxAction::OpenUrl`).
 pub(crate) fn open_web_link(ctx: &egui::Context, url: &str) {
-    super::context::request(ctx, CtxAction::OpenUrl(url.to_owned()));
+    super::context::request(ctx, CtxAction::OpenUrl(web_target(url).into_owned()));
 }
 
 /// Who wrote a bubble line, drawn before the name.
@@ -728,45 +740,169 @@ enum Seg<'a> {
     /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
     /// as the avatar's name, opens the profile (LLUrlEntryAgent).
     Agent(uuid::Uuid),
+    /// A link written with its own text, `[https://example.org Text]` or
+    /// `[secondlife:///app/... Text]` (LLUrlEntryHTTPLabel, LLUrlEntrySLLabel):
+    /// shown as the text, it acts as the link inside (a web link, an agent
+    /// link or another SL link; a place takes the text as its label).
+    Labelled(Cow<'a, str>, Box<Seg<'a>>),
 }
 
 fn segments(text: &str) -> Vec<Seg<'_>> {
     let mut out = Vec::new();
     let mut rest = text;
     while !rest.is_empty() {
-        let next = ["https://", "http://", "secondlife://"].iter().filter_map(|p| rest.find(p)).min();
-        let Some(i) = next else {
+        let Some((i, len, seg)) = next_link(rest) else {
             out.push(Seg::Text(rest));
             break;
         };
         if i > 0 {
             out.push(Seg::Text(&rest[..i]));
         }
-        let tail = &rest[i..];
-        let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
-        // trailing punctuation belongs to the sentence
-        while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ';', ':', '"', '\'']) {
-            end -= 1;
-        }
-        let link = &tail[..end.max(1)];
-        let seg = if let Some(rest) = link.strip_prefix("secondlife:///app/agent/") {
-            let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
-            match (uuid::Uuid::parse_str(id).ok(), action) {
-                (Some(id), "mention") => Seg::Mention(id),
-                (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
-                _ => Seg::Slurl(link),
-            }
-        } else if let Some(place) = crate::slurl::place_link(link) {
-            Seg::Place(link, place)
-        } else if link.starts_with("secondlife://") {
-            Seg::Slurl(link)
-        } else {
-            Seg::Url(link)
-        };
         out.push(seg);
-        rest = &tail[link.len()..];
+        rest = &rest[i + len..];
     }
     out
+}
+
+/// The first link of a text: where it starts, how long it is, and what it
+/// is. Links are found in the order of LLUrlRegistry::findUrl
+/// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[` of
+/// a link with its own text wins over the address inside it.
+fn next_link(text: &str) -> Option<(usize, usize, Seg<'_>)> {
+    let schemes = ["https://", "http://", "secondlife://"].iter().filter_map(|p| text.find(p));
+    let bare = schemes.chain(web_start(text)).min();
+    let labelled = text
+        .match_indices('[')
+        .map(|(i, _)| i)
+        .take_while(|&i| bare.is_none_or(|b| i < b))
+        .find_map(|i| labelled(&text[i..]).map(|(len, seg)| (i, len, seg)));
+    if labelled.is_some() {
+        return labelled;
+    }
+    let i = bare?;
+    let tail = &text[i..];
+    let mut end = tail.find(char::is_whitespace).unwrap_or(tail.len());
+    // trailing punctuation belongs to the sentence
+    while end > 0 && tail[..end].ends_with(['.', ',', '!', '?', ')', ']', ';', ':', '"', '\'']) {
+        end -= 1;
+    }
+    let link = &tail[..end.max(1)];
+    Some((i, link.len(), link_seg(link)))
+}
+
+/// Where an address without its scheme starts, "www.example.org"
+/// (LLUrlEntryHTTPNoProtocol: `\bwww\.\S+\.([^\s<]*)?\b`).
+fn web_start(text: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = text[from..].find("www.").map(|i| i + from) {
+        let word_start = !text[..i].ends_with(|c: char| c.is_alphanumeric() || c == '_');
+        let host = text[i + 4..].split(|c: char| c.is_whitespace() || c == '<').next().unwrap_or("");
+        // a dot with something on both sides after "www."
+        let dotted = host
+            .trim_end_matches(|c: char| !c.is_alphanumeric())
+            .find('.')
+            .is_some_and(|d| d > 0);
+        if word_start && dotted {
+            return Some(i);
+        }
+        from = i + 4;
+    }
+    None
+}
+
+/// `[https://example.org Text]` at the start of `text`: its length and its
+/// segment. The pattern of LLUrlEntryHTTPLabel and LLUrlEntrySLLabel,
+/// `\[(https?|secondlife)://\S+[ \t]+[^\]]+\]`; the text is unescaped like
+/// getLabelFromWikiLink, and a text that is itself a link shows the address
+/// instead (LLUrlEntryHTTPLabel::getLabel), so it cannot pass for another
+/// destination.
+fn labelled(text: &str) -> Option<(usize, Seg<'_>)> {
+    let body = text.strip_prefix('[')?;
+    let known = ["https://", "http://", "secondlife://"]
+        .iter()
+        .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)));
+    let url_end = body.find(char::is_whitespace)?;
+    let url = &body[..url_end];
+    if !known || url.ends_with("://") {
+        return None;
+    }
+    let after = &body[url_end..];
+    let label_start = after.trim_start_matches([' ', '\t']);
+    let gap = after.len() - label_start.len();
+    if gap == 0 {
+        return None;
+    }
+    let close = label_start.find(']')?;
+    let label = label_start[..close].trim_end();
+    if label.trim().is_empty() {
+        return None;
+    }
+    let len = 1 + url_end + gap + close + 1;
+    let inner = link_seg(url);
+    let label = unescape(label);
+    if segments(&label).iter().any(|s| !matches!(s, Seg::Text(_))) {
+        return Some((len, inner));
+    }
+    Some((
+        len,
+        match inner {
+            Seg::Place(u, mut place) => {
+                place.label = label.into_owned();
+                Seg::Place(u, place)
+            }
+            inner => Seg::Labelled(label, Box::new(inner)),
+        },
+    ))
+}
+
+/// What a link is, from its address.
+fn link_seg(link: &str) -> Seg<'_> {
+    if let Some(rest) = link.strip_prefix("secondlife:///app/agent/") {
+        let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
+        match (uuid::Uuid::parse_str(id).ok(), action) {
+            (Some(id), "mention") => Seg::Mention(id),
+            (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
+            _ => Seg::Slurl(link),
+        }
+    } else if let Some(place) = crate::slurl::place_link(link) {
+        Seg::Place(link, place)
+    } else if link.starts_with("secondlife://") {
+        Seg::Slurl(link)
+    } else {
+        Seg::Url(link)
+    }
+}
+
+/// `%XX` escapes decoded (LLURI::unescape).
+fn unescape(text: &str) -> Cow<'_, str> {
+    if !text.contains('%') {
+        return Cow::Borrowed(text);
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && let Some(v) = text.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Cow::Owned(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The address a web link opens: "www.example.org" gets its scheme
+/// (LLUrlEntryHTTPNoProtocol::getUrl).
+fn web_target(url: &str) -> Cow<'_, str> {
+    if url.contains("://") {
+        Cow::Borrowed(url)
+    } else {
+        Cow::Owned(format!("http://{url}"))
+    }
 }
 
 /// Right click on the sender of a chat line: the name menu, its report on
@@ -900,18 +1036,18 @@ pub(crate) fn chat_text_marked(
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
-                Seg::Url(u) => {
-                    link_badge(ui, p, u, size);
-                    let behind = select::atom_begin(ui);
-                    let r = ui.add(egui::Link::new(RichText::new(u).size(size).color(super::colors::c(k.chat_urls))));
-                    select::atom_end(ui, behind, u, r.rect);
-                    if r.on_hover_text(u).clicked() {
-                        open_web_link(ui.ctx(), u);
-                    }
-                }
+                Seg::Url(u) => web_link(ui, p, u, u, size),
                 Seg::Slurl(u) => {
                     select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
                 }
+                Seg::Labelled(label, inner) => match *inner {
+                    Seg::Url(u) => web_link(ui, p, u, &label, size),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size),
+                    Seg::Slurl(u) => {
+                        select::label(ui, RichText::new(label.as_ref()).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                    }
+                    _ => marked_run(ui, emoji, &label, size, color, italics, mark),
+                },
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Mention(id) => {
                     want_names.insert(id);
@@ -936,23 +1072,40 @@ pub(crate) fn chat_text_marked(
                 }
                 Seg::Agent(id) => {
                     want_names.insert(id);
-                    let name = world.social.name_of(&id);
-                    let behind = select::atom_begin(ui);
-                    let r = ui.add(
-                        egui::Label::new(RichText::new(&name).size(size).color(super::colors::c(k.chat_slurl))).sense(egui::Sense::click()),
-                    );
-                    select::atom_end(ui, behind, &name, r.rect);
-                    name_menu(&r, p, world, id);
-                    if r.on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
-                        .clicked()
-                    {
-                        super::profile::request_open(ui.ctx(), id);
-                    }
+                    agent_link(ui, p, world, id, &world.social.name_of(&id), size);
                 }
             }
         }
     });
+}
+
+/// A web link of a text, its trust badge before it; `text` is the address
+/// or the text it was written with.
+fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
+    let k = super::colors::get();
+    link_badge(ui, p, url, size);
+    let behind = select::atom_begin(ui);
+    let r = ui.add(egui::Link::new(RichText::new(text).size(size).color(super::colors::c(k.chat_urls))));
+    select::atom_end(ui, behind, text, r.rect);
+    if r.on_hover_text(url).clicked() {
+        open_web_link(ui.ctx(), url);
+    }
+}
+
+/// An avatar link of a text (its name, or the text it was written with):
+/// opens the profile, the name menu on a right click.
+fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
+    let k = super::colors::get();
+    let behind = select::atom_begin(ui);
+    let r = ui.add(egui::Label::new(RichText::new(text).size(size).color(super::colors::c(k.chat_slurl))).sense(egui::Sense::click()));
+    select::atom_end(ui, behind, text, r.rect);
+    name_menu(&r, p, world, id);
+    if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(aurora_i18n::tr!("common-view-profile"))
+        .clicked()
+    {
+        super::profile::request_open(ui.ctx(), id);
+    }
 }
 
 /// Height of the input row: the emoji button, the field and the send button
@@ -1087,6 +1240,7 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
         .into_iter()
         .map(|s| match s {
             Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
+            Seg::Labelled(label, _) => label.into_owned(),
             Seg::Place(_, place) => place.label,
             Seg::Mention(id) => format!(" @{} ", world.social.name_of(&id)),
             Seg::Agent(id) => world.social.name_of(&id),
@@ -2650,6 +2804,11 @@ pub(crate) fn bar_input(
             },
         });
         st.input.clear();
+        if st.keep_focus {
+            // ready for the next message; only Enter on the empty bar or a
+            // click elsewhere gives the keyboard back to the world
+            st.focus_request = true;
+        }
     }
     // Enter on an empty bar returns to movement (like Firestorm).
     out
@@ -2692,6 +2851,63 @@ mod tests {
         assert_eq!(segs[3], Seg::Mention(id));
         let bad = segments("secondlife:///app/agent/nope/about");
         assert!(matches!(bad[0], Seg::Slurl(_)));
+    }
+
+    #[test]
+    fn links_written_with_their_own_text_show_the_text() {
+        let segs = segments("My channel: [https://www.youtube.com/@me YouTube], come!");
+        assert_eq!(segs[0], Seg::Text("My channel: "));
+        assert_eq!(
+            segs[1],
+            Seg::Labelled("YouTube".into(), Box::new(Seg::Url("https://www.youtube.com/@me")))
+        );
+        assert_eq!(segs[2], Seg::Text(", come!"));
+        // several words, a tab, an escape (getLabelFromWikiLink)
+        let segs = segments("[http://example.org\tMy%20shop  is open]");
+        assert_eq!(
+            segs,
+            vec![Seg::Labelled("My shop  is open".into(), Box::new(Seg::Url("http://example.org")))]
+        );
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!("[secondlife:///app/agent/{id}/about my friend]");
+        assert_eq!(segments(&t), vec![Seg::Labelled("my friend".into(), Box::new(Seg::Agent(id)))]);
+        let place = segments("[secondlife:///app/teleport/Ahern/1/2/3 the beach]");
+        assert!(matches!(&place[0], Seg::Place(_, p) if p.label == "the beach"));
+    }
+
+    #[test]
+    fn a_text_that_is_a_link_shows_the_real_address() {
+        // LLUrlEntryHTTPLabel::getLabel: no "[https://evil.example https://bank.example]"
+        let segs = segments("[https://evil.example https://bank.example]");
+        assert_eq!(segs, vec![Seg::Url("https://evil.example")]);
+        let segs = segments("[https://evil.example www.bank.example]");
+        assert_eq!(segs, vec![Seg::Url("https://evil.example")]);
+    }
+
+    #[test]
+    fn brackets_that_are_not_a_labelled_link_stay_text() {
+        for t in [
+            "[https://example.org]",
+            "[https://example.org ]",
+            "[note] text",
+            "[https://example.org\nText]",
+            "[ftp.example.org x]",
+        ] {
+            assert!(!segments(t).iter().any(|s| matches!(s, Seg::Labelled(..))), "{t}");
+        }
+        // the address alone is still a link, without the bracket
+        assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
+    }
+
+    #[test]
+    fn addresses_without_scheme_are_links() {
+        let segs = segments("see www.youtube.com/watch, or [www.youtube.com YouTube]");
+        assert_eq!(segs[1], Seg::Url("www.youtube.com/watch"));
+        assert_eq!(segs[3], Seg::Url("www.youtube.com"));
+        assert_eq!(web_target("www.youtube.com"), "http://www.youtube.com");
+        for t in ["awww.example.com", "www.", "www.example", "www .example.com"] {
+            assert!(segments(t).iter().all(|s| matches!(s, Seg::Text(_))), "{t}");
+        }
     }
 
     #[test]
