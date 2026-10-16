@@ -556,6 +556,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
+| `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 ### Details
 
@@ -1006,6 +1007,33 @@ temporary status or seated avatar. Maximum: 256 prims and 1024 items
 copied / scripts observed. Name conflicts and non-copyable contents stop the
 operation before any unlinking. Copying a script does not keep its runtime
 memory; replacing the root does not automatically copy the Linkset Data.
+
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop`**
+— at frame 600, a violet bell of ours (scripted, touch text "Ring the
+bell", sit text "Lie down"), a teal crate of ours and a cloud of large
+amber particles another resident owns stand in a row 5 m ahead, where the
+camera looks. At frame 700 the right click opens the menu of the bell
+(`list`: "Ring the bell" and "Lie down" as labels, Return enabled, the
+script actions and Put on in their submenus), or lands on the particles
+(`particle`: the menu of what is behind, with "Ignore particle owner"
+enabled). At frame 740: `scripts` chooses Reset scripts (the "modify
+scripts" question), `scripts-run` answers it yes (the Reset progress
+window lists the bell's script, then "Done."); `return` / `return-yes`
+choose Return (the question; answered yes, the bell goes); `wear` chooses
+Put on ▸ Attach to ▸ Right Arm ▸ Right Hand: the avatar walks to the bell,
+then attaches it (it leaves the world: the demo has no item to wear it
+from); `particle-block` blocks the particles' owner: People opens on the
+Blocked tab with Nova Exemple. `link` selects the crate and the bell in
+the build tools at frame 650: the menu then has Link enabled (Object ▸)
+and "Take multiple ▸" instead of Take. `drop`, with `AURORA_DEMO_WORN=1`,
+opens the worn backpack's menu and chooses Drop (the question). The log
+writes `demo object menu: <action>` and, at frame 900, `demo object menu
+result: …` (bell in the world or gone, particle owner, block, queue
+lines). Capture with `AURORA_FPS_LIMIT=60` at frames 760 (menus), 780
+(questions), 800 (queue window, block list) and 1000 (wear); a submenu
+opens under `AURORA_DEMO_POINTER` (one point every 60 frames from frame
+300: the eighth point is at frame 720). Our attachments' menu (favorites,
+Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
 
 
 ## HUDs

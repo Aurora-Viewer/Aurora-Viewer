@@ -66,6 +66,10 @@ pub struct AttachPoint {
     /// Anchor of the wearer's palette holding the posed point (anchors.rs);
     /// None for a HUD point, or past the anchors a palette has.
     pub anchor: Option<u8>,
+    /// avatar_lad.xml `group` and `pie_slice`: the body part submenu of
+    /// "Attach" and the place in it (LLVOAvatarSelf::buildMenus); 9 is HUD.
+    pub group: u8,
+    pub pie_slice: u8,
 }
 
 /// One base mesh part with its geometry in avatar-local space.
@@ -258,6 +262,8 @@ impl AvatarLibrary {
                                     skel_position: jp + pos,
                                     joint: None,
                                     anchor: None,
+                                    group: c.attr("group").and_then(|v| v.parse().ok()).unwrap_or(0),
+                                    pie_slice: c.attr("pie_slice").and_then(|v| v.parse().ok()).unwrap_or(0),
                                 },
                             );
                         }

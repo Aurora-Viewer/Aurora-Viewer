@@ -169,6 +169,20 @@ pub enum BuildCmd {
         handle: RegionHandle,
         local_ids: Vec<u32>,
     },
+    /// ObjectAttach of rezzed roots (LLSelectMgr::sendAttach): `point` with
+    /// ATTACHMENT_ADD to add rather than replace, each root with its
+    /// rotation (packObjectIDAndRotation).
+    Attach {
+        handle: RegionHandle,
+        point: u8,
+        objects: Vec<(u32, Quat)>,
+    },
+    /// ObjectDrop: our attachments dropped on the ground
+    /// (LLSelectMgr::sendDropAttachment, roots only).
+    DropAttachment {
+        handle: RegionHandle,
+        local_ids: Vec<u32>,
+    },
     SetName {
         handle: RegionHandle,
         local_id: u32,

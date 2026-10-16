@@ -30,9 +30,12 @@ pub mod flags {
     pub const OBJECT_COPY: u32 = 1 << 3;
     pub const OBJECT_ANY_OWNER: u32 = 1 << 4;
     pub const OBJECT_YOU_OWNER: u32 = 1 << 5;
+    pub const SCRIPTED: u32 = 1 << 6;
     pub const HANDLE_TOUCH: u32 = 1 << 7;
     pub const OBJECT_MOVE: u32 = 1 << 8;
     pub const TAKES_MONEY: u32 = 1 << 9;
+    /// FLAGS_AFFECTS_NAVMESH: flagObjectPermanent.
+    pub const AFFECTS_NAVMESH: u32 = 1 << 12;
     pub const OBJECT_TRANSFER: u32 = 1 << 17;
 }
 
@@ -106,6 +109,29 @@ pub struct ObjectFacts {
     pub blocked: bool,
     /// Name from ObjectProperties (block list entry).
     pub name: String,
+    /// The touch and sit texts of ObjectProperties: the labels of "Touch"
+    /// and "Sit here" when set (enable_object_touch, enable_object_sit).
+    pub touch_name: String,
+    pub sit_name: String,
+    /// Roots in the menu's selection: a right click on an object that is
+    /// already selected keeps the selection (handleObjectSelection), and
+    /// "Take" becomes "Take multiple" (Object.VisibleTakeMultiple).
+    pub roots: usize,
+    /// LLSelectMgr::enableLinkObjects.
+    pub link: bool,
+    /// object_is_wearable: "Wear", "Add" and the attachment points.
+    pub wear: bool,
+    /// EditableSelected: a prim of the selection we may modify (the
+    /// script actions); EditableSelectedMono adds UpdateScriptTask.
+    pub scripts: bool,
+    pub mono: bool,
+    /// Our attachment's inventory item is a favorite (None: not known).
+    pub favorite: Option<bool>,
+    /// Attachment.EnableDrop: ours, its item in the inventory, building
+    /// allowed on the parcel.
+    pub drop: bool,
+    /// The skeleton of an animated object (LLAvatarEnableResetSkeleton).
+    pub animesh: Option<Uuid>,
 }
 
 impl ObjectFacts {
@@ -155,12 +181,27 @@ pub struct Facts {
     pub friend: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
+    /// The owner of the particle under the right click
+    /// (LLPickInfo::mParticleOwnerID), when it is not us.
+    pub particle_owner: Option<Uuid>,
+    /// "Put on ▸ Attach" and "Attach HUD" (LLVOAvatarSelf::buildMenus).
+    pub attach_points: Vec<AttachChoice>,
     /// Voice is enabled: "Call" works (LLAvatarActions::canCall).
     pub voice: bool,
     /// The avatar's voice row, when they are in our voice channel.
     pub voice_volume: Option<menu::VoiceVolume>,
     /// The avatar is in view and wears something: "Inspect" lists it.
     pub worn: bool,
+}
+
+/// One attachment point of "Put on ▸ Attach" or "Attach HUD".
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachChoice {
+    pub id: u8,
+    pub label: String,
+    /// avatar_lad.xml group (the body part submenu; 9 is HUD) and place.
+    pub group: u8,
+    pub pie_slice: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +314,38 @@ pub enum CtxAction {
     Open(Uuid),
     /// Unlink the linkset (Tools.Unlink).
     Unlink(Uuid),
+    /// Link the selected objects (Tools.Link).
+    Link(Uuid),
+    /// "Take as separate items" / "Take copies as separate items"
+    /// (Object.TakeSeparate / TakeSeparateCopy): one item per root.
+    TakeSeparate {
+        id: Uuid,
+        copy: bool,
+    },
+    /// "Return" (Object.Return): asked first (ReturnToOwner), then
+    /// DeRezObject RETURN_TO_OWNER.
+    Return(Uuid),
+    /// "Put on" (Object.AttachToAvatar / AttachAddToAvatar): walk to the
+    /// object, then ObjectAttach; point 0 is the object's own point.
+    Wear {
+        id: Uuid,
+        point: u8,
+        add: bool,
+    },
+    /// The script actions on the selection (Tools.SelectedScriptAction).
+    Scripts {
+        id: Uuid,
+        action: crate::build::script_queue::QueueKind,
+    },
+    /// "Drop" one of our attachments (Attachment.Drop): asked first
+    /// (AttachmentDrop), then ObjectDrop.
+    Drop(ObjKey),
+    /// "Block particle owner" (Particle.Mute): the owner of the particle
+    /// under the right click.
+    BlockParticleOwner(Uuid),
+    /// "Add to / Remove from favorites" of our attachment's inventory item
+    /// (Object.SetFavorite).
+    AttachmentFavorite(Uuid),
     /// "Edit linked parts" (Tools.EditLinkedParts).
     EditLinkedParts(bool),
     /// Land menu: build tools, create (Land.Build) or terraform (Land.Edit).
@@ -811,6 +884,51 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
                 answer = Some(true);
             }
             if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                answer = Some(false);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    answer
+}
+
+/// A question of the object menus with its "ignore" box (the okcancelignore
+/// template: ReturnToOwner, AttachmentDrop, ConfirmScriptModify).
+/// Some(true) goes on, Some(false) cancels; the caller saves `dont_ask`
+/// once the answer is yes, like `teleport_confirm`.
+pub struct Question<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub text: &'a str,
+    pub yes: &'a str,
+    pub no: &'a str,
+}
+
+pub fn ask(ctx: &egui::Context, p: &Palette, q: &Question, dont_ask: &mut bool) -> Option<bool> {
+    use egui::RichText;
+    let mut answer = None;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new(q.id)).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.label(RichText::new(q.title).size(15.0).strong().color(p.ink));
+        ui.add_space(6.0);
+        ui.label(RichText::new(q.text).size(12.5).color(p.muted));
+        ui.add_space(8.0);
+        super::widgets::checkbox(
+            ui,
+            p,
+            dont_ask,
+            RichText::new(aurora_i18n::tr!("ui-context-do-not-show-again"))
+                .size(12.5)
+                .color(p.muted),
+        );
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if super::widgets::flat_button(ui, p, q.yes).clicked() {
+                answer = Some(true);
+            }
+            if super::widgets::flat_button(ui, p, q.no).clicked() {
                 answer = Some(false);
             }
         });
