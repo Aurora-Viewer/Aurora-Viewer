@@ -66,6 +66,7 @@ impl Block {
                 bytes: self.start + bytes.start..self.start + bytes.end,
                 style: Style {
                     code: true,
+                    block_code: true,
                     role: Some(*role),
                     ..Default::default()
                 },

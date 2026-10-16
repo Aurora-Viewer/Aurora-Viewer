@@ -16,6 +16,8 @@ pub(super) struct EditorResult {
     pub drop: Option<(usize, Uuid)>,
     #[cfg(test)]
     galley: Option<std::sync::Arc<egui::Galley>>,
+    #[cfg(test)]
+    text_clip_rect: Option<egui::Rect>,
 }
 
 #[derive(Clone)]
@@ -108,6 +110,11 @@ pub(super) fn editor(
         None
     };
     let editable = editable && markdown.is_none();
+    // Reserve a layer behind the immutable editor's transparent frame and text.
+    // Native selection and cursor painting remain above the code surfaces.
+    let code_background = markdown
+        .filter(|rendered| !rendered.code_blocks.is_empty())
+        .map(|_| ui.painter().add(egui::Shape::Noop));
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
@@ -195,10 +202,29 @@ pub(super) fn editor(
     };
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("demo_rect"), output.response.rect));
+    if let (Some(rendered), Some(slot)) = (markdown, code_background) {
+        let rects = rendered.code_rects(
+            &output.galley,
+            output.galley_pos,
+            output.text_clip_rect,
+            ui.spacing().item_spacing.y * 0.5,
+        );
+        ui.painter().set(
+            slot,
+            egui::Shape::Vec(
+                rects
+                    .into_iter()
+                    .map(|rect| egui::Shape::rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field))
+                    .collect(),
+            ),
+        );
+    }
     let mut result = EditorResult {
         changed: output.response.changed(),
         #[cfg(test)]
         galley: Some(output.galley.clone()),
+        #[cfg(test)]
+        text_clip_rect: Some(output.text_clip_rect),
         ..Default::default()
     };
     if output.response.has_focus() {
@@ -364,6 +390,95 @@ mod tests {
         let source = Notecard::decode(&crate::world::inventory::demo::note_asset(true)).expect("fixture");
         let text = source.text.clone();
         (source, text)
+    }
+
+    #[test]
+    fn markdown_code_backgrounds_cover_whole_blocks_below_selectable_text() {
+        fn flatten<'a>(shape: &'a egui::Shape, shapes: &mut Vec<&'a egui::Shape>) {
+            if let egui::Shape::Vec(children) = shape {
+                for child in children {
+                    flatten(child, shapes);
+                }
+            } else {
+                shapes.push(shape);
+            }
+        }
+        let raw = "Before `inline` 🐺\n\n```lsl\ndefault {\n\n    llOwnerSay(\"A long line that wraps in a narrow preview\");\n}\n```\n\nBetween\n\n```text\nx\n```\n\n```\n```\n\nAfter";
+        let rendered = super::super::markdown::Rendered::parse(raw);
+        for width in [160.0, 480.0] {
+            let ctx = egui::Context::default();
+            let p = crate::theme::Theme::default().palette();
+            let mut text = raw.to_owned();
+            let mut result = None;
+            let output = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 1000.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    result = Some(editor(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        egui::Id::new("code_background"),
+                        &mut text,
+                        None,
+                        false,
+                        egui::vec2(width, 900.0),
+                        Appearance::Markdown(&rendered, &Default::default()),
+                    ));
+                },
+            ));
+            assert_eq!(text, raw, "painting must not change the saved source");
+            let result = result.expect("editor");
+            let clip = result.text_clip_rect.expect("visible text bounds");
+            let galley = result.galley.expect("text layout");
+            let highlights: Vec<_> = galley
+                .job
+                .sections
+                .iter()
+                .filter(|section| section.format.background == p.field)
+                .collect();
+            assert_eq!(highlights.len(), 1, "only inline code keeps a glyph background");
+            let range = &highlights[0].byte_range;
+            assert_eq!(&galley.job.text[range.start.0..range.end.0], "inline");
+            let mut shapes = Vec::new();
+            for shape in &output.shapes {
+                flatten(&shape.shape, &mut shapes);
+            }
+            let backgrounds: Vec<_> = shapes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, shape)| {
+                    if let egui::Shape::Rect(rect) = shape
+                        && rect.fill == p.field
+                    {
+                        Some((index, rect.rect))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(backgrounds.len(), 3, "one rectangle for LSL, plain and empty blocks");
+            let first = backgrounds[0].1;
+            assert!(
+                first.height() > 4.0 * egui::TextStyle::Monospace.resolve(&ctx.global_style()).size,
+                "the surface must also cover blank and wrapped rows"
+            );
+            for (_, rect) in &backgrounds {
+                assert_eq!(rect.left(), clip.left());
+                assert_eq!(rect.right(), clip.right());
+            }
+            assert!(backgrounds.windows(2).all(|pair| pair[0].1.bottom() < pair[1].1.top()));
+            let text_index = shapes
+                .iter()
+                .position(|shape| matches!(shape, egui::Shape::Text(_)))
+                .expect("selectable text");
+            assert!(
+                backgrounds.iter().all(|(index, _)| *index < text_index),
+                "surfaces stay below text and native selection"
+            );
+        }
     }
 
     fn key(key: egui::Key, command: bool) -> egui::Event {

@@ -118,6 +118,9 @@ drawing resolves the same current skin/custom script colors. Edit reuses
 `ui/scripts/indent.rs` and its selection commands, with LSL scopes for comment
 shortcuts, automatic indentation and brace matching. Tab stops and multiline
 Tab/Shift+Tab work throughout the source; pasted text remains untouched.
+Code-block backgrounds use character ranges from the parser and the shaped
+text rows: one full-width surface per block, below native text/selection,
+including wrapped and empty rows. Inline code retains its glyph highlight.
 
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.

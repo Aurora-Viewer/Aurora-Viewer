@@ -204,6 +204,7 @@ struct Style {
     italic: bool,
     strike: bool,
     code: bool,
+    block_code: bool,
     quote: bool,
     link: Option<Arc<str>>,
     role: Option<super::super::scripts::settings::ColorRole>,
@@ -220,6 +221,7 @@ pub(super) struct Rendered {
     pub text: String,
     spans: Vec<Span>,
     pub links: Vec<(Range<usize>, Arc<str>)>,
+    pub code_blocks: Vec<Range<usize>>,
     chars: usize,
 }
 
@@ -254,6 +256,7 @@ impl Rendered {
             text: String::new(),
             spans: Vec::new(),
             links: Vec::new(),
+            code_blocks: Vec::new(),
             chars: 0,
         };
         let mut style = Style::default();
@@ -261,6 +264,7 @@ impl Rendered {
         let mut lists: Vec<Option<u64>> = Vec::new();
         let mut cell = 0;
         let mut code = None;
+        let mut block_start = None;
         for (event, range) in Parser::new_ext(
             source,
             Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES,
@@ -283,6 +287,8 @@ impl Rendered {
                         Tag::CodeBlock(kind) => {
                             rendered.newline(2);
                             style.code = true;
+                            style.block_code = true;
+                            block_start = Some(rendered.chars);
                             if code::is_lsl(&kind) {
                                 code = Some(code::Block::new(&rendered));
                             }
@@ -331,6 +337,14 @@ impl Rendered {
                     }
                 }
                 Event::End(tag) => {
+                    if tag == TagEnd::CodeBlock
+                        && let Some(start) = block_start.take()
+                    {
+                        if rendered.chars == start {
+                            rendered.push("\n", &style);
+                        }
+                        rendered.code_blocks.push(start..rendered.chars);
+                    }
                     if tag == TagEnd::CodeBlock
                         && let Some(code) = code.take()
                     {
@@ -423,7 +437,11 @@ impl Rendered {
                     font_id: if s.strong && !s.code { strong.font_id } else { font },
                     coords: if s.strong { strong.coords } else { Default::default() },
                     color,
-                    background: if s.code { p.field } else { egui::Color32::TRANSPARENT },
+                    background: if s.code && !s.block_code {
+                        p.field
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    },
                     italics: s.italic || s.quote,
                     underline: if s.link.is_some() {
                         egui::Stroke::new(0.5, color)
@@ -439,6 +457,44 @@ impl Rendered {
                 },
             );
         }
+    }
+
+    /// One surface per code block, derived from the shaped rows so wrapping,
+    /// blank lines and mixed font heights keep the rectangle continuous.
+    pub(super) fn code_rects(&self, galley: &egui::Galley, pos: egui::Pos2, clip: egui::Rect, padding: f32) -> Vec<egui::Rect> {
+        let mut at = 0;
+        let mut rows = galley
+            .rows
+            .iter()
+            .map(|row| {
+                let start = at;
+                at += row.char_count_including_newline().0;
+                (start..at, row.rect().translate(pos.to_vec2()))
+            })
+            .peekable();
+        let mut rects = Vec::new();
+        for block in &self.code_blocks {
+            while rows.peek().is_some_and(|(range, _)| range.end <= block.start) {
+                rows.next();
+            }
+            let mut rect = egui::Rect::NOTHING;
+            while rows.peek().is_some_and(|(range, _)| range.start < block.end) {
+                if let Some((_, row)) = rows.next() {
+                    rect = rect.union(row);
+                }
+            }
+            if rect.is_finite() {
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(clip.left(), rect.top() - padding),
+                    egui::pos2(clip.right(), rect.bottom() + padding),
+                )
+                .intersect(clip);
+                if rect.is_positive() {
+                    rects.push(rect);
+                }
+            }
+        }
+        rects
     }
 }
 

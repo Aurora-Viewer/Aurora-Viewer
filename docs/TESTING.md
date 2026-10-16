@@ -2977,6 +2977,10 @@ offline; the files and snapshots uploaded in demo stay offline.
   undo/redo, Unicode, exact paste, live preview and Ctrl+S with attachments.
   Prose/other languages must not gain LSL colors or brace/comment behavior;
   Classic and read-only notes must retain their existing behavior.
+  Fenced/indented code must have one continuous background across the block's
+  full width, including blank and wrapped rows. Repeat in both previews at a
+  narrow window width; inline code keeps its small highlight, selection stays
+  visible and neither scrolling nor switching views changes the saved source.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal
