@@ -8,6 +8,8 @@ struct Fixture {
     runtime: Runtime,
     account: Account,
     state: AoUi,
+    movement: super::super::movement::MovementUi,
+    movement_prefs: crate::movement::Preferences,
 }
 
 impl Fixture {
@@ -29,6 +31,8 @@ impl Fixture {
                 selected: id,
             },
             state: AoUi::default(),
+            movement: Default::default(),
+            movement_prefs: Default::default(),
         };
         fixture.settle();
         fixture
@@ -51,6 +55,10 @@ impl Fixture {
                 &mut self.account,
                 &mut self.state,
                 &mut true,
+                &mut self.movement,
+                &mut self.movement_prefs,
+                &Default::default(),
+                "",
             );
         });
         output.textures_delta.clear();
@@ -105,6 +113,37 @@ fn enable_label_and_pause_change_runtime_without_inventory_writes() {
 }
 
 #[test]
+fn firestorm_migration_is_explicit_cancellable_and_keeps_native_selection_until_acknowledged() {
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_migration(&mut f.inv, Uuid::from_u128(1));
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    let selected = f.account.selected;
+    let generation = f.inv.generation;
+    assert!(f.state.migration.is_none());
+    assert!(f.click(aurora_i18n::tr!("ao-migrate")).is_empty());
+    f.state.migration.as_mut().expect("picker").refresh(&mut f.inv, true);
+    f.settle();
+    assert!(
+        f.click(aurora_i18n::tr!("ao-migrate-confirm")).is_empty(),
+        "duplicate name is disabled"
+    );
+    assert!(f.click("Firestorm Walk Set").is_empty());
+    f.settle();
+    assert!(matches!(
+        f.click(aurora_i18n::tr!("ao-migrate-confirm")).as_slice(),
+        [Action::Migrate]
+    ));
+    assert_eq!(f.account.selected, selected);
+    assert_eq!(f.inv.generation, generation);
+    assert!(f.click(aurora_i18n::tr!("common-cancel")).is_empty());
+    assert!(f.state.migration.is_none());
+    assert_eq!(f.account.selected, selected);
+    assert_eq!(f.inv.generation, generation);
+}
+
+#[test]
 fn rename_updates_existing_folder_and_new_set_creates_a_distinct_set() {
     let mut f = Fixture::new();
     f.state.name = "Renamed".into();
@@ -138,4 +177,191 @@ fn animation_picker_links_into_selected_state_and_import_blocks_edits() {
     f.settle();
     assert!(f.click(aurora_i18n::tr!("ao-add")).is_empty());
     assert!(f.state.picker.is_none(), "busy controls must not dispatch concurrent changes");
+}
+
+#[test]
+fn design_movement_switches_are_independent_of_ao_and_never_write_inventory() {
+    let mut f = Fixture::new();
+    f.state.prototype = Some(prototype::Prototype::new("design-movement"));
+    f.settle();
+    assert!(f.click(aurora_i18n::tr!("movement-running")).is_empty());
+    let draft = f.state.prototype.as_ref().expect("design");
+    assert!(draft.movement.running && !draft.movement.fly_assist && !draft.movement.swimming);
+    assert!(!f.account.enabled);
+    assert!(f.click(aurora_i18n::tr!("ao-design-animations")).is_empty());
+    assert!(matches!(&f.click(aurora_i18n::tr!("ao-enabled"))[..], [Action::Preferences]));
+    assert!(f.state.prototype.as_ref().expect("design").movement.running);
+}
+
+#[test]
+fn design_swimming_choice_returns_to_the_actual_ao_state_editor() {
+    let mut f = Fixture::new();
+    f.state.prototype = Some(prototype::Prototype::new("design-movement"));
+    f.settle();
+    assert!(f.click(aurora_i18n::tr!("ao-design-swim-animations")).is_empty());
+    assert_eq!(f.state.state, State::SwimmingForward);
+    let draft = f.state.prototype.as_mut().expect("design");
+    assert_eq!(draft.tab, 0);
+    assert!(draft.underwater());
+    let now = std::time::Instant::now();
+    let first = draft.signal(now);
+    let later = draft.signal(now + std::time::Duration::from_secs(1));
+    assert_eq!(first, later, "a preview must not restart its animation every frame");
+}
+
+#[test]
+fn movement_tab_preserves_independent_preferences_without_enabling_ao() {
+    let mut f = Fixture::new();
+    f.click(aurora_i18n::tr!("ao-tab-movement"));
+    assert_eq!(f.state.tab, 1);
+    let actions = f.click(aurora_i18n::tr!("movement-running"));
+    assert!(f.movement_prefs.running);
+    assert!(!f.account.enabled);
+    assert!(matches!(actions.as_slice(), [Action::MovementPreferences]));
+    f.click(aurora_i18n::tr!("ao-tab-animations"));
+    assert_eq!(f.state.tab, 0);
+    assert_eq!(f.state.state, State::Standing);
+}
+
+#[test]
+fn swimming_switch_requires_the_selected_set_to_have_all_eight_slots() {
+    let mut f = Fixture::new();
+    f.state.tab = 1;
+    f.settle();
+    f.click(aurora_i18n::tr!("movement-swimming"));
+    assert!(f.movement_prefs.swimming);
+    f.catalog
+        .sets
+        .iter_mut()
+        .find(|s| s.id == f.account.selected)
+        .expect("set")
+        .states
+        .remove(&State::WaterEntry);
+    f.settle();
+    assert!(!f.movement_prefs.swimming);
+    assert!(f.click(aurora_i18n::tr!("movement-swimming")).is_empty());
+    assert!(!f.movement_prefs.swimming, "a disabled switch cannot bypass the missing-slot guard");
+    assert_eq!(f.movement.swim_slots, 7);
+}
+
+#[test]
+fn selecting_another_set_cancels_an_open_animation_picker() {
+    let mut f = Fixture::new();
+    f.state.picker = Some(false);
+    let empty = Set::new("Other set".into());
+    f.account.selected = empty.id;
+    f.catalog.sets.push(empty);
+    f.settle();
+    assert!(f.state.picker.is_none());
+    assert!(!f.movement.swim_ready);
+}
+
+#[test]
+fn acknowledged_container_selection_is_remapped_and_bound_to_its_original_editor() {
+    let mut f = Fixture::new();
+    let requested = Uuid::new_v4();
+    let actual = Uuid::new_v4();
+    let target = EditorTarget {
+        set: f.account.selected,
+        state: State::Standing,
+        container: Some(requested),
+    };
+    assert!(f.state.container.is_none());
+    let created = std::collections::HashMap::from([(requested, actual)]);
+    assert!(f.state.finish_editor(target, &created));
+    assert_eq!(f.state.container, Some(actual));
+    f.state.state = State::Walking;
+    f.state.container = None;
+    assert!(!f.state.finish_editor(target, &created));
+    assert!(f.state.container.is_none());
+}
+
+#[test]
+fn guided_combinations_are_cancellable_and_wait_for_acknowledgement() {
+    let mut f = Fixture::new();
+    let generation = f.inv.generation;
+    assert!(f.click(aurora_i18n::tr!("ao-combine")).is_empty());
+    assert!(f.state.combination.is_some());
+    assert!(f.click(aurora_i18n::tr!("common-cancel")).is_empty());
+    assert!(f.state.combination.is_none());
+    assert_eq!(f.inv.generation, generation);
+    f.click(aurora_i18n::tr!("ao-combine"));
+    let chosen = f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id;
+    let dialog = f.state.combination.as_mut().expect("dialog");
+    dialog.name = "Together".into();
+    dialog.selected.insert(chosen);
+    f.settle();
+    let out = f.click(aurora_i18n::tr!("ao-create-group"));
+    assert!(matches!(
+        &out[..],
+        [Action::EditContainer(_, EditorTarget { container: Some(_), .. })]
+    ));
+    assert!(f.state.combination.is_none());
+    assert!(f.state.container.is_none(), "do not select an unacknowledged new folder");
+    assert_eq!(f.inv.generation, generation);
+}
+
+#[test]
+fn native_animation_rows_choose_on_single_click_and_drag_through_inventory_ack() {
+    let mut f = Fixture::new();
+    let c = &f.catalog.selected(f.account.selected).expect("set").states[&State::Standing];
+    let (folder, second) = (c.folder, c.steps[1].id);
+    assert!(f.click("Aurora Stand B").is_empty());
+    assert_eq!(f.runtime.index(State::Standing, folder), 1);
+    fn locate(shape: &egui::Shape, name: &str) -> Option<egui::Pos2> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == name => Some(t.pos + egui::vec2(5.0, 5.0)),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| locate(s, name)),
+            _ => None,
+        }
+    }
+    let shapes = f.draw(Vec::new()).1;
+    let from = shapes.iter().find_map(|s| locate(&s.shape, "Aurora Stand B")).expect("source");
+    let to = shapes.iter().find_map(|s| locate(&s.shape, "Aurora Stand A")).expect("destination");
+    let press = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    assert!(f.draw(vec![egui::Event::PointerMoved(from), press(from, true)]).0.is_empty());
+    assert!(f.draw(vec![egui::Event::PointerMoved(from + egui::vec2(9.0, 0.0))]).0.is_empty());
+    assert!(f.draw(vec![egui::Event::PointerMoved(to)]).0.is_empty());
+    let out = f.draw(vec![press(to, false)]).0;
+    let [Action::Edit(change, None)] = out.as_slice() else {
+        panic!("drop must dispatch one inventory edit")
+    };
+    crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), change.clone()).expect("server ack");
+    f.catalog.invalidate();
+    f.catalog.refresh(&mut f.inv);
+    assert_eq!(
+        f.catalog.selected(f.account.selected).expect("set").states[&State::Standing].steps[0].id,
+        second
+    );
+}
+
+#[test]
+fn opening_swimming_from_movement_reveals_its_selected_state_in_the_rail() {
+    let mut f = Fixture::new();
+    f.click(aurora_i18n::tr!("ao-tab-movement"));
+    f.click(aurora_i18n::tr!("ao-swim-animations"));
+    // The native rail scrolls smoothly; advance beyond its animation.
+    for _ in 0..45 {
+        f.draw(Vec::new());
+    }
+
+    assert_eq!(f.state.state, State::SwimmingForward);
+    fn visible(shape: &egui::Shape, clip: egui::Rect, label: &str) -> bool {
+        match shape {
+            egui::Shape::Text(t) => t.galley.text() == label && t.pos.x < 400.0 && clip.contains(t.pos + egui::vec2(3.0, 3.0)),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| visible(s, clip, label)),
+            _ => false,
+        }
+    }
+    assert!(
+        f.draw(Vec::new())
+            .1
+            .iter()
+            .any(|s| visible(&s.shape, s.clip_rect, State::SwimmingForward.label()))
+    );
 }

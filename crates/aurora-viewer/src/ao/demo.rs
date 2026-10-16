@@ -45,6 +45,165 @@ fn folder(inv: &mut Inventory, parent: Uuid, id: Uuid, name: &str, kind: i32) {
 }
 
 pub fn seed(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    seed_options(inv, owner, false)
+}
+
+pub fn seed_firestorm(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    let selected = seed(inv, owner);
+    let Some(brand) = inventory::child(inv, inv.root, "#Aurora") else {
+        return selected;
+    };
+    let Some(root) = inventory::child(inv, brand, "AO") else {
+        return selected;
+    };
+    let inventory_root = inv.root;
+    let fs = inventory::child(inv, inv.root, "#Firestorm").unwrap_or_else(|| {
+        let id = Uuid::new_v4();
+        folder(inv, inventory_root, id, "#Firestorm", -1);
+        id
+    });
+    if let Some(parent) = inv.folders.get_mut(&brand) {
+        parent.children.retain(|id| *id != root);
+    }
+    if let Some(parent) = inv.folders.get_mut(&fs) {
+        parent.children.push(root);
+    }
+    if let Some(folder) = inv.folders.get_mut(&root) {
+        folder.info.parent = fs;
+        folder.info.name = "#AO".into();
+    }
+    inv.generation = inv.generation.wrapping_add(1);
+    selected
+}
+
+/// Synthetic cached source matching the reported set name/options. No grid.
+pub fn seed_firestorm_wait(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    let selected = seed_firestorm(inv, owner);
+    if let Some(set) = inv.folders.get_mut(&selected) {
+        set.info.name = "MonSet".into();
+    }
+    if let Some(standing) = inventory::child(inv, selected, "Standing:CT6.00:CY")
+        && let Some(folder) = inv.folders.get_mut(&standing)
+    {
+        folder.info.name = "Standing:CT15.00:CY:RN".into();
+    }
+    inv.generation = inv.generation.wrapping_add(1);
+    selected
+}
+
+/// Two legacy sets beside an existing native AO, for explicit migration only.
+pub fn seed_migration(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    seed_firestorm(inv, owner);
+    let mut source = inventory::Catalog::default();
+    source.refresh_firestorm(inv);
+    let Some(mut set) = source.sets.first().cloned() else {
+        return Uuid::nil();
+    };
+    set.name = "Firestorm Walk Set".into();
+    set.default = false;
+    // Fixture construction only: production mutations always use the native
+    // catalogue, and editable rejects destinations under #Firestorm.
+    if let Ok((change, _)) = inventory::create(inv, &source, &set) {
+        let _ = crate::world::inventory::actions::demo_mutate(inv, owner, change);
+    }
+    set.name = "Aurora AO".into();
+    set.default = true;
+    let mut native = inventory::Catalog::default();
+    native.refresh(inv);
+    inventory::create(inv, &native, &set)
+        .and_then(|(change, id)| {
+            crate::world::inventory::actions::demo_mutate(inv, owner, change).map(|reply| reply.created.get(&id).copied().unwrap_or(id))
+        })
+        .unwrap_or_else(|reason| {
+            log::warn!("AO migration fixture: {reason}");
+            Uuid::nil()
+        })
+}
+
+/// Only called for explicit offline AO fixtures. The real writable gate is
+/// shared with production; these placeholder services never reach a client.
+pub fn inventory_services(world: &mut crate::world::World, ready: bool) {
+    let Some(region) = world.main_region.and_then(|id| world.regions.get_mut(&id)) else {
+        return;
+    };
+    let services = ["InventoryAPIv3", "FetchInventoryDescendents2"]; // gitleaks:allow -- public capability names
+    for name in services {
+        if ready && !region.caps.contains_key(name) {
+            Arc::make_mut(&mut region.caps).insert(name.into(), "https://inventory.invalid/offline".into());
+        } else if !ready && region.caps.contains_key(name) {
+            Arc::make_mut(&mut region.caps).remove(name);
+        }
+    }
+}
+
+pub fn seed_movement_design(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    seed_options(inv, owner, true)
+}
+
+/// Explicit offline fixtures only; never add sample entries to a user's AO.
+pub fn seed_interface(inv: &mut Inventory, owner: Uuid, mode: &str) -> Uuid {
+    let id = if mode == "interface-swim" {
+        seed_movement_design(inv, owner)
+    } else {
+        seed(inv, owner)
+    };
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(inv);
+    let original = inv
+        .items
+        .values()
+        .find(|a| a.name == "Aurora Stand A" && a.asset_type == 20)
+        .cloned();
+    if let Some(original) = original {
+        for (index, letter) in ['C', 'D', 'E', 'F'].into_iter().enumerate() {
+            let mut item = original.clone();
+            item.id = Uuid::new_v4();
+            item.name = format!("Aurora Stand {letter}");
+            item.asset_id = ASSETS[index % 2];
+            let item_id = item.id;
+            inv.add_items(vec![item]);
+            if let Some(set) = catalog.selected(id)
+                && let Ok(change) = inventory::add(inv, set, State::Standing, item_id, None)
+            {
+                let _ = crate::world::inventory::actions::demo_mutate(inv, owner, change);
+                catalog.invalidate();
+                catalog.refresh(inv);
+            }
+        }
+    }
+    if matches!(mode, "interface-group" | "interface-track")
+        && let Some(set) = catalog.selected(id)
+        && let Some(c) = set.states.get(&State::Standing)
+    {
+        let selected = c.steps.iter().take(2).map(|s| s.id).collect();
+        let name = if mode == "interface-track" {
+            "Independent gestures"
+        } else {
+            "Body and hands"
+        };
+        if let Ok((change, _)) = inventory::editor::combine(inv, set, State::Standing, name, mode == "interface-track", &selected) {
+            let _ = crate::world::inventory::actions::demo_mutate(inv, owner, change);
+        }
+    }
+    id
+}
+
+pub fn seed_swimming_incomplete(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    let selected = seed_movement_design(inv, owner);
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(inv);
+    if let Some(folder) = catalog
+        .selected(selected)
+        .and_then(|s| s.states.get(&State::WaterEntry))
+        .map(|c| c.folder)
+        && let Ok(change) = inventory::remove(inv, folder)
+    {
+        let _ = crate::world::inventory::actions::demo_mutate(inv, owner, change);
+    }
+    selected
+}
+
+fn seed_options(inv: &mut Inventory, owner: Uuid, swimming: bool) -> Uuid {
     if inv.root.is_nil() {
         inv.root = Uuid::from_u128(0xd0d0_a000_0000_0000_0000_0000_0000_1000);
     }
@@ -61,7 +220,7 @@ pub fn seed(inv: &mut Inventory, owner: Uuid) -> Uuid {
     let originals = Uuid::from_u128(0xd0d0_a000_0000_0000_0000_0000_0000_1002);
     folder(inv, root, originals, aurora_i18n::tr!("ao-demo-folder"), -1);
     let mut animations = Vec::new();
-    for (index, name) in [
+    let mut names: Vec<String> = [
         "Aurora Stand A",
         "Aurora Stand B",
         "Aurora Walk",
@@ -70,15 +229,24 @@ pub fn seed(inv: &mut Inventory, owner: Uuid) -> Uuid {
         "Aurora Fly",
         "Aurora Type",
     ]
-    .iter()
-    .enumerate()
-    {
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    if swimming {
+        names.extend(crate::movement::Style::ALL.into_iter().map(|style| style.name().to_owned()));
+        names.extend(crate::movement::strokes::WATER_CLIPS.into_iter().map(|(_, name)| name.to_owned()));
+    }
+    for (index, name) in names.iter().enumerate() {
         let id = Uuid::from_u128(0xd0d0_a000_0000_0000_0000_0000_0000_2000 + index as u128);
         inv.add_items(vec![InvItem {
             id,
             parent: originals,
-            name: (*name).into(),
-            asset_id: ASSETS[index],
+            name: name.clone(),
+            asset_id: if index < ASSETS.len() {
+                ASSETS[index]
+            } else {
+                crate::movement::strokes::local_id(index - ASSETS.len())
+            },
             asset_type: 20,
             inv_type: 19,
             owner,
@@ -114,7 +282,17 @@ pub fn seed(inv: &mut Inventory, owner: Uuid) -> Uuid {
             _ => 5,
         };
         let mut config = StateConfig::default();
-        let indexes = if state == State::Standing { vec![0, 1] } else { vec![index] };
+        let indexes = match state {
+            State::Standing => vec![0, 1],
+            State::Floating if swimming => vec![10],
+            State::SwimmingForward if swimming => vec![7],
+            State::SwimmingUp if swimming => vec![9],
+            State::SwimmingDown if swimming => vec![12],
+            State::UnderwaterFloating if swimming => vec![11],
+            State::WaterFlightExit if swimming => vec![9],
+            State::WaterEntry | State::WaterShoreExit if swimming => vec![12],
+            _ => vec![index],
+        };
         for index in indexes {
             if let Some(a) = animations.get(index) {
                 config.steps.push(Step {

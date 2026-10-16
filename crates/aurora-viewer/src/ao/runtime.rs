@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 
 pub struct Frame<'a> {
     pub raw: &'a [PlayingAnimation],
+    /// Movement enhancer's bounded ground-contact grace; never changes raw signals.
+    pub run_hold: Option<PlayingAnimation>,
+    pub swim_hold: Option<(State, PlayingAnimation)>,
+    /// Hands a stock run back to ordinary running without a stop/start flicker.
+    pub native_running: bool,
     pub enabled: bool,
     pub mouselook: bool,
     pub on_object: bool,
@@ -36,6 +41,8 @@ pub struct Runtime {
     active: Vec<PlayingAnimation>,
     owned: HashMap<Uuid, Instant>,
     completed: HashSet<Uuid>,
+    run_transition: Option<Instant>,
+    run_asserted: Option<Instant>,
 }
 
 impl Default for Runtime {
@@ -50,6 +57,8 @@ impl Default for Runtime {
             active: Vec::new(),
             owned: HashMap::new(),
             completed: HashSet::new(),
+            run_transition: None,
+            run_asserted: None,
         }
     }
 }
@@ -63,18 +72,6 @@ impl Runtime {
         c.index = index;
         c.next = None;
         c.manual = true;
-    }
-    pub fn cycle(&mut self, state: State, config: &StateConfig, previous: bool) {
-        let len = config.steps.len();
-        if len == 0 {
-            return;
-        }
-        let index = self.index(state, config.folder).min(len - 1);
-        self.choose(
-            state,
-            config.folder,
-            if previous { (index + len - 1) % len } else { (index + 1) % len },
-        );
     }
     pub fn finished(&mut self, id: Uuid) {
         if self.owned.contains_key(&id) {
@@ -184,6 +181,13 @@ impl Runtime {
                 .find(|a| STAND_VARIANTS.contains(&a.id))
                 .map(|a| (State::Standing, *a));
         }
+        if let Some(signal) = frame.run_hold {
+            primary = Some((State::Running, signal));
+        }
+        if let Some((state, signal)) = frame.swim_hold {
+            // Swim states share stock UUIDs with flight; keep the explicit state.
+            primary = Some((state, signal));
+        }
         self.current = primary.map(|(state, _)| state);
         let mut desired = Vec::new();
         let mut remap = Vec::new();
@@ -193,7 +197,7 @@ impl Runtime {
             if let Some((base, a)) = primary {
                 let state = if frame.underwater {
                     let swim = match base {
-                        State::Hovering => Some(State::Floating),
+                        State::Hovering => Some(State::UnderwaterFloating),
                         State::Flying | State::FlyingSlow => Some(State::SwimmingForward),
                         State::FlyingUp => Some(State::SwimmingUp),
                         State::FlyingDown => Some(State::SwimmingDown),
@@ -242,6 +246,43 @@ impl Runtime {
             self.state_assets(set, State::Always, signal, now, &mut roll, &mut desired);
             states.insert(State::Always);
         }
+        if !running
+            && let Some(set) = set.filter(|set| set.swimming_slots() == State::SWIMMING.len())
+            && let Some((state, signal)) = frame.swim_hold.filter(|(state, _)| state.swimming())
+        {
+            // Active swimming owns its slots even when the regular AO
+            // is off/paused. Broadcast through the same AgentAnimation owner.
+            self.state_assets(set, state, signal.continuous_start, now, &mut roll, &mut desired);
+            states.insert(state);
+            remap.push((state, desired.clone()));
+        }
+        let run_assets = remap
+            .iter()
+            .find(|(state, _)| *state == State::Running)
+            .map(|(_, assets)| assets.as_slice())
+            .unwrap_or_default();
+        let handoff = frame.native_running && self.active.iter().any(|a| a.id == State::Running.motion());
+        let fallback_run = (frame.run_hold.is_some() || handoff) && !run_assets.iter().any(&mut ready);
+        if fallback_run {
+            // This belongs to the enhancer even when Aurora AO is disabled.
+            // AgentAnimation makes the standard run visible to other viewers.
+            desired.push(State::Running.motion());
+        }
+        let fall = frame
+            .raw
+            .iter()
+            .filter(|a| a.id == State::Falling.motion())
+            .map(|a| a.continuous_start)
+            .max();
+        let run_reassert = frame.run_hold.is_some()
+            && ((fall.is_some() && fall != self.run_transition)
+                || self
+                    .run_asserted
+                    .is_some_and(|last| now.saturating_duration_since(last) >= Duration::from_millis(500)));
+        self.run_transition = frame.run_hold.and(fall);
+        if frame.run_hold.is_none() {
+            self.run_asserted = None;
+        }
         let mut seen = HashSet::new();
         desired.retain(|id| seen.insert(*id) && !self.completed.contains(id));
         let mut commands = Vec::new();
@@ -253,8 +294,13 @@ impl Runtime {
         let previous = std::mem::take(&mut self.active);
         for id in desired {
             let old = previous.iter().find(|a| a.id == id);
-            if old.is_none() || reassert {
+            let is_run = frame.run_hold.is_some() && (run_assets.contains(&id) || (fallback_run && id == State::Running.motion()));
+            let missing_run = is_run && !frame.raw.iter().any(|a| a.id == id);
+            if old.is_none() || reassert || (is_run && run_reassert && (fall.is_some() || missing_run)) {
                 commands.push((id, true));
+                if is_run {
+                    self.run_asserted = Some(now);
+                }
             }
             self.active.push(PlayingAnimation::from_signal(id, 0, now, old));
             self.owned.insert(id, now);
@@ -267,7 +313,17 @@ impl Runtime {
                 now.saturating_duration_since(*seen) < Duration::from_secs(2)
             }
         });
+        // Unlike a private AO asset, the stock run is also simulator-owned.
+        // A late stop echo must not hide a later ordinary run indefinitely.
+        if !self.active.iter().any(|a| a.id == State::Running.motion()) {
+            self.owned.remove(&State::Running.motion());
+        }
         let loaded: Vec<_> = self.active.iter().copied().filter(|a| ready(&a.id)).collect();
+        let held_pose = frame.run_hold.is_some() && loaded.iter().any(|a| run_assets.contains(&a.id) || a.id == State::Running.motion());
+        let swimming_pose = frame.swim_hold.is_some()
+            && remap
+                .iter()
+                .any(|(state, assets)| state.swimming() && loaded.iter().any(|a| assets.contains(&a.id)));
         let mut pose: Vec<_> = frame
             .raw
             .iter()
@@ -277,6 +333,21 @@ impl Runtime {
                     return false;
                 }
                 let state = State::from_motion(a.id);
+                if held_pose
+                    && matches!(
+                        state,
+                        Some(State::Standing | State::Walking | State::Running | State::Falling | State::TurningLeft | State::TurningRight)
+                    )
+                {
+                    return false;
+                }
+                if swimming_pose
+                    && state.is_some_and(|state| {
+                        !matches!(state, State::Typing | State::Always | State::Sitting | State::GroundSit) && !state.transient()
+                    })
+                {
+                    return false;
+                }
                 // Preserve LL transition motions and their finish control flags.
                 // Retain the stock pose while the replacement is downloading.
                 !state.is_some_and(|s| {
@@ -291,18 +362,13 @@ impl Runtime {
             })
             .collect();
         pose.extend(loaded);
-        if !running {
-            for cursor in self.cursors.values_mut() {
+        // Re-entering after an observed stop restarts its cycle. An active
+        // swim context must keep its cursor with the ordinary AO off too, so
+        // a finished non-looping entry/exit clip cannot restart every frame.
+        for ((state, _), cursor) in &mut self.cursors {
+            if !states.contains(state) {
                 cursor.signal = None;
                 cursor.next = None;
-            }
-        } else {
-            // Re-entering a state after an observed stop must restart its cycle.
-            for ((state, _), cursor) in &mut self.cursors {
-                if !states.contains(state) {
-                    cursor.signal = None;
-                    cursor.next = None;
-                }
             }
         }
         (pose, commands)

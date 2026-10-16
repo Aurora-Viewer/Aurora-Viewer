@@ -39,6 +39,9 @@ pub enum BarAction {
     Quit,
     TeleportHome,
     ToggleFly,
+    ToggleMoveLock,
+    MoveLockOptions,
+    MovementEnhancer,
     ToggleMouselook,
     SitGround,
     StandUp,
@@ -536,6 +539,20 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         };
         if menu::item(ui, p, "plane-tilt-filled", fly) {
             *action = BarAction::ToggleFly;
+        }
+        // Firestorm keeps its double-click teleport beside its movement
+        let locked = ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(egui::Id::new("movelock_requested")))
+            .unwrap_or(false);
+        if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("movelock-title"), locked, true) {
+            *action = BarAction::ToggleMoveLock;
+        }
+        if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("movelock-options")) {
+            *action = BarAction::MoveLockOptions;
+        }
+        if menu::item(ui, p, "swimming", aurora_i18n::tr!("movement-title")) {
+            *action = BarAction::MovementEnhancer;
         }
         // Firestorm keeps its double-click teleport beside its movement
         // entries (Avatar › Movement): the four choices of the preference
@@ -1376,6 +1393,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "move" => panels.movement_controls = !panels.movement_controls,
         "view" => panels.camera_controls = !panels.camera_controls,
         "fly" => return BarAction::ToggleFly,
+        "movelock" | "move_lock" => return BarAction::ToggleMoveLock,
+        "movement" => return BarAction::MovementEnhancer,
         "mouselook" => return BarAction::ToggleMouselook,
         "sit" => return BarAction::SitGround,
         "home" => return BarAction::TeleportHome,
@@ -2098,6 +2117,10 @@ pub(crate) fn toolbar_row(
         }
         let active = if b.command == "ao" {
             row.ao_active
+        } else if matches!(b.command.as_str(), "movelock" | "move_lock") {
+            toolbar.movelock_active
+        } else if b.command == "movement" {
+            toolbar.movement_active
         } else {
             command_active(&b.command, panels, row.flying, row.seated, row.mouselook)
         };
@@ -2117,6 +2140,11 @@ pub(crate) fn toolbar_row(
             format!("{}\n{}", super::toolbar::label(b), menu::not_yet())
         } else {
             super::toolbar::label(b).to_owned()
+        };
+        let tip = if matches!(b.command.as_str(), "movelock" | "move_lock") {
+            toolbar.movelock_status.clone()
+        } else {
+            tip
         };
         // the Favorites button: its grid of favourites opens upwards
         let grid_id = egui::Id::new("bars_favorites_grid_open");

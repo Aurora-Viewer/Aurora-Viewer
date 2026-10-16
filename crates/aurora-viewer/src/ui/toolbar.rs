@@ -202,6 +202,10 @@ enum Edit {
 pub struct ToolbarUi {
     pub open: bool,
     pub voice_options: bool,
+    pub movelock_options: bool,
+    pub movelock_active: bool,
+    pub movement_active: bool,
+    pub movelock_status: String,
     /// Where the favourites live (given by the app), for the Favorites
     /// button's menu, and the choice made there (taken by the app).
     pub favorites_access: crate::settings::FavoritesAccess,
@@ -302,6 +306,11 @@ impl ToolbarUi {
                 && menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-bars-microphone-options"))
             {
                 self.voice_options = true;
+            }
+            if button.is_some_and(|b| matches!(b.command.as_str(), "movelock" | "move_lock"))
+                && menu::item(ui, p, "lock-filled", aurora_i18n::tr!("movelock-options"))
+            {
+                self.movelock_options = true;
             }
             // the Favorites button: where the favourites live
             if button.is_some_and(|b| b.command == "favorites")

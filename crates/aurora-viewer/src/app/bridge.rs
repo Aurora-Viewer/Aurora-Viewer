@@ -1,0 +1,202 @@
+//! Worn bridge lifecycle and the single Movelock action used by all inputs.
+use super::*;
+use uuid::Uuid;
+
+impl App {
+    pub(super) fn release_bridge(&mut self) {
+        if let Some(command) = self.bridge_runtime.release() {
+            self.send(command);
+        }
+    }
+    pub(super) fn toggle_move_lock(&mut self) {
+        if !self.in_world() {
+            return;
+        }
+        let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
+        prefs.enabled = !prefs.enabled;
+        if prefs.enabled && self.bridge_runtime.error.is_some() {
+            self.bridge_runtime.retry(Instant::now());
+        }
+        if !self.demo {
+            self.settings.save();
+        }
+        self.update_bridge();
+    }
+    pub(super) fn update_bridge(&mut self) {
+        if self.demo && self.frame_count < 300 {
+            return;
+        }
+        if self.demo
+            && self.frame_count == 300
+            && (std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
+                || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
+                || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some())
+        {
+            crate::world::bridge::demo::seed(&mut self.world);
+            self.movelock_ui.open = std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
+            if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "radar") {
+                crate::world::bridge::demo::seed_queries(&mut self.world);
+                self.panels.people = true;
+                self.panels.people_tab = 0;
+            }
+            self.panels.perf = false;
+            self.settings.bridge.entry(self.world.agent_id).or_default().enabled =
+                std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode != "off");
+        }
+        let online = self.in_world()
+            && (!self.demo
+                || std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
+                || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
+                || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some());
+        if !online {
+            return;
+        }
+        let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
+        self.bridge_runtime.update(&mut self.world, prefs, online, Instant::now());
+        self.egui_ctx
+            .data_mut(|d| d.insert_temp(egui::Id::new("movelock_requested"), prefs.enabled));
+        if self.demo {
+            let mode = std::env::var("AURORA_DEMO_MOVELOCK").unwrap_or_default();
+            self.bridge_demo.startup_stalled = mode == "timeout";
+            self.bridge_demo.invalid_endpoint = mode == "endpoint";
+            let prefs = self.settings.bridge.get(&self.world.agent_id).copied().unwrap_or_default();
+            self.bridge_demo.state(
+                &mut self.bridge_runtime,
+                mode == "moving"
+                    || self.input.forward
+                    || self.input.back
+                    || self.input.strafe_left
+                    || self.input.strafe_right
+                    || self.input.up
+                    || self.input.down,
+                mode == "seated" || self.world.agent.is_sitting(),
+                &prefs,
+            );
+        }
+        for command in std::mem::take(&mut self.bridge_runtime.commands) {
+            self.send(command);
+        }
+        let endpoint = self.sync_bridge_queries();
+        let (command, message) = self.bridge_services.update(endpoint.as_ref(), Instant::now());
+        if let Some(command) = command {
+            self.send(command);
+        }
+        if let Some(message) = message {
+            self.world.system_message(message);
+        }
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| matches!(m.as_str(), "scripts" | "error"))
+        {
+            let object = self
+                .world
+                .objects
+                .iter()
+                .find(|(_, o)| !o.is_avatar() && Some(o.key.region) == self.world.main_region)
+                .map(|(_, o)| o.full_id);
+            if let Some(object) = object {
+                self.inspect_scripts(object);
+            }
+        }
+    }
+    pub(super) fn sync_bridge_queries(&mut self) -> Option<aurora_net::bridge::Endpoint> {
+        let endpoint = if self.in_world() && !self.world.teleporting {
+            self.bridge_runtime.query_endpoint()
+        } else {
+            None
+        };
+        if let Some(message) = self
+            .bridge_services
+            .sync(self.world.agent_id, self.world.main_region, endpoint.as_ref())
+        {
+            self.world.system_message(message);
+        }
+        endpoint
+    }
+    pub(super) fn inspect_scripts(&mut self, object: Uuid) {
+        if !self.in_world() {
+            return;
+        }
+        let valid = self
+            .world
+            .objects
+            .index_of_uuid(&object)
+            .and_then(|i| self.world.objects.get(i))
+            .is_some_and(|o| Some(o.key.region) == self.world.main_region);
+        if !valid {
+            self.world.system_message(aurora_i18n::tr!("bridge-script-info-region"));
+            return;
+        }
+        let _ = self.sync_bridge_queries();
+        if self.bridge_services.inspect(object, Instant::now()) {
+            if self.bridge_runtime.error.is_some() {
+                self.bridge_runtime.retry(Instant::now());
+            }
+            self.world.system_message(aurora_i18n::tr!("bridge-script-info-loading"));
+        }
+    }
+    pub(super) fn bridge_demo_command(&mut self, command: &NetCommand) -> bool {
+        let mode = std::env::var("AURORA_DEMO_MOVELOCK").unwrap_or_default();
+        let moving = mode == "moving"
+            || self.input.forward
+            || self.input.back
+            || self.input.strafe_left
+            || self.input.strafe_right
+            || self.input.up
+            || self.input.down;
+        let Some(events) = self.bridge_demo.reply(
+            &self.bridge_runtime,
+            &self.world,
+            command,
+            moving,
+            mode == "seated" || self.world.agent.is_sitting(),
+            mode == "error",
+        ) else {
+            return false;
+        };
+        for event in events {
+            let now = Instant::now();
+            if let Some(event) = self.bridge_runtime.receive(&mut self.world, event, now, now) {
+                self.on_app_event(event);
+            }
+        }
+        true
+    }
+    pub(super) fn movelock_window(&mut self, ctx: &egui::Context, p: &Palette) {
+        if std::mem::take(&mut self.toolbar_ui.movelock_options) {
+            self.movelock_ui.open = true;
+        }
+        let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
+        let status = prefs.state();
+        let was_enabled = prefs.enabled;
+        let shortcut = self
+            .settings
+            .keybinds
+            .get(Action::MoveLock)
+            .iter()
+            .flatten()
+            .map(|b| b.label())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        self.toolbar_ui.movelock_active = prefs.enabled;
+        self.toolbar_ui.movelock_status = format!("{} ({shortcut})\n{status}", aurora_i18n::tr!("movelock-title"));
+        if prefs.enabled && prefs.indicator {
+            self.movelock_ui.indicator(ctx, p, status);
+        }
+        let (changed, repair) = self.movelock_ui.show(
+            ctx,
+            p,
+            prefs,
+            status,
+            self.bridge_runtime.error.as_deref().or(self.bridge_runtime.progress()),
+            &shortcut,
+        );
+        if repair || (prefs.enabled && !was_enabled && self.bridge_runtime.error.is_some()) {
+            // Repair preserves the requested mode.
+            self.bridge_runtime.retry(Instant::now());
+        }
+        if changed && !self.demo {
+            self.settings.save();
+        }
+    }
+}

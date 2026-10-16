@@ -4,6 +4,8 @@ pub mod appearance;
 pub mod blocking;
 pub mod body;
 pub mod calling_cards;
+
+pub mod bridge;
 pub mod calls;
 pub mod chat_log;
 pub mod contact_sets;

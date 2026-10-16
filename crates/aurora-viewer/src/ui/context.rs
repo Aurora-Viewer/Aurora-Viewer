@@ -292,6 +292,9 @@ pub enum CtxAction {
         id: Uuid,
         permanent: bool,
     },
+
+    /// Firestorm Tools.ScriptInfo: read simulator script statistics via the bridge.
+    ScriptInfo(Uuid),
     /// "Refresh textures" of an object or of something worn: every texture
     /// of its linkset is downloaded again (Object.TexRefresh).
     RefreshTextures(Uuid),

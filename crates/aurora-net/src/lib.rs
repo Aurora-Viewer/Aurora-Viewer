@@ -3,6 +3,7 @@
 
 pub mod abuse_report;
 mod agent_update;
+pub mod bridge;
 pub mod build;
 pub mod caps;
 pub mod circuit;

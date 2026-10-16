@@ -557,6 +557,9 @@ pub struct Scene {
     /// Ban lines of the parcel we may not enter.
     pub banlines: banlines::BanLines,
     pub particles: particles::ParticleManager,
+    /// Bundled swimming fallback for our own rendering only. Its private ID
+    /// is never sent in AgentAnimation; remote viewers receive a real asset.
+    pub movement_preview: Option<crate::world::PlayingAnimation>,
     /// Avatar rendering complexity by avatar id (complexity.rs).
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
@@ -966,6 +969,7 @@ impl Scene {
             water: water::WaterGpu::default(),
             banlines: banlines::BanLines::default(),
             particles: particles::ParticleManager::default(),
+            movement_preview: None,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             sets: SyncSets::default(),
@@ -3840,7 +3844,18 @@ impl Scene {
                 let playing = self.object_signals.entry(owner).or_default().update(world, idx, now);
                 motions.sync(&playing, now, |id| anims.get(id));
             } else {
-                let stopped = motions.sync(world.animations_of(&owner), pose_now, |id| anims.get(id));
+                let mut playing;
+                let signals = if owner == world.agent_id
+                    && world.animation_preview_clock.is_none()
+                    && let Some(preview) = self.movement_preview
+                {
+                    playing = world.animations_of(&owner).to_vec();
+                    playing.push(preview);
+                    playing.as_slice()
+                } else {
+                    world.animations_of(&owner)
+                };
+                let stopped = motions.sync(signals, pose_now, |id| anims.get(id));
                 if owner == world.agent_id {
                     completed.extend(stopped);
                 }

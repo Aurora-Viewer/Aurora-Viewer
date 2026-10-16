@@ -25,6 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod ao;
+mod bridge;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod buy_currency;
@@ -50,6 +51,7 @@ mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod marketplace_listings;
+mod movement;
 mod object_actions;
 mod object_menu;
 mod object_menu_demo;
@@ -166,6 +168,14 @@ pub struct App {
     logo: Option<egui::TextureHandle>,
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
     world: World,
+    bridge_runtime: crate::world::bridge::Bridge,
+    bridge_services: crate::world::bridge::services::Services,
+    bridge_demo: crate::world::bridge::demo::Demo,
+    movelock_ui: ui::movelock::MoveLockUi,
+    movement_ui: ui::movement::MovementUi,
+    movement_runtime: crate::movement::Runtime,
+    movement_probe: (Option<Instant>, bool, Option<Vec3>),
+    pass_wall_at: Option<Instant>,
     scene: Scene,
     probes: crate::scene::probes::ProbeManager,
     /// Throttle of the "sky frame" log line.
@@ -556,6 +566,7 @@ pub struct App {
     demo_offer_shown: Option<uuid::Uuid>,
     ao_ui: ui::ao::AoUi,
     ao_catalog: crate::ao::inventory::Catalog,
+    ao_bootstrap: crate::ao::bootstrap::Bootstrap,
     ao_runtime: crate::ao::runtime::Runtime,
     ao_agent: uuid::Uuid,
     ao_missing: HashSet<uuid::Uuid>,
@@ -747,6 +758,9 @@ impl App {
 
         let panels = Panels::from_settings(&settings);
         let mut scene = Scene::new(cache, lib.clone());
+        scene.jobs.execute(|| {
+            crate::movement::strokes::pack();
+        });
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
@@ -765,6 +779,14 @@ impl App {
                 w.cache_dir = Some(cache_root);
                 w
             },
+            bridge_runtime: Default::default(),
+            bridge_services: Default::default(),
+            bridge_demo: Default::default(),
+            movelock_ui: Default::default(),
+            movement_ui: Default::default(),
+            movement_runtime: Default::default(),
+            movement_probe: (None, false, None),
+            pass_wall_at: None,
             scene,
             probes: Default::default(),
             sky_log: Default::default(),
@@ -1000,6 +1022,7 @@ impl App {
             demo_offer_shown: None,
             ao_ui: Default::default(),
             ao_catalog: Default::default(),
+            ao_bootstrap: Default::default(),
             ao_runtime: Default::default(),
             ao_agent: uuid::Uuid::nil(),
             ao_missing: Default::default(),
@@ -1048,6 +1071,15 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if self.bridge_runtime.observe_command(&cmd, Instant::now()) {
+            self.settings.bridge.entry(self.world.agent_id).or_default().enabled = false;
+            if !self.demo {
+                self.settings.save();
+            }
+        }
+        if self.demo && self.bridge_demo_command(&cmd) {
+            return;
+        }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
         if !self.world.maturity.synced()
@@ -1829,6 +1861,19 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::BridgeQueryReply { request, result } = ev {
+            let _ = self.sync_bridge_queries();
+            if result.is_err() && self.bridge_services.owns(request) {
+                self.bridge_runtime.refresh_queries(&self.world, Instant::now());
+            }
+            if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
+                self.world.system_message(message);
+            }
+            return;
+        }
+        if self.bridge_runtime.event(&mut self.world, &ev, Instant::now()) {
+            return;
+        }
         if let NetEvent::MoneyTransaction {
             success,
             kind,
@@ -2191,6 +2236,11 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.bridge_runtime = Default::default();
+                self.movement_runtime = Default::default();
+                self.scene.movement_preview = None;
+                self.movement_probe = (None, false, None);
+                self.pass_wall_at = None;
                 self.world.notification_history = if self.demo {
                     Default::default()
                 } else {
@@ -2717,12 +2767,25 @@ impl App {
         if !self.settings.audio.mic_hold && self.settings.keybinds.held_actions_of(&input).contains(&Action::PushToTalk) {
             self.mic_on = !self.mic_on;
         }
+        if self
+            .settings
+            .movements
+            .get(&self.world.agent_id)
+            .is_some_and(|prefs| prefs.pass_wall)
+            && self.settings.keybinds.pass_wall_triggered(&input, self.mods())
+        {
+            self.pass_wall();
+            return;
+        }
         let Some(action) = self.settings.keybinds.triggered(&input, self.mods()) else {
             return;
         };
         match action {
             Action::Fly => self.toggle_fly(),
             Action::AlwaysRun => self.set_always_run(!self.always_run),
+            Action::MoveLock => self.toggle_move_lock(),
+            Action::MovementEnhancer => self.open_movement(),
+            Action::PassWall => self.pass_wall(),
             Action::Mouselook => self.toggle_mouselook(),
             Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
             Action::ResetCamera => {
@@ -3658,6 +3721,7 @@ impl App {
         if self.in_world() && !self.demo {
             self.record_inventory_logout();
             self.want_scene_capture = true;
+            self.release_bridge();
             self.net.send(NetCommand::Logout);
         }
     }
@@ -3674,6 +3738,7 @@ impl App {
             self.on_left_release();
         }
         if self.in_world() {
+            self.release_bridge();
             self.net.send(NetCommand::Logout);
             std::thread::sleep(Duration::from_millis(300));
         }
@@ -3813,7 +3878,14 @@ impl App {
         if !self.in_world() || self.world.teleporting || !self.radar.due(now) {
             return;
         }
-        let seen = crate::world::radar::sightings(&self.world);
+        let mut seen = crate::world::radar::sightings(&self.world);
+        let endpoint = self.sync_bridge_queries();
+        if let Some(command) =
+            self.bridge_services
+                .radar(&mut seen, self.settings.radar.enhance_by_bridge, endpoint.as_ref(), Instant::now())
+        {
+            self.send(command);
+        }
         let gaps = crate::world::radar::region_gaps(&self.world);
         // AURORA_DEMO_RADAR=tp: for the first ten seconds (at 60 images a
         // second) we are still in the region the demo "teleports" from
@@ -4504,7 +4576,16 @@ impl App {
             }
             i.strafe_left |= k(Action::StrafeLeft);
             i.strafe_right |= k(Action::StrafeRight);
-            i.up = k(Action::Up);
+            let passing = self
+                .settings
+                .movements
+                .get(&self.world.agent_id)
+                .is_some_and(|prefs| prefs.pass_wall)
+                && self
+                    .down
+                    .iter()
+                    .any(|input| self.settings.keybinds.pass_wall_triggered(input, self.mods()));
+            i.up = k(Action::Up) && !passing;
             // Page Down / C: crouch on the ground (crouch-walk while moving), descend in flight
             i.down = k(Action::Down);
         }
@@ -4574,7 +4655,13 @@ impl App {
         if i.up {
             self.world.agent.record_jump_input(now);
             let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
-            if held > FLY_TIME && !self.world.agent.flying && !self.world.agent.seated && self.in_world() {
+            if held > FLY_TIME
+                && !self.movement_runtime.state.swimming()
+                && self.movement_runtime.state != crate::movement::State::Leaving
+                && !self.world.agent.flying
+                && !self.world.agent.seated
+                && self.in_world()
+            {
                 self.world.agent.flying = true;
             }
         } else {
@@ -5215,7 +5302,7 @@ impl App {
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
-            if let Some(app_ev) = self.world.apply_received(ev, sent) {
+            if let Some(app_ev) = self.bridge_runtime.receive(&mut self.world, ev, Instant::now(), sent) {
                 self.on_app_event(app_ev);
             }
             let now = Instant::now();
@@ -5352,6 +5439,7 @@ impl App {
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
         self.update_autopilot(dt);
+        self.update_movement();
         self.update_audio();
         let mut edit_camera_frame = None;
         if self.in_world() {
@@ -5416,6 +5504,11 @@ impl App {
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)
             c.control_flags |= self.autopilot_flags;
+            c.control_flags = crate::movement::controls(
+                c.control_flags,
+                self.movement_runtime.state,
+                self.bridge_runtime.captures_motion(Instant::now()),
+            );
             if self.autopilot.is_some() {
                 c.flags |= crate::autopilot::AU_FLAGS_CLIENT_AUTOPILOT;
             }
@@ -5443,6 +5536,7 @@ impl App {
         }
         self.update_voice();
         self.update_radar();
+        self.update_bridge();
         self.update_region_restart();
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
@@ -7758,6 +7852,7 @@ impl App {
             self.send(NetCommand::TeleportLandmark(asset));
         }
         if a.cancel_loading {
+            self.release_bridge();
             self.net.send(NetCommand::Logout);
             self.back_to_login(Some(aurora_i18n::tr!("app-login-canceled").into()));
         }
@@ -7813,6 +7908,7 @@ impl App {
             }
             BarAction::Logout => {
                 self.want_scene_capture = true;
+                self.release_bridge();
                 self.net.send(NetCommand::Logout);
                 self.world.system_message(aurora_i18n::tr!("app-logging-out"));
             }
@@ -7918,6 +8014,9 @@ impl App {
                 self.options_ui.tab = ui::options::TAB_GRAPHICS;
             }
             BarAction::CameraControls => self.panels.camera_controls = true,
+            BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::MoveLockOptions => self.movelock_ui.open = true,
+            BarAction::MovementEnhancer => self.open_movement(),
             BarAction::NetworkGraph => {
                 ui::widgets::open_floater(&self.egui_ctx, "perf", &mut self.panels.perf);
                 ui::perf::show_network(&self.egui_ctx);
@@ -9811,25 +9910,7 @@ impl App {
                 {
                     self.camera = camera;
                 }
-                let mut open = self.panels.ao;
-                let mut account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();
-                let actions = ui::ao::show(
-                    &ctx,
-                    &p,
-                    &mut self.world.inventory,
-                    &self.ao_catalog,
-                    &mut self.ao_runtime,
-                    &mut account,
-                    &mut self.ao_ui,
-                    &mut open,
-                );
-                self.panels.ao = open;
-                if actions.iter().any(|a| matches!(a, ui::ao::Action::Preferences)) {
-                    self.settings.ao.accounts.insert(self.world.agent_id, account);
-                }
-                for action in actions {
-                    self.apply_ao_action(action);
-                }
+                self.ao_window(&ctx, &p);
                 t = self.ui_parts.lap(Part::UiInventory, t);
                 let facts = self.context_facts();
                 let had_menu = self.context_menu.is_some();
@@ -10077,6 +10158,7 @@ impl App {
                 }
                 self.photo_ui(&ctx, &p, renderer);
                 self.controls_window(&ctx, &p);
+                self.movelock_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
@@ -11610,7 +11692,23 @@ impl ApplicationHandler for App {
             }
             if let Some(mode) = &self.ao_demo {
                 crate::ao::demo::assets(&mut self.scene);
-                let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                let selected = if mode == "firestorm-wait" {
+                    crate::ao::demo::seed_firestorm_wait(&mut self.world.inventory, self.world.agent_id)
+                } else if mode.starts_with("migrate") {
+                    crate::ao::demo::seed_migration(&mut self.world.inventory, self.world.agent_id)
+                } else if mode == "firestorm" {
+                    crate::ao::demo::seed_firestorm(&mut self.world.inventory, self.world.agent_id)
+                } else if mode.starts_with("interface") {
+                    crate::ao::demo::seed_interface(&mut self.world.inventory, self.world.agent_id, mode)
+                } else if mode == "swim-missing" {
+                    crate::ao::demo::seed_swimming_incomplete(&mut self.world.inventory, self.world.agent_id)
+                } else if mode == "empty" {
+                    uuid::Uuid::nil()
+                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "swim") {
+                    crate::ao::demo::seed_movement_design(&mut self.world.inventory, self.world.agent_id)
+                } else {
+                    crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id)
+                };
                 self.settings.ao.accounts.insert(
                     self.world.agent_id,
                     crate::ao::Account {

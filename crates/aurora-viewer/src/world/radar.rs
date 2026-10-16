@@ -40,7 +40,7 @@ pub struct Sighting {
     pub position: Vec3,
     /// False for a coarse location without altitude: its range is unknown.
     pub altitude_known: bool,
-    /// The avatar object is loaded (exact position, typing and sitting known).
+    /// The avatar object is loaded, with an exact native position.
     pub loaded: bool,
     pub sitting: bool,
     pub typing: bool,
@@ -320,6 +320,23 @@ fn region_gap(me: glam::Vec2, main: glam::Vec2, offset: glam::Vec2, size: glam::
     glam::Vec2::new(apart((me.x, me.x), (offset.x, far.x)), apart((me.y, me.y), (offset.y, far.y))).length()
 }
 
+/// Resolve the complete parent chain, as LLWorld::getAvatars excludes orphaned
+/// avatars. A seat-relative position is never a usable region position.
+fn native_position<'a>(world: &'a World, mut object: &'a super::objects::Object) -> Option<Vec3> {
+    let mut position = object.position;
+    for _ in 0..64 {
+        if !position.is_finite() {
+            return None;
+        }
+        if object.parent_id == 0 {
+            return Some(world.region_offset(object.key.region)? + position);
+        }
+        object = world.objects.parent_of(object).and_then(|i| world.objects.get(i))?;
+        position = object.position + object.rotation * position;
+    }
+    None
+}
+
 /// The avatars around us: the loaded ones first (exact position), then the
 /// coarse locations of every region we see, neighbors included. A coarse
 /// altitude of 0 or 1020 (the byte 0 or 255) means the server does not know
@@ -328,27 +345,19 @@ pub fn sightings(world: &World) -> Vec<Sighting> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for (_, o) in world.objects.avatars() {
-        if o.full_id == world.agent_id || seen.contains(&o.full_id) {
+        if o.full_id.is_nil() || o.full_id == world.agent_id || seen.contains(&o.full_id) {
             continue;
         }
-        let Some(offset) = world.region_offset(o.key.region) else {
+        let Some(position) = native_position(world, o) else {
             continue;
         };
-        // a seated avatar is placed relative to its seat, itself maybe a
-        // child of its object
-        let mut local = o.position;
-        let mut parent = world.objects.parent_of(o).and_then(|i| world.objects.get(i));
-        while let Some(up) = parent {
-            local = up.position + up.rotation * local;
-            parent = world.objects.parent_of(up).and_then(|i| world.objects.get(i));
-        }
         let animations = world.animations_of(&o.full_id);
         let playing = |id: Uuid| animations.iter().any(|a| a.id == id);
         seen.insert(o.full_id);
         out.push(Sighting {
             id: o.full_id,
             region: o.key.region,
-            position: offset + local,
+            position,
             altitude_known: true,
             loaded: true,
             sitting: o.parent_id != 0 || playing(ANIM_AGENT_SIT_GROUND) || playing(super::body::ANIM_SIT_GROUND_CONSTRAINED),
@@ -360,7 +369,7 @@ pub fn sightings(world: &World) -> Vec<Sighting> {
             continue;
         };
         for (id, position) in list {
-            if *id == world.agent_id || !seen.insert(*id) {
+            if id.is_nil() || *id == world.agent_id || !seen.insert(*id) {
                 continue;
             }
             out.push(Sighting {
