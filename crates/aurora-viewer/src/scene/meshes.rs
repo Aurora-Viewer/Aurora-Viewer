@@ -280,6 +280,9 @@ pub struct MeshStreamer {
     /// Bytes of mesh assets downloaded, and requests sent (`counts`).
     pub downloaded: u64,
     pub requests: u64,
+    /// When `mesh load:` was last written, and the requests it told.
+    logged_at: Option<Instant>,
+    logged_requests: u64,
 }
 
 impl MeshStreamer {
@@ -299,6 +302,8 @@ impl MeshStreamer {
             staging: None,
             downloaded: 0,
             requests: 0,
+            logged_at: None,
+            logged_requests: 0,
         }
     }
 
@@ -602,6 +607,21 @@ impl MeshStreamer {
         }
         // one entry per download under way
         self.fetching = self.by_key.len();
+        // `mesh load:` every 10 s while meshes download (the bytes of an
+        // arrival beside those of the `texture load:` line)
+        if self.requests != self.logged_requests && self.logged_at.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(10)) {
+            self.logged_at = Some(now);
+            self.logged_requests = self.requests;
+            let (ready, fetching, failed) = self.counts();
+            log::info!(
+                "mesh load: {} requests, {:.1} MB downloaded since the start; {} meshes loaded, {} downloading, {} failed",
+                self.requests,
+                self.downloaded as f64 / 1e6,
+                ready,
+                fetching,
+                failed
+            );
+        }
     }
 
     /// Build the wanted levels whose block is held, once the skin is known.
@@ -1239,6 +1259,8 @@ mod tests {
             staging: None,
             downloaded: 0,
             requests: 0,
+            logged_at: None,
+            logged_requests: 0,
         }
     }
 

@@ -4057,6 +4057,12 @@ line gives:
   screen yet (out of view, or just arrived): they leave at the lowest
   rank and for the smallest range.
 
+While meshes download, a `mesh load:` line (`scene/meshes.rs`) gives every
+10 s the requests sent and the megabytes of mesh assets downloaded since
+the start of the session, and the meshes loaded, downloading and failed:
+beside the bytes of the `texture load:` line, what an arrival costs in
+meshes.
+
 The cost of decoding alone is measured outside the viewer on a folder of
 cached textures (read-only), per size class, on one thread then on as many
 threads as the background tasks:
