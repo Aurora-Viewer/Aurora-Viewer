@@ -155,12 +155,16 @@ impl Intent {
 /// Walk and run: the speeds the offline demo already used for SL (3.2 and
 /// 5.13 m/s); fly: 16 m/s, measured in the log of the border-crossing
 /// trial on Agni (2026-10-13). Crouch, nudge and climb are guesses. No
-/// ramp until one is seen: a lead that stops short of a simulator that
-/// slows down is caught up going on (`ease_out`), one that runs past a
-/// simulator that stops at once would have to come back.
+/// ramp on the land until one is seen: a lead that stops short of a
+/// simulator that slows down is caught up going on (`ease_out`), one that
+/// runs past a simulator that stops at once would have to come back. A
+/// flight gets going over half a second (Agni, 2026-10-16: from a hover,
+/// 90 % of its speed 0.55 s after the first report that moved); with no
+/// ramp a flight of a moment while walking (the jump key held) led by
+/// 2.9 m, then the drawn avatar stood still while the simulator caught up.
 const SEED_SPEED: [f32; 5] = [3.2, 5.13, 1.2, 1.0, 16.0];
 const SEED_CLIMB: f32 = 4.0;
-const SEED_RAMP: f32 = 0.0;
+const SEED_RAMP: [f32; 5] = [0.0, 0.0, 0.0, 0.0, 0.5];
 /// The simulator plays an input this long after the round trip: one of
 /// its physics steps (45 a second), to be confirmed on the grid.
 const SEED_DELAY: f32 = 1.0 / 45.0;
@@ -203,7 +207,7 @@ impl Default for Calibration {
             speed_samples: [0; 5],
             climb: [SEED_CLIMB; 2],
             climb_samples: [0; 2],
-            ramp: [SEED_RAMP; 5],
+            ramp: SEED_RAMP,
             ramp_samples: [0; 5],
             last: None,
             ramp_watch: None,
@@ -558,7 +562,7 @@ impl Prediction {
         }
         self.failures
             .retain(|t| s.now.saturating_duration_since(*t).as_secs_f32() < FAILURE_WINDOW);
-        let ramp = self.last_mode.map_or(SEED_RAMP, |m| self.calibration.ramp(m));
+        let ramp = self.last_mode.map_or(0.0, |m| self.calibration.ramp(m));
         let target = self.intent.map_or(Vec3::ZERO, |i| self.calibration.target(&i));
         // the end of a flight at speed: the simulator carries the avatar on
         // until it lands, whatever the keys ask
