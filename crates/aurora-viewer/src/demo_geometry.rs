@@ -1,7 +1,7 @@
 //! AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]: geometry load test. As when
 //! a crowded region arrives, meshes keep entering the geometry arena until
 //! it holds `mb` megabytes of them (vertices and indices), at 25 MB a
-//! second unless told otherwise (Knotty beach: about 22 MB a second for 35
+//! second unless told otherwise (KB: about 22 MB a second for 35
 //! s). The arena outgrows its buffers several times on the way: read the
 //! `vertex arena grown to` lines of the log and, with AURORA_PROFILE=1,
 //! `frame_max`, `r_acquire` and `r_resources` in `max:` around them. The
