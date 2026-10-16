@@ -377,16 +377,19 @@ pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
     levels.insert(SOL, talk(1.3));
     levels.insert(VEGA, (0.0, false));
     if !status_set(mode, time) {
-        // AURORA_DEMO_VOICE_GLOW: Tess speaks too, over the white wall,
+        // AURORA_DEMO_VOICE=sweep: Tess speaks too, over the white wall,
         // from a whisper to a shout and back
-        let tess = if crate::ui::nameplate::glow_demo() {
-            (voice_sweep(time), true)
-        } else {
-            (0.0, false)
-        };
+        let tess = if sweep() { (voice_sweep(time), true) } else { (0.0, false) };
         levels.insert(TESS, tess);
         levels.insert(ORION, talk(0.0));
     }
+}
+
+/// AURORA_DEMO_VOICE=sweep: Tess's voice goes over the whole range of the
+/// speaking ring (`voice_sweep`); our own plate follows the microphone.
+fn sweep() -> bool {
+    static SWEEP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SWEEP.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").is_ok_and(|v| v.trim() == "sweep"))
 }
 
 /// Raw levels of a whisper (just above the speaking level), a normal voice

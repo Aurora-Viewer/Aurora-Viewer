@@ -480,14 +480,6 @@ fn the_halo_follows_the_voice_level() {
     }
     let loud = e.halo().expect("speaking");
     assert!(loud.level > 0.99 && loud.gate > 0.99, "{loud:?}");
-    // the first look keeps the mockup's `.speak.thin` rule
-    let p = Theme::default().palette();
-    let plain = p.ink.gamma_multiply(0.14);
-    let full = Metrics::of(Level::Full, SCALE).height;
-    let thin = paint::voice_light(&p, GlowStyle::Thin, loud, plain, full, 0.0);
-    let g = thin.lights()[0];
-    assert!((g.blur - 14.0 * SCALE).abs() < 0.1 && (g.spread - 2.0 * SCALE).abs() < 0.05);
-    assert_eq!(g.color, p.success.gamma_multiply(0.85));
     let mut quiet = VoiceEnvelope::default();
     for _ in 0..60 {
         quiet.update(0.0, true, 1.0 / 60.0);
@@ -496,84 +488,40 @@ fn the_halo_follows_the_voice_level() {
     assert!(whisper.level < 0.01 && whisper.gate > 0.99, "a whisper still lights the plate");
 }
 
-/// Widest reach and strongest opacity of a look's lights and rings.
+/// Widest reach and strongest opacity of the voice's glow and ring.
 fn voice_extent(v: &paint::VoiceLight) -> (f32, u8) {
-    let lights = v.lights().iter().map(|g| (g.spread + g.blur, g.color.a()));
-    let rings = v.rings().iter().map(|r| (r.gap + r.width, r.color.a()));
-    lights.chain(rings).fold((0.0, 0), |(d, a), (dl, al)| (d.max(dl), a.max(al)))
+    let glow = (v.glow.spread + v.glow.blur, v.glow.color.a());
+    let ring = (v.ring.gap + v.ring.width, v.ring.color.a());
+    (glow.0.max(ring.0), glow.1.max(ring.1))
 }
 
 #[test]
-fn every_voice_look_grows_with_the_level_and_fades_with_the_gate() {
+fn the_voice_light_grows_with_the_level_and_fades_with_the_gate() {
     let p = Theme::default().palette();
     let plain = p.ink.gamma_multiply(0.14);
     let full = Metrics::of(Level::Full, SCALE).height;
     let far = Metrics::of(Level::Far, SCALE).height;
-    for style in GLOW_STYLES {
-        let look = |level: f32, gate: f32, height: f32| paint::voice_light(&p, style, Halo { level, gate, heat: 0.0 }, plain, height, 0.3);
-        let (loud, whisper) = (look(1.0, 1.0, full), look(0.0, 1.0, full));
-        let ((reach_loud, alpha_loud), (reach_whisper, alpha_whisper)) = (voice_extent(&loud), voice_extent(&whisper));
-        // (the ripples go as far at any level, only brighter)
-        assert!(reach_loud >= reach_whisper && alpha_loud > alpha_whisper, "{style:?}");
-        // a whisper still shows, and the plate lights up as soon as it speaks
-        assert!(alpha_whisper > 60, "{style:?}: {alpha_whisper}");
-        // fading out, everything goes with the gate
-        let (_, alpha_fading) = voice_extent(&look(1.0, 0.1, full));
-        assert!(alpha_fading < alpha_loud / 4, "{style:?}");
-        // never wider than a plate's height, tighter around a far pill
-        assert!(reach_loud < full, "{style:?}: {reach_loud}");
-        let (reach_far, _) = voice_extent(&look(1.0, 1.0, far));
-        assert!(reach_far <= reach_loud, "{style:?}");
-        // the plate's edge turns green with the gate
-        let mesh::Border::Around(edge, _) = loud.border else {
-            panic!("{style:?}: no outline")
-        };
-        assert!(edge.g() > plain.g(), "{style:?}");
-    }
+    let look = |level: f32, gate: f32, height: f32| paint::voice_light(&p, Halo { level, gate, heat: 0.0 }, plain, height);
+    let (loud, whisper) = (look(1.0, 1.0, full), look(0.0, 1.0, full));
+    let ((reach_loud, alpha_loud), (reach_whisper, alpha_whisper)) = (voice_extent(&loud), voice_extent(&whisper));
+    assert!(reach_loud > reach_whisper && alpha_loud > alpha_whisper);
+    // a whisper still shows, and the plate lights up as soon as it speaks
+    assert!(alpha_whisper > 60, "{alpha_whisper}");
+    // fading out, everything goes with the gate
+    let (_, alpha_fading) = voice_extent(&look(1.0, 0.1, full));
+    assert!(alpha_fading < alpha_loud / 4);
+    // never wider than a plate's height, tighter around a far pill
+    assert!(reach_loud < full, "{reach_loud}");
+    let (reach_far, _) = voice_extent(&look(1.0, 1.0, far));
+    assert!(reach_far < reach_loud);
+    // the plate's edge turns green with the gate
+    let mesh::Border::Around(edge, _) = loud.border else {
+        panic!("no outline")
+    };
+    assert!(edge.g() > plain.g());
     // the ring closes in on the plate as the voice starts
-    let ring = |gate: f32| {
-        paint::voice_light(
-            &p,
-            GlowStyle::Ring,
-            Halo {
-                level: 0.5,
-                gate,
-                heat: 0.0,
-            },
-            plain,
-            full,
-            0.0,
-        )
-        .rings()[0]
-    };
-    assert!(ring(0.2).gap > ring(1.0).gap && ring(0.2).color.a() < ring(1.0).color.a());
-}
-
-#[test]
-fn the_ripples_rise_and_fade_smoothly() {
-    let p = Theme::default().palette();
-    let plain = p.ink.gamma_multiply(0.14);
-    let full = Metrics::of(Level::Full, SCALE).height;
-    let halo = Halo {
-        level: 0.6,
-        gate: 1.0,
-        heat: 0.0,
-    };
-    let rings_at = |t: f32| paint::voice_light(&p, GlowStyle::Ripple, halo, plain, full, t).rings().to_vec();
-    let mut previous = rings_at(0.0);
-    for frame in 1..=180 {
-        let now = rings_at(frame as f32 / 60.0);
-        for (a, b) in previous.iter().zip(&now) {
-            // a ring born again at the plate is invisible on both sides
-            let reborn = b.gap < a.gap;
-            if reborn {
-                assert!(a.color.a() < 4 && b.color.a() < 12, "{a:?} -> {b:?}");
-            } else {
-                assert!((a.color.a() as i32 - b.color.a() as i32).abs() < 12, "frame {frame}");
-            }
-        }
-        previous = now;
-    }
+    let (starting, open) = (look(0.5, 0.2, full).ring, look(0.5, 1.0, full).ring);
+    assert!(starting.gap > open.gap && starting.color.a() < open.color.a());
 }
 
 #[test]
@@ -598,7 +546,7 @@ fn the_voice_level_rises_fast_falls_slowly_and_ends_dark() {
     let p = Theme::default().palette();
     let full = Metrics::of(Level::Full, SCALE).height;
     let alpha = |e: &VoiceEnvelope| {
-        let light = e.halo().map(|h| paint::voice_light(&p, GlowStyle::default(), h, p.ink, full, 0.0));
+        let light = e.halo().map(|h| paint::voice_light(&p, h, p.ink, full));
         light.map_or(0, |v| voice_extent(&v).1) as f32 / 255.0
     };
     let mut previous = alpha(&e);
@@ -696,13 +644,6 @@ fn the_red_comes_and_goes_smoothly() {
         e.update_raw(0.0, false, dt);
     }
     assert_eq!(e, VoiceEnvelope::default());
-}
-
-#[test]
-fn the_glow_looks_are_named_for_the_demo_switch() {
-    let names: Vec<_> = GLOW_STYLES.iter().map(|s| s.name()).collect();
-    assert_eq!(names, ["thin", "aura", "ring", "ring-loud", "ripple"]);
-    assert_eq!(GlowStyle::default(), GlowStyle::RingLoud);
 }
 
 #[test]

@@ -5267,6 +5267,8 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
 /// Offline voice: the other avatar talks in bursts; our own outline follows
 /// the transmitted microphone. AURORA_DEMO_VOICE exercises both tags without
 /// microphone input: speaking / loud / listening / off / cycle (4 s / 3 s / 2 s).
+/// `sweep` keeps the real microphone here and makes a plate of the name
+/// plates scene go from a whisper to a shout (`demo::tags::voice`).
 pub fn voice_levels(
     t: f64,
     me: Uuid,
