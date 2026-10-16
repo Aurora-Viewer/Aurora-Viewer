@@ -213,7 +213,45 @@ fn paint_icon(painter: &egui::Painter, icon: &str, center: Pos2, size: f32, colo
     }
 }
 
-pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, entries: &[Entry], open: &mut bool) -> Option<usize> {
+/// The voice row of an avatar in our voice channel, in a panel under the
+/// disc (above it when the screen ends there), the pie having no rows;
+/// returns the panel's rectangle, where clicks leave the pie open.
+fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: uuid::Uuid, voice: crate::ui::menu::VoiceVolume) -> Rect {
+    const WIDTH: f32 = 250.0;
+    const HEIGHT: f32 = 38.0;
+    let screen = ctx.content_rect();
+    let below = center.y + radius + 8.0;
+    let y = if below + HEIGHT <= screen.bottom() {
+        below
+    } else {
+        center.y - radius - 8.0 - HEIGHT
+    };
+    let x = (center.x - WIDTH * 0.5).clamp(screen.left(), (screen.right() - WIDTH).max(screen.left()));
+    egui::Area::new(egui::Id::new("world_pie_voice"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(egui::pos2(x, y))
+        .movable(false)
+        .fade_in(false)
+        .show(ctx, |ui| {
+            // over the pie's input surface
+            ui.ctx().move_to_top(ui.layer_id());
+            crate::ui::widgets::overlay(ui, p, egui::Margin::same(4), |ui| {
+                ui.set_width(WIDTH - 10.0);
+                super::voice_edit(ui, p, id, voice);
+            });
+        })
+        .response
+        .rect
+}
+
+pub(super) fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    menu: &mut ContextMenu,
+    entries: &[Entry],
+    voice: Option<(uuid::Uuid, crate::ui::menu::VoiceVolume)>,
+    open: &mut bool,
+) -> Option<usize> {
     let root = layout(&menu.target, entries);
     let mut current = root.as_slice();
     let mut valid_depth = 0;
@@ -335,6 +373,14 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, menu: &mut ContextMenu, ent
             primary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
             secondary_released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Secondary));
         });
+    // at the first level only, with the avatar's own entries
+    if let Some((id, voice)) = voice.filter(|_| menu.pie_path.is_empty()) {
+        let panel = voice_panel(ctx, p, center, radius, id, voice);
+        if ctx.input(|i| i.pointer.interact_pos()).is_some_and(|pos| panel.contains(pos)) {
+            primary_released = false;
+            secondary_released = false;
+        }
+    }
     let escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
     let back = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace));
     if escape {
@@ -483,6 +529,49 @@ mod tests {
         click(&ctx, &mut menu, &facts, egui::pos2(900.0, 400.0), egui::PointerButton::Primary);
         assert!(menu.is_none());
         assert!(super::super::take_requests(&ctx).is_empty());
+    }
+
+    #[test]
+    fn the_voice_panel_under_the_pie_changes_the_volume_without_closing_it() {
+        let ctx = egui::Context::default();
+        let tess = uuid::Uuid::from_u128(2);
+        let facts = Facts {
+            voice_volume: Some(crate::ui::menu::VoiceVolume {
+                volume: 0.5,
+                muted: false,
+                can_mute: true,
+            }),
+            ..Facts::default()
+        };
+        let mut menu = open(Target::Avatar {
+            id: tess,
+            own: false,
+            attachment: None,
+        });
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        // the disc ends at y = 580; the slider starts 36 points into the panel
+        click(&ctx, &mut menu, &facts, egui::pos2(320.0, 607.0), egui::PointerButton::Primary);
+        assert!(menu.is_some(), "a click on the voice panel leaves the pie open");
+        let requests = super::super::take_requests(&ctx);
+        assert!(
+            !requests.is_empty()
+                && requests
+                    .iter()
+                    .all(|r| matches!(r, CtxAction::SetVoiceVolume(id, v) if *id == tess && *v < 0.5)),
+            "{requests:?}"
+        );
+        // out of voice: no panel, a click there closes the pie
+        let mut menu = open(Target::Avatar {
+            id: tess,
+            own: false,
+            attachment: None,
+        });
+        let facts = Facts::default();
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        click(&ctx, &mut menu, &facts, egui::pos2(320.0, 607.0), egui::PointerButton::Primary);
+        assert!(menu.is_none());
     }
 
     #[test]

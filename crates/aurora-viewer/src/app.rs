@@ -8620,6 +8620,10 @@ impl App {
                 } else {
                     self.voice.levels(self.world.agent_id)
                 };
+                // who gets the voice row of the avatar menus
+                let me = self.world.agent_id;
+                self.world.calls.voice_peers.clear();
+                self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
                 // the look-at crosshairs under the name tags (none over a held
                 // photo, nor the walk mark)
                 if !held {
