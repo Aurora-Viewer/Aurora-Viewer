@@ -1098,7 +1098,7 @@ Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited |
 
 ### Details
 
@@ -1160,7 +1160,7 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|inspect|inventory|library|sound`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -1195,6 +1195,12 @@ access to a grid.
 - `sound`: a sound item playing the demo chime, double-clicked at frame
   700: it plays in the world at our position (LLSoundBridgeAction), where
   "Open" shows its preview. The log writes `demo sound trigger: …`.
+- `freeze`: our avatar dances from frame 600, the object is right-clicked
+  at 700 and edited at 740, and the build window closes at 1100: the
+  dance stands still from the right click to the close, then goes on from
+  the same pose (LLSelectMgr::pauseAssociatedAvatars). The log writes
+  `demo worn freeze: frame … paused=… head=…` at frames 690, 720, 900,
+  1099, 1130 and 1200: the head stays put between 720 and 1099.
 
 The steps are counted in frames: capture with `AURORA_FPS_LIMIT=60`,
 around frames 720 (menu), 770 (edit, inspect), 850 (move), 680, 800,

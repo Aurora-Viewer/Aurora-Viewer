@@ -5621,6 +5621,8 @@ impl App {
                 crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
             }
             self.update_ao(now);
+            // what carries an edited attachment stands still (pauseAssociatedAvatars)
+            self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
             self.scene.update_auto_hover(
