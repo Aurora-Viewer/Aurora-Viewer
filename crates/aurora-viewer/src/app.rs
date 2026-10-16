@@ -4791,7 +4791,8 @@ impl App {
                     url: crate::scene::textures::asset_url(&base, "landmark_id", &asset),
                     range: None,
                     // a window waits on it
-                    priority: 1e12,
+                    priority: crate::scene::fetch_priority::urgent::WINDOW,
+                    lane: aurora_net::Lane::Urgent,
                     accept: "*/*",
                 });
             }

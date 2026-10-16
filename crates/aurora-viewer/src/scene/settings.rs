@@ -12,7 +12,8 @@
 use super::jobs::{JobResult, Jobs};
 use crate::world::eep::Settings;
 use aurora_llsd::Llsd;
-use aurora_net::{FetchRequest, FetchResult, Fetcher};
+use super::fetch_priority::urgent;
+use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -204,8 +205,9 @@ impl SettingsStreamer {
                 key,
                 url: super::textures::asset_url(base, "settings_id", &id),
                 range: None,
-                // the sky waits on it: ahead of textures and meshes
-                priority: 1e12,
+                // the sky waits on it
+                priority: urgent::SKY,
+                lane: Lane::Urgent,
                 accept: "*/*",
             });
         }

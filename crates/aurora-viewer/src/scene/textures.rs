@@ -21,7 +21,8 @@ use super::texture_cache::{self, Transcoded};
 use super::texture_load::{DecodeMeter, LoadTotals, LoadWatch};
 use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
-use aurora_net::{FetchRequest, FetchResult, Fetcher};
+use super::fetch_priority;
+use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::path::PathBuf;
@@ -244,6 +245,11 @@ struct Entry {
     alpha: AlphaKind,
     unused_since: Option<Instant>,
     fetch_key: u64,
+    /// The rank its download was last given (`fetch_priority`).
+    sent: f32,
+    /// Our own avatar's bake, or an image of the interface: in the
+    /// fetcher's urgent lane.
+    urgent: bool,
     dirty_cache: bool,
     /// Why the last fetch failed (status, error kind, host; never the URL).
     last_error: Option<String>,
@@ -817,6 +823,13 @@ pub struct TextureStreamer {
     /// AURORA_TEXTURE_TODO=check: updates since the session began.
     checks: u32,
     by_fetch_key: HashMap<u64, Uuid>,
+    /// Downloads to rank again, or to drop (nothing uses the texture any
+    /// more), told to the fetcher at the next `update`.
+    moved: Vec<(u64, f32)>,
+    dropped: Vec<u64>,
+    /// `/texture/<our agent>/`: the path of our own bakes (`set_agent`).
+    own_bakes: String,
+    own_agent: Uuid,
     next_key: u64,
     uploads: PendingUploads,
     /// Staging memory of the renderer, given to the decode jobs.
@@ -980,6 +993,10 @@ impl TextureStreamer {
             counts: Counts::default(),
             checks: 0,
             by_fetch_key: HashMap::new(),
+            moved: Vec::new(),
+            dropped: Vec::new(),
+            own_bakes: String::new(),
+            own_agent: Uuid::nil(),
             next_key: 1,
             uploads: PendingUploads::default(),
             staging: None,
@@ -1256,7 +1273,15 @@ impl TextureStreamer {
             complete: false,
             info: None,
             decoded: None,
-            want: 2,
+            // Not seen yet: the coarsest level, which `recompute_wants`
+            // gives whatever is out of view. The level of a new entry was a
+            // quarter of its size, read again from the disk and decoded once
+            // the coarsest was shown, or downloaded further, for every
+            // texture of an arrival out of view: at a login on Agni, 2,208
+            // of the 3,590 decodes of the first 10 s. What is in view has
+            // its size noted before its first read
+            // (`want_before_the_first_pass`).
+            want: aurora_assets::j2k::MAX_DISCARD_LEVEL,
             need_px: 0.0,
             away_px: 0.0,
             fixed_px: 0.0,
@@ -1275,6 +1300,8 @@ impl TextureStreamer {
             alpha: AlphaKind::Opaque,
             unused_since: None,
             fetch_key: 0,
+            sent: 0.0,
+            urgent: false,
             dirty_cache: false,
             last_error: None,
             error_logged: false,
@@ -1284,8 +1311,27 @@ impl TextureStreamer {
             refresh: false,
             epoch: 0,
         });
+        e.urgent = matches!(&e.source, TexSource::Bake { url } if !self.own_bakes.is_empty() && url.contains(&self.own_bakes));
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         slot
+    }
+
+    /// Our avatar: its bakes go in the fetcher's urgent lane, as Firestorm
+    /// boosts them (`BOOST_AVATAR_BAKED_SELF`).
+    pub fn set_agent(&mut self, agent: &Uuid) {
+        if *agent != self.own_agent {
+            self.own_agent = *agent;
+            self.own_bakes = if agent.is_nil() { String::new() } else { format!("/texture/{agent}/") };
+        }
+    }
+
+    /// Rank of a texture's download: its lane, then its size on screen.
+    fn rank(e: &Entry) -> (Lane, f32) {
+        if e.urgent {
+            (Lane::Urgent, fetch_priority::urgent::OWN)
+        } else {
+            (Lane::Bulk, fetch_priority::texture(e.px_now(), e.decoded.is_some()))
+        }
     }
 
     /// "Refresh textures" (destroy_texture, llviewermenu.cpp): the texture
@@ -1452,6 +1498,9 @@ impl TextureStreamer {
                 return;
             }
             let _ = self.acquire(renderer, id, TexSource::Asset);
+            if let Some(e) = self.entries.get_mut(&id) {
+                e.urgent = true;
+            }
         }
         self.note_usage(&id, 256.0);
     }
@@ -1544,6 +1593,9 @@ impl TextureStreamer {
             ui_wanted,
             todo,
             counts,
+            by_fetch_key,
+            moved,
+            dropped: dropped_fetches,
             ..
         } = self;
         reductions.clear();
@@ -1591,6 +1643,25 @@ impl TextureStreamer {
                     reductions.push((*id, keep, bytes_at(e, d)));
                 }
             }
+            // A download waiting for a slot follows what is seen now: it
+            // moves with its size on screen, and goes when nothing uses the
+            // texture any more (a region left, an object gone). Firestorm
+            // drops every texture request at a teleport
+            // (LLViewerTextureList::updateImages); one already sent ends.
+            if e.fetching && !e.urgent && e.fetch_key != 0 {
+                if e.refs == 0 {
+                    by_fetch_key.remove(&e.fetch_key);
+                    dropped_fetches.push(e.fetch_key);
+                    e.fetch_key = 0;
+                    e.fetching = false;
+                } else {
+                    let (_, now) = Self::rank(e);
+                    if fetch_priority::changed(e.sent, now) {
+                        e.sent = now;
+                        moved.push((e.fetch_key, now));
+                    }
+                }
+            }
             // decay so textures that shrank on screen can be lowered later
             e.need_px *= 0.5;
             e.away_px *= 0.5;
@@ -1636,6 +1707,12 @@ impl TextureStreamer {
     /// retry delay, a decode slot or its upload, as it was before the list.
     pub fn update(&mut self, jobs: &Jobs, fetcher: &Fetcher, viewer_asset: Option<&str>) {
         self.can_fetch = viewer_asset.is_some();
+        for key in self.dropped.drain(..) {
+            fetcher.cancel(key);
+        }
+        for (key, priority) in self.moved.drain(..) {
+            fetcher.reprioritise(key, priority);
+        }
         let now = Instant::now();
         let mode = todo_mode();
         if mode == TodoMode::Check {
@@ -1674,6 +1751,8 @@ impl TextureStreamer {
         let (bc7, bc7_cache) = (*bc7, *bc7_cache);
         // first disk reads of the new textures, queued in one go
         let mut cache_reads = Vec::new();
+        // what waits for a decode slot (rank, texture, level)
+        let mut to_decode: Vec<(UploadPriority, Uuid, u8)> = Vec::new();
         {
             let mut visit = |id: Uuid, e: &mut Entry| {
                 if e.refresh {
@@ -1766,9 +1845,6 @@ impl TextureStreamer {
                 let first_pixels = !have_enough && !after_failure && e.holds_first_pixels(needed);
                 if have_enough || after_failure || first_pixels {
                     'decode: {
-                        if *decodes >= *max_decodes {
-                            break 'decode;
-                        }
                         // Decode at the best level the data allows.
                         let discard = match &e.info {
                             Some(info) if !e.complete => level_held(info, e.data.len(), e.want),
@@ -1785,25 +1861,13 @@ impl TextureStreamer {
                         if uploads.covers(&id, discard) {
                             break 'decode;
                         }
-                        e.decoding = true;
-                        *decodes += 1;
-                        load.again += u64::from(e.decoded.is_some());
-                        let data = e.data.clone();
-                        let job = DecodeJob {
-                            id,
-                            discard,
-                            keep_pixels: e.keep_pixels,
-                            bc7: bc7 && !e.keep_rgba,
-                            // (not over a file that already holds this level)
-                            cache: e
-                                .info
-                                .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
-                                .zip(cache_writer.clone())
-                                .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+                        // (given a slot below, once every texture was seen)
+                        let rank = UploadPriority {
+                            first: e.decoded.is_none(),
+                            pixels: e.px_now(),
+                            seq: 0,
                         };
-                        let pool = staging.clone();
-                        let meter = meter.clone();
-                        jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+                        to_decode.push((rank, id, discard));
                     }
                     if !first_pixels {
                         return;
@@ -1825,13 +1889,15 @@ impl TextureStreamer {
                     e.asked_at = Some(now);
                     load.first_blind += u64::from(e.px_now() <= 0.0);
                 }
-                let priority = e.need_px.max(e.fixed_px).max(1.0) + if e.decoded.is_none() { 1e5 } else { 0.0 };
+                let (lane, priority) = Self::rank(e);
+                e.sent = priority;
                 by_fetch_key.insert(key, id);
                 fetcher.request(FetchRequest {
                     key,
                     url,
                     range: Some(range),
                     priority,
+                    lane,
                     accept: "image/x-j2c",
                 });
             };
@@ -1861,6 +1927,40 @@ impl TextureStreamer {
             if todo.is_empty() {
                 *todo = listed;
             }
+        }
+        // Decode slots go to what shows nothing yet, then to the largest on
+        // screen, as the uploads to the GPU do (`UploadPriority`). They went
+        // in the order of the work list, so on an arrival a texture out of
+        // view could take the slot of the one in front of the camera.
+        let free = max_decodes.saturating_sub(*decodes);
+        if to_decode.len() > free {
+            to_decode.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            to_decode.truncate(free);
+        }
+        for (_, id, discard) in to_decode {
+            let Some(e) = entries.get_mut(&id) else {
+                continue;
+            };
+            e.decoding = true;
+            *decodes += 1;
+            load.again += u64::from(e.decoded.is_some());
+            let data = e.data.clone();
+            let job = DecodeJob {
+                id,
+                discard,
+                keep_pixels: e.keep_pixels,
+                bc7: bc7 && !e.keep_rgba,
+                // (not over a file that already holds this level)
+                cache: e
+                    .info
+                    .filter(|_| bc7_cache && !e.keep_rgba && !e.transcoded.is_some_and(|finest| finest <= discard))
+                    .zip(cache_writer.clone())
+                    .map(|(info, writer)| (Self::transcoded_path(cache_dir, &id), info, writer)),
+            };
+            let pool = staging.clone();
+            let meter = meter.clone();
+            jobs.spawn(move || decode_job(job, &data, pool.as_deref(), &meter));
+            Self::settle(todo, counts, id, e);
         }
         let dir = cache_dir.clone();
         let pool = staging.clone();

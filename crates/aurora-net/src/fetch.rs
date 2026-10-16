@@ -40,15 +40,37 @@ impl ByteRange {
     }
 }
 
+/// Which slots a request may take. Firestorm gives each kind of asset its
+/// own connections (`LLAppCoreHttp::init_data`, llappcorehttp.cpp: 12 for
+/// the assets, 8 for the textures, 8 for the meshes), so an animation never
+/// waits behind a region's meshes. Here they share one pool, ordered by
+/// lane then priority, and a few slots are kept for the urgent lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Lane {
+    /// Meshes and textures, ordered together by their size on screen.
+    #[default]
+    Bulk,
+    /// Small assets something waits on: the sky, animations, sounds,
+    /// materials, our own bakes, a window's image or landmark.
+    Urgent,
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
     /// Caller-defined key, echoed in the result.
     pub key: u64,
     pub url: String,
     pub range: Option<ByteRange>,
-    /// Higher is more urgent.
+    /// Higher is more urgent, within its lane.
     pub priority: f32,
+    pub lane: Lane,
     pub accept: &'static str,
+}
+
+/// Slots only the urgent lane may take, out of `max_concurrent` (none on a
+/// small pool: the bulk lane would have none left).
+pub fn urgent_slots(max_concurrent: usize) -> usize {
+    (max_concurrent / 6).min(4)
 }
 
 #[derive(Debug)]
@@ -252,25 +274,127 @@ fn note_protocol(host: &str, version: reqwest::Version) {
 
 enum Msg {
     Request(FetchRequest),
+    Priority(u64, f32),
     Cancel(u64),
 }
 
-struct Queued(FetchRequest, u64);
+/// A place in the heap: stale once its request was cancelled, sent, or
+/// given another priority (a newer generation).
+struct Node {
+    lane: Lane,
+    priority: f32,
+    generation: u64,
+    key: u64,
+}
 
-impl PartialEq for Queued {
+impl PartialEq for Node {
     fn eq(&self, o: &Self) -> bool {
         self.cmp(o) == CmpOrdering::Equal
     }
 }
-impl Eq for Queued {}
-impl PartialOrd for Queued {
+impl Eq for Node {}
+impl PartialOrd for Node {
     fn partial_cmp(&self, o: &Self) -> Option<CmpOrdering> {
         Some(self.cmp(o))
     }
 }
-impl Ord for Queued {
+impl Ord for Node {
+    /// Lane first, then priority, then the oldest.
     fn cmp(&self, o: &Self) -> CmpOrdering {
-        self.0.priority.total_cmp(&o.0.priority).then_with(|| o.1.cmp(&self.1))
+        self.lane
+            .cmp(&o.lane)
+            .then_with(|| self.priority.total_cmp(&o.priority))
+            .then_with(|| o.generation.cmp(&self.generation))
+    }
+}
+
+/// The requests waiting for a slot. Their priority can change while they
+/// wait (Firestorm scores its pending mesh requests again before sending
+/// the best ones, `LLMeshRepository::notifyLoadedMeshes`, and its texture
+/// fetch follows each texture's current priority), and a cancelled one
+/// leaves. Once sent, a request runs to its end: like Firestorm, nothing
+/// in flight is cancelled, its caller simply ignores the result.
+#[derive(Default)]
+struct FetchQueue {
+    heap: BinaryHeap<Node>,
+    /// key -> the request and the generation of its live heap node
+    waiting: HashMap<u64, (FetchRequest, u64)>,
+    generation: u64,
+}
+
+impl FetchQueue {
+    fn len(&self) -> usize {
+        self.waiting.len()
+    }
+
+    fn insert_node(&mut self, key: u64, lane: Lane, priority: f32) -> u64 {
+        self.generation += 1;
+        self.heap.push(Node {
+            lane,
+            priority,
+            generation: self.generation,
+            key,
+        });
+        // (the stale nodes left by new priorities, swept now and then)
+        if self.heap.len() > 2 * self.waiting.len() + 64 {
+            let waiting = &self.waiting;
+            self.heap.retain(|n| waiting.get(&n.key).is_some_and(|(_, g)| *g == n.generation) || n.generation == self.generation);
+        }
+        self.generation
+    }
+
+    /// Queue a request; one already waiting under its key is replaced.
+    fn push(&mut self, r: FetchRequest) {
+        let (key, lane, priority) = (r.key, r.lane, r.priority);
+        self.waiting.remove(&key);
+        let generation = self.insert_node(key, lane, priority);
+        self.waiting.insert(key, (r, generation));
+    }
+
+    /// New priority for a request still waiting (false when it is not).
+    fn reprioritise(&mut self, key: u64, priority: f32) -> bool {
+        let Some(lane) = self.waiting.get(&key).map(|(r, _)| r.lane) else {
+            return false;
+        };
+        let generation = self.insert_node(key, lane, priority);
+        if let Some((r, g)) = self.waiting.get_mut(&key) {
+            r.priority = priority;
+            *g = generation;
+        }
+        true
+    }
+
+    fn cancel(&mut self, key: u64) -> bool {
+        self.waiting.remove(&key).is_some()
+    }
+
+    /// Lane of the most urgent request waiting.
+    fn next_lane(&mut self) -> Option<Lane> {
+        while let Some(n) = self.heap.peek() {
+            if self.waiting.get(&n.key).is_some_and(|(_, g)| *g == n.generation) {
+                return Some(n.lane);
+            }
+            self.heap.pop();
+        }
+        None
+    }
+
+    fn pop(&mut self) -> Option<FetchRequest> {
+        self.next_lane()?;
+        let n = self.heap.pop()?;
+        self.waiting.remove(&n.key).map(|(r, _)| r)
+    }
+
+    fn apply(&mut self, msg: Msg) {
+        match msg {
+            Msg::Request(r) => self.push(r),
+            Msg::Priority(k, p) => {
+                self.reprioritise(k, p);
+            }
+            Msg::Cancel(k) => {
+                self.cancel(k);
+            }
+        }
     }
 }
 
@@ -304,11 +428,20 @@ impl Fetcher {
         (Fetcher { tx }, res_rx)
     }
 
-    /// Queue (or re-prioritise) a request.
+    /// Queue a request (one still waiting under the same key is replaced).
     pub fn request(&self, r: FetchRequest) {
         let _ = self.tx.send(Msg::Request(r));
     }
 
+    /// Give a request still waiting for a slot another priority; nothing
+    /// happens once it is sent.
+    pub fn reprioritise(&self, key: u64, priority: f32) {
+        let _ = self.tx.send(Msg::Priority(key, priority));
+    }
+
+    /// Drop a request still waiting for a slot. One already sent runs to
+    /// its end and its result is still delivered: the caller forgets the
+    /// key to ignore it.
     pub fn cancel(&self, key: u64) {
         let _ = self.tx.send(Msg::Cancel(key));
     }
@@ -322,15 +455,16 @@ async fn dispatcher(
     stats: Arc<NetStats>,
     policy: RetryPolicy,
 ) {
-    let sem = Arc::new(Semaphore::new(max_concurrent));
-    let mut heap: BinaryHeap<Queued> = BinaryHeap::new();
-    // key -> generation of the latest request; stale heap entries are skipped
-    let mut live: HashMap<u64, u64> = HashMap::new();
-    let mut generation: u64 = 0;
+    // the bulk lane takes its own slots; the urgent lane those or its own
+    let urgent = urgent_slots(max_concurrent);
+    let bulk_sem = Arc::new(Semaphore::new(max_concurrent.saturating_sub(urgent).max(1)));
+    let urgent_sem = Arc::new(Semaphore::new(urgent));
+    let mut queue = FetchQueue::default();
     loop {
         // Drain incoming messages without blocking when we have work.
         loop {
-            let msg = if heap.is_empty() {
+            let msg = if queue.next_lane().is_none() {
+                stats.http_queued.store(0, Ordering::Relaxed);
                 match rx.recv().await {
                     Some(m) => m,
                     None => return,
@@ -342,50 +476,42 @@ async fn dispatcher(
                     Err(mpsc::error::TryRecvError::Disconnected) => return,
                 }
             };
-            match msg {
-                Msg::Request(r) => {
-                    generation += 1;
-                    live.insert(r.key, generation);
-                    heap.push(Queued(r, generation));
-                }
-                Msg::Cancel(k) => {
-                    live.remove(&k);
-                }
-            }
+            queue.apply(msg);
         }
-        stats.http_queued.store(live.len() as u32, Ordering::Relaxed);
+        stats.http_queued.store(queue.len() as u32, Ordering::Relaxed);
+        let Some(lane) = queue.next_lane() else {
+            continue;
+        };
 
-        // Wait for a free slot, but keep accepting messages meanwhile.
-        let permit = tokio::select! {
-            p = sem.clone().acquire_owned() => match p { Ok(p) => p, Err(_) => return },
+        // Wait for a slot the most urgent request may take, but keep
+        // accepting messages meanwhile: one may bring a more urgent request.
+        // (an urgent request takes its reserved slots first, leaving the
+        // others to the bulk)
+        let (permit, sem) = tokio::select! {
+            biased;
+            p = urgent_sem.clone().acquire_owned(), if lane == Lane::Urgent => match p {
+                Ok(p) => (p, urgent_sem.clone()),
+                Err(_) => return,
+            },
+            p = bulk_sem.clone().acquire_owned() => match p {
+                Ok(p) => (p, bulk_sem.clone()),
+                Err(_) => return,
+            },
             m = rx.recv() => {
                 match m {
-                    Some(Msg::Request(r)) => { generation += 1; live.insert(r.key, generation); heap.push(Queued(r, generation)); }
-                    Some(Msg::Cancel(k)) => { live.remove(&k); }
+                    Some(m) => queue.apply(m),
                     None => return,
                 }
                 continue;
             }
         };
-        let next = loop {
-            match heap.pop() {
-                Some(Queued(r, g)) => {
-                    if live.get(&r.key) == Some(&g) {
-                        live.remove(&r.key);
-                        break Some(r);
-                    }
-                }
-                None => break None,
-            }
-        };
-        let Some(req) = next else {
+        let Some(req) = queue.pop() else {
             drop(permit);
             continue;
         };
         let http = http.clone();
         let res_tx = res_tx.clone();
         let stats = stats.clone();
-        let sem = sem.clone();
         tokio::spawn(async move {
             stats.http_in_flight.fetch_add(1, Ordering::Relaxed);
             let result = do_fetch(&http, &req, policy, &sem, permit, &stats).await;
@@ -722,6 +848,7 @@ mod tests {
             url,
             range,
             priority: 1.0,
+            lane: Lane::Bulk,
             accept: "image/x-j2c",
         };
         do_fetch(&client(), &req, policy, &sem, permit, &NetStats::default()).await
