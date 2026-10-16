@@ -172,6 +172,29 @@ impl Session<'_> {
                     .collect();
                 self.send(addr, &m, true);
             }
+            BuildCmd::Attach { handle, point, objects } => {
+                let Some(addr) = self.sim_for_handle(handle) else { return };
+                let mut m = ObjectAttach::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.agent_data.attachment_point = point;
+                m.object_data = objects
+                    .iter()
+                    .map(|&(object_local_id, rotation)| object_attach::ObjectData { object_local_id, rotation })
+                    .collect();
+                self.send(addr, &m, true);
+            }
+            BuildCmd::DropAttachment { handle, local_ids } => {
+                let Some(addr) = self.sim_for_handle(handle) else { return };
+                let mut m = ObjectDrop::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.object_data = local_ids
+                    .iter()
+                    .map(|&id| object_drop::ObjectData { object_local_id: id })
+                    .collect();
+                self.send(addr, &m, true);
+            }
             BuildCmd::SetName { handle, local_id, name } => {
                 let Some(addr) = self.sim_for_handle(handle) else { return };
                 let mut m = ObjectName::default();

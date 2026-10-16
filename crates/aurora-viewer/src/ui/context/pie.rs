@@ -81,12 +81,21 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
             let buy = take_action(&mut rest, |a| matches!(a, CtxAction::Buy(_)));
             let take = take_action(&mut rest, |a| matches!(a, CtxAction::Take(_)));
             let copy = take_action(&mut rest, |a| matches!(a, CtxAction::TakeCopy(_)));
+            // several objects: "Take multiple" in place of Take / Take copy
+            // (menu_pie_object.xml Take ▸, VisibleTakeMultiple)
+            let takes = match take.kind {
+                Kind::Action(_) => vec![take, copy],
+                _ => match take_icon(&mut rest, "hand-grab").kind {
+                    Kind::Submenu(entries) => entries,
+                    _ => Vec::new(),
+                },
+            };
             let buy_or_take = if buy.enabled {
-                rest.extend([take, copy]);
+                rest.extend(takes);
                 buy
             } else {
                 rest.push(buy);
-                submenu("hand-grab", aurora_i18n::tr!("ui-context-take"), vec![take, copy])
+                submenu("hand-grab", aurora_i18n::tr!("ui-context-take"), takes)
             };
             let pay = take_action(&mut rest, |a| matches!(a, CtxAction::Pay(_)));
             let edit = take_action(&mut rest, |a| matches!(a, CtxAction::Edit(_)));
@@ -133,7 +142,7 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
         }
         Target::Attachment { .. } => {
             let profile = take_icon(&mut rest, "info-circle-filled");
-            let drop = take_icon(&mut rest, "trash-filled");
+            let drop = take_action(&mut rest, |a| matches!(a, CtxAction::Drop(_)));
             let sit = seated(&mut rest);
             let detach = take_action(&mut rest, |a| matches!(a, CtxAction::Detach(_)));
             let inventory = take_action(&mut rest, |a| matches!(a, CtxAction::AttachmentInventory(_)));
