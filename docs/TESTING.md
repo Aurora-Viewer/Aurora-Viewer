@@ -1726,6 +1726,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REPORT_ABUSE=<mode>` | Report Abuse window, its checks and its sending, nothing sent |
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
+| `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
@@ -1778,6 +1779,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
   window. A payment only moves the demo balance (no L$, no request sent).
   `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
+  `empty`: no amount typed (the field's "0" hint, in the figures' size).
   `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
@@ -2561,6 +2563,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
   is saved.
+- **`AURORA_DEMO_PARCEL_NAME=<text>`**: the parcel name shown by the
+  place island and its menu, over the demo's own (and over
+  `AURORA_DEMO_BARS`'s long one); `\n` stands for a line break. To check
+  how odd names sit beside the region: accents, emoji, other scripts,
+  letters from a fallback font, a trailing line break. The parcel's name
+  and the region text must share one baseline.
 - **`AURORA_DEMO_BARS=<words>`**: the states of the top and bottom bars
   for the comparisons with the bars mockup, for this run only (nothing is
   saved), with the mockup's long parcel name and, with the islands, its

@@ -8702,7 +8702,16 @@ impl App {
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
-                let parcel_name = if self.demo && ui::bars::demo::get().on && !classic_bars {
+                // AURORA_DEMO_PARCEL_NAME=<text>: any parcel name ("\n" is a
+                // line break), to check how odd names sit in the place island
+                let demo_parcel = if self.demo {
+                    std::env::var("AURORA_DEMO_PARCEL_NAME").ok().map(|v| v.replace("\\n", "\n"))
+                } else {
+                    None
+                };
+                let parcel_name = if let Some(name) = demo_parcel.as_deref() {
+                    name
+                } else if self.demo && ui::bars::demo::get().on && !classic_bars {
                     aurora_i18n::tr!("demo-bars-parcel")
                 } else {
                     self.world.parcel_name.as_str()
@@ -8900,6 +8909,7 @@ impl App {
                 // the dock leaves the Conversations button out of its default
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                 self.toolbar_ui.islands = !classic_bars;
+                self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 let ao_active = self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused;
                 let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
                     // hidden: the chat lines go down to the screen's bottom
