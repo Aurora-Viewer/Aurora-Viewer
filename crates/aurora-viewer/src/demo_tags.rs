@@ -369,7 +369,8 @@ pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {
     // syllables and short pauses, like the mockup's level
     let talk = |phase: f32| {
         let syllable = (t * 2.3 + phase).sin().abs() * (0.6 + 0.4 * (t * 7.1 + phase).sin());
-        let level = 0.33 + 0.28 * syllable;
+        // a normal voice: green, short of a shout's red
+        let level = 0.33 + 0.18 * syllable;
         let on = (t * 0.45 + phase).sin() > -0.55;
         if on { (level, true) } else { (0.0, false) }
     };

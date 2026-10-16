@@ -633,7 +633,7 @@ fn the_voice_envelope_does_not_depend_on_the_frame_rate() {
 #[test]
 fn the_loud_ring_grows_with_the_voice_and_turns_red_only_when_overdriven() {
     let p = Theme::default().palette();
-    let over = crate::ui::voice_tag::LEVEL_MAX;
+    let over = level_at_dbfs(SHOUT_DBFS);
     // from the speaking level to past the overdriven one, as the plates read it
     let raws: Vec<f32> = (0..=70).map(|i| aurora_voice::SPEAKING_AUDIO_LEVEL + i as f32 * 0.005).collect();
     let rings: Vec<_> = raws.iter().map(|&r| paint::loud_ring(&p, voice_level(r), overdrive(r))).collect();
@@ -670,7 +670,7 @@ fn the_loud_ring_grows_with_the_voice_and_turns_red_only_when_overdriven() {
 fn the_red_comes_and_goes_smoothly() {
     let dt = 1.0 / 60.0;
     let mut e = VoiceEnvelope::default();
-    let over = crate::ui::voice_tag::LEVEL_MAX;
+    let over = level_at_dbfs(SHOUT_DBFS);
     // a normal voice: no red at all
     for _ in 0..60 {
         e.update_raw(0.46, true, dt);

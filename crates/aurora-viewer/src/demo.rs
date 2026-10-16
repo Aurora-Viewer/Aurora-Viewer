@@ -5318,16 +5318,15 @@ pub fn voice_levels(
 }
 
 /// The microphone meter's level (the tuning scale of `MicCapture::level`:
-/// 0.8 at full scale, 0.01 a decibel) on the participant scale the voice
-/// server reports and the tags read (`0.18 + 0.005 × dB` of a 16-bit RMS,
-/// about 0.63 at full scale, aurora_voice::transmit): the demo's own tag
-/// then lights up, and turns red, at the same loudness as on the grid.
+/// 0.8 at full scale, 0.01 a decibel) on the participant scale our own
+/// level has on the grid (`0.18 + 0.005 × dB` of a 16-bit RMS, about 0.63
+/// at full scale, aurora_voice::transmit), both over the same 300 ms: the
+/// demo's own tag then lights up, and turns red, at the same loudness.
 fn participant_level(tuning: f32) -> f32 {
     if tuning <= 0.0 {
         return 0.0;
     }
-    let dbfs = (tuning - 0.8) * 100.0;
-    (0.63 + 0.005 * dbfs).max(0.0)
+    crate::ui::nameplate::level_at_dbfs((tuning - 0.8) * 100.0).max(0.0)
 }
 
 #[cfg(test)]
@@ -5339,11 +5338,27 @@ mod voice_tests {
         assert!(voice_levels(1.0, DEMO_AGENT, false, true, 0.6, None).is_empty());
         assert_eq!(voice_levels(1.0, DEMO_AGENT, true, false, 0.6, None)[&DEMO_AGENT], (0.0, false));
         let (level, speaking) = voice_levels(1.0, DEMO_AGENT, true, true, 0.6, None)[&DEMO_AGENT];
-        assert!((level - 0.53).abs() < 1e-4 && speaking, "{level}");
-        // the meter's overdriven level is the tags' red point, its silence no voice
-        assert!((participant_level(0.7) - 0.58).abs() < 1e-4);
+        assert!((level - participant_level(0.6)).abs() < 1e-6 && speaking, "{level}");
+    }
+
+    #[test]
+    fn a_real_shout_on_the_microphone_turns_our_plate_red_and_normal_speech_does_not() {
+        use crate::ui::nameplate::overdrive;
+        // the meter at full scale is the participant level at full scale
+        assert!((participant_level(0.8) - 0.6315).abs() < 1e-4);
+        // the meter's levels (0.01 a dB, 0.8 at full scale) of a voice
+        let at = |dbfs: f32| participant_level(0.8 + dbfs / 100.0);
+        let speaking = |dbfs: f32| at(dbfs) > aurora_voice::SPEAKING_AUDIO_LEVEL;
+        // silence and room noise: no voice; a whisper speaks
         assert_eq!(participant_level(0.0), 0.0);
-        assert!(participant_level(0.1) < aurora_voice::SPEAKING_AUDIO_LEVEL);
+        assert!(!speaking(-70.0) && speaking(-45.0));
+        // normal speech, even raised: green
+        for dbfs in [-30.0, -27.0, -24.0, -20.0] {
+            assert_eq!(overdrive(at(dbfs)), 0.0, "{dbfs} dBFS");
+        }
+        // a shout turns red on the way, a hard shout fully
+        assert!(overdrive(at(-15.0)) > 0.4, "{}", overdrive(at(-15.0)));
+        assert_eq!(overdrive(at(-11.0)), 1.0);
     }
 
     #[test]

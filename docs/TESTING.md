@@ -3259,6 +3259,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_VOICE_GLOW=thin`, `aura`, `ring`, `ring-loud`, `ripple` or `cycle` | Temporary: look of a speaking name plate, to compare the variants |
+| `AURORA_VOICE_LEVEL_LOG=1` | Temporary: our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
@@ -3373,7 +3374,16 @@ What the inventory must show with these scenarios:
   to follow the real microphone (voice enabled in Preferences; the meter's
   level is turned into the voice server's scale, so a shout turns red as
   loud as on the grid). Look at the plates on both backgrounds, through the
-  whole range, and at the start and end of speech (never a jump).
+  whole range, and at the start and end of speech (never a jump). The red
+  starts at a shout, -18 dBFS of RMS over 300 ms, and is full at -12:
+  normal speech at a sane microphone gain reads -30 to -24 and stays green.
+- **`AURORA_VOICE_LEVEL_LOG`** (temporary, until the red threshold is
+  settled): once a second, a `voice level (own plate, loudest over 1 s)`
+  line with the loudest raw level of our own plate (and its dBFS, the
+  microphone meter's value), whether we spoke, the smoothed level, the red
+  threshold and the color reached. Our own plate must be shown (Preferences,
+  "Show my own name"); in demo with `AURORA_DEMO_TALK=1` and without
+  `AURORA_DEMO_VOICE`, it follows the real microphone.
 - **`AURORA_DEMO_MEDIA_CLICK`**: focus click at frame 700 by default,
   second click 60 frames after, optional click on the field 120 frames
   after, then "aurora" is typed. `AURORA_DEMO_MEDIA_CLICK_FRAME` changes
