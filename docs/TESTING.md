@@ -3600,6 +3600,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GLOW_SKIP=<mask>` | Removes a family of faces from the glow |
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
+| `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
@@ -3742,6 +3743,16 @@ What the inventory must show with these scenarios:
   CJK, Arabic, mathematical letters…) become squares again. To compare with
   `AURORA_DEMO_GLYPHS=1` or to isolate a font problem. The log says
   `system fallback fonts: off`.
+- **`AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>`**: the interface
+  font (`Inter`, `Noto Sans`, `Roboto` or `system:<path of a .ttf>`) and
+  scale (0.75 to 2) of this launch, without touching Preferences ›
+  Fonts / Interface: to capture one screen with every font and scale in a
+  row. Give the window the scale too (`AURORA_WINDOW_SIZE="2304,1296"` at
+  1.5), else the top bar drops what does not fit. What to look for: text
+  beside an icon, a badge or a box (the place island's rating badge and
+  name, buttons, menu rows) centred alike with every font; the test
+  `the_place_island_centres_its_badge_and_texts_with_every_font` measures
+  the place island.
 - **`AURORA_PRESENT_MODE=immediate|mailbox|fifo|fifo-relaxed`**: replaces
   the present mode chosen from vertical sync
   (`aurora-render/src/present.rs`: without sync `Mailbox`, otherwise

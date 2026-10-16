@@ -592,6 +592,27 @@ fn bandwidth_kbps(settings: &Settings) -> f32 {
         .unwrap_or(settings.bandwidth_kbps as f32)
 }
 
+/// The interface font, or AURORA_UI_FONT for this launch (a built-in name
+/// or `system:<path>`): every font compared in one run of captures,
+/// Preferences left alone.
+fn ui_font(settings: &Settings) -> String {
+    std::env::var("AURORA_UI_FONT")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| settings.font.clone())
+}
+
+/// The interface scale, or AURORA_UI_SCALE for this launch (brought into
+/// the range of the Preferences, 0.75–2).
+fn ui_scale(settings: &Settings) -> f32 {
+    std::env::var("AURORA_UI_SCALE")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|s| s.is_finite())
+        .map_or(settings.ui_scale, |s| s.clamp(0.75, 2.0))
+}
+
 /// The colour vision the interface adapts to: the preferences', or in demo
 /// mode `AURORA_DEMO_COLORBLIND` (a capture's, never saved).
 fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
@@ -680,7 +701,7 @@ impl App {
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
-        egui_ctx.set_zoom_factor(settings.ui_scale);
+        egui_ctx.set_zoom_factor(ui_scale(&settings));
         // last view of the previous session for the loading screen
         let mut backdrop = ui::backdrop::Backdrop::default();
         if settings.loading_backdrop && std::env::var_os("AURORA_CAPTURE").is_none() {
@@ -693,7 +714,7 @@ impl App {
             ui::layout::load(&egui_ctx);
         }
         // after the layout: restoring it drops the fonts installed before
-        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &settings.font);
+        let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &ui_font(&settings));
 
         // Decode the 4096px logo off the main thread.
         let (tx, rx) = crossbeam_channel::bounded(1);
@@ -5062,7 +5083,7 @@ impl App {
             crate::crash::update(&self.skin.theme, &self.settings);
             self.palette = self.skin.theme.palette();
             self.cursors.set_palette(&self.palette);
-            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+            self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
 
         self.frame_profile.lap(Lap::Start);
@@ -5960,7 +5981,7 @@ impl App {
         let t_ui = Instant::now();
         self.world.objects.refresh_labelled();
         if self.system_fonts_pending && ui::fonts::fallback::ready().is_some() {
-            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
@@ -6368,12 +6389,12 @@ impl App {
 
         // apply UI actions
         if actions.font_changed {
-            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
+            self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &ui_font(&self.settings));
         }
         if actions.ui_scale_changed {
             // Zoom changes no render/network setting or crash record field.
             // In particular, never fsync the crash snapshot during a drag.
-            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+            self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
@@ -6394,7 +6415,7 @@ impl App {
             ui::colors::set(&self.settings.colors);
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
-            self.egui_ctx.set_zoom_factor(self.settings.ui_scale);
+            self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.net.send(NetCommand::SetDrawDistance(self.settings.draw_distance));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
