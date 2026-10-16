@@ -372,6 +372,10 @@ pub struct App {
     /// Window moved / resized: its normal geometry is recorded once settled.
     geom_changed: Option<Instant>,
     frame_start: Instant,
+    /// A Windows Alt code being typed in a text field (alt_codes.rs), and
+    /// the characters it gave, for egui's next frame.
+    alt_codes: crate::alt_codes::AltCodes,
+    alt_text: Vec<String>,
     people_ui: ui::people::PeopleUi,
     /// Avatars around us, swept once a second on `radar_clock`.
     radar: crate::world::radar::Radar,
@@ -845,6 +849,8 @@ impl App {
             tp_dest: None,
             geom_changed: None,
             frame_start: Instant::now(),
+            alt_codes: Default::default(),
+            alt_text: Vec::new(),
             people_ui: Default::default(),
             radar: Default::default(),
             radar_clock: Instant::now(),
@@ -4271,6 +4277,36 @@ impl App {
             && crate::keybinds::chat_bar_moves(code, self.ctrl, self.chat_ui.input.is_empty(), self.settings.arrow_keys_always_move)
     }
 
+    /// A Windows Alt code typed in a text field (alt_codes.rs): true for one
+    /// of its digits, which neither the field nor the viewer's shortcuts
+    /// see. Left Alt's release hands the character to egui's next frame.
+    /// Outside a text field, Alt and the numpad keep their shortcuts.
+    fn alt_code_key(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput { event: ke, .. } = event else {
+            return false;
+        };
+        let PhysicalKey::Code(code) = ke.physical_key else {
+            return false;
+        };
+        let pressed = ke.state == ElementState::Pressed;
+        if code == KeyCode::AltLeft {
+            if pressed {
+                if !ke.repeat {
+                    self.alt_codes.alt_pressed();
+                }
+            } else if let Some(text) = self.alt_codes.alt_released(ke.text.as_deref())
+                && self.egui_ctx.egui_wants_keyboard_input()
+            {
+                self.alt_text.push(text);
+            }
+            return false;
+        }
+        if !pressed || !self.alt_codes.active() || !self.egui_ctx.egui_wants_keyboard_input() {
+            return false;
+        }
+        self.alt_codes.key_pressed(code, ke.repeat)
+    }
+
     fn update_move_input(&mut self, typing: bool, dt: f32) {
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
@@ -5893,6 +5929,7 @@ impl App {
             self.system_fonts_pending = !ui::fonts::apply(&self.egui_ctx, &self.settings.font);
         }
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
+        raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
         if self.demo && self.capture.is_some() {
             raw.events.extend(self.login_form.motion.demo_events(self.frame_count));
@@ -11737,6 +11774,11 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // the digits of a Windows Alt code typed in a text field are kept
+        // from it (alt_codes.rs); the character comes at Alt's release
+        if self.alt_code_key(&event) {
+            return;
+        }
         // a movement key the chat bar hands to the avatar never reaches its
         // text (LLViewerWindow::handleKey returns before the focused field)
         let chat_pass = matches!(
@@ -11791,6 +11833,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.alt_codes.reset();
                 self.gesture_state.manager.release(None);
                 self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
