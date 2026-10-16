@@ -155,6 +155,7 @@ pub(super) fn show(
                             None => aurora_i18n::tr!("ui-chat-write-local").to_owned(),
                             Some(id) => aurora_i18n::tr!("ui-chat-write-to", name = world.session_title(&id)),
                         };
+                        let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
@@ -164,6 +165,9 @@ pub(super) fn show(
                                 .min_size(egui::vec2(field_w, BUTTON))
                                 .vertical_align(egui::Align::Center)
                         });
+                        if recalled {
+                            output.response.mark_changed();
+                        }
                         crate::ui::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
                         if local {
                             completion::complete(ui, &mut output, &mut draft, gestures);
@@ -214,6 +218,7 @@ pub(super) fn show(
                 let text = draft.trim().to_owned();
                 if !text.is_empty() {
                     sent = true;
+                    st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
                     match st.selected {
                         None => {
                             let (channel, message) = parse_channel(&text);
