@@ -214,6 +214,9 @@ pub struct App {
     /// What the network did each second: Performance window, and the
     /// "net summary" line in the log with AURORA_PROFILE.
     net_profile: crate::net_profile::NetProfile,
+    /// AURORA_PROFILE: the lines of every 10 s (messages, HTTP, assets,
+    /// avatars, memory; deep_profile.rs).
+    deep_profile: crate::deep_profile::DeepProfile,
     /// `AURORA_SYNC_SLICE=alt`: seconds of the frame profile so far.
     sync_alt: u64,
     /// AURORA_NAME_TAGS=alt: this second draws the classic tags.
@@ -812,6 +815,7 @@ impl App {
             interface: Default::default(),
             frame_profile: FrameProfile::default(),
             net_profile: crate::net_profile::NetProfile::default(),
+            deep_profile: crate::deep_profile::DeepProfile::default(),
             sync_alt: 0,
             name_tags_alt_classic: false,
             demo_tag_states: None,
@@ -1175,6 +1179,11 @@ impl App {
                             self.on_app_event(ev);
                         }
                     } else {
+                        aurora_net::transition::begin(
+                            aurora_net::transition::Kind::Teleport,
+                            || "demo teleport started (offline: no simulator)".to_string(),
+                            &self.net.stats,
+                        );
                         self.demo_tp_start = Some(Instant::now());
                         self.demo_tp_dest = Some(*position);
                     }
@@ -2355,6 +2364,14 @@ impl App {
                 }
             }
             NetEvent::AgentMovementComplete { .. } => {
+                aurora_net::transition::step(|| {
+                    format!(
+                        "viewer: arrival applied ({}), seated {}, {} worn objects",
+                        if self.world.arrived_by_crossing { "crossing" } else { "teleport" },
+                        self.world.agent.seated,
+                        self.scene.own_attachment_count()
+                    )
+                });
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
@@ -3856,6 +3873,11 @@ impl App {
             }
         } else if self.demo {
             // Only inter-region demo teleports simulate a connection delay.
+            aurora_net::transition::begin(
+                aurora_net::transition::Kind::Teleport,
+                || "demo teleport started (offline: no simulator)".to_string(),
+                &self.net.stats,
+            );
             self.demo_tp_start = Some(Instant::now());
             self.demo_tp_dest = Some(pos);
         } else {
@@ -5312,7 +5334,11 @@ impl App {
             }
         }
         self.net_profile.events_left(self.net.events.len());
-        self.net_profile.corrections(self.world.agent.take_corrections());
+        let corrections = self.world.agent.take_corrections();
+        if corrections.count > 0 {
+            aurora_net::transition::step(|| format!("position of our avatar corrected by {:.2} m", corrections.largest));
+        }
+        self.net_profile.corrections(corrections);
         self.net_profile.lead(self.world.agent.prediction.take_lead_max());
         // a border crossing changed what positions are relative to: the
         // camera moves with the agent, in the same frame
@@ -5967,6 +5993,8 @@ impl App {
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), w.main_region) {
+                    aurora_net::transition::step(|| "AgentMovementComplete (demo)".to_string());
+                    aurora_net::transition::arrived(Duration::from_secs(20));
                     let ev = NetEvent::AgentMovementComplete {
                         handle,
                         position,
@@ -6040,12 +6068,22 @@ impl App {
             // glide toward the target, never backwards
             let k = 1.0 - (-2.6 * dt).exp();
             o.shown = (o.shown + (target - o.shown) * k).max(o.shown).min(1.0);
-            if target >= 1.0 && o.shown > 0.985 {
-                o.end.get_or_insert(Instant::now());
+            if target >= 1.0 && o.shown > 0.985 && o.end.is_none() {
+                o.end = Some(Instant::now());
+                aurora_net::transition::end(
+                    Some(aurora_net::transition::Kind::Teleport),
+                    "arrived (teleport screen hidden)",
+                    &self.net.stats,
+                );
             }
             // no answer from the simulator: give up the screen
-            if o.arrived.is_none() && o.start.elapsed() > Duration::from_secs(90) {
-                o.end.get_or_insert(Instant::now());
+            if o.arrived.is_none() && o.start.elapsed() > Duration::from_secs(90) && o.end.is_none() {
+                o.end = Some(Instant::now());
+                aurora_net::transition::end(
+                    Some(aurora_net::transition::Kind::Teleport),
+                    "failed (no arrival 90 s after the teleport screen was shown)",
+                    &self.net.stats,
+                );
             }
             if o.end.is_some_and(|e| e.elapsed().as_secs_f32() > ui::loading::FADE_SECONDS) {
                 self.tp_overlay = None;
@@ -6960,6 +6998,7 @@ impl App {
             .frame(paced.as_secs_f32().min(0.1) * 1000.0, net, &self.last_render, &self.scene.stats);
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
+        self.end_deep_profile(&gfx.renderer);
         self.gfx = Some(gfx);
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();
@@ -7751,6 +7790,54 @@ impl App {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
         }
+    }
+
+    /// AURORA_PROFILE: the frame's share of the lines written every 10 s
+    /// (deep_profile.rs), and what only their end reads.
+    fn end_deep_profile(&mut self, renderer: &aurora_render::Renderer) {
+        if !self.deep_profile.enabled() {
+            return;
+        }
+        let in_world = self.in_world();
+        let texture_upload_bytes = std::mem::take(&mut self.scene.textures.stats.uploaded_bytes_frame);
+        let st = &self.scene.stats;
+        let tex = &self.scene.textures.stats;
+        let frame = crate::deep_profile::FrameSample {
+            texture_upload_bytes,
+            decoding: tex.decoding,
+            pending_upload: tex.pending_upload,
+            jobs: st.jobs,
+            geom_pending: st.geom_pending,
+            meshes_fetching: self.scene.meshes.fetching,
+            avatars: if in_world { st.avatars } else { Default::default() },
+            posed: if in_world { st.posed } else { 0 },
+            skeletons_rebuilt: if in_world { st.skeletons_rebuilt } else { 0 },
+        };
+        let (scene, render, net) = (&self.scene, &self.last_render, &self.net);
+        self.deep_profile.end_frame(frame, || {
+            let tex = &scene.textures.stats;
+            let geometry_used = render.vertex_used
+                * (std::mem::size_of::<aurora_render::Vertex>() + std::mem::size_of::<aurora_render::SkinVertex>()) as u64
+                + render.index_used * 2;
+            crate::deep_profile::PeriodSample {
+                avatars: scene.avatar_sample(),
+                gpu: crate::deep_profile::GpuMemory {
+                    video: renderer.video_memory.read(&renderer.device),
+                    textures: render.textures,
+                    texture_bytes: render.texture_bytes,
+                    pages: render.texture_pages,
+                    page_bytes: render.texture_page_bytes,
+                    geometry_bytes: render.geometry_bytes,
+                    geometry_used,
+                    texture_target: tex.target_bytes,
+                    pressure: tex.pressure,
+                },
+                process: crate::sys_probe::process_memory(),
+                texture_cache: scene.textures.cache_counts(),
+                geometry_uploaded: renderer.geometry_uploaded,
+                http_queued: net.stats.http_queued.load(std::sync::atomic::Ordering::Relaxed),
+            }
+        });
     }
 
     /// Local chat from the chat bar or the conversations window: a chat bar

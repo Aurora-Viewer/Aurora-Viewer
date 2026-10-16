@@ -533,6 +533,56 @@ pub struct SceneStats {
     pub posed: usize,
     /// Worn objects placed by the GPU (anchors.rs): not visited by the sync.
     pub anchored: usize,
+    /// Skeletons built again this frame (a shape, an attachment or their
+    /// age changed), out of `posed` (AURORA_PROFILE).
+    pub skeletons_rebuilt: usize,
+    /// How the avatars of the last lists are drawn (AURORA_PROFILE).
+    pub avatars: AvatarCounts,
+}
+
+/// How the avatars of a frame's lists are drawn (`avatar summary`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AvatarCounts {
+    /// Every avatar of the scene.
+    pub total: usize,
+    /// The nearest ones drawn in full (RenderAvatarMaxNonImpostors), and
+    /// those of them in the view.
+    pub full: usize,
+    pub full_in_view: usize,
+    /// The farther ones drawn as impostors within the draw distance, those
+    /// in the view, and those whose picture was taken this frame.
+    pub impostors: usize,
+    pub impostors_in_view: usize,
+    pub pictured: usize,
+    /// Over the complexity limit (grey silhouettes), and hidden while they
+    /// load.
+    pub silhouettes: usize,
+    pub loading: usize,
+}
+
+/// What the worn objects of the avatars cost (`avatar summary`), read
+/// every 10 s with AURORA_PROFILE by walking the objects.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AvatarSample {
+    /// Objects worn by avatars (HUDs left out), and those of the avatars
+    /// drawn in full.
+    pub attachments: usize,
+    pub attachments_full: usize,
+    /// Rigged meshes worn, and their triangles at the level of detail
+    /// built, for every avatar and for those drawn in full.
+    pub rigged: usize,
+    pub rigged_triangles: u64,
+    pub rigged_triangles_full: u64,
+    /// Triangles of every worn object of the avatars drawn in full.
+    pub worn_triangles_full: u64,
+    /// Rendering complexity: the sum over the avatars, the largest, and
+    /// the avatars it is known for.
+    pub complexity_total: u64,
+    pub complexity_max: u32,
+    pub complexity_known: usize,
+    /// Animations playing on the posed skeletons, and the most on one.
+    pub animations: usize,
+    pub animations_max: usize,
 }
 
 pub struct Scene {
@@ -3281,6 +3331,26 @@ impl Scene {
         }
         let mut plan = self.impostors.plan(&imp_avatars, view.eye, Instant::now());
         self.stats.avatars_hidden = imp_avatars.len();
+        if aurora_net::probe::enabled() {
+            let full: Vec<usize> = avatars.iter().filter(|(_, i)| avatar_ok[*i]).map(|(_, i)| *i).collect();
+            self.stats.avatars = AvatarCounts {
+                total: avatars.len(),
+                full: full.len(),
+                full_in_view: full
+                    .iter()
+                    .filter(|&&i| self.gpu.get(i).is_some_and(|g| view.sphere_visible(g.center, 1.6)))
+                    .count(),
+                impostors: imp_avatars.len(),
+                impostors_in_view: imp_avatars.iter().filter(|a| a.in_view).count(),
+                pictured: plan.capture.len(),
+                silhouettes: avatars.iter().filter(|(_, i)| self.too_complex.contains(i)).count(),
+                loading: if self.hide_loading {
+                    avatars.iter().filter(|(_, i)| self.loading.indices.contains(i)).count()
+                } else {
+                    0
+                },
+            };
+        }
         // avatar states of the GPU object table (few avatars: every frame)
         for &(_, i) in &avatars {
             let mut st = 0;
@@ -3737,6 +3807,58 @@ impl Scene {
     /// sync of the same frame uploads their joint palettes
     /// (`update_anchors`). Only our avatar reports timed animation stops
     /// to the simulator (LLVOAvatarSelf::requestStopMotion).
+    /// Objects our avatar wears (HUDs left out): a step of the teleport and
+    /// crossing timelines (AURORA_PROFILE).
+    pub fn own_attachment_count(&self) -> usize {
+        let Some(own) = self.agent_idx else {
+            return 0;
+        };
+        self.gpu
+            .iter()
+            .filter(|g| g.owner_avatar == Some(own) && !g.hud && !g.is_avatar)
+            .count()
+    }
+
+    /// What the avatars wear and play (`avatar summary`, AURORA_PROFILE):
+    /// one walk over the objects, every 10 s.
+    pub fn avatar_sample(&self) -> AvatarSample {
+        let mut s = AvatarSample::default();
+        let drawn_in_full = |owner: usize| {
+            self.gpu
+                .get(owner)
+                .is_some_and(|a| a.cull_state & avatar_state::FULL != 0 && a.cull_state & avatar_state::TOO_COMPLEX == 0)
+        };
+        for g in &self.gpu {
+            let Some(owner) = g.owner_avatar.filter(|_| !g.hud && !g.is_avatar) else {
+                continue;
+            };
+            let triangles: u64 = g.faces.iter().map(|f| u64::from(f.cmd.index_count / 3)).sum();
+            let full = drawn_in_full(owner);
+            s.attachments += 1;
+            if full {
+                s.attachments_full += 1;
+                s.worn_triangles_full += triangles;
+            }
+            if g.rigged {
+                s.rigged += 1;
+                s.rigged_triangles += triangles;
+                if full {
+                    s.rigged_triangles_full += triangles;
+                }
+            }
+        }
+        for &c in self.avatar_complexity.values() {
+            s.complexity_total += u64::from(c);
+            s.complexity_max = s.complexity_max.max(c);
+        }
+        s.complexity_known = self.avatar_complexity.len();
+        for m in self.motions.values() {
+            s.animations += m.motion_count();
+            s.animations_max = s.animations_max.max(m.motion_count());
+        }
+        s
+    }
+
     pub fn update_poses(&mut self, world: &mut World, eye: Vec3, now: Instant) -> Vec<Uuid> {
         let mut completed = Vec::new();
         // free palettes of owners that disappeared
@@ -3760,6 +3882,7 @@ impl Scene {
             }
         }
         self.stats.posed = 0;
+        self.stats.skeletons_rebuilt = 0;
         let n = self.palette_count as usize * anim::PALETTE_JOINTS;
         if n == 0 {
             world.avatar_poses.clear();
@@ -3867,7 +3990,10 @@ impl Scene {
                 });
             let (base, dz) = match self.skeletons.get(&owner).filter(|_| cached) {
                 Some(s) => (s.base.clone(), s.shape_dz),
-                None => self.skeleton_of(world, owner, idx, now),
+                None => {
+                    self.stats.skeletons_rebuilt += 1;
+                    self.skeleton_of(world, owner, idx, now)
+                }
             };
             shape_dz.push((owner, dz));
             work.push((slot as usize, motions, base, owner, pose_now));

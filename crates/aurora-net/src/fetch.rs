@@ -9,12 +9,13 @@
 //! 499–599 statuses and transport errors, 1 s doubling backoff capped at
 //! 20 s, `Retry-After` honoured below 30 s).
 
+use crate::probe::{self, HttpKind};
 use crate::stats::NetStats;
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, mpsc};
 
 /// Byte range of a request (`end` inclusive, None = up to the end).
@@ -317,6 +318,9 @@ struct FetchQueue {
     /// key -> the request and the generation of its live heap node
     waiting: HashMap<u64, (FetchRequest, u64)>,
     generation: u64,
+    /// When each waiting request was first queued (AURORA_PROFILE only:
+    /// the wait for a slot, `http summary`).
+    queued_at: HashMap<u64, Instant>,
 }
 
 impl FetchQueue {
@@ -347,6 +351,9 @@ impl FetchQueue {
         self.waiting.remove(&key);
         let generation = self.insert_node(key, lane, priority);
         self.waiting.insert(key, (r, generation));
+        if probe::enabled() {
+            self.queued_at.entry(key).or_insert_with(Instant::now);
+        }
     }
 
     /// New priority for a request still waiting (false when it is not).
@@ -363,7 +370,13 @@ impl FetchQueue {
     }
 
     fn cancel(&mut self, key: u64) -> bool {
+        self.queued_at.remove(&key);
         self.waiting.remove(&key).is_some()
+    }
+
+    /// How long a request just popped waited (AURORA_PROFILE only).
+    fn waited(&mut self, key: u64) -> Option<Duration> {
+        self.queued_at.remove(&key).map(|at| at.elapsed())
     }
 
     /// Lane of the most urgent request waiting.
@@ -474,6 +487,7 @@ async fn dispatcher(
             queue.apply(msg);
         }
         stats.http_queued.store(queue.len() as u32, Ordering::Relaxed);
+        probe::http_queue(queue.len());
         if queue.next_lane().is_none() {
             continue;
         }
@@ -498,14 +512,24 @@ async fn dispatcher(
             drop(permit);
             continue;
         };
+        // (AURORA_PROFILE: the kind of the request, its wait and its time)
+        let kind = probe::enabled().then(|| HttpKind::of_asset(&req.url, req.accept));
+        if let (Some(kind), Some(waited)) = (kind, queue.waited(req.key)) {
+            probe::http_waited(kind, waited);
+        }
         let http = http.clone();
         let res_tx = res_tx.clone();
         let stats = stats.clone();
         let sem = sem.clone();
         tokio::spawn(async move {
             stats.http_in_flight.fetch_add(1, Ordering::Relaxed);
+            let timed = kind.and_then(probe::HttpRequest::start);
             let result = do_fetch(&http, &req, policy, &sem, permit, &stats).await;
             stats.http_in_flight.fetch_sub(1, Ordering::Relaxed);
+            if let Some(timed) = timed {
+                let bytes = result.data.as_ref().map_or(0, Vec::len);
+                timed.finish(result.status, bytes, result.data.is_ok());
+            }
             match &result.data {
                 Ok(d) => {
                     stats.http_bytes.fetch_add(d.len() as u64, Ordering::Relaxed);
@@ -548,10 +572,13 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
         offset: 0,
         data: Err(why),
     };
+    let sent = Instant::now();
     let resp = match rb.send().await {
         Ok(resp) => resp,
         Err(e) => {
-            let why = format!("status none, {}, host {}", describe_transport_error(&e), host_of(&req.url));
+            let host = host_of(&req.url);
+            probe::host_response(&host, 0, sent.elapsed(), 0);
+            let why = format!("status none, {}, host {host}", describe_transport_error(&e));
             if transport_retryable(&e) {
                 return Attempt::Retry {
                     status: 0,
@@ -566,6 +593,10 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
     // after redirects: tells whether a CDN answered
     let host = resp.url().host_str().unwrap_or("?").to_string();
     note_protocol(&host, resp.version());
+    let ttfb = sent.elapsed();
+    if classify_status(status) != StatusClass::Success {
+        probe::host_response(&host, status, ttfb, 0);
+    }
     let reason = resp.status().canonical_reason().unwrap_or("");
     match classify_status(status) {
         StatusClass::Success => {}
@@ -623,6 +654,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
         .and_then(parse_content_range);
     match resp.bytes().await {
         Ok(body) => {
+            probe::host_response(&host, status, ttfb, body.len());
             let (offset, complete) = body_extent(status, req.range, content_range, body.len() as u64);
             Attempt::Done(FetchResult {
                 key: req.key,
@@ -633,6 +665,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32) -> A
             })
         }
         Err(e) => {
+            probe::host_response(&host, 0, ttfb, 0);
             let why = format!("status {status}, {}, host {host}", describe_transport_error(&e));
             if transport_retryable(&e) {
                 Attempt::Retry {
@@ -678,6 +711,9 @@ async fn do_fetch(
                 }
                 log::debug!("asset fetch {}: {why}, retry {}", req.key, retry + 1);
                 stats.http_retries.fetch_add(1, Ordering::Relaxed);
+                if probe::enabled() {
+                    probe::http_retry(HttpKind::of_asset(&req.url, req.accept));
+                }
                 drop(slot);
                 tokio::time::sleep(policy.delay(retry, retry_after)).await;
                 retry += 1;

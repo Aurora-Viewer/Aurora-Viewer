@@ -21,6 +21,7 @@ pub mod objcache;
 pub mod objects;
 pub mod offline_im;
 pub mod outfits;
+pub mod probe;
 pub mod profile;
 pub mod region_restart;
 pub mod scripts;
@@ -32,6 +33,7 @@ pub mod stats;
 pub mod task_inventory;
 pub mod terrain;
 pub mod throttle;
+pub mod transition;
 pub mod types;
 pub mod xmlrpc;
 

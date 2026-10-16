@@ -242,6 +242,13 @@ impl AgentState {
         if !in_main_region || !pos.is_finite() || !vel.is_finite() || !acceleration.is_finite() {
             return;
         }
+        aurora_net::transition::step_once_arrived("own update", || {
+            format!(
+                "first update of our avatar from the region ({:.1} m from where it was drawn{})",
+                pos.distance(self.position),
+                if seated { ", seated" } else { "" }
+            )
+        });
         let was_seated = self.seated;
         self.seated = seated;
         if seated || was_seated {
