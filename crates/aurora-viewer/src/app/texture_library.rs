@@ -131,10 +131,19 @@ impl App {
             return;
         }
         let inventory = matches!(mode.as_str(), "preview" | "preview-drag" | "inventory-drag");
-        if !inventory && !matches!(mode.as_str(), "drop" | "apply" | "apply-pbr") {
+        if !inventory
+            && !matches!(
+                mode.as_str(),
+                "drop" | "apply" | "apply-pbr" | "objects-drop" | "objects-nocopy-drop"
+            )
+        {
             return;
         }
-        let item = crate::demo::texture_library::first_texture();
+        let item = if mode.starts_with("objects") {
+            crate::demo::texture_library::first_object()
+        } else {
+            crate::demo::texture_library::first_texture()
+        };
         let source = if inventory {
             self.egui_ctx
                 .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", self.inventory_ui.ui_id, item))))
@@ -168,7 +177,19 @@ impl App {
         };
         let Some(source) = source else { return };
         let start = if inventory { 720 } else { 650 };
-        let target = egui::pos2(480.0, 430.0);
+        let target = if mode.starts_with("objects") {
+            let point = self.world.agent.position + Vec3::new(5.0, 2.0, 0.0);
+            let Some(target) = self
+                .world
+                .ground_height(point)
+                .and_then(|z| self.build.cam.project(Vec3::new(point.x, point.y, z)))
+            else {
+                return;
+            };
+            target
+        } else {
+            egui::pos2(480.0, 430.0)
+        };
         if mode != "preview" {
             match self.frame_count.saturating_sub(start) {
                 0 if self.frame_count >= start => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
@@ -202,7 +223,7 @@ impl App {
                 }
             }
             self.library_demo_seeded = true;
-            self.settings.texture_library.presentation = if mode == "horizontal" {
+            self.settings.texture_library.presentation = if matches!(mode.as_str(), "horizontal" | "objects-horizontal") {
                 library::Presentation::Horizontal
             } else {
                 library::Presentation::Vertical
@@ -213,8 +234,16 @@ impl App {
             self.panels.people = false;
             self.panels.perf = false;
             self.panels.minimap = false;
+            self.panels.ao = false;
+            if matches!(mode.as_str(), "objects-drop" | "objects-nocopy-drop") && std::env::var_os("AURORA_DEMO_CAM").is_none() {
+                self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
+            }
             let inventory_drag = crate::demo::texture_library::inventory_drag_enabled();
-            self.panels.inventory = mode == "inventory" || inventory_drag;
+            self.panels.inventory = matches!(mode.as_str(), "inventory" | "objects-inventory") || inventory_drag;
+            if mode == "objects-inventory" {
+                self.inventory_ui
+                    .show_original(&self.world.inventory, crate::demo::texture_library::first_object());
+            }
             if inventory_drag {
                 let item = crate::demo::texture_library::first_texture();
                 self.inventory_ui.show_original(&self.world.inventory, item);
@@ -225,7 +254,7 @@ impl App {
                     egui::vec2(360.0, 280.0),
                 );
             } else if mode == "inventory"
-                && let Some(root) = catalogue::root(&self.world.inventory)
+                && let Some(root) = catalogue::child(&self.world.inventory, self.world.inventory.root, catalogue::AURORA)
             {
                 self.inventory_ui.show_folder(&self.world.inventory, root);
             }

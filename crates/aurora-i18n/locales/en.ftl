@@ -507,6 +507,59 @@ notecard-task-title = { $note } ({ $object })
 notecard-task-unavailable = This notecard or its object is no longer available.
 notecard-task-demo-title = Notecard in an object
 notecard-save-button = Save (Ctrl+S)
+notecard-view-classic = Classic
+notecard-view-markdown = Markdown
+notecard-view-source = Edit
+notecard-source-heading = Plain text
+notecard-preview-heading = Markdown preview
+notecard-format-bold = Bold
+notecard-format-italic = Italic
+notecard-format-strike = Strikethrough
+notecard-format-code = Code
+notecard-format-link = Link
+notecard-format-heading = Heading
+notecard-format-bullet = List
+notecard-format-ordered = Numbered list
+notecard-format-quote = Quote
+notecard-format-code-block = Code block
+notecard-format-lsl = LSL
+notecard-format-placeholder = text
+notecard-format-hint = Select text in the source and choose a format, or insert a template without a selection.
+notecard-markdown-help = Markdown help
+notecard-markdown-help-code = Use a ```lsl block for the script editor’s colors. In Edit: Tab indents, Shift+Tab outdents, Enter keeps LSL indentation and closing braces align with their opener. Ctrl+K comments selected LSL lines; Ctrl+Shift+K toggles a block comment. Pasted text stays unchanged.
+notecard-markdown-help-intro = Buttons edit the source and the preview follows your changes. Click again to remove a style, heading, list or quote. Ctrl+Z undoes, Ctrl+Y redoes.
+notecard-markdown-help-extra = Headings: # through ######. Separate paragraphs with a blank line. For tables, separate columns with | and add a header row such as | --- | --- |. Images show their alt text; HTML stays text. Attachments are preserved when saving (Ctrl+S).
+notecard-markdown-demo =
+    # Welcome to Aurora
+    A notecard with **bold**, *italic*, ~~strikethrough~~ and `code`.
+
+    ## Your notes
+    - Keep the original text when switching views.
+    - Save from any view with **Ctrl+S**.
+
+    > Embedded items remain part of the notecard.
+
+    { "[" }Aurora Viewer](https://auroraviewer.com)
+
+    ```text
+    A plain code block
+    ```
+notecard-lsl-demo =
+    # LSL in a notecard
+    Use the **LSL** button, then type as in the script editor.
+
+    ```lsl
+    default
+    { "{" }
+        state_entry()
+    { "    {" }
+            // LSL colors and indentation
+            integer count = 2;
+            vector tint = <1.0, 0.5, 0.0>;
+            llSay(PUBLIC_CHANNEL, "Hello 🐺");
+    { "    }" }
+    { "}" }
+    ```
 inventory-preview-busy = Too many documents are loading. Try again in a moment.
 inventory-preview-timeout = Loading the document timed out. Reopen it to retry.
 notecard-text-too-large = A notecard cannot exceed 65,536 bytes of text.
@@ -7417,16 +7470,22 @@ shape-param-11001-min = Lower
 shape-param-11001-max = Higher
 
 # Compact texture and material library
-texture-library-title = Textures & materials
+texture-library-title = Library
 texture-library-side = Show on the side
 texture-library-bottom = Show at the bottom
-texture-library-empty = Place textures or materials in #Aurora/Textures Library.
+texture-library-empty = Place textures, materials or objects in #Aurora/Textures Library or #Aurora/Objects Library.
 texture-library-preparing = Preparing the library folders…
 texture-library-loading = Loading folders…
 texture-library-retry = Try again
 texture-library-all = Entire library
 texture-library-textures = Textures
 texture-library-pbr = PBR
+texture-library-objects = Objects
+texture-library-object-drag-hint = Drag into the world to rez. Ctrl: object contents.
+texture-library-demo-object-image = Object with image
+texture-library-demo-object = Object without image
+texture-library-demo-object-group = Object group without image
+texture-library-demo-object-group-image = Object group with image (no copy)
 texture-library-recent = Recently used
 texture-library-preview = Open preview
 texture-library-drag-hint = Drag onto a face. Shift: all faces. Ctrl: object contents.
@@ -7448,7 +7507,7 @@ texture-library-demo-linen = Natural linen
 texture-library-demo-sources = Demo materials
 texture-library-folder-error = Some folders could not be loaded.
 texture-library-manage = Organize in inventory
-texture-library-content-hint = Move or copy textures, materials and folders into #Aurora/Textures Library. Subfolders are included.
+texture-library-content-hint = Move or copy textures, materials, objects and folders into #Aurora/Textures Library or #Aurora/Objects Library. Both folders and their subfolders accept all three item types.
 texture-library-demo-polished = Polished
 
 texture-library-click-hint = Click to apply to the faces selected in Edit mode.

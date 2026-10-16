@@ -195,7 +195,7 @@ fn item_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
-        if let Some(t) = crate::ui::icons::global(item_icon(item.asset_type as i32, item.inv_type as i32)) {
+        if let Some(t) = crate::ui::icons::global(item_icon(item.asset_type as i32, item.inv_type as i32, item.flags)) {
             ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
         } else {
             ui.add_space(16.0);

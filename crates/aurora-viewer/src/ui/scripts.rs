@@ -22,6 +22,8 @@ mod reference;
 pub mod settings;
 mod syntax;
 mod view;
+pub(crate) use indent::edit_scoped as edit_code;
+pub(crate) use syntax::highlight as highlight_lsl;
 pub use view::editor_focused;
 
 pub enum Action {

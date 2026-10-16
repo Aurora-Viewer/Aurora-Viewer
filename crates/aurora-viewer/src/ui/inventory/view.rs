@@ -123,6 +123,7 @@ impl Filters {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InventoryPreferences {
+    pub notecard_view: super::markdown::View,
     pub protected: HashSet<Uuid>,
     pub upload_folders: [Uuid; 5],
     pub sort: Sort,
@@ -145,6 +146,7 @@ pub struct InventoryPreferences {
 impl Default for InventoryPreferences {
     fn default() -> Self {
         Self {
+            notecard_view: Default::default(),
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
@@ -420,7 +422,7 @@ impl ViewCache {
                 if original.owner_mask & filters.permissions != filters.permissions {
                     return false;
                 }
-                if filters.coalesced && (original.asset_type != 6 || original.flags & 0x200000 == 0) {
+                if filters.coalesced && (original.asset_type != 6 || original.flags & super::OBJECT_HAS_MULTIPLE_ITEMS == 0) {
                     return false;
                 }
                 if (filters.creator == Creator::Me && original.creator != agent)

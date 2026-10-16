@@ -129,6 +129,10 @@ are planned or in progress: they are not in the viewer yet.
 - **Arrange it your way**: customizable bottom, left and right toolbars,
   favourites in a menu, row or dock, and classic Firestorm layouts available
   in Preferences › Aurora.
+- **A quick library** (`Ctrl+Space`): textures, PBR materials and objects from
+  `#Aurora/Textures Library` and `#Aurora/Objects Library`, with search, folders
+  and favourites. Both folders accept all three item types. Objects show
+  their thumbnail or a single/group icon and can be dragged into the world to rez.
 - **People and places at a glance**: redesigned resident and group profiles,
   a People window for friends, groups, contact sets, recent and blocked
   residents, and a world map with floating controls.

@@ -33,21 +33,58 @@ fn inventory() -> (Inventory, Uuid, Uuid) {
     let aurora = folder(&mut inv, 3, root, -1, catalogue::AURORA);
     let library = folder(&mut inv, 4, aurora, -1, catalogue::LIBRARY);
     let source = folder(&mut inv, 5, root, -1, "Stone");
+    folder(&mut inv, 6, aurora, -1, catalogue::OBJECTS_LIBRARY);
     (inv, library, source)
 }
 #[test]
 fn texture_library_root_creation_reuses_aurora_and_does_not_repeat() {
     let (mut inv, library, _) = inventory();
-    inv.remove(&[library]);
+    inv.remove(&[library, Uuid::from_u128(6)]);
     let mut ui = LibraryUi::default();
     let mut actions = Vec::new();
     ui.prepare_root(&mut inv, &mut actions);
     assert_eq!(actions.len(), 1);
     let Action::Change(change) = &actions[0] else { panic!("creation") };
-    assert_eq!(change.operations.len(), 1);
+    assert_eq!(change.operations.len(), 2);
     assert!(matches!(&change.operations[0],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::LIBRARY));
+    assert!(
+        matches!(&change.operations[1],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::OBJECTS_LIBRARY)
+    );
     ui.prepare_root(&mut inv, &mut actions);
     assert_eq!(actions.len(), 1);
+}
+#[test]
+fn library_creates_only_missing_roots_and_waits_for_the_parent_listing() {
+    for existing in catalogue::LIBRARIES {
+        let (mut inv, library, _) = inventory();
+        inv.remove(&[Uuid::from_u128(6)]);
+        let aurora = inv.folders[&library].info.parent;
+        inv.folders.get_mut(&library).unwrap().info.name = existing.into();
+        let mut ui = LibraryUi::default();
+        let mut actions = Vec::new();
+        inv.folders.get_mut(&aurora).unwrap().state = FetchState::Unknown;
+        ui.prepare_root(&mut inv, &mut actions);
+        assert!(actions.is_empty(), "load the parent before deciding that a root is missing");
+        assert!(inv.queue.iter().any(|(id, _)| *id == aurora));
+        inv.folders.get_mut(&aurora).unwrap().state = FetchState::Fetched;
+        ui.prepare_root(&mut inv, &mut actions);
+        let [Action::Change(change)] = actions.as_slice() else {
+            panic!("missing root creation")
+        };
+        let missing = catalogue::LIBRARIES.into_iter().find(|name| *name != existing).unwrap();
+        assert!(matches!(change.operations.as_slice(), [Operation::Folder { parent, name, .. }] if *parent == aurora && name == missing));
+    }
+    let (mut inv, library, _) = inventory();
+    let aurora = inv.folders[&library].info.parent;
+    let mut actions = Vec::new();
+    LibraryUi::default().prepare_root(&mut inv, &mut actions);
+    assert!(actions.is_empty(), "reuse both existing folders");
+    inv.remove(&[aurora]);
+    LibraryUi::default().prepare_root(&mut inv, &mut actions);
+    let [Action::Change(change)] = actions.as_slice() else {
+        panic!("library tree creation")
+    };
+    assert_eq!(change.operations.len(), 3, "create the parent and both roots together");
 }
 #[test]
 fn texture_library_presentation_changes_preserve_search_and_selection() {
@@ -79,6 +116,43 @@ fn texture_library_recent_resources_are_bounded_and_deduplicated() {
     assert_eq!(preferences.recent.len(), 32);
     assert_eq!(preferences.recent[0], Uuid::from_u128(49));
     assert_eq!(preferences.recent.iter().filter(|id| **id == Uuid::from_u128(49)).count(), 1);
+}
+#[test]
+fn texture_library_object_filters_share_folder_search_favorites_and_recent() {
+    let (mut inv, library, outside) = inventory();
+    for (n, kind, flags) in [(80, 0, 0), (81, 57, 0), (82, 6, 0), (83, 6, 0x200000)] {
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(n),
+            parent: library,
+            asset_id: Uuid::from_u128(n + 100),
+            asset_type: kind,
+            flags,
+            name: format!("Resource {n}"),
+            ..Default::default()
+        }]);
+    }
+    let mut ui = LibraryUi::default();
+    ui.catalogue.prepare(&mut inv);
+    let mut prefs = Preferences::default();
+    let ids = |ui: &LibraryUi, prefs: &Preferences| ui.filtered(prefs).iter().map(|&i| ui.catalogue.entries[i].id).collect::<Vec<_>>();
+    assert_eq!(ids(&ui, &prefs).len(), 4);
+    for (kind, expected) in [(Kind::Texture, vec![80]), (Kind::Material, vec![81]), (Kind::Object, vec![82, 83])] {
+        ui.kind = kind;
+        assert_eq!(ids(&ui, &prefs), expected.into_iter().map(Uuid::from_u128).collect::<Vec<_>>());
+    }
+    ui.folder = Some(library);
+    ui.search = "83".into();
+    assert_eq!(ids(&ui, &prefs), vec![Uuid::from_u128(83)]);
+    ui.search.clear();
+    prefs.favorites.insert(Uuid::from_u128(82));
+    ui.scope = Scope::Favorites;
+    assert_eq!(ids(&ui, &prefs), vec![Uuid::from_u128(82)]);
+    prefs.record(Uuid::from_u128(82));
+    prefs.record(Uuid::from_u128(83));
+    ui.scope = Scope::Recent;
+    assert_eq!(ids(&ui, &prefs), vec![Uuid::from_u128(83), Uuid::from_u128(82)]);
+    ui.folder = Some(outside);
+    assert!(ids(&ui, &prefs).is_empty());
 }
 #[test]
 fn texture_library_shortcut_is_ctrl_space_and_rebindable() {
@@ -218,7 +292,7 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
     use std::sync::Arc;
     let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
     for presentation in [Presentation::Vertical, Presentation::Horizontal] {
-        for kind in [0, 57] {
+        for kind in [0, 57, 6] {
             let (mut inv, library, _) = inventory();
             let item = Uuid::from_u128(80);
             inv.add_items(vec![InvItem {
@@ -298,14 +372,18 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
             }
             assert!(frame(button(source, true), &mut ui).is_empty());
             let actions = frame(button(source, false), &mut ui);
-            assert!(matches!(actions.as_slice(), [Action::Apply(id)] if *id == item));
+            if kind == 6 {
+                assert!(actions.is_empty(), "clicking an object only selects it");
+            } else {
+                assert!(matches!(actions.as_slice(), [Action::Apply(id)] if *id == item));
+            }
             assert_eq!(ui.selected, Some(item));
             frame(button(source, true), &mut ui);
             assert!(
                 frame(button(source, false), &mut ui).is_empty(),
                 "the second click opens preview without reapplying"
             );
-            assert!(ui.windows.iter().any(|window| window.id == item));
+            assert_eq!(ui.windows.iter().any(|window| window.id == item), kind != 6);
         }
     }
 }

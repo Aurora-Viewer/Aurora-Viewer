@@ -534,7 +534,7 @@ impl ListingsUi {
                 if !filter.is_empty() && !it.name.to_lowercase().contains(filter) {
                     continue;
                 }
-                let icon = super::inventory::item_icon(it.asset_type, it.inv_type);
+                let icon = super::inventory::item_icon(it.asset_type, it.inv_type, it.flags);
                 let mut label = tree::name(&it.name, p);
                 if let Some(permissions) = super::inventory::permissions::Permissions::inventory(inv, item) {
                     permissions.append_suffix(&mut label, p);

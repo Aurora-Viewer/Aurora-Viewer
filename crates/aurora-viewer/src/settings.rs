@@ -1719,6 +1719,25 @@ mod tests {
     use winit::keyboard::KeyCode;
 
     #[test]
+    fn notecard_view_defaults_to_classic_and_last_choice_survives_restart() {
+        use crate::ui::inventory::NotecardView;
+
+        let path = scratch_settings_file();
+        for old in ["{}", r#"{"inventory":{"search_library":false}}"#] {
+            std::fs::write(&path, old).expect("synthetic old settings");
+            assert_eq!(Settings::load_from(&path).inventory.notecard_view, NotecardView::Classic);
+        }
+        let mut settings = Settings::load_from(&path);
+        for view in [NotecardView::Markdown, NotecardView::Classic, NotecardView::Edit] {
+            settings.inventory.notecard_view = view;
+            settings.save_to(&path);
+            settings = Settings::load_from(&path);
+            assert_eq!(settings.inventory.notecard_view, view);
+            assert!(!settings.inventory.search_library, "other saved preferences survive");
+        }
+    }
+
+    #[test]
     fn teleport_confirmation_is_on_for_old_settings_and_survives_reload() {
         let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
         assert!(old.confirm_teleports);

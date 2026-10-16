@@ -397,6 +397,12 @@ fn tokens(source: &str) -> Vec<Token> {
     result
 }
 
+/// Semantic colors shared with fenced LSL in notecards. Tokenize on the
+/// document worker; resolve the current skin and custom colors when drawing.
+pub(crate) fn highlight(source: &str) -> Vec<(Range<usize>, ColorRole)> {
+    tokens(source).into_iter().map(|token| (token.bytes, token.kind.role())).collect()
+}
+
 #[derive(PartialEq)]
 struct Style {
     font: FontId,

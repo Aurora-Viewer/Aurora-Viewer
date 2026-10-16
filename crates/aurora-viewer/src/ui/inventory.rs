@@ -18,6 +18,8 @@ mod dialogs;
 mod document;
 pub(crate) mod drag;
 mod embedded;
+mod markdown;
+pub use markdown::View as NotecardView;
 mod move_to;
 pub use document::document_demo_events;
 pub(crate) mod permissions;
@@ -47,9 +49,10 @@ pub fn show_document(
     st: &mut InventoryUi,
     drag_inventory: &Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    prefs: &mut InventoryPreferences,
+    script_settings: &super::scripts::settings::ScriptSettings,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
-    let prefs = InventoryPreferences::default();
     let facts = Facts {
         agent: Uuid::nil(),
         worn: Default::default(),
@@ -60,8 +63,8 @@ pub fn show_document(
         touchable: Default::default(),
         names: Default::default(),
     };
-    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, &prefs, &mut actions);
-    dialogs::show(ctx, p, icons, inv, st, &prefs, &facts, images, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, prefs, script_settings, &mut actions);
+    dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     actions
 }
 
@@ -312,6 +315,9 @@ pub struct InventoryUi {
     pub preview_dirty: bool,
     pub save_pending: bool,
     pub preview_source: Option<aurora_net::inventory::notecard::Notecard>,
+    /// Seeded from the shared preference on first display, then kept per window.
+    pub notecard_view: Option<NotecardView>,
+    notecard_markdown: markdown::Cache,
     pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
     pub preview_message: String,
@@ -462,8 +468,13 @@ impl InventoryUi {
 
 use tree::folder_icon;
 
-pub fn item_icon(asset_type: i32, inv_type: i32) -> &'static str {
+/// II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS / LLInventoryIcon::getIconName
+/// (Firestorm indra/{llinventory,newview}, originally LGPL 2.1).
+pub const OBJECT_HAS_MULTIPLE_ITEMS: u32 = 0x200000;
+
+pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
     match (asset_type, inv_type) {
+        (6, _) if flags & OBJECT_HAS_MULTIPLE_ITEMS != 0 => "Inv_Object_Multi",
         (_, 15) => "Inv_Snapshot",
         (0, _) => "Inv_Texture",
         (1, _) => "Inv_Sound",
@@ -507,7 +518,7 @@ fn item_row(
     st.visible.push(*id);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        icon(ui, icons, item_icon(it.asset_type, it.inv_type), p);
+        icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p);
         if rename_row(ui, p, inv, *id, st, prefs, actions) {
             return;
         }
@@ -1247,6 +1258,7 @@ pub fn show(
     open: &mut bool,
     appearance_busy: bool,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    script_settings: &super::scripts::settings::ScriptSettings,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
     let mut facts = Facts::from_world(world, appearance_busy);
@@ -1316,7 +1328,7 @@ pub fn show(
     finish_hidden_rename(inv, st, prefs, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
     move_to::show(ctx, p, icons, inv, st, prefs, &facts, &mut actions);
-    dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, &mut actions);
+    dialogs::preview(ctx, p, icons, inv, inv, st, images, prefs, script_settings, &mut actions);
     st.thumbnail.show(
         ctx,
         p,
@@ -1387,6 +1399,7 @@ pub fn show(
             &mut w.state,
             images,
             prefs,
+            script_settings,
             &mut actions,
         );
         w.state.thumbnail.show(
@@ -1454,6 +1467,16 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_group_icons_follow_item_flags_without_changing_other_types() {
+        assert_eq!(item_icon(6, 6, 0), "Inv_Object");
+        assert_eq!(item_icon(6, 6, OBJECT_HAS_MULTIPLE_ITEMS | 0x100), "Inv_Object_Multi");
+        assert_eq!(item_icon(6, 6, 0x100), "Inv_Object");
+        assert_eq!(item_icon(0, 0, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_Texture");
+        assert_eq!(item_icon(0, 15, 0), "Inv_Snapshot");
+        assert_eq!(item_icon(24, 24, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_LinkItem");
+    }
 
     #[test]
     fn worn_labels_follow_actual_points_and_inventory_links() {

@@ -95,6 +95,33 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/inventory/markdown.rs` provides each inventory/object notecard's Classic,
+Markdown and split Edit views. Classic retains Firestorm's plain proportional
+text with embedded inventory. CommonMark is parsed once per source change on
+the worker pool and displayed as a selectable, read-only rich text editor.
+Edit places the raw source on the left and its live Markdown preview on the
+right, with independent scroll areas and a common save footer.
+`InventoryPreferences::notecard_view` persists the last explicit tab choice
+for inventory and object notes. New document windows inherit it on first
+display; existing windows retain their own mode and draft. Old settings
+without the preference start in Classic.
+`ui/inventory/markdown/formatting.rs` adds the Edit toolbar and syntax help;
+formatting transforms the source selection, preserves Unicode and embedded
+markers, and records one native undo step per action. The latest
+ready preview remains visible while a changed draft is being parsed;
+the existing embedded-item renderer keeps attachment actions in every view.
+All modes share the original source draft and permission-aware save lifecycle
+in `ui/inventory/document.rs`; formatted text never enters the asset encoder.
+`ui/inventory/markdown/code.rs` maps fenced LSL tokens back to the exact source
+and formatted preview. The document worker uses the script editor's lexer;
+drawing resolves the same current skin/custom script colors. Edit reuses
+`ui/scripts/indent.rs` and its selection commands, with LSL scopes for comment
+shortcuts, automatic indentation and brace matching. Tab stops and multiline
+Tab/Shift+Tab work throughout the source; pasted text remains untouched.
+Code-block backgrounds use character ranges from the parser and the shaped
+text rows: one full-width surface per block, below native text/selection,
+including wrapped and empty rows. Inline code retains its glyph highlight.
+
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material
@@ -117,14 +144,23 @@ inside the inventory's auxiliary window list (nil root, no tree); they retain
 their own drafts, save acknowledgements and close confirmations, and opening
 the same item raises/restores it. Resource, notecard and script integration
 tests exercise the shared placement with their actual floaters.
-`ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` subtree
-by inventory generation, includes only actual texture/material items and real
+`ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` and
+`#Aurora/Objects Library` subtrees as one catalogue
+by inventory generation, includes only actual texture/material/object items and real
 folders/subfolders, and excludes all links and the bridge's sibling data.
+Both roots accept every supported type and appear in the folder filter; the
+organize action reveals their common `#Aurora` parent. Missing roots are created
+only after fetching the parent's children, reusing either existing root.
 `previews.rs` assembles bounded, revisioned PBR models on workers
 and draws them with the importer's shared GPU preview. `app/texture_library.rs`
 routes inventory mutations, library clicks on selected edit faces and
 permission-aware world face drops through the
-existing build and task-inventory operations. `Settings::texture_library`
+existing build and task-inventory operations. Object cards use inventory thumbnails,
+falling back to distinct single/coalesced-object icons, and share the inventory
+rez drag path (`app/inventory_drag.rs`), including permission checks and no-copy consumption.
+Inventory rows, pickers, properties, embedded items, Marketplace and task contents
+share a flags-aware icon selector for single/coalesced objects.
+`Settings::texture_library`
 persists presentation, favorites and recent resources. Ctrl+Space and the
 customizable toolbar command toggle the current floater. `demo_texture_library.rs`
 provides actual synthetic inventory folders, tileable textures and PBR materials offline.

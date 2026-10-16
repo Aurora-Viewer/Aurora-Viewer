@@ -16,12 +16,26 @@ pub(super) struct EditorResult {
     pub drop: Option<(usize, Uuid)>,
     #[cfg(test)]
     galley: Option<std::sync::Arc<egui::Galley>>,
+    #[cfg(test)]
+    text_clip_rect: Option<egui::Rect>,
 }
 
 #[derive(Clone)]
 struct Clipboard {
     text: String,
     card: Notecard,
+}
+
+#[derive(Default)]
+pub(super) enum Appearance<'a> {
+    #[default]
+    Classic,
+    Source,
+    CodeSource(
+        Option<&'a super::markdown::Rendered>,
+        &'a super::super::scripts::settings::ScriptSettings,
+    ),
+    Markdown(&'a super::markdown::Rendered, &'a super::super::scripts::settings::ScriptSettings),
 }
 
 pub(super) fn clipboard(ctx: &egui::Context, id: egui::Id, source: &mut Notecard, text: &str, editable: bool) {
@@ -82,12 +96,29 @@ pub(super) fn editor(
     source: Option<&Notecard>,
     editable: bool,
     size: Vec2,
+    appearance: Appearance<'_>,
 ) -> EditorResult {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let style = if matches!(appearance, Appearance::Source | Appearance::CodeSource(..)) {
+        egui::TextStyle::Monospace
+    } else {
+        egui::TextStyle::Body
+    };
+    let font = style.resolve(ui.style());
+    let markdown = if let Appearance::Markdown(rendered, _) = &appearance {
+        Some(*rendered)
+    } else {
+        None
+    };
+    let editable = editable && markdown.is_none();
+    // Reserve a layer behind the immutable editor's transparent frame and text.
+    // Native selection and cursor painting remain above the code surfaces.
+    let code_background = markdown
+        .filter(|rendered| !rendered.code_blocks.is_empty())
+        .map(|_| ui.painter().add(egui::Shape::Noop));
     let label_font = egui::TextStyle::Body.resolve(ui.style());
     let mut labels = std::collections::HashMap::new();
     if let Some(source) = source {
-        for marker in text.chars() {
+        for marker in markdown.map_or(text.as_str(), |rendered| rendered.text.as_str()).chars() {
             if labels.contains_key(&marker) {
                 continue;
             }
@@ -112,26 +143,37 @@ pub(super) fn editor(
         };
         let mut job = LayoutJob::default();
         job.wrap.max_width = wrap_width;
-        let mut start = 0;
-        for (byte, marker) in buffer.as_str().char_indices() {
-            if let Some(label) = labels.get(&marker) {
-                job.append(&buffer.as_str()[start..byte], 0.0, normal.clone());
-                // One wide glyph keeps egui's character indices, wrapping and
-                // selection aligned with the one-character asset marker.
-                job.append(
-                    &blank.to_string(),
-                    0.0,
-                    TextFormat {
-                        font_id: egui::FontId::new((label.size().x + 24.0) / unit_width, font.family.clone()),
-                        color: egui::Color32::TRANSPARENT,
-                        line_height: Some(line_height),
-                        ..normal.clone()
-                    },
-                );
-                start = byte + marker.len_utf8();
+        let mut append = |job: &mut LayoutJob, segment: &str, normal: TextFormat| {
+            let mut start = 0;
+            for (byte, marker) in segment.char_indices() {
+                if let Some(label) = labels.get(&marker) {
+                    job.append(&segment[start..byte], 0.0, normal.clone());
+                    // One wide glyph keeps egui's character indices, wrapping and
+                    // selection aligned with the one-character asset marker.
+                    job.append(
+                        &blank.to_string(),
+                        0.0,
+                        TextFormat {
+                            font_id: egui::FontId::new((label.size().x + 24.0) / unit_width, font.family.clone()),
+                            color: egui::Color32::TRANSPARENT,
+                            line_height: Some(line_height.max(normal.font_id.size)),
+                            ..normal.clone()
+                        },
+                    );
+                    start = byte + marker.len_utf8();
+                }
             }
+            job.append(&segment[start..], 0.0, normal);
+        };
+        if let Appearance::Markdown(rendered, settings) = &appearance {
+            rendered.layout(ui, p, settings, &mut append, &mut job);
+        } else if let Appearance::CodeSource(Some(rendered), settings) = &appearance
+            && rendered.source == buffer.as_str()
+        {
+            super::markdown::code::source_layout(rendered, p, settings, normal, &mut append, &mut job);
+        } else {
+            append(&mut job, buffer.as_str(), normal);
         }
-        job.append(&buffer.as_str()[start..], 0.0, normal);
         ui.fonts_mut(|fonts| fonts.layout_job(job))
     };
     let mut show = |ui: &mut egui::Ui, buffer: &mut dyn egui::TextBuffer| {
@@ -140,25 +182,80 @@ pub(super) fn editor(
             .desired_width(size.x)
             .min_size(size)
             .desired_rows(1)
-            .font(egui::TextStyle::Monospace)
+            .font(style.clone())
+            .lock_focus(editable && matches!(appearance, Appearance::CodeSource(..)))
             .layouter(&mut layouter)
             .show(ui)
     };
-    let output = if editable { show(ui, text) } else { show(ui, &mut text.as_str()) };
+    let output = if editable {
+        if matches!(appearance, Appearance::CodeSource(..)) {
+            let (mut output, changed) = super::super::scripts::edit_code(ui, id, text, &super::markdown::code::scope, show);
+            if changed {
+                output.response.mark_changed();
+            }
+            output
+        } else {
+            show(ui, text)
+        }
+    } else {
+        show(ui, &mut markdown.map_or(text.as_str(), |rendered| rendered.text.as_str()))
+    };
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("demo_rect"), output.response.rect));
+    if let (Some(rendered), Some(slot)) = (markdown, code_background) {
+        let rects = rendered.code_rects(
+            &output.galley,
+            output.galley_pos,
+            output.text_clip_rect,
+            ui.spacing().item_spacing.y * 0.5,
+        );
+        ui.painter().set(
+            slot,
+            egui::Shape::Vec(
+                rects
+                    .into_iter()
+                    .map(|rect| egui::Shape::rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field))
+                    .collect(),
+            ),
+        );
+    }
     let mut result = EditorResult {
         changed: output.response.changed(),
         #[cfg(test)]
         galley: Some(output.galley.clone()),
+        #[cfg(test)]
+        text_clip_rect: Some(output.text_clip_rect),
         ..Default::default()
     };
     if output.response.has_focus() {
         result.save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
     }
+    if let Some(rendered) = markdown
+        && let Some(pos) = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|pos| output.text_clip_rect.contains(*pos))
+    {
+        let cursor = output.galley.cursor_from_pos(pos - output.galley_pos);
+        let cursor_rect = output.galley.pos_from_cursor(cursor).translate(output.galley_pos.to_vec2());
+        if (cursor_rect.min.x - pos.x).abs() < font.size
+            && let Some((_, url)) = rendered.links.iter().find(|(range, _)| range.contains(&cursor.index.0))
+            && (url.starts_with("https://") || url.starts_with("http://"))
+        {
+            egui::Response::clone(&output.response)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(url.as_ref());
+            if output.response.clicked() {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(url.as_ref()));
+            }
+        }
+    }
     let painter = ui.painter().with_clip_rect(output.text_clip_rect);
     if let Some(source) = source {
-        for (index, marker) in text.chars().enumerate() {
+        for (index, marker) in markdown
+            .map_or(text.as_str(), |rendered| rendered.text.as_str())
+            .chars()
+            .enumerate()
+        {
             let Some(attachment) = source.attachment(marker) else { continue };
             let Some(label) = labels.get(&marker) else { continue };
             let mut cursor = CCursor::new(index);
@@ -170,7 +267,11 @@ pub(super) fn editor(
             if !output.text_clip_rect.intersects(rect) {
                 continue;
             }
-            if let Some(icon) = icons.get(item_icon(attachment.item.asset_type, attachment.item.inv_type)) {
+            if let Some(icon) = icons.get(item_icon(
+                attachment.item.asset_type,
+                attachment.item.inv_type,
+                attachment.item.flags,
+            )) {
                 painter.image(
                     icon.id(),
                     egui::Rect::from_min_size(pos, Vec2::splat(16.0)),
@@ -281,6 +382,7 @@ mod tests {
                     Some(source),
                     editable,
                     egui::vec2(600.0, 300.0),
+                    Appearance::Classic,
                 );
             },
         );
@@ -292,6 +394,95 @@ mod tests {
         let source = Notecard::decode(&crate::world::inventory::demo::note_asset(true)).expect("fixture");
         let text = source.text.clone();
         (source, text)
+    }
+
+    #[test]
+    fn markdown_code_backgrounds_cover_whole_blocks_below_selectable_text() {
+        fn flatten<'a>(shape: &'a egui::Shape, shapes: &mut Vec<&'a egui::Shape>) {
+            if let egui::Shape::Vec(children) = shape {
+                for child in children {
+                    flatten(child, shapes);
+                }
+            } else {
+                shapes.push(shape);
+            }
+        }
+        let raw = "Before `inline` 🐺\n\n```lsl\ndefault {\n\n    llOwnerSay(\"A long line that wraps in a narrow preview\");\n}\n```\n\nBetween\n\n```text\nx\n```\n\n```\n```\n\nAfter";
+        let rendered = super::super::markdown::Rendered::parse(raw);
+        for width in [160.0, 480.0] {
+            let ctx = egui::Context::default();
+            let p = crate::theme::Theme::default().palette();
+            let mut text = raw.to_owned();
+            let mut result = None;
+            let output = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 1000.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    result = Some(editor(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        egui::Id::new("code_background"),
+                        &mut text,
+                        None,
+                        false,
+                        egui::vec2(width, 900.0),
+                        Appearance::Markdown(&rendered, &Default::default()),
+                    ));
+                },
+            ));
+            assert_eq!(text, raw, "painting must not change the saved source");
+            let result = result.expect("editor");
+            let clip = result.text_clip_rect.expect("visible text bounds");
+            let galley = result.galley.expect("text layout");
+            let highlights: Vec<_> = galley
+                .job
+                .sections
+                .iter()
+                .filter(|section| section.format.background == p.field)
+                .collect();
+            assert_eq!(highlights.len(), 1, "only inline code keeps a glyph background");
+            let range = &highlights[0].byte_range;
+            assert_eq!(&galley.job.text[range.start.0..range.end.0], "inline");
+            let mut shapes = Vec::new();
+            for shape in &output.shapes {
+                flatten(&shape.shape, &mut shapes);
+            }
+            let backgrounds: Vec<_> = shapes
+                .iter()
+                .enumerate()
+                .filter_map(|(index, shape)| {
+                    if let egui::Shape::Rect(rect) = shape
+                        && rect.fill == p.field
+                    {
+                        Some((index, rect.rect))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(backgrounds.len(), 3, "one rectangle for LSL, plain and empty blocks");
+            let first = backgrounds[0].1;
+            assert!(
+                first.height() > 4.0 * egui::TextStyle::Monospace.resolve(&ctx.global_style()).size,
+                "the surface must also cover blank and wrapped rows"
+            );
+            for (_, rect) in &backgrounds {
+                assert_eq!(rect.left(), clip.left());
+                assert_eq!(rect.right(), clip.right());
+            }
+            assert!(backgrounds.windows(2).all(|pair| pair[0].1.bottom() < pair[1].1.top()));
+            let text_index = shapes
+                .iter()
+                .position(|shape| matches!(shape, egui::Shape::Text(_)))
+                .expect("selectable text");
+            assert!(
+                backgrounds.iter().all(|(index, _)| *index < text_index),
+                "surfaces stay below text and native selection"
+            );
+        }
     }
 
     fn key(key: egui::Key, command: bool) -> egui::Event {

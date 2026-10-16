@@ -641,6 +641,12 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
+            && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
+            && std::env::var_os("AURORA_DEMO_AO").is_none()
+        {
+            settings.show_ao = false;
+        }
         let net = NetClient::new()?;
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
@@ -9380,6 +9386,7 @@ impl App {
                     &mut open,
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
+                    &self.settings.script_editor,
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),

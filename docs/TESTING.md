@@ -1579,7 +1579,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material library with synthetic real inventory folders, textures and PBR resources. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material/object library with synthetic inventory and thumbnails. |
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
@@ -1601,6 +1601,20 @@ in inventory, `search` filters stone PBR materials (including a nested polished
 folder), and `empty` keeps the sample resources outside the empty library. `drop` performs a real card drag onto the
 modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenarios
 make demo objects modifiable so manual surface drops can also be exercised.
+`objects` and `objects-horizontal` show the Objects filter, with a thumbnail,
+single-object and coalesced-object fallback icons, and a no-copy group with an image.
+The synthetic inventory uses both `#Aurora/Textures Library` and
+`#Aurora/Objects Library`, each containing textures, materials and objects.
+`objects-inventory` also reveals actual object rows in inventory: the group
+must use the same multi-cube icon as its library card. The folder picker lists
+both roots and their subfolders; organizing reveals their common parent.
+`objects-drop` drags the first object into the world at frame 650 through the
+inventory rez path, using a projected ground point and an elevated camera
+unless `AURORA_DEMO_CAM` is set (capture at frame 800). The offline simulator stands in with
+a cube; actual object/coalesced geometry and server rez permissions need grid validation.
+`objects-nocopy-drop` drops the no-copy group instead: its card disappears after
+the drop, and the stand-in cube appears in the world.
+Library scenarios keep the unrelated AO window closed from startup.
 `baseline` keeps the library closed in the same scene for a profiling comparison.
 `preview` double-clicks an actual inventory texture and leaves its preview open;
 `preview-drag` then drags the preview image onto that surface, and `inventory-drag`
@@ -3059,6 +3073,53 @@ offline; the files and snapshots uploaded in demo stay offline.
   text at frame 650 then send Ctrl+S at frame 670; the refusal keeps
   the draft. Saving and closing / reopening keeps the text during
   the demo session, without creating an item in the personal inventory.
+- `note-classic`, `note-markdown`, `note-source`: the same Markdown sample
+  with an image, a landmark and an object in each display mode. Capture
+  after frame 740. Switch tabs, edit the source in Classic or Edit, then
+  save from Markdown and reopen: the Markdown syntax, Unicode text and
+  attachments must survive. Classic defaults to Firestorm's plain,
+  proportional, wrapping text; Edit shows the monospace source on the left
+  and its live Markdown preview on the right, with independent scrolling.
+  Type headings, bold and Unicode in Edit and check that the right side
+  updates without leaving the mode, then Ctrl+S from either pane.
+  The formatting toolbar applies bold, italic, strikethrough, inline code,
+  links, headings, lists, quotes and fenced code to the source selection.
+  Select Unicode text with the mouse, click Bold, then undo and redo:
+  the text, selection and attachments must survive, and Ctrl+S must save
+  the Markdown source. Repeat a style to remove it; without a selection,
+  the controls insert editable templates. Markdown help shows syntax and
+  limits. Formatting is disabled for read-only notes and pending saves.
+  `note-format` uses the same sample in Edit, selects the first list word
+  at frame 650, clicks Bold at 670–671 and opens Markdown help at 710–711;
+  capture frame 700 for the selection/preview or frame 800 for the help.
+  Leave Edit idle with the source focused, including at a fractional UI
+  scale (112.5%): neither pane's border may oscillate. A short note must
+  not show scroll bars; a long note must still scroll in each pane.
+  Markdown is a selectable formatted preview with headings, emphasis, lists, quotes,
+  code and links. Images show their alt text as a link without downloading.
+  Newlines before and after embedded-item rows must remain newlines in both
+  Markdown views; items written on the same source line must stay inline.
+  `note-remember` opens this same sample using the saved preference instead
+  of forcing a view. With no saved choice, Classic is selected. Choose
+  Markdown, open another inventory or object note, then restart the demo:
+  newly opened notes must still use Markdown. Repeat with Classic and Edit.
+  Merely displaying an older window must not replace the last explicit
+  choice, and switching views must preserve any unsaved source/attachments.
+  Demo settings stay separate from the normal viewer's settings.
+  `note-lsl` / `note-lsl-markdown` show fenced LSL in Edit / Markdown. Capture
+  after frame 740: types, functions, events, constants, strings, numbers and
+  comments must use the script editor's colors, including customized colors.
+  The LSL toolbar button wraps selected lines or inserts an editable script
+  template. Type Tab/Shift+Tab with and without multiline selections; in LSL,
+  Enter keeps indentation, a closing brace aligns with its opener, Backspace
+  removes a four-column stop and Ctrl+K / Ctrl+Shift+K toggle comments. Check
+  undo/redo, Unicode, exact paste, live preview and Ctrl+S with attachments.
+  Prose/other languages must not gain LSL colors or brace/comment behavior;
+  Classic and read-only notes must retain their existing behavior.
+  Fenced/indented code must have one continuous background across the block's
+  full width, including blank and wrapped rows. Repeat in both previews at a
+  narrow window width; inline code keeps its small highlight, selection stays
+  visible and neither scrolling nor switching views changes the saved source.
 - `note-edit`, `note-save`, `note-close`, `note-error`, `note-embedded`:
   automatic addition of text at frame 650, then save with Ctrl+S
   (`note-save`), close confirmation (`note-close`) or simulated refusal
