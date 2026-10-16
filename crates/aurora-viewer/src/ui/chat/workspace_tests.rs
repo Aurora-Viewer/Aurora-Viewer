@@ -737,3 +737,92 @@ fn the_fixed_edges_stay_while_one_is_dragged_fast() {
         }
     }
 }
+
+/// The window's height dragged, slowly and quickly, by its bottom edge
+/// then by its top edge, in a short conversation and in one longer than the
+/// window: the messages keep their place against the field (bottom edge:
+/// they slide with it) and on the screen (top edge), on every frame; the
+/// Legacy style's short conversation, standing at the top, against the
+/// window's top (the human's report of 2026-10-16: the lines "hop" while
+/// the window moves).
+#[test]
+fn the_messages_stay_put_while_the_height_is_dragged() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Legacy] {
+        for long in [false, true] {
+            let mut h = Harness::new(style);
+            if long {
+                for k in 0..40 {
+                    h.world
+                        .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("line {k}")));
+                }
+            }
+            let last = if long { "line 39" } else { "hello from Jane" };
+            h.st.selected = Some(JANE);
+            crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(200.0, 150.0), egui::vec2(800.0, 560.0));
+            h.settle();
+            h.settle();
+            let window = |h: &Harness| {
+                h.frames
+                    .ctx
+                    .memory(|m| m.area_rect(egui::Id::new("conversations")))
+                    .expect("the window")
+            };
+            for (edge, steps) in [
+                ("bottom slow", [-7.3_f32; 12].to_vec()),
+                ("bottom fast", vec![-80.0, -80.0, -80.0, 120.0, 120.0, -60.5, 60.5]),
+                ("top slow", [7.3_f32; 12].to_vec()),
+                ("top fast", vec![80.0, 80.0, 80.0, -120.0, -120.0, 60.5, -60.5]),
+            ] {
+                let start = window(&h);
+                let top = edge.starts_with("top");
+                let grab = if top {
+                    egui::pos2(start.center().x, start.top() + 1.0)
+                } else {
+                    egui::pos2(start.center().x, start.bottom() - 1.0)
+                };
+                let button = |pos, pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(grab)]);
+                h.frame(vec![button(grab, true)]);
+                let mut at = grab;
+                let mut seen = Vec::new();
+                for dy in steps {
+                    at.y += dy;
+                    let texts = h.frame(vec![egui::Event::PointerMoved(at)]);
+                    let row = last_text(&texts, last);
+                    let w = window(&h);
+                    // against the window's bottom (the field), or on the screen;
+                    // a short conversation of the Legacy style stands at the
+                    // top: against the window's top
+                    seen.push(if !long && style == ChatStyle::Legacy {
+                        row.top() - w.top()
+                    } else if top {
+                        row.top()
+                    } else {
+                        row.top() - w.bottom()
+                    });
+                }
+                h.frame(vec![button(at, false)]);
+                h.settle();
+                assert!(
+                    seen.iter().all(|y| (y - seen[0]).abs() < 0.01),
+                    "{style:?}, {} conversation, {edge}: {seen:?}",
+                    if long { "long" } else { "short" }
+                );
+            }
+        }
+    }
+}
+
+/// Where the last text `source` is painted, if it is.
+fn last_text(texts: &[crate::ui::widgets::elide_tests::Text], source: &str) -> egui::Rect {
+    texts
+        .iter()
+        .rev()
+        .find(|t| t.source == source)
+        .map_or(egui::Rect::NOTHING, |t| t.rect)
+}

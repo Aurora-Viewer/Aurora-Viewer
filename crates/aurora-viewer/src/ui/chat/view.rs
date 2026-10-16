@@ -124,6 +124,11 @@ pub struct View {
     /// The content's height at the last `show`: the scroll area's, whose
     /// end it sticks to.
     shown_height: f32,
+    /// Where the viewport's top stood at the last `show` when the rows were
+    /// placed against the end: the scroll area is still there when the
+    /// window got shorter (its bottom then short of the end) and nobody
+    /// scrolled.
+    anchored_top: Option<f32>,
     unmeasured: usize,
     /// Rows matching the find text, as indices of `rows`.
     hits: Vec<usize>,
@@ -433,7 +438,7 @@ impl View {
         // at the end of the conversation the scroll area follows its growth
         // by itself (stick to bottom), a frame late: the rows are placed
         // against the bottom here instead, no correction to add
-        let at_end = viewport.bottom() >= self.shown_height - 1.0;
+        let at_end = viewport.bottom() >= self.shown_height - 1.0 || self.anchored_top.is_some_and(|t| (viewport.top() - t).abs() < 0.5);
         let target = self.scroll_to.take().filter(|&t| t < self.rows.len());
         let anchored = at_end && target.is_none();
 
@@ -528,8 +533,10 @@ impl View {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
             let top = height - viewport.height();
+            self.anchored_top = Some(top);
             (rect.top() + lift + viewport.top() - top, self.total - viewport.height())
         } else {
+            self.anchored_top = None;
             (rect.top() + lift - shift_above, viewport.top() + shift_above)
         };
         let view_bottom = view_top + viewport.height();

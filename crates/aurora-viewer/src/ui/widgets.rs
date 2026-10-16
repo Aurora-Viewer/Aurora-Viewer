@@ -400,7 +400,12 @@ impl<'a> Floater<'a> {
         // dragged with its group has the group's limits.
         let room = super::layout::move_area(ctx);
         // the edge dragged snaps to the other windows and to the work area
-        let resized = resize_drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+        let resized = resize_drag.map(|drag| {
+            on_pixels(
+                ctx,
+                super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
+            )
+        });
         let size = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
             .unwrap_or(self.default_size);
@@ -671,7 +676,12 @@ pub(crate) fn bare_window(
     if let Some(limits) = slot.limits {
         w = w.constrain_to(limits);
     }
-    let resized = drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+    let resized = drag.map(|drag| {
+        on_pixels(
+            ctx,
+            super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
+        )
+    });
     if let Some(rect) = resized {
         // (no constraint from the last frame's size: see `Floater::show`)
         w = w.fixed_size(rect.size()).current_pos(rect.min).constrain(false);
@@ -688,6 +698,20 @@ pub(crate) fn bare_window(
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
     resize::handles(ctx, p, &shown.response);
+}
+
+/// A resized window's rect on whole physical pixels. The pointer moves by
+/// fractions of a point (a scaled screen, a sub-pixel drag): egui rounds the
+/// window's position but not its size, so its bottom, and the messages laid
+/// against it, fell between pixels and hopped by one as the edge moved (the
+/// human's report of 2026-10-16).
+fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
+    let ppp = ctx.pixels_per_point();
+    let round = |v: f32| (v * ppp).round() / ppp;
+    egui::Rect::from_min_max(
+        egui::pos2(round(rect.min.x), round(rect.min.y)),
+        egui::pos2(round(rect.max.x), round(rect.max.y)),
+    )
 }
 
 const PLACE_POS: &str = "place_pos";

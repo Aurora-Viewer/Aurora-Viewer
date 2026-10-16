@@ -1811,6 +1811,13 @@ pub fn show(
     if style.workspace() {
         floater = floater.flush_body();
     }
+    // about the least the window lays out without overflowing (the
+    // workspace's rail, head, 60 points of messages and field; the Legacy
+    // style's tabs and field): smaller, it grew back to its content during
+    // a resize and the messages, laid out for the smaller size first,
+    // hopped for a frame
+    let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
+    floater.min_size = floater.min_size.max(least);
     floater.show(ctx, p, open, |ui| {
         if style.workspace() {
             let env = workspace::Env {
