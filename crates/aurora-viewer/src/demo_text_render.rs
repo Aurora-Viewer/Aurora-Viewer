@@ -18,8 +18,8 @@
 
 use crate::theme::Palette;
 use crate::ui::fonts;
-use egui::epaint::text::{HintingTarget, SmoothHinting};
 use egui::epaint::FontColorTransferFunction;
+use egui::epaint::text::{HintingTarget, SmoothHinting};
 use egui::{FontId, RichText, Vec2};
 use std::time::{Duration, Instant};
 
@@ -252,7 +252,11 @@ fn specimen(ui: &mut egui::Ui, p: &Palette, name: &str) {
             .color(p.ink),
     );
     ui.add_space(4.0);
-    ui.label(RichText::new(aurora_i18n::tr!("demo-text-render-on-glass")).size(11.0).color(p.muted));
+    ui.label(
+        RichText::new(aurora_i18n::tr!("demo-text-render-on-glass"))
+            .size(11.0)
+            .color(p.muted),
+    );
     for size in SIZES {
         ui.label(RichText::new(format!("{size:.0}  {pangram}")).size(size).color(p.ink));
     }

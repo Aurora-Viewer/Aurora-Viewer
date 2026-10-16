@@ -503,7 +503,10 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         let caret_w = if on { widgets::caret_room(CARET) } else { 0.0 };
         let right = i == last && manage;
         let pos = if right {
-            Pos2::new(cell.right() - 8.0 - galley.size().x - caret_w, cell.center().y - galley.size().y / 2.0)
+            Pos2::new(
+                cell.right() - 8.0 - galley.size().x - caret_w,
+                cell.center().y - galley.size().y / 2.0,
+            )
         } else {
             Pos2::new(cell.left() + 8.0, cell.center().y - galley.size().y / 2.0)
         };

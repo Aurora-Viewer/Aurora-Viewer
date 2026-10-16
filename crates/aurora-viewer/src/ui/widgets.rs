@@ -25,8 +25,8 @@ pub use color::color_button;
 pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use workspace::{
-    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, glyph, navigation, navigation_wrapped, paint_glyph,
-    section_header, sort_caret, stat, surface,
+    Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, glyph, navigation, navigation_wrapped, paint_glyph, section_header,
+    sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
     finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,

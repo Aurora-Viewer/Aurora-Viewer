@@ -853,18 +853,13 @@ fn objects(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
                 if let Some(caret) = crate::ui::icons::global(widgets::disclosure_caret(true)) {
                     button = button.right_text(egui::Image::new((caret.id(), Vec2::splat(10.0))).tint(p.muted));
                 }
-                menu::button(
-                    ui,
-                    p,
-                    button.min_size(Vec2::new(0.0, 26.0)),
-                    |ui| {
-                        for (label, count, can, kind) in shown {
-                            if menu::item_if(ui, p, "eye-filled", label, can && count > 0) {
-                                world.land.show_objects(kind, Vec::new());
-                            }
+                menu::button(ui, p, button.min_size(Vec2::new(0.0, 26.0)), |ui| {
+                    for (label, count, can, kind) in shown {
+                        if menu::item_if(ui, p, "eye-filled", label, can && count > 0) {
+                            world.land.show_objects(kind, Vec::new());
                         }
-                    },
-                )
+                    }
+                })
                 .on_hover_text(aurora_i18n::tr!("ui-land-manage-show-tip"));
             });
             for (label, count, can, confirm) in [

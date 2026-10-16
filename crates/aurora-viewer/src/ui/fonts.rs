@@ -328,7 +328,10 @@ mod tests {
         ("Vietnamese", "Tiếng Việt: Xin chào thế giới, ước mơ, Đường phố ỹ ỵ ở ẫ ặ ằ"),
         ("Greek", "Ελληνικά: Γειά σου κόσμε! ΆΈΉ ώ"),
         ("Cyrillic", "Русский: Привет, мир! ЁЇЄҐ ё"),
-        ("CJK", "日本語 こんにちは カタカナ · 한국어 안녕하세요 · 中文 你好，世界 · 繁體中文 · ｆｕｌｌｗｉｄｔｈ"),
+        (
+            "CJK",
+            "日本語 こんにちは カタカナ · 한국어 안녕하세요 · 中文 你好，世界 · 繁體中文 · ｆｕｌｌｗｉｄｔｈ",
+        ),
         ("Arabic", "العربية: مرحبا بالعالم ۞ ۩"),
         ("Hebrew", "עברית: שלום עולם"),
         ("Thai", "ภาษาไทย สวัสดี ๑"),
@@ -441,7 +444,11 @@ mod tests {
             eprintln!("system fonts incomplete: not checked");
             return;
         }
-        let text = demo_text().into_iter().chain(SCRIPTS.iter().map(|(_, t)| *t)).collect::<Vec<_>>().join(" ");
+        let text = demo_text()
+            .into_iter()
+            .chain(SCRIPTS.iter().map(|(_, t)| *t))
+            .collect::<Vec<_>>()
+            .join(" ");
         for b in &BUILTINS {
             for family in [egui::FontFamily::Proportional, semibold_family()] {
                 let missing = squares(definitions_for(b.name, system), family.clone(), &text);
@@ -479,7 +486,11 @@ mod tests {
     #[test]
     fn what_inter_lacks_comes_from_the_same_faces_as_with_noto() {
         let system = fallback::wait();
-        let text = demo_text().into_iter().chain(SCRIPTS.iter().map(|(_, t)| *t)).collect::<Vec<_>>().join(" ");
+        let text = demo_text()
+            .into_iter()
+            .chain(SCRIPTS.iter().map(|(_, t)| *t))
+            .collect::<Vec<_>>()
+            .join(" ");
         for family in [egui::FontFamily::Proportional, semibold_family()] {
             let inter = faces_drawing(definitions_for(INTER, system), family.clone(), &text);
             let noto = faces_drawing(definitions_for(NOTO, system), family.clone(), &text);
@@ -535,13 +546,21 @@ mod tests {
         let defs = definitions_for(&format!("system:{}", font.path.display()), &[]);
         assert!(!defs.font_data.contains_key(SEMIBOLD));
         assert_eq!(defs.families[&semibold_family()][0], "aurora-main");
-        assert_eq!(defs.font_data["aurora-main"].font.as_ref(), std::fs::read(&font.path).expect("font file"));
+        assert_eq!(
+            defs.font_data["aurora-main"].font.as_ref(),
+            std::fs::read(&font.path).expect("font file")
+        );
     }
 
     /// Typographic family name of an embedded face (name ID 16, else 1).
     fn font_family_name(ttf: &[u8]) -> Option<String> {
         let face = ttf_parser::Face::parse(ttf, 0).ok()?;
-        let name = |id| face.names().into_iter().find(|n| n.name_id == id && n.is_unicode()).and_then(|n| n.to_string());
+        let name = |id| {
+            face.names()
+                .into_iter()
+                .find(|n| n.name_id == id && n.is_unicode())
+                .and_then(|n| n.to_string())
+        };
         name(16).or_else(|| name(1))
     }
 

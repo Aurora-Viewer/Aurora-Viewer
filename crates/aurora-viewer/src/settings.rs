@@ -2137,7 +2137,11 @@ mod tests {
             (15, "Noto Sans", "Inter"),
             (2, "Inter", "Inter"),
             (15, "Roboto", "Roboto"),
-            (15, "system:C:\\Windows\\Fonts\\segoeui.ttf", "system:C:\\Windows\\Fonts\\segoeui.ttf"),
+            (
+                15,
+                "system:C:\\Windows\\Fonts\\segoeui.ttf",
+                "system:C:\\Windows\\Fonts\\segoeui.ttf",
+            ),
             (16, "Noto Sans", "Noto Sans"),
         ] {
             let old = Settings {
