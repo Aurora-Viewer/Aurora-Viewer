@@ -275,7 +275,7 @@ fn chat_island(
     );
     // egui paints a placeholder in the weak text colour, whatever its own
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
-    let out = crate::ui::chat::bar_input(&mut child, chat, gestures, emoji.as_deref_mut(), |edit| {
+    let out = crate::ui::chat::bar_input(&mut child, p, chat, gestures, emoji.as_deref_mut(), |edit| {
         edit.frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
             .font(egui::FontId::proportional(12.5))
@@ -331,6 +331,7 @@ fn emoji_picker(
         return;
     };
     let mut close = false;
+    let mut escape = false;
     let shown = egui::Area::new(Id::new("chat_island_emoji_picker"))
         .fade_in(false)
         .order(egui::Order::Foreground)
@@ -339,14 +340,20 @@ fn emoji_picker(
         .show(ui.ctx(), |ui| {
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(300.0);
-                if let Some(c) = emoji.picker(ui, p, icons) {
+                let picked = emoji.picker(ui, p, icons);
+                if let Some(c) = picked.chosen {
                     chat.input.push(c);
                     close = !ui.input(|i| i.modifiers.shift);
                 }
+                escape = picked.escape;
             });
         });
     let away = shown.response.clicked_elsewhere() && !ui.rect_contains_pointer(button.expand(4.0));
-    if close || away || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if escape {
+        // the field gets the keyboard back, its caret where it was
+        chat.bar_emoji_open = false;
+        ui.ctx().memory_mut(|m| m.request_focus(crate::ui::chat::bar_input_id()));
+    } else if close || away {
         chat.bar_emoji_open = false;
         chat.focus_request = true;
     }

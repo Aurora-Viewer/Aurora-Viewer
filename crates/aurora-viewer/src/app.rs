@@ -4959,6 +4959,11 @@ impl App {
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
+        // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
+        // the demo's start has settled (it takes it back at the start)
+        if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
+            self.chat_ui.conv_focus_request = true;
+        }
         if self.demo
             && self.frame_count == 800
             && let Ok(mode) = std::env::var("AURORA_DEMO_EXIT")
@@ -5940,6 +5945,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
+                || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -11625,6 +11631,15 @@ impl ApplicationHandler for App {
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 }
             }
+            // AURORA_DEMO_EMOJI_CODES=<text>: the conversation window open, its
+            // input holding <text> with the keyboard and the caret at the
+            // end: a `:code` of two letters or more there opens the emoji
+            // suggestions (`ui/emoji/codes.rs`)
+            if let Ok(text) = std::env::var("AURORA_DEMO_EMOJI_CODES") {
+                self.panels.chat = true;
+                *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
+                self.chat_ui.conv_focus_request = true;
+            }
             // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
             // its lines selected (Ctrl+A, or across three lines)
             if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_SELECT") {
@@ -11879,12 +11894,15 @@ impl ApplicationHandler for App {
                 }
                 if let PhysicalKey::Code(code) = ke.physical_key {
                     let pressed = ke.state == ElementState::Pressed;
-                    // The color dialog owns Escape before camera shortcuts.
-                    // egui already received the event above.
+                    // The color dialog and an emoji picker own Escape before
+                    // camera shortcuts. egui already received the event above.
                     let eyedropper = ui::widgets::color::pipette::armed(&self.egui_ctx);
                     if pressed
                         && code == KeyCode::Escape
-                        && (self.build.ui.color_picker.is_open() || self.script_editors.color_open() || eyedropper)
+                        && (self.build.ui.color_picker.is_open()
+                            || self.script_editors.color_open()
+                            || eyedropper
+                            || ui::emoji::picker_open(&self.egui_ctx))
                     {
                         return;
                     }

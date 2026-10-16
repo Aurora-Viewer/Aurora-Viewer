@@ -1743,6 +1743,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
+| `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
@@ -2188,6 +2189,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   colour), inverted in my own bubbles (light, violet text), nothing outside
   the selected characters; with the classic lines
   (Preferences › Aurora › Conversations) as with the bubbles.
+- **`AURORA_DEMO_EMOJI_CODES=<text>`**: the Conversations window open, its
+  input holding `<text>` with the keyboard and the caret at the end
+  (`ui/emoji/codes.rs`). With `hi :hea`, the list of suggestions opens
+  above the field: the emoji of the codes starting with "hea" (heart first),
+  the first one lit; the arrows move the choice, Tab or Enter take it (Enter
+  is not sent), Escape closes the list until the letters change. Typing the
+  closing `:` of a known code (`:smile:`) turns it into its emoji; a time
+  (`12:30:`), a word before the colon or a link stay as typed.
 - **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
   local chat with its emoji picker shown (first tab, smileys); any value
   other than `1` is put in the input field, as if picked. With

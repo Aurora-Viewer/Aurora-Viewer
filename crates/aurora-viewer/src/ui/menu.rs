@@ -227,8 +227,38 @@ pub fn popup_at(ctx: &egui::Context, id: Id, pos: egui::Pos2, open: &mut bool, p
     hovered
 }
 
+/// What the left of a row shows.
+#[derive(Clone, Copy)]
+enum Lead<'a> {
+    /// A Tabler icon, by name.
+    Icon(&'a str),
+    /// A picture in its own colours (an emoji), or a character when it has
+    /// none.
+    Picture(Option<&'a egui::TextureHandle>, &'a str),
+}
+
+/// A row of a list of suggestions shown under the keyboard (the emoji of a
+/// `:code` being typed): its `picture`, the `label`, a muted `detail` at the
+/// right end, lit like a hovered entry while `selected` (the arrows' choice).
+/// It does not close anything: the list belongs to its field.
+pub fn picture_row(
+    ui: &mut Ui,
+    p: &Palette,
+    picture: Option<&egui::TextureHandle>,
+    fallback: &str,
+    label: &str,
+    detail: &str,
+    selected: bool,
+) -> egui::Response {
+    row_lead(ui, p, Lead::Picture(picture, fallback), label, true, End::Keys(detail), selected)
+}
+
 /// One row: icon, label, right end. Hover highlight like a menu item.
 fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: End, open: bool) -> egui::Response {
+    row_lead(ui, p, Lead::Icon(icon), label, enabled, end, open)
+}
+
+fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool) -> egui::Response {
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
@@ -268,7 +298,28 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
         p.violet_light
     };
     let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(ICON));
-    paint_icon(painter, icon, icon_rect, tint);
+    match lead {
+        Lead::Icon(icon) => paint_icon(painter, icon, icon_rect, tint),
+        Lead::Picture(Some(t), _) => {
+            let size = t.size_vec2();
+            let fit = egui::Rect::from_center_size(icon_rect.center(), size * (ICON / size.max_elem()));
+            painter.image(
+                t.id(),
+                fit,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                super::widgets::PICTURE_TINT,
+            );
+        }
+        Lead::Picture(None, text) => {
+            painter.text(
+                icon_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                FontId::proportional(13.0),
+                ink,
+            );
+        }
+    }
     painter.galley(
         egui::pos2(rect.left() + PAD + ICON + PAD, rect.center().y - galley.size().y * 0.5),
         galley,
