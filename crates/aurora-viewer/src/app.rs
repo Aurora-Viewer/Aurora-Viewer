@@ -3172,6 +3172,48 @@ impl App {
         }
     }
 
+    /// AURORA_DEMO_LOOKAT=leave (issue #482): at frame 230 Violet Wolf looks
+    /// at us (his mark on our head), at frame 800 he logs off (the
+    /// simulator kills his avatar): his mark must go with him.
+    fn demo_look_at_leave(&mut self) {
+        use crate::world::lookat;
+        let wolf = crate::demo::DEMO_LOUP;
+        let ev = match self.frame_count {
+            230 => NetEvent::LookAt {
+                effect: uuid::Uuid::from_u128(0x100c),
+                source: wolf,
+                target: self.world.agent_id,
+                offset: [0.0; 3],
+                kind: lookat::CONVERSATION,
+                duration: lookat::MAX_TIMEOUT,
+            },
+            800 => {
+                let Some(key) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&wolf)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.key)
+                else {
+                    return;
+                };
+                NetEvent::ObjectsKilled {
+                    handle: key.region,
+                    local_ids: vec![key.local_id],
+                }
+            }
+            _ => return,
+        };
+        if let Some(e) = self.world.apply(ev) {
+            self.on_app_event(e);
+        }
+        log::info!(
+            "demo lookat leave: frame {}, remote look-ats {}",
+            self.frame_count,
+            self.world.look_at.remote.len()
+        );
+    }
+
     /// The point under the cursor the head looks at (`lookat::cursor_look`):
     /// the hover pick of the last frame, on an object in its frame (an
     /// avatar's from its head, as calcTargetPosition aims), or a global
@@ -7063,7 +7105,8 @@ impl App {
         // =own: the crosshairs shown, ours too, the real cursor; =own,x,y:
         // the cursor at (x, y), fractions of the window, moving by a pixel
         // (the head follows a cursor that moves); =targets: own
-        // with every other avatar looking somewhere new every 2 s
+        // with every other avatar looking somewhere new every 2 s; =leave:
+        // the crosshairs shown, Violet Wolf looks at us, then logs off
         if self.demo
             && let Ok(value) = std::env::var("AURORA_DEMO_LOOKAT")
         {
@@ -7071,9 +7114,12 @@ impl App {
             let mode = parts.next().unwrap_or_default().trim();
             let pinned: Vec<f32> = parts.filter_map(|v| v.trim().parse().ok()).collect();
             self.demo_look_at = true;
-            self.demo_look_at_targets = matches!(mode, "own" | "targets");
+            self.demo_look_at_targets = matches!(mode, "own" | "targets" | "leave");
             if mode == "targets" && self.frame_count >= 200 && self.frame_count.is_multiple_of(120) {
                 self.demo_look_at_everyone();
+            }
+            if mode == "leave" {
+                self.demo_look_at_leave();
             }
             // the cursor is pinned for captures; "own" and "targets" leave
             // the real one alone
@@ -7099,6 +7145,7 @@ impl App {
                     .set_view(ahead - rot * Vec3::Y * 1.2, ahead, &mut self.world.agent, &self.settings.camera);
             }
             if self.frame_count == 230
+                && mode != "leave"
                 && let Some((mx, my)) = self.world.main_origin()
             {
                 let p = self.world.agent.position + Vec3::new(4.0, 6.0, 1.0);
