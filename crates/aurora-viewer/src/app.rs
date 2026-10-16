@@ -5525,7 +5525,8 @@ impl App {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
             }
             let at = self.camera.forward();
-            self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml);
+            let step_back = self.settings.walk_backwards_without_turning;
+            self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml, step_back);
             self.trace_own_motion();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
@@ -11889,6 +11890,8 @@ impl ApplicationHandler for App {
                         | "worn"
                         | "filtered"
                         | "large"
+                        | "search-selection"
+                        | "search-selection-keyboard"
                         | "long"
                         | "long-filtered"
                         | "resize-left"
@@ -11900,7 +11903,11 @@ impl ApplicationHandler for App {
                         | "received-missing"
                 );
                 if configured_view {
-                    crate::world::inventory::demo::seed_view(&mut self.world.inventory, self.world.agent_id, view == "large");
+                    crate::world::inventory::demo::seed_view(
+                        &mut self.world.inventory,
+                        self.world.agent_id,
+                        view == "large" || view.starts_with("search-selection"),
+                    );
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
@@ -11939,6 +11946,9 @@ impl ApplicationHandler for App {
                     }
                     if view == "large" {
                         self.inventory_ui.search = aurora_i18n::tr!("app-item").into();
+                    }
+                    if view.starts_with("search-selection") {
+                        self.inventory_ui.search = aurora_i18n::tr!("world-inventory-demo-item", n = "1490");
                     }
                     if matches!(view.as_str(), "long" | "long-filtered" | "resize-left" | "resize-right") {
                         crate::world::inventory::demo::seed_long_names(&mut self.world.inventory);

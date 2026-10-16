@@ -144,7 +144,7 @@ fn demo_mode() -> Option<&'static str> {
     MODE.get_or_init(|| {
         std::env::var("AURORA_DEMO_INVENTORY")
             .ok()
-            .filter(|mode| mode.starts_with("clipboard"))
+            .filter(|mode| mode.starts_with("clipboard") || mode.starts_with("search-selection"))
     })
     .as_deref()
 }
@@ -165,12 +165,69 @@ pub(super) fn demo_caret(response: &egui::Response, st: &InventoryUi, folder: Uu
     }
 }
 
+pub(super) fn demo_search(response: &egui::Response, st: &InventoryUi) {
+    if demo_mode().is_some_and(|mode| mode.starts_with("search-selection")) {
+        response.ctx.data_mut(|data| {
+            data.insert_temp(egui::Id::new(("inventory_demo_search", st.ui_id)), response.rect);
+        });
+    }
+}
+
 /// Exercise actual rows with the same native events egui-winit emits for
 /// Ctrl+C/X/V, without activating the OS window or reading OS clipboard text.
 pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec<egui::Event> {
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
+    if mode.starts_with("search-selection") {
+        let keyboard = mode == "search-selection-keyboard";
+        let pos = match frame {
+            650 | 651 => ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", st.ui_id, Uuid::from_u128(11490))))),
+            720 | 721 => ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_demo_search", st.ui_id))))
+                .map(|rect| {
+                    if keyboard {
+                        rect.left_center() + egui::vec2(15.0, 0.0)
+                    } else {
+                        rect.right_center() - egui::vec2(14.0, 0.0)
+                    }
+                }),
+            _ => None,
+        };
+        if let Some(pos) = pos {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650 || frame == 720,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        if keyboard && matches!(frame, 730 | 731) {
+            return vec![egui::Event::Key {
+                key: if frame == 730 { egui::Key::A } else { egui::Key::Backspace },
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: if frame == 730 {
+                    egui::Modifiers::COMMAND
+                } else {
+                    egui::Modifiers::NONE
+                },
+            }];
+        }
+        if frame == 800 {
+            log::info!(
+                "demo inventory search selection: query_empty={}, selected={:?}, visible={}",
+                st.search.is_empty(),
+                st.selected,
+                st.selected.is_some_and(|id| st.visible.contains(&id))
+            );
+        }
+        return Vec::new();
+    }
     let window = mode == "clipboard-window";
     if mode == "clipboard-progress" {
         super::progress::demo(frame, st);

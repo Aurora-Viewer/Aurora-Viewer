@@ -2346,6 +2346,15 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-letter-keys-move-help"),
                     |ui| toggle(ui, p, &mut s.letter_keys_move),
                 );
+                // Legacy Viewer › Move & View › Movement
+                // (FSDisableTurningAroundWhenWalkingBackwards)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-walk-backwards-without-turning"),
+                    aurora_i18n::tr!("ui-options-walk-backwards-without-turning-help"),
+                    |ui| toggle(ui, p, &mut s.walk_backwards_without_turning),
+                );
                 row(
                     ui,
                     p,
