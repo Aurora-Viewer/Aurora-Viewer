@@ -452,8 +452,7 @@ impl TexturePicker {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     ui.spacing_mut().button_padding.x = 3.0;
-                    let width = (ui.available_width() - ui.spacing().item_spacing.x * 3.0) / 4.0;
-                    for (label, asset) in [
+                    let presets = [
                         (aurora_i18n::tr!("common-default"), self.default),
                         (
                             aurora_i18n::tr!("common-blank"),
@@ -464,10 +463,23 @@ impl TexturePicker {
                             (!self.materials).then_some(TRANSPARENT_TEXTURE),
                         ),
                         (aurora_i18n::tr!("common-none-2"), self.allow_none.then_some(Uuid::nil())),
-                    ] {
+                    ];
+                    let widths = presets.map(|(label, _)| {
+                        ui.fonts_mut(|fonts| {
+                            fonts
+                                .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), p.ink)
+                                .size()
+                                .x
+                        }) + ui.spacing().button_padding.x * 2.0
+                    });
+                    let available = ui.available_width() - ui.spacing().item_spacing.x * 3.0;
+                    let total: f32 = widths.iter().sum();
+                    let scale = (available / total).clamp(0.0, 1.0);
+                    let extra = ((available - total) / 4.0).max(0.0);
+                    for ((label, asset), width) in presets.into_iter().zip(widths) {
                         if ui
                             .add_enabled_ui(asset.is_some(), |ui| {
-                                widgets::flat_button_sized(ui, p, label, Vec2::new(width, 26.0))
+                                widgets::flat_button_sized(ui, p, label, Vec2::new(width * scale + extra, 26.0))
                             })
                             .inner
                             .clicked()
