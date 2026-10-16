@@ -125,6 +125,20 @@ impl Harness {
         self.frame(vec![button(true)]);
         self.frame(vec![button(false)]);
     }
+
+    /// A right click at `at`, and the frames that show its menu.
+    fn right_click(&mut self, at: egui::Pos2) -> Vec<crate::ui::widgets::elide_tests::Text> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(vec![egui::Event::PointerMoved(at)]);
+        self.frame(vec![button(true)]);
+        self.frame(vec![button(false)]);
+        self.settle()
+    }
 }
 
 /// The column lists the conversations; a click shows one and gives its
@@ -825,4 +839,129 @@ fn last_text(texts: &[crate::ui::widgets::elide_tests::Text], source: &str) -> e
         .rev()
         .find(|t| t.source == source)
         .map_or(egui::Rect::NOTHING, |t| t.rect)
+}
+
+const GROUP: Uuid = Uuid::from_u128(0x6);
+
+/// Whether a text `label` is painted.
+fn shown(texts: &[crate::ui::widgets::elide_tests::Text], label: &str) -> bool {
+    texts.iter().any(|t| t.source == label)
+}
+
+/// The right-click menu of a private conversation in the column: Close and
+/// its call, the resident's own menu (the one of their name) and the rows
+/// the conversation item adds; its Close closes the conversation.
+#[test]
+fn a_private_conversation_opens_its_menu_in_the_column() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.settle();
+    let jane = h.rect(entry_id(Pinned::Conversation(JANE)));
+    let texts = h.right_click(jane.center());
+    let close = aurora_i18n::tr!("ui-chat-close-conversation");
+    for label in [
+        close,
+        aurora_i18n::tr!("common-voice-call"),
+        aurora_i18n::tr!("common-view-profile"),
+        aurora_i18n::tr!("common-copy-name"),
+        aurora_i18n::tr!("common-pay"),
+    ] {
+        assert!(shown(&texts, label), "{label:?} in the menu");
+    }
+    assert!(!shown(&texts, aurora_i18n::tr!("people-group-profile")), "no group rows");
+    h.click(last(&texts, close).center());
+    assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == JANE)));
+}
+
+/// A group's conversation: Close, its call, the transcript and the group's
+/// actions (profile, activate unless it is the active group, stop its
+/// chat, leave), none of a resident's.
+#[test]
+fn a_group_conversation_opens_the_group_actions() {
+    use crate::ui::context::{CtxAction, take_requests};
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.groups.groups.push(aurora_net::GroupMembership {
+        id: GROUP,
+        name: "Builders".into(),
+        insignia: Uuid::nil(),
+        powers: 0,
+        accept_notices: true,
+        list_in_profile: true,
+        contribution: 0,
+    });
+    h.world.conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, "hello builders"));
+    h.world.calls.voice_enabled = true;
+    h.settle();
+    let group = h.rect(entry_id(Pinned::Conversation(GROUP)));
+    let texts = h.right_click(group.center());
+    let activate = aurora_i18n::tr!("ui-chat-menu-activate-group");
+    let call = aurora_i18n::tr!("common-voice-call");
+    assert!(
+        shown(&texts, aurora_i18n::tr!("ui-chat-close-conversation"))
+            || shown(&texts, aurora_i18n::tr!("ui-chat-close-conversation-leave"))
+    );
+    for label in [
+        call,
+        aurora_i18n::tr!("common-view-conversation-history"),
+        aurora_i18n::tr!("people-group-profile"),
+        activate,
+        aurora_i18n::tr!("common-stop-receiving-this-group-s-chat"),
+        aurora_i18n::tr!("ui-contacts-leave-group"),
+    ] {
+        assert!(shown(&texts, label), "{label:?} in the menu");
+    }
+    assert!(!shown(&texts, aurora_i18n::tr!("common-view-profile")), "no resident rows");
+    take_requests(&h.frames.ctx);
+    h.click(last(&texts, activate).center());
+    let asked = take_requests(&h.frames.ctx);
+    assert!(
+        asked.iter().any(|a| matches!(a, CtxAction::ActivateGroup(id) if *id == GROUP)),
+        "{asked:?}"
+    );
+    // the active group already: greyed
+    h.world.groups.active = GROUP;
+    h.settle();
+    let texts = h.right_click(group.center());
+    h.click(last(&texts, activate).center());
+    assert!(take_requests(&h.frames.ctx).is_empty(), "nothing asked from a greyed row");
+    let texts = h.right_click(group.center());
+    h.click(last(&texts, call).center());
+    assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Call(id) if *id == GROUP)));
+}
+
+/// The nearby chat's menu holds its transcript only: it cannot be closed.
+#[test]
+fn the_nearby_chat_menu_holds_its_transcript() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.settle();
+    let local = h.rect(entry_id(Pinned::Local));
+    let texts = h.right_click(local.center());
+    assert!(shown(&texts, aurora_i18n::tr!("common-view-conversation-history")));
+    assert!(!shown(&texts, aurora_i18n::tr!("ui-chat-close-conversation")));
+    assert!(!shown(&texts, aurora_i18n::tr!("common-voice-call")));
+}
+
+/// The tabs of the Bubbles and Lines styles open the same menu.
+#[test]
+fn the_tabs_of_the_other_styles_open_the_menu() {
+    for style in [ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        let texts = h.settle();
+        let name = h.world.session_title(&JANE);
+        // the tab: the leftmost text with the conversation's name
+        let tab = texts
+            .iter()
+            .filter(|t| t.source == name)
+            .min_by(|a, b| a.rect.left().total_cmp(&b.rect.left()))
+            .expect("the tab is drawn")
+            .rect;
+        let texts = h.right_click(tab.center());
+        let close = aurora_i18n::tr!("ui-chat-close-conversation");
+        assert!(shown(&texts, close), "{style:?}");
+        assert!(shown(&texts, aurora_i18n::tr!("common-view-profile")), "{style:?}");
+        h.click(last(&texts, close).center());
+        assert!(
+            h.actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == JANE)),
+            "{style:?}"
+        );
+    }
 }

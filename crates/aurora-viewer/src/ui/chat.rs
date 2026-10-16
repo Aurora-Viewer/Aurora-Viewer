@@ -4,6 +4,7 @@ mod bubbles;
 mod call;
 mod completion;
 mod compose;
+mod conv_menu;
 mod find;
 mod head;
 mod header;
@@ -55,6 +56,9 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV_SELECT`: a selection to make once lines are shown
     /// ("all", or "part" of three lines).
     pub demo_select: Option<String>,
+    /// `AURORA_DEMO_CONV_MENU=local|im|group|conference`: the conversation
+    /// of the list whose right-click menu the demo opens.
+    pub demo_menu: Option<String>,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
     /// Textures the conversation wants by id (the groups' insignias), drawn
@@ -1862,7 +1866,7 @@ pub fn show(
                     }
                 }
                 let local_shown = st.selected.is_none() && !st.contacts;
-                if list_entry(
+                let local = list_entry(
                     ui,
                     p,
                     aurora_i18n::tr!("common-nearby-chat"),
@@ -1872,9 +1876,10 @@ pub fn show(
                     if local_shown { 0 } else { world.chat_unread },
                     None,
                 )
-                .resp
-                .clicked()
-                {
+                .resp;
+                conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
+                conv_menu::attach(&local, p, world, &mut actions, None);
+                if local.clicked() {
                     st.select_tab(None);
                 }
                 let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
@@ -1905,6 +1910,8 @@ pub fn show(
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
                         }
+                        conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
+                        conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         if entry.close {
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
@@ -2392,8 +2399,13 @@ pub fn toasts(
 }
 
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
-/// at frame 700 (its profile opens).
+/// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
+/// on a conversation of the list (`conv_menu`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let menu = conv_menu::demo_events(ctx, frame);
+    if !menu.is_empty() {
+        return menu;
+    }
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();
     }

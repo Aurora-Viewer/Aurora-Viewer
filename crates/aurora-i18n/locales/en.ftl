@@ -5784,6 +5784,7 @@ ui-options-camera-reset-all = Reset the camera
 ui-options-camera-reset-all-tip = Puts every setting of this page back to its default: rear view, camera position and focus point, viewing angle, distance, smoothing, limits and mouselook.
 ui-chat-close-conversation = Close conversation
 ui-chat-close-conversation-leave = Close conversation (leaves the session)
+ui-chat-menu-activate-group = Activate group
 ui-options-snap-windows = Snap windows
 ui-options-snap-windows-help = Hold Alt while moving a window to snap it to another window, a bar or a screen edge. Without Alt, moving creates no attachment. Attached windows move together; Alt detaches the window you drag and lets you attach it elsewhere. Resizing snaps automatically; Alt disables snapping during a resize.
 ui-options-windows-stop-at-edges = Windows stop at the screen edges

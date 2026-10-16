@@ -1745,6 +1745,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
+| `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2193,6 +2194,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
+  `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
+  at frame 701 on the first conversation of that kind in the list (the
+  workspace's column or the tabs) opens its menu: capture at frame 780 with
+  `AURORA_FPS_LIMIT=60`. `im` (`AURORA_DEMO_CONV=aurora`): Close and Voice
+  call, the resident's menu of a name, then Invite to group, Show on map,
+  Share and Pay; `group` (`aurora` or `bubbles:group`): Close, Voice call,
+  the transcript, Group profile, Activate group (greyed for the active
+  one), Stop receiving its chat, Leave group; `conference`
+  (`aurora:conference`): Close, Hang up during its call, the transcript;
+  `local`: the transcript only. The transcript rows are greyed in the demo
+  (no transcript folder).
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of

@@ -313,7 +313,10 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                 };
-                if entry(ui, p, &e, rail, entry_id(Pinned::Local)).resp.clicked() {
+                let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
+                super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
+                super::conv_menu::attach(&picked.resp, p, world, actions, None);
+                if picked.resp.clicked() {
                     st.select_tab(None);
                 }
             }
@@ -369,6 +372,8 @@ pub(super) fn show(
                         picked.resp.scroll_to_me(None);
                         st.reveal = None;
                     }
+                    super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
+                    super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
                     if picked.close {
                         actions.push(ConvAction::Close(id));
                     } else if picked.resp.clicked() {

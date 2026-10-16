@@ -5786,6 +5786,7 @@ ui-options-camera-reset-all = Réinitialiser la caméra
 ui-options-camera-reset-all-tip = Remet tous les réglages de cette page à leur valeur par défaut : vue arrière, position et point visé, angle de vue, distance, lissage, limites et vue subjective.
 ui-chat-close-conversation = Fermer la conversation
 ui-chat-close-conversation-leave = Fermer la conversation (quitte la session)
+ui-chat-menu-activate-group = Activer le groupe
 ui-options-snap-windows = Aimanter les fenêtres
 ui-options-snap-windows-help = Maintenir Alt pendant le déplacement permet de coller une fenêtre à une autre, à une barre ou à un bord de l'écran. Sans Alt, déplacer une fenêtre ne crée aucun lien. Les fenêtres attachées bougent ensemble ; Alt détache la fenêtre déplacée et permet de l'attacher ailleurs. Le redimensionnement aimante automatiquement les bords ; Alt désactive cet aimant pendant le redimensionnement.
 ui-options-windows-stop-at-edges = Fenêtres arrêtées aux bords de l'écran
