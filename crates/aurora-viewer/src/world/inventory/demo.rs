@@ -639,7 +639,7 @@ pub fn seed_big(inv: &mut Inventory, agent: Uuid, items: usize) -> Vec<Uuid> {
                 if p % 4 == 0 {
                     let extras = add_folder(inv, product, "Extras".into());
                     leaves.push(extras);
-                    if (n + p) % 3 == 0 {
+                    if (n + p).is_multiple_of(3) {
                         leaves.push(add_folder(inv, extras, "Fit packs".into()));
                     }
                 }

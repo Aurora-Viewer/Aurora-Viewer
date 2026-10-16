@@ -18,20 +18,19 @@ impl App {
         }
         let elapsed = START.get_or_init(Instant::now).elapsed();
         if big.toggle > 0.0 {
-            let open = (elapsed.as_secs_f32() / big.toggle) as u64 % 2 == 0;
+            let open = ((elapsed.as_secs_f32() / big.toggle) as u64).is_multiple_of(2);
             if open != self.panels.inventory {
                 log::info!("demo inventory window open={open}");
                 self.panels.inventory = open;
             }
         }
-        if big.churn_ms > 0 {
-            let due = elapsed.as_millis() as u64 / big.churn_ms;
-            if CHURNS.swap(due, Ordering::Relaxed) != due {
-                let id = Uuid::from_u128(21_000_000 + u128::from(due % 2_000));
-                if let Some(mut item) = self.world.inventory.items.get(&id).cloned() {
-                    item.desc = format!("Update {due}");
-                    self.world.inventory.server_updated(Vec::new(), vec![item]);
-                }
+        if let Some(due) = (elapsed.as_millis() as u64).checked_div(big.churn_ms)
+            && CHURNS.swap(due, Ordering::Relaxed) != due
+        {
+            let id = Uuid::from_u128(21_000_000 + u128::from(due % 2_000));
+            if let Some(mut item) = self.world.inventory.items.get(&id).cloned() {
+                item.desc = format!("Update {due}");
+                self.world.inventory.server_updated(Vec::new(), vec![item]);
             }
         }
     }
