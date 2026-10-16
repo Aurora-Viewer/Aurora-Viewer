@@ -310,7 +310,7 @@ pub fn show(
     let mut open = true;
     let mut toggle_sections = false;
     let (title_icon, title) = compact::window_heading(tool);
-    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), Vec2::new(344.0, 538.0))
+    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), Vec2::new(344.0, 684.0))
         .help(aurora_i18n::tr!("build-compact-help"))
         .framed_header(title_icon)
         .action(
@@ -319,6 +319,7 @@ pub fn show(
             &mut toggle_sections,
         )
         .silent();
+    floater.header_status = compact::object_status(tool, world, p);
     floater.min_size = Vec2::new(344.0, 420.0);
     if !s.expanded {
         if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(egui::Id::new(INSPECTOR_ID).with("sections_expanded_size"))) {
@@ -474,6 +475,25 @@ impl BuildTool {
             };
             self.faces.insert(unit, vec![f]);
             self.last_face = Some(f);
+        }
+    }
+
+    pub fn select_next_link(&mut self, world: &mut World, s: &mut BuildSettings, next: bool, include: bool) {
+        if !s.edit_linked {
+            return;
+        }
+        let mode = self.edit_mode;
+        self.edit_mode = EditMode::Move;
+        self.select_next_part(world, s, next, include);
+        self.edit_mode = mode;
+        if mode == EditMode::Face {
+            if !include {
+                self.faces.clear();
+            }
+            if let Some(key) = self.selection.first().copied() {
+                self.faces.insert(key, vec![0]);
+            }
+            self.last_face = Some(0);
         }
     }
 

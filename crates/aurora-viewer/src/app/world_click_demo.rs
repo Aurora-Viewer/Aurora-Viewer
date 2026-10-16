@@ -61,7 +61,7 @@ impl App {
         if self.frame_count == 700 {
             self.alt = mode.starts_with("camera-");
             log::info!("demo world click: mode={mode}, cursor={:?}", self.cursor_pos);
-            let over_ui = self.egui_ctx.is_pointer_over_egui() || self.egui_ctx.egui_wants_pointer_input();
+            let over_ui = self.ui_takes_pointer();
             log::info!("demo world click UI: over_ui={over_ui}");
             self.mouse_input(MouseButton::Left, true, over_ui);
         }

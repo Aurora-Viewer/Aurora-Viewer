@@ -2,7 +2,7 @@
 //! and bottom shelf (H3), backed by both library folders under #Aurora.
 
 pub(crate) mod catalogue;
-mod previews;
+pub(crate) mod previews;
 mod windows;
 pub(crate) use windows::window_id as preview_window_id;
 #[cfg(test)]

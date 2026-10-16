@@ -156,9 +156,6 @@ pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            if let Some(v) = check(ui, p, s.rez_under_land_group, false, aurora_i18n::tr!("rez-under-land-group"), true) {
-                s.rez_under_land_group = v;
-            }
             if let Some(v) = check(
                 ui,
                 p,

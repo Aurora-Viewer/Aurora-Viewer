@@ -703,6 +703,7 @@ fn nearby_snap(screen: Rect, parent: Rect, window: Rect) -> Option<DockSide> {
 
 fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: usize) -> egui::Response {
     let modifiers = ui.input(|i| i.modifiers);
+    let increment = speed;
     let speed = speed
         * 0.25
         * if modifiers.alt {
@@ -714,15 +715,26 @@ fn number(ui: &mut egui::Ui, value: &mut f32, max: f32, speed: f32, decimals: us
         } else {
             1.0
         };
-    ui.add_sized(
-        [76.0, 23.0],
-        egui::DragValue::new(value)
-            .range(0.0..=max)
-            .speed(speed)
-            .min_decimals(decimals)
-            .max_decimals(decimals)
-            .custom_parser(aurora_i18n::parse_number),
-    )
+    let (mut response, step) = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let response = ui.add_sized(
+                [63.0, 23.0],
+                egui::DragValue::new(&mut *value)
+                    .range(0.0..=max)
+                    .speed(speed)
+                    .min_decimals(decimals)
+                    .max_decimals(decimals)
+                    .custom_parser(aurora_i18n::parse_number),
+            );
+            (response, widgets::step_buttons(ui, 23.0))
+        })
+        .inner;
+    if step != 0 {
+        *value = (*value + increment * step as f32).clamp(0.0, max);
+        response.mark_changed();
+    }
+    response
 }
 
 pub fn color(rgb: Rgb) -> Color32 {
