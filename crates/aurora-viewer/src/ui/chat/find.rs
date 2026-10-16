@@ -1,8 +1,8 @@
 //! Searching a conversation: the filter of its toolbar (only the matching
-//! lines stay) and the find bar opened by Ctrl+F (the lines stay, the
-//! matches are highlighted and visited one after the other, like
-//! Firestorm's LLFloaterSearchReplace on a chat history). Each conversation
-//! has its own.
+//! lines stay) and the find field opened by Ctrl+F or the head's magnifier,
+//! in the head's row (the lines stay, the matches are highlighted and
+//! visited one after the other, like LLFloaterSearchReplace on a chat
+//! history). Each conversation has its own.
 
 use super::view::View;
 use crate::theme::Palette;
@@ -78,10 +78,35 @@ pub fn wash(p: &Palette) -> Color32 {
     p.amber.gamma_multiply(0.28)
 }
 
-/// Mark of the line of the current match: an amber bar along its left edge.
+/// Where the message of the row being drawn spans (top, and bottom when the
+/// drawer knows it), below its day and "New" lines.
+fn message_key() -> egui::Id {
+    egui::Id::new("conv_find_message_span")
+}
+
+/// A row's drawer says where its message starts, below the day and "New"
+/// lines it drew first, and where it ends when it leaves a gap after it.
+pub fn note_message(ui: &egui::Ui, top: f32, bottom: Option<f32>) {
+    ui.ctx().data_mut(|d| d.insert_temp(message_key(), (top, bottom)));
+}
+
+/// Before a row is drawn: nothing noted yet.
+pub fn forget_message(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<(f32, Option<f32>)>(message_key()));
+}
+
+/// Mark of the line of the current match: an amber bar along the left edge
+/// of its message only (the human's report of 2026-10-16: it ran over the
+/// day and "New" lines above the message and the gap under it).
 pub fn current_marker(ui: &egui::Ui, p: &Palette) {
     let r = ui.min_rect();
-    let bar = egui::Rect::from_min_max(r.left_top(), egui::pos2(r.left() + 2.0, r.bottom()));
+    let (top, bottom) = ui
+        .ctx()
+        .data(|d| d.get_temp::<(f32, Option<f32>)>(message_key()))
+        .unwrap_or((r.top(), None));
+    let top = top.clamp(r.top(), r.bottom());
+    let bottom = bottom.unwrap_or(r.bottom()).clamp(top, r.bottom());
+    let bar = egui::Rect::from_min_max(egui::pos2(r.left(), top), egui::pos2(r.left() + 2.0, bottom));
     ui.painter().rect_filled(bar, 0.0, p.amber);
 }
 
@@ -104,61 +129,83 @@ pub fn wants_shortcut(ui: &egui::Ui, own: &[egui::Id]) -> bool {
     super::super::find_shortcut::take(ui, own)
 }
 
-/// The find bar: field, previous / next, "3 / 17", close. Enter goes to the
-/// next match (Shift+Enter to the previous), Escape closes. True when it
-/// was closed.
-pub fn bar(ui: &mut egui::Ui, p: &Palette, f: &mut Find, view: &mut View) -> bool {
+/// Side of the small buttons at the field's end.
+const BUTTON: f32 = 20.0;
+
+/// The find field, laid over `rect` in the head's row in place of the
+/// conversation's picture and name (the human's request of 2026-10-16: no
+/// strip pushing the messages): the face of the other windows' search
+/// fields (`widgets::field_frame`, here on `face`), a magnifier, the text,
+/// then inside it the match count and previous / next. Enter goes to the
+/// previous (older) match, Shift+Enter to the next one; Escape closes, as
+/// the cross at its end when `cross` (a head without the magnifier's
+/// button). True when it was closed.
+pub fn field(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, face: Color32, f: &mut Find, view: &mut View, cross: bool) -> bool {
+    use super::super::widgets;
     let mut close = false;
-    ui.horizontal(|ui| {
-        ui.set_height(BAR_H);
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let field = ui.add(
-            egui::TextEdit::singleline(&mut f.text)
-                .id(field_id())
-                .hint_text(aurora_i18n::tr!("ui-chat-find"))
-                .desired_width((ui.available_width() - 190.0).clamp(80.0, 260.0)),
-        );
-        if std::mem::take(&mut f.focus) {
-            field.request_focus();
-        }
-        if field.changed() {
-            f.restart = true;
-        }
-        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            close = true;
-        }
-        let n = view.hits().len();
-        let prev = super::super::widgets::icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-chat-find-previous"), n > 0);
-        let next = super::super::widgets::icon_button(ui, p, "caret-down-filled", aurora_i18n::tr!("ui-chat-find-next"), n > 0);
-        if enter {
-            // Enter walks up the conversation, from the latest match
-            f.step(view, ui.input(|i| i.modifiers.shift));
-            field.request_focus();
-        } else if prev {
-            f.step(view, false);
-        } else if next {
-            f.step(view, true);
-        }
-        let count = if f.text.is_empty() {
-            String::new()
-        } else if n == 0 {
-            aurora_i18n::tr!("ui-chat-find-none").to_owned()
-        } else {
-            aurora_i18n::tr!(
-                "ui-chat-find-count",
-                current = (f.current.min(n - 1) + 1).to_string(),
-                total = n.to_string()
-            )
-        };
-        let color = if n == 0 && !f.text.is_empty() { p.warn } else { p.muted };
-        ui.label(RichText::new(count).size(12.0).color(color));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if super::super::widgets::icon_button(ui, p, "x", aurora_i18n::tr!("ui-chat-find-close"), true) {
-                close = true;
-            }
-        });
-    });
+    ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
+    let n = view.hits().len();
+    let count = if f.text.is_empty() {
+        String::new()
+    } else if n == 0 {
+        aurora_i18n::tr!("ui-chat-find-none").to_owned()
+    } else {
+        aurora_i18n::tr!(
+            "ui-chat-find-count",
+            current = (f.current.min(n - 1) + 1).to_string(),
+            total = n.to_string()
+        )
+    };
+    let count_font = egui::FontId::proportional(12.0);
+    let count_w = ui
+        .painter()
+        .layout_no_wrap(count.clone(), count_font.clone(), Color32::PLACEHOLDER)
+        .size()
+        .x;
+    let gap = 4.0;
+    let trailing = count_w + gap + 2.0 * BUTTON + gap + if cross { BUTTON + gap } else { 0.0 };
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(egui::vec2(9.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let ui = &mut child;
+    ui.spacing_mut().item_spacing.x = gap;
+    widgets::glyph(ui, "search-filled", p.muted, 13.0);
+    let text_w = (ui.available_width() - trailing).max(40.0);
+    let edit = ui.add(
+        egui::TextEdit::singleline(&mut f.text)
+            .id(field_id())
+            .frame(egui::Frame::NONE)
+            .hint_text(aurora_i18n::tr!("ui-chat-find"))
+            .desired_width(text_w),
+    );
+    if std::mem::take(&mut f.focus) {
+        edit.request_focus();
+    }
+    if edit.changed() {
+        f.restart = true;
+    }
+    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        close = true;
+    }
+    let color = if n == 0 && !f.text.is_empty() { p.warn } else { p.muted };
+    ui.label(RichText::new(count).font(count_font).color(color));
+    let prev = widgets::icon_button(ui, p, "caret-up-filled", aurora_i18n::tr!("ui-chat-find-previous"), n > 0);
+    let next = widgets::icon_button(ui, p, "caret-down-filled", aurora_i18n::tr!("ui-chat-find-next"), n > 0);
+    if cross && widgets::icon_button(ui, p, "x", aurora_i18n::tr!("ui-chat-find-close"), true) {
+        close = true;
+    }
+    if enter {
+        // Enter walks up the conversation, from the latest match
+        f.step(view, ui.input(|i| i.modifiers.shift));
+        edit.request_focus();
+    } else if prev {
+        f.step(view, false);
+    } else if next {
+        f.step(view, true);
+    }
     close
 }
 

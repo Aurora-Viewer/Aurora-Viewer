@@ -109,10 +109,19 @@ fn minimized_width(expanded: f32) -> f32 {
 /// the bars' islands (`layout::clear_of_islands`): a window saved in a
 /// larger screen or another layout comes back within reach. None when it
 /// stands well and nothing asks for it elsewhere.
-fn title_in_reach(ctx: &egui::Context, id: egui::Id, area: egui::Rect, asked: Option<egui::Pos2>) -> Option<egui::Pos2> {
+fn title_in_reach(
+    ctx: &egui::Context,
+    id: egui::Id,
+    area: egui::Rect,
+    asked: Option<egui::Pos2>,
+    sized: Option<Vec2>,
+) -> Option<egui::Pos2> {
     use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, islands, keep_title_in, window_edges};
     let state = egui::AreaState::load(ctx, id).filter(|s| s.size.is_some());
-    let size = state.as_ref().and_then(|s| s.size).unwrap_or(egui::vec2(TITLE_GRIP, TITLE_BAR_H));
+    // `sized`: the size it takes this frame (an edge dragged)
+    let size = sized
+        .or_else(|| state.as_ref().and_then(|s| s.size))
+        .unwrap_or(egui::vec2(TITLE_GRIP, TITLE_BAR_H));
     let pos = asked.or_else(|| state.as_ref().map(|s| s.left_top_pos()))?;
     let edges = window_edges(ctx);
     let mut kept = keep_title_in(area, pos, size, edges);
@@ -390,19 +399,34 @@ impl<'a> Floater<'a> {
         // it cross, its title bar within reach (`layout::reach`); a window
         // dragged with its group has the group's limits.
         let room = super::layout::move_area(ctx);
+        // the edge dragged snaps to the other windows and to the work area
+        let resized = resize_drag.map(|drag| {
+            on_pixels(
+                ctx,
+                super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
+            )
+        });
         let size = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
             .unwrap_or(self.default_size);
         let edges = super::layout::window_edges(ctx);
-        w = w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size, edges)));
+        // While an edge is dragged the drag keeps the window in its bounds
+        // and its title in reach (`title_in_reach` below): egui would
+        // constrain the asked position with the last frame's size, and a
+        // quick drag of the left or top edge pushed the whole window back
+        // by what that size exceeded, its opposite edge moving for a frame
+        // (the human's report of 2026-10-16).
+        w = if resized.is_some() {
+            w.constrain(false)
+        } else {
+            w.constrain_to(slot.limits.unwrap_or_else(|| super::layout::reach(room, size, edges)))
+        };
         if let Some(pos) = ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(window_id.with(PLACE_POS))) {
             asked = Some(pos);
             if self.cascade.is_some() {
                 cascade::placed(ctx, window_id);
             }
         }
-        // the edge dragged snaps to the other windows and to the work area
-        let resized = resize_drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
         if let Some(rect) = resized {
             w = w.fixed_size(rect.size());
             asked = Some(rect.min);
@@ -410,7 +434,7 @@ impl<'a> Floater<'a> {
         // Whatever places the window, its title bar stays in reach: egui
         // lets a window larger than its limits slide out of them by what it
         // has in excess, title first.
-        if let Some(pos) = title_in_reach(ctx, window_id, room, asked) {
+        if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
             w = w.current_pos(pos);
         }
         let mut glass_slot = None;
@@ -652,9 +676,15 @@ pub(crate) fn bare_window(
     if let Some(limits) = slot.limits {
         w = w.constrain_to(limits);
     }
-    let resized = drag.map(|drag| super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()));
+    let resized = drag.map(|drag| {
+        on_pixels(
+            ctx,
+            super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
+        )
+    });
     if let Some(rect) = resized {
-        w = w.fixed_size(rect.size()).current_pos(rect.min);
+        // (no constraint from the last frame's size: see `Floater::show`)
+        w = w.fixed_size(rect.size()).current_pos(rect.min).constrain(false);
     }
     let Some(shown) = w.show(ctx, |ui| {
         // as a resizable egui::Window would: the body gets the whole size
@@ -668,6 +698,20 @@ pub(crate) fn bare_window(
         drag.finish(ctx, window_id, requested, shown.response.rect);
     }
     resize::handles(ctx, p, &shown.response);
+}
+
+/// A resized window's rect on whole physical pixels. The pointer moves by
+/// fractions of a point (a scaled screen, a sub-pixel drag): egui rounds the
+/// window's position but not its size, so its bottom, and the messages laid
+/// against it, fell between pixels and hopped by one as the edge moved (the
+/// human's report of 2026-10-16).
+fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
+    let ppp = ctx.pixels_per_point();
+    let round = |v: f32| (v * ppp).round() / ppp;
+    egui::Rect::from_min_max(
+        egui::pos2(round(rect.min.x), round(rect.min.y)),
+        egui::pos2(round(rect.max.x), round(rect.max.y)),
+    )
 }
 
 const PLACE_POS: &str = "place_pos";
@@ -2162,6 +2206,17 @@ fn square_crop(w: usize, h: usize) -> egui::Rect {
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
     let (u, v) = if w > h { (h / w, 1.0) } else { (1.0, w / h) };
     egui::Rect::from_center_size(egui::pos2(0.5, 0.5), Vec2::new(u, v))
+}
+
+/// A picture cropped square over `rect`, its corners the theme's (a
+/// group's insignia in the Conversations window).
+pub fn square_picture(ui: &egui::Ui, rect: egui::Rect, t: &egui::TextureHandle) {
+    let [w, h] = t.size();
+    egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), rect.size()))
+        .uv(square_crop(w, h))
+        .tint(PICTURE_TINT)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .paint_at(ui, rect);
 }
 
 /// `avatar_picture` in a disc: the residents of the Conversations window,

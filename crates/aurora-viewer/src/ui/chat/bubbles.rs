@@ -151,6 +151,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     if let Some(day) = look.marker {
         day_marker(ui, p, day);
     }
+    // (the current match's marker starts under the day)
+    super::find::note_message(ui, ui.cursor().top(), None);
     if line.kind == ChatKind::System {
         system_pill(ui, env, line, mark);
         return;

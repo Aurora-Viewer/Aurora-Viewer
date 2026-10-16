@@ -5,7 +5,7 @@
 use super::members::member_id;
 use super::sidebar::{Pinned, control_id, entry_id, search_id};
 use super::stage::person_id;
-use super::{ChatUi, ConvAction, Start, classic_id, compose::Volume, show, thread};
+use super::{ChatUi, ConvAction, Start, classic_id, compose::Volume, show};
 use crate::settings::ChatStyle;
 use crate::ui::widgets::elide_tests::{Frames, Text};
 use crate::world::calls::{CallMember, InviteAnswer, PendingInvite};
@@ -118,6 +118,7 @@ impl H {
                 contacts,
                 contacts_settings,
                 false,
+                None,
                 &mut open,
             ));
         });
@@ -154,6 +155,7 @@ impl H {
                 contacts,
                 contacts_settings,
                 false,
+                None,
                 &mut open,
             ));
         });
@@ -192,14 +194,32 @@ impl H {
 
     /// Press the last text `source` painted (a menu row, a word button).
     fn press_text(&mut self, source: &str) {
-        let rect = self
-            .texts
+        let rect = self.text_rect(source);
+        self.at(rect.center());
+    }
+
+    /// Where the last text `source` is painted.
+    fn text_rect(&self, source: &str) -> egui::Rect {
+        self.texts
             .iter()
             .rev()
             .find(|t| t.source == source)
             .unwrap_or_else(|| panic!("{source:?} is not painted"))
-            .rect;
-        self.at(rect.center());
+            .rect
+    }
+
+    /// A right click at `pos`.
+    fn right_click(&mut self, pos: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(vec![egui::Event::PointerMoved(pos)]);
+        self.frame(vec![button(true)]);
+        self.frame(vec![button(false)]);
+        self.settle();
     }
 
     fn painted(&self, source: &str) -> bool {
@@ -276,8 +296,9 @@ fn has(actions: &[ConvAction], f: impl Fn(&ConvAction) -> bool) -> bool {
     actions.iter().any(f)
 }
 
-/// Column (Aurora, Compact): the search filters and finds a resident; each
-/// section's "+" starts its kind of conversation; the entries show theirs.
+/// Column (Aurora, Compact): the search filters and finds a resident; the
+/// "new conversation" button beside it starts each kind of conversation;
+/// the entries show theirs.
 #[test]
 fn the_column_searches_and_starts_conversations() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -295,23 +316,29 @@ fn the_column_searches_and_starts_conversations() {
         h.st.picker.open = false;
         h.st.side_filter.clear();
         h.settle();
-        h.press(control_id("section-add-Private"));
-        assert!(h.st.picker.open && h.st.start == Start::Im, "{style:?}: + of the IMs");
+        h.press(control_id("new-conversation"));
+        h.press_text(aurora_i18n::tr!("ui-chat-start-private"));
+        assert!(h.st.picker.open && h.st.start == Start::Im, "{style:?}: a private message");
         h.st.picker.open = false;
         h.settle();
-        h.press(control_id("section-add-Conference"));
-        assert!(
-            h.st.picker.open && h.st.start == Start::Conference,
-            "{style:?}: + of the conferences"
-        );
+        h.press(control_id("new-conversation"));
+        h.press_text(aurora_i18n::tr!("ui-chat-start-conference"));
+        assert!(h.st.picker.open && h.st.start == Start::Conference, "{style:?}: a conference");
         h.st.picker.open = false;
         h.settle();
-        h.press(control_id("section-add-Group"));
+        h.press(control_id("new-conversation"));
+        h.press_text(aurora_i18n::tr!("ui-chat-start-group"));
         h.press_text("Builders");
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::StartGroupChat(g) if *g == GROUP)),
-            "{style:?}: + of the groups"
+            "{style:?}: a group's chat"
         );
+        for section in ["Private", "Group", "Conference"] {
+            assert!(
+                h.shown(control_id(&format!("section-add-{section}"))).is_none(),
+                "{style:?}: no + on the {section} section"
+            );
+        }
         h.press(entry_id(Pinned::Conversation(MEETING)));
         assert_eq!(h.st.selected, Some(MEETING), "{style:?}");
         h.press(entry_id(Pinned::Local));
@@ -423,26 +450,35 @@ fn the_head_acts() {
     }
 }
 
-/// The toolbar of a line under the pointer: copy, profile, its menu.
+/// A message under the pointer: no buttons, the arrow (no text cursor); its
+/// right click copies it, quotes it in the field, and holds its author's
+/// menu (the profile among them).
 #[test]
-fn the_line_toolbar_acts() {
+fn the_message_menu_acts() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
         let mut h = H::new(style);
         h.open(Some(JANE));
         let text = h.texts.iter().rev().find(|t| t.source == "hello from Jane").expect("the line").rect;
         h.frame(vec![egui::Event::PointerMoved(text.center())]);
-        h.frame(Vec::new());
+        let out = h.frame_out(Vec::new());
+        assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "{style:?}: the arrow over a message");
         let jane = h.world.social.ims.iter().find(|s| s.other == JANE).expect("Jane").lines[0].clone();
-        let copy = h.shown(thread::tool_id("copy", &jane)).expect("copy");
+        for salt in ["copy", "quote", "profile", "more"] {
+            let id = egui::Id::new(("thread_tool", salt, jane.time, jane.source, jane.text.as_str()));
+            assert!(h.shown(id).is_none(), "{style:?}: no {salt} button");
+        }
+        // copy
+        h.right_click(text.center());
+        let row = h.text_rect(aurora_i18n::tr!("ui-chat-copy-message"));
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers: Default::default(),
         };
-        h.frame(vec![egui::Event::PointerMoved(copy.center())]);
-        h.frame(vec![button(copy.center(), true)]);
-        let out = h.frame_out(vec![button(copy.center(), false)]);
+        h.frame(vec![egui::Event::PointerMoved(row.center())]);
+        h.frame(vec![button(row.center(), true)]);
+        let out = h.frame_out(vec![button(row.center(), false)]);
         assert!(
             out.commands
                 .iter()
@@ -450,23 +486,18 @@ fn the_line_toolbar_acts() {
             "{style:?}: copy"
         );
         h.settle();
-        h.frame(vec![egui::Event::PointerMoved(text.center())]);
-        h.frame(Vec::new());
-        h.press(thread::tool_id("profile", &jane));
-        assert_eq!(
-            crate::ui::profile::take_open_request(&h.frames.ctx),
-            Some(JANE),
-            "{style:?}: profile"
-        );
-        h.frame(vec![egui::Event::PointerMoved(text.center())]);
-        h.frame(Vec::new());
-        h.press(thread::tool_id("more", &jane));
+        // quote
+        h.right_click(text.center());
+        h.press_text(aurora_i18n::tr!("ui-chat-quote-message"));
+        assert_eq!(h.st.draft_mut(Some(JANE)), "> hello from Jane ", "{style:?}: quote");
+        // the author's menu
+        h.right_click(text.center());
         assert!(h.painted(aurora_i18n::tr!("common-view-profile")), "{style:?}: the author's menu");
     }
 }
 
-/// The field (Aurora, Compact): emoji, gestures, inventory, channel,
-/// whisper / say / shout, send.
+/// The field (Aurora, Compact): emoji, the volume's menu, inventory,
+/// channel, send.
 #[test]
 fn the_field_acts() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -476,24 +507,38 @@ fn the_field_acts() {
         assert!(h.st.emoji_open, "{style:?}: emoji");
         h.press(control_id("box-mood-smile-filled"));
         assert!(!h.st.emoji_open, "{style:?}: emoji closed");
-        let wave = Uuid::from_u128(0x6E57);
-        h.gestures.active.insert(wave);
-        h.press(control_id("box-hand-finger"));
-        h.press_text(aurora_i18n::tr!("common-loading-2"));
+        // no gestures button: their window, their keys, their trigger
+        assert!(h.shown(control_id("box-hand-finger")).is_none(), "{style:?}: no gestures");
+        // the channel: hidden by default, "/5" before the text still sends
+        // on 5
+        h.open(None);
+        h.type_text("/5 hidden");
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: no chip by default");
+        h.enter(Default::default());
         assert!(
-            has(&h.take(), |a| matches!(a, ConvAction::PlayGesture(id) if *id == wave)),
-            "{style:?}: gesture"
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::Local(c) if c.channel == 5 && c.message == "hidden")
+            ),
+            "{style:?}: /5 without the chip"
         );
-        // the channel: "/5" opening the text, back to 0 from the chip
+        // shown by the preferences: "/5" opening the text, back to 0 from it
+        h.st.show_channel = true;
         h.open(None);
         h.type_text("/5 secret");
         assert!(h.painted("/5"), "{style:?}: the chip shows the channel");
         h.press(control_id("box-channel"));
         h.press_text(aurora_i18n::tr!("ui-chat-channel-reset"));
         assert_eq!(h.st.draft_mut(None), "secret", "{style:?}: channel reset");
-        // shout, then say what was typed
+        // shout from the volume's menu, then say what was typed
+        assert!(h.painted(aurora_i18n::tr!("ui-chat-volume-say")), "{style:?}: the volume named");
+        h.press(control_id("box-volume"));
         h.press_text(aurora_i18n::tr!("ui-chat-volume-shout"));
         assert_eq!(h.st.volume, Volume::Shout, "{style:?}");
+        assert!(
+            h.painted(aurora_i18n::tr!("ui-chat-volume-shout")),
+            "{style:?}: the button names it"
+        );
         h.st.conv_focus_request = true;
         h.settle();
         h.enter(Default::default());
@@ -504,10 +549,26 @@ fn the_field_acts() {
             ),
             "{style:?}: shouted"
         );
+        h.press(control_id("box-volume"));
         h.press_text(aurora_i18n::tr!("ui-chat-volume-say"));
         assert_eq!(h.st.volume, Volume::Say, "{style:?}");
-        // a resident: the paperclip, and the send button
+        // narrow, the volume stays (its icon), its menu still acts
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(460.0, 580.0));
+        // (the column eases to the rail)
+        for _ in 0..20 {
+            h.settle();
+        }
+        assert!(h.shown(control_id("box-channel")).is_none(), "{style:?}: narrow, no channel chip");
+        h.press(control_id("box-volume"));
+        h.press_text(aurora_i18n::tr!("ui-chat-volume-whisper"));
+        assert_eq!(h.st.volume, Volume::Whisper, "{style:?}: narrow");
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 580.0));
+        for _ in 0..20 {
+            h.settle();
+        }
+        // a resident: no volume, the paperclip, and the send button
         h.open(Some(JANE));
+        assert!(h.shown(control_id("box-volume")).is_none(), "{style:?}: no volume in an IM");
         h.press(control_id("box-paperclip"));
         assert!(has(&h.take(), |a| matches!(a, ConvAction::OpenInventory)), "{style:?}: paperclip");
         h.st.conv_focus_request = true;

@@ -13,14 +13,71 @@ use super::{
     ChatUi, ConvAction, Lines, Rows, ToField, compose, conversation_lines, find, head, mark_read, members, sidebar, stage, thread,
 };
 use crate::theme::Palette;
-use crate::world::World;
-use std::collections::HashMap;
+use crate::world::{ChatKind, ChatLine, World};
+use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
 
 /// Below this width the column becomes a rail of pictures.
 pub(super) const RAIL_BELOW: f32 = 600.0;
 /// The members' panel shows when the messages keep at least this width.
 const MESSAGES_MIN: f32 = 360.0;
+/// How far past a threshold a window must go back before the layout
+/// switches back (the human's report of 2026-10-16: resized around 600
+/// points the column and the rail swapped at every point).
+const HYSTERESIS: f32 = 40.0;
+/// Time the column and the members' panel take to reach their new width
+/// once the window's size crossed a threshold without a drag (a window
+/// maximised or restored, docked): the messages slide instead of jumping
+/// 170 or 210 points in one frame. While its edge is dragged the layout
+/// follows the edge at once: easing behind it, the content looked shrunk
+/// and catching up (the human's report of 2026-10-16).
+const LAYOUT_EASE: f32 = 0.15;
+
+/// A width easing to `target` in `LAYOUT_EASE`, linearly, or at once when
+/// `instant` (a drag of the window's edge). It moves on the frame its
+/// target changes, a frame's step already: egui's `animate_value_with_time`
+/// gives the old value then, and the messages, narrowed by the window
+/// alone for that frame, wrapped again.
+fn ease(ctx: &egui::Context, id: egui::Id, target: f32, instant: bool) -> f32 {
+    let (now, dt) = ctx.input(|i| (i.time, f64::from(i.stable_dt.min(0.1))));
+    // (from, to, start)
+    let stored = ctx.data(|d| d.get_temp::<(f32, f32, f64)>(id)).filter(|_| !instant);
+    let Some((from, to, start)) = stored else {
+        ctx.data_mut(|d| d.insert_temp(id, (target, target, now)));
+        return target;
+    };
+    let at = |from: f32, to: f32, start: f64| from + (to - from) * ((now - start) / f64::from(LAYOUT_EASE)).clamp(0.0, 1.0) as f32;
+    let (from, start) = if to == target {
+        (from, start)
+    } else {
+        let here = at(from, to, start);
+        ctx.data_mut(|d| d.insert_temp(id, (here, target, now - dt)));
+        (here, now - dt)
+    };
+    let value = at(from, target, start);
+    if value != target {
+        ctx.request_repaint();
+    }
+    value
+}
+
+/// The column is a rail at this window width, given what it was last frame.
+fn rail_now(was: Option<bool>, width: f32) -> bool {
+    match was {
+        Some(true) => width < RAIL_BELOW + HYSTERESIS,
+        _ => width < RAIL_BELOW,
+    }
+}
+
+/// The messages leave room for the members' panel at this pane width,
+/// given what they did last frame.
+fn members_room_now(was: Option<bool>, width: f32) -> bool {
+    let left = width - members::WIDTH;
+    match was {
+        Some(true) => left >= MESSAGES_MIN - HYSTERESIS,
+        _ => left >= MESSAGES_MIN,
+    }
+}
 
 /// What the workspace draws with.
 pub(super) struct Env<'a> {
@@ -33,6 +90,9 @@ pub(super) struct Env<'a> {
     pub contacts: &'a mut crate::ui::contacts::ContactsUi,
     pub contacts_settings: &'a mut crate::ui::contacts::ContactsSettings,
     pub show_contacts_tab: bool,
+    /// People's friends tab, the Contacts tab in Aurora's look of People;
+    /// None: the contact list.
+    pub friends: Option<crate::ui::people::FriendsPane<'a, 'a>>,
     pub docked: bool,
     pub compact: bool,
 }
@@ -48,19 +108,25 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         contacts,
         contacts_settings,
         show_contacts_tab,
+        friends,
         docked,
         compact,
     } = env;
     let size = ui.available_size();
     let h = size.y.max(160.0);
-    let rail = size.x < RAIL_BELOW;
-    // the conversation left: its "New" line goes
-    if st.shown != Some(st.selected) {
-        if let Some(before) = st.shown {
-            st.first_unread.remove(&before);
-        }
-        st.shown = Some(st.selected);
-    }
+    // the window's edge dragged: its width changes under a held button
+    st.layout_dragged = ui.input(|i| i.pointer.primary_down()) && st.layout_width.is_some_and(|w| (w - size.x).abs() > 0.1);
+    st.layout_width = Some(size.x);
+    let rail_wanted = rail_now(st.layout_rail, size.x);
+    st.layout_rail = Some(rail_wanted);
+    let column = ease(
+        ui.ctx(),
+        ui.id().with("column_width"),
+        if rail_wanted { sidebar::RAIL } else { sidebar::WIDTH },
+        st.layout_dragged,
+    );
+    // the entries take the rail's look once the column is closer to it
+    let rail = column < (sidebar::RAIL + sidebar::WIDTH) / 2.0;
     // the window moves by its title bar only: a drag on the workspace's
     // background (the column, the head, the strips) leaves it in place, as
     // one on the lines (#427)
@@ -68,29 +134,77 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     ui.interact(all, ui.id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        sidebar::show(ui, p, pics, world, st, actions, show_contacts_tab, docked, rail, h);
+        let contacts_sub = if friends.is_some() {
+            sidebar::ContactsSub::Friends
+        } else {
+            sidebar::ContactsSub::Lists
+        };
+        sidebar::show(
+            ui,
+            p,
+            pics,
+            images,
+            world,
+            st,
+            actions,
+            show_contacts_tab,
+            contacts_sub,
+            docked,
+            rail,
+            column,
+            h,
+        );
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_height(h);
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             if st.contacts {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.vertical(|ui| {
+                let pane = ui.available_rect_before_wrap();
+                let pane = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), h));
+                contacts_pane(ui, p, pane, |ui| match friends {
+                    Some(friends) => {
+                        for a in crate::ui::people::friends_pane(ui, p, world, friends, contacts, contacts_settings) {
+                            actions.push(ConvAction::People(a));
+                        }
+                    }
+                    None => {
                         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
                         let pics = crate::ui::contacts::Pics { avatars: pics, images };
                         for a in crate::ui::contacts::panel(ui, p, world, contacts, contacts_settings, &pics) {
                             actions.push(ConvAction::Contacts(a));
                         }
-                    });
+                    }
                 });
                 return;
             }
-            pane(ui, p, icons, emoji, pics, gestures, world, st, actions, compact, rail, h);
+            pane(ui, p, icons, emoji, pics, images, gestures, world, st, actions, compact, rail, h);
         });
     });
 }
+
+/// The Contacts tab's pane, at the right of the column: the conversation
+/// pane's ground, and its content over the whole height (inside a row of
+/// the layout, the lists took the height of one line).
+fn contacts_pane(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, content: impl FnOnce(&mut egui::Ui)) {
+    ui.allocate_rect(pane, egui::Sense::hover());
+    let corner = ui.visuals().window_corner_radius;
+    let radius = egui::CornerRadius {
+        se: corner.se,
+        ..egui::CornerRadius::ZERO
+    };
+    ui.painter().rect_filled(pane, radius, p.field.gamma_multiply(0.55));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("conversation_contacts")
+            .max_rect(pane.shrink2(egui::vec2(CONTACTS_MARGIN.x, CONTACTS_MARGIN.y)))
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    content(&mut child);
+}
+
+/// The Contacts pane's margins: the conversation's head and lines keep
+/// about these.
+const CONTACTS_MARGIN: egui::Vec2 = egui::vec2(12.0, 10.0);
 
 /// The conversation shown, at the right of the column.
 #[allow(clippy::too_many_arguments)]
@@ -100,6 +214,7 @@ fn pane(
     icons: &crate::ui::icons::Icons,
     emoji: &mut crate::ui::emoji::Emoji,
     pics: &HashMap<Uuid, egui::TextureHandle>,
+    images: &HashMap<Uuid, egui::TextureHandle>,
     gestures: &crate::gestures::Manager,
     world: &mut World,
     st: &mut ChatUi,
@@ -121,10 +236,19 @@ fn pane(
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);
-    let members_room = !rail && width - members::WIDTH >= MESSAGES_MIN;
+    let members_room = !rail && members_room_now(st.layout_members_room, width);
+    st.layout_members_room = Some(members_room);
+    // the panel's width eases to its new one when the room comes or goes
+    // with the window's size; the head's button shows or hides it at once
+    let room_w = ease(
+        ui.ctx(),
+        ui.id().with("members_width"),
+        if members_room { members::WIDTH } else { 0.0 },
+        st.layout_dragged,
+    );
     {
         let w: &World = world;
-        head::show(ui, p, pics, w, st, actions, members_room);
+        head::show(ui, p, pics, images, w, st, actions, members_room);
         stage::show(ui, p, pics, w, st, actions);
     }
     // the filter field, while the filter is on (the "…" menu)
@@ -145,18 +269,19 @@ fn pane(
     if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
         search.open_find();
     }
-    let find_h = if search.find.is_some() { find::BAR_H + 8.0 } else { 0.0 };
-    let lines_h = (pane.bottom() - ui.cursor().top() - compose::HEIGHT - find_h).max(60.0);
+    // (the find field is in the head's row: the messages keep their height)
+    let lines_h = (pane.bottom() - ui.cursor().top() - compose::HEIGHT).max(60.0);
     // ---- the messages, and the members beside them
     let read = mark_read(world, st.selected);
-    note_first_unread(world, st, read);
+    note_new_line(ui, world, st, read);
     let w: &World = world;
     let own_name = w.own_name();
     let me = our_names(w, &own_name);
     let moderators = st.selected.and_then(|id| w.groups.sessions.get(&id)).map(|s| &s.moderators);
     let mut asked = Vec::new();
-    let members_shown = members_room && st.members_open && matches!(kind, Some(k) if k != sidebar::Kind::Private);
-    let lines_w = if members_shown { width - members::WIDTH } else { width };
+    let members_shown = st.members_open && matches!(kind, Some(k) if k != sidebar::Kind::Private) && room_w >= 1.0;
+    let members_w = if members_shown { room_w } else { 0.0 };
+    let lines_w = width - members_w;
     let mut to_field = ToField::Nothing;
     let body_top = ui.cursor().top();
     ui.horizontal_top(|ui| {
@@ -180,7 +305,7 @@ fn pane(
             to_field = conversation_lines(ui, p, lines, st, Rows::Thread(&mut th));
         });
         if members_shown && let Some(id) = st.selected {
-            members::show(ui, p, pics, w, st, actions, id, lines_h);
+            members::show(ui, p, pics, w, st, actions, id, members_w, lines_h);
         }
     });
     ui.set_min_height(0.0);
@@ -197,27 +322,6 @@ fn pane(
         ToField::Text(t) => {
             st.drafts.entry(st.selected).or_default().push_str(&t);
             st.conv_focus_request = true;
-        }
-    }
-    // ---- the find bar
-    let search = st.searches.entry(st.selected).or_default();
-    let view = st.views.entry(st.selected).or_default();
-    if search.find.is_some() {
-        let mut close = false;
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.set_width(width - 24.0);
-                if let Some(f) = search.find.as_mut() {
-                    close = find::bar(ui, p, f, view);
-                }
-            });
-        });
-        ui.add_space(4.0);
-        if close {
-            search.find = None;
-            ui.ctx().memory_mut(|m| m.request_focus(conv_input));
         }
     }
     // ---- the field
@@ -267,24 +371,83 @@ fn drops(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, st: &ChatUi, kind: Op
     }
 }
 
-/// The conversation shown was read: where its unread lines began, for
-/// its "New" line (kept until it is left or we answer).
-fn note_first_unread(world: &World, st: &mut ChatUi, read: Option<(usize, usize)>) {
-    let Some((unread, len)) = read else {
-        return;
-    };
-    if unread == 0 {
-        return;
-    }
-    let first = match st.selected {
-        None => world.chat_clock.first,
+/// The conversation shown is in sight: its "New" line (`NewLines`).
+fn note_new_line(ui: &egui::Ui, world: &World, st: &mut ChatUi, read: Option<(usize, usize)>) {
+    let (first, lines) = match st.selected {
+        None => (world.chat_clock.first, &world.chat),
         Some(id) => match world.social.ims.iter().find(|s| s.other == id) {
-            Some(s) => s.clock.first,
+            Some(s) => (s.clock.first, &s.lines),
             None => return,
         },
     };
-    let seq = first + len.saturating_sub(unread) as u64;
-    st.first_unread.entry(st.selected).or_insert(seq);
+    let unread = read.map_or(0, |(unread, _)| unread);
+    let looked = ui.input(|i| i.focused);
+    st.new_lines
+        .frame(st.selected, ui.ctx().cumulative_frame_nr(), looked, first, lines, unread);
+}
+
+/// Where the "New" line of each conversation sits (the human's rule of
+/// 2026-10-16): it marks what arrived while we were away from the
+/// conversation, and stays where it is while we read and write there. Away
+/// means not looking at it: another conversation or the Contacts tab
+/// shown, the window closed or minimised, the viewer without the focus.
+/// Coming back places it before the first line from someone else after
+/// the last one seen, or removes it when nothing arrived.
+#[derive(Default)]
+pub(super) struct NewLines {
+    /// The number the next line of each conversation had when it was last
+    /// in sight.
+    seen: HashMap<Option<Uuid>, u64>,
+    /// The "New" line of each: above this line's number.
+    at: HashMap<Option<Uuid>, u64>,
+    /// The conversation in sight, the frame it was last, and whether the
+    /// viewer had the focus then.
+    present: Option<(Option<Uuid>, u64, bool)>,
+}
+
+impl NewLines {
+    /// Nothing seen yet: the next sight of each conversation puts its
+    /// "New" line above its unread lines (a demo's lines, given at once).
+    pub(super) fn forget(&mut self) {
+        *self = NewLines::default();
+    }
+
+    /// The line the "New" line of `conv` is above.
+    pub(super) fn at(&self, conv: Option<Uuid>) -> Option<u64> {
+        self.at.get(&conv).copied()
+    }
+
+    /// A frame showing `conv`, whose lines are numbered from `first`;
+    /// `looked`: the viewer has the focus; `unread`: its lines nobody saw,
+    /// for a conversation not yet seen since the login.
+    pub(super) fn frame(&mut self, conv: Option<Uuid>, frame: u64, looked: bool, first: u64, lines: &VecDeque<ChatLine>, unread: usize) {
+        let next = first + lines.len() as u64;
+        let stayed = matches!(self.present, Some((c, f, _)) if c == conv && (f == frame || f + 1 == frame));
+        let refocused = looked && matches!(self.present, Some((_, _, false)));
+        if !stayed || refocused {
+            let from = self
+                .seen
+                .get(&conv)
+                .copied()
+                .unwrap_or(next.saturating_sub(unread as u64))
+                .max(first);
+            // (without the focus, what is shown is not seen yet)
+            self.seen.insert(conv, from);
+            let mine = |seq: u64| lines.get((seq - first) as usize).is_none_or(|l| l.kind == ChatKind::Own);
+            match (from..next).find(|&seq| !mine(seq)) {
+                Some(seq) => {
+                    self.at.insert(conv, seq);
+                }
+                None => {
+                    self.at.remove(&conv);
+                }
+            }
+        }
+        if looked {
+            self.seen.insert(conv, next);
+        }
+        self.present = Some((conv, frame, looked));
+    }
 }
 
 /// Our names, lowercase, whose mention marks a message: the name we show

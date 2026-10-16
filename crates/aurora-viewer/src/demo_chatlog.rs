@@ -6,7 +6,8 @@
 //! - `im`: a conversation with history from two earlier days, greyed, then
 //!   a new message;
 //! - `find`: the same, then Ctrl+F (pointer over the window) and a word
-//!   typed at frame 300: the find bar and its matches;
+//!   typed at frame 300: the find field and its matches (`find:none` a word
+//!   that is not there, `:legacy` the Legacy style, `:narrow` the rail);
 //! - `history`: the History window on a transcript of 20 000 messages
 //!   (`history:find`: Ctrl+F and a word typed at frame 300, searched in the
 //!   whole file);
@@ -61,9 +62,19 @@ pub fn peer_name() -> String {
     format!("Nova {}", aurora_i18n::tr!("demo-example"))
 }
 
-/// The word the find bar and the History search look for.
+/// The word the find bar and the History search look for (`find:none`: a
+/// word the conversation does not hold).
 pub fn needle() -> &'static str {
-    "aurora"
+    if find_flag("none") { "zqxw" } else { "aurora" }
+}
+
+/// `find:<flag>…` (`none`, `legacy`, `narrow`): the find scenario with no
+/// match, in the Legacy style, or in a window narrow enough for the rail.
+pub fn find_flag(flag: &str) -> bool {
+    std::env::var("AURORA_DEMO_CHATLOG").is_ok_and(|v| {
+        let mut parts = v.split(':');
+        parts.next() == Some("find") && parts.any(|f| f == flag)
+    })
 }
 
 fn sentences() -> [&'static str; 6] {
