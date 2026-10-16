@@ -17,6 +17,9 @@ pub mod texture_library;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
+#[path = "demo_arrival.rs"]
+pub mod arrival;
 /// The local asset server of its `net=` option.
 #[path = "demo_asset_server.rs"]
 pub mod asset_server;

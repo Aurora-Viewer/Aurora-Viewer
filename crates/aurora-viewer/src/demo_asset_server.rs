@@ -6,7 +6,8 @@
 //! whatever the number of requests under way, as on a link where latency
 //! and not throughput is the limit.
 //!
-//! It speaks the little of HTTP/1.1 the fetcher needs: `GET` with an
+//! It serves textures, and with `start_assets` meshes and animations too
+//! (AURORA_DEMO_ARRIVAL). It speaks the little of HTTP/1.1 the fetcher needs: `GET` with an
 //! optional `Range: bytes=a-b` or `a-`, answered by a 200, a 206 with its
 //! `Content-Range`, a 416 past the end or a 404, on connections kept open.
 
@@ -21,18 +22,33 @@ use uuid::Uuid;
 /// close).
 const MAX_HEAD: usize = 16 * 1024;
 
+/// The file of an asset: its kind (`texture`, `mesh`, `animatn`, the name
+/// of the request's `<kind>_id=` parameter) and its id. None: a 404.
+pub type Resolve = Arc<dyn Fn(&str, &Uuid) -> Option<PathBuf> + Send + Sync>;
+
 /// Starts the server for `files`: texture `id` is the file `index(id)`
 /// (cycled). Returns its base URL, the `ViewerAsset` capability of the
 /// demo's region.
 pub fn start(files: Arc<Vec<PathBuf>>, delay: Duration, index: fn(&Uuid) -> Option<u32>) -> std::io::Result<String> {
+    start_assets(
+        Arc::new(move |kind, id| {
+            let i = index(id).filter(|_| kind == "texture")?;
+            files.get(i as usize % files.len().max(1)).cloned()
+        }),
+        delay,
+    )
+}
+
+/// Starts the server for any kind of asset, found by `resolve`.
+pub fn start_assets(resolve: Resolve, delay: Duration) -> std::io::Result<String> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let url = format!("http://{}/", listener.local_addr()?);
     std::thread::Builder::new().name("demo-assets".into()).spawn(move || {
         for stream in listener.incoming().flatten() {
-            let files = files.clone();
+            let resolve = resolve.clone();
             let spawned = std::thread::Builder::new()
                 .name("demo-assets-connection".into())
-                .spawn(move || serve(stream, &files, delay, index));
+                .spawn(move || serve(stream, &resolve, delay));
             if let Err(e) = spawned {
                 log::warn!("demo asset server: connection not served ({e})");
             }
@@ -42,7 +58,7 @@ pub fn start(files: Arc<Vec<PathBuf>>, delay: Duration, index: fn(&Uuid) -> Opti
 }
 
 /// One connection: requests answered one after the other until it closes.
-fn serve(stream: TcpStream, files: &[PathBuf], delay: Duration, index: fn(&Uuid) -> Option<u32>) {
+fn serve(stream: TcpStream, resolve: &Resolve, delay: Duration) {
     let _ = stream.set_nodelay(true);
     let Ok(mut out) = stream.try_clone() else {
         return;
@@ -61,10 +77,7 @@ fn serve(stream: TcpStream, files: &[PathBuf], delay: Duration, index: fn(&Uuid)
             }
         }
         std::thread::sleep(delay);
-        let file = parse_request(&head).and_then(|(id, range)| {
-            let path = &files[index(&id)? as usize % files.len()];
-            Some((std::fs::read(path).ok()?, range))
-        });
+        let file = parse_request(&head).and_then(|(kind, id, range)| Some((std::fs::read(resolve(kind, &id)?).ok()?, range)));
         let (status, headers, body) = match &file {
             Some((data, range)) => reply(data, *range),
             None => ("404 Not Found", String::new(), &[][..]),
@@ -83,12 +96,20 @@ fn serve(stream: TcpStream, files: &[PathBuf], delay: Duration, index: fn(&Uuid)
 /// not open.
 type Range = (u64, Option<u64>);
 
-/// The texture asked for and its range, from the head of a request
+/// Kinds of asset served, as the `<kind>_id=` parameters of the
+/// ViewerAsset capability name them.
+const KINDS: [&str; 3] = ["texture", "mesh", "animatn"];
+
+/// The asset asked for (kind, id) and its range, from the head of a request
 /// (`GET /?texture_id=<id> HTTP/1.1` and its header lines).
-fn parse_request(head: &str) -> Option<(Uuid, Option<Range>)> {
+fn parse_request(head: &str) -> Option<(&'static str, Uuid, Option<Range>)> {
     let mut lines = head.lines();
     let target = lines.next()?.strip_prefix("GET ")?.split(' ').next()?;
-    let id = target.split(['?', '&']).find_map(|p| p.strip_prefix("texture_id="))?;
+    let (kind, id) = target.split(['?', '&']).find_map(|p| {
+        let (name, value) = p.split_once('=')?;
+        let kind = KINDS.into_iter().find(|k| name.strip_suffix("_id") == Some(*k))?;
+        Some((kind, value))
+    })?;
     let id = Uuid::parse_str(id).ok()?;
     let range = lines.find_map(|l| {
         let (name, value) = l.split_once(':')?;
@@ -98,7 +119,7 @@ fn parse_request(head: &str) -> Option<(Uuid, Option<Range>)> {
         let (first, last) = value.trim().strip_prefix("bytes=")?.split_once('-')?;
         Some((first.parse().ok()?, last.parse().ok()))
     });
-    Some((id, range))
+    Some((kind, id, range))
 }
 
 /// Status, extra header lines and body for `data` asked with `range`.
@@ -127,12 +148,17 @@ mod tests {
     fn requests_name_a_texture_and_a_range() {
         let id = Uuid::from_u128(7);
         let head = format!("GET /?texture_id={id} HTTP/1.1\r\nhost: x\r\nRange: bytes=0-16383\r\n\r\n");
-        assert_eq!(parse_request(&head), Some((id, Some((0, Some(16383))))));
+        assert_eq!(parse_request(&head), Some(("texture", id, Some((0, Some(16383))))));
         let head = format!("GET /?texture_id={id} HTTP/1.1\r\nrange: bytes=599-\r\n\r\n");
-        assert_eq!(parse_request(&head), Some((id, Some((599, None)))));
+        assert_eq!(parse_request(&head), Some(("texture", id, Some((599, None)))));
         let head = format!("GET /?texture_id={id} HTTP/1.1\r\n\r\n");
-        assert_eq!(parse_request(&head), Some((id, None)));
+        assert_eq!(parse_request(&head), Some(("texture", id, None)));
+        let head = format!("GET /?mesh_id={id} HTTP/1.1\r\n\r\n");
+        assert_eq!(parse_request(&head), Some(("mesh", id, None)));
+        let head = format!("GET /?animatn_id={id} HTTP/1.1\r\n\r\n");
+        assert_eq!(parse_request(&head), Some(("animatn", id, None)));
         assert_eq!(parse_request("GET /?mesh_id=1 HTTP/1.1\r\n\r\n"), None);
+        assert_eq!(parse_request(&format!("GET /?sound_id={id} HTTP/1.1\r\n\r\n")), None);
         assert_eq!(parse_request("POST / HTTP/1.1\r\n\r\n"), None);
     }
 

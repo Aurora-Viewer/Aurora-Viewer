@@ -484,6 +484,7 @@ pub struct App {
     demo_place: Option<crate::world::place_details::Source>,
     /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
     stream_demo: Option<crate::demo::stream::StreamDemo>,
+    arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
@@ -913,6 +914,7 @@ impl App {
             place_images: Default::default(),
             demo_place: None,
             stream_demo: None,
+            arrival_demo: None,
             tex_refresh_demo: None,
             experience_demo: None,
             geometry_demo: None,
@@ -6812,6 +6814,9 @@ impl App {
                 pending,
             );
         }
+        if let Some(demo) = &mut self.arrival_demo {
+            demo.tick(self.frame_count, &mut self.world, &self.scene);
+        }
         // AURORA_DEMO_TEXREFRESH: a panel with a stale cached texture
         if let Some(demo) = &mut self.tex_refresh_demo
             && let Some(object) = demo.tick(self.frame_count, &mut self.world, self.scene.textures.cache_dir())
@@ -11474,6 +11479,7 @@ impl ApplicationHandler for App {
                 }
             }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
+            self.arrival_demo = crate::demo::arrival::ArrivalDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
