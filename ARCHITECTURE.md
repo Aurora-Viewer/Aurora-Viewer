@@ -652,6 +652,14 @@ as soon as they arrive. `world/inventory.rs` advances the versions of the
 loaded parents, ignores older replies and avoids counting repeated records
 again.
 
+Confirmed attachment removal (`ObjectsKilled` or an unparenting update)
+unregisters our root's `AttachItemID` before discarding its object state.
+`world/appearance.rs::unlink_attachment` removes only its Current Outfit
+links locally and queues their individual AIS deletions through the existing
+background inventory edits, without another appearance synchronization.
+The original and saved outfits remain available; teleport/crossing kill
+protection runs before unregistering.
+
 `ui/inventory/progress.rs` distinguishes the submission of a mutation from
 the tracking of the copies in the background: several copies can be tracked
 without disabling the other commands. `InventoryProgress` passes on steps

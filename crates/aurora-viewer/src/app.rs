@@ -2027,7 +2027,7 @@ impl App {
                         self.world.inventory.remove(&reply.removed);
                         self.world.inventory.apply(reply.contents);
                     }
-                    Err(reason) => log::warn!("refused inventory offer not moved to the Trash: {reason}"),
+                    Err(reason) => log::warn!("background inventory change not saved: {reason}"),
                 }
                 return;
             }
@@ -5392,7 +5392,7 @@ impl App {
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
             }
-            // refused offers: to the Trash, whatever the inventory window does
+            // Background inventory changes, whatever the inventory window does.
             self.update_marketplace_listings();
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
