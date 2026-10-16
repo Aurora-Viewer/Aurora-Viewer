@@ -1,4 +1,4 @@
-# Asset imports — Firestorm reference
+# Asset imports — Legacy Viewer reference
 
 This matrix tracks the imports from disk and their local previews.
 It is used to check the options, the default values, the protocol and
@@ -9,7 +9,7 @@ Scope confirmed on 2026-10-12: textures, materials, meshes, sounds,
 animations, bulk uploads and local previews. The imports of linksets, EEP
 and Windlight are listed for later tasks in `TASKS.md`.
 
-Reference consulted: Firestorm `d942e1118d01c3383ef7d6b64f248af77452b0dc`
+Reference consulted: the Legacy Viewer `d942e1118d01c3383ef7d6b64f248af77452b0dc`
 (2026-10-12). The visible choices follow this revision of the sources.
 
 ## Common workflow
@@ -42,7 +42,7 @@ Sources: `llviewermenufile.cpp`, `llviewerassetupload.cpp`,
 
 ## Textures
 
-- Formats of the Firestorm file dialog and RGB/RGBA validation.
+- Formats of the Legacy Viewer file dialog and RGB/RGBA validation.
 - Dimensions before/after resizing, maximum X/Y dimensions, powers of two,
   2K and the associated fee; bulk optionally limited to 1024.
 - Lossless compression for small textures (area ≤ 128²), `LosslessJ2CUpload`
@@ -51,7 +51,7 @@ Sources: `llviewermenufile.cpp`, `llviewerassetupload.cpp`,
   deliberate keeping after a warning.
 - Image preview with pan/zoom; hair, male or female head/body, skirt and
   sculpted prim with rotation/zoom.
-- Former temporary texture checkbox: visible in Firestorm only without
+- Former temporary texture checkbox: visible in the Legacy Viewer only without
   server-side baking, but `TemporaryUpload` is no longer read by its upload
   path in this revision. Current SL regions use baking; Aurora offers no
   fake free upload. Local previews stay free and send no asset to the
@@ -63,7 +63,7 @@ Sources: `llfloaterimagepreview.cpp`, `floater_image_preview.xml`,
 ## Sounds
 
 - WAV: PCM restrictions, channels, sample rate, bit depth and duration;
-  conversion to the Vorbis sound of Second Life, with the Firestorm
+  conversion to the Vorbis sound of Second Life, with the Legacy Viewer's
   parameters.
 - Name/description, fee and destination; local sound preview.
   The Play and Stop controls are placed side by side.
@@ -103,7 +103,7 @@ Sources: `llfloaternamedesc.cpp`, `llaudio/llvorbisencode.cpp`,
   the playback controls.
   Pause and the slider also drive the preview on our avatar; the ends of
   these local motions produce no network stop.
-- Bulk imports: `.anim` accepted, BVH excluded like Firestorm.
+- Bulk imports: `.anim` accepted, BVH excluded like the Legacy Viewer.
 
 Sources: `llfloaterbvhpreview.cpp`,
 `llcharacter/llbvhloader.cpp`, `llcharacter/llkeyframemotion.cpp`,
@@ -136,7 +136,7 @@ Sources: `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
 
 ## Meshes
 
-- Collada and glTF/GLB according to the filters of this Firestorm version;
+- Collada and glTF/GLB according to the filters of this Legacy Viewer version;
   instances, materials, coordinates, units, transforms and rigging.
 - Four LODs: file, generation, reuse; counters and validation of the
   faces/instances, suffixes and search for the associated files.
@@ -160,9 +160,9 @@ Sources: `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   on hover and when the selection changes.
 - LOD generation: methods, triangles, error and smoothed normals; values
   and presets of the reference window.
-  The triangle mode uses an internal threshold of 100% like Firestorm; the
+  The triangle mode uses an internal threshold of 100% like the Legacy Viewer; the
   saved error threshold only applies to the error mode. AUTO welds the
-  identical exported vertices in both modes, like Firestorm, then removes
+  identical exported vertices in both modes, like the Legacy Viewer, then removes
   the unused copies before simplification so that they are not still
   treated as locked seams.
   The threshold is shown as a percentage of the model size; its help
@@ -171,7 +171,7 @@ Sources: `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   normal and UV seams can leave almost all the triangles, even with a high
   threshold. The fast method accepts more simplification at the seams.
   AUTO also progressively reduces the normal and UV seams, then uses the
-  fast method if necessary, like Firestorm when the budget is exceeded by
+  fast method if necessary, like the Legacy Viewer when the budget is exceeded by
   more than 80%. The faces keep their material slot.
   The "File" choice opens the picker before changing a source that has no
   file; cancelling keeps the old LOD. Loading a valid file or changing
@@ -182,7 +182,7 @@ Sources: `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
   A mesh refusal keeps the HTTP status, the code and the validation messages
   provided by the server, in a bounded area. Only these fields are read;
   URLs, paths and control characters are removed.
-  The four MAV validation codes explained by Firestorm are also
+  The four MAV validation codes explained by the Legacy Viewer are also
   explained in French and in English.
   The mesh import rights are reported separately. A failure after the
   transfer keeps the unknown-outcome warning, its available details, and
@@ -202,7 +202,7 @@ Sources: `llmaterialeditor.cpp`, `panel_gltf_material.xml`,
 - Prior server calculation of the weights and of the price, breakdown of
   the price/streaming/physics, authorisation state of the account, reset
   and log.
-- Upload of the asset and of its instances through the Firestorm mesh
+- Upload of the asset and of its instances through the Legacy Viewer mesh
   protocol.
 
 Sources: `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
@@ -248,12 +248,12 @@ Sources: `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
 - Local mesh: choice of the model, optional units in metres, imported
   dimensions, application to/removal from the selection and support prim;
   watching disabled by default, period of 3 s adjustable from 0.1 s like
-  Firestorm.
+  the Legacy Viewer.
   The preparation and the installation of the mesh data are independent of
   the graphics context held temporarily by the render loop: applying,
   reloading or placing a support prim also works from the interface.
 - Environments: EEP settings and old Windlight presets, multiple imports.
-- Firestorm linkset backups: rebuilding of the prims and of the contents,
+- Legacy Viewer linkset backups: rebuilding of the prims and of the contents,
   reuse/upload of the assets, temporary texture options, offset.
   This workflow also relies on the build tools and their acknowledgements.
 - The existing CSV imports of parcel access and AO imports remain separate
@@ -372,7 +372,7 @@ type. Also check the server refusal and the resumption of the draft: the
 settings stay present, with the warning to check the inventory when the
 outcome of a paid transfer is unknown.
 
-The physics uses the free V-HACD 4.1 branch of Firestorm: resolution in
+The physics uses the free V-HACD 4.1 branch of the Legacy Viewer: resolution in
 number of voxels, limit of hulls/vertices, volume error and
 Flood/Surface/Raycast modes. The native code is pinned to a public BSD
 revision, with cancellation and progress. The model processing is parallel

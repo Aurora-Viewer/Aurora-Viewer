@@ -16,10 +16,10 @@ a grey veil. A required offer shows only Quit and Update; neither Esc nor a
 click outside can close it. The login button stays disabled as long as this
 update is required.
 
-The modes take up the choices of Firestorm's `UpdaterServiceSetting`:
+The modes take up the choices of the Legacy Viewer's `UpdaterServiceSetting`:
 required only, ask, download automatically. Aurora chooses "Ask before
 downloading" by default, to meet the request for an offer at launch;
-Firestorm chooses 0. The automatic mode prepares the files and waits for
+The Legacy Viewer chooses 0. The automatic mode prepares the files and waits for
 the user's agreement before quitting and restarting their session.
 
 ## Package and release policy

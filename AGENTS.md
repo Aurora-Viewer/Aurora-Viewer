@@ -45,6 +45,9 @@ else's work.
 
 ## 2. Reference behaviour: Firestorm
 
+In everything you write from now on, this viewer is called the **Legacy
+Viewer** (section 10); the rules below keep their older wording.
+
 Firestorm is the reference for **what the user sees and does**, not for how
 it is done:
 
@@ -385,7 +388,7 @@ change to the interface:
 ## 9. The pull request
 
 Short title in the form `type(area): summary`, in English, for example
-`feat(avatar): gaze tracking like Firestorm`. The area is one of the area
+`feat(avatar): gaze tracking like the Legacy Viewer`. The area is one of the area
 labels below.
 
 ```powershell
@@ -397,7 +400,7 @@ The body follows the template `.github/pull_request_template.md`, is written
 in English and must be **readable by a human in two minutes**:
 
 - **What it is for**: 2–3 simple sentences, from the user's point of view.
-- **Firestorm origin**: yes/no; if yes, the files and functions followed.
+- **Legacy Viewer origin**: yes/no; if yes, the files and functions followed.
 - **What changes**: by area (interface, rendering, network…), in short
   bullets; options added with their default value.
 - **Screenshots**: demo mode images (section 12).
@@ -421,6 +424,18 @@ Labels (created by `scripts/setup-labels.ps1`):
   `user.email`.
 - **No mention of AI**: no "Co-Authored-By: Claude/Codex", no "Generated
   with…", no "AI-assisted" in commits, PRs or comments.
+- **Never name Firestorm in anything new: say Legacy Viewer.** The viewer
+  we compare with and port from (section 2) is the **Legacy Viewer** in
+  everything written from now on: PR titles, descriptions and reviews,
+  commit messages, code comments, `TASKS.md`, the docs, issue comments, and
+  the interface (new labels, tooltips and settings say "Legacy"; new
+  identifiers use `legacy`, for example `legacy_movement`). What is already
+  written stays as it is: do not rewrite old commits, PRs, comments, labels
+  or identifiers only to rename them. A line you change for another reason
+  takes the new name in its new wording. Source references name files and
+  functions, not a viewer (`LLAgent::setFlying`, indra/newview/llagent.cpp),
+  and the folder of the sources stays `../phoenix-firestorm`: a path, not a
+  mention.
 - Commit messages in English, in the imperative, clear:
   `Add the fade-out of stopped animations`.
 
@@ -441,7 +456,7 @@ Before telling the human, review your own PR as a demanding reviewer would:
    **and** those of the neighbouring features (the work of other agents
    merged in the meantime must not be broken). Compare before / after with
    screenshots.
-4. **Firestorm fidelity**: the behaviour and the rendering match the sources
+4. **Legacy Viewer fidelity**: the behaviour and the rendering match the sources
    consulted (or do better, with no regression); visible differences are
    justified.
 5. **Secrets and personal data**: `git diff origin/main...HEAD` contains no
@@ -471,7 +486,7 @@ line as they are: the PR tracking of `aurora-tools.cmd` reads them):
 | PR CI (fmt, clippy, secrets) | ✅ |
 | Demo scenarios (before / after) | ✅ screenshots below |
 | Non-regression of neighbouring features | ✅ … |
-| Firestorm fidelity | ✅ files checked: … |
+| Legacy Viewer fidelity | ✅ files checked: … |
 | Secrets / personal data | ✅ none |
 | Docs (README, ARCHITECTURE, TASKS) | ✅ |
 

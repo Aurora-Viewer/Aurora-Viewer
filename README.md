@@ -27,7 +27,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 **All the tools you need to experience SecondLife the way it's meant to be experienced, Photo tools, Auto Hover Height, tons of QoL !**  
 <img width="1975" height="1030" alt="image" src="https://github.com/user-attachments/assets/42d3c1c3-e3d9-487c-86e5-6a5453ec0a90" />
 
-**Modern UI and Firestorm toggles to get the Firestorm UI back on the modules you want! (if you prefer).**  
+**Modern UI and Legacy toggles to get the Legacy UI back on the modules you want! (if you prefer).**  
 <img width="2187" height="866" alt="Capture d&#39;écran 2026-10-15 050409" src="https://github.com/user-attachments/assets/d4d2d61f-e2c9-4bfc-80a6-60d0b0dbdf38" />
 
 **Audio input/output quick setting & Notification center**  
@@ -39,7 +39,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 Aurora Viewer is a Second Life client built from scratch in Rust, with a
 modern GPU renderer (wgpu on Vulkan) and a clean, flat interface. It follows
-the behaviour of [Firestorm](https://www.firestormviewer.org) — same protocol,
+the behaviour of the Legacy Viewer — same protocol,
 same rules, same defaults — while rethinking the user interface.
 
 > **Status:** early development (0.x). Usable for exploring, chatting and
@@ -127,7 +127,7 @@ are planned or in progress: they are not in the viewer yet.
 - **Flat, calm and readable**: glass island bars, a notification center with
   history, messenger-style conversations and a redesigned performance window.
 - **Arrange it your way**: customizable bottom, left and right toolbars,
-  favourites in a menu, row or dock, and classic Firestorm layouts available
+  favourites in a menu, row or dock, and classic Legacy layouts available
   in Preferences › Aurora.
 - **A quick library** (`Ctrl+Space`): textures, PBR materials and objects from
   `#Aurora/Textures Library` and `#Aurora/Objects Library`, with search, folders
@@ -179,8 +179,8 @@ are planned or in progress: they are not in the viewer yet.
 <table>
   <tr>
     <td width="50%" align="center" valign="top">
-      <img src="docs/screenshots/compare-firestorm.png" alt="Firestorm statistics window in a busy store: 68 fps"><br>
-      <b>Firestorm</b> · 68 fps
+      <img src="docs/screenshots/compare-firestorm.png" alt="Legacy Viewer statistics window in a busy store: 68 fps"><br>
+      <b>Legacy Viewer</b> · 68 fps
     </td>
     <td width="50%" align="center" valign="top">
       <img src="docs/screenshots/compare-aurora.png" alt="Aurora Viewer performance window in the same store: 386 fps"><br>
@@ -193,7 +193,7 @@ Measured on 10 October 2026 with the frame cap off, on one PC (RTX 4090), in
 one busy store of about 16,000 objects. This is an informal test, not a
 benchmark:
 
-- 138 fps where Firestorm gave 68 fps at the same spot;
+- 138 fps where the Legacy Viewer gave 68 fps at the same spot;
 - about 343 fps at that spot (median) once the render thread landed, 386 fps
   in the capture above.
 
@@ -205,7 +205,7 @@ The texture memory budget is set automatically from the detected VRAM.
   PBR and legacy materials, shadows, reflection probes, water, glow,
   particles, rainbows, 22° halos and depth of field; GPU occlusion
   (experimental), graphics presets and per-section resets.
-- **Avatars** — skeleton and Bento animations blended like Firestorm,
+- **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
   a shape editor with textured mesh previews, manual and automatic hover
   height, rebake, skeleton reset and animation controls; gestures with
@@ -220,7 +220,7 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Social** — local chat, messenger-style IMs and group conversations,
   resident profiles, the People window, contact sets, blocking, notifications
   with history and friend/IM alerts; searchable conversation history kept on
-  disk per account and grid in Firestorm's text format, and offline messages.
+  disk per account and grid in the Legacy Viewer's text format, and offline messages.
 - **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
   invitations, adding participants and per-participant call volume.
 - **Groups** — creation, invitations, notices, roles, abilities, member
@@ -280,7 +280,7 @@ possible to add a language; see [the translation guide](docs/TRANSLATING.md).
 The viewer first follows the language saved in **Preferences › Interface ›
 Language**, then the system's if "System language" is selected. English is
 the fallback. The change applies at once; the "Language visible to scripts"
-setting is on by default, like Firestorm. The translations are in
+setting is on by default, like the Legacy Viewer. The translations are in
 `crates/aurora-i18n/locales/`.
 
 ### Frame limiter
@@ -304,9 +304,9 @@ while keeping their saved local sizes.
 
 The **AO** button of the bottom bar opens the built-in Animation Overrider.
 Sets are kept under `#Firestorm/#AO`; import a ZHAO notecard from the same
-folder as its animations. The AO is off at first, as in Firestorm. `cao on` /
+folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /
 `cao off` turn it on or off; `cao sit` toggles the sit, `cao sit off` replaces
-the sit and `cao sit on` keeps the standard sit, like Firestorm. The demo
+the sit and `cao sit on` keeps the standard sit, like the Legacy Viewer. The demo
 scenario is described in
 [the test options](docs/TESTING.md#avatars-and-animations).
 
@@ -354,7 +354,7 @@ Enable **Free camera** to move the camera with the movement keys while your
 avatar stays put. Hold the right mouse button to look, use Shift to move
 faster or Ctrl to move slower, and press Escape to return. The **Controls**
 window provides camera and movement pads, saved camera positions and free
-camera controls. A classic Firestorm photo layout is available in
+camera controls. A classic Legacy photo layout is available in
 Preferences › Aurora.
 
 ### Gestures
@@ -425,8 +425,8 @@ files never leave the machine and are never attached to a bug report.
 **What it is**
 
 - A Second Life viewer written from scratch in Rust; it is not a fork of
-  the Linden or Firestorm codebase.
-- It speaks the same protocol as Firestorm (same messages, capabilities,
+  an existing viewer's codebase.
+- It speaks the same protocol as the Legacy Viewer (same messages, capabilities,
   request rates and defaults), so the servers see a well-behaved, familiar
   client.
 - Open source (GPLv3), with credit to the Linden / Firestorm code
@@ -448,7 +448,7 @@ files never leave the machine and are never attached to a bug report.
   visually intact (each one is checked), about half the texture memory
   overall, and cached that way on disk: back in a place already visited,
   they go to the GPU without being decoded again.
-- Same look as Firestorm: PBR and legacy materials, EEP sky, shadows,
+- Same look as the Legacy Viewer: PBR and legacy materials, EEP sky, shadows,
   reflection probes, mirrors, water, glow and particles, checked side by
   side on the main grid.
 
@@ -466,7 +466,7 @@ git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 
 The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
-the Firestorm sources next to the repository, and download the Rust
+the Legacy Viewer sources next to the repository, and download the Rust
 toolchain and the crates. Then, driven by the keyboard: release /
 dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
 Windows notifications, releases (see
@@ -599,7 +599,7 @@ its own task in its own git worktree:
 - [docs/TESTING.md](docs/TESTING.md) — test switches (demo scenarios,
   captures, diagnostics) and profiling
 
-Behaviour follows Firestorm: its sources are expected next to the repository
+Behaviour follows the Legacy Viewer: its sources are expected next to the repository
 (`../phoenix-firestorm`, cloned from
 [FirestormViewer/phoenix-firestorm](https://github.com/FirestormViewer/phoenix-firestorm)).
 

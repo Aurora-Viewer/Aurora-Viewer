@@ -29,7 +29,7 @@ to your agent in French or in English: it answers in your language.
 
 ## Life of a task
 
-1. You ask an agent for a task ("do gaze tracking like Firestorm").
+1. You ask an agent for a task ("do gaze tracking like the Legacy Viewer").
 2. The agent creates its working folder `..\work\<task>` on a branch of its
    own: it does not see the other agents' code in progress, and vice versa.
 3. It codes, tests in demo mode, then **builds and launches the viewer for
@@ -40,7 +40,7 @@ to your agent in French or in English: it answers in your language.
    on the viewer (documentation, CI, scripts), it just tells you what is
    going to change.
 5. The agent opens the **pull request**: a readable summary (what it is for,
-   whether it comes from Firestorm, what changes, screenshots).
+   whether it comes from the Legacy Viewer, what changes, screenshots).
 6. Right after, without you having to ask, it waits for the end of CI then
    **reviews its PR**: conflicts with `main`, CI, non-regression, secrets…
    and posts a **review comment** ("Conversation" tab of the PR) with a
@@ -202,7 +202,7 @@ see the news item in the viewer **before** merging, launch it with
      machine), the Visual Studio C++ tools that Rust needs to build (several
      GB), and Rust (rustup, for your account, as Rust wants on Windows);
      Windows permission prompts may open;
-   - they clone the Firestorm sources into `phoenix-firestorm\`, next to the
+   - they clone the Legacy Viewer sources into `phoenix-firestorm\`, next to the
      repository;
    - they download the Rust toolchain and all the crates;
    - they install sccache with winget (for your account), the compiler cache
@@ -246,7 +246,7 @@ the number, the cache and the settings into three screens, with the chosen
 version and a summary before confirmation.
 
 When it opens, the tool checks the environment: tools, repository behind
-GitHub, outdated Firestorm sources, Rust not up to date, font, GitHub
+GitHub, outdated Legacy Viewer sources, Rust not up to date, font, GitHub
 login… If something is missing or outdated, the first choice is **Repair /
 update** (the same installation as the one-line command: what is there is
 updated, nothing is reinstalled). If that update changes the Aurora Tools
@@ -272,7 +272,7 @@ hidden Windows consoles and the restart on isolated temporary scripts.
 | Shortcuts | "Aurora Tools" and "Aurora PR" (the PR panel directly) on the Desktop and in the Start menu, with the logo |
 | Claude permissions | Lets your Claude Code agents follow their PRs and CI, post their review and their screenshots, merge their PR, triage the issues and reply to them (`gh pr view / list / checks / comment`, `gh run view / list / watch`, `gh issue list / view / edit / comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1`), which auto mode can otherwise refuse them ("auto-approval", "write to an external system", "interference with workloads"). `gh api`, `git push`, `gh pr merge`, the releases and `end-task.ps1` stay without a rule, left to the judgement of auto mode. Adds these rules to your Claude Code settings (`%USERPROFILE%\.claude\settings.json`) without touching the rest, keeping a copy of the former file; the merge queue and the protection of `main` still apply. Run it again after a tools update that adds a rule: only the missing rules are added. Then open a new Claude Code session |
 | Check again | The full table of the environment |
-| Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Firestorm sources are kept |
+| Reset the repository | Start again from a fresh clone of the `main` of GitHub: the tool first lists everything that would be lost (uncommitted changes, commits never pushed, stashes, agents' tasks with their changes, ignored files such as a `.env`), refuses if a build or a viewer is running, and does nothing unless you type `RESET`. It then deletes the tasks of `work\` and `RELEASE\`, puts the repository back on `origin/main` (untracked files and builds erased, local branches and stashes deleted), then repairs the environment. Your git identity, your GitHub login and the Legacy Viewer sources are kept |
 
 **Live PRs.** As long as the tools are open, the bottom banner sums up the
 PRs ("PR: 3 open · 1 CI · 1 queued · 1 red"), and a **Windows notification**
@@ -388,7 +388,7 @@ for the format of the packages and their policy.
 | Viewer code | `crates/` (see [ARCHITECTURE.md](ARCHITECTURE.md)) |
 | Task tracking | [TASKS.md](TASKS.md) (open work and what was finished since the last release); older finished tasks in [docs/TASKS_ARCHIVE.md](docs/TASKS_ARCHIVE.md) |
 | Agents' working folders | `work\`, in the project folder |
-| Firestorm sources (reference) | `phoenix-firestorm\`, in the project folder |
+| Legacy Viewer sources (reference) | `phoenix-firestorm\`, in the project folder |
 | Settings, skins, layout | `%APPDATA%\Aurora\AuroraViewer\config\` |
 | Conversation history (text files, per account and per grid; Preferences › Chat to open it, turn it off or erase it) | `%APPDATA%\Aurora\AuroraViewer\config\accounts\<account uuid>\chat_logs\<grid>\` |
 | Cache (textures, mesh…) — can be deleted safely | `%LOCALAPPDATA%\Aurora\AuroraViewer\cache\` |

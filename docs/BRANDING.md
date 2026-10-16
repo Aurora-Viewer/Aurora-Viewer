@@ -72,21 +72,21 @@ dragging a handle switch to `violet_light`, like any selection.
   the login screen, use `widgets::overlay_frame`. Never write a background,
   border or radius by hand. The bars
   keep the `bar` colour as their tint (`widgets::finish_bar_glass`); the
-  minimap keeps Firestorm's opacity with the border and the shadow of the
+  minimap keeps the Legacy Viewer's opacity with the border and the shadow of the
   windows. Menus, submenus, right-click menus and drop-down lists get this
   glass from a single place (`menu::glaze`, at the end of the frame, in the
   world): a new menu has nothing to do to get it.
   Gradients are reserved for brand elements (login background, auroras,
   fill of the progress bar).
 - **Preferences › Aurora.** The page of what Aurora does differently from
-  Firestorm carries the brand in two places only: its entry in the
+  the Legacy Viewer carries the brand in two places only: its entry in the
   category list (edge mark and name in the aurora gradient, from `success`
   through `teal`, `indigo_light` and `violet_light` to `rose`) and the head
   of the page (the aurora over the `navy` sky, a hairline of the same
   gradient along its bottom edge). The settings below keep the cards and
   controls of the other pages; the choices between Aurora's look and
-  Firestorm's are a `widgets::segmented` track, Aurora's segment lit in the
-  accent and Firestorm's in `raised`. It is not a precedent for the other
+  the Legacy Viewer's are a `widgets::segmented` track, Aurora's segment lit in the
+  accent and the Legacy Viewer's in `raised`. It is not a precedent for the other
   pages (human's choice, 2026-10-14).
 - **Login screen.** It is the viewer's showcase. The window blur only
   knows the 3D scene, which is absent here: each card (`login::card`)
@@ -360,7 +360,7 @@ profiles is `circle-check-filled` in `success` (trusted site),
 
 The world cursors are drawn from the same Tabler outline icons, in the
 `ink` colour outlined with `bar` to stay readable over any scenery
-(`crates/aurora-viewer/src/cursors.rs`). The rules are those of Firestorm,
+(`crates/aurora-viewer/src/cursors.rs`). The rules are those of the Legacy Viewer,
 only the drawings change:
 
 | Situation | Cursor |
