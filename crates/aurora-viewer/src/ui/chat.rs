@@ -77,6 +77,12 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV=aurora:new`: open the menu of the column's "new
     /// conversation" button once it is drawn.
     pub demo_new_menu: bool,
+    /// The workspace's layout last frame (None before the first): the
+    /// column as a rail, room for the members' panel. A threshold crossed
+    /// back needs a margin past it (`workspace::rail_now`), so a window
+    /// resized around one does not flip at every point.
+    layout_rail: Option<bool>,
+    layout_members_room: Option<bool>,
     /// `style` was given once: a change after it is the preferences'.
     style_given: bool,
     /// Voice is enabled (calls possible), given every frame by the app.

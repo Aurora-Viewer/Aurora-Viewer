@@ -336,6 +336,43 @@ fn empty_sections_are_not_drawn() {
     assert!(h.frames.ctx.read_response(new).is_some(), "the new conversation button");
 }
 
+/// A threshold crossed back needs a margin past it: a window resized
+/// around 600 points (or around the room of the members' panel) switches
+/// its layout once each way (the human's report of 2026-10-16).
+#[test]
+fn layout_thresholds_have_a_margin() {
+    use super::{RAIL_BELOW, members_room_now, rail_now};
+    assert!(rail_now(None, RAIL_BELOW - 1.0));
+    assert!(!rail_now(None, RAIL_BELOW + 1.0));
+    assert!(rail_now(Some(true), RAIL_BELOW + 20.0), "a rail stays one past 600");
+    assert!(!rail_now(Some(true), RAIL_BELOW + 41.0));
+    assert!(!rail_now(Some(false), RAIL_BELOW + 1.0));
+    let room = super::members::WIDTH + super::MESSAGES_MIN;
+    assert!(members_room_now(None, room));
+    assert!(!members_room_now(None, room - 1.0));
+    assert!(members_room_now(Some(true), room - 20.0), "the panel stays a little under its room");
+    assert!(!members_room_now(Some(true), room - 41.0));
+}
+
+/// The window narrowed past 600 points: the column eases to the rail over
+/// a few frames instead of jumping in one.
+#[test]
+fn the_column_eases_to_the_rail() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, 560.0));
+    h.settle();
+    let wide = h.rect(entry_id(Pinned::Local)).width();
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(560.0, 560.0));
+    let mut widths = Vec::new();
+    for _ in 0..30 {
+        h.frame(Vec::new());
+        widths.push(h.rect(entry_id(Pinned::Local)).width());
+    }
+    let narrow = *widths.last().expect("frames");
+    let between = widths.iter().filter(|w| **w < wide - 1.0 && **w > narrow + 1.0).count();
+    assert!(narrow < wide && between >= 3, "{wide} → {widths:?}");
+}
+
 /// Thirty friends, all online, named "Friend 00" to "Friend 29".
 fn add_friends(world: &mut World) {
     for i in 0..30u128 {

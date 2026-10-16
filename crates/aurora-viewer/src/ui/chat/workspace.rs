@@ -21,6 +21,32 @@ use uuid::Uuid;
 pub(super) const RAIL_BELOW: f32 = 600.0;
 /// The members' panel shows when the messages keep at least this width.
 const MESSAGES_MIN: f32 = 360.0;
+/// How far past a threshold a window must go back before the layout
+/// switches back (the human's report of 2026-10-16: resized around 600
+/// points the column and the rail swapped at every point).
+const HYSTERESIS: f32 = 40.0;
+/// Time the column and the members' panel take to reach their new width
+/// once the window's size crossed a threshold: the messages slide instead
+/// of jumping 170 or 210 points in one frame.
+const LAYOUT_EASE: f32 = 0.15;
+
+/// The column is a rail at this window width, given what it was last frame.
+fn rail_now(was: Option<bool>, width: f32) -> bool {
+    match was {
+        Some(true) => width < RAIL_BELOW + HYSTERESIS,
+        _ => width < RAIL_BELOW,
+    }
+}
+
+/// The messages leave room for the members' panel at this pane width,
+/// given what they did last frame.
+fn members_room_now(was: Option<bool>, width: f32) -> bool {
+    let left = width - members::WIDTH;
+    match was {
+        Some(true) => left >= MESSAGES_MIN - HYSTERESIS,
+        _ => left >= MESSAGES_MIN,
+    }
+}
 
 /// What the workspace draws with.
 pub(super) struct Env<'a> {
@@ -57,7 +83,15 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     } = env;
     let size = ui.available_size();
     let h = size.y.max(160.0);
-    let rail = size.x < RAIL_BELOW;
+    let rail_wanted = rail_now(st.layout_rail, size.x);
+    st.layout_rail = Some(rail_wanted);
+    let column = ui.ctx().animate_value_with_time(
+        ui.id().with("column_width"),
+        if rail_wanted { sidebar::RAIL } else { sidebar::WIDTH },
+        LAYOUT_EASE,
+    );
+    // the entries take the rail's look once the column is closer to it
+    let rail = column < (sidebar::RAIL + sidebar::WIDTH) / 2.0;
     // the conversation left: its "New" line goes
     if st.shown != Some(st.selected) {
         if let Some(before) = st.shown {
@@ -77,7 +111,20 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         } else {
             sidebar::ContactsSub::Lists
         };
-        sidebar::show(ui, p, pics, world, st, actions, show_contacts_tab, contacts_sub, docked, rail, h);
+        sidebar::show(
+            ui,
+            p,
+            pics,
+            world,
+            st,
+            actions,
+            show_contacts_tab,
+            contacts_sub,
+            docked,
+            rail,
+            column,
+            h,
+        );
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_height(h);
@@ -159,7 +206,15 @@ fn pane(
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);
-    let members_room = !rail && width - members::WIDTH >= MESSAGES_MIN;
+    let members_room = !rail && members_room_now(st.layout_members_room, width);
+    st.layout_members_room = Some(members_room);
+    // the panel's width eases to its new one when the room comes or goes
+    // with the window's size; the head's button shows or hides it at once
+    let room_w = ui.ctx().animate_value_with_time(
+        ui.id().with("members_width"),
+        if members_room { members::WIDTH } else { 0.0 },
+        LAYOUT_EASE,
+    );
     {
         let w: &World = world;
         head::show(ui, p, pics, w, st, actions, members_room);
@@ -193,8 +248,9 @@ fn pane(
     let me = our_names(w, &own_name);
     let moderators = st.selected.and_then(|id| w.groups.sessions.get(&id)).map(|s| &s.moderators);
     let mut asked = Vec::new();
-    let members_shown = members_room && st.members_open && matches!(kind, Some(k) if k != sidebar::Kind::Private);
-    let lines_w = if members_shown { width - members::WIDTH } else { width };
+    let members_shown = st.members_open && matches!(kind, Some(k) if k != sidebar::Kind::Private) && room_w >= 1.0;
+    let members_w = if members_shown { room_w } else { 0.0 };
+    let lines_w = width - members_w;
     let mut to_field = ToField::Nothing;
     let body_top = ui.cursor().top();
     ui.horizontal_top(|ui| {
@@ -218,7 +274,7 @@ fn pane(
             to_field = conversation_lines(ui, p, lines, st, Rows::Thread(&mut th));
         });
         if members_shown && let Some(id) = st.selected {
-            members::show(ui, p, pics, w, st, actions, id, lines_h);
+            members::show(ui, p, pics, w, st, actions, id, members_w, lines_h);
         }
     });
     ui.set_min_height(0.0);

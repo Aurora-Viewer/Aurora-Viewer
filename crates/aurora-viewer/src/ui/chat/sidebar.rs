@@ -189,9 +189,10 @@ pub(super) fn show(
     contacts_sub: ContactsSub,
     docked: bool,
     rail: bool,
+    // RAIL or WIDTH, or on its way from one to the other
+    width: f32,
     height: f32,
 ) {
-    let width = if rail { RAIL } else { WIDTH };
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
     // the mockup's `.side`: the bar's colour at 75 %, a hairline at its
     // right, its bottom left corner the window's
@@ -211,6 +212,8 @@ pub(super) fn show(
             .max_rect(column.shrink2(egui::vec2(6.0, 0.0)))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
+    // (while its width eases, nothing spills over the messages)
+    child.set_clip_rect(column.intersect(child.clip_rect()));
     let ui = &mut child;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
