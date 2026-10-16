@@ -59,6 +59,11 @@ pub struct NetPeriod {
     /// held them, and those counted as errors.
     pub eq_idle: u64,
     pub eq_errors: u64,
+    /// Objects received in full, and announced by their cache entry: found
+    /// in the object cache, or asked for in full (an arrival's curve).
+    pub objects_full: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 /// What the Performance window keeps beyond the last period.
@@ -197,6 +202,9 @@ impl NetProfile {
             http_kbps: kbps(snap.http_bytes, prev.http_bytes),
             eq_idle: since(snap.eq_idle_polls, prev.eq_idle_polls),
             eq_errors: since(snap.eq_errors, prev.eq_errors),
+            objects_full: since(snap.objects_full, prev.objects_full),
+            cache_hits: since(snap.object_cache_hits, prev.object_cache_hits),
+            cache_misses: since(snap.object_cache_misses, prev.object_cache_misses),
         };
         if peaks.input_delay_ms.is_some() {
             self.totals.input_delay_ms = peaks.input_delay_ms;
@@ -221,7 +229,7 @@ fn summary(p: &NetPeriod) -> String {
         "ping={} avg={} | udp in={:.0} out={:.0} pkt/s {:.0} / {:.0} kb/s | resent={} given_up={} dup={} unacked={} gaps={} late={} \
          | loop_max={:.2} | events={} left_max={} wait_max={:.2} | agent_updates={} input_delay_max={input} \
          | corrections={} largest={:.2} lead_max={:.2} | http active={} queued={} done={} failed={} retries={} {:.0} kb/s \
-         | event_queue idle={} errors={}",
+         | event_queue idle={} errors={} | objects full={} cache_hit={} cache_miss={}",
         p.ping_ms,
         p.ping_avg_ms,
         p.packets_in,
@@ -250,6 +258,9 @@ fn summary(p: &NetPeriod) -> String {
         p.http_kbps,
         p.eq_idle,
         p.eq_errors,
+        p.objects_full,
+        p.cache_hits,
+        p.cache_misses,
     )
 }
 
@@ -282,6 +293,9 @@ mod tests {
         stats.http_retries.fetch_add(1, Ordering::Relaxed);
         stats.eq_idle_polls.fetch_add(4, Ordering::Relaxed);
         stats.eq_errors.fetch_add(1, Ordering::Relaxed);
+        stats.objects_full.fetch_add(150, Ordering::Relaxed);
+        stats.object_cache_hits.fetch_add(40, Ordering::Relaxed);
+        stats.object_cache_misses.fetch_add(2, Ordering::Relaxed);
         stats.agent_update_sent(true);
         p.event_applied(t, t + Duration::from_millis(12));
         p.event_applied(t, t + Duration::from_millis(4));
@@ -310,7 +324,10 @@ mod tests {
             line.contains("| corrections=1 largest=2.50 lead_max=0.00 | http active=0 queued=0 done=0 failed=0 retries=1 500 kb/s"),
             "{line}"
         );
-        assert!(line.ends_with("| event_queue idle=4 errors=1"), "{line}");
+        assert!(
+            line.ends_with("| event_queue idle=4 errors=1 | objects full=150 cache_hit=40 cache_miss=2"),
+            "{line}"
+        );
 
         // the next period starts from nothing
         p.end_frame_at(&stats, t + PERIOD * 4).expect("third period");

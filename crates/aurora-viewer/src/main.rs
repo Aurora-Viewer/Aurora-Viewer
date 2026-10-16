@@ -54,6 +54,7 @@ mod ui_sound;
 mod updater;
 mod voice;
 mod window_hold;
+mod window_show;
 mod world;
 
 fn main() -> anyhow::Result<()> {
