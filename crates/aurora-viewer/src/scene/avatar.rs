@@ -240,6 +240,10 @@ impl AvatarLibrary {
                         let joint = c.attr("joint").unwrap_or("mPelvis");
                         let pos = parse_vec3(c.attr("position").unwrap_or("0 0 0"));
                         let rot = parse_vec3(c.attr("rotation").unwrap_or("0 0 0"));
+                        // LLVOAvatar::initAttachmentPoints (indra/newview/llvoavatar.cpp,
+                        // originally LGPL 2.1) uses LLQuaternion::setQuat: qx * qy * qz.
+                        // The skeleton's mayaQ convention composes these in reverse.
+                        let rotation = Quat::from_euler(glam::EulerRot::XYZ, rot.x.to_radians(), rot.y.to_radians(), rot.z.to_radians());
                         let hud = c.attr("hud").is_some_and(|v| v == "true");
                         if let Some(id) = id {
                             attach_names.insert(id, c.attr("name").unwrap_or(aurora_i18n::tr!("common-attachment")).to_owned());
@@ -249,7 +253,7 @@ impl AvatarLibrary {
                                 id,
                                 AttachPoint {
                                     position: jp + pos - pelvis,
-                                    rotation: aurora_assets::skeleton::maya_q_xyz(rot),
+                                    rotation,
                                     hud,
                                     skel_position: jp + pos,
                                     joint: None,
@@ -346,6 +350,29 @@ impl AvatarLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_rotations_match_firestorms_local_axes() {
+        let lib = AvatarLibrary::load();
+        assert_eq!(lib.attach_points.len(), 55);
+        for (&id, point) in &lib.attach_points {
+            // Basis vectors from LLQuaternion::setQuat in
+            // LLVOAvatar::initAttachmentPoints (llvoavatar.cpp), not mayaQ.
+            let expected = match id {
+                1 => [Vec3::Y, Vec3::Z, Vec3::X],   // Chest: 0, 90, 90
+                9 => [Vec3::Y, -Vec3::Z, -Vec3::X], // Spine: 0, -90, 90
+                2 => [Vec3::Y, -Vec3::X, Vec3::Z],  // Skull: 0, 0, 90
+                _ => [Vec3::X, Vec3::Y, Vec3::Z],
+            };
+            for (axis, expected) in [Vec3::X, Vec3::Y, Vec3::Z].into_iter().zip(expected) {
+                let actual = point.rotation * axis;
+                assert!(
+                    actual.abs_diff_eq(expected, 1e-6),
+                    "point {id}, axis {axis:?}: {actual:?} != {expected:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn refresh_takes_the_bakes_not_the_default_textures() {
