@@ -468,30 +468,60 @@ fn a_compact_pill_puts_its_badges_after_the_name() {
 #[test]
 fn the_halo_follows_the_voice_level() {
     let mut e = VoiceEnvelope::default();
-    assert_eq!(e.halo(1.0), None, "no halo before anyone speaks");
+    assert_eq!(e.halo(), None, "no halo before anyone speaks");
     // in the channel but silent, even with some noise on the line: no
     // halo, so no green outline either
     for _ in 0..60 {
         e.update(0.4, false, 1.0 / 60.0);
     }
-    assert_eq!(e.halo(1.0), None);
-    // loud: the widest halo of the mockup's rule
+    assert_eq!(e.halo(), None);
     for _ in 0..60 {
         e.update(1.0, true, 1.0 / 60.0);
     }
-    let loud = e.halo(1.0).expect("speaking");
-    assert!((loud.blur - 14.0).abs() < 0.1 && (loud.spread - 2.0).abs() < 0.05 && (loud.alpha - 0.85).abs() < 0.01);
-    assert!(loud.gate > 0.99, "the outline is fully green: {}", loud.gate);
-    // a whisper: the tightest one, still visible
+    let loud = e.halo().expect("speaking");
+    assert!(loud.level > 0.99 && loud.gate > 0.99, "{loud:?}");
     let mut quiet = VoiceEnvelope::default();
     for _ in 0..60 {
         quiet.update(0.0, true, 1.0 / 60.0);
     }
-    let whisper = quiet.halo(1.0).expect("speaking");
-    assert!((whisper.blur - 3.0).abs() < 0.01 && whisper.spread.abs() < 0.01 && (whisper.alpha - 0.30).abs() < 0.01);
-    // in points: everything follows the plate's scale but the opacity
-    let scaled = e.halo(0.5).expect("speaking");
-    assert!((scaled.blur - loud.blur * 0.5).abs() < 0.01 && (scaled.alpha - loud.alpha).abs() < 0.001);
+    let whisper = quiet.halo().expect("speaking");
+    assert!(whisper.level < 0.01 && whisper.gate > 0.99, "a whisper still lights the plate");
+}
+
+/// Widest reach and strongest opacity of the voice's glow and ring.
+fn voice_extent(v: &paint::VoiceLight) -> (f32, u8) {
+    let glow = (v.glow.spread + v.glow.blur, v.glow.color.a());
+    let ring = (v.ring.gap + v.ring.width, v.ring.color.a());
+    (glow.0.max(ring.0), glow.1.max(ring.1))
+}
+
+#[test]
+fn the_voice_light_grows_with_the_level_and_fades_with_the_gate() {
+    let p = Theme::default().palette();
+    let plain = p.ink.gamma_multiply(0.14);
+    let full = Metrics::of(Level::Full, SCALE).height;
+    let far = Metrics::of(Level::Far, SCALE).height;
+    let look = |level: f32, gate: f32, height: f32| paint::voice_light(&p, Halo { level, gate, heat: 0.0 }, plain, height);
+    let (loud, whisper) = (look(1.0, 1.0, full), look(0.0, 1.0, full));
+    let ((reach_loud, alpha_loud), (reach_whisper, alpha_whisper)) = (voice_extent(&loud), voice_extent(&whisper));
+    assert!(reach_loud > reach_whisper && alpha_loud > alpha_whisper);
+    // a whisper still shows, and the plate lights up as soon as it speaks
+    assert!(alpha_whisper > 60, "{alpha_whisper}");
+    // fading out, everything goes with the gate
+    let (_, alpha_fading) = voice_extent(&look(1.0, 0.1, full));
+    assert!(alpha_fading < alpha_loud / 4);
+    // never wider than a plate's height, tighter around a far pill
+    assert!(reach_loud < full, "{reach_loud}");
+    let (reach_far, _) = voice_extent(&look(1.0, 1.0, far));
+    assert!(reach_far < reach_loud);
+    // the plate's edge turns green with the gate
+    let mesh::Border::Around(edge, _) = loud.border else {
+        panic!("no outline")
+    };
+    assert!(edge.g() > plain.g());
+    // the ring closes in on the plate as the voice starts
+    let (starting, open) = (look(0.5, 0.2, full).ring, look(0.5, 1.0, full).ring);
+    assert!(starting.gap > open.gap && starting.color.a() < open.color.a());
 }
 
 #[test]
@@ -513,16 +543,22 @@ fn the_voice_level_rises_fast_falls_slowly_and_ends_dark() {
     }
     assert!(e.level > top * 0.8, "{} after {top}", e.level);
     // never a jump from one frame to the next
-    let mut previous = e.halo(1.0).expect("speaking").alpha;
+    let p = Theme::default().palette();
+    let full = Metrics::of(Level::Full, SCALE).height;
+    let alpha = |e: &VoiceEnvelope| {
+        let light = e.halo().map(|h| paint::voice_light(&p, h, p.ink, full));
+        light.map_or(0, |v| voice_extent(&v).1) as f32 / 255.0
+    };
+    let mut previous = alpha(&e);
     for frame in 0..240 {
         let speaking = frame < 20;
         e.update(if frame % 7 < 3 { 1.0 } else { 0.0 }, speaking, dt);
-        let alpha = e.halo(1.0).map_or(0.0, |h| h.alpha);
-        assert!((alpha - previous).abs() < 0.2, "frame {frame}: {previous} -> {alpha}");
-        previous = alpha;
+        let now = alpha(&e);
+        assert!((now - previous).abs() < 0.2, "frame {frame}: {previous} -> {now}");
+        previous = now;
     }
     // silent for good: no halo at all, not a faint one
-    assert_eq!(e.halo(1.0), None);
+    assert_eq!(e.halo(), None);
     assert_eq!(e, VoiceEnvelope::default());
 }
 
@@ -540,6 +576,74 @@ fn the_voice_envelope_does_not_depend_on_the_frame_rate() {
     };
     let (slow, fast) = (run(30), run(240));
     assert!((slow.level - fast.level).abs() < 0.01 && (slow.gate - fast.gate).abs() < 0.01);
+}
+
+#[test]
+fn the_loud_ring_grows_with_the_voice_and_turns_red_only_when_overdriven() {
+    let p = Theme::default().palette();
+    let over = level_at_dbfs(SHOUT_DBFS);
+    // from the speaking level to past the overdriven one, as the plates read it
+    let raws: Vec<f32> = (0..=70).map(|i| aurora_voice::SPEAKING_AUDIO_LEVEL + i as f32 * 0.005).collect();
+    let rings: Vec<_> = raws.iter().map(|&r| paint::loud_ring(&p, voice_level(r), overdrive(r))).collect();
+    for (w, r) in rings.windows(2).zip(&raws[1..]) {
+        let (a, b) = (w[0], w[1]);
+        assert!(b.gap >= a.gap && b.width >= a.width, "{r}: {a:?} -> {b:?}");
+        assert!(
+            b.alpha >= a.alpha && b.glow >= a.glow && b.blur >= a.blur && b.edge >= a.edge,
+            "{r}"
+        );
+        // the red never goes back as the voice rises
+        assert!(overdrive(*r) >= overdrive(*r - 0.005), "{r}");
+    }
+    let green = |level: f32| paint::loud_ring(&p, level, 0.0).color;
+    for (ring, &raw) in rings.iter().zip(&raws) {
+        if raw <= over {
+            assert_eq!(ring.color, green(voice_level(raw)), "green below the overdriven level: {raw}");
+        }
+    }
+    // a clear range: a faint hairline on the plate, then a thick ring well out
+    let (whisper, normal, shout) = (rings[2], rings[30], rings[66]);
+    assert!(whisper.gap < 1.5 && whisper.width < 1.2 && whisper.alpha < 0.5 && whisper.glow < 0.06);
+    assert!(normal.gap > 2.0 * whisper.gap && normal.width > 1.5 * whisper.width);
+    assert!(shout.gap > 7.0 && shout.width > 3.0 && shout.glow > 0.4 && shout.blur > 20.0);
+    // a shout is red, from the palette
+    assert!(overdrive(raws[66]) >= 1.0);
+    assert_eq!(shout.color, p.danger);
+    // halfway, the amber of the palette rather than a mix of green and red
+    assert_eq!(paint::loud_ring(&p, 1.0, 0.5).color, p.amber);
+    assert!(overdrive(over) == 0.0 && overdrive(over + 0.015) > 0.4 && overdrive(f32::NAN) == 0.0);
+}
+
+#[test]
+fn the_red_comes_and_goes_smoothly() {
+    let dt = 1.0 / 60.0;
+    let mut e = VoiceEnvelope::default();
+    let over = level_at_dbfs(SHOUT_DBFS);
+    // a normal voice: no red at all
+    for _ in 0..60 {
+        e.update_raw(0.46, true, dt);
+    }
+    assert_eq!(e.heat, 0.0);
+    // a shout: red within a few frames, never in one
+    e.update_raw(over + 0.05, true, dt);
+    assert!(e.heat > 0.0 && e.heat < 0.5, "{}", e.heat);
+    for _ in 0..10 {
+        e.update_raw(over + 0.05, true, dt);
+    }
+    assert!(e.heat > 0.95, "{}", e.heat);
+    // back to normal: it fades slower than it came
+    let mut previous = e.heat;
+    for _ in 0..12 {
+        e.update_raw(0.46, true, dt);
+        assert!(e.heat < previous && previous - e.heat < 0.1);
+        previous = e.heat;
+    }
+    assert!(e.heat > 0.3);
+    // silence for good: nothing left
+    for _ in 0..120 {
+        e.update_raw(0.0, false, dt);
+    }
+    assert_eq!(e, VoiceEnvelope::default());
 }
 
 #[test]
