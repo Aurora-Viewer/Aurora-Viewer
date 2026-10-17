@@ -2778,11 +2778,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   a resident's name or picture, or a message in Aurora/Compact. Incoming
   messages must leave the menu and its original target in place, so Ignore,
   Copy and Quote can still be used. Repeat after scrolling up and in all
-  four styles. The transcript holds its position while the menu is open;
-  Escape, a click outside or choosing an action closes it normally. New
-  messages are still received and appear when the menu closes. The
+  four styles. New messages must appear immediately with the menu open,
+  following the live end or retaining the normal manual-scroll position.
+  Escape, a click outside or choosing an action closes it normally; dragging
+  the conversation window closes it before the mouse is released. The
   original target must remain available when the 2,000-message live buffer
-  evicts its line; only visible rows are retained while the menu is open.
+  evicts its line; only the menu's original target is retained.
   Check that following the live end, manual scrolling, find and text selection still
   work afterwards. The offline regression injects messages between actual
   pointer frames: `cargo test --workspace incoming_messages_keep_chat_context_menus_open`.

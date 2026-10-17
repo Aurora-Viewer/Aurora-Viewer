@@ -396,6 +396,7 @@ impl HistoryUi {
         // nothing is looked up for the lines of a transcript
         let mut no_pictures = HashSet::new();
         let own_name = world.own_name();
+        let menu = ui.layer_id().id.with(("history_line_menu", self.page));
         let mut env = LineEnv {
             p,
             icons,
@@ -406,6 +407,7 @@ impl HistoryUi {
             wanted: &mut no_pictures,
             own_name: &own_name,
             plain_history: true,
+            menu: Some(menu),
             bubbles: None,
         };
         let wash = find::wash(p);
@@ -413,12 +415,7 @@ impl HistoryUi {
         // a page opens at its end, the most recent of its messages
         let area = egui::ScrollArea::vertical()
             .id_salt(("chat_history", self.page))
-            .stick_to_bottom(!view.menu_open(ui.ctx()))
-            .scroll_source(if view.menu_open(ui.ctx()) {
-                egui::scroll_area::ScrollSource::NONE
-            } else {
-                Default::default()
-            })
+            .stick_to_bottom(true)
             .auto_shrink([false, false])
             .max_height(height)
             .min_scrolled_height(height);
@@ -436,11 +433,11 @@ impl HistoryUi {
                 width,
             );
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
-            let (shift, content) = view.show(ui, viewport, lines, &mut |ui, row, painted| {
-                let Some(line) = row.held.as_deref().or_else(|| lines.get(row.line)) else {
+            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                let Some(line) = lines.get(row.line) else {
                     return;
                 };
-                let seq = row.seq;
+                let seq = clock.first + row.line as u64;
                 super::select::row(ui, seq, selection.of_row(seq), painted, |ui| {
                     super::draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
                 });
@@ -465,6 +462,11 @@ impl HistoryUi {
             state.offset.y += out.inner;
             state.store(ui.ctx(), out.id);
         }
+        super::line_menu::show(ui, menu, p, |ui, target| {
+            if let Some(avatar) = target.sender {
+                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+            }
+        });
         debug_assert!(self.lines.len() <= PAGE);
     }
 }
