@@ -413,7 +413,12 @@ impl HistoryUi {
         // a page opens at its end, the most recent of its messages
         let area = egui::ScrollArea::vertical()
             .id_salt(("chat_history", self.page))
-            .stick_to_bottom(true)
+            .stick_to_bottom(!view.menu_open(ui.ctx()))
+            .scroll_source(if view.menu_open(ui.ctx()) {
+                egui::scroll_area::ScrollSource::NONE
+            } else {
+                Default::default()
+            })
             .auto_shrink([false, false])
             .max_height(height)
             .min_scrolled_height(height);
@@ -431,11 +436,11 @@ impl HistoryUi {
                 width,
             );
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
-            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
-                let Some(line) = lines.get(row.line) else {
+            let (shift, content) = view.show(ui, viewport, lines, &mut |ui, row, painted| {
+                let Some(line) = row.held.as_deref().or_else(|| lines.get(row.line)) else {
                     return;
                 };
-                let seq = clock.first + row.line as u64;
+                let seq = row.seq;
                 super::select::row(ui, seq, selection.of_row(seq), painted, |ui| {
                     super::draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
                 });

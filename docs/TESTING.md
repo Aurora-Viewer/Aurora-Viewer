@@ -2774,6 +2774,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   oldest entry, consecutive duplicate sends, channel prefixes and emoji.
   No count limit or disk persistence; closing an IM/group/conference
   discards its recall, while hiding Conversations keeps it.
+  Chat context menus (#557): in an active group conversation, right click
+  a resident's name or picture, or a message in Aurora/Compact. Incoming
+  messages must leave the menu and its original target in place, so Ignore,
+  Copy and Quote can still be used. Repeat after scrolling up and in all
+  four styles. The transcript holds its position while the menu is open;
+  Escape, a click outside or choosing an action closes it normally. New
+  messages are still received and appear when the menu closes. The
+  original target must remain available when the 2,000-message live buffer
+  evicts its line; only visible rows are retained while the menu is open.
+  Check that following the live end, manual scrolling, find and text selection still
+  work afterwards. The offline regression injects messages between actual
+  pointer frames: `cargo test --workspace incoming_messages_keep_chat_context_menus_open`.
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
