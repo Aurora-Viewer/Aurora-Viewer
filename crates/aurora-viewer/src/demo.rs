@@ -4397,6 +4397,7 @@ pub const IDLE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000
 pub const ANIMESH_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0100);
 pub const ANIMESH_TEXTURE: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0101);
 pub const ANIMESH_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0102);
+pub const ANIMESH_UNRIGGED_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0103);
 
 /// AURORA_DEMO_ANIMESH=churn: the ground animesh changes its mesh asset every
 /// `ANIMESH_CHURN_FRAMES` frames, as rigged meshes come and go on a grid.
@@ -4420,7 +4421,10 @@ pub fn animesh_churn_events(generation: u32) -> Vec<NetEvent> {
 
 /// Root mesh, linked mesh driven by a child's signal, and a worn root mesh.
 pub fn animesh_events() -> Vec<NetEvent> {
-    let objects = animesh_objects(ANIMESH_MESH);
+    let mut objects = animesh_objects(ANIMESH_MESH);
+    if std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| matches!(v.as_str(), "alpha" | "alpha-cycle")) {
+        make_animesh_invisible(&mut objects);
+    }
     let mut events: Vec<_> = objects
         .iter()
         .filter(|o| o.volume.is_mesh())
@@ -4435,8 +4439,60 @@ pub fn animesh_events() -> Vec<NetEvent> {
     events
 }
 
+/// Enable after the normal zero-record path has loaded, then exercise
+/// cleanup, the non-rigged filter and reactivation without a scene reload.
+pub fn animesh_alpha_step(frame: u64) -> Option<Option<bool>> {
+    if !std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| v == "alpha-cycle") {
+        return None;
+    }
+    match frame {
+        720 | 1440 => Some(Some(true)),
+        960 => Some(None),
+        1200 => Some(Some(false)),
+        _ => None,
+    }
+}
+
+/// Invisible unrigged mesh children on ground/worn animesh linksets, plus
+/// a skinned zero-alpha neighbour for the independent rigged filter.
+pub(crate) fn make_animesh_invisible(objects: &mut Vec<ObjectUpdate>) {
+    if let Some(te) = objects
+        .iter_mut()
+        .find(|o| o.local_id == 9202)
+        .and_then(|o| o.texture_entry.as_mut())
+    {
+        for face in &mut Arc::make_mut(te).faces {
+            face.color[3] = 0.0;
+        }
+    }
+    for (local, parent) in [(9205, 9200), (9206, 9203)] {
+        let sculpt = SculptParams {
+            texture: ANIMESH_UNRIGGED_MESH,
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        };
+        let mut object = prim(
+            local,
+            Vec3::new(0.2, 0.0, 0.4),
+            Quat::IDENTITY,
+            Vec3::new(1.7, 0.8, 0.9),
+            aurora_prim::VolumeParams {
+                sculpt: Some(sculpt),
+                ..Default::default()
+            },
+            te([0.0; 4], 0, false, 0.0),
+            ExtraParams {
+                sculpt: Some(sculpt),
+                ..Default::default()
+            },
+            "",
+        );
+        object.parent_id = parent;
+        objects.push(object);
+    }
+}
+
 /// Objects of the animesh demo; the ground root mesh (9200) is `ground_mesh`.
-fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
+pub(crate) fn animesh_objects(ground_mesh: Uuid) -> Vec<ObjectUpdate> {
     let ground = floor_at(134.0, 126.0) + 0.2;
     let mut objects = Vec::new();
     for (id, pos, parent, animated, is_mesh, color) in [
