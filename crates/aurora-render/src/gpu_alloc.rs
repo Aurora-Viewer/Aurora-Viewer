@@ -25,20 +25,27 @@ pub fn try_buffer(device: &wgpu::Device, desc: &wgpu::BufferDescriptor) -> Resul
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let buffer = device.create_buffer(desc);
-    // An invalid buffer only shows when it is used: a clear of its first
-    // bytes is recorded (never submitted) for the scope to catch it.
-    if desc.usage.contains(wgpu::BufferUsages::COPY_DST) && desc.size >= wgpu::COPY_BUFFER_ALIGNMENT {
-        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("allocation check"),
-        });
-        enc.clear_buffer(&buffer, 0, Some(wgpu::COPY_BUFFER_ALIGNMENT));
-        drop(enc.finish());
-    }
+    probe(device, &buffer);
     let invalid = pollster::block_on(invalid.pop());
     let oom = pollster::block_on(oom.pop());
     match invalid.or(oom) {
         None => Ok(buffer),
         Some(e) => Err(reason(&e.to_string())),
+    }
+}
+
+/// An invalid buffer only shows when it is used: a clear of its first bytes
+/// is recorded into an encoder that is finished and dropped, never
+/// submitted (nothing reaches the GPU), for the error scope around it to
+/// catch a "Buffer … is invalid" (`invalid_buffers_are_seen_and_valid_ones_untouched`).
+/// Buffers without COPY_DST are not checked (every growing buffer has it).
+fn probe(device: &wgpu::Device, buffer: &wgpu::Buffer) {
+    if buffer.usage().contains(wgpu::BufferUsages::COPY_DST) && buffer.size() >= wgpu::COPY_BUFFER_ALIGNMENT {
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("allocation check"),
+        });
+        enc.clear_buffer(buffer, 0, Some(wgpu::COPY_BUFFER_ALIGNMENT));
+        drop(enc.finish());
     }
 }
 
@@ -299,6 +306,64 @@ mod tests {
         let err = try_buffer(&device, &desc(too_big)).expect_err("refused");
         assert!(!err.is_empty());
         assert_eq!(uncaught.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    /// The probe of `try_buffer`: a buffer whose creation failed without a
+    /// word (its error swallowed here, as wgpu does when it files a failed
+    /// allocation as a lost device) is caught by the probe alone; a valid
+    /// buffer is left as it was (the probe's clear never reaches the GPU)
+    /// and the probe costs microseconds. Needs a GPU:
+    /// `cargo test --workspace invalid_buffers_are_seen -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn invalid_buffers_are_seen_and_valid_ones_untouched() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).expect("GPU device");
+        let desc = |size| wgpu::BufferDescriptor {
+            label: Some("probe"),
+            size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        };
+        let probed = |buffer: &wgpu::Buffer| {
+            let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+            probe(&device, buffer);
+            pollster::block_on(scope.pop())
+        };
+        // an invalid buffer whose creation error nobody saw
+        let silent = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let bad = device.create_buffer(&desc(device.limits().max_buffer_size.saturating_mul(2)));
+        assert!(pollster::block_on(silent.pop()).is_some(), "the creation did fail");
+        let seen = probed(&bad).expect("the probe sees the invalid buffer");
+        assert!(reason(&seen.to_string()).contains("invalid"), "{seen}");
+        // a valid buffer: no error, and its content stays
+        let good = device.create_buffer(&desc(256));
+        queue.write_buffer(&good, 0, &[7u8; 16]);
+        queue.submit([]);
+        let t0 = Instant::now();
+        for _ in 0..1000 {
+            assert!(probed(&good).is_none());
+        }
+        let per_probe = t0.elapsed() / 1000;
+        eprintln!("probe of a valid buffer: {per_probe:?}");
+        assert!(per_probe < Duration::from_millis(1), "{per_probe:?}");
+        let read = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("read back"),
+            size: 16,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        enc.copy_buffer_to_buffer(&good, 0, &read, 0, 16);
+        queue.submit([enc.finish()]);
+        read.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        let bytes = read.slice(..).get_mapped_range().expect("mapped");
+        assert_eq!(&bytes[..], &[7u8; 16], "the probe's clear never ran");
     }
 
     #[test]
