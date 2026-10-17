@@ -97,6 +97,100 @@ impl Session<'_> {
                 let url = self.sim_cap(addr, "EstateAccess");
                 self.estate_get(handle, url, Get::Access);
             }
+            EstateCommand::Message {
+                handle,
+                estate,
+                name,
+                text,
+            } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                if estate {
+                    let strings = estate::estate_message_strings(&name, &text);
+                    self.send_estate_owner_message(addr, "instantmessage", invoice, &strings, true);
+                } else {
+                    let strings = estate::region_message_strings(self.agent_id(), &name, &text);
+                    self.send_estate_owner_message(addr, "simulatormessage", invoice, &strings, true);
+                }
+            }
+            EstateCommand::TeleportHome { handle, target } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                let me = self.agent_id().hyphenated().to_string();
+                match target {
+                    Some(id) => {
+                        let strings = [me, id.hyphenated().to_string()];
+                        self.send_estate_owner_message(addr, "teleporthomeuser", invoice, &strings, true);
+                    }
+                    // "historical message name" (onKickAllCommit)
+                    None => self.send_estate_owner_message(addr, "teleporthomeallusers", invoice, &[me], true),
+                }
+            }
+            EstateCommand::KickFromEstate { handle, target } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                self.send_estate_owner_message(addr, "kickestate", invoice, &[target.hyphenated().to_string()], true);
+            }
+            EstateCommand::ReturnObjects {
+                handle,
+                target,
+                flags,
+                estate_wide,
+            } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                if estate_wide {
+                    // routed by the space server to every region of the estate
+                    let invoice = self.estate_invoice;
+                    let strings = [flags.to_string(), target.hyphenated().to_string()];
+                    self.send_estate_owner_message(addr, "estateobjectreturn", invoice, &strings, true);
+                } else {
+                    // send_sim_wide_deletes (llfloatergodtools.cpp): this region only
+                    log::info!("sending SimWideDeletes (flags {flags})");
+                    let mut m = SimWideDeletes::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.data_block.target_id = target;
+                    m.data_block.flags = flags;
+                    self.send(addr, &m, true);
+                }
+            }
+            EstateCommand::Restart { handle, seconds } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                self.send_estate_owner_message(addr, "restart", invoice, &[seconds.to_string()], true);
+            }
+            EstateCommand::SetRestartSchedule { handle, days, seconds } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let Some(url) = self.sim_cap(addr, "RegionSchedule") else {
+                    log::warn!("restart schedule: no RegionSchedule capability");
+                    return;
+                };
+                // setRegionShcheduleCoro, then the schedule asked again for
+                // the window (the Legacy Viewer closes its floater)
+                let body = estate::restart_schedule_body(days, seconds);
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                tokio::spawn(async move {
+                    match crate::caps::post_llsd(&http, &url, &body).await {
+                        Ok(_) => log::info!("restart schedule posted"),
+                        Err(e) => log::warn!("restart schedule not posted: {e}"),
+                    }
+                    let body = fetch_llsd(&http, &url, Get::Schedule).await;
+                    let _ = events.send(NetEvent::Estate(Get::Schedule.event(handle, body)));
+                });
+            }
         }
     }
 
@@ -169,17 +263,7 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         tokio::spawn(async move {
             let body = match &url {
-                Some(url) => match http.get(url).header("Accept", "application/llsd+xml").send().await {
-                    Ok(r) if r.status().is_success() => r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()),
-                    Ok(r) => {
-                        log::info!("region / estate {what:?}: HTTP {}", r.status().as_u16());
-                        None
-                    }
-                    Err(e) => {
-                        log::warn!("region / estate {what:?}: {e}");
-                        None
-                    }
-                },
+                Some(url) => fetch_llsd(&http, url, what).await,
                 None => None,
             };
             let _ = events.send(NetEvent::Estate(what.event(handle, body)));
@@ -219,6 +303,21 @@ impl Session<'_> {
             emit(self.sh, NetEvent::Estate(EstateEvent::AccessChanged { handle }));
         }
         Ok(true)
+    }
+}
+
+/// GET of a capability of the window: its LLSD, None on a failure.
+async fn fetch_llsd(http: &reqwest::Client, url: &str, what: Get) -> Option<Llsd> {
+    match http.get(url).header("Accept", "application/llsd+xml").send().await {
+        Ok(r) if r.status().is_success() => r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()),
+        Ok(r) => {
+            log::info!("region / estate {what:?}: HTTP {}", r.status().as_u16());
+            None
+        }
+        Err(e) => {
+            log::warn!("region / estate {what:?}: {e}");
+            None
+        }
     }
 }
 

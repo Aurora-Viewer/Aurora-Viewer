@@ -75,6 +75,77 @@ pub fn access_delta_strings(agent: Uuid, flags: u32, id: Uuid) -> Vec<String> {
     vec![agent.hyphenated().to_string(), flags.to_string(), id.hyphenated().to_string()]
 }
 
+/// `SWD_*` flags of a return of a resident's objects (llregionflags.h):
+/// SimWideDeletes' Flags, `estateobjectreturn`'s first string.
+pub mod swd {
+    pub const OTHERS_LAND_ONLY: u32 = 1 << 0;
+    pub const ALWAYS_RETURN_OBJECTS: u32 = 1 << 1;
+    pub const SCRIPTED_ONLY: u32 = 1 << 2;
+}
+
+/// LLPanelRegionDebugInfo::onClickReturn: always returned, then the
+/// panel's two filters.
+pub fn return_flags(scripted_only: bool, others_land_only: bool) -> u32 {
+    let mut f = swd::ALWAYS_RETURN_OBJECTS;
+    if scripted_only {
+        f |= swd::SCRIPTED_ONLY;
+    }
+    if others_land_only {
+        f |= swd::OTHERS_LAND_ONLY;
+    }
+    f
+}
+
+/// The restart delay's spinner (panel_region_debug.xml `restart_delay`):
+/// 120 s by default, 15 s to an hour.
+pub const RESTART_DELAY_DEFAULT: u32 = 120;
+pub const RESTART_DELAY_MIN: u32 = 15;
+pub const RESTART_DELAY_MAX: u32 = 3600;
+
+/// `simulatormessage`'s strings (LLPanelRegionGeneralInfo::onMessageCommit):
+/// grid x and y (unused, "-1"), the sender, their name, the text.
+pub fn region_message_strings(agent: Uuid, name: &str, text: &str) -> Vec<String> {
+    vec![
+        "-1".to_owned(),
+        "-1".to_owned(),
+        agent.hyphenated().to_string(),
+        name.to_owned(),
+        text.to_owned(),
+    ]
+}
+
+/// `instantmessage`'s strings (LLPanelEstateInfo::onMessageCommit): the
+/// sender's name, the text.
+pub fn estate_message_strings(name: &str, text: &str) -> Vec<String> {
+    vec![name.to_owned(), text.to_owned()]
+}
+
+/// The RegionSchedule capability's body (LLFloaterRegionRestartSchedule::
+/// onSaveButtonClicked): every day is a daily restart ("D"), fewer a weekly
+/// one ("W") with the days' capital letters, Sunday first — none clears the
+/// schedule; the time in seconds after midnight UTC.
+pub fn restart_schedule_body(days: [bool; 7], seconds: u32) -> Llsd {
+    let chosen: String = DAY_LETTERS
+        .iter()
+        .zip(days)
+        .filter(|(_, on)| *on)
+        .map(|(c, _)| c.to_ascii_uppercase())
+        .collect();
+    let restart = if chosen.len() < 7 {
+        aurora_llsd::llsd_map! {
+            "type" => "W",
+            "days" => chosen.as_str(),
+            "time" => seconds.min(86_399) as i32,
+        }
+    } else {
+        aurora_llsd::llsd_map! {
+            "type" => "D",
+            "time" => seconds.min(86_399) as i32,
+        }
+    };
+    aurora_llsd::llsd_map! { "restart" => restart }
+}
+
 /// ESimStatID (llviewerstats.h): the stats of SimStats the window reads.
 pub mod sim_stat {
     pub const TIME_DILATION: u32 = 0;
@@ -535,6 +606,36 @@ pub enum EstateCommand {
     /// The lists again (LLPanelEstateAccess::updateLists), once the
     /// simulator answered a change with `setaccess`.
     RefreshAccess { handle: RegionHandle },
+    /// "Message to everyone": the region's (`simulatormessage`) or the
+    /// whole estate's (`instantmessage`), signed with `name`.
+    Message {
+        handle: RegionHandle,
+        estate: bool,
+        name: String,
+        text: String,
+    },
+    /// "Teleport home" one resident (`teleporthomeuser`) or everyone in
+    /// the region (`teleporthomeallusers`, `target` None).
+    TeleportHome { handle: RegionHandle, target: Option<Uuid> },
+    /// "Kick from estate" (`kickestate`).
+    KickFromEstate { handle: RegionHandle, target: Uuid },
+    /// A resident's objects returned (LLPanelRegionDebugInfo::callbackReturn):
+    /// through the estate (`estateobjectreturn`) or this region only
+    /// (SimWideDeletes), with `swd` flags.
+    ReturnObjects {
+        handle: RegionHandle,
+        target: Uuid,
+        flags: u32,
+        estate_wide: bool,
+    },
+    /// `restart` in `seconds`, or -1 to cancel a restart.
+    Restart { handle: RegionHandle, seconds: i32 },
+    /// The restart schedule saved (RegionSchedule POST), then asked again.
+    SetRestartSchedule {
+        handle: RegionHandle,
+        days: [bool; 7],
+        seconds: u32,
+    },
 }
 
 /// What the simulator answered.
@@ -746,6 +847,42 @@ mod tests {
         assert_eq!(m[1].1[1], "1 00000000-0000-0000-0000-000000000002");
         assert_eq!(m[2].1[2], "2 12.500000 60.000000");
         assert!(m[3].1.is_empty());
+    }
+
+    /// The interventions' strings in the panels' order.
+    #[test]
+    fn the_interventions_as_the_panels_send_them() {
+        let me = Uuid::from_u128(1);
+        assert_eq!(
+            region_message_strings(me, "Aurora Demo", "Back in 5"),
+            ["-1", "-1", "00000000-0000-0000-0000-000000000001", "Aurora Demo", "Back in 5"]
+                .map(String::from)
+                .to_vec()
+        );
+        assert_eq!(
+            estate_message_strings("Aurora Demo", "Hi"),
+            ["Aurora Demo", "Hi"].map(String::from).to_vec()
+        );
+        assert_eq!(return_flags(false, false), swd::ALWAYS_RETURN_OBJECTS);
+        assert_eq!(return_flags(true, true), 7);
+        assert_eq!(return_flags(true, false), swd::ALWAYS_RETURN_OBJECTS | swd::SCRIPTED_ONLY);
+    }
+
+    /// Saved as LLFloaterRegionRestartSchedule does, and read back.
+    #[test]
+    fn the_restart_schedule_body() {
+        let tue_thu = [false, false, true, false, true, false, false];
+        let b = restart_schedule_body(tue_thu, 7200);
+        assert_eq!(b["restart"]["type"].to_string_value(), "W");
+        assert_eq!(b["restart"]["days"].to_string_value(), "TR");
+        assert_eq!(b["restart"]["time"].as_i32(), 7200);
+        assert_eq!(parse_restart_schedule(&b).map(|s| (s.days, s.seconds)), Some((tue_thu, 7200)));
+        let daily = restart_schedule_body([true; 7], 21_600);
+        assert_eq!(daily["restart"]["type"].to_string_value(), "D");
+        assert!(!daily["restart"].has("days"));
+        // no day: a weekly schedule without days clears it
+        let none = restart_schedule_body([false; 7], 0);
+        assert_eq!(none["restart"]["days"].to_string_value(), "");
     }
 
     #[test]

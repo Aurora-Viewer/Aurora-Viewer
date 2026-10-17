@@ -241,13 +241,41 @@ fn main_column(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world
     let gauge_w = if compact { COMPACT_GAUGE_W } else { REGION_GAUGE_W };
     let list = fact_list(p, world, details.as_deref(), stats.as_ref());
     facts(ui, p, &list, gauge_w, if compact { 12.0 } else { 18.0 });
-    // the rules of the region
+    // the rules of the region, after a restart under way
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+        restart_pill(ui, p, v, world);
         for permit in permits(v, world.estate.estate.as_ref().map(|e| e.flags)) {
             pill(ui, p, permit.tone, permit.icon, &permit.label).on_hover_text(permit.tip);
         }
     });
+}
+
+/// A restart of this region under way: its count, and for who manages the
+/// estate a click that cancels it (`restart` -1, as the alert's button).
+fn restart_pill(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) {
+    use crate::world::region_restart::Phase;
+    let Some(a) = world.region_restart.alert.as_ref() else {
+        return;
+    };
+    let ours = a.handle.map_or(a.region == v.name, |h| h == v.handle);
+    if !ours || a.phase != Phase::Live {
+        return;
+    }
+    let text = aurora_i18n::tr!("region-int-restart-pill", time = crate::ui::region_restart::time_text(a.seconds()));
+    let r = pill(ui, p, Tone::Deny, "refresh", &text);
+    if v.manages() {
+        let r = r
+            .interact(Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(aurora_i18n::tr!("region-int-restart-pill-tip"));
+        if r.clicked() {
+            world.estate.intervene(aurora_net::estate::EstateCommand::Restart {
+                handle: v.handle,
+                seconds: -1,
+            });
+        }
+    }
 }
 
 /// "2026.10.02.4893" of "Second Life Server 2026.10.02.4893".
@@ -671,14 +699,24 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
         {
             ui.ctx().copy_text(url);
         }
-        // the interventions come with the next steps
+        // the interventions' shortcuts (Manage › Interventions)
         if v.manages() {
-            for (icon, text, kind) in [
-                ("speakerphone", aurora_i18n::tr!("region-message"), Flat),
-                ("gauge-filled", aurora_i18n::tr!("region-top-scripts"), Flat),
-                ("refresh", aurora_i18n::tr!("region-restart"), SoftDanger),
-            ] {
-                action(ui, p, icon, label(text), kind, false).on_disabled_hover_text(format!("{text}\n{later}"));
+            let message = aurora_i18n::tr!("region-message");
+            if action(ui, p, "speakerphone", label(message), Flat, true)
+                .on_hover_text(message)
+                .clicked()
+            {
+                s.interventions.dialog = Some(super::interventions::Dialog::message());
+            }
+            // the Top scripts window comes with the scripts' step
+            let top = aurora_i18n::tr!("region-top-scripts");
+            action(ui, p, "gauge-filled", label(top), Flat, false).on_disabled_hover_text(format!("{top}\n{later}"));
+            let restart = aurora_i18n::tr!("region-restart");
+            if action(ui, p, "refresh", label(restart), SoftDanger, true)
+                .on_hover_text(restart)
+                .clicked()
+            {
+                s.interventions.dialog = Some(super::interventions::Dialog::restart());
             }
         }
         more_menu(ui, p, world, v.handle);

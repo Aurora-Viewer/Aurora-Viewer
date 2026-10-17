@@ -14,10 +14,15 @@
 //! `people`, `select` ticks Orion in the allowed residents, `pick` opens the
 //! resident picker on them, `ask-ban` asks to ban Orion and `ask-remove` to
 //! remove him from the allowed residents; the simulator keeps the lists'
-//! changes and answers `setaccess`, then the lists again.
+//! changes and answers `setaccess`, then the lists again. On
+//! `manage:interventions`, `ask-message`, `ask-home`, `ask-kick`,
+//! `ask-return`, `ask-restart` or `ask-schedule` opens that intervention's
+//! dialog (on Orion for the kick and the return); the simulator answers a
+//! restart with its notice (a cancel with "cancelled") and keeps the
+//! schedule it is sent.
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
-use crate::ui::region::{Ask, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList};
+use crate::ui::region::{Ask, Home, InterventionDialog, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList};
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
     BannedAgent, EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
@@ -44,6 +49,8 @@ pub struct Scenario {
     pub compact: bool,
     pub manage: ManageDemo,
     pub people: PeopleDemo,
+    /// The intervention's dialog shown on Manage › Interventions.
+    pub intervention: Option<InterventionDialog>,
 }
 
 fn parse(v: &str) -> Scenario {
@@ -54,6 +61,7 @@ fn parse(v: &str) -> Scenario {
         compact: false,
         manage: ManageDemo::default(),
         people: PeopleDemo::default(),
+        intervention: None,
     };
     for part in v.split(':').map(str::trim) {
         match part {
@@ -67,6 +75,31 @@ fn parse(v: &str) -> Scenario {
             "access" => s.manage.section = Some(0),
             "rules" => s.manage.section = Some(1),
             "terrain" => s.manage.section = Some(2),
+            "interventions" => s.manage.section = Some(3),
+            "ask-message" => s.intervention = Some(InterventionDialog::message()),
+            "ask-home" => {
+                s.intervention = Some(InterventionDialog::Home {
+                    query: String::new(),
+                    target: Some(Home::One(PIXEL)),
+                })
+            }
+            "ask-kick" => s.intervention = Some(InterventionDialog::Kick { target: ORION, ban: false }),
+            "ask-return" => {
+                s.intervention = Some(InterventionDialog::Return {
+                    target: ORION,
+                    scripted: true,
+                    others_land: true,
+                    estate_wide: false,
+                })
+            }
+            "ask-restart" => s.intervention = Some(InterventionDialog::restart()),
+            "ask-schedule" => {
+                s.intervention = Some(InterventionDialog::Schedule {
+                    days: [true, false, false, false, false, false, false],
+                    hour: 6,
+                    minute: 0,
+                })
+            }
             "pending" => s.manage.pending = true,
             "ask-override" => s.manage.ask = Some(Ask::AccessOverride),
             "ask-linden" => s.manage.ask = Some(Ask::LindenEstate),
@@ -285,6 +318,24 @@ fn apply_delta(lists: &mut EstateAccess, flags: u32, id: Uuid, now: &str) {
     }
 }
 
+/// The restart schedule the simulator keeps: Sunday at 06:00 UTC, then
+/// what was saved.
+static SCHEDULE: Mutex<Option<Option<RestartSchedule>>> = Mutex::new(None);
+
+fn schedule() -> Option<RestartSchedule> {
+    let mut s = SCHEDULE.lock().unwrap_or_else(|e| e.into_inner());
+    *s.get_or_insert(Some(RestartSchedule {
+        days: [true, false, false, false, false, false, false],
+        seconds: 6 * 3600,
+    }))
+}
+
+fn save_schedule(days: [bool; 7], seconds: u32) {
+    // a weekly schedule without days clears it
+    let kept = days.iter().any(|d| *d).then_some(RestartSchedule { days, seconds });
+    *SCHEDULE.lock().unwrap_or_else(|e| e.into_inner()) = Some(kept);
+}
+
 /// "YYYY-MM-DD HH:MM" now, as the capability dates a ban.
 fn now_stamp() -> String {
     let secs = std::time::SystemTime::now()
@@ -385,10 +436,7 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             }));
             out.push(ev(EstateEvent::Schedule {
                 handle,
-                schedule: Ok(Some(RestartSchedule {
-                    days: [true, false, false, false, false, false, false],
-                    seconds: 6 * 3600,
-                })),
+                schedule: Ok(schedule()),
             }));
             out.push(ev(EstateEvent::Stats {
                 handle,
@@ -415,6 +463,25 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             handle: *handle,
             access: manages().then(|| Arc::new(with_lists(|l| l.clone()))),
         })],
+        // the region's notice, as the simulator's AlertMessage tells it
+        EstateCommand::Restart { seconds, .. } if *seconds < 0 => vec![NetEvent::RegionRestartCancelled],
+        EstateCommand::Restart { seconds, .. } => vec![NetEvent::RegionRestart(aurora_net::region_restart::Notice {
+            seconds: *seconds,
+            region: Some(aurora_i18n::tr!("common-aurora-demo").into()),
+            opensim: false,
+        })],
+        EstateCommand::SetRestartSchedule { handle, days, seconds } => {
+            save_schedule(*days, *seconds);
+            vec![ev(EstateEvent::Schedule {
+                handle: *handle,
+                schedule: Ok(schedule()),
+            })]
+        }
+        // nobody to send home, kick or return in the demo
+        EstateCommand::Message { .. }
+        | EstateCommand::TeleportHome { .. }
+        | EstateCommand::KickFromEstate { .. }
+        | EstateCommand::ReturnObjects { .. } => Vec::new(),
     }
 }
 
@@ -433,6 +500,7 @@ mod tests {
                 compact: false,
                 manage: ManageDemo::default(),
                 people: PeopleDemo::default(),
+                intervention: None,
             }
         );
         assert_eq!(parse("overview:resident").role, Role::Resident);
@@ -452,6 +520,31 @@ mod tests {
                 ..
             })
         ));
+        let i = parse("manage:interventions:ask-kick");
+        assert_eq!(i.manage.section, Some(3));
+        assert_eq!(i.intervention, Some(InterventionDialog::Kick { target: ORION, ban: false }));
+        assert_eq!(parse("manage:ask-restart").intervention, Some(InterventionDialog::restart()));
+    }
+
+    /// A restart is answered with the region's notice, a cancel with
+    /// "cancelled"; a saved schedule is the one answered.
+    #[test]
+    fn the_demo_simulator_answers_the_interventions() {
+        let restart = reply(&EstateCommand::Restart { handle: 1, seconds: 120 });
+        assert!(matches!(&restart[..], [NetEvent::RegionRestart(n)] if n.seconds == 120));
+        let cancel = reply(&EstateCommand::Restart { handle: 1, seconds: -1 });
+        assert!(matches!(cancel[..], [NetEvent::RegionRestartCancelled]));
+        let days = [false, true, false, false, false, false, false];
+        let saved = reply(&EstateCommand::SetRestartSchedule {
+            handle: 1,
+            days,
+            seconds: 3600,
+        });
+        assert!(matches!(
+            &saved[..],
+            [NetEvent::Estate(EstateEvent::Schedule { schedule: Ok(Some(s)), .. })] if s.days == days && s.seconds == 3600
+        ));
+        assert!(reply(&EstateCommand::KickFromEstate { handle: 1, target: ORION }).is_empty());
     }
 
     /// What the window sends changes the lists the simulator answers.

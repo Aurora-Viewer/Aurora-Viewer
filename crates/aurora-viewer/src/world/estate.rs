@@ -127,6 +127,12 @@ impl Estate {
             .push(NetCommand::Estate(EstateCommand::AccessDelta { handle, flags, ids, batch }));
     }
 
+    /// An intervention of the window (message, teleport home, kick,
+    /// returned objects, restart, schedule), sent as the panels send it.
+    pub fn intervene(&mut self, c: EstateCommand) {
+        self.out.push(NetCommand::Estate(c));
+    }
+
     fn clear(&mut self) {
         self.region = None;
         self.estate = None;

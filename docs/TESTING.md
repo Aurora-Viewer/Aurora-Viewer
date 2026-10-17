@@ -3025,7 +3025,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:interventions][:pending][:ask-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -3037,8 +3037,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the avatar the estate owner; `manager` gives the estate to another
   resident and makes the avatar its manager (RegionHandshake
   IsEstateManager); both get `estateupdateinfo` and the estate's lists
-  (the header names the managers, shows the estate's access and voice and
-  the greyed interventions, "View as" offers the role / Resident).
+  (the header names the managers, shows the estate's access and voice,
+  "Message to all…" and "Restart…" open their dialogs, "View as" offers
+  the role / Resident).
   `resident` gets neither: no People tab, no "View as", no managers nor
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
@@ -3066,7 +3067,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   lists again: what is added, banned or removed shows in the list. A
   manager sees the managers' list greyed with the amber "estate owner"
   lock; `preview` shows the card that says the simulator sends the lists
-  to the owner and the managers only.
+  to the owner and the managers only. `interventions` scrolls Manage to
+  Interventions (message, teleport home, kick, return a resident's
+  objects, restart and its cancel, the restart schedule), and
+  `ask-message`, `ask-home` (Pixel chosen), `ask-kick` (Orion),
+  `ask-return` (Orion, scripted objects on other people's land),
+  `ask-restart` or `ask-schedule` (Sunday at 06:00) opens that dialog.
+  The demo simulator answers a restart with the region's notice (the
+  alert counts down and the header shows the red "Restart in m:ss" pill,
+  a click on it cancels) and a cancel with "cancelled", and keeps the
+  schedule it is sent; the message, the teleports home, the kick and the
+  return are only logged ("sending estate request '…'").
+  `AURORA_DEMO_RESTART=300` with `overview` shows the pill without a
+  dialog.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
