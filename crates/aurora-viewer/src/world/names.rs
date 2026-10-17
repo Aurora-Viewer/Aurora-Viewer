@@ -118,6 +118,17 @@ impl AvatarName {
         }
     }
 
+    /// LLAvatarName::getUserName: "Firstname Lastname", or "Firstname" for
+    /// Resident names, whatever the trim option.
+    pub fn user_name(&self) -> String {
+        let (f, l) = (&self.legacy_first, &self.legacy_last);
+        if l.is_empty() || l == "Resident" {
+            if f.is_empty() { self.display_name.clone() } else { f.clone() }
+        } else {
+            format!("{f} {l}")
+        }
+    }
+
     /// LLAvatarName::getDisplayName.
     pub fn display(&self, o: &NameOptions) -> String {
         if o.use_display_names {
@@ -201,6 +212,34 @@ impl AvatarName {
         let mut d = AvatarNameData::from_llsd(v);
         d.id = Uuid::nil();
         AvatarName::from_data(&d, v["display_name_expires"].as_f64())
+    }
+}
+
+/// The legacy name in a complete name written to a transcript: "Jane Doe
+/// (jane.doe)" gives "Jane Doe", "Jane (janedoe)" gives "Janedoe" (or
+/// "Janedoe Resident" untrimmed); a name without parentheses is kept
+/// (LLCacheName::buildLegacyName, indra/llmessage/llcachename.cpp,
+/// originally LGPL 2.1).
+pub fn build_legacy_name(complete: &str, trim_resident: bool) -> String {
+    let (Some(open), Some(close)) = (complete.rfind(" ("), complete.rfind(')')) else {
+        return complete.to_owned();
+    };
+    if close != complete.len() - 1 || close < open + 2 {
+        return complete.to_owned();
+    }
+    let inner = &complete[open + 2..close];
+    if inner.is_empty() {
+        return complete.to_owned();
+    }
+    let cap = |s: &str| {
+        let mut c = s.chars();
+        c.next().map(|f| f.to_uppercase().chain(c).collect::<String>()).unwrap_or_default()
+    };
+    let (first, last) = inner.split_once('.').unwrap_or((inner, ""));
+    match (cap(first), last.is_empty()) {
+        (f, false) => format!("{f} {}", cap(last)),
+        (f, true) if trim_resident => f,
+        (f, true) => format!("{f} Resident"),
     }
 }
 
@@ -295,6 +334,23 @@ impl AvatarNames {
     /// Queue a lookup if the name is missing or expired.
     pub fn want(&self, id: &Uuid) {
         let _ = self.get(id);
+    }
+
+    /// The avatar whose user name is `name`, among the cached ones
+    /// (LLAvatarNameCache::findIdByName; a "Resident" last name written out
+    /// matches too, and the case does not count: buildLegacyName capitalises
+    /// what a transcript wrote in lower case, and user names are unique
+    /// whatever their case). Queues nothing: a name not cached stays unknown.
+    pub fn find_id_by_name(&self, name: &str) -> Option<Uuid> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let bare = name.strip_suffix(" Resident").unwrap_or(name);
+        self.cache
+            .iter()
+            .find(|(_, n)| n.user_name().eq_ignore_ascii_case(bare))
+            .map(|(id, _)| *id)
     }
 
     /// Complete name ("Jane Doe (janedoe)") if known.
@@ -482,6 +538,36 @@ mod tests {
             expires: 0.0,
             next_update: 0.0,
         }
+    }
+
+    #[test]
+    fn transcript_names_give_the_legacy_name() {
+        assert_eq!(build_legacy_name("Jane Doe (jane.doe)", true), "Jane Doe");
+        assert_eq!(build_legacy_name("Jane (janedoe)", true), "Janedoe");
+        assert_eq!(build_legacy_name("Jane (janedoe)", false), "Janedoe Resident");
+        assert_eq!(build_legacy_name("Bob Smith", true), "Bob Smith");
+        // parentheses inside a display name, not at the end: kept
+        assert_eq!(build_legacy_name("Bob (the builder) Smith", true), "Bob (the builder) Smith");
+        assert_eq!(build_legacy_name("Bob ()", true), "Bob ()");
+        assert_eq!(build_legacy_name("", true), "");
+    }
+
+    #[test]
+    fn an_avatar_is_found_by_its_user_name() {
+        let mut names = AvatarNames::default();
+        let (jane, bob) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        names.cache.insert(jane, named("Jane Doe", "janedoe", "janedoe", "Resident", false));
+        names.cache.insert(bob, named("Bob", "bob.smith", "Bob", "Smith", false));
+        assert_eq!(names.find_id_by_name("janedoe"), Some(jane));
+        assert_eq!(names.find_id_by_name("janedoe Resident"), Some(jane));
+        assert_eq!(names.find_id_by_name("Bob Smith"), Some(bob));
+        // the display name is not a user name, and a name not cached is unknown
+        assert_eq!(names.find_id_by_name("Jane Doe"), None);
+        assert_eq!(names.find_id_by_name("Alice Liddell"), None);
+        assert_eq!(names.find_id_by_name(""), None);
+        // a transcript's complete name, through its legacy name
+        assert_eq!(names.find_id_by_name(&build_legacy_name("Bob (bob.smith)", true)), Some(bob));
+        assert_eq!(names.find_id_by_name(&build_legacy_name("Jane Doe (janedoe)", false)), Some(jane));
     }
 
     #[test]

@@ -137,7 +137,8 @@ pub(super) fn draw(
 
 /// Who wrote a line, for its picture, its menu and its profile.
 struct Who {
-    /// The avatar to look up (none for an object or a history line).
+    /// The avatar to look up (none for an object, nor for a history line
+    /// whose sender's name was not cached).
     avatar: uuid::Uuid,
     object: bool,
     logged: bool,
@@ -147,7 +148,7 @@ impl Who {
     fn of(env: &LineEnv, line: &ChatLine) -> Who {
         let logged = line.origin != Origin::Live;
         let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-        let avatar = if logged || object {
+        let avatar = if object {
             uuid::Uuid::nil()
         } else if line.kind == ChatKind::Own {
             env.world.agent_id
@@ -380,8 +381,7 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
     if !who.avatar.is_nil() {
         env.wanted.insert(who.avatar);
     }
-    let pic = env.pics.get(&who.avatar).filter(|_| !who.logged);
-    crate::ui::widgets::avatar_disc(ui, p, rect, pic, name, who.logged);
+    crate::ui::widgets::avatar_disc(ui, p, rect, env.pics.get(&who.avatar), name, who.logged);
     if who.avatar.is_nil() {
         return;
     }

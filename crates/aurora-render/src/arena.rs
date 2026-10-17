@@ -824,6 +824,7 @@ mod tests {
     #[test]
     #[ignore]
     fn arena_round_trip_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -924,6 +925,7 @@ mod tests {
     #[test]
     #[ignore]
     fn records_grow_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -988,6 +990,7 @@ mod tests {
     #[test]
     #[ignore]
     fn new_buffer_first_use() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,

@@ -848,6 +848,7 @@ mod tests {
     #[test]
     #[ignore]
     fn gpu_probe_filter_fills_its_slot() {
+        let _gpu = crate::test_gpu::lock();
         let Some((device, queue)) = device() else {
             return;
         };

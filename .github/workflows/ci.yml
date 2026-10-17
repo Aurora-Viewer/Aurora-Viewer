@@ -32,16 +32,23 @@ jobs:
     name: fmt, clippy (Windows)
     runs-on: windows-latest
     steps:
+      # the whole history (the version is read from the last tag, and the
+      # changed files from the base), without the files of other commits:
+      # the captures branch alone weighs hundreds of MB
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          filter: blob:none
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
+      # the runner's toolchain carries two more targets (gnu, i686) that
+      # every update would download again for nothing
       - name: Rust stable
         if: steps.changes.outputs.code == 'true'
         run: |
-          rustup update stable
+          ./.github/drop-extra-targets.ps1
+          rustup update stable --no-self-update
           rustup component add rustfmt clippy
       # caches are written from main only, and read by every PR and queue
       # run: PR caches would otherwise evict main's from the 10 GB quota
@@ -67,32 +74,64 @@ jobs:
   tests:
     # Not on pull requests: the agent ran them locally (check.ps1) and the
     # merge queue runs them on the combined code before anything lands.
-    # A skipped job counts as passed for the required checks.
-    name: tests (Windows)
+    #
+    # The run is split in two halves on two runners, each building the
+    # tests itself (the build is the same, the cache too): the interface
+    # tests of the viewer (`ui::`, about half of the time) and everything
+    # else. A libtest filter and its `--skip` are exact complements, so
+    # every test of every binary runs in one half and only one, whatever
+    # modules are added later; a new module only moves the balance.
+    name: tests (Windows, ${{ matrix.half }})
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - half: interface
+            filter: "ui::"
+          - half: rest
+            filter: "--skip ui::"
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          filter: blob:none
       - name: Code changed?
         id: changes
         uses: ./.github/actions/code-changed
       - name: Rust stable
-        if: steps.changes.outputs.code == 'true'
-        run: rustup update stable
+        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.half == 'interface')
+        run: |
+          ./.github/drop-extra-targets.ps1
+          rustup update stable --no-self-update
+      # both halves share the job's cache key (the matrix is not part of it)
       - uses: Swatinem/rust-cache@v2
         id: cache
-        if: steps.changes.outputs.code == 'true'
+        if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.half == 'interface')
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Tests
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.half == 'interface' }}
+      - name: Tests (${{ matrix.half }})
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
-        run: cargo test --profile ci --workspace --locked
+        run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }}
       # main: build the tests without running them, for the cache only
+      # (one half writes it, the other has nothing to do)
       - name: Build the tests (cache)
-        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+        if: steps.changes.outputs.code == 'true' && github.event_name == 'push' && matrix.half == 'interface' && steps.cache.outputs.cache-hit != 'true'
         run: cargo test --profile ci --workspace --locked --no-run
+
+  tests-result:
+    # The check that main requires: green when both halves passed (or were
+    # skipped, on a pull request), red otherwise.
+    name: tests (Windows)
+    if: always()
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Both halves
+        run: |
+          echo "halves: ${{ needs.tests.result }}"
+          case "${{ needs.tests.result }}" in success|skipped) ;; *) exit 1 ;; esac
 
   secrets:
     name: secret scan

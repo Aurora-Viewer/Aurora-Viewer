@@ -243,6 +243,8 @@ pub fn target(view: &str) -> Option<Uuid> {
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
         "object"
         | "properties"
+        | "properties-no-mod"
+        | "properties-no-creator"
         | "rename"
         | "multi-add"
         | "multi-detach"

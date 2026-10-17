@@ -400,10 +400,8 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
 #[test]
 fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
     use aurora_net::inventory::InvItem;
-    use std::{
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::sync::Arc;
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
     let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
     for size in [Vec2::new(1280.0, 800.0), Vec2::new(800.0, 560.0)] {
         let (mut inv, library, _) = inventory();
@@ -463,18 +461,14 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
             assert!(actions.is_empty(), "preview gestures must not apply to the edit selection");
             dropped
         };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
+        // the preview job runs on this thread: its model is there after a
+        // few frames, whatever the load of the machine
+        let ready = (0..10).any(|_| {
             frame(Vec::new(), &mut library);
-            if ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", item))))
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", item))))
                 .is_some()
-            {
-                break;
-            }
-            assert!(Instant::now() < deadline, "material preview worker did not finish");
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        });
+        assert!(ready, "material preview not shown");
         for _ in 0..8 {
             frame(Vec::new(), &mut library);
         }
@@ -538,10 +532,8 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
 #[test]
 fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
     use aurora_net::inventory::InvItem;
-    use std::{
-        sync::Arc,
-        time::{Duration, Instant},
-    };
+    use std::sync::Arc;
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
     let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
     let (mut inv, library_folder, outside) = inventory();
     let items = [91, 92, 93, 94].map(Uuid::from_u128);
@@ -616,18 +608,15 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
         );
         output.textures_delta.clear();
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
+    // the preview jobs run on this thread (see the test above)
+    let ready = (0..10).any(|_| {
         frame(Vec::new(), &mut resources, &mut world);
-        if items[2..].iter().all(|item| {
+        items[2..].iter().all(|item| {
             ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", *item))))
                 .is_some()
-        }) {
-            break;
-        }
-        assert!(Instant::now() < deadline, "preview workers did not finish");
-        std::thread::sleep(Duration::from_millis(1));
-    }
+        })
+    });
+    assert!(ready, "material previews not shown");
     for _ in 0..8 {
         frame(Vec::new(), &mut resources, &mut world);
     }
