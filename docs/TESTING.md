@@ -1596,7 +1596,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
-| `AURORA_DEMO_BUMP=tall` or `wide` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it (tangent frame) |
+| `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1660,7 +1660,16 @@ To check with these scenarios:
   coordinates are four times denser one way. With `AURORA_TANGENTS=alt`, the
   relief of its bumps along the denser axis comes and goes (`tall` shows it
   best, the sun lighting the vertical tilts): about three times weaker with
-  the former frame. Seen from `AURORA_DEMO_POS="133.5,128.6"`.
+  the former frame. Seen from `AURORA_DEMO_POS="133.5,128.6"`. `sphere`
+  adds, in front of the panel, a low-poly mesh ball (12 × 8 quads, smooth
+  normals, warped UVs) whose normal map is baked from a round, dimpled ball
+  through the mesh's own MikkTSpace tangents, as a modelling tool bakes one
+  (`demo_tangents.rs`). With the vertices' tangents (`AURORA_TANGENTS`
+  default) it is round and evenly dimpled; with `pixel` or `derivative`
+  each triangle turns the relief its own way and the facets show. Close-up
+  from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
+  at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
+  the sun draws across a low-poly ball.
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
   `AURORA_DEMO_CROWD` wear a box on each foot's attachment point, opaque or
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces
@@ -3931,7 +3940,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
-| `AURORA_TANGENTS=derivative\|alt` | Normal maps on the former tangent frame, or alternated each second, to compare |
+| `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
@@ -4435,14 +4444,19 @@ What the inventory must show with these scenarios:
     cascades moves, and the shadows close to the camera are sharper there
     (they were reading a farther cascade than the terrain and the small
     neighbouring objects).
-- **`AURORA_TANGENTS=derivative|alt`**: the tangent frame of the normal maps
-  (`perturb_normal`, common.wgsl). By default it is the Legacy Viewer's
-  (LLVolumeFace::createTangents): T along dP/du, of unit length and
-  orthogonal to the normal, B = cross(N, T) with the handedness, built per
-  pixel from the derivatives. `derivative` brings back the cotangent frame
-  of before, scaled by the longer of its two gradients, which divided the
-  relief along the denser texture axis by the density ratio; `alt`
-  alternates the two every second. See `AURORA_DEMO_BUMP`.
+- **`AURORA_TANGENTS=vertex|pixel|derivative|alt`**: the tangent frame of
+  the normal maps (`perturb_normal`, common.wgsl). By default (`vertex`) it
+  is the vertices' tangents, built with the geometry as the Legacy Viewer
+  builds them (`scene/tangents.rs`: Lengyel's for prims, MikkTSpace for
+  meshes), interpolated across the triangles; faces without them (avatar
+  bodies, terrain) take the per-pixel frame. `pixel` uses only the
+  per-pixel frame: T along dP/du of each triangle, of unit length and
+  orthogonal to the normal, B = cross(N, T) with the handedness, built from
+  the derivatives (not smoothed across the triangles' edges). `derivative`
+  brings back the cotangent frame of before, scaled by the longer of its
+  two gradients, which divided the relief along the denser texture axis by
+  the density ratio; `alt` alternates `vertex` and `pixel` every second.
+  See `AURORA_DEMO_BUMP`.
 - **`AURORA_SHADOW_FILTER=gaps|mapped|before`**: the sun shadow lookup as it
   was before its edges were cleaned (`cascade_shadow` in `common.wgsl`,
   `shadow_normal` in `object.wgsl`). `gaps`: 4 × 4 filter taps up to two

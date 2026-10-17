@@ -448,7 +448,7 @@ pub fn volume_to_faces(mesh: &aurora_prim::VolumeMesh) -> (Vec<FaceData>, Vec3, 
             if f.positions.is_empty() || f.indices.len() < 3 {
                 return None;
             }
-            let verts: Vec<Vertex> = f
+            let mut verts: Vec<Vertex> = f
                 .positions
                 .iter()
                 .enumerate()
@@ -461,6 +461,9 @@ pub fn volume_to_faces(mesh: &aurora_prim::VolumeMesh) -> (Vec<FaceData>, Vec3, 
                     Vertex::new(*p, n, uv)
                 })
                 .collect();
+            if !f.uvs.is_empty() {
+                super::tangents::pack_volume_tangents(&mut verts, &f.indices);
+            }
             Some(FaceGeom {
                 vertices: verts,
                 indices: f.indices.clone(),
@@ -491,7 +494,7 @@ pub fn mesh_to_faces(
             if f.positions.is_empty() || f.indices.len() < 3 || f.positions.len() > 65536 {
                 return None;
             }
-            let verts: Vec<Vertex> = f
+            let mut verts: Vec<Vertex> = f
                 .positions
                 .iter()
                 .enumerate()
@@ -509,7 +512,29 @@ pub fn mesh_to_faces(
                     Vertex::new(v.to_array(), n.to_array(), uv)
                 })
                 .collect();
-            let skin = match joint_map {
+            let mut indices = f.indices.clone();
+            // (the vertex each one comes from, when the tangents split some)
+            let mut sources: Option<Vec<u16>> = None;
+            let scale = Vec3::from_array(f.normalized_scale.unwrap_or([1.0; 3]));
+            if let Some(mut corners) = super::tangents::mesh_corner_tangents(&f.positions, &f.normals, &f.uvs, &f.indices, scale) {
+                if let Some(m) = xform {
+                    // a rigged face's tangents go through the bind shape like
+                    // its positions, as the Legacy Viewer's skinning moves them
+                    // (avatarSkinV.glsl matrices, materialV.glsl)
+                    for (t, _) in &mut corners {
+                        *t = m.transform_vector3(Vec3::from_array(*t)).normalize_or(Vec3::X).to_array();
+                    }
+                }
+                match super::tangents::weld(&verts, &f.indices, &corners) {
+                    Some(welded) => {
+                        verts = welded.vertices;
+                        indices = welded.indices;
+                        sources = Some(welded.sources);
+                    }
+                    None => super::tangents::pack_volume_tangents(&mut verts, &f.indices),
+                }
+            }
+            let skin: Option<Vec<SkinVertex>> = match joint_map {
                 Some(map) if f.joints.len() == f.positions.len() && f.weights.len() == f.positions.len() => Some(
                     f.joints
                         .iter()
@@ -526,9 +551,13 @@ pub fn mesh_to_faces(
                 ),
                 _ => None,
             };
+            let skin = match (skin, &sources) {
+                (Some(skin), Some(sources)) => Some(sources.iter().map(|&s| skin[s as usize]).collect()),
+                (skin, _) => skin,
+            };
             Some(FaceGeom {
                 vertices: verts,
-                indices: f.indices.clone(),
+                indices,
                 skin,
             })
         })

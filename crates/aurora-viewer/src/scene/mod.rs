@@ -41,6 +41,7 @@ mod sync_check;
 mod sync_plan;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
+pub mod tangents;
 pub mod texture_budget;
 pub(crate) mod texture_cache;
 mod texture_load;

@@ -966,6 +966,9 @@ const SCREEN_INDIRECT: u32 = 0x400u;
 // frame.light_mode.z: normal maps on a unit, orthogonal tangent frame as the
 // Legacy Viewer's per-vertex tangents (AURORA_TANGENTS, perturb_normal)
 const TANGENT_UNIT: u32 = 0x800u;
+// frame.light_mode.z: normal maps on the tangents of the vertices where
+// they have some (object.wgsl vertex_tangent; AURORA_TANGENTS)
+const TANGENT_VERTEX: u32 = 0x1000u;
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
@@ -1380,11 +1383,25 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
 // derived bitangent points down the image; SL normal maps (materialF.glsl
 // getNormal: B = sign * cross(N, T) along +t, GL bottom-left origin) put +Y
 // up the image, hence the green channel is negated.
-fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, map: vec3<f32>) -> vec3<f32> {
+// With the vertices' tangents (`vt`, zero without them, and their
+// handedness `vt_sign`), the frame is theirs, smooth across the triangles.
+fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, vt: vec3<f32>, vt_sign: f32, front: bool, map: vec3<f32>) -> vec3<f32> {
     let dp1 = dpdx(p);
     let dp2 = dpdy(p);
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
+    if (dot(vt, vt) > 1e-12) {
+        // (after the derivatives, which need uniform control flow)
+        // materialF.glsl / pbropaqueF.glsl getNormal: B = sign * cross(N, T)
+        // and T left as interpolated (MikkTSpace's pixel shader), the map
+        // read as it is (the tangents follow the volume's own s and t, +t up
+        // the image), a back face's normal turned once perturbed
+        let f = select(-1.0, 1.0, front);
+        let vn = n * f;
+        let mv = map * 2.0 - vec3<f32>(1.0);
+        let rv = normalize(mv.x * vt + mv.y * (vt_sign * cross(vn, vt)) + mv.z * vn) * f;
+        return select(n, rv, dot(rv, rv) > 0.5);
+    }
     let dp2perp = cross(dp2, n);
     let dp1perp = cross(n, dp1);
     let t = dp2perp * duv1.x + dp1perp * duv2.x;
