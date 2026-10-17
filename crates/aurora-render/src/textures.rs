@@ -2160,6 +2160,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pages_round_trip_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -2246,6 +2247,7 @@ mod tests {
     #[test]
     #[ignore]
     fn textures_shrink_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -2380,6 +2382,7 @@ mod tests {
     #[test]
     #[ignore]
     fn bc7_pages_round_trip_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -2494,6 +2497,7 @@ mod tests {
     #[test]
     #[ignore]
     fn placeholders_share_one_layer_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -2583,6 +2587,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pages_fuzz_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -2705,6 +2710,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pages_come_from_the_page_thread() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -2794,6 +2800,7 @@ mod tests {
     #[test]
     #[ignore]
     fn pages_sampled_through_the_bind_group() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");

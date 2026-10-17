@@ -2227,6 +2227,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Ctrl+A / Backspace at 730–731. Capture at 680 and 820: the selection stays
   highlighted, its parent folder opens and the full inventory scrolls to
   it. At frame 800 the log reports the empty query, selection and visibility.
+- **`AURORA_DEMO_INVENTORY=properties-no-mod|properties-no-creator`**: the
+  properties of a no-modify object made by another resident. `no-mod` shows
+  its creator as a link; `no-creator` gives it no creator, as the simulator
+  sends an object whose parts have several creators: the row reads
+  "(unknown / multiple)", without a link, with the reason on hover.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, with `AURORA_DEMO_INVENTORY=1`:
   double-click on the real title bar of the inventory at frames 660–665; `1`
   keeps the bar collapsed, `restore` expands it at frames 1000–1005,
@@ -2961,9 +2966,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (without this variable, the demo writes and reads back no history). The
   windows are placed at a known size.
   - `im`: a conversation with Nova whose file contains two past
-    days. What to see: these lines in grey, without a profile picture, with a
-    date marker at each change of day, then the new message in its
-    normal colours; the file `Nova Example.txt` receives this message.
+    days. What to see: these lines in grey, with their senders' profile
+    pictures dimmed (this scenario gives Nova and us one), with a date
+    marker at each change of day, then the new message in its normal
+    colours; the file `Nova Example.txt` receives this message.
   - `find`: the same, then Ctrl+F (pointer over the window) and a word typed at
     frame 300 (the field empty at frame 303). What to see: the find field in
     the head's row in place of the picture and the names, "5 / 5" and the

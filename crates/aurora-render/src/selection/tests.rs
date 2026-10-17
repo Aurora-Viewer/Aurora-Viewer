@@ -5,6 +5,7 @@ use super::*;
 #[test]
 #[ignore = "requires a Vulkan device"]
 fn halo_preserves_material_and_tracks_holes_and_disconnected_islands() {
+    let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::VULKAN,
         ..wgpu::InstanceDescriptor::new_without_display_handle()

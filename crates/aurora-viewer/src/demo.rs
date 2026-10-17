@@ -1520,6 +1520,15 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
     if p.sl_image.is_nil() && std::env::var_os("AURORA_DEMO_PROFILE").is_some() {
         p.sl_image = tags::scenario_picture(id);
     }
+    // AURORA_DEMO_CHATLOG: the conversation's resident and we have one, for
+    // the pictures of the history lines
+    if p.sl_image.is_nil() && chatlog::mode().is_some() {
+        if id == chatlog::PEER {
+            p.sl_image = tags::picture_texture(3);
+        } else if id == DEMO_AGENT {
+            p.sl_image = tags::picture_texture(0);
+        }
+    }
     // AURORA_DEMO_PEOPLE: what the rows and the sheet show of them
     people::profile(&mut p);
     p
