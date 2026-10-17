@@ -627,6 +627,12 @@ pub struct Settings {
     pub ao_method: u8,
     /// GTAO quality: 0 low, 1 medium, 2 high, 3 ultra.
     pub gtao_quality: u8,
+    /// With GTAO: screen-space indirect light (a visibility bitmask and one
+    /// bounce of light from the surfaces around). Aurora's own, off by
+    /// default.
+    pub screen_indirect_light: bool,
+    /// Its strength, 0 to 4 (1 = one physical bounce).
+    pub screen_indirect_intensity: f32,
     /// Water reflections: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
     pub water_reflections: u8,
     /// Mirrors: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
@@ -714,6 +720,11 @@ pub struct Settings {
     #[serde(skip)]
     pub new_profile: bool,
 }
+
+/// The default strength of GTAO's indirect light: at 1 (one physical
+/// bounce) it hardly shows in the demo's coloured corner, at 2 a glow starts
+/// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
+const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
 const SETTINGS_VERSION: u32 = 18;
 
@@ -1139,6 +1150,8 @@ impl Default for Settings {
             ssao: 1,
             ao_method: 0,
             gtao_quality: 2,
+            screen_indirect_light: false,
+            screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
             water_reflections: 1,
             reflection_probes: 3,
             probe_count: 32,
@@ -1564,6 +1577,11 @@ impl Settings {
         self.snapshot.sanitize();
         self.dof.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
+        self.screen_indirect_intensity = if self.screen_indirect_intensity.is_finite() {
+            self.screen_indirect_intensity.clamp(0.0, 4.0)
+        } else {
+            SCREEN_INDIRECT_INTENSITY
+        };
         self.sharpen = if self.sharpen.is_finite() {
             self.sharpen.clamp(0.0, 1.0)
         } else {
@@ -1730,6 +1748,8 @@ impl Settings {
             } else {
                 AoMethod::Legacy
             },
+            screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
+            screen_indirect_intensity: self.screen_indirect_intensity,
             contact_shadows: self.contact_shadows,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
