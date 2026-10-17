@@ -146,7 +146,7 @@ impl super::Scene {
         let Some(&head) = self.avatar_lib.rig.names.get("mHead") else {
             return;
         };
-        for local in [9200, 9202, 9203] {
+        for local in [9200, 9201, 9202, 9203, 9205, 9206] {
             let Some((i, _)) = world.objects.iter().find(|(_, o)| o.key.local_id == local) else {
                 continue;
             };
@@ -170,6 +170,19 @@ impl super::Scene {
                 g.center,
                 g.radius
             );
+            if std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| matches!(v.as_str(), "alpha" | "alpha-cycle")) {
+                let red = g
+                    .faces
+                    .iter()
+                    .filter(|f| self.lists.debug_red.iter().any(|c| c.record == f.record))
+                    .count();
+                log::info!(
+                    "demo animesh alpha {local}: records {}, red {red}, rigged {}, overlay {:?}",
+                    g.faces.len(),
+                    g.rigged,
+                    self.debug_alpha
+                );
+            }
         }
         // (AURORA_DEMO_ANIMESH=churn: stops growing once meshes are freed)
         let (used, len) = self.skin_binds.counts();
@@ -471,6 +484,22 @@ impl super::Scene {
     pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
         use super::jobs::JobResult;
         self.install_demo_animesh_mesh(renderer, crate::demo::ANIMESH_MESH);
+        if std::env::var("AURORA_DEMO_ANIMESH").is_ok_and(|v| matches!(v.as_str(), "alpha" | "alpha-cycle")) {
+            // No skin metadata or skin vertex stream: sharing an animated
+            // parent must not make these mesh children rigged.
+            let cube = aurora_prim::generate_volume(&aurora_prim::VolumeParams::default(), 1.0);
+            for lod in 0..4 {
+                let (faces, min, max) = super::jobs::volume_to_faces(&cube);
+                self.upload_geom(
+                    renderer,
+                    super::GeomKey::Mesh {
+                        id: crate::demo::ANIMESH_UNRIGGED_MESH,
+                        lod,
+                    },
+                    super::jobs::PreparedGeom::new(faces, min, max, true, None),
+                );
+            }
+        }
         let rig = self.avatar_lib.rig.clone();
         self.anims.insert(
             crate::demo::ANIMESH_ANIM,

@@ -711,7 +711,7 @@ pub struct Scene {
     pub avatar_area: HashMap<Uuid, f32>,
     complexity_rules: u64,
     /// Debug "Show transparency": Some(rigged faces too).
-    pub debug_alpha: Option<bool>,
+    debug_alpha: Option<bool>,
     /// Culling view of the last lists (debug overlay).
     pub last_cull: Option<CullView>,
     complexity_at: Option<Instant>,
@@ -961,6 +961,24 @@ fn tex_anim_record(
 }
 
 impl Scene {
+    /// LLViewHighlightTransparent / LLPipeline::rebuildDrawInfo: invisible
+    /// faces need temporary records while the transparency overlay is on.
+    /// See indra/newview/llviewermenu.cpp and pipeline.cpp (LGPL 2.1).
+    pub fn set_debug_alpha(&mut self, world: &mut World, debug_alpha: Option<bool>) {
+        if self.debug_alpha.is_some() != debug_alpha.is_some() {
+            for (idx, slot) in world.objects.slots.iter_mut().enumerate() {
+                let Some(object) = slot else { continue };
+                if object.is_avatar() || !(0..aurora_prim::te::MAX_TES).any(|face| object.visual_texture_face(face).color[3] < 0.004) {
+                    continue;
+                }
+                object.material_dirty = true;
+                object.render.needs_records = true;
+                self.sets.dirty.insert(idx);
+            }
+        }
+        self.debug_alpha = debug_alpha;
+    }
+
     /// Invisible selected faces get temporary records for their overlay only.
     /// Ordinary transparent faces keep their zero-record path. Changing an
     /// opaque face selection never rebuilds its geometry or material records.
@@ -2692,7 +2710,7 @@ impl Scene {
             };
             let tf = o.visual_texture_face(fi);
             let invisible = tf.color[3] < 0.004;
-            if invisible && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0 {
+            if invisible && self.debug_alpha.is_none() && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0 {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
                 continue;
@@ -5259,6 +5277,64 @@ mod tests {
             ..test_face(Pass::Blend, false)
         };
         assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
+    }
+
+    #[test]
+    fn transparency_toggle_rebuilds_invisible_animesh_once_and_preserves_face_selection() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut objects = crate::demo::animesh_objects(crate::demo::ANIMESH_MESH);
+        crate::demo::make_animesh_invisible(&mut objects);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: world.main_region.unwrap(),
+            objects,
+        });
+        let index = |local| world.objects.iter().find(|(_, o)| o.key.local_id == local).unwrap().0;
+        let (opaque, invisible_root, invisible_mesh) = (index(9200), index(9201), index(9202));
+        let unrigged_children = [index(9205), index(9206)];
+        let mut scene = Scene::new(Default::default(), lib);
+        let selection = HashMap::from([(invisible_mesh, 1)]);
+        scene.set_face_selection(&mut world, selection.clone());
+        let clean = |scene: &mut Scene, world: &mut World| {
+            scene.sets.dirty.take();
+            for object in world.objects.slots.iter_mut().flatten() {
+                object.material_dirty = false;
+                object.render.needs_records = false;
+            }
+        };
+        clean(&mut scene, &mut world);
+        scene.set_debug_alpha(&mut world, Some(false));
+        for idx in [invisible_root, invisible_mesh].into_iter().chain(unrigged_children) {
+            let object = world.objects.get(idx).unwrap();
+            assert!(object.material_dirty && object.render.needs_records);
+            assert!(scene.sets.dirty.contains(idx));
+        }
+        assert!(!world.objects.get(opaque).unwrap().material_dirty);
+        for idx in unrigged_children {
+            let object = world.objects.get(idx).unwrap();
+            assert!(object.visual_volume().is_mesh());
+            assert_eq!(object.visual_volume().sculpt.unwrap().texture, crate::demo::ANIMESH_UNRIGGED_MESH);
+            assert!(Scene::skeleton_owner(&world, idx).is_some());
+        }
+        assert_eq!(Scene::skeleton_owner(&world, invisible_mesh).unwrap().1, invisible_root);
+        clean(&mut scene, &mut world);
+        // An unchanged overlay and its independent rigged filter need no
+        // material rebuild: only the draw lists change.
+        scene.set_debug_alpha(&mut world, Some(false));
+        scene.set_debug_alpha(&mut world, Some(true));
+        assert_eq!(scene.sets.dirty.len(), 0);
+        assert!(!world.objects.get(invisible_mesh).unwrap().material_dirty);
+        scene.set_debug_alpha(&mut world, None);
+        assert!(world.objects.get(invisible_mesh).unwrap().material_dirty);
+        assert_eq!(scene.selection_faces, selection);
+        clean(&mut scene, &mut world);
+        scene.set_debug_alpha(&mut world, None);
+        assert_eq!(scene.sets.dirty.len(), 0);
+        scene.set_debug_alpha(&mut world, Some(true));
+        assert!(scene.sets.dirty.contains(invisible_mesh));
     }
 
     #[test]

@@ -1290,7 +1290,7 @@ To check with these scenarios:
   poses, the pause, the cycles and adding / importing from the inventory.
 - **`AURORA_DEMO_AO=movement|swim`**: test the actual integrated AO window. `movement` opens its persistent Movement (EXPERIMENTAL) tab, with a matching experimental heading and menu/toolbar/keybinding labels; `swim` opens the selected single-animation swimming slot with synthetic contributed inventory links and expands only this owned offline window so all eight can be inspected together; normal users retain their saved window size and scrolling. `swim-missing` opens Movement with one slot absent: swimming must remain unavailable with a 7/8 explanation. Confirm independent run/flight/swim/passage toggles, run and flight multipliers starting at x1, the active toolbar indicator, swim-state navigation, AO enable/pause, and animation choice/cycles. Ctrl+Alt+M and the movement toolbar open this same manager. Passage uses Ctrl plus the current jump keys (default E / Page Up); it requires its own switch, leaves text/media focus alone, and yields to explicit shortcut conflicts. Rebind Jump and confirm the displayed chord follows. Disable passage during its pulse to cancel it. In a normal human-driven grid session, assign all eight swimming slots in the selected set, enable swimming and verify another viewer sees the matching idle, movement, cushioned-entry and separate flight/shore exit animations. Ordinary AO disable/pause must not stop active swimming animations. Removing a slot or selecting an incomplete set must stop swimming; a different complete set cannot unlock that selection. No import-pack button or automatic fill/upload prompt may appear. Capture around frame 850.
 - **`AURORA_DEMO_AO=design-current|design-tabs|design-movement|design-section|design-swim`**: a native interactive layout study. The Current view reuses the existing AO body unchanged; the side workbench switches to Animations/Movement tabs or a collapsible section. Ctrl+Alt+M and the movement toolbar button open the prototype Movement tab and reopen its workbench; the separate movement floater stays hidden in this design scenario. Movement switches/sliders are temporary preview values and do not control motors or write account movement preferences. `design-swim` opens the AO swimming list and its matching avatar preview. The workbench selects simulated avatar animation states; swimming selection uses the actual AO state lists, including the eight separate swimming contexts in the synthetic inventory. Check AO activation/pause, state selection, animation double-click/cycles, independent motor switches and reset, and returning from movement controls to swimming animation selection. All inventory changes stay in the offline demo. Capture each layout around frame 850; keep the existing dimensions, palette, fonts and widgets for comparison.
-- **`AURORA_DEMO_ANIMESH=1|churn`**: animated root mesh, linked mesh flagged
+- **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle`**: animated root mesh, linked mesh flagged
   by a child and worn animesh, with independent skeletons of their own and
   alpha shadows. `churn`: the animesh on the ground (orange) also changes its
   mesh asset every 240 frames, like the rigged meshes that come and go on
@@ -1298,6 +1298,22 @@ To check with these scenarios:
   two as well, and the line `demo animesh: skin bindings <in use> used
   of <in the list>` of the log (every 120 frames) must stop growing
   once the first meshes are freed (600 frames after their last use).
+  `alpha` adds zero-alpha **non-rigged mesh** children 9205/9206 to the
+  ground/worn animated linksets. These boxes must appear with
+  `AURORA_DEMO_DEBUG=alpha` alone, independent of "Rigged objects too".
+  It also makes linked mesh 9202 fully transparent, retaining its skin and
+  animation. With `AURORA_DEMO_DEBUG=alpha,alpha_rigged`, it must appear in
+  red and follow its skeleton; the invisible non-rigged root 9201 must
+  appear with `alpha` alone. Toggle transparency off and on after loading:
+  both must disappear and reappear. Turning off "Rigged objects too" hides
+  only the rigged overlay. Normal rendering and shadows stay invisible.
+  `alpha-cycle` uses the same fixture and switches the overlay after normal
+  loading: frame 720 on with rigged faces, 960 off, 1200 on without rigged
+  faces, 1440 on with rigged faces. Capture at 850,1100,1350,1550. The
+  `demo animesh alpha` log gives temporary records and red draws per object:
+  mesh 9202 must have red draws only with rigged highlighting, meshes
+  9205/9206 (`rigged false`) and root 9201
+  whenever the overlay is on, and both must have zero records when off.
 - **`AURORA_DEMO_ANIMESH_TRIS=<n>`**: with `AURORA_DEMO_ANIMESH`, adds
   about n triangles to the demo's rigged mesh, as opaque faces of 45,000
   (each a thin tube around the torso, 7 faces at most). With
@@ -1493,7 +1509,7 @@ To check with these scenarios:
   and the colors' order are those of skyF.glsl. Capture in `AURORA_AA=3` and
   `AURORA_AA=6`.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
-  `culling`, `lights`, `probes`, `skeletons`, `alpha`, `wire`, `complexity`,
+  `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
   `check_probes`: the entries of Preferences › Debug. `shadows` is the view
   of `AURORA_DEBUG_SHADOWS`; `ao` shows the ambient occlusion of the screen

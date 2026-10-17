@@ -5682,10 +5682,17 @@ impl App {
             self.scene.reflections = self.settings.water_reflections > 0 || self.settings.mirrors > 0 || in_world;
             self.scene.fov_y = self.camera.fov_y;
             self.scene.agent_idx = self.world.objects.index_of_uuid(&self.world.agent_id);
-            self.scene.debug_alpha = match self.settings.debug {
+            if self.demo
+                && let Some(alpha) = crate::demo::animesh_alpha_step(self.frame_count)
+            {
+                self.settings.debug.show_alpha = alpha.is_some();
+                self.settings.debug.show_alpha_rigged = alpha.unwrap_or(false);
+            }
+            let debug_alpha = match self.settings.debug {
                 d if d.show_alpha => Some(d.show_alpha_rigged),
                 _ => None,
             };
+            self.scene.set_debug_alpha(&mut self.world, debug_alpha);
             // finished jobs only leave cheap work to the main thread (their
             // data is staged for the GPU by the jobs): a short budget is
             // enough, and keeps a burst of results from stretching a frame
