@@ -119,9 +119,14 @@ pub enum Transcoded {
     KeepRgba,
 }
 
+/// Alpha class as stored. A mask's mips depend on whether its alpha
+/// coverage is kept (`super::textures::alpha_coverage_on`): 3 when it is, 1
+/// when not, so that a file made the other way reads as missing and its
+/// texture is decoded again; the other textures' files stay valid.
 fn alpha_code(a: AlphaKind) -> u8 {
     match a {
         AlphaKind::Opaque => 0,
+        AlphaKind::Mask if super::textures::alpha_coverage_on() => 3,
         AlphaKind::Mask => 1,
         AlphaKind::Blend => 2,
     }
@@ -253,8 +258,8 @@ fn parse(head: &[u8], file_len: u64, want: u8) -> Option<Parsed> {
     let stored = head[6];
     let alpha = match head[7] {
         0 => AlphaKind::Opaque,
-        1 => AlphaKind::Mask,
         2 => AlphaKind::Blend,
+        code if code == alpha_code(AlphaKind::Mask) => AlphaKind::Mask,
         _ => return None,
     };
     let info = J2kInfo {
@@ -400,7 +405,10 @@ mod tests {
         check("magic", &|b| b[0] = b'X');
         check("version", &|b| b[4] = VERSION + 1);
         check("kind", &|b| b[5] = 9);
-        check("alpha", &|b| b[7] = 3);
+        check("alpha", &|b| b[7] = 4);
+        // a mask whose mips were made without keeping its alpha coverage
+        // (files of before, or AURORA_ALPHA_COVERAGE=0): decoded again
+        check("mask-mips", &|b| b[7] = 1);
         check("levels", &|b| b[11] = 17);
         check("no-level", &|b| b[11] = 0);
         check("short", &|b| b.truncate(b.len() - 1));

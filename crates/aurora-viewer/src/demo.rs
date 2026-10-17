@@ -3064,6 +3064,41 @@ pub fn events() -> Vec<NetEvent> {
     } else {
         id += alpha_panels().len() as u32;
     }
+    // AURORA_DEMO_FOLIAGE=1: the same cut-out foliage panel (2.5 m, alpha a
+    // mask) at 5, 10, 20, 35 and 60 m along the start view, one side then
+    // the other, to see it thin out (or not, AURORA_ALPHA_COVERAGE) with the
+    // distance; from the start position, or AURORA_DEMO_POS="x,y" (an open
+    // place: "80,100")
+    if std::env::var_os("AURORA_DEMO_FOLIAGE").is_some() {
+        let look = Vec3::new(0.8, 0.4, 0.0).normalize();
+        let across = Vec3::new(-look.y, look.x, 0.0);
+        let yaw = look.y.atan2(look.x);
+        let eye = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|s| s.trim().parse::<f32>().ok()).collect::<Vec<_>>())
+            .filter(|p| p.len() >= 2)
+            .map_or(Vec3::new(132.0, 126.0, 0.0), |p| Vec3::new(p[0], p[1], 0.0));
+        for (k, dist) in [5.0f32, 10.0, 20.0, 35.0, 60.0].into_iter().enumerate() {
+            let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+            let p = eye + look * dist + across * side * (1.6 + dist * 0.06);
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = TEX_FOLIAGE;
+                f.color = [1.0, 1.0, 1.0, 1.0];
+            }
+            add(prim(
+                id,
+                Vec3::new(p.x, p.y, height(p.x, p.y) + 1.25),
+                Quat::from_rotation_z(yaw),
+                Vec3::new(0.02, 2.5, 2.5),
+                boxp,
+                Arc::new(t),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_GLOW_LAYERS=1: a faintly glowing layer over a faintly
     // glowing skin, as mesh bodies wear them (fixed ids: the other demo
     // objects keep theirs). Left panel: skin with glow 0.02; right panel:
@@ -5511,7 +5546,7 @@ fn hair_texture(empty: u32, period: u32) -> (Vec<u8>, u32, u32) {
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
-    *id == TEX_HAIR || *id == TEX_PROJECTED
+    *id == TEX_HAIR || *id == TEX_PROJECTED || *id == TEX_FOLIAGE
 }
 
 #[cfg(test)]
@@ -5795,6 +5830,67 @@ pub const TEX_PROJECTED: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_
 /// Packed occlusion-roughness-metal map of AURORA_DEMO_PBR_METAL: occlusion
 /// (red) 0 but for a centred disc, roughness 0.1, metallic 1.
 pub const TEX_ORM_DISC: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0008);
+/// Foliage of AURORA_DEMO_FOLIAGE (256 × 256, alpha a mask): thin blades
+/// and small leaves, about a sixth of the texels drawn.
+pub const TEX_FOLIAGE: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0009);
+
+#[cfg(test)]
+mod foliage_tests {
+    use super::*;
+    use crate::scene::jobs::{AlphaKind, classify_alpha};
+    use aurora_render::{MASK_CUTOFF, alpha_coverage, build_mips, preserve_alpha_coverage};
+
+    #[test]
+    fn the_demo_foliage_is_a_mask_that_keeps_its_coverage() {
+        let (px, w, h) = foliage_texture();
+        assert_eq!(classify_alpha(&px), AlphaKind::Mask);
+        let plain = build_mips(w, h, px, 16);
+        let mut kept = plain.clone();
+        preserve_alpha_coverage(&mut kept, MASK_CUTOFF);
+        let target = alpha_coverage(&plain[0].2, MASK_CUTOFF);
+        let row = |m: &[(u32, u32, Vec<u8>)]| {
+            m.iter()
+                .map(|(_, _, d)| format!("{:.3}", alpha_coverage(d, MASK_CUTOFF)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        eprintln!("foliage coverage per level, plain: {}", row(&plain));
+        eprintln!("foliage coverage per level, kept:  {}", row(&kept));
+        // plain mips lose it a few levels down; kept ones hold it to 8 × 8
+        // (within what the alpha values of a level allow: 2-texel blades are
+        // 128 or 255 one level down)
+        assert!(alpha_coverage(&plain[4].2, MASK_CUTOFF) < target * 0.5);
+        for (w, _, d) in kept.iter().take_while(|(w, _, _)| *w >= 8) {
+            assert!(
+                (alpha_coverage(d, MASK_CUTOFF) - target).abs() < 0.08,
+                "{w}: {}",
+                alpha_coverage(d, MASK_CUTOFF)
+            );
+        }
+    }
+}
+
+/// Blades of grass and small leaves on a transparent ground: the thin cut
+/// out shapes that thin out with the distance when their mips are averaged.
+fn foliage_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 256;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        for x in 0..N {
+            let (fx, fy) = (x as f32, y as f32);
+            // blades: 2 texels wide, leaning, one every 12 texels
+            let lean = fx + fy * 0.18;
+            let blade = (lean % 12.0) < 2.0 && fy > (x * 37 % 97) as f32 * 0.6;
+            // leaves: small ellipses on a 24-texel grid, shifted every row
+            let (cx, cy) = ((fx + (y / 24 % 2) as f32 * 12.0) % 24.0 - 12.0, fy % 24.0 - 12.0);
+            let leaf = (cx / 5.0).powi(2) + (cy / 2.5).powi(2) < 1.0;
+            let on = blade || leaf;
+            let g = 120 + ((x * 7 + y * 3) % 60) as u8;
+            px.extend_from_slice(&[40, g, 52, if on { 255 } else { 0 }]);
+        }
+    }
+    (px, N, N)
+}
 const MAT_NONE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0001);
 const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002);
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
@@ -5845,6 +5941,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if *id == TEX_HAIR {
         let (empty, period) = hair_demo().map_or((60, 16), |h| (h.empty, h.period));
         return Some(hair_texture(empty, period));
+    }
+    if *id == TEX_FOLIAGE {
+        return Some(foliage_texture());
     }
     if let Some(picture) = tags::picture_pixels(id) {
         return Some(picture);

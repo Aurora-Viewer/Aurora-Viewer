@@ -1597,6 +1597,7 @@ To check with these scenarios:
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall` or `wide` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it (tangent frame) |
+| `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1661,6 +1662,12 @@ To check with these scenarios:
   relief of its bumps along the denser axis comes and goes (`tall` shows it
   best, the sun lighting the vertical tilts): about three times weaker with
   the former frame. Seen from `AURORA_DEMO_POS="133.5,128.6"`.
+- **`AURORA_DEMO_FOLIAGE=1`**: a 2.5 m panel of thin blades and small
+  leaves (256 × 256, its alpha a mask) at 5, 10, 20, 35 and 60 m along the
+  start view, one side then the other. Seen from an open place,
+  `AURORA_DEMO_POS="80,100"` (the row follows the start position). With
+  `AURORA_ALPHA_COVERAGE=0` the 10 and 20 m panels thin out; with the
+  coverage kept they stay as full as the nearest one.
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
   `AURORA_DEMO_CROWD` wear a box on each foot's attachment point, opaque or
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces
@@ -3932,6 +3939,7 @@ What the inventory must show with these scenarios:
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
 | `AURORA_TANGENTS=derivative\|alt` | Normal maps on the former tangent frame, or alternated each second, to compare |
+| `AURORA_ALPHA_COVERAGE=0` | Mips of alpha-masked textures plainly averaged, as before (foliage thins out with the distance) |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
@@ -4443,6 +4451,15 @@ What the inventory must show with these scenarios:
   of before, scaled by the longer of its two gradients, which divided the
   relief along the denser texture axis by the density ratio; `alt`
   alternates the two every second. See `AURORA_DEMO_BUMP`.
+- **`AURORA_ALPHA_COVERAGE=0`**: the mips of a texture whose alpha is a
+  mask are box-filtered as they come (`build_mips`), so a leaf, a blade of
+  grass, a strand or a fence wire falls under the alpha cutoff a few levels
+  down and the foliage thins out with the distance. By default each level
+  keeps level 0's share of texels at or above the 0.5 cutoff
+  (`preserve_alpha_coverage`, Castaño 2010), computed once at decode and
+  stored in the transcoded cache (a file made the other way is decoded
+  again). It is read at start: compare two launches. See
+  `AURORA_DEMO_FOLIAGE`.
 - **`AURORA_SHADOW_FILTER=gaps|mapped|before`**: the sun shadow lookup as it
   was before its edges were cleaned (`cascade_shadow` in `common.wgsl`,
   `shadow_normal` in `object.wgsl`). `gaps`: 4 × 4 filter taps up to two
