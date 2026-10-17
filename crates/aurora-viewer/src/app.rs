@@ -11037,6 +11037,8 @@ impl ApplicationHandler for App {
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
                     self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
+                    self.options_ui.scroll_to_occlusion = filter == "occlusion";
+                    self.options_ui.scroll_to_bloom = filter == "bloom";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),

@@ -2380,7 +2380,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   check that hiding world indicators leaves the call's controls intact.
 - **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
   jump to the corresponding Sound and voice card for offline captures;
-  `0:tonemap` opens Graphics scrolled to the Tone mapping row. Changes
+  `0:tonemap` opens Graphics scrolled to the Tone mapping row, `0:occlusion`
+  to the Indirect light row (contact shadows and ambient occlusion around
+  it) and `0:bloom` to the Bloom row, the rows the Deluxe level turns on
+  (with `AURORA_GRAPHICS_PRESET=deluxe` or `high` to compare). Changes
   apply live, persist, and reset with the audio page. The microphone popup
   exposes camera/avatar ears and all five noise levels; its processing shortcut
   opens the same card. `AURORA_DEMO_VOICE=cycle` exercises the world indicators
