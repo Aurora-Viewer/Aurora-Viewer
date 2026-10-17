@@ -47,6 +47,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_controls = !aurora;
     s.classic_restart_alert = !aurora;
     s.classic_chat_lines = !aurora;
+    s.classic_rez_effect = !aurora;
     s.predict_own_motion = aurora;
     s.synchronize_animations = aurora;
 }
@@ -564,6 +565,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             aurora_i18n::tr!("ui-options-aurora-restart-classic"),
             &mut s.classic_restart_alert,
         );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-rez-effect"),
+            aurora_i18n::tr!("ui-options-aurora-rez-effect-help"),
+            aurora_i18n::tr!("ui-options-aurora-rez-effect-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-rez-effect-classic"),
+            &mut s.classic_rez_effect,
+        );
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-gaze"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -744,6 +755,7 @@ mod tests {
         assert!(s.classic_controls, "Firestorm's two control windows");
         assert!(s.classic_restart_alert, "Firestorm's yellow restart box");
         assert!(s.classic_chat_lines, "the Legacy Viewer's one-line chat lines");
+        assert!(s.classic_rez_effect, "grey objects while they load");
         assert!(!s.predict_own_motion, "the avatar waits for the simulator");
         assert!(!s.synchronize_animations);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
@@ -771,6 +783,7 @@ mod tests {
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);
         assert!(!s.classic_chat_lines && !fresh.classic_chat_lines, "the cards are the default");
+        assert!(!s.classic_rez_effect && !fresh.classic_rez_effect, "the rez effect is the default");
         assert!(s.predict_own_motion, "Aurora's movement");
         assert!(!fresh.predict_own_motion, "Firestorm's movement until tried on the grid");
         assert!(s.synchronize_animations, "the Aurora bulk choice enables receipt clocks");

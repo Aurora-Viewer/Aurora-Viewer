@@ -288,6 +288,13 @@ impl Scene {
         (done, total.max(1), missing)
     }
 
+    /// Whether nothing of an avatar is missing (its bakes downloaded, what
+    /// it wears built): the rez effect's line over our own avatar waits
+    /// for it after an appearance change.
+    pub(super) fn avatar_complete(&self, world: &World, idx: usize) -> bool {
+        self.avatar_load_parts(world, idx, None).2.is_empty()
+    }
+
     /// Diagnostic: the first missing parts with the state of what they wait
     /// for (asset ids and fetch states, never a URL).
     fn describe_missing(&self, world: &World, missing: &[Missing]) -> String {

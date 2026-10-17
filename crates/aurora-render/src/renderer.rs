@@ -115,6 +115,7 @@ struct FrameU {
     sky_optics_tex: [u32; 4],
     anim_clock: [u32; 4],
     selection_color: [f32; 4],
+    rez_gradient: [[f32; 4]; 3],
     cascade_vp: [[[f32; 4]; 4]; CASCADES],
     lights: [LightU; MAX_LIGHTS],
     /// Which of `lights` a fragment walks (light_tiles.rs).
@@ -3913,6 +3914,7 @@ impl Backend {
         let camera_pos = inv_view.transform_point3(Vec3::ZERO);
         let mut u = FrameU::zeroed();
         u.selection_color = f.selection_color;
+        u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
         if eye_relative_enabled() {

@@ -109,6 +109,16 @@ pub struct Palette {
     pub panel_alpha: u8,
 }
 
+impl Palette {
+    /// The brand gradient in the world (docs/BRANDING.md: gradients are for
+    /// brand elements), from its bright end to its deep one: teal, light
+    /// indigo, violet, the colors of the aurora of the login screen. The
+    /// rez effect runs along it (scene/rez.rs).
+    pub fn aurora_gradient(&self) -> [Color32; 3] {
+        [self.teal, self.indigo_light, self.violet]
+    }
+}
+
 impl Theme {
     /// The colors, adapted to the colour blindness chosen in the
     /// preferences (`crate::colorblind`).
