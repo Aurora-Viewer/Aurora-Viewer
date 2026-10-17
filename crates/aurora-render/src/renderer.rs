@@ -4328,6 +4328,19 @@ impl Backend {
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
             main.light_sets.mode[2] |= 0x2000;
         }
+        // AURORA_BLEND_AO=old|new|alt: blended faces take the screen-space
+        // occlusion and indirect light of what lies behind them as before,
+        // not at all, or one second in two each (common.wgsl
+        // BLEND_SCREEN_TERMS)
+        static BLEND_AO: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let blend_ao = *BLEND_AO.get_or_init(|| match std::env::var("AURORA_BLEND_AO").as_deref().map(str::trim) {
+            Ok("old") => 1,
+            Ok("alt") => 2,
+            _ => 0,
+        });
+        if shadow_bias_legacy_now(blend_ao, std::time::SystemTime::now()) {
+            main.light_sets.mode[2] |= 0x4000;
+        }
         // AURORA_TANGENTS=vertex|pixel|derivative|alt (common.wgsl
         // TANGENT_VERTEX, TANGENT_UNIT): the vertices' tangents, the
         // per-pixel frame where a face has none; the per-pixel frame alone;

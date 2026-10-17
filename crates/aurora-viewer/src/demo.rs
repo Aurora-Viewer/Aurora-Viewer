@@ -3767,6 +3767,32 @@ pub fn events() -> Vec<NetEvent> {
         "",
     ));
     id += 1;
+    // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
+    // position, facing the camera, so that the avatar stands between the
+    // camera and the pane (issue #556: no halo around the avatar on it)
+    if std::env::var_os("AURORA_DEMO_HALO").is_some() {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        // the start look-at of AgentMovementComplete, (0.8, 0.4)
+        let (dx, dy) = (0.894_427_2, 0.447_213_6);
+        let (px, py) = (sx + dx * 3.0, sy + dy * 3.0);
+        add(prim(
+            id,
+            Vec3::new(px, py, g(px, py) + 2.0),
+            Quat::from_rotation_z(dy.atan2(dx)),
+            Vec3::new(0.1, 8.0, 4.0),
+            boxp,
+            te([0.6, 0.8, 1.0, 0.35], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+    }
     let _ = id;
     if let Ok(spec) = std::env::var("AURORA_DEMO_FLEXIBLE") {
         objs.clear();
