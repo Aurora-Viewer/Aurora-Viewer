@@ -339,6 +339,7 @@ mod tests {
             one_shot: 0,
             cam_warned: false,
             far: 128.0,
+            fov: DEFAULT_FOV,
             logout_started: None,
             finished: false,
             agent_moved: false,

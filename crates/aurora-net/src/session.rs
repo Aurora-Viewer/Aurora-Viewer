@@ -68,6 +68,8 @@ mod groups_net;
 use crate::build::BUILD_PARCEL_SEQ;
 
 const SIM_TIMEOUT: Duration = Duration::from_secs(60);
+/// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
+const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 /// Diagnostic: the RegionHandshake of a region the agent arrived in should
 /// come along with AgentMovementComplete; without it the simulator never
@@ -181,6 +183,8 @@ struct Session<'a> {
     /// "No agent updates" already reported for this CompleteAgentMovement.
     cam_warned: bool,
     far: f32,
+    /// The camera's vertical viewing angle, last told to the simulator.
+    fov: f32,
     logout_started: Option<Instant>,
     finished: bool,
     agent_moved: bool,
@@ -310,6 +314,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         one_shot: 0,
         cam_warned: false,
         far: 128.0,
+        fov: DEFAULT_FOV,
         logout_started: None,
         finished: false,
         agent_moved: false,
@@ -461,6 +466,13 @@ impl Session<'_> {
         if let Some(sim) = self.sims.get_mut(&addr) {
             let _ = sim.circuit.send(&self.sock, &self.sh.stats, msg, reliable);
         }
+    }
+
+    /// AgentFOV with the camera's real vertical angle
+    /// (LLViewerCamera::setView: GenCounter 0, reliable).
+    fn send_fov(&mut self, to: SocketAddr) {
+        let fov = agent_fov(self.agent_id(), self.session_id(), self.login.circuit_code, self.fov);
+        self.send(to, &fov, true);
     }
 
     fn send_main<M: Msg>(&mut self, msg: &M, reliable: bool) {
@@ -1234,6 +1246,14 @@ impl Session<'_> {
                 self.send_main(&m, true);
             }
             NetCommand::SetDrawDistance(d) => self.far = d.clamp(32.0, 1024.0),
+            NetCommand::SetFov(angle) => {
+                if angle.is_finite() && angle > 0.0 && angle != self.fov {
+                    self.fov = angle;
+                    if let Some(main) = self.main {
+                        self.send_fov(main);
+                    }
+                }
+            }
             NetCommand::SendImDialog {
                 to,
                 dialog,
@@ -3641,12 +3661,7 @@ impl Session<'_> {
             r.agent_data.agent_id = self.agent_id();
             r.agent_data.session_id = self.session_id();
             self.send(from, &r, true);
-            let mut fov = AgentFOV::default();
-            fov.agent_data.agent_id = self.agent_id();
-            fov.agent_data.session_id = self.session_id();
-            fov.agent_data.circuit_code = self.login.circuit_code;
-            fov.fov_block.vertical_angle = 1.0;
-            self.send(from, &fov, true);
+            self.send_fov(from);
             let mut mb = MoneyBalanceRequest::default();
             mb.agent_data.agent_id = self.agent_id();
             mb.agent_data.session_id = self.session_id();
@@ -4555,6 +4570,35 @@ fn parse_reset_skeleton(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, 
     Some((target, e.type_data[16] & 1 != 0))
 }
 
+/// AgentFOV as LLViewerCamera::setView fills it: the generation counter
+/// stays 0.
+fn agent_fov(agent_id: Uuid, session_id: Uuid, circuit_code: u32, vertical_angle: f32) -> AgentFOV {
+    let mut fov = AgentFOV::default();
+    fov.agent_data.agent_id = agent_id;
+    fov.agent_data.session_id = session_id;
+    fov.agent_data.circuit_code = circuit_code;
+    fov.fov_block.gen_counter = 0;
+    fov.fov_block.vertical_angle = vertical_angle;
+    fov
+}
+
+#[cfg(test)]
+mod agent_fov_tests {
+    use super::*;
+
+    #[test]
+    fn agent_fov_carries_the_real_angle() {
+        let m = agent_fov(Uuid::from_u128(1), Uuid::from_u128(2), 77, 0.75);
+        assert_eq!(m.agent_data.agent_id, Uuid::from_u128(1));
+        assert_eq!(m.agent_data.session_id, Uuid::from_u128(2));
+        assert_eq!(m.agent_data.circuit_code, 77);
+        assert_eq!(m.fov_block.gen_counter, 0);
+        assert_eq!(m.fov_block.vertical_angle, 0.75);
+        // until the viewer gives its own: 60°, not the 1.0 rad sent before
+        assert!((DEFAULT_FOV - 60f32.to_radians()).abs() < 1e-6);
+    }
+}
+
 #[cfg(test)]
 mod reset_skeleton_tests {
     use super::*;
@@ -4686,6 +4730,7 @@ mod event_queue_tests {
             one_shot: 0,
             cam_warned: false,
             far: 128.0,
+            fov: DEFAULT_FOV,
             logout_started: None,
             finished: false,
             agent_moved: false,
