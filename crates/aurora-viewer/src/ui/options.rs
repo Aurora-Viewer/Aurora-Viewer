@@ -77,6 +77,11 @@ pub struct OptionsUi {
     pub scroll_to_end: bool,
     /// Graphics opens on the tone mapping row (`AURORA_DEMO_OPTIONS=0:tonemap`).
     pub scroll_to_tone_mapping: bool,
+    /// Graphics opens on the indirect light row (`0:occlusion`), between
+    /// the contact shadows and the ambient occlusion, or on the bloom row
+    /// (`0:bloom`): the rows the Deluxe level turns on.
+    pub scroll_to_occlusion: bool,
+    pub scroll_to_bloom: bool,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -1519,6 +1524,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-screen-indirect-light"),
                     aurora_i18n::tr!("ui-options-screen-indirect-light-help"),
                     |ui| {
+                        if std::mem::take(&mut st.scroll_to_occlusion) {
+                            ui.scroll_to_cursor(Some(egui::Align::Center));
+                        }
                         ui.add_enabled_ui(s.ssao > 0 && s.ao_method == 1, |ui| toggle(ui, p, &mut s.screen_indirect_light))
                             .inner
                     },
@@ -1624,7 +1632,12 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     p,
                     aurora_i18n::tr!("ui-options-bloom"),
                     aurora_i18n::tr!("ui-options-bloom-help"),
-                    |ui| toggle(ui, p, &mut s.bloom),
+                    |ui| {
+                        if std::mem::take(&mut st.scroll_to_bloom) {
+                            ui.scroll_to_cursor(Some(egui::Align::Center));
+                        }
+                        toggle(ui, p, &mut s.bloom)
+                    },
                 );
                 c |= row(
                     ui,

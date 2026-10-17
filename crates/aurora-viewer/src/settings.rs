@@ -724,9 +724,12 @@ pub struct Settings {
 /// The default strength of GTAO's indirect light: at 1 (one physical
 /// bounce) it hardly shows in the demo's coloured corner, at 2 a glow starts
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
-const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
+pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
-const SETTINGS_VERSION: u32 = 18;
+/// The default strength of the bloom (half of the light over its threshold).
+pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
+
+const SETTINGS_VERSION: u32 = 19;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1019,7 +1022,7 @@ impl Default for Settings {
             sharpen: 0.4,
             glow: true,
             bloom: false,
-            bloom_strength: 0.5,
+            bloom_strength: BLOOM_STRENGTH,
             occlusion_culling: true,
             lod_factor: 2.0,
             texture_budget_auto: true,
@@ -1524,6 +1527,12 @@ impl Settings {
             // Deluxe follows it, any other keeps its occlusion
             crate::graphics_presets::upgrade_deluxe(&mut self);
         }
+        if self.settings_version < 19 {
+            // Deluxe now also takes the bloom, the contact shadows and the
+            // indirect light: the same rule, a profile still exactly on the
+            // Deluxe of version 18 follows it
+            crate::graphics_presets::upgrade_deluxe_effects(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1590,7 +1599,7 @@ impl Settings {
         self.bloom_strength = if self.bloom_strength.is_finite() {
             self.bloom_strength.clamp(0.05, 1.0)
         } else {
-            0.5
+            BLOOM_STRENGTH
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);
@@ -1949,14 +1958,40 @@ mod tests {
             ..Settings::default()
         };
         Preset::Deluxe.apply(&mut old);
+        // the Deluxe of then: Legacy occlusion, none of the later effects
         old.ao_method = 0;
+        old.bloom = false;
+        old.contact_shadows = false;
+        old.screen_indirect_light = false;
         let now = old.sanitized();
         assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
+        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
         // chosen after the change: kept
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
         chosen.ao_method = 0;
         assert_eq!(chosen.sanitized().ao_method, 0);
+    }
+
+    #[test]
+    fn a_file_on_the_deluxe_of_version_18_takes_the_new_effects_once() {
+        use crate::graphics_presets::Preset;
+        let mut old = Settings {
+            settings_version: 18,
+            ..Settings::default()
+        };
+        Preset::Deluxe.apply(&mut old);
+        old.bloom = false;
+        old.contact_shadows = false;
+        old.screen_indirect_light = false;
+        let now = old.sanitized();
+        assert!(now.bloom && now.contact_shadows && now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // turned off after the change: kept off
+        let mut chosen = Settings::default();
+        Preset::Deluxe.apply(&mut chosen);
+        chosen.bloom = false;
+        assert!(!chosen.sanitized().bloom);
     }
 
     #[test]
