@@ -6369,6 +6369,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
+                || self.chat_ui.demo_reorder
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
@@ -12417,6 +12418,10 @@ impl ApplicationHandler for App {
             if let Ok(kind) = std::env::var("AURORA_DEMO_CONV_MENU") {
                 self.panels.chat = true;
                 self.chat_ui.demo_menu = Some(kind.trim().to_owned());
+            }
+            if std::env::var_os("AURORA_DEMO_CONV_REORDER").is_some() {
+                self.panels.chat = true;
+                self.chat_ui.demo_reorder = true;
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
