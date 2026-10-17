@@ -18,7 +18,7 @@
 //! - `ml`: into mouselook at frame 600, out at 700
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
 //! - `ml-zoom`: into mouselook at 600, right button held at 640 (no zoom
-//!   yet: the remembered angle is the default one), 3 wheel clicks in at
+//!   yet: the normal angle stays until the wheel sets one), 3 wheel clicks in at
 //!   650, released at 680 (the normal angle), held again at 720 (the
 //!   remembered zoom at once), released at 760, a wheel click out at 800
 //!   (leaves mouselook)

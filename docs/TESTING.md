@@ -337,10 +337,10 @@ when unfocused") is ignored during a screenshot.
   until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
   world view" above the bottom bar); `ml-zoom`: the right button held in
-  mouselook at 640 (no zoom the first time: the remembered angle starts at
-  the default one), 3 wheel clicks in at 650 (`fov` in the log goes from 60°
-  to 42.8° at once), released at 680 (60° again), held again at 720 (42.8°
-  at once), released at 760, a wheel click out at 800 (leaves mouselook);
+  mouselook at 640 (the normal angle stays: no zoom was set with the wheel
+  yet), 3 wheel clicks in at 650 (`fov` in the log drops by 17.2° at once),
+  released at 680 (the normal angle again, exactly), held again at 720 (the
+  zoom at once), released at 760, a wheel click out at 800 (leaves mouselook);
   `ml-zoom-alt`: Alt + right click in mouselook at 640, no context menu
   unless Preferences › Camera › Mouselook › "Context menu with Alt + right
   click" is on; wheel; pulling back in flight; sitting on a

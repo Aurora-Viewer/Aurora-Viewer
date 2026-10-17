@@ -457,7 +457,7 @@ impl Camera {
     /// the remembered zoomed angle at once. `aspect`: the window's.
     pub fn press_mouselook_zoom(&mut self, s: &CameraSettings, aspect: f32) {
         if self.mouselook() {
-            self.ml_zoom.press(s.mouselook_zoom_fov, aspect);
+            self.ml_zoom.press(s.mouselook_zoom_fov, s.fov, aspect);
         }
     }
 
@@ -468,12 +468,14 @@ impl Camera {
     }
 
     /// Right button up (LLToolCompGun::handleRightMouseUp), or mouselook left
-    /// while it is held: the zoomed angle is remembered in `s` and the normal
-    /// one comes back. True when it was held.
+    /// while it is held: the normal angle comes back, and the zoomed one is
+    /// remembered in `s` when the wheel set it. True when it was held.
     pub fn release_mouselook_zoom(&mut self, s: &mut CameraSettings) -> bool {
         match self.ml_zoom.release() {
-            Some(angle) => {
-                s.mouselook_zoom_fov = angle;
+            Some(hold) => {
+                if hold.scrolled {
+                    s.mouselook_zoom_fov = Some(hold.angle);
+                }
                 true
             }
             None => false,
@@ -2283,7 +2285,12 @@ mod tests {
 
     #[test]
     fn the_held_right_button_zooms_mouselook_at_once() {
-        let mut s = CameraSettings::default();
+        // a viewing angle that is not the default 60°
+        let normal = 59.5f32.to_radians();
+        let mut s = CameraSettings {
+            fov: normal,
+            ..Default::default()
+        };
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
         let mut cam = Camera::default();
         settle(&mut cam, &mut w, &s);
@@ -2292,15 +2299,25 @@ mod tests {
         cam.press_mouselook_zoom(&s, aspect);
         assert!(!cam.mouselook_zoom_held());
         cam.change_to_mouselook(&mut w.agent, &s, false);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        // a right click without the wheel changes nothing, then or after
+        cam.press_mouselook_zoom(&s, aspect);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert_eq!(cam.fov_y, normal);
+        assert!(cam.release_mouselook_zoom(&mut s));
+        assert_eq!(s.mouselook_zoom_fov, None);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert_eq!(cam.fov_y, normal);
+        // the wheel while held: at once, remembered, the normal angle exact after
         cam.press_mouselook_zoom(&s, aspect);
         assert!(cam.scroll_mouselook_zoom(-3.0, aspect));
         cam.update(&mut w, &s, &frame(1.0 / 60.0));
-        assert!((cam.fov_y - (DEFAULT_FOV - 0.3)).abs() < 1e-5, "instant: {}", cam.fov_y);
+        assert!((cam.fov_y - (normal - 0.3)).abs() < 1e-5, "instant: {}", cam.fov_y);
         assert!(cam.release_mouselook_zoom(&mut s));
-        assert!((s.mouselook_zoom_fov - (DEFAULT_FOV - 0.3)).abs() < 1e-5);
-        assert_eq!(s.fov, DEFAULT_FOV, "the normal angle is never written");
+        assert!((s.mouselook_zoom_fov.unwrap() - (normal - 0.3)).abs() < 1e-5);
+        assert_eq!(s.fov, normal, "the normal angle is never written");
         cam.update(&mut w, &s, &frame(1.0 / 60.0));
-        assert!((cam.fov_y - DEFAULT_FOV).abs() < 1e-5);
+        assert_eq!(cam.fov_y, normal);
         // without the button the wheel is the usual one
         assert!(!cam.scroll_mouselook_zoom(1.0, aspect));
     }
