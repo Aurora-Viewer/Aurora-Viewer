@@ -317,8 +317,18 @@ const LABEL_GAP: f32 = 4.0;
 /// a larger font) goes on at the line below instead of running under the
 /// control: the row grows for it alone, the column does not move.
 fn row_label(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
+    row_label_marked(ui, p, label, false)
+}
+
+/// The size of the experimental mark after a label, and its gap.
+const MARK: f32 = 13.0;
+
+/// `row_label`, with the experimental mark right after the text when
+/// `experimental` (the text wraps before it).
+fn row_label_marked(ui: &mut egui::Ui, p: &Palette, label: &str, experimental: bool) -> egui::Response {
     // the spacing before the control is room for the text too, less a gap
-    let room = LABEL_W + ui.spacing().item_spacing.x - LABEL_GAP;
+    let mark = if experimental { MARK + LABEL_GAP } else { 0.0 };
+    let room = LABEL_W + ui.spacing().item_spacing.x - LABEL_GAP - mark;
     let galley = egui::WidgetText::from(RichText::new(label).size(13.0).color(p.ink)).into_galley(
         ui,
         Some(egui::TextWrapMode::Wrap),
@@ -326,10 +336,33 @@ fn row_label(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
         egui::TextStyle::Body,
     );
     let height = galley.size().y.max(22.0);
+    let size = galley.size();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(LABEL_W, height), Sense::hover());
-    let top = rect.center().y - galley.size().y * 0.5;
+    let top = rect.center().y - size.y * 0.5;
     ui.painter().galley(egui::pos2(rect.left(), top), galley, p.ink);
+    if experimental {
+        let at = egui::pos2(rect.left() + size.x + LABEL_GAP + MARK * 0.5, rect.center().y);
+        super::widgets::experimental_mark(
+            ui,
+            p,
+            egui::Rect::from_center_size(at, Vec2::splat(MARK)),
+            resp.id.with("experimental"),
+        );
+    }
     resp
+}
+
+/// `row` for an experimental option: its label carries the warning mark.
+fn row_experimental(ui: &mut egui::Ui, p: &Palette, label: &str, hint: &str, control: impl FnOnce(&mut egui::Ui) -> bool) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let resp = row_label_marked(ui, p, label, true);
+        if !hint.is_empty() {
+            resp.on_hover_text(hint);
+        }
+        changed = control(ui);
+    });
+    changed
 }
 
 /// One row: label (with optional hint) on the left, control on the right.
@@ -1518,7 +1551,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         .inner
                     },
                 );
-                c |= row(
+                c |= row_experimental(
                     ui,
                     p,
                     aurora_i18n::tr!("ui-options-screen-indirect-light"),
@@ -1627,7 +1660,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-glow-around-glowing-faces-as-in-firestorm"),
                     |ui| toggle(ui, p, &mut s.glow),
                 );
-                c |= row(
+                c |= row_experimental(
                     ui,
                     p,
                     aurora_i18n::tr!("ui-options-bloom"),
