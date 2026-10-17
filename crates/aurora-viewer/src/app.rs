@@ -68,6 +68,7 @@ mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
 mod task_notecards;
+mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
 mod world_click_demo;
@@ -101,6 +102,8 @@ struct TpOverlay {
     shown: f32,
     /// What the screen said when its fade out began; it leaves saying that.
     leaving: Option<ui::loading::BannerText>,
+    /// When the region may show and how the bar finishes.
+    mode: teleport_screen::Mode,
 }
 
 impl TpOverlay {
@@ -113,6 +116,11 @@ impl TpOverlay {
             loading_end,
             shown: 0.0,
             leaving: None,
+            mode: if loading_end {
+                teleport_screen::Mode::Old
+            } else {
+                teleport_screen::Mode::for_next_teleport()
+            },
         }
     }
 }
@@ -6196,22 +6204,22 @@ impl App {
                     let terrain = self.world.terrain_progress();
                     let st = self.scene.textures.stats;
                     let tex = st.loaded as f32 / st.total.max(1) as f32;
-                    let ready = (terrain > 0.97 && at.elapsed() > Duration::from_millis(800)) || at.elapsed() > Duration::from_secs(10);
-                    if ready {
+                    if teleport_screen::ready(o.mode, at.elapsed(), terrain) {
                         1.0
                     } else {
                         0.6 + 0.4 * (0.75 * terrain + 0.25 * tex).clamp(0.0, 1.0) * 0.97
                     }
                 }
             };
-            // glide toward the target, never backwards
-            let k = 1.0 - (-2.6 * dt).exp();
-            o.shown = (o.shown + (target - o.shown) * k).max(o.shown).min(1.0);
-            if target >= 1.0 && o.shown > 0.985 && o.end.is_none() {
+            o.shown = teleport_screen::glide(o.mode, o.shown, target, dt);
+            if teleport_screen::done(o.mode, o.shown, target) && o.end.is_none() {
                 o.end = Some(Instant::now());
                 aurora_net::transition::end(
                     Some(aurora_net::transition::Kind::Teleport),
-                    "arrived (teleport screen hidden)",
+                    match o.mode {
+                        teleport_screen::Mode::Quick => "arrived (teleport screen hidden)",
+                        teleport_screen::Mode::Old => "arrived (teleport screen hidden, old screen)",
+                    },
                     &self.net.stats,
                 );
             }
