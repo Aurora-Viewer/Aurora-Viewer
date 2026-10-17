@@ -645,7 +645,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, w
     actions(ui, p, s, v, world, compact);
     ui.add_space(12.0);
     let left = |ui: &mut egui::Ui, world: &mut World, s: &mut RegionUi| covenant_card(ui, p, s, v, world);
-    let right = |ui: &mut egui::Ui, world: &mut World, _: &mut RegionUi| health_card(ui, p, v, world);
+    let right = |ui: &mut egui::Ui, world: &mut World, s: &mut RegionUi| health_card(ui, p, s, v, world);
     if compact {
         // one column: each card the whole width
         let mut c = sheet::card_begin(ui);
@@ -665,7 +665,6 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
     use widgets::ActionKind::{Flat, SoftDanger};
     // compact: the icons alone, their names on hover
     let label = |text: &'static str| if compact { "" } else { text };
-    let later = aurora_i18n::tr!("common-not-available-in-aurora-yet");
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
         let about = aurora_i18n::tr!("common-about-land");
@@ -708,9 +707,13 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
             {
                 s.interventions.dialog = Some(super::interventions::Dialog::message());
             }
-            // the Top scripts window comes with the scripts' step
             let top = aurora_i18n::tr!("region-top-scripts");
-            action(ui, p, "gauge-filled", label(top), Flat, false).on_disabled_hover_text(format!("{top}\n{later}"));
+            if action(ui, p, "gauge-filled", label(top), Flat, !world.estate.top_waiting)
+                .on_hover_text(top)
+                .clicked()
+            {
+                super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
+            }
             let restart = aurora_i18n::tr!("region-restart");
             if action(ui, p, "refresh", label(restart), SoftDanger, true)
                 .on_hover_text(restart)
@@ -834,11 +837,13 @@ fn covenant_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, wor
 }
 
 /// The simulator's statistics and the region's facts.
-fn health_card(ui: &mut egui::Ui, p: &Palette, v: &View, world: &mut World) {
-    let later = aurora_i18n::tr!("common-not-available-in-aurora-yet");
+fn health_card(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
     let link = v.manages().then(|| aurora_i18n::tr!("region-top-scripts-link"));
-    if let Some(r) = card_title(ui, p, "gauge-filled", aurora_i18n::tr!("region-health"), link) {
-        r.on_hover_text(later);
+    if let Some(r) = card_title(ui, p, "gauge-filled", aurora_i18n::tr!("region-health"), link)
+        && r.clicked()
+        && !world.estate.top_waiting
+    {
+        super::top_objects::open(s, v, world, aurora_net::estate::land_stat::TOP_SCRIPTS);
     }
     let stats = world.estate.stats_of(v.handle).cloned();
     let get = |id: u32| stats.as_ref().and_then(|s| s.get(id));

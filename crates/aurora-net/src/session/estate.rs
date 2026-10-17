@@ -169,6 +169,56 @@ impl Session<'_> {
                 let invoice = self.estate_invoice;
                 self.send_estate_owner_message(addr, "restart", invoice, &[seconds.to_string()], true);
             }
+            EstateCommand::SetRegionDebug { handle, debug } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                self.send_estate_owner_message(addr, "setregiondebug", invoice, &debug.strings(), true);
+            }
+            EstateCommand::TopObjects { handle, report } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                let (method, count) = estate::top_request(report);
+                self.send_estate_owner_message(addr, method, invoice, &[count.to_owned()], true);
+            }
+            EstateCommand::LandStat {
+                handle,
+                report,
+                flags,
+                filter,
+            } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let mut m = LandStatRequest::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.request_data.report_type = report;
+                m.request_data.request_flags = flags;
+                m.request_data.filter = str_field(&filter);
+                // the whole region
+                m.request_data.parcel_local_id = 0;
+                self.send(addr, &m, true);
+            }
+            EstateCommand::ReturnTopObjects { handle, tasks } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                // returnObjects: the whole region (-1), RT_NONE, the tasks
+                // cut as a full message would be (isSendFullFast)
+                for chunk in tasks.chunks(50) {
+                    let mut m = ParcelReturnObjects::default();
+                    m.agent_data.agent_id = self.agent_id();
+                    m.agent_data.session_id = self.session_id();
+                    m.parcel_data.local_id = -1;
+                    m.parcel_data.return_type = 1;
+                    m.task_i_ds = chunk.iter().map(|&task_id| parcel_return_objects::TaskIDs { task_id }).collect();
+                    self.send(addr, &m, true);
+                }
+            }
             EstateCommand::SetRestartSchedule { handle, days, seconds } => {
                 let Some(addr) = self.sim_for_handle(handle) else {
                     return;
@@ -273,6 +323,39 @@ impl Session<'_> {
     /// processEstateOwnerRequest: `estateupdateinfo` and `setaccess` of the
     /// last invoice.
     pub(super) fn dispatch_estate(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<bool, aurora_msg::DecodeError> {
+        if pkt.id == LandStatReply::ID {
+            // an older simulator's UDP answer (UDPDeprecated): the same
+            // report as the event queue's, without DataExtended
+            let m: LandStatReply = pkt.decode()?;
+            let report = estate::TopObjects {
+                report: m.request_data.report_type,
+                flags: m.request_data.request_flags,
+                total: m.request_data.total_object_count,
+                objects: m
+                    .report_data
+                    .iter()
+                    .map(|r| estate::TopObject {
+                        local_id: r.task_local_id,
+                        task_id: r.task_id,
+                        position: [r.location_x, r.location_y, r.location_z],
+                        score: r.score,
+                        name: estate::parameter_string(&r.task_name),
+                        owner: estate::username_of(&estate::parameter_string(&r.owner_name)),
+                        parcel: "unknown".to_owned(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            };
+            let handle = self.handle_of(from);
+            emit(
+                self.sh,
+                NetEvent::Estate(EstateEvent::TopObjects {
+                    handle,
+                    report: Arc::new(report),
+                }),
+            );
+            return Ok(true);
+        }
         if pkt.id != EstateOwnerMessage::ID {
             return Ok(false);
         }
@@ -303,6 +386,27 @@ impl Session<'_> {
             emit(self.sh, NetEvent::Estate(EstateEvent::AccessChanged { handle }));
         }
         Ok(true)
+    }
+}
+
+impl Session<'_> {
+    /// LandStatReply of the event queue (handle_land_reply).
+    pub(super) fn on_land_stat_reply(&mut self, from: SocketAddr, body: &Llsd) {
+        let report = estate::parse_land_stat(body);
+        log::info!(
+            "land stat: report {} with {} of {} objects",
+            report.report,
+            report.objects.len(),
+            report.total
+        );
+        let handle = self.handle_of(from);
+        emit(
+            self.sh,
+            NetEvent::Estate(EstateEvent::TopObjects {
+                handle,
+                report: Arc::new(report),
+            }),
+        );
     }
 }
 

@@ -6,7 +6,7 @@
 //! was there before, as Firestorm's controls keep them until
 //! processRegionInfo or a new RegionHandshake.
 
-use aurora_net::estate::{EstateInfo, RegionRules, TerrainSettings, estate_flags as ef};
+use aurora_net::estate::{EstateInfo, RegionDebug, RegionRules, TerrainSettings, estate_flags as ef};
 
 /// How many settings differ between two states of a section (the count of
 /// "N changes not sent yet").
@@ -79,6 +79,19 @@ impl Changes for RegionRules {
             self.agent_limit != o.agent_limit,
             self.object_bonus != o.object_bonus,
             self.sim_access != o.sim_access,
+        ]
+        .into_iter()
+        .filter(|c| *c)
+        .count()
+    }
+}
+
+impl Changes for RegionDebug {
+    fn changes(&self, o: &Self) -> usize {
+        [
+            self.skip_scripts != o.skip_scripts,
+            self.skip_collisions != o.skip_collisions,
+            self.skip_physics != o.skip_physics,
         ]
         .into_iter()
         .filter(|c| *c)

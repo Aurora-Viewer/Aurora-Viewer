@@ -10,13 +10,14 @@
 
 use super::confirm::Ask;
 use super::draft::{Access, Draft};
+use super::top_objects;
 use super::{ManageDemo, RegionUi, View};
 use crate::theme::Palette;
 use crate::ui::sheet::{self, RowText, editable, line, srow, srow_ext, why};
 use crate::ui::widgets;
 use crate::world::World;
 use crate::world::estate::Role;
-use aurora_net::estate::{ESTATE_LAST_LINDEN, RegionRules, TerrainSettings, estate_flags as ef};
+use aurora_net::estate::{ESTATE_LAST_LINDEN, RegionDebug, RegionRules, TerrainSettings, estate_flags as ef, land_stat};
 use egui::{RichText, Sense, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -28,17 +29,25 @@ pub(super) enum Section {
     Access,
     Rules,
     Terrain,
+    Scripts,
     Interventions,
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 4] = [Section::Access, Section::Rules, Section::Terrain, Section::Interventions];
+    pub(super) const ALL: [Section; 5] = [
+        Section::Access,
+        Section::Rules,
+        Section::Terrain,
+        Section::Scripts,
+        Section::Interventions,
+    ];
 
     fn icon(self) -> &'static str {
         match self {
             Section::Access => "door-enter",
             Section::Rules => "shield-filled",
             Section::Terrain => "mountain-filled",
+            Section::Scripts => "code",
             Section::Interventions => "bolt-filled",
         }
     }
@@ -48,15 +57,15 @@ impl Section {
             Section::Access => aurora_i18n::tr!("ui-land-manage-access"),
             Section::Rules => aurora_i18n::tr!("region-manage-rules"),
             Section::Terrain => aurora_i18n::tr!("region-manage-terrain"),
+            Section::Scripts => aurora_i18n::tr!("region-manage-scripts"),
             Section::Interventions => aurora_i18n::tr!("region-manage-interventions"),
         }
     }
 }
 
 /// The mockup's other sections, greyed in the navigation until their step.
-fn later() -> [(&'static str, &'static str); 4] {
+fn later() -> [(&'static str, &'static str); 3] {
     [
-        ("code", aurora_i18n::tr!("region-manage-scripts")),
         ("sun-high-filled", aurora_i18n::tr!("common-environment")),
         ("flask-filled", aurora_i18n::tr!("ui-land-manage-experiences")),
         ("gavel", aurora_i18n::tr!("region-manage-covenant")),
@@ -70,6 +79,7 @@ pub(super) struct ManageState {
     pub access: Draft<Access>,
     pub rules: Draft<RegionRules>,
     pub terrain: Draft<TerrainSettings>,
+    pub debug: Draft<RegionDebug>,
     /// The terrain texture the texture picker is choosing.
     pub picking: Option<usize>,
     /// AURORA_DEMO_REGION's section, changes and question, set up once the
@@ -95,6 +105,7 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
         Some(1) => Section::Rules,
         Some(2) => Section::Terrain,
         Some(3) => Section::Interventions,
+        Some(4) => Section::Scripts,
         _ => Section::Access,
     };
     if section != Section::Access || d.pending {
@@ -199,7 +210,7 @@ pub(super) fn show(
         let later_tip = aurora_i18n::tr!("common-not-available-in-aurora-yet");
         for (i, (icon, label)) in later().into_iter().enumerate() {
             // the experiences' count, as the mockup shows it
-            let count = (i == 2).then_some(xp.as_deref()).flatten();
+            let count = (i == 1).then_some(xp.as_deref()).flatten();
             editable(ui, false, |ui| {
                 if compact {
                     sheet::nav_compact(ui, p, icon, label, false)
@@ -224,6 +235,7 @@ pub(super) fn show(
             Section::Access => access(ui, p, s, v, world),
             Section::Rules => rules(ui, p, s, v, world),
             Section::Terrain => terrain(ui, p, s, v, world, images),
+            Section::Scripts => scripts(ui, p, s, v, world),
             Section::Interventions => super::interventions::section(ui, p, s, v, world),
         },
     );
@@ -501,6 +513,85 @@ pub(super) fn send_rules(s: &mut RegionUi, v: &View, world: &mut World) {
         world.estate.set_region_rules(v.handle, rules);
         if rules.sim_access != server.sim_access {
             s.ask = Some(Ask::MaturityChanged);
+        }
+    }
+}
+
+/// "Scripts and physics": the Debug panel's three switches with their bar,
+/// and the Top scripts / Top colliders reports.
+fn scripts(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
+    title(ui, p, Section::Scripts, |_| {});
+    why(ui, p, aurora_i18n::tr!("region-scripts-why"));
+    let Some(server) = world.estate.region.as_deref().map(RegionDebug::of) else {
+        loading(ui, p);
+        return;
+    };
+    let can = v.manages();
+    let mut now = s.manage.debug.shown(&server);
+    let before = now;
+    let switches: [(&str, &str, &mut bool); 3] = [
+        (
+            aurora_i18n::tr!("region-scripts-skip-scripts"),
+            aurora_i18n::tr!("region-scripts-skip-scripts-desc"),
+            &mut now.skip_scripts,
+        ),
+        (
+            aurora_i18n::tr!("region-scripts-skip-collisions"),
+            aurora_i18n::tr!("region-scripts-skip-collisions-desc"),
+            &mut now.skip_collisions,
+        ),
+        (
+            aurora_i18n::tr!("region-scripts-skip-physics"),
+            aurora_i18n::tr!("region-scripts-skip-physics-desc"),
+            &mut now.skip_physics,
+        ),
+    ];
+    for (i, (name, desc, value)) in switches.into_iter().enumerate() {
+        if i > 0 {
+            line(ui, p);
+        }
+        srow(ui, p, name, desc, 40.0, |ui| {
+            switch(ui, p, value, can);
+        });
+    }
+    // the Top windows: the Debug panel's buttons, waiting for the report
+    let waiting = world.estate.top_waiting;
+    for (report, name, desc) in [
+        (
+            land_stat::TOP_SCRIPTS,
+            aurora_i18n::tr!("region-top-scripts"),
+            aurora_i18n::tr!("region-scripts-top-scripts-desc"),
+        ),
+        (
+            land_stat::TOP_COLLIDERS,
+            aurora_i18n::tr!("region-top-colliders"),
+            aurora_i18n::tr!("region-scripts-top-colliders-desc"),
+        ),
+    ] {
+        line(ui, p);
+        srow(ui, p, name, desc, 120.0, |ui| {
+            let size = Vec2::new(0.0, 28.0);
+            let label = aurora_i18n::tr!("region-scripts-open");
+            if widgets::action_button_if(ui, p, "gauge-filled", label, widgets::ActionKind::Flat, size, can && !waiting).clicked() {
+                top_objects::open(s, v, world, report);
+            }
+        });
+    }
+    if now != before {
+        s.manage.debug.set(&server, now);
+    }
+    let pending = s.manage.debug.pending(&server);
+    if can && pending > 0 {
+        match sheet::pending_bar(ui, p, pending) {
+            Some(true) => {
+                if let Some(debug) = s.manage.debug.apply(&server) {
+                    world
+                        .estate
+                        .intervene(aurora_net::estate::EstateCommand::SetRegionDebug { handle: v.handle, debug });
+                }
+            }
+            Some(false) => s.manage.debug.cancel(),
+            None => {}
         }
     }
 }

@@ -13,6 +13,7 @@ mod interventions;
 mod manage;
 mod overview;
 mod people;
+mod top_objects;
 
 use crate::theme::Palette;
 use crate::ui::sheet::{self, PageTab};
@@ -135,6 +136,8 @@ pub struct RegionUi {
     people: people::PeopleState,
     /// "Interventions": the resident picker and the dialog on screen.
     interventions: interventions::InterventionsState,
+    /// The Top scripts / Top colliders window.
+    top: top_objects::TopState,
     /// The question or notice on screen.
     ask: Option<Ask>,
     /// The terrain textures' picker.
@@ -180,6 +183,12 @@ impl RegionUi {
         self.interventions.demo = Some(d);
     }
 
+    /// AURORA_DEMO_REGION on Manage › Scripts and physics: the Top window
+    /// opened on that report.
+    pub fn demo_top(&mut self, report: u32) {
+        self.top.demo = Some(report);
+    }
+
     /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
     pub fn demo_people(&mut self, people: PeopleDemo) {
         self.people.demo = Some(people);
@@ -208,6 +217,7 @@ impl RegionUi {
                 self.texture.open = false;
                 self.people.reset();
                 self.interventions.reset();
+                self.top.reset();
                 world.estate.close();
             }
             return false;
@@ -227,6 +237,7 @@ impl RegionUi {
             };
             self.people.reset();
             self.interventions.reset();
+            self.top.reset();
             self.manage_region = Some(handle);
             self.ask = None;
         }
@@ -323,6 +334,7 @@ impl RegionUi {
         }
         self.wanted_images.extend(self.texture.wanted_images.drain());
         people::dialogs(ctx, p, self, &view, world);
+        top_objects::show(ctx, p, self, &view, world);
         interventions::dialogs(ctx, p, self, &view, world);
         let changed = confirm::show(ctx, p, self, &view, world);
         if changed {

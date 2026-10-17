@@ -19,14 +19,17 @@
 //! `ask-return`, `ask-restart` or `ask-schedule` opens that intervention's
 //! dialog (on Orion for the kick and the return); the simulator answers a
 //! restart with its notice (a cancel with "cancelled") and keeps the
-//! schedule it is sent.
+//! schedule it is sent. `scripts` scrolls to Scripts and physics,
+//! `top-scripts` or `top-colliders` opens that report: the simulator lists
+//! the mockup's objects, filters them as LandStatRequest asks, forgets the
+//! returned ones and keeps the debug switches.
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::ui::region::{Ask, Home, InterventionDialog, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList};
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
     BannedAgent, EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
-    estate_access as ea, estate_flags as ef, sim_stat,
+    TopObject, TopObjects, estate_access as ea, estate_flags as ef, land_stat, sim_stat, skip_flags,
 };
 use aurora_net::{NetEvent, region_flags as rf};
 use std::sync::{Arc, Mutex};
@@ -51,6 +54,8 @@ pub struct Scenario {
     pub people: PeopleDemo,
     /// The intervention's dialog shown on Manage › Interventions.
     pub intervention: Option<InterventionDialog>,
+    /// The Top window opened on that report.
+    pub top: Option<u32>,
 }
 
 fn parse(v: &str) -> Scenario {
@@ -62,6 +67,7 @@ fn parse(v: &str) -> Scenario {
         manage: ManageDemo::default(),
         people: PeopleDemo::default(),
         intervention: None,
+        top: None,
     };
     for part in v.split(':').map(str::trim) {
         match part {
@@ -76,6 +82,15 @@ fn parse(v: &str) -> Scenario {
             "rules" => s.manage.section = Some(1),
             "terrain" => s.manage.section = Some(2),
             "interventions" => s.manage.section = Some(3),
+            "scripts" => s.manage.section = Some(4),
+            "top-scripts" => {
+                s.manage.section = Some(4);
+                s.top = Some(land_stat::TOP_SCRIPTS);
+            }
+            "top-colliders" => {
+                s.manage.section = Some(4);
+                s.top = Some(land_stat::TOP_COLLIDERS);
+            }
             "ask-message" => s.intervention = Some(InterventionDialog::message()),
             "ask-home" => {
                 s.intervention = Some(InterventionDialog::Home {
@@ -318,6 +333,86 @@ fn apply_delta(lists: &mut EstateAccess, flags: u32, id: Uuid, now: &str) {
     }
 }
 
+/// The objects the demo simulator reports, minus the returned ones:
+/// scripts (time in ms, memory, URLs) and colliders.
+static RETURNED: Mutex<Vec<Uuid>> = Mutex::new(Vec::new());
+
+fn top_objects(report: u32, flags: u32, filter: &str) -> TopObjects {
+    let returned = RETURNED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let row = |n: u128, score: f32, name: &str, owner: &str, pos: [f32; 3], parcel: &str, memory: f32, urls: i32| TopObject {
+        local_id: n as u32,
+        task_id: Uuid::from_u128(0x70B0_0000_0000_0000_0000_0000_0000_0000 + n),
+        position: pos,
+        score,
+        name: name.into(),
+        owner: owner.into(),
+        parcel: parcel.into(),
+        time: 1_781_000_000 + n as u32 * 86_400,
+        memory,
+        urls,
+        extended: true,
+    };
+    let all = if report == land_stat::TOP_COLLIDERS {
+        vec![
+            row(11, 412.0, "Bouncy castle", "orion.exemple", [96.0, 140.0, 22.0], "Plaza", 0.0, 0),
+            row(12, 88.5, "Pool balls", "pixelboutique", [151.0, 92.0, 21.5], "North shore", 0.0, 0),
+            row(13, 12.25, "Swing", "lune.example", [130.0, 118.0, 24.0], "Plaza", 0.0, 0),
+        ]
+    } else {
+        vec![
+            row(
+                1,
+                0.842,
+                "Fountain particles",
+                "orion.exemple",
+                [128.0, 130.0, 22.0],
+                "Plaza",
+                262_144.0,
+                1,
+            ),
+            row(
+                2,
+                0.415,
+                "Radio stream",
+                "pixelboutique",
+                [151.0, 92.0, 23.0],
+                "North shore",
+                131_072.0,
+                2,
+            ),
+            row(3, 0.231, "Greeter", "aurora.demo", [132.0, 126.0, 33.0], "Plaza", 65_536.0, 0),
+            row(4, 0.104, "Door", "lune.example", [110.0, 140.0, 22.5], "Market", 16_384.0, 0),
+            row(
+                5,
+                0.021,
+                "Tip jar",
+                "pixelboutique",
+                [149.0, 95.0, 22.0],
+                "North shore",
+                16_384.0,
+                1,
+            ),
+        ]
+    };
+    let f = filter.to_lowercase();
+    let objects: Vec<TopObject> = all
+        .into_iter()
+        .filter(|o| !returned.contains(&o.task_id))
+        .filter(|o| match flags {
+            0 => true,
+            x if x == land_stat::FILTER_BY_OWNER => o.owner.contains(&f),
+            x if x == land_stat::FILTER_BY_PARCEL_NAME => o.parcel.to_lowercase().contains(&f),
+            _ => o.name.to_lowercase().contains(&f),
+        })
+        .collect();
+    TopObjects {
+        report,
+        flags,
+        total: if report == land_stat::TOP_COLLIDERS { 3 } else { 312 },
+        objects,
+    }
+}
+
 /// The restart schedule the simulator keeps: Sunday at 06:00 UTC, then
 /// what was saved.
 static SCHEDULE: Mutex<Option<Option<RestartSchedule>>> = Mutex::new(None);
@@ -477,6 +572,39 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
                 schedule: Ok(schedule()),
             })]
         }
+        EstateCommand::SetRegionDebug { handle, debug } => {
+            with_sent(|s| {
+                let mut f = s.0.flags & !(skip_flags::SCRIPTS | skip_flags::COLLISIONS | skip_flags::PHYSICS);
+                for (on, bit) in [
+                    (debug.skip_scripts, skip_flags::SCRIPTS),
+                    (debug.skip_collisions, skip_flags::COLLISIONS),
+                    (debug.skip_physics, skip_flags::PHYSICS),
+                ] {
+                    if on {
+                        f |= bit;
+                    }
+                }
+                s.0.flags = f;
+            });
+            region_info(*handle)
+        }
+        EstateCommand::TopObjects { handle, report } => vec![ev(EstateEvent::TopObjects {
+            handle: *handle,
+            report: Arc::new(top_objects(*report, 0, "")),
+        })],
+        EstateCommand::LandStat {
+            handle,
+            report,
+            flags,
+            filter,
+        } => vec![ev(EstateEvent::TopObjects {
+            handle: *handle,
+            report: Arc::new(top_objects(*report, *flags, filter)),
+        })],
+        EstateCommand::ReturnTopObjects { tasks, .. } => {
+            RETURNED.lock().unwrap_or_else(|e| e.into_inner()).extend(tasks.iter().copied());
+            Vec::new()
+        }
         // nobody to send home, kick or return in the demo
         EstateCommand::Message { .. }
         | EstateCommand::TeleportHome { .. }
@@ -501,6 +629,7 @@ mod tests {
                 manage: ManageDemo::default(),
                 people: PeopleDemo::default(),
                 intervention: None,
+                top: None,
             }
         );
         assert_eq!(parse("overview:resident").role, Role::Resident);
@@ -524,6 +653,8 @@ mod tests {
         assert_eq!(i.manage.section, Some(3));
         assert_eq!(i.intervention, Some(InterventionDialog::Kick { target: ORION, ban: false }));
         assert_eq!(parse("manage:ask-restart").intervention, Some(InterventionDialog::restart()));
+        let t = parse("manage:top-colliders");
+        assert_eq!((t.manage.section, t.top), (Some(4), Some(land_stat::TOP_COLLIDERS)));
     }
 
     /// A restart is answered with the region's notice, a cancel with
@@ -545,6 +676,10 @@ mod tests {
             [NetEvent::Estate(EstateEvent::Schedule { schedule: Ok(Some(s)), .. })] if s.days == days && s.seconds == 3600
         ));
         assert!(reply(&EstateCommand::KickFromEstate { handle: 1, target: ORION }).is_empty());
+        // the report, filtered by owner as LandStatRequest asks
+        let filtered = top_objects(land_stat::TOP_SCRIPTS, land_stat::FILTER_BY_OWNER, "PIXEL");
+        assert_eq!(filtered.objects.len(), 2);
+        assert!(filtered.objects.iter().all(|o| o.owner == "pixelboutique"));
     }
 
     /// What the window sends changes the lists the simulator answers.
