@@ -301,7 +301,7 @@ fn number(
 /// "Who can come": the estate's access (LLPanelEstateInfo). The simulator
 /// sends it to the estate's owner and managers only: a resident gets a
 /// sentence instead.
-fn access(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
+pub(super) fn access(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
     let server = server_access(world);
     let can = v.manages() && server.is_some();
     let mut now = server.map(|a| s.manage.access.shown(&a)).unwrap_or_default();
@@ -411,7 +411,7 @@ fn empty(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str) {
 }
 
 /// "Region rules": the General panel's switches, limits and maturity.
-fn rules(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
+pub(super) fn rules(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
     title(ui, p, Section::Rules, |_| {});
     why(ui, p, aurora_i18n::tr!("region-rules-why"));
     let (Some(server), Some(details)) = (server_rules(world), world.estate.region.clone()) else {
@@ -536,7 +536,7 @@ pub(super) fn send_rules(s: &mut RegionUi, v: &View, world: &mut World) {
 
 /// "Scripts and physics": the Debug panel's three switches with their bar,
 /// and the Top scripts / Top colliders reports.
-fn scripts(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
+pub(super) fn scripts(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
     title(ui, p, Section::Scripts, |_| {});
     why(ui, p, aurora_i18n::tr!("region-scripts-why"));
     let Some(server) = world.estate.region.as_deref().map(RegionDebug::of) else {
@@ -632,7 +632,14 @@ fn corners() -> [(usize, &'static str); 4] {
 
 /// "Terrain and water": the Terrain panel; its PBR transforms and RAW file
 /// are in the Advanced fold (`advanced.rs`).
-fn terrain(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) {
+pub(super) fn terrain(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut RegionUi,
+    v: &View,
+    world: &mut World,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+) {
     title(ui, p, Section::Terrain, |_| {});
     why(ui, p, aurora_i18n::tr!("region-terrain-why"));
     let Some(server) = server_terrain(world, v) else {

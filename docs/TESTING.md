@@ -3079,7 +3079,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions][:pending][:ask-…|:top-…|:pick-…][:telehub|:raw|:pbr]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions][:pending][:ask-…|:top-…|:pick-…][:telehub|:raw|:pbr][:classic]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -3169,7 +3169,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   saves a flat 256 × 256 RAW file where asked, Upload… reads one and the
   demo simulator takes it. `pbr` turns the terrain's slots to PBR
   materials (the bar counts 4 changes) with that fold open on the four
-  materials' transforms, which the demo simulator keeps.
+  materials' transforms, which the demo simulator keeps. `classic`
+  opens the classic window (the Legacy Viewer's eight tabs) on the tab of
+  the section asked (`terrain`: Terrain, `scripts` or `interventions`:
+  Debug, `people`: Access, none: Region).
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

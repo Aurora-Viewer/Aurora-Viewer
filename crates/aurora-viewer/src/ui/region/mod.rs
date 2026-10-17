@@ -8,6 +8,7 @@
 //! manage the estate can look at it as a resident would ("View as").
 
 mod advanced;
+mod classic;
 mod confirm;
 mod draft;
 mod estate_wide;
@@ -25,6 +26,7 @@ use crate::world::World;
 use crate::world::estate::{self, Role};
 pub use advanced::MaterialInfo;
 use aurora_net::RegionHandle;
+pub use classic::{Tab as ClassicTab, WINDOW as CLASSIC_WINDOW};
 pub(crate) use confirm::Ask;
 use egui::Vec2;
 pub(crate) use estate_wide::{Dialog as EstateWideDialog, XpList};
@@ -155,6 +157,9 @@ pub struct RegionUi {
     top: top_objects::TopState,
     /// The rules' and terrain's Advanced folds.
     advanced: advanced::AdvancedState,
+    /// The classic window's tab, and AURORA_DEMO_REGION's `classic`.
+    classic_tab: classic::Tab,
+    force_classic: bool,
     /// Environment, Experiences and Covenant: their pickers and dialogs.
     estate_wide: estate_wide::EstateWideState,
     /// The question or notice on screen.
@@ -217,6 +222,12 @@ impl RegionUi {
     /// Covenant: the picker or question shown.
     pub fn demo_estate_wide(&mut self, d: EstateWideDialog) {
         self.estate_wide.demo = Some(d);
+    }
+
+    /// AURORA_DEMO_REGION's `classic`: the Legacy Viewer's tabs, on that one.
+    pub fn demo_classic(&mut self, tab: ClassicTab) {
+        self.force_classic = true;
+        self.classic_tab = tab;
     }
 
     /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
@@ -283,6 +294,23 @@ impl RegionUi {
             self.as_resident = false;
         }
         let screen = ctx.content_rect();
+        // Preferences › Aurora: the Legacy Viewer's eight tabs, no "View as"
+        let classic_look = settings.classic_region_estate || self.force_classic;
+        if classic_look {
+            self.as_resident = false;
+            let mut floater = Floater::new(
+                classic::WINDOW,
+                aurora_i18n::tr!("region-title"),
+                egui::pos2(screen.center().x - classic::SIZE.x / 2.0, 80.0),
+                classic::SIZE,
+            )
+            .help(aurora_i18n::tr!("region-help"));
+            floater.min_size = classic::MIN_SIZE;
+            floater.show(ctx, p, open, |ui| {
+                let pics = overview::Pictures { avatars, map };
+                classic::body(ui, p, self, &view, world, &pics, avatars, images);
+            });
+        }
         let mut floater = Floater::new(
             WINDOW,
             aurora_i18n::tr!("region-title"),
@@ -291,75 +319,77 @@ impl RegionUi {
         )
         .help(aurora_i18n::tr!("region-help"));
         floater.min_size = MIN_SIZE;
-        floater.show(ctx, p, open, |ui| {
-            let compact = ui.available_width() < COMPACT_W;
-            // a resident is not sent the lists: no People page
-            let pages: Vec<Page> = Page::ALL
-                .into_iter()
-                .filter(|pg| *pg != Page::People || view.role != Role::Resident)
-                .collect();
-            let tabs: Vec<PageTab<'_, Page>> = pages
-                .iter()
-                .map(|pg| PageTab {
-                    page: *pg,
-                    icon: pg.icon(),
-                    label: pg.label(),
-                    disabled: None,
-                })
-                .collect();
-            let role = (view.role != Role::Resident && !compact).then(|| sheet::ViewAs {
-                mine: role_name(view.role),
-                other: role_name(Role::Resident),
-                tip: aurora_i18n::tr!("region-view-as-tip"),
-                // the mockup lights the choice in the accent
-                accent: true,
+        if !classic_look {
+            floater.show(ctx, p, open, |ui| {
+                let compact = ui.available_width() < COMPACT_W;
+                // a resident is not sent the lists: no People page
+                let pages: Vec<Page> = Page::ALL
+                    .into_iter()
+                    .filter(|pg| *pg != Page::People || view.role != Role::Resident)
+                    .collect();
+                let tabs: Vec<PageTab<'_, Page>> = pages
+                    .iter()
+                    .map(|pg| PageTab {
+                        page: *pg,
+                        icon: pg.icon(),
+                        label: pg.label(),
+                        disabled: None,
+                    })
+                    .collect();
+                let role = (view.role != Role::Resident && !compact).then(|| sheet::ViewAs {
+                    mine: role_name(view.role),
+                    other: role_name(Role::Resident),
+                    tip: aurora_i18n::tr!("region-view-as-tip"),
+                    // the mockup lights the choice in the accent
+                    accent: true,
+                });
+                // a resident's window has no People page
+                if !pages.contains(&self.page) {
+                    self.page = Page::Overview;
+                }
+                sheet::page_tabs(ui, p, &tabs, &mut self.page, role, &mut self.as_resident);
+                ui.add_space(8.0);
+                let view = View {
+                    shown: if self.as_resident { Role::Resident } else { view.role },
+                    ..view.clone()
+                };
+                let pics = overview::Pictures { avatars, map };
+                match self.page {
+                    Page::Manage => {
+                        // compact, the header keeps only the region's name
+                        overview::header(ui, p, self, &view, world, &pics, compact, compact);
+                        // the mockup's 12 px under the header, item spacing included
+                        ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
+                        manage::demo(self, &view, world);
+                        manage::show(ui, p, self, &view, world, images, compact);
+                    }
+                    Page::People => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("region_estate_people")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width() - 6.0);
+                                // compact, the header keeps only the region's name
+                                overview::header(ui, p, self, &view, world, &pics, compact, compact);
+                                ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
+                                people::show(ui, p, self, &view, world, avatars, images, compact);
+                                ui.add_space(4.0);
+                            });
+                    }
+                    _ => {
+                        egui::ScrollArea::vertical()
+                            .id_salt("region_estate_overview")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width() - 6.0);
+                                overview::header(ui, p, self, &view, world, &pics, compact, false);
+                                overview::show(ui, p, self, &view, world, compact);
+                                ui.add_space(4.0);
+                            });
+                    }
+                }
             });
-            // a resident's window has no People page
-            if !pages.contains(&self.page) {
-                self.page = Page::Overview;
-            }
-            sheet::page_tabs(ui, p, &tabs, &mut self.page, role, &mut self.as_resident);
-            ui.add_space(8.0);
-            let view = View {
-                shown: if self.as_resident { Role::Resident } else { view.role },
-                ..view.clone()
-            };
-            let pics = overview::Pictures { avatars, map };
-            match self.page {
-                Page::Manage => {
-                    // compact, the header keeps only the region's name
-                    overview::header(ui, p, self, &view, world, &pics, compact, compact);
-                    // the mockup's 12 px under the header, item spacing included
-                    ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
-                    manage::demo(self, &view, world);
-                    manage::show(ui, p, self, &view, world, images, compact);
-                }
-                Page::People => {
-                    egui::ScrollArea::vertical()
-                        .id_salt("region_estate_people")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width() - 6.0);
-                            // compact, the header keeps only the region's name
-                            overview::header(ui, p, self, &view, world, &pics, compact, compact);
-                            ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
-                            people::show(ui, p, self, &view, world, avatars, images, compact);
-                            ui.add_space(4.0);
-                        });
-                }
-                _ => {
-                    egui::ScrollArea::vertical()
-                        .id_salt("region_estate_overview")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width() - 6.0);
-                            overview::header(ui, p, self, &view, world, &pics, compact, false);
-                            overview::show(ui, p, self, &view, world, compact);
-                            ui.add_space(4.0);
-                        });
-                }
-            }
-        });
+        }
         let view = View {
             shown: if self.as_resident { Role::Resident } else { view.role },
             ..view

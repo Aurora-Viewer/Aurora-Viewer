@@ -31,6 +31,8 @@
 //! `ask-covenant` asks before clearing the covenant. The simulator keeps
 //! the region's day, timing and sky altitudes, the experience lists and
 //! the covenant it is sent, and two notecards wait in the inventory.
+//! `classic` opens the classic window on the tab of the section asked
+//! (People: Access).
 //! `telehub` opens the region rules' Advanced fold (the demo region has a
 //! telehub with two spawn points, and keeps what Connect, Disconnect, Add
 //! and the x send), `raw` the terrain's (a download answers a flat RAW
@@ -75,6 +77,8 @@ pub struct Scenario {
     pub top: Option<u32>,
     /// The picker or question of Environment, Experiences or Covenant.
     pub estate_wide: Option<EstateWideDialog>,
+    /// The classic window (the Legacy Viewer's tabs).
+    pub classic: bool,
 }
 
 fn parse(v: &str) -> Scenario {
@@ -88,6 +92,7 @@ fn parse(v: &str) -> Scenario {
         intervention: None,
         top: None,
         estate_wide: None,
+        classic: false,
     };
     for part in v.split(':').map(str::trim) {
         match part {
@@ -98,6 +103,7 @@ fn parse(v: &str) -> Scenario {
             "owner" => s.role = Role::Owner,
             "preview" => s.preview = true,
             "compact" => s.compact = true,
+            "classic" => s.classic = true,
             "access" => s.manage.section = Some(0),
             "rules" => s.manage.section = Some(1),
             "terrain" => s.manage.section = Some(2),
@@ -1022,6 +1028,7 @@ mod tests {
                 intervention: None,
                 top: None,
                 estate_wide: None,
+                classic: false,
             }
         );
         assert_eq!(parse("overview:resident").role, Role::Resident);

@@ -508,18 +508,11 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             &mut s.classic_about_land,
         );
         between(ui, p);
-        // Firestorm's eight tabs are not ported yet: the choice is kept and
-        // says what opens meanwhile
-        let help = if s.classic_region_estate {
-            aurora_i18n::tr!("ui-options-aurora-region-estate-soon")
-        } else {
-            aurora_i18n::tr!("ui-options-aurora-region-estate-help")
-        };
         c |= look_choice(
             ui,
             p,
             aurora_i18n::tr!("region-title"),
-            help,
+            aurora_i18n::tr!("ui-options-aurora-region-estate-help"),
             aurora_i18n::tr!("ui-options-aurora-about-land-aurora"),
             aurora_i18n::tr!("ui-options-aurora-about-land-classic"),
             &mut s.classic_region_estate,

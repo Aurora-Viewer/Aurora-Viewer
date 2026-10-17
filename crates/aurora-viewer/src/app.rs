@@ -10328,7 +10328,12 @@ impl App {
                 self.panels.about_land = open;
                 // Region / Estate: asked by About Land or the restart notice
                 if ui::region::take_open_request(&ctx) {
-                    ui::widgets::open_floater(&ctx, ui::region::WINDOW, &mut self.panels.region_estate);
+                    let id = if self.settings.classic_region_estate {
+                        ui::region::CLASSIC_WINDOW
+                    } else {
+                        ui::region::WINDOW
+                    };
+                    ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
                 let mut open = self.panels.region_estate;
                 if open {
@@ -11466,6 +11471,11 @@ impl ApplicationHandler for App {
                 }
                 if let Some(d) = scenario.estate_wide.clone() {
                     self.region_ui.demo_estate_wide(d);
+                }
+                if scenario.classic {
+                    let people = scenario.page == ui::region::Page::People;
+                    self.region_ui
+                        .demo_classic(ui::region::ClassicTab::of_section(scenario.manage.section, people));
                 }
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
