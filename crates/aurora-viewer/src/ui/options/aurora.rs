@@ -379,10 +379,11 @@ fn chat_style_choice(ui: &mut egui::Ui, p: &Palette, style: &mut ChatStyle) -> b
 
 fn animation_clock_choice(ui: &mut egui::Ui, p: &Palette, synchronized: &mut bool) -> bool {
     let mut legacy = !*synchronized;
-    let changed = look_choice(
+    let changed = look_choice_with(
         ui,
         p,
         aurora_i18n::tr!("ui-options-aurora-animation-clock"),
+        Some(aurora_i18n::tr!("ui-options-aurora-animation-clock-experimental")),
         aurora_i18n::tr!("ui-options-aurora-animation-clock-help"),
         aurora_i18n::tr!("ui-options-aurora-animation-clock-synchronized"),
         aurora_i18n::tr!("ui-options-aurora-animation-clock-legacy"),

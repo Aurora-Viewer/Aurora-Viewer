@@ -6030,6 +6030,7 @@ ui-options-aurora-own-motion-instant = Instant
 ui-options-aurora-own-motion-server = Simulator (Legacy)
 ui-options-aurora-animations = Animations
 ui-options-aurora-animation-clock = Animation timing
+ui-options-aurora-animation-clock-experimental = Experimental: synchronized playback is still being validated on the grid for avatars and animesh. Legacy remains the default.
 ui-options-aurora-animation-clock-help = Avatars and animesh: the synchronized clock follows elapsed time from the first received signal, including after late loading or editing. Legacy starts at loading and resumes from the paused pose after editing.
 ui-options-aurora-animation-clock-synchronized = Synchronized clock
 ui-options-aurora-animation-clock-legacy = Legacy
