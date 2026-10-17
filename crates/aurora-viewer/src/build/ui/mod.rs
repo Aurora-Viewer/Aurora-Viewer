@@ -201,18 +201,43 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
         return;
     }
     use egui::Key;
-    let (pressed, m) = ctx.input(|i| (i.events.clone(), i.modifiers));
+    let pressed = ctx.input(|i| i.events.clone());
     for ev in pressed {
         let egui::Event::Key {
             key,
             pressed: true,
-            repeat: false,
+            repeat,
+            modifiers: m,
             ..
         } = ev
         else {
             continue;
         };
         let (ctrl, shift) = (m.command || m.ctrl, m.shift);
+        if let Some(history) = crate::keybinds::EditHistory::from_key(key, crate::keybinds::Mods { ctrl, shift, alt: m.alt }) {
+            // LLToolBrushLand has UndoLand only: redo must not fall through
+            // to an object selection left over from another tool.
+            if tool.open {
+                if tool.tool == Tool::Land {
+                    if history == crate::keybinds::EditHistory::Undo {
+                        let mut cmds = Vec::new();
+                        tool.land.undo(&mut cmds);
+                        for c in cmds {
+                            tool.send(c);
+                        }
+                    }
+                } else {
+                    tool.undo(world, history == crate::keybinds::EditHistory::Redo);
+                }
+            }
+            ctx.input_mut(|i| {
+                i.consume_key(m, key);
+            });
+            continue;
+        }
+        if repeat {
+            continue;
+        }
         match (key, ctrl, shift) {
             (Key::B, true, false) => {
                 if tool.open {
@@ -244,15 +269,6 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             (Key::X, false, true) => tool.snap_xy_to_grid(world, s),
             (Key::Period, true, sh) => tool.select_next_part(world, s, true, sh),
             (Key::Comma, true, sh) => tool.select_next_part(world, s, false, sh),
-            (Key::Z, true, false) if tool.tool == Tool::Land => {
-                let mut cmds = Vec::new();
-                tool.land.undo(&mut cmds);
-                for c in cmds {
-                    tool.send(c);
-                }
-            }
-            (Key::Z, true, false) => tool.undo(world, false),
-            (Key::Y, true, false) => tool.undo(world, true),
             _ => {}
         }
     }

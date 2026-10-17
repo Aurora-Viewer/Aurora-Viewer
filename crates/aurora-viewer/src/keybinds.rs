@@ -729,6 +729,48 @@ pub struct Mods {
     pub alt: bool,
 }
 
+/// Editing history takes priority over held movement and camera bindings:
+/// LLViewerInput::scanKey (indra/newview/llviewerinput.cpp), LLEditUndo /
+/// LLEditRedo (indra/newview/llviewermenu.cpp). Text and media keep their
+/// own history; Ctrl+Shift+Z also matches egui's native redo shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditHistory {
+    Undo,
+    Redo,
+}
+
+impl EditHistory {
+    pub fn from_key(key: egui::Key, mods: Mods) -> Option<Self> {
+        if !mods.ctrl || mods.alt {
+            return None;
+        }
+        match (key, mods.shift) {
+            (egui::Key::Z, false) => Some(Self::Undo),
+            (egui::Key::Y, false) | (egui::Key::Z, true) => Some(Self::Redo),
+            _ => None,
+        }
+    }
+
+    /// Use the same logical letter as egui, including AZERTY/QWERTZ, and
+    /// remove a previously held key too. Releasing Ctrl before the letter
+    /// must never resume walking without a new unmodified key press.
+    pub fn take_native_key(key: &winit::keyboard::Key, code: KeyCode, mods: Mods, down: &mut HashSet<Input>) -> Option<Self> {
+        let logical = match key {
+            winit::keyboard::Key::Character(letter) => egui::Key::from_name(letter),
+            _ => None,
+        };
+        // Match egui-winit's physical fallback for non-Latin layouts too.
+        let key = logical.or(match code {
+            KeyCode::KeyZ => Some(egui::Key::Z),
+            KeyCode::KeyY => Some(egui::Key::Y),
+            _ => None,
+        })?;
+        let history = Self::from_key(key, mods)?;
+        down.remove(&Input::key(code));
+        Some(history)
+    }
+}
+
 /// Legacy single-key HUD setting, read only to migrate older settings files.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HoldKey {
@@ -951,6 +993,85 @@ impl KeyBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_keys_never_reach_avatar_camera_or_other_held_bindings_in_any_layout() {
+        for (code, letter, history) in [
+            (KeyCode::KeyZ, "z", EditHistory::Undo),
+            (KeyCode::KeyW, "z", EditHistory::Undo), // AZERTY
+            (KeyCode::KeyY, "z", EditHistory::Undo), // QWERTZ
+            (KeyCode::KeyY, "Y", EditHistory::Redo),
+            (KeyCode::KeyZ, "y", EditHistory::Redo), // QWERTZ
+            (KeyCode::KeyZ, "я", EditHistory::Undo), // egui's non-Latin fallback
+        ] {
+            let input = Input::key(code);
+            let key = winit::keyboard::Key::Character(letter.into());
+            let ctrl = Mods {
+                ctrl: true,
+                ..Default::default()
+            };
+            let mut bindings = KeyBindings::default();
+            for action in [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag] {
+                bindings.set(action, 0, Some(Binding::plain(input.clone())));
+            }
+            let other = Input::key(KeyCode::ArrowDown);
+            // Also cancel a key already held before Ctrl or a repeat arrives.
+            let mut down = HashSet::from([input.clone(), other.clone()]);
+            for _ in 0..3 {
+                assert_eq!(EditHistory::take_native_key(&key, code, ctrl, &mut down), Some(history));
+                assert_eq!(down, HashSet::from([other.clone()]));
+                for mods in [ctrl, Mods::default()] {
+                    for action in [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag] {
+                        assert!(!bindings.held(action, &down, mods), "{letter}: {action:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn history_reservation_keeps_plain_movement_altgr_and_other_letters() {
+        let input = Input::key(KeyCode::KeyW);
+        let z = winit::keyboard::Key::Character("z".into());
+        for mods in [
+            Mods::default(),
+            Mods {
+                ctrl: true,
+                alt: true,
+                shift: false,
+            },
+        ] {
+            let mut down = HashSet::from([input.clone()]);
+            assert_eq!(EditHistory::take_native_key(&z, KeyCode::KeyW, mods, &mut down), None);
+            assert!(down.contains(&input));
+        }
+        let mut down = HashSet::from([Input::key(KeyCode::KeyZ)]);
+        assert_eq!(
+            EditHistory::take_native_key(
+                &winit::keyboard::Key::Character("w".into()),
+                KeyCode::KeyZ,
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+                &mut down,
+            ),
+            None,
+            "AZERTY Ctrl+W is not Ctrl+Z"
+        );
+        assert!(down.contains(&Input::key(KeyCode::KeyZ)));
+        assert_eq!(
+            EditHistory::from_key(
+                egui::Key::Z,
+                Mods {
+                    ctrl: true,
+                    shift: true,
+                    alt: false
+                }
+            ),
+            Some(EditHistory::Redo)
+        );
+    }
 
     #[test]
     fn import_shortcut_migrates_rebinds_and_keeps_explicitly_cleared_slots() {
