@@ -149,16 +149,10 @@ fn head(ui: &mut egui::Ui, p: &Palette, cols: &[(Column, &str, f32, bool)], sort
     widths
 }
 
-fn search(ui: &mut egui::Ui, p: &Palette, table: &mut Table) {
+fn search(ui: &mut egui::Ui, p: &Palette, table: &mut Table, hint: &str) {
     ui.add_space(5.0);
     ui.horizontal(|ui| {
-        widgets::search_box(
-            ui,
-            p,
-            &mut table.filter,
-            aurora_i18n::tr!("ui-land-scripts-search"),
-            ui.available_width(),
-        );
+        widgets::search_box(ui, p, &mut table.filter, hint, ui.available_width());
     });
     table.prepare();
     ui.label(
@@ -296,7 +290,7 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
                 .color(p.muted),
         );
     }
-    search(ui, p, table);
+    search(ui, p, table, aurora_i18n::tr!("ui-land-scripts-search"));
     ui.add_space(4.0);
     let widths = head(
         ui,
@@ -459,7 +453,7 @@ fn mine_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, world: &mut Worl
             }
         }
     }
-    search(ui, p, table);
+    search(ui, p, table, aurora_i18n::tr!("ui-land-scripts-attachments-search"));
     ui.add_space(4.0);
     let widths = head(
         ui,
@@ -531,7 +525,7 @@ mod tests {
                 },
                 |ui| {
                     let start = ui.cursor().min.y;
-                    search(ui, &p, &mut table);
+                    search(ui, &p, &mut table, aurora_i18n::tr!("ui-land-scripts-search"));
                     assert!(ui.cursor().min.y - start < 90.0, "search consumed the table at height {height}");
                 },
             );
