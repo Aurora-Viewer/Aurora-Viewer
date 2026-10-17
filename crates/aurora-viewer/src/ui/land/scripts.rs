@@ -518,7 +518,7 @@ mod tests {
         for height in [300.0, 440.0, 800.0] {
             let ctx = egui::Context::default();
             let mut table = Table::default();
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(680.0, height))),
                     ..Default::default()
@@ -529,6 +529,8 @@ mod tests {
                     assert!(ui.cursor().min.y - start < 90.0, "search consumed the table at height {height}");
                 },
             );
+            // Headless tests do not submit texture uploads to a renderer.
+            output.textures_delta.clear();
         }
     }
 
