@@ -32,6 +32,363 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
     (world, tool, settings)
 }
 
+fn history_key(key: egui::Key, shift: bool, repeat: bool) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat,
+        modifiers: egui::Modifiers {
+            ctrl: true,
+            command: true,
+            shift,
+            ..Default::default()
+        },
+    }
+}
+
+fn history_frame(
+    ctx: &egui::Context,
+    world: &mut World,
+    tool: &mut BuildTool,
+    settings: &mut BuildSettings,
+    mut events: Vec<egui::Event>,
+) -> Vec<egui::Event> {
+    // Ctrl can be released before the next rendered frame.
+    events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    let mut remaining = Vec::new();
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            events,
+            ..Default::default()
+        },
+        |ui| {
+            super::super::shortcuts(ui.ctx(), tool, world, settings);
+            remaining = ui.input(|i| i.events.clone());
+        },
+    );
+    output.textures_delta.clear();
+    remaining
+}
+
+#[test]
+fn duplicate_and_linked_edit_commands_own_their_presses_and_do_not_repeat() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    tool.out.clear();
+    let remaining = history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![
+            history_key(egui::Key::D, false, false),
+            history_key(egui::Key::D, false, true),
+            history_key(egui::Key::E, true, false),
+            history_key(egui::Key::E, true, true),
+        ],
+    );
+    assert_eq!(
+        tool.out
+            .iter()
+            .filter(|cmd| matches!(cmd, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Duplicate { .. })))
+            .count(),
+        1
+    );
+    assert!(settings.edit_linked, "the repeated press must not toggle linked edit back off");
+    assert!(
+        !remaining
+            .iter()
+            .any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+    );
+}
+
+#[test]
+fn build_commands_reserve_logical_keys_and_preserve_text_alt_camera_and_closed_tools() {
+    use crate::keybinds::{Action, Binding, Input, KeyBindings, Mods as KeyMods};
+    use winit::keyboard::{Key as NativeKey, KeyCode};
+    for (letter, code, mods) in [
+        (
+            "d",
+            KeyCode::KeyD,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "e",
+            KeyCode::KeyE,
+            KeyMods {
+                ctrl: true,
+                shift: true,
+                alt: false,
+            },
+        ),
+        (
+            "l",
+            KeyCode::KeyL,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "l",
+            KeyCode::KeyL,
+            KeyMods {
+                ctrl: true,
+                shift: true,
+                alt: false,
+            },
+        ),
+        ("g", KeyCode::KeyG, KeyMods::default()),
+        (
+            "g",
+            KeyCode::KeyG,
+            KeyMods {
+                shift: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "x",
+            KeyCode::KeyX,
+            KeyMods {
+                shift: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "b",
+            KeyCode::KeyB,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "ю",
+            KeyCode::KeyD,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let key = NativeKey::Character(letter.into());
+        let input = Input::key(code);
+        let mut kb = KeyBindings::default();
+        kb.set(Action::Forward, 0, Some(Binding::captured(input.clone(), KeyMods::default())));
+        kb.set(Action::CamZoomIn, 0, Some(Binding::captured(input.clone(), KeyMods::default())));
+        let mut down = std::collections::HashSet::from([input.clone()]);
+        assert!(super::super::Shortcut::take_native_key(&key, code, mods, true, true, &mut down).is_some());
+        assert!(down.is_empty());
+        assert!(!kb.held(Action::Forward, &down, KeyMods::default()));
+        assert!(!kb.held(Action::CamZoomIn, &down, KeyMods::default()));
+        // A focused field owns its own editing events, even if build is open.
+        assert!(super::super::Shortcut::take_native_key(&key, code, mods, true, false, &mut down).is_none());
+        assert!(super::super::Shortcut::take_native_key(&key, code, KeyMods { alt: true, ..mods }, true, true, &mut down).is_none());
+    }
+    assert!(
+        super::super::Shortcut::from_key(
+            egui::Key::D,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+            false
+        )
+        .is_none()
+    );
+    assert!(super::super::Shortcut::from_key(egui::Key::G, KeyMods::default(), false).is_none());
+}
+
+#[test]
+fn history_dispatch_uses_each_event_modifiers_and_supports_repeats_and_both_redo_keys() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    world.groups.active = uuid::Uuid::from_u128(8123);
+    let root = tool.roots(&world)[0];
+    let object = world.objects.get(root).unwrap();
+    let (handle, id) = (object.key.region, object.full_id);
+    tool.out.clear();
+    let remaining = history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![
+            history_key(egui::Key::Z, false, false),
+            history_key(egui::Key::Z, false, true),
+            history_key(egui::Key::Y, false, false),
+            history_key(egui::Key::Y, false, true),
+            history_key(egui::Key::Z, true, false),
+        ],
+    );
+    assert!(
+        !remaining
+            .iter()
+            .any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+    );
+    let commands = tool
+        .out
+        .iter()
+        .filter_map(|cmd| match cmd {
+            aurora_net::NetCommand::Build(cmd) => Some(cmd),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(commands.len(), 5);
+    for (i, cmd) in commands.iter().enumerate() {
+        let (h, ids, group_id) = match cmd {
+            aurora_net::build::BuildCmd::Undo { handle, ids, group_id } if i < 2 => (handle, ids, group_id),
+            aurora_net::build::BuildCmd::Redo { handle, ids, group_id } if i >= 2 => (handle, ids, group_id),
+            other => panic!("Unexpected history command: {other:?}"),
+        };
+        assert_eq!((*h, ids.as_slice(), *group_id), (handle, [id].as_slice(), world.groups.active));
+    }
+}
+
+#[test]
+fn terrain_history_keeps_regions_for_further_undo_and_never_redoes_a_leftover_object() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    tool.set_tool(Tool::Land);
+    let regions = vec![123, 456];
+    tool.land.last_regions = regions.clone();
+    tool.out.clear();
+    for _ in 0..2 {
+        history_frame(
+            &ctx,
+            &mut world,
+            &mut tool,
+            &mut settings,
+            vec![history_key(egui::Key::Z, false, false)],
+        );
+        assert_eq!(tool.land.last_regions, regions);
+    }
+    let undone = tool
+        .out
+        .iter()
+        .filter_map(|cmd| match cmd {
+            aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::UndoLand { handle }) => Some(*handle),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(undone, regions.repeat(2));
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Y, false, false), history_key(egui::Key::Z, true, false)],
+    );
+    assert!(tool.out.is_empty());
+}
+
+#[test]
+fn object_history_targets_linkset_roots_once_or_the_selected_linked_part() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    let root_idx = tool.roots(&world)[0];
+    let root = world.objects.get(root_idx).unwrap();
+    let (root_key, root_id) = (root.key, root.full_id);
+    let child_idx = world
+        .objects
+        .iter()
+        .find(|(idx, object)| *idx != root_idx && !object.is_avatar())
+        .unwrap()
+        .0;
+    let child = world.objects.get_mut(child_idx).unwrap();
+    child.parent_id = root_key.local_id;
+    child.parent_region = root_key.region;
+    let (child_key, child_id) = (child.key, child.full_id);
+    tool.selection = vec![child_key, root_key];
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(matches!(
+        tool.out.as_slice(),
+        [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { ids, .. })] if ids == &[root_id]
+    ));
+    tool.selection_linked = true;
+    tool.selection = vec![child_key];
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Y, false, false)],
+    );
+    assert!(matches!(
+        tool.out.as_slice(),
+        [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Redo { ids, .. })] if ids == &[child_id]
+    ));
+    tool.open = false;
+    tool.out.clear();
+    history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![history_key(egui::Key::Z, false, false)],
+    );
+    assert!(tool.out.is_empty());
+}
+
+#[test]
+fn focused_text_history_stays_in_singleline_and_multiline_fields_instead_of_the_object() {
+    for multiline in [false, true] {
+        let (mut world, mut tool, mut settings) = fixture();
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("history_text");
+        let mut text = String::new();
+        let mut frame = |time, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    super::super::shortcuts(ui.ctx(), &mut tool, &mut world, &mut settings);
+                    let edit = if multiline {
+                        egui::TextEdit::multiline(&mut text)
+                    } else {
+                        egui::TextEdit::singleline(&mut text)
+                    };
+                    ui.add(edit.id(id)).request_focus();
+                },
+            );
+            output.textures_delta.clear();
+            text.clone()
+        };
+        frame(0.0, vec![]);
+        frame(0.1, vec![]);
+        frame(0.2, vec![egui::Event::Text("Original".into())]);
+        // Native TextEdit groups typing until its one-second idle timeout.
+        frame(1.3, vec![]);
+        assert_eq!(frame(1.5, vec![egui::Event::Text(" changed".into())]), "Original changed");
+        frame(2.6, vec![]);
+        assert_eq!(frame(2.7, vec![history_key(egui::Key::Z, false, false)]), "Original");
+        assert_eq!(frame(2.8, vec![history_key(egui::Key::Y, false, false)]), "Original changed");
+        assert_eq!(frame(2.9, vec![history_key(egui::Key::Z, false, false)]), "Original");
+        assert_eq!(frame(3.0, vec![history_key(egui::Key::Z, true, false)]), "Original changed");
+        assert!(!tool.out.iter().any(|cmd| matches!(
+            cmd,
+            aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Undo { .. } | aurora_net::build::BuildCmd::Redo { .. })
+        )));
+    }
+}
+
 fn text_shapes(shape: &egui::Shape, result: &mut Vec<(String, egui::Rect)>) {
     match shape {
         egui::Shape::Text(text) => result.push((text.galley.job.text.clone(), text.galley.rect.translate(text.pos.to_vec2()))),
