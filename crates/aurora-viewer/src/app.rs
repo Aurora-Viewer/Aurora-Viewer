@@ -7796,7 +7796,10 @@ impl App {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
                     }
-                    crate::build::demo::Step::MeshLod(level) => self.build.set_inspected_mesh_lod(level),
+                    crate::build::demo::Step::MeshLod(level) => {
+                        self.panels.chat = false;
+                        self.build.set_inspected_mesh_lod(level);
+                    }
                     crate::build::demo::Step::ReplaceBegin(contents) => {
                         self.build.begin_replacement(&self.world, &self.settings.build);
                         self.build.replacement.options.contents = contents;

@@ -81,6 +81,24 @@ fn value_row(ui: &mut egui::Ui, p: &Palette, name: &str, value: &str, active: bo
     });
 }
 
+fn distance_row(ui: &mut egui::Ui, p: &Palette, cells: [String; 4], widths: [f32; 4], header: bool) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (i, (text, width)) in cells.into_iter().zip(widths).enumerate() {
+            ui.add_sized(
+                Vec2::new(width, 16.0),
+                egui::Label::new(
+                    RichText::new(&text)
+                        .size(10.0)
+                        .color(if header || i == 0 { p.muted } else { p.ink }),
+                )
+                .truncate(),
+            )
+            .on_hover_text(text);
+        }
+    });
+}
+
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, idx: usize, env: &mut Env) {
     let Some(info) = env.scene.mesh_info(world, idx) else { return };
     let levels = [
@@ -90,6 +108,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
         aurora_i18n::tr!("build-mesh-lowest"),
     ];
     ui.spacing_mut().item_spacing.y = 3.0;
+    ui.spacing_mut().interact_size.y = 16.0;
+    ui.spacing_mut().button_padding = Vec2::new(3.0, 3.0);
     ui.horizontal(|ui| {
         common::section(ui, p, aurora_i18n::tr!("build-ui-object-mesh"));
         if let Some(faces) = info.faces {
@@ -149,37 +169,40 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
     }
     let factors = [1.25, 2.0, env.scene.lod_factor];
     let distances = factors.map(|f| info.radius.and_then(|r| switch_distances(r, f)));
-    egui::Grid::new("mesh_lod_distances")
-        .spacing(Vec2::new(7.0, 3.0))
-        .min_col_width(0.0)
-        .show(ui, |ui| {
-            for label in [
-                aurora_i18n::tr!("build-mesh-transition"),
-                "LL",
-                "Legacy",
-                aurora_i18n::tr!("build-mesh-current"),
-            ] {
-                ui.label(RichText::new(label).size(10.0).color(p.muted));
-            }
-            ui.end_row();
-            ui.label(RichText::new(aurora_i18n::tr!("build-mesh-factor")).size(10.0).color(p.muted));
-            for f in factors {
-                ui.label(RichText::new(aurora_i18n::number(f as f64, 2)).size(10.0).color(p.muted));
-            }
-            ui.end_row();
-            for i in 0..3 {
-                ui.label(
-                    RichText::new(format!("{} ↔ {}", levels[i], levels[i + 1]))
-                        .size(10.0)
-                        .color(p.muted),
-                );
-                for column in distances {
-                    let text = column.map(|d| aurora_i18n::number(d[i] as f64, 1)).unwrap_or_else(|| "—".into());
-                    ui.label(RichText::new(text).size(10.0).color(p.ink));
-                }
-                ui.end_row();
-            }
-        });
+    let width = ui.available_width();
+    let widths = [width * 0.44, width * 0.186, width * 0.186, width * 0.188];
+    distance_row(
+        ui,
+        p,
+        [
+            aurora_i18n::tr!("build-mesh-transition").into(),
+            "LL".into(),
+            "Legacy".into(),
+            aurora_i18n::tr!("build-mesh-current").into(),
+        ],
+        widths,
+        true,
+    );
+    distance_row(
+        ui,
+        p,
+        [
+            aurora_i18n::tr!("build-mesh-factor").into(),
+            aurora_i18n::number(1.25, 2),
+            aurora_i18n::number(2.0, 2),
+            aurora_i18n::number(factors[2] as f64, 3),
+        ],
+        widths,
+        true,
+    );
+    for i in 0..3 {
+        let mut cells = std::array::from_fn(|_| String::new());
+        cells[0] = format!("{} ↔ {}", levels[i], levels[i + 1]);
+        for (column, values) in distances.iter().enumerate() {
+            cells[column + 1] = values.map(|d| aurora_i18n::number(d[i] as f64, 1)).unwrap_or_else(|| "—".into());
+        }
+        distance_row(ui, p, cells, widths, false);
+    }
     common::small(ui, p, aurora_i18n::tr!("build-mesh-distances-note")).on_hover_text(aurora_i18n::tr!("build-mesh-distances-help"));
 }
 

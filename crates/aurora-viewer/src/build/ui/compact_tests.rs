@@ -55,6 +55,22 @@ fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_in_fo
     }
     let (rect, texts) = inspector.show(Vec::new());
     assert!(texts.iter().any(|(t, _)| t == aurora_i18n::tr!("build-mesh-triangles")));
+    for heading in [
+        aurora_i18n::tr!("build-mesh-transition"),
+        "LL",
+        "Legacy",
+        aurora_i18n::tr!("build-mesh-current"),
+    ] {
+        assert!(
+            texts.iter().any(|(t, r)| t == heading && r.height() < 18.0),
+            "Distance column must stay on one line: {heading}"
+        );
+    }
+    assert!(
+        texts
+            .iter()
+            .any(|(t, r)| t == aurora_i18n::tr!("build-mesh-distances-note") && r.bottom() < rect.bottom() - 150.0)
+    );
     assert!(
         !texts
             .iter()

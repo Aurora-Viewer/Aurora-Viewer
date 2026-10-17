@@ -15,11 +15,11 @@ impl Scene {
         for (lod, detail) in [0.25, 0.5, 1.0, 2.0].into_iter().enumerate() {
             let volume = aurora_prim::generate_volume(&params, detail);
             let (faces, min, max) = jobs::volume_to_faces(&volume);
-            self.upload_geom(
-                renderer,
-                GeomKey::Mesh { id, lod: lod as u8 },
-                jobs::PreparedGeom::new(faces, min, max, true, None),
-            );
+            let key = GeomKey::Mesh { id, lod: lod as u8 };
+            self.upload_geom(renderer, key, jobs::PreparedGeom::new(faces, min, max, true, None));
+            // These generated fixtures have no downloadable asset bytes. Keep
+            // their four geometries alive until the offline world is destroyed.
+            self.geom_ref(key);
         }
     }
 
