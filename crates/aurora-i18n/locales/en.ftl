@@ -3466,6 +3466,8 @@ ui-options-preset-custom = Custom
 ui-options-shadow-quality = Shadow quality
 ui-options-projector-shadows = Projector shadows
 ui-options-projector-shadows-help = The two projectors that weigh most on screen cast shadows
+ui-options-contact-shadows = Contact shadows
+ui-options-contact-shadows-help = Sharp sun shadows where things touch (feet on the ground, objects resting on a surface, folds), which the shadow map is too coarse to show. Costs a little on the graphics card
 ui-options-when-i-am-away = When I am away:
 ui-options-when-the-window-is-not-in-the-foreground-the = When the window is not in the foreground, the viewer slows down to free system resources. Enabled by default
 ui-options-glow-amount-instead-of-the-image-red-glow-10 = Glow amount instead of the image (red = glow × 10, green = × 2)

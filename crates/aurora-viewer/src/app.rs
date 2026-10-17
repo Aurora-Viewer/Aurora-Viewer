@@ -12276,6 +12276,13 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_FEET=opaque|blend: a shoe on each foot of our avatar
+            // and of the crowd (what the contact shadows see touch the ground)
+            if let Some(blend) = crate::demo::feet_demo() {
+                for ev in crate::demo::feet_events(blend, crate::demo::crowd_count().unwrap_or(0)) {
+                    self.world.apply(ev);
+                }
+            }
             // AURORA_DEMO_GLYPHS=1|2: residents named and talking in the
             // characters of the grid's display names (system fallback fonts)
             if let Some(reversed) = crate::demo::glyphs::scenario() {

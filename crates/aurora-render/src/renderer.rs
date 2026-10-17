@@ -3,7 +3,8 @@
 //! 1. cascaded sun shadows
 //! 2. single-sample depth prepass (shared by SSAO, water, SSR, particles, TAA)
 //! 3. ambient occlusion (optional): the Legacy SSAO at half resolution, or
-//!    GTAO in compute (gtao.rs)
+//!    GTAO in compute (gtao.rs); then the sun's contact shadows in compute
+//!    (contact_shadows.rs, optional)
 //! 4. planar reflections: water and the nearest mirror (optional, reduced resolution)
 //! 5. scene pass A: sky, terrain, opaque and masked geometry (MSAA, HDR);
 //!    with MSAA, first a depth prepass of its multisampled depth
@@ -129,6 +130,8 @@ struct FrameU {
     /// What each map leaves of its shadows unlit: 1 - fade (spotLightF's
     /// shadow_fade).
     spot_fade: [f32; 4],
+    /// x: 1 when the shading takes the contact shadows (main view only).
+    contact: [f32; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -679,6 +682,7 @@ struct Targets {
     /// Multisampled depth (MSAA only; otherwise `depth_ss` is the scene depth).
     depth_msaa: Option<wgpu::TextureView>,
     /// Single-sample depth from the prepass.
+    depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
     scene_copy_tex: wgpu::Texture,
     scene_copy: wgpu::TextureView,
@@ -692,6 +696,9 @@ struct Targets {
     gtao: Option<crate::gtao::Targets>,
     /// The frame groups bind GTAO's occlusion rather than the Legacy one.
     gtao_shown: bool,
+    /// The contact shadows' mask (contact_shadows.rs), when they are on or
+    /// `AURORA_CONTACT_SHADOWS` keeps it ready.
+    contact: Option<crate::contact_shadows::Targets>,
     water_refl: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
     post_bind_group: wgpu::BindGroup,
@@ -732,6 +739,9 @@ struct Pipelines {
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_mask: wgpu::RenderPipeline,
     pre_mask_2s: wgpu::RenderPipeline,
+    /// Blended faces opaque enough to cast contact shadows, into their
+    /// depth (contact_shadows.rs).
+    pre_contact: wgpu::RenderPipeline,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): one-sided and two-sided opaque faces.
     pre_msaa: Option<[wgpu::RenderPipeline; 2]>,
@@ -776,6 +786,8 @@ struct GpuTimer {
     last_depth: Option<[f32; 2]>,
     /// Last time of the ambient occlusion (ms).
     last_ssao: Option<f32>,
+    /// Last time of the contact shadows (ms).
+    last_contact: Option<f32>,
     /// Last time of the bloom levels (ms).
     last_bloom: Option<f32>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
@@ -840,7 +852,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 21;
+const GPU_MARKS: u32 = 22;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -895,6 +907,10 @@ const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
 /// single-sample prepass with the occlusion culling, multisampled prepass.
 const GPU_DEPTH: [(u32, u32); 2] = [(MARK_SHADOWS_END, MARK_DEPTH_END), (MARK_SCENE_BEGIN, MARK_DEPTH_MSAA_END)];
+/// After the contact shadows, which follow the occlusion (written there
+/// when they are off): inside the effects' range from `MARK_SSAO_END` to
+/// `MARK_REFL_END`.
+const MARK_CONTACT_END: u32 = 23;
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
@@ -964,6 +980,7 @@ impl GpuTimer {
             last_shadow_parts: None,
             last_depth: None,
             last_ssao: None,
+            last_contact: None,
             last_bloom: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
@@ -992,6 +1009,7 @@ impl GpuTimer {
                             let d = GPU_DEPTH.map(|(a, b)| ms(a, b));
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
+                            self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
                             self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
@@ -1210,6 +1228,10 @@ pub(crate) struct Backend {
     pipelines: Pipelines,
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
+    contact: crate::contact_shadows::ContactShadows,
+    /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
+    /// switches them each second).
+    contact_now: bool,
     bloom: crate::bloom::Bloom,
     frame_buffer: wgpu::Buffer,
     refl_buffers: [wgpu::Buffer; 7],
@@ -1693,6 +1715,8 @@ struct Impostors {
     capture_opaque: wgpu::RenderPipeline,
     capture_blend: wgpu::RenderPipeline,
     sprite: wgpu::RenderPipeline,
+    /// The cards' depth alone, single sample (contact shadows).
+    sprite_depth: wgpu::RenderPipeline,
 }
 
 impl Impostors {
@@ -1795,7 +1819,7 @@ impl Impostors {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (capture_opaque, capture_blend, sprite) =
+        let (capture_opaque, capture_blend, sprite, sprite_depth) =
             Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr);
         Impostors {
             layout,
@@ -1808,6 +1832,7 @@ impl Impostors {
             capture_opaque,
             capture_blend,
             sprite,
+            sprite_depth,
         }
     }
 
@@ -1820,7 +1845,7 @@ impl Impostors {
         samples: u32,
         ssr: bool,
     ) {
-        (self.capture_opaque, self.capture_blend, self.sprite) =
+        (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) =
             Self::make_pipelines(device, &self.layout, frame_layout, records_layout, tex_layout, samples, ssr);
     }
 
@@ -1832,7 +1857,12 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
-    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    ) -> (
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+    ) {
         let src = format!(
             "{}\n{}\n{}",
             include_str!("shaders/common.wgsl"),
@@ -1904,7 +1934,18 @@ impl Impostors {
                 )
             },
         );
-        (capture_opaque, capture_blend, sprite)
+        // their depth alone for the contact shadows (single sample, no color)
+        let sprite_depth = make_pipeline(
+            device,
+            &module,
+            &pl,
+            PipeDesc {
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, false)
+            },
+        );
+        (capture_opaque, capture_blend, sprite, sprite_depth)
     }
 }
 
@@ -2079,6 +2120,8 @@ impl Backend {
                     },
                     count: None,
                 },
+                // the contact shadows' mask (contact_shadows.rs)
+                float_tex(13),
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2285,6 +2328,7 @@ impl Backend {
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
+        let contact = crate::contact_shadows::ContactShadows::new(&device);
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
         let targets = Self::make_targets(
@@ -2294,6 +2338,7 @@ impl Backend {
             &post_buffer,
             &glow.views[1],
             &gtao,
+            &contact,
             config.width,
             config.height,
             msaa_samples,
@@ -2353,6 +2398,8 @@ impl Backend {
             pipelines,
             ssao,
             gtao,
+            contact,
+            contact_now: false,
             bloom,
             frame_buffer,
             refl_buffers,
@@ -2778,6 +2825,9 @@ impl Backend {
         let pre_opaque_2s = pre("prepass 2s", "vs_depth", None, None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
+        // both sides: a double-sided blended face casts either way, the
+        // nearer one keeps the depth
+        let pre_contact = pre("prepass contact", "vs_main", Some("fs_depth_contact"), None);
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>| {
                 pipe(PipeDesc {
@@ -2915,6 +2965,7 @@ impl Backend {
             pre_opaque_2s,
             pre_mask,
             pre_mask_2s,
+            pre_contact,
             pre_msaa,
             refl_sky,
             refl_terrain,
@@ -2994,6 +3045,7 @@ impl Backend {
         post_buffer: &wgpu::Buffer,
         glow_view: &wgpu::TextureView,
         gtao: &crate::gtao::Gtao,
+        contact: &crate::contact_shadows::ContactShadows,
         width: u32,
         height: u32,
         samples: u32,
@@ -3006,7 +3058,15 @@ impl Backend {
         let color_msaa = (samples > 1).then(|| make_view(device, "hdr msaa", w, h, HDR_FORMAT, samples, att).1);
         let depth_msaa = (samples > 1).then(|| make_view(device, "depth msaa", w, h, DEPTH_FORMAT, samples, att).1);
         // read by the cursor picks through a compute pass (pick.rs)
-        let depth_ss = make_view(device, "depth prepass", w, h, DEPTH_FORMAT, 1, sampled).1;
+        let (depth_ss_tex, depth_ss) = make_view(
+            device,
+            "depth prepass",
+            w,
+            h,
+            DEPTH_FORMAT,
+            1,
+            sampled | wgpu::TextureUsages::COPY_SRC,
+        );
         let (scene_copy_tex, scene_copy) = make_view(
             device,
             "scene copy",
@@ -3050,6 +3110,9 @@ impl Backend {
         let gtao = (s.ssao > 0 && gtao_ao).then(|| gtao.targets(device, &depth_ss, w, h, ao_override.level(s.ao_method)));
         // the method shown first; `AURORA_AO=alt` switches it each second
         let gtao_shown = gtao.is_some() && !legacy_ao;
+        let contact = crate::contact_shadows::Override::from_env()
+            .needed(s.contact_shadows)
+            .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
         let water_refl = refl("water reflection", s.water_reflection_scale);
         let mirror = refl("mirror", s.mirror_scale);
         let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3087,6 +3150,8 @@ impl Backend {
             ao,
             gtao,
             gtao_shown,
+            contact,
+            depth_ss_tex,
             water_refl,
             mirror,
             post_bind_group,
@@ -3112,7 +3177,8 @@ impl Backend {
                   water: &wgpu::TextureView,
                   mirror: &wgpu::TextureView,
                   scene: &wgpu::TextureView,
-                  depth: &wgpu::TextureView| {
+                  depth: &wgpu::TextureView,
+                  contact: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
@@ -3169,6 +3235,10 @@ impl Backend {
                         binding: 12,
                         resource: wgpu::BindingResource::TextureView(&probes.irradiance_view),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 13,
+                        resource: wgpu::BindingResource::TextureView(contact),
+                    },
                 ],
             })
         };
@@ -3180,9 +3250,10 @@ impl Backend {
         .unwrap_or(&dummies.white);
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
+        let contact = t.contact.as_ref().map(|c| &c.result).unwrap_or(&dummies.black);
         FrameGroups {
-            a: mk("frame a", frame_buffer, ao, water, mirror, &dummies.black, &dummies.depth),
-            b: mk("frame b", frame_buffer, ao, water, mirror, &t.scene_copy, &t.depth_ss),
+            a: mk("frame a", frame_buffer, ao, water, mirror, &dummies.black, &dummies.depth, contact),
+            b: mk("frame b", frame_buffer, ao, water, mirror, &t.scene_copy, &t.depth_ss, contact),
             refl: [
                 mk(
                     "frame water reflection",
@@ -3192,6 +3263,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
                 mk(
                     "frame mirror",
@@ -3201,6 +3273,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
                 mk(
                     "frame probe capture",
@@ -3210,6 +3283,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
                 mk(
                     "frame impostor 0",
@@ -3219,6 +3293,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
                 mk(
                     "frame impostor 1",
@@ -3228,6 +3303,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
                 mk(
                     "frame HUD",
@@ -3237,6 +3313,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
                 mk(
                     "frame drawn pick",
@@ -3246,9 +3323,20 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                 ),
             ],
         }
+    }
+
+    /// Whether this frame draws the contact shadows: with the sun shadows
+    /// and the mask ready, `AURORA_CONTACT_SHADOWS=alt` every other second.
+    fn contact_on(&self, shadows: bool) -> bool {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+        shadows
+            && self.targets.contact.is_some()
+            && crate::contact_shadows::Override::from_env().on_now(self.settings.contact_shadows, secs)
     }
 
     /// The occlusion method of this frame: `AURORA_AO=alt` switches it each
@@ -3337,6 +3425,7 @@ impl Backend {
             &self.post_buffer,
             &self.glow.views[1],
             &self.gtao,
+            &self.contact,
             self.config.width,
             self.config.height,
             self.msaa_samples,
@@ -3395,6 +3484,7 @@ impl Backend {
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
+            || s.contact_shadows != self.settings.contact_shadows
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
@@ -4066,7 +4156,15 @@ impl Backend {
         let mirror = f.mirror.filter(|_| self.targets.mirror.is_some());
 
         self.show_ao_method();
+        self.contact_now = self.contact_on(f.shadows);
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
+        if self.contact_now {
+            main.contact[0] = 1.0;
+            // the blended faces opaque enough are in the depth it read
+            if crate::contact_shadows::Override::from_env().all_casters() {
+                main.contact[1] = 1.0;
+            }
+        }
         main.misc = [
             // 2: GTAO's occlusion, without the normal map part the Legacy
             // pass misses (normal_map_occlusion, common.wgsl)
@@ -4312,6 +4410,12 @@ impl Backend {
             bloom_norm: self.bloom.norm() * crate::bloom::GAIN,
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
+        if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
+            // the light through the projection the depth prepass was drawn
+            // with (jittered under TAA)
+            let light = crate::contact_shadows::light_projection(fu.proj * fu.view, f.sun_dir);
+            self.contact.write(&self.queue, t, light);
+        }
         if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
             self.gtao.write(&self.queue, t, f.proj);
         } else if self.targets.ao.is_some() {
@@ -4953,6 +5057,45 @@ impl Backend {
 
         prof.mark("ssao");
         mark(&mut encoder, MARK_SSAO_END);
+        // ---- contact shadows: what casts them beyond the prepass (the
+        // blended faces opaque enough, the impostor cards) is drawn into a
+        // copy of its depth, which the pass then reads
+        if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
+            let (_, n_blend) = rg.blend;
+            let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
+            if more {
+                encoder.copy_texture_to_texture(
+                    self.targets.depth_ss_tex.as_image_copy(),
+                    t.depth_texture().as_image_copy(),
+                    self.targets.depth_ss_tex.size(),
+                );
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("contact shadows depth"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: t.depth_view(),
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+                if n_sprites > 0 {
+                    pass.set_pipeline(&self.impostors.sprite_depth);
+                    pass.set_bind_group(3, &self.impostors.bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.impostors.sprites.slice(..));
+                    pass.draw(0..6, 0..n_sprites as u32);
+                }
+            }
+            self.contact.encode(&mut encoder, t, more);
+        }
+        mark(&mut encoder, MARK_CONTACT_END);
         // ---- planar reflections
         let refl_passes = [
             (
@@ -5914,6 +6057,7 @@ impl Backend {
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
+        stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
         stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();

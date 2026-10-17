@@ -427,6 +427,17 @@ fn fs_depth_mask(in: VsOut) {
     }
 }
 
+// Depth of the blended faces opaque enough to cast contact shadows (half
+// covered, as the impostor pictures keep them), drawn over a copy of the
+// prepass (contact_shadows.rs).
+@fragment
+fn fs_depth_contact(in: VsOut) {
+    let rec = records[in.record];
+    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
+        discard;
+    }
+}
+
 struct Material {
     color: vec4<f32>,
     n: vec3<f32>,
@@ -677,6 +688,10 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     surface_occlusion = m.occlusion;
+    // a blended face is in the depth the contact shadows read when it is
+    // opaque enough (fs_depth_contact); a more transparent one would get
+    // what lies behind it
+    contact_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || (frame.contact.y > 0.5 && m.color.a >= 0.5);
     var col: vec3<f32>;
     let classic = is_classic_sky() && !camera_underwater();
     var hazed = false;
@@ -687,7 +702,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     } else if (classic) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         // softenLightF: scol = max(shadow, emissive)
-        let sh = max(shadow_factor(in.world_pos, shadow_normal(m), in.view_depth), m.unlit);
+        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
@@ -705,7 +720,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        let sh = max(shadow_factor(in.world_pos, shadow_normal(m), in.view_depth), m.unlit);
+        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
@@ -1190,6 +1205,14 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
         col = apply_fog(col, in.world_pos);
     }
     return vec4<f32>(col, 1.0);
+}
+
+// The card's depth alone (contact shadows): where its picture is covered.
+@fragment
+fn fs_impostor_depth(in: SpriteOut) {
+    if (textureSample(impostor_atlas, impostor_sampler, in.uv).a < 0.5) {
+        discard;
+    }
 }
 
 @fragment

@@ -612,6 +612,9 @@ pub struct RenderSettings {
     pub ssao: u8,
     /// How the occlusion `ssao` turns on is computed.
     pub ao_method: AoMethod,
+    /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
+    /// with the sun shadows only.
+    pub contact_shadows: bool,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -638,6 +641,7 @@ impl Default for RenderSettings {
             shadow_resolution: 2048,
             ssao: 1,
             ao_method: AoMethod::Legacy,
+            contact_shadows: false,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
@@ -1043,6 +1047,9 @@ pub struct RenderStats {
     /// GPU time of the ambient occlusion alone (ms), part of
     /// [`GpuElement::Effects`]: the Legacy pass or GTAO's.
     pub gpu_ssao: Option<f32>,
+    /// GPU time of the contact shadows alone (ms), part of
+    /// [`GpuElement::Effects`].
+    pub gpu_contact: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,

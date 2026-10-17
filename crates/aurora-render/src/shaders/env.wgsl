@@ -236,7 +236,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
     let n = normalize(in.normal);
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let dist = distance(in.world_pos, frame.camera_pos.xyz);
-    let sh = shadow_factor(in.world_pos, n, dist);
+    let sh = sun_shadow(in.world_pos, n, dist, in.clip.xy);
     if (is_classic_sky() && !camera_underwater()) {
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
