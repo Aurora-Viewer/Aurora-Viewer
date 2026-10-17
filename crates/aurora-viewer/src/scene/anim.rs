@@ -205,8 +205,9 @@ impl BoundAnim {
 //
 // Port of LLMotionController / LLPoseBlender (indra/llcharacter, Linden
 // Research, originally LGPL 2.1): motions ease in and out (cubic), a motion still
-// loading catches up to its first known signal, a stopped motion keeps playing while it
-// eases out, and a joint no motion drives keeps its last pose (never back to
+// loading starts on arrival (or catches up to its first known signal when opted
+// in), a stopped motion keeps playing while it eases out, and a joint no motion
+// drives keeps its last pose (never back to
 // the T-pose: LLJointStateBlender::blendJointStates).
 
 /// Most joint states blended per joint (JSB_NUM_JOINT_STATES).
