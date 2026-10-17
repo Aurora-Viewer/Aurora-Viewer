@@ -4156,6 +4156,7 @@ ui-perf-render-thread = Thread de rendu
 ui-place-details-title = Titre :
 ui-contacts-titles = Titres
 ui-options-tone-mapping = Tone mapping
+ui-options-tone-mapping-classic-sky = Sans effet avec un ciel classique (ambiance des sondes à 0) : il n'est pas tone mappé
 common-torus = Tore
 ui-options-camera-press-m-or-zoom-into-your-avatar-s-head = Touche M, ou zoomer jusque dans la tête de l'avatar
 ui-options-practical-movement-key = Touche de déplacement
