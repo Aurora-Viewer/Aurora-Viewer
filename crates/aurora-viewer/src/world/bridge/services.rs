@@ -1,11 +1,11 @@
-//! Optional read-only bridge services. Firestorm FSRadar bulk height lookup
-//! and handle_script_info, independent of the confirmed movement controller.
+//! Optional read-only bridge services. FSRadar bulk height lookup and
+//! handle_script_info, independent of the confirmed movement controller.
 use crate::world::radar::Sighting;
 use aurora_net::{
     NetCommand, RegionHandle,
     bridge::{
         Endpoint,
-        query::{Altitude, MAX_AVATARS, Query, Reply},
+        query::{Altitude, MAX_AVATARS, ObjectInfo, Query, Reply, ScriptInfo},
     },
 };
 use std::{
@@ -29,7 +29,8 @@ struct RadarRequest {
     at: Instant,
 }
 struct Inspection {
-    object: Uuid,
+    query: Query,
+    attachment_names: HashMap<u8, String>,
     request: Option<Uuid>,
     at: Instant,
 }
@@ -73,11 +74,26 @@ impl Services {
     }
 
     pub fn inspect(&mut self, object: Uuid, now: Instant) -> bool {
-        if object.is_nil() || self.inspection.as_ref().is_some_and(|p| p.object == object) {
+        self.inspect_query(Query::ScriptInfo(object), now)
+    }
+
+    pub fn inspect_object(&mut self, object: Uuid, now: Instant, attachment_names: &HashMap<u8, String>) -> bool {
+        if !self.inspect_query(Query::ObjectInfo(object), now) {
+            return false;
+        }
+        if let Some(pending) = &mut self.inspection {
+            pending.attachment_names.clone_from(attachment_names);
+        }
+        true
+    }
+
+    fn inspect_query(&mut self, query: Query, now: Instant) -> bool {
+        if !query.valid() || self.inspection.as_ref().is_some_and(|p| p.query == query) {
             return false;
         }
         self.inspection = Some(Inspection {
-            object,
+            query,
+            attachment_names: HashMap::new(),
             request: None,
             at: now,
         });
@@ -106,7 +122,7 @@ impl Services {
             Some(NetCommand::BridgeQuery {
                 request,
                 endpoint: endpoint.clone(),
-                query: Query::ScriptInfo(pending.object),
+                query: pending.query.clone(),
             }),
             None,
         )
@@ -186,27 +202,13 @@ impl Services {
             if now.duration_since(pending.at) >= QUERY_TIMEOUT {
                 return Some(aurora_i18n::tr!("bridge-query-timeout").into());
             }
-            return Some(match result {
-                Ok(Reply::ScriptInfo(info)) if info.object == pending.object => {
-                    let pathfinding = if info.character_seconds > 0.0 {
-                        aurora_i18n::tr!(
-                            "bridge-script-info-pathfinding",
-                            time = aurora_i18n::number(info.character_seconds * 1000.0, 3)
-                        )
-                    } else {
-                        String::new()
-                    };
-                    aurora_i18n::tr!(
-                        "bridge-script-info-result",
-                        name = info.name,
-                        running = info.running.to_string(),
-                        total = info.total.to_string(),
-                        memory = aurora_i18n::number(f64::from(info.memory) / 1024.0, 2),
-                        time = aurora_i18n::number(info.cpu_seconds * 1000.0, 3),
-                        pathfinding = pathfinding
-                    )
+            return Some(match (pending.query, result) {
+                (Query::ScriptInfo(object), Ok(Reply::ScriptInfo(info))) if info.object == object => script_report(&info),
+                (Query::ObjectInfo(object), Ok(Reply::ObjectInfo(info))) if info.scripts.object == object => {
+                    object_report(&info, &pending.attachment_names)
                 }
-                Err(error) => aurora_i18n::tr!("bridge-script-info-failed", reason = error),
+                (Query::ObjectInfo(_), Err(error)) => aurora_i18n::tr!("bridge-object-info-failed", reason = error),
+                (_, Err(error)) => aurora_i18n::tr!("bridge-script-info-failed", reason = error),
                 _ => aurora_i18n::tr!("bridge-request-response").into(),
             });
         }
@@ -235,6 +237,101 @@ impl Services {
         }
         None
     }
+}
+
+fn script_report(info: &ScriptInfo) -> String {
+    let pathfinding = if info.character_seconds > 0.0 {
+        aurora_i18n::tr!(
+            "bridge-script-info-pathfinding",
+            time = aurora_i18n::number(info.character_seconds * 1000.0, 3)
+        )
+    } else {
+        String::new()
+    };
+    aurora_i18n::tr!(
+        "bridge-script-info-result",
+        name = info.name.clone(),
+        running = info.running.to_string(),
+        total = info.total.to_string(),
+        memory = aurora_i18n::number(f64::from(info.memory) / 1024.0, 2),
+        time = aurora_i18n::number(info.cpu_seconds * 1000.0, 3),
+        pathfinding = pathfinding
+    )
+}
+
+/// FSLSLBridge::lslToViewer's extended report, exposed as its own action.
+fn object_report(info: &ObjectInfo, attachment_names: &HashMap<u8, String>) -> String {
+    let vector = |values: &[f64]| {
+        format!(
+            "<{}>",
+            values.iter().map(|v| aurora_i18n::number(*v, 3)).collect::<Vec<_>>().join(", ")
+        )
+    };
+    let identity = |id: Uuid, kind: &str| {
+        if id.is_nil() {
+            "---".into()
+        } else {
+            format!("secondlife:///app/{kind}/{id}/about")
+        }
+    };
+    let distance = info
+        .position
+        .iter()
+        .zip(info.observer_position)
+        .map(|(a, b)| (a - b).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    let details = aurora_i18n::tr!(
+        "bridge-object-info-result",
+        name = info.scripts.name.clone(),
+        object = info.scripts.object.to_string(),
+        description = info.description.clone(),
+        root = info.root.to_string(),
+        prims = info.prims.to_string(),
+        impact = info.land_impact.to_string(),
+        inventory = info.inventory.to_string(),
+        velocity = vector(&info.velocity),
+        position = vector(&info.position),
+        distance = aurora_i18n::number(distance, 3),
+        rotation = vector(&info.rotation),
+        degrees = vector(&info.rotation_degrees),
+        angular = vector(&info.angular_velocity),
+        creator = identity(info.creator, "agent"),
+        owner = if info.owner.is_nil() {
+            aurora_i18n::tr!("bridge-object-info-group-owned").to_owned()
+        } else {
+            identity(info.owner, "agent")
+        },
+        previous = identity(info.previous_owner, "agent"),
+        rezzer = info.rezzer.to_string(),
+        group = identity(info.group, "group"),
+        created = if info.created.is_empty() {
+            "---".into()
+        } else {
+            info.created.clone()
+        },
+        rezzed = if info.rezzed.is_empty() {
+            "---".into()
+        } else {
+            info.rezzed.clone()
+        },
+        pathfinding = info.pathfinding.to_string(),
+        attachment = if let Some(name) = attachment_names.get(&info.attachment_point) {
+            crate::ui::appearance::items::point_name(name).to_owned()
+        } else if info.attachment_point == 0 {
+            "---".into()
+        } else {
+            info.attachment_point.to_string()
+        },
+        temporary = if info.temporary_attachment {
+            aurora_i18n::tr!("common-yes")
+        } else {
+            aurora_i18n::tr!("common-no")
+        }
+        .to_owned(),
+        observer = vector(&info.observer_position)
+    );
+    format!("{}\n{details}", script_report(&info.scripts))
 }
 
 #[cfg(test)]

@@ -2336,6 +2336,7 @@ ui-contacts-information = Informations
 ui-land-mod-information-and-settings-for-the-selected-parcel = Informations et réglages de la parcelle sélectionnée
 build-ui-tools-parcel-information = Informations sur la parcelle
 ui-context-script-information = Informations sur les scripts
+ui-context-object-information = Informations sur l’objet
 ui-place-details-info = Infos :
 world-profiles-payment-info-on-file = Infos de paiement enregistrées
 world-profiles-payment-info-used = Infos de paiement utilisées
@@ -3058,6 +3059,11 @@ ui-minimap-temporary-objects = Objets temporaires
 ui-options-commands-get-an-avatar-s-name-from-its-uuid = Obtenir le nom d'un avatar à partir de son UUID
 ui-options-occlusion = Occlusion
 ui-options-ambient-occlusion = Occlusion ambiante
+ui-options-ao-method = Méthode d'occlusion
+ui-options-ao-method-help = Legacy : l'occlusion à l'écran du Legacy Viewer (Basse / Haute au-dessus). GTAO : occlusion ambiante « ground truth », des ombres de contact plus fines dans les recoins, les plis et sous les objets, sans halo sombre
+ui-options-ao-legacy = Legacy
+ui-options-gtao-quality = Qualité GTAO
+ui-options-gtao-quality-help = Directions et échantillons par pixel : plus haut est plus lisse et coûte plus à la carte graphique (Basse travaille à demi-résolution)
 ui-perf-ambient-occlusion-reflections-water-mirrors-probes-screen-space-reflections = Occlusion ambiante, reflets (eau, miroirs, sondes), reflets écran
 build-ui-texture-occlude-water = Occulter eau
 build-ui-floaters-occlude-water = Occulter l'eau
@@ -4151,6 +4157,7 @@ ui-perf-render-thread = Thread de rendu
 ui-place-details-title = Titre :
 ui-contacts-titles = Titres
 ui-options-tone-mapping = Tone mapping
+ui-options-tone-mapping-classic-sky = Sans effet avec un ciel classique (ambiance des sondes à 0) : il n'est pas tone mappé
 common-torus = Tore
 ui-options-camera-press-m-or-zoom-into-your-avatar-s-head = Touche M, ou zoomer jusque dans la tête de l'avatar
 ui-options-practical-movement-key = Touche de déplacement
@@ -4171,6 +4178,8 @@ app-double-click-ground-set = Double-clic au sol : { $action }
 keybinds-orbit-clockwise = Tourner autour (sens horaire)
 keybinds-orbit-counterclockwise = Tourner autour (sens inverse)
 ui-options-camera-scroll-toward-yourself-to-leave-mouselook = Tourner la molette vers soi quitte la vue subjective
+ui-options-camera-alt-right-click-menu = Menu contextuel avec Alt + clic droit
+ui-options-camera-alt-right-click-menu-tip = En vue subjective, Alt + clic droit ouvre le menu contextuel. Un clic droit seul zoome tant qu'il est maintenu, et la molette règle ce zoom.
 ui-options-camera-show-how-to-leave = Indiquer comment en sortir
 ui-options-camera-show-how-to-leave-tip = « Appuyez sur Échap pour quitter la vue subjective » en bas de l'écran en vue subjective
 ui-options-camera-show-interface = Afficher l'interface en vue subjective
@@ -7909,6 +7918,33 @@ bridge-script-info-missing = L’objet n’est plus disponible ou se trouve hors
 bridge-script-info-result = Scripts de « { $name } » : { $running }/{ $total } en cours ; { $memory } Kio de mémoire allouée ; { $time } ms CPU. { $pathfinding }
 bridge-script-info-pathfinding = CPU du pathfinding : { $time } ms.
 bridge-script-info-failed = Informations sur les scripts indisponibles : { $reason }
+bridge-object-info-loading = Récupération des informations sur l’objet via le bridge Aurora…
+bridge-object-info-region = Les informations sur l’objet ne sont disponibles que pour un objet de votre région actuelle.
+bridge-object-info-failed = Informations sur l’objet indisponibles : { $reason }
+bridge-object-info-group-owned = Propriété d’un groupe
+bridge-object-info-result =
+    Informations sur l’objet « { $name } » :
+    UUID de l’objet : { $object }
+    Description : { $description }
+    Prim racine : { $root }
+    Nombre de prims : { $prims }
+    Impact terrain : { $impact }
+    Éléments d’inventaire : { $inventory }
+    Vitesse : { $velocity } m/s
+    Position : { $position } ({ $distance } m)
+    Rotation : { $rotation } ({ $degrees }°)
+    Vitesse angulaire : { $angular } rad/s
+    Créateur : { $creator }
+    Propriétaire : { $owner }
+    Propriétaire précédent : { $previous }
+    Rez par : { $rezzer }
+    Groupe : { $group }
+    Date de création : { $created }
+    Date de rez : { $rezzed }
+    Type de pathfinding : { $pathfinding }
+    Point d’attache : { $attachment }
+    Attachement temporaire : { $temporary }
+    Votre position actuelle : { $observer }
 bridge-query-timeout = Le bridge n’a pas répondu à la demande d’informations à temps. Réessayez.
 bridge-query-interrupted = La demande d’informations a été interrompue par un changement de région ou de connexion du bridge. Réessayez.
 ao-bootstrap-interrupted = Un import AO inachevé existe déjà dans #Aurora. Vérifiez-le dans l’inventaire avant de réessayer.

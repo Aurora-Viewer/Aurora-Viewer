@@ -15,6 +15,7 @@ pub mod demo;
 mod focus;
 pub(crate) mod follow;
 pub mod free;
+mod mouselook_zoom;
 mod settings;
 
 pub use focus::FocusObject;
@@ -237,6 +238,8 @@ pub struct Camera {
     seat: Option<Seat>,
     fov_zoom: f32,
     current_fov_zoom: f32,
+    /// The right button held in mouselook (`mouselook_zoom.rs`).
+    ml_zoom: mouselook_zoom::MouselookZoom,
     /// mCameraVirtualPositionAgent: camera target before the FOV push-out.
     virtual_position: Vec3,
     anim: Option<Animation>,
@@ -297,6 +300,7 @@ impl Default for Camera {
             seat: None,
             fov_zoom: 0.0,
             current_fov_zoom: 0.0,
+            ml_zoom: Default::default(),
             virtual_position: Vec3::ZERO,
             anim: None,
             smoothing_last_global: Vec3::ZERO,
@@ -438,6 +442,48 @@ impl Camera {
         } else {
             self.change_to_third_person(agent, s, true);
         }
+    }
+
+    /// The viewing angle before the FOV zoom: the held mouselook zoom's, or
+    /// the setting's (CameraAngle).
+    fn base_fov(&self, s: &CameraSettings) -> f32 {
+        match self.ml_zoom.angle() {
+            Some(angle) if self.mouselook() => angle,
+            _ => s.fov,
+        }
+    }
+
+    /// Right button down in mouselook (LLToolCompGun::handleRightMouseDown):
+    /// the remembered zoomed angle at once. `aspect`: the window's.
+    pub fn press_mouselook_zoom(&mut self, s: &CameraSettings, aspect: f32) {
+        if self.mouselook() {
+            self.ml_zoom.press(s.mouselook_zoom_fov, s.fov, aspect);
+        }
+    }
+
+    /// Wheel clicks (SL sign) while the zoom is held
+    /// (LLToolCompGun::handleScrollWheel); false when it is not.
+    pub fn scroll_mouselook_zoom(&mut self, clicks: f32, aspect: f32) -> bool {
+        self.mouselook() && self.ml_zoom.scroll(clicks, aspect)
+    }
+
+    /// Right button up (LLToolCompGun::handleRightMouseUp), or mouselook left
+    /// while it is held: the normal angle comes back, and the zoomed one is
+    /// remembered in `s` when the wheel set it. True when it was held.
+    pub fn release_mouselook_zoom(&mut self, s: &mut CameraSettings) -> bool {
+        match self.ml_zoom.release() {
+            Some(hold) => {
+                if hold.scrolled {
+                    s.mouselook_zoom_fov = Some(hold.angle);
+                }
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn mouselook_zoom_held(&self) -> bool {
+        self.ml_zoom.angle().is_some()
     }
 
     fn follow_rotation(&self, agent: &AgentState) -> Quat {
@@ -1171,7 +1217,7 @@ impl Camera {
             // the free camera's own view; the avatar's waits for its return
             self.position = free.position;
             self.target = free.target();
-            self.fov_y = s.fov / (1.0 + self.current_fov_zoom);
+            self.fov_y = self.base_fov(s) / (1.0 + self.current_fov_zoom);
             self.anim = None;
             return;
         }
@@ -1229,7 +1275,7 @@ impl Camera {
             self.smoothing_last_agent = camera_target - self.avatar.position;
             self.position = camera_target;
             self.target = focus_target;
-            self.fov_y = s.fov / (1.0 + self.current_fov_zoom);
+            self.fov_y = self.base_fov(s) / (1.0 + self.current_fov_zoom);
             return;
         }
 
@@ -1287,7 +1333,7 @@ impl Camera {
         self.current_fov_zoom += (self.fov_zoom - self.current_fov_zoom) * interpolant(FOV_ZOOM_HALF_LIFE, dt);
         self.position = camera;
         self.target = focus;
-        self.fov_y = s.fov / (1.0 + self.current_fov_zoom);
+        self.fov_y = self.base_fov(s) / (1.0 + self.current_fov_zoom);
     }
 
     /// While seated the agent frame turns with the seat (setupSitCamera,
@@ -2235,6 +2281,45 @@ mod tests {
         }
         assert!(cam.anim.is_none());
         assert!(cam.position.distance(Vec3::new(128.12, 128.0, 25.7)) < 0.01, "{:?}", cam.position);
+    }
+
+    #[test]
+    fn the_held_right_button_zooms_mouselook_at_once() {
+        // a viewing angle that is not the default 60°
+        let normal = 59.5f32.to_radians();
+        let mut s = CameraSettings {
+            fov: normal,
+            ..Default::default()
+        };
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let aspect = 16.0 / 9.0;
+        // outside mouselook the button does not zoom
+        cam.press_mouselook_zoom(&s, aspect);
+        assert!(!cam.mouselook_zoom_held());
+        cam.change_to_mouselook(&mut w.agent, &s, false);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        // a right click without the wheel changes nothing, then or after
+        cam.press_mouselook_zoom(&s, aspect);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert_eq!(cam.fov_y, normal);
+        assert!(cam.release_mouselook_zoom(&mut s));
+        assert_eq!(s.mouselook_zoom_fov, None);
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert_eq!(cam.fov_y, normal);
+        // the wheel while held: at once, remembered, the normal angle exact after
+        cam.press_mouselook_zoom(&s, aspect);
+        assert!(cam.scroll_mouselook_zoom(-3.0, aspect));
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!((cam.fov_y - (normal - 0.3)).abs() < 1e-5, "instant: {}", cam.fov_y);
+        assert!(cam.release_mouselook_zoom(&mut s));
+        assert!((s.mouselook_zoom_fov.unwrap() - (normal - 0.3)).abs() < 1e-5);
+        assert_eq!(s.fov, normal, "the normal angle is never written");
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert_eq!(cam.fov_y, normal);
+        // without the button the wheel is the usual one
+        assert!(!cam.scroll_mouselook_zoom(1.0, aspect));
     }
 
     #[test]

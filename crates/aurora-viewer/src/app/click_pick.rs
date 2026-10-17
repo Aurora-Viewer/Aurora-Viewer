@@ -56,6 +56,9 @@ pub(super) enum Click {
     World,
     /// Right click: the menu of what is under the cursor.
     Menu,
+    /// Left press in mouselook that no script took: touch at the crosshair
+    /// (app/script_clicks.rs).
+    Gun,
 }
 
 /// What follows a click that waits for its depth, kept in order.
@@ -232,7 +235,10 @@ impl App {
         match button {
             MouseButton::Right => self.on_right_button(pressed, over_ui),
             MouseButton::Left if pressed => {
-                if !over_ui && self.in_world() && !self.camera.mouselook() {
+                if !over_ui && self.in_world() && self.camera.mouselook() {
+                    self.double_click.reset();
+                    self.mouselook_press();
+                } else if !over_ui && self.in_world() && !self.camera.mouselook() {
                     if self.beacon_hover() {
                         self.world.map.clear_track();
                         self.beacon_hit = None;
@@ -286,6 +292,7 @@ impl App {
             }
             Click::World => self.world_press(),
             Click::Menu => self.world_menu(),
+            Click::Gun => self.gun_press(),
         }
         self.clicks.running = None;
     }

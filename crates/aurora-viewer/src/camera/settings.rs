@@ -92,6 +92,13 @@ pub struct CameraSettings {
     pub enable_mouselook: bool,
     /// FSScrollWheelExitsMouselook.
     pub wheel_exits_mouselook: bool,
+    /// The angle of the right-button zoom in mouselook, remembered from one
+    /// hold to the next (`_NACL_MLFovValues` y; mouselook_zoom.rs); none
+    /// until the wheel set one, the hold then keeping the normal angle.
+    pub mouselook_zoom_fov: Option<f32>,
+    /// FSEnableRightclickMenuInMouselook: Alt + right click opens the
+    /// context menu in mouselook (otherwise the right button only zooms).
+    pub mouselook_alt_right_menu: bool,
     /// FSShowMouselookInstructions: "Press Esc to return to world view".
     pub show_mouselook_instructions: bool,
     /// FSShowInterfaceInMouselook (FIRE-8868, off): the bars stay in
@@ -125,6 +132,9 @@ impl Default for CameraSettings {
             track_focus_object: true,
             enable_mouselook: true,
             wheel_exits_mouselook: true,
+            // no zoom until the wheel is turned once while the button is held
+            mouselook_zoom_fov: None,
+            mouselook_alt_right_menu: false,
             show_mouselook_instructions: true,
             show_interface_in_mouselook: false,
         }
@@ -188,6 +198,7 @@ impl CameraSettings {
         let fix = |v: f32, lo: f32, hi: f32, def: f32| if v.is_finite() { v.clamp(lo, hi) } else { def };
         self.offset_scale = fix(self.offset_scale, 0.5, 3.0, d.offset_scale);
         self.fov = fix(self.fov, *FOV_RANGE.start(), *FOV_RANGE.end(), d.fov);
+        self.mouselook_zoom_fov = super::mouselook_zoom::sanitize(self.mouselook_zoom_fov);
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, 0.0, 9.0, d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);

@@ -61,6 +61,7 @@ mod plate_click;
 mod region_restart;
 mod report_abuse;
 mod reset_skeleton;
+mod script_clicks;
 mod scripts;
 mod shape_editor;
 mod snapshot;
@@ -151,6 +152,9 @@ const NUDGE_TIME: f32 = 0.25;
 /// steering with the left button (rad/s).
 const STEER_TURN_RATE: f32 = 9.0;
 const FLY_TIME: f32 = 0.5;
+/// Radians: a change of the viewing angle below this is not sent in AgentFOV
+/// (an eased FOV zoom creeps toward its target for ever).
+const FOV_SEND_EPSILON: f32 = 1e-3;
 
 struct LogoData {
     ui: egui::ColorImage,
@@ -235,6 +239,8 @@ pub struct App {
     prev_dt: f32,
     start: Instant,
     right_drag: bool,
+    /// The camera's vertical angle last sent in AgentFOV.
+    sent_fov: f32,
     /// The system cursor hidden and locked by mouselook or a camera drag.
     cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
@@ -244,6 +250,7 @@ pub struct App {
     left_down: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
+    script_clicks: script_clicks::ScriptClicks,
     /// Displacement while the right button is held (click vs orbit drag).
     right_gesture: RightGesture,
     /// Open right-click menu.
@@ -826,12 +833,14 @@ impl App {
             prev_dt: 0.0,
             start: Instant::now(),
             right_drag: false,
+            sent_fov: crate::camera::DEFAULT_FOV,
             cursor_hold: Default::default(),
             numeric_drag: Default::default(),
             text_menu: Default::default(),
             alt: false,
             left_down: false,
             clicks: Default::default(),
+            script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
             context_menu: None,
             mouse_mode: MouseMode::None,
@@ -2027,7 +2036,7 @@ impl App {
                         self.world.inventory.remove(&reply.removed);
                         self.world.inventory.apply(reply.contents);
                     }
-                    Err(reason) => log::warn!("refused inventory offer not moved to the Trash: {reason}"),
+                    Err(reason) => log::warn!("background inventory change not saved: {reason}"),
                 }
                 return;
             }
@@ -2616,14 +2625,7 @@ impl App {
                     }
                 }
                 Step::ToggleMouselook => self.toggle_mouselook(),
-                Step::Wheel(clicks) => {
-                    let was = self.camera.mouselook();
-                    self.camera
-                        .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
-                    if was != self.camera.mouselook() {
-                        self.set_mouselook_grab(!was);
-                    }
-                }
+                Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
                 Step::FollowEvents => {
                     if let Some(handle) = self.world.main_region {
@@ -3044,8 +3046,9 @@ impl App {
             self.activate_object_action_at(target, d.idx, d.hit.point, ray, surface);
             return;
         }
-        if !on_avatar
-            && shown.is_none()
+        // a prim we wear takes the click before our avatar does
+        // (LLToolPie::handleLeftClickPick: touchable first, then the avatar)
+        if shown.is_none()
             && !alt
             && !self.ctrl
             && !self.shift
@@ -3054,6 +3057,7 @@ impl App {
             && let Some(point) = hit
             && let Some(pick_ray) = ray
             && let Some(idx) = self.scene.interaction_at_ray(&self.world, point, pick_ray, true)
+            && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
             self.activate_object_action(target, idx, point, ray);
@@ -3101,6 +3105,9 @@ impl App {
             // a double click on the ground, or on an object without a click
             // action (which took the press above): walk_to / teleport_to
             self.double_click_ground(point);
+        } else if !self.build.open {
+            // a press nothing took (scanMouse): scripts that took the button hear it
+            self.script_click_down((control::LBUTTON_DOWN, control::LBUTTON_UP));
         }
     }
 
@@ -4362,6 +4369,9 @@ impl App {
         if self.hud_drag.is_some() {
             return;
         }
+        if self.mouselook_right_button(pressed, over_ui) {
+            return;
+        }
         let was_drag = self.right_drag;
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if self.mouse_walks() {
@@ -4375,6 +4385,66 @@ impl App {
             // a click (no drag): context menu
             self.open_context_menu();
         }
+    }
+
+    /// The right button in mouselook (LLToolCompGun::handleRightMouseDown /
+    /// Up): held, it zooms; Alt + right click goes on to the context menu
+    /// only with FSEnableRightclickMenuInMouselook. True when it is handled.
+    fn mouselook_right_button(&mut self, pressed: bool, over_ui: bool) -> bool {
+        if pressed {
+            if !self.camera.mouselook() || over_ui || !self.in_world() {
+                return false;
+            }
+            if !self.alt {
+                let aspect = self.view_aspect();
+                self.camera.press_mouselook_zoom(&self.settings.camera, aspect);
+                return true;
+            }
+            return !self.settings.camera.mouselook_alt_right_menu;
+        }
+        let handled = self.end_mouselook_zoom() || (self.camera.mouselook() && !self.settings.camera.mouselook_alt_right_menu);
+        if handled {
+            // a press from before mouselook ends here too, with no menu
+            self.right_drag = false;
+        }
+        handled
+    }
+
+    /// The held mouselook zoom ends: its angle is remembered (saved with the
+    /// settings when it changed). True when it was held.
+    fn end_mouselook_zoom(&mut self) -> bool {
+        let before = self.settings.camera.mouselook_zoom_fov;
+        if !self.camera.release_mouselook_zoom(&mut self.settings.camera) {
+            return false;
+        }
+        if self.settings.camera.mouselook_zoom_fov != before && !self.demo {
+            self.settings.save();
+        }
+        true
+    }
+
+    /// Wheel clicks on the world (SL sign: positive zooms out): the held
+    /// mouselook zoom's angle, or the camera's own use of the wheel.
+    fn camera_wheel(&mut self, clicks: f32) {
+        let aspect = self.view_aspect();
+        if self.camera.scroll_mouselook_zoom(clicks, aspect) {
+            return;
+        }
+        let was = self.camera.mouselook();
+        self.camera
+            .scroll(clicks, self.ctrl, self.shift, &mut self.world.agent, &mut self.settings.camera);
+        if was != self.camera.mouselook() {
+            self.set_mouselook_grab(!was);
+        }
+    }
+
+    /// Width over height of the world view (the camera's limits on its
+    /// viewing angle depend on it).
+    fn view_aspect(&self) -> f32 {
+        self.gfx.as_ref().map_or(16.0 / 9.0, |g| {
+            let (w, h) = g.renderer.size();
+            w as f32 / h.max(1) as f32
+        })
     }
 
     fn on_left_release(&mut self) {
@@ -4397,6 +4467,7 @@ impl App {
             self.send(NetCommand::Build(cmd));
         }
         self.release_object_hold();
+        self.script_click_up();
         self.left_down = false;
         self.build.mouse_up(&mut self.world, &self.settings.build);
         self.flush_build();
@@ -5392,7 +5463,7 @@ impl App {
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
             }
-            // refused offers: to the Trash, whatever the inventory window does
+            // Background inventory changes, whatever the inventory window does.
             self.update_marketplace_listings();
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
@@ -5505,6 +5576,11 @@ impl App {
             {
                 self.world.agent.follow_seat(p);
             }
+            // mouselook left with the zoom still held (Escape, M, a seat):
+            // the normal angle comes back, the zoomed one is remembered
+            if !self.camera.mouselook() && self.camera.mouselook_zoom_held() {
+                self.end_mouselook_zoom();
+            }
             let frame = crate::camera::FrameInput {
                 dt,
                 now: Instant::now(),
@@ -5548,6 +5624,8 @@ impl App {
             if self.world.status.away {
                 c.control_flags |= control::AWAY;
             }
+            // send_agent_update: Alt or Ctrl turns script clicks into releases
+            c.alt_or_ctrl = self.alt || self.ctrl;
             // diagnostic: vertical controls sent to the simulator
             let vertical = c.control_flags & (control::UP_POS | control::UP_NEG | control::FLY);
             if vertical != self.last_vertical_flags {
@@ -5745,6 +5823,12 @@ impl App {
             let camera_changed = edit_camera_frame.is_some() || panned;
             if let Some(frame) = edit_camera_frame {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
+            // every change of the viewing angle goes to the simulator, as
+            // LLViewerCamera::setView (the end of a zoom's easing excepted)
+            if (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
+                self.sent_fov = self.camera.fov_y;
+                self.net.send(NetCommand::SetFov(self.sent_fov));
             }
             if camera_changed {
                 view = self.camera.view();
@@ -6110,6 +6194,7 @@ impl App {
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
         let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        self.options_ui.sky_tone_mapped = !env.sky.no_post;
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
             let key = {
@@ -10934,6 +11019,7 @@ impl ApplicationHandler for App {
                     self.options_ui.ask_reset_section();
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
+                    self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
@@ -12693,12 +12779,7 @@ impl ApplicationHandler for App {
                 // avatar's view behind it, or enter mouselook)
                 if !on_media && self.camera.free().is_none() {
                     // SL wheel clicks: positive zooms out
-                    let was = self.camera.mouselook();
-                    self.camera
-                        .scroll(-steps, self.ctrl, self.shift, &mut self.world.agent, &mut self.settings.camera);
-                    if was != self.camera.mouselook() {
-                        self.set_mouselook_grab(!was);
-                    }
+                    self.camera_wheel(-steps);
                 }
             }
             _ => {}

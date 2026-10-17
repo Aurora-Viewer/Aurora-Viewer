@@ -395,6 +395,8 @@ struct Period {
     gpu: [f32; GPU],
     /// Depth prepasses alone: single-sample, multisampled.
     gpu_depth: [f32; 2],
+    /// The ambient occlusion alone (inside g_effects).
+    gpu_ssao: f32,
     gpu_frames: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
@@ -590,6 +592,7 @@ impl FrameProfile {
         if let Some(d) = render.gpu_depth {
             add(&mut p.gpu_depth, &d);
         }
+        p.gpu_ssao += render.gpu_ssao.unwrap_or(0.0);
         p.draws += render.draws as u64;
         p.blend_triangles += render.blend_triangles;
         p.blend_early += render.blend_early_discard as u32;
@@ -826,6 +829,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     }
     // with MSAA, the prepass of the multisampled depth (inside g_shadows_depth too)
     let _ = write!(out, " g_depth_msaa={:.3}", p.gpu_depth[1] / gpu_n);
+    // the ambient occlusion alone (inside g_effects)
+    let _ = write!(out, " g_ssao={:.3}", p.gpu_ssao / gpu_n);
     let _ = write!(out, " | shadow_path={}", aurora_render::shadow_cull::path_name(p.shadow_path));
     for (key, by_cascade, unit) in [
         ("sd", p.shadow[0], 1.0),
@@ -946,7 +951,7 @@ mod tests {
         assert!(l.starts_with("fps=51.0 frame=19.61"), "{l}");
         assert!(l.contains(" calls=40 "), "{l}");
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
-        assert!(l.contains(" g_depth=0.000 g_depth_msaa=0.000 | shadow_path="), "{l}");
+        assert!(l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 | shadow_path="), "{l}");
         assert!(l.contains(" synced=30 anchored=7 "), "{l}");
         assert!(l.contains(" posed=2.0 "), "{l}");
         assert!(l.contains(" records_kb=2.0 "), "{l}");

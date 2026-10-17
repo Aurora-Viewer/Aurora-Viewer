@@ -188,6 +188,12 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inventor
                 "ui-inventory-controls-case-insensitive-search-combines-terms-quotes-search-for-an"
             ));
     });
+    if searching && st.search.trim().is_empty() {
+        // The plain list shares its scroll area with the results: it goes back
+        // to its place from before the search, unless a selection it shows is
+        // revealed below (that reveal's offset wins).
+        st.plain_scroll_restore = Some(st.plain_scroll);
+    }
     if searching
         && st.search.trim().is_empty()
         && let Some(id) = st.selected.filter(|id| st.selection.contains(id))

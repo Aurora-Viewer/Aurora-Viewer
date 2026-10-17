@@ -328,7 +328,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -336,7 +336,14 @@ when unfocused") is ignored during a screenshot.
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
-  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
+  world view" above the bottom bar); `ml-zoom`: the right button held in
+  mouselook at 640 (the normal angle stays: no zoom was set with the wheel
+  yet), 3 wheel clicks in at 650 (`fov` in the log drops by 17.2° at once),
+  released at 680 (the normal angle again, exactly), held again at 720 (the
+  zoom at once), released at 760, a wheel click out at 800 (leaves mouselook);
+  `ml-zoom-alt`: Alt + right click in mouselook at 640, no context menu
+  unless Preferences › Camera › Mouselook › "Context menu with Alt + right
+  click" is on; wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
@@ -553,7 +560,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
-| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks and other residents' scripted attachments |
+| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
@@ -565,7 +572,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=on\|off\|moving\|seated\|error\|timeout\|endpoint` | Aurora bridge creation, confirmed position lock, movement/sitting pause and simulated failure |
-| `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|error` | Bridge altitude correction and object script-information local reports |
+| `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending` | Movement options, local swimming poses and synthetic passage feedback |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
@@ -573,7 +580,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
@@ -584,7 +591,16 @@ Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
 `worn-prim` and `worn-mesh` put a scripted attachment on another resident,
 without move/modify rights; both must log `demo touch_start: prim=975` and
 `demo touch_end: prim=975`, with `held=false` in the final result. The mesh
-scenario installs the existing synthetic skinned mesh locally. All scenarios
+scenario installs the existing synthetic skinned mesh locally. `worn-own`
+wears a scripted prim on our own chest (issue #488): the press must touch it
+(`demo server: ObjectGrab 975`) instead of turning to our avatar.
+`mouselook-gun` makes a script take the mouselook button
+(ScriptControlChange) and enters mouselook: the press and release send only
+`demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
+enters mouselook with nothing taken and puts a touchable panel under the
+crosshair: `click bits 0x10000000`, `ObjectGrab 975`, `click bits
+0x20000000`. `ground` presses the floor beside the avatar: `click bits
+0x10000000` then `0x20000000` (a click nothing takes). All scenarios
 write `demo world click` / `demo world click result`; the camera's final
 focus can be compared with the visible cube/pane. Use the usual `blend-zero`,
 `mask-zero`, invisible build/menu and HUD scenarios for neighbouring behavior.
@@ -1342,7 +1358,7 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
-| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]` | Classic EEP sky with this gamma |
+| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]` | EEP sky with this gamma, classic unless it has a probe ambiance |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
@@ -1441,6 +1457,13 @@ To check with these scenarios:
   `AURORA_DEMO_SKY=1.62,0.8,1.1` and `AURORA_DEMO_PBR_OVERRIDE=1`, the surround
   of each bump of the slabs must be darkened by ambient occlusion, and no
   longer be once ambient occlusion is turned off in the settings.
+  `probe ambiance`: the sky's reflection probe ambiance; above 0 the sky is
+  no longer classic and is tone mapped. With `AURORA_DEMO_SKY=1,0.8,0.25,0.6`,
+  `AURORA_DEMO_TOD=0` (the region's sky, not a saved preset) and
+  `AURORA_DEMO_OPTIONS=0:tonemap` (Graphics, scrolled to the row), the Tone
+  mapping choice is enabled;
+  World › Environment › Midday (a classic sky in the demo) greys it, with its
+  tooltip, and "Use shared environment" enables it again.
 - **`AURORA_DEMO_SKY_OPTICS=rainbow|halo|clear`**: the region's sky carries a
   moisture level of 1 (`rainbow`, sun 12° up in the west) or an ice level of
   1 (`halo`, sun 14° up in the east), and the camera looks east from behind
@@ -2313,7 +2336,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
   check that hiding world indicators leaves the call's controls intact.
 - **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
-  jump to the corresponding Sound and voice card for offline captures. Changes
+  jump to the corresponding Sound and voice card for offline captures;
+  `0:tonemap` opens Graphics scrolled to the Tone mapping row. Changes
   apply live, persist, and reset with the audio page. The microphone popup
   exposes camera/avatar ears and all five noise levels; its processing shortcut
   opens the same card. `AURORA_DEMO_VOICE=cycle` exercises the world indicators
@@ -3786,6 +3810,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
+| `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3870,6 +3895,23 @@ What the inventory must show with these scenarios:
   three, without `AURORA_PROFILE`, to see the difference
   (`AURORA_DEMO_PBR_METAL=1`: the cube left of the spheres turns from dark
   with bright discs to an even mirror).
+- **`AURORA_AO=legacy|gtao|alt[:<0-3>]`**: the ambient occlusion method of
+  Preferences › Graphics for this launch, without changing the saved
+  setting: `legacy` the Legacy Viewer's screen-space occlusion
+  (ssao.wgsl), `gtao` ground-truth ambient occlusion (gtao.rs, after
+  Intel's XeGTAO), `alt` the two by turns, one second each, both kept
+  ready (GTAO on odd seconds). `:0` to `:3` choose GTAO's quality (low at
+  half resolution, medium, high, ultra); without it, that of the settings
+  (high when they choose Legacy). The occlusion still needs the setting on
+  (Ambient occlusion: Low or High). To compare, `AURORA_DEMO_DEBUG=ao`
+  shows the occlusion alone: the Legacy one is soft with wide halos and
+  the relief of normal maps, GTAO's is sharp in the folds of the avatars,
+  under objects and in corners. On classic skies the shading only lets the
+  occlusion darken the ambient part of the light (adjustIrradiance), so the
+  image itself changes little; on other skies it darkens the whole ambient
+  light. `g_ssao` of `perf summary` is its GPU time (demo crowd of 40,
+  2560 × 1369, RTX 4090: Legacy low about 0.08 to 0.15 ms, GTAO low 0.10,
+  medium 0.24, high 0.31, ultra 0.57 ms).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
@@ -4405,6 +4447,8 @@ thread.
   - `g_depth_msaa`: with MSAA, the prepass of the multisampled depth from
     which the scene pass starts (0 outside MSAA), also counted in
     `g_shadows_depth`;
+  - `g_ssao`: the ambient occlusion alone, Legacy or GTAO (`AURORA_AO`),
+    also counted in `g_effects`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn
@@ -4743,7 +4787,7 @@ Surface-return follow-up: regressions compare automatic entry with an actual und
 Gentler surface-return follow-up (bridge 1.19): actual-LSL evaluation covers command caps at selected speeds 0.5/1/2/5/8 m/s, the 1.5 m/s-per-second vertical command ramp, smaller goals near flotation, bounded goals that still converge, and release/mode-switch/Movelock resets. Its deterministic position tracker is not Havok and cannot establish real acceleration or smoothness. Existing water/gesture/watchdog/ownership, accepted run, remote-anchor and quiet discovery checks remain covered. Human follow-up is the same fall and short underwater ascent tap: the lift should start gently and slow before reaching the configured flotation height; up/down interruption remains available. The viewer must install the compatible 1.19 script into the existing bridge.
 
 
-**`AURORA_DEMO_BRIDGE_QUERY=radar|scripts|error`** — authenticated read-only bridge services (1.20). Set `AURORA_DEMO=1` and use the usual automated-window title/border. The scenario provisions the real offline factory; all BridgeQuery commands receive synthetic replies without using a network endpoint. `radar` adds Sky Visitor with an unknown coarse altitude (1020 m), opens People / Nearby and returns 2048 m through the bridge service; its displayed distance must become approximately 2 km. Known native/coarse heights remain authoritative and are not queried. The demo opens the real radar options to inspect the simple correction toggle without diagnostic counters. `scripts` asks for a demo object at frame 700; local chat must show 12/17 running scripts, 1088 KiB allocated memory, 1.250 ms CPU and 0.200 ms pathfinding (localized decimal separators). `error` produces a safe missing/unavailable-object report rather than a raw HTTP body or private address. Capture at frame 1050 or later, after the factory save/reattach delay. These fixtures cover UI and dispatch, not the real LSL runtime.
+**`AURORA_DEMO_BRIDGE_QUERY=radar|scripts|object|error`** — authenticated read-only bridge services (1.21). Set `AURORA_DEMO=1` and use the usual automated-window title/border. The scenario provisions the real offline factory; all BridgeQuery commands receive synthetic replies without using a network endpoint. `radar` adds Sky Visitor with an unknown coarse altitude (1020 m), opens People / Nearby and returns 2048 m through the bridge service; its displayed distance must become approximately 2 km. Known native/coarse heights remain authoritative and are not queried. The demo opens the real radar options to inspect the simple correction toggle without diagnostic counters. `scripts` asks for a demo object at frame 700; local chat must show 12/17 running scripts, 1088 KiB allocated memory, 1.250 ms CPU and 0.200 ms pathfinding (localized decimal separators). `object` dispatches the real Object information context action at frame 700 and reports the basic script summary followed by all extended object fields (three prims, land impact two, nineteen inventory items, four-metre distance, identity links, UTC timestamps and attachment status), without changing a preference. `error` produces a safe missing/unavailable-object report rather than a raw HTTP body or private address. Capture at frame 1050 or later, after the factory save/reattach delay. These fixtures cover UI and dispatch, not the real LSL runtime.
 
 Read-only bridge unit coverage includes batch/rate limits and fair coverage of a 320-avatar crowd, partial/empty results, strict requested-UUID/numeric/name decoding, known-position priority, fourteen-second expiry, region/session/teleport cleanup, disabled correction, inspection priority/provisioning/timeouts and stale replies. A failed current query triggers only quiet throttled discovery, preserving the confirmed lock and in-flight motor command; obsolete replies cannot initiate recovery. The actual shipped LSL query/auth control flow is also evaluated with deterministic API stubs for bounded requests, token rejection, unavailable targets, unusual names and metric units, asserting no writes to motor globals, sequencing or watchdog. Existing run/water/passage/discovery regression evaluators still apply; this is not a simulator/Havok test.
 

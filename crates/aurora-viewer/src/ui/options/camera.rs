@@ -248,6 +248,13 @@ pub(super) fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset_view:
         changed |= row(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-camera-alt-right-click-menu"),
+            aurora_i18n::tr!("ui-options-camera-alt-right-click-menu-tip"),
+            |ui| toggle(ui, p, &mut c.mouselook_alt_right_menu),
+        );
+        changed |= row(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-camera-exit-with-mouse-wheel"),
             aurora_i18n::tr!("ui-options-camera-scroll-toward-yourself-to-leave-mouselook"),
             |ui| toggle(ui, p, &mut c.wheel_exits_mouselook),

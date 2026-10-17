@@ -610,8 +610,14 @@ pub struct Settings {
     pub max_particles: u32,
     /// Avatars drawn (the nearest ones).
     pub max_avatars: u32,
-    /// Ambient occlusion: 0 off, 1 low, 2 high.
+    /// Ambient occlusion: 0 off, 1 low, 2 high (the levels of the Legacy
+    /// method).
     pub ssao: u8,
+    /// How the ambient occlusion is computed: 0 Legacy (the Legacy Viewer's
+    /// screen-space occlusion), 1 GTAO.
+    pub ao_method: u8,
+    /// GTAO quality: 0 low, 1 medium, 2 high, 3 ultra.
+    pub gtao_quality: u8,
     /// Water reflections: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
     pub water_reflections: u8,
     /// Mirrors: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
@@ -700,7 +706,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 17;
+const SETTINGS_VERSION: u32 = 18;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1119,6 +1125,8 @@ impl Default for Settings {
             max_particles: 4096,
             max_avatars: 16,
             ssao: 1,
+            ao_method: 0,
+            gtao_quality: 2,
             water_reflections: 1,
             reflection_probes: 3,
             probe_count: 32,
@@ -1486,6 +1494,11 @@ impl Settings {
             // (every file wrote the old "off")
             self.chat_keep_focus = true;
         }
+        if self.settings_version < 18 {
+            // Deluxe now takes GTAO: a profile still exactly on the former
+            // Deluxe follows it, any other keeps its occlusion
+            crate::graphics_presets::upgrade_deluxe(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1509,6 +1522,8 @@ impl Settings {
         self.render_exceptions
             .retain(|(id, m)| uuid::Uuid::parse_str(id).is_ok() && (1..=2).contains(m));
         self.ssao = self.ssao.min(2);
+        self.ao_method = self.ao_method.min(1);
+        self.gtao_quality = self.gtao_quality.min(3);
         self.water_reflections = self.water_reflections.min(4);
         self.mirrors = self.mirrors.min(4);
         self.anisotropy = match self.anisotropy {
@@ -1673,7 +1688,7 @@ impl Settings {
     }
 
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
-        use aurora_render::{AntiAliasing, Tonemapper};
+        use aurora_render::{AntiAliasing, AoMethod, Tonemapper};
         aurora_render::RenderSettings {
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
@@ -1691,6 +1706,13 @@ impl Settings {
             },
             shadow_resolution: self.shadow_params().0,
             ssao: self.ssao,
+            ao_method: if self.ao_method == 1 {
+                AoMethod::Gtao {
+                    quality: self.gtao_quality,
+                }
+            } else {
+                AoMethod::Legacy
+            },
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 64),
@@ -1881,6 +1903,24 @@ mod tests {
 
     /// The chat bar keeps the keyboard by default, earlier files get it once
     /// (they all wrote the old "off"), a later choice stays.
+    #[test]
+    fn a_file_on_the_former_deluxe_moves_to_gtao_once() {
+        use crate::graphics_presets::Preset;
+        let mut old = Settings {
+            settings_version: 17,
+            ..Settings::default()
+        };
+        Preset::Deluxe.apply(&mut old);
+        old.ao_method = 0;
+        let now = old.sanitized();
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
+        // chosen after the change: kept
+        let mut chosen = Settings::default();
+        Preset::Deluxe.apply(&mut chosen);
+        chosen.ao_method = 0;
+        assert_eq!(chosen.sanitized().ao_method, 0);
+    }
+
     #[test]
     fn chat_bar_keeps_focus_by_default_and_once_for_earlier_files() {
         assert!(Settings::default().sanitized().chat_keep_focus);

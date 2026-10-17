@@ -53,6 +53,8 @@ impl Held {
             shadow_quality,
             projector_shadows,
             ssao,
+            ao_method,
+            gtao_quality,
             water_reflections,
             mirrors,
             ssr,
