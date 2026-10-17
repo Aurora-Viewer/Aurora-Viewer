@@ -729,7 +729,7 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 20;
+const SETTINGS_VERSION: u32 = 21;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1541,6 +1541,13 @@ impl Settings {
             crate::graphics_presets::upgrade_deluxe_experimental(&mut self);
             crate::graphics_presets::upgrade_high_gtao(&mut self);
         }
+        if self.settings_version < 21 {
+            // the levels of 2026-10-17 (GTAO from Medium up, contact shadows
+            // in High and Deluxe, indirect light and 192 m in Deluxe): a
+            // profile still exactly on the Medium, High or Deluxe of version
+            // 20 follows it, any other keeps its values
+            crate::graphics_presets::upgrade_levels_v21(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1960,20 +1967,18 @@ mod tests {
     /// (they all wrote the old "off"), a later choice stays.
     #[test]
     fn a_file_on_the_former_deluxe_moves_to_gtao_once() {
-        use crate::graphics_presets::Preset;
+        use crate::graphics_presets::{Preset, deluxe_v18};
         let mut old = Settings {
             settings_version: 17,
             ..Settings::default()
         };
-        Preset::Deluxe.apply(&mut old);
         // the Deluxe of then: Legacy occlusion, none of the later effects
+        deluxe_v18().write(&mut old);
         old.ao_method = 0;
-        old.bloom = false;
-        old.contact_shadows = false;
-        old.screen_indirect_light = false;
         let now = old.sanitized();
-        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
+        // straight to the Deluxe of now
         assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 3));
         // chosen after the change: kept
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -1983,19 +1988,16 @@ mod tests {
 
     #[test]
     fn a_file_on_the_deluxe_of_version_18_takes_the_new_effects_once() {
-        use crate::graphics_presets::Preset;
+        use crate::graphics_presets::{Preset, deluxe_v18};
         let mut old = Settings {
             settings_version: 18,
             ..Settings::default()
         };
-        Preset::Deluxe.apply(&mut old);
-        old.bloom = false;
-        old.contact_shadows = false;
-        old.screen_indirect_light = false;
+        deluxe_v18().write(&mut old);
         let now = old.sanitized();
-        // through version 19 to the Deluxe of now: the contact shadows, the
-        // experimental bloom and indirect light off
-        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        // through version 19 to the Deluxe of now: the contact shadows and
+        // the indirect light, the experimental bloom off
+        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
         assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
         // turned off after the change: kept off
         let mut chosen = Settings::default();
@@ -2006,16 +2008,15 @@ mod tests {
 
     #[test]
     fn a_file_on_the_deluxe_of_version_19_turns_the_experimental_effects_off_once() {
-        use crate::graphics_presets::Preset;
+        use crate::graphics_presets::{Preset, deluxe_v19};
         let mut old = Settings {
             settings_version: 19,
             ..Settings::default()
         };
-        Preset::Deluxe.apply(&mut old);
-        old.bloom = true;
-        old.screen_indirect_light = true;
+        deluxe_v19().write(&mut old);
         let now = old.sanitized();
-        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        // to the Deluxe of now: the bloom off, the indirect light on again
+        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
         assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
         // turned on again after the change: kept on
         let mut chosen = Settings::default();
@@ -2028,22 +2029,51 @@ mod tests {
 
     #[test]
     fn a_file_on_the_high_of_version_19_moves_to_gtao_medium_once() {
-        use crate::graphics_presets::Preset;
+        use crate::graphics_presets::{Preset, high_v19};
         let mut old = Settings {
             settings_version: 19,
             ..Settings::default()
         };
-        Preset::High.apply(&mut old);
-        old.ao_method = 0;
-        old.gtao_quality = 2;
+        high_v19().write(&mut old);
         let now = old.sanitized();
-        assert_eq!((now.ao_method, now.gtao_quality), (1, 1));
+        // through version 20 to the High of now
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
+        assert!(now.contact_shadows);
         assert_eq!(Preset::matching(&now), Some(Preset::High));
         // the Legacy method chosen after the change: kept
         let mut chosen = Settings::default();
         Preset::High.apply(&mut chosen);
         chosen.ao_method = 0;
         assert_eq!(chosen.sanitized().ao_method, 0);
+    }
+
+    #[test]
+    fn files_on_the_levels_of_version_20_follow_the_levels_of_now_once() {
+        use crate::graphics_presets::{Preset, deluxe_v20, high_v20, medium_v20};
+        for (former, preset) in [
+            (medium_v20(), Preset::Medium),
+            (high_v20(), Preset::High),
+            (deluxe_v20(), Preset::Deluxe),
+        ] {
+            let mut old = Settings {
+                settings_version: 20,
+                ..Settings::default()
+            };
+            former.write(&mut old);
+            assert_eq!(Preset::matching(&old), None, "{preset:?}");
+            let now = old.sanitized();
+            assert_eq!(Preset::matching(&now), Some(preset));
+            // customized on that level: kept
+            let mut custom = Settings {
+                settings_version: 20,
+                ..Settings::default()
+            };
+            former.write(&mut custom);
+            custom.max_particles = 1024;
+            let before = (custom.ssao, custom.gtao_quality, custom.draw_distance);
+            let kept = custom.sanitized();
+            assert_eq!((kept.ssao, kept.gtao_quality, kept.draw_distance), before);
+        }
     }
 
     #[test]
