@@ -12,7 +12,9 @@ mod header;
 pub mod history;
 mod input_history;
 mod invite_card;
+mod line_menu;
 mod members;
+mod reorder;
 pub(crate) mod select;
 mod sidebar;
 mod stage;
@@ -67,6 +69,10 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV_MENU=local|im|group|conference`: the conversation
     /// of the list whose right-click menu the demo opens.
     pub demo_menu: Option<String>,
+    /// Explicit offline pointer fixture for conversation rearrangement.
+    pub demo_reorder: bool,
+    /// Presentation order of currently open conversations, shared by all styles.
+    reorder: reorder::State,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
     /// Textures the conversation wants by id (the groups' insignias), drawn
@@ -933,8 +939,12 @@ fn web_target(url: &str) -> Cow<'_, str> {
 
 /// Right click on the sender of a chat line: the name menu, its report on
 /// the line.
-fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine) {
-    super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    if let Some(menu) = menu {
+        line_menu::sender(r, menu, id, line);
+    } else {
+        super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+    }
 }
 
 /// Right click on an avatar name in a conversation (menu_url_agent.xml).
@@ -1514,6 +1524,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             None => (None, w.chat_clock),
         },
     };
+    let menu = ui.layer_id().id.with(("chat_line_menu", st.selected));
     let mut env = LineEnv {
         p,
         icons,
@@ -1524,6 +1535,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         wanted: &mut st.wanted_pics,
         own_name,
         plain_history: false,
+        menu: Some(menu),
         bubbles: match rows {
             Rows::Classic(style) => style,
             Rows::Thread(_) => None,
@@ -1591,9 +1603,9 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
-            if let Rows::Thread(th) = &mut rows {
+            if matches!(rows, Rows::Thread(_)) {
                 let first = clock.first;
-                thread::message_menu(ui, &env, th, &content, &drawn, |seq| {
+                line_menu::message(&content, menu, &drawn, |seq| {
                     seq.checked_sub(first).and_then(|i| lines.get(i as usize))
                 });
             }
@@ -1605,6 +1617,13 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         state.offset.y += out.inner;
         state.store(ui.ctx(), out.id);
     }
+    line_menu::show(ui, menu, p, |ui, target| {
+        if let Some(avatar) = target.sender {
+            super::context::chat_sender_menu(ui, p, w, avatar, &target.line);
+        } else if let Rows::Thread(th) = &mut rows {
+            thread::message_menu(ui, &env, th, &target.line);
+        }
+    });
     to_field
 }
 
@@ -1623,6 +1642,8 @@ pub(crate) struct LineEnv<'a> {
     /// History lines in the colors of new ones (the History window, where
     /// every line is history; Firestorm's is_conversation_log).
     pub plain_history: bool,
+    /// A transcript-owned popup; None for nearby-chat toasts and fixtures.
+    pub menu: Option<egui::Id>,
     /// The lines as bubbles (`bubbles.rs`), with the sender's name opening
     /// each group when `Some(true)` (several people write); `None`: the
     /// classic lines with their header strips.
@@ -1718,7 +1739,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         _ => line.source,
                     };
                     if !object && !avatar.is_nil() {
-                        line_name_menu(&r, p, world, avatar, line);
+                        line_name_menu(&r, p, world, avatar, line, env.menu);
                     }
                     if !object
                         && !avatar.is_nil()
@@ -1819,7 +1840,12 @@ fn list_entry(
 ) -> ListEntry {
     // narrower beside the list's scroll bar, when it shows
     let width = ENTRY_W.min(ui.available_width());
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), egui::Sense::click());
+    let sense = if close.is_some() {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), sense);
     // the close button stands over the entry and takes its hover: the entry
     // keeps its hovered face while the pointer is on the button
     let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(rect));
@@ -1965,6 +1991,7 @@ pub fn show(
     friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> Vec<ConvAction> {
+    st.reorder.begin(ctx, world);
     let mut actions = Vec::new();
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
@@ -2061,7 +2088,7 @@ pub fn show(
                 if local.clicked() {
                     st.select_tab(None);
                 }
-                let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
+                let sessions = st.reorder.sessions(world);
                 // The conversations scroll under the pinned entries above, which
                 // stay in reach (the vertical tabs of FSFloaterIMContainer
                 // scroll with the arrows of LLTabContainer, all together).
@@ -2091,6 +2118,7 @@ pub fn show(
                         }
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
+                        st.reorder.row(world, other, &entry.resp);
                         if entry.close {
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
@@ -2098,6 +2126,7 @@ pub fn show(
                             st.select_tab(Some(other));
                         }
                     }
+                    st.reorder.finish(ui, p, st.demo_reorder);
                 });
             });
             if st.contacts {
@@ -2622,6 +2651,10 @@ fn line_extras(
 /// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
 /// on a conversation of the list (`conv_menu`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let reorder = reorder::demo_events(ctx, frame);
+    if !reorder.is_empty() {
+        return reorder;
+    }
     let menu = conv_menu::demo_events(ctx, frame);
     if !menu.is_empty() {
         return menu;
@@ -2680,7 +2713,7 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             match target {
                 SenderLink::Resident(id) => {
-                    line_name_menu(&resp, p, world, id, line);
+                    line_name_menu(&resp, p, world, id, line, None);
                     if resp.clicked() {
                         super::profile::request_open(ui.ctx(), id);
                     }

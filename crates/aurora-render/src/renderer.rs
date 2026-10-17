@@ -2019,6 +2019,30 @@ fn shadow_anchor(center: Vec3, radius: f32) -> Vec3 {
     (center / radius).floor() * radius
 }
 
+/// Whether this frame uses the receiver bias of before
+/// (`AURORA_SHADOW_BIAS`: 0 the new one, 1 the old one, 2 one second in
+/// two each).
+fn shadow_bias_legacy_now(mode: u8, now: std::time::SystemTime) -> bool {
+    match mode {
+        1 => true,
+        2 => now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+            .is_multiple_of(2),
+        _ => false,
+    }
+}
+
+/// The receiver bias `cascade_shadow` (common.wgsl) subtracts from a
+/// cascade's stored depth, in that depth's units: two texels of the
+/// cascade, in metres along the light, times the depth per metre of the
+/// cascade's matrix. `texel` is a texel of the tile in tile coordinates.
+#[cfg(test)]
+fn shadow_receiver_bias(m: Mat4, texel: f32, radius: f32) -> f32 {
+    let depth_per_metre = Vec3::new(m.x_axis.z, m.y_axis.z, m.z_axis.z).length();
+    2.0 * texel * radius * 2.0 * depth_per_metre
+}
+
 fn ortho_reverse_z(half: f32, near: f32, far: f32) -> Mat4 {
     let d = (far - near).max(1e-3);
     Mat4::from_cols(
@@ -4337,24 +4361,43 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
-        // AURORA_TANGENTS=unit|derivative|alt (common.wgsl TANGENT_UNIT)
+        // AURORA_SHADOW_BIAS=legacy|new|alt: the receiver bias of before (a
+        // fixed 0.0005 of the cascade's depth range), the one in texels, or
+        // one second in two each (common.wgsl SHADOW_BIAS_LEGACY)
+        static SHADOW_BIAS: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let bias = *SHADOW_BIAS.get_or_init(|| match std::env::var("AURORA_SHADOW_BIAS").as_deref().map(str::trim) {
+            Ok("legacy") => 1,
+            Ok("alt") => 2,
+            _ => 0,
+        });
+        if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
+            main.light_sets.mode[2] |= 0x2000;
+        }
+        // AURORA_TANGENTS=vertex|pixel|derivative|alt (common.wgsl
+        // TANGENT_VERTEX, TANGENT_UNIT): the vertices' tangents, the
+        // per-pixel frame where a face has none; the per-pixel frame alone;
+        // the cotangent frame of before; vertex and pixel a second each
         static TANGENTS: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
         let tangents = *TANGENTS.get_or_init(|| match std::env::var("AURORA_TANGENTS").as_deref().map(str::trim) {
             Ok("derivative") => 0,
-            Ok("alt") => 2,
-            _ => 1,
+            Ok("pixel") => 1,
+            Ok("alt") => 3,
+            _ => 2,
         });
-        let unit_now = match tangents {
-            1 => true,
-            2 => std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs())
-                .is_multiple_of(2),
-            _ => false,
+        let tangents_now = match tangents {
+            3 => {
+                let second = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                if second.is_multiple_of(2) { 2 } else { 1 }
+            }
+            t => t,
         };
-        if unit_now {
-            main.light_sets.mode[2] |= 0x800;
-        }
+        main.light_sets.mode[2] |= match tangents_now {
+            2 => 0x1800,
+            1 => 0x800,
+            _ => 0,
+        };
         // (common.wgsl SCREEN_INDIRECT)
         if indirect_now {
             main.light_sets.mode[2] |= 0x400;
@@ -6380,6 +6423,39 @@ mod tests {
         // small camera moves inside the cell keep the same anchor
         assert_eq!(shadow_anchor(c + Vec3::new(0.5, -0.4, 0.2), 6.0), a);
         assert_eq!(shadow_anchor(Vec3::new(-0.1, 0.0, 0.0), 6.0), Vec3::new(-6.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn shadow_receiver_bias_is_two_texels_along_the_light() {
+        // a cascade as cascade_matrices builds it: a 6 m square, the depth
+        // padded by CASCADE_DEPTH_PAD on each side
+        let radius = 6.0f32;
+        let light = Vec3::new(0.3, -0.2, -0.93).normalize();
+        let center = Vec3::new(128.0, 128.0, 25.0);
+        let eye = center - light * (radius + crate::shadow_cull::CASCADE_DEPTH_PAD);
+        let view = glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
+        let depth = radius * 2.0 + 2.0 * crate::shadow_cull::CASCADE_DEPTH_PAD;
+        let m = glam::camera::rh::proj::directx::orthographic(-radius, radius, -radius, radius, 0.1, depth) * view;
+        let texel = 1.0 / 2048.0;
+        let bias = shadow_receiver_bias(m, texel, radius);
+        // the same bias in metres: two texels of 2 x 6 m / 2048
+        let metres = |b: f32| {
+            let a = m.project_point3(center);
+            let p = m.project_point3(center - light * 1.0);
+            b / (a.z - p.z).abs()
+        };
+        assert!((metres(bias) - 2.0 * 2.0 * radius / 2048.0).abs() < 1e-4, "{}", metres(bias));
+        // the bias of before was about 0.4 m in the finest cascade
+        assert!((metres(0.0005) - 0.406).abs() < 0.01, "{}", metres(0.0005));
+    }
+
+    #[test]
+    fn shadow_bias_switch_alternates_by_the_second() {
+        let at = |s: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
+        assert!(!shadow_bias_legacy_now(0, at(10)));
+        assert!(shadow_bias_legacy_now(1, at(11)));
+        assert!(shadow_bias_legacy_now(2, at(10)));
+        assert!(!shadow_bias_legacy_now(2, at(11)));
     }
 
     #[test]

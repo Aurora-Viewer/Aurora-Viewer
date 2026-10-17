@@ -208,7 +208,8 @@ pub(super) enum ContactsSub {
     Lists,
 }
 
-/// The column (or rail). `height`: what the window gives it.
+/// The column (or rail). `height`: what the window gives it. Returns true
+/// when the docked Contacts entry was clicked, even if already selected.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut egui::Ui,
@@ -226,8 +227,9 @@ pub(super) fn show(
     // RAIL or WIDTH, or on its way from one to the other
     width: f32,
     height: f32,
-) {
+) -> bool {
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let mut contacts_clicked = false;
     // the mockup's `.side`: the bar's colour at 75 %, a hairline at its
     // right, its bottom left corner the window's
     let corner = ui.visuals().window_corner_radius;
@@ -292,6 +294,7 @@ pub(super) fn show(
                 };
                 if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
                     if docked {
+                        contacts_clicked = true;
                         st.contacts = true;
                         st.show_profile = false;
                     } else {
@@ -321,14 +324,9 @@ pub(super) fn show(
                 }
             }
             let reveal = st.reveal;
+            let sessions = st.reorder.sessions(world);
             for section in [Kind::Private, Kind::Group, Kind::Conference] {
-                let ids: Vec<(Uuid, usize)> = world
-                    .social
-                    .ims
-                    .iter()
-                    .filter(|s| kind(world, &s.other) == section)
-                    .map(|s| (s.other, s.unread))
-                    .collect();
+                let ids: Vec<(Uuid, usize)> = sessions.iter().copied().filter(|(id, _)| kind(world, id) == section).collect();
                 let titled: Vec<(Uuid, usize, String)> = ids
                     .into_iter()
                     .map(|(id, unread)| (id, unread, entry_name(world, &id, section)))
@@ -378,6 +376,7 @@ pub(super) fn show(
                     }
                     super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
                     super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
+                    st.reorder.row(world, id, &picked.resp);
                     if picked.close {
                         actions.push(ConvAction::Close(id));
                     } else if picked.resp.clicked() {
@@ -386,6 +385,7 @@ pub(super) fn show(
                     }
                 }
             }
+            st.reorder.finish(ui, p, st.demo_reorder);
             // the search starts new conversations: friends without one, and
             // the resident search
             if !filter.is_empty() && !rail {
@@ -438,6 +438,7 @@ pub(super) fn show(
     if voice {
         voice_panel(ui, p, world, st, actions, rail);
     }
+    contacts_clicked
 }
 
 /// What the nearby chat's entry says: who can hear us, and its last line.
@@ -572,7 +573,12 @@ fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {
 fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H), egui::Sense::hover());
-    let resp = ui.interact(rect, id, egui::Sense::click());
+    let sense = if e.close.is_some() {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let resp = ui.interact(rect, id, sense);
     let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(rect));
     let radius = ui.visuals().window_corner_radius;
     if e.current {

@@ -276,6 +276,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-aurora-gaze") => "eye-filled",
         value if value == aurora_i18n::text("ui-options-aurora-movement") => "walk",
+        value if value == aurora_i18n::text("ui-options-aurora-animations") => "player-play-filled",
         value if value == aurora_i18n::text("ui-options-aurora-avatar-plates") => "tag-filled",
         _ => return None,
     })

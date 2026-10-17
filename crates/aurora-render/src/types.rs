@@ -9,7 +9,8 @@ use glam::{Mat4, Vec3, Vec4};
 #[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
 pub struct Vertex {
     pub pos: [f32; 3],
-    /// snorm8 normal; `w` carries extra data (terrain composition).
+    /// snorm8 normal; `w` carries extra data: the tangent of an object's
+    /// vertex ([`pack_tangent`]), the composition of the terrain's.
     pub normal: [i8; 4],
     pub uv: [f32; 2],
 }
@@ -31,6 +32,64 @@ pub fn pack_snorm(v: f32) -> i8 {
         return 0;
     }
     (v.clamp(-1.0, 1.0) * 127.0).round() as i8
+}
+
+/// Steps of a packed tangent's angle around its normal.
+const TANGENT_STEPS: f32 = 127.0;
+
+/// The normal a vertex shader reads from a snorm8 normal, unit length.
+fn unpacked_normal(normal: [i8; 4]) -> Option<Vec3> {
+    let n = Vec3::new(normal[0] as f32, normal[1] as f32, normal[2] as f32) / 127.0;
+    n.max(Vec3::splat(-1.0)).try_normalize()
+}
+
+/// Two unit axes across `n` (Duff et al. 2017, "Building an Orthonormal
+/// Basis, Revisited"); object.wgsl vertex_tangent builds the same pair.
+fn tangent_basis(n: Vec3) -> (Vec3, Vec3) {
+    let s = if n.z >= 0.0 { 1.0 } else { -1.0 };
+    let a = -1.0 / (s + n.z);
+    let b = n.x * n.y * a;
+    (
+        Vec3::new(1.0 + s * n.x * n.x * a, s * b, -s * n.x),
+        Vec3::new(b, s + n.y * n.y * a, -n.y),
+    )
+}
+
+/// A vertex tangent in one byte, the `w` of the packed `normal`: the
+/// tangent's angle around the normal, in 127 steps (1.4° at most off), and
+/// its handedness as the sign (`hand` < 0: the bitangent is -cross(N, T),
+/// a mirrored texture). 0 is no tangent (normal maps on the per-pixel frame
+/// of perturb_normal). The tangent is taken across the packed normal, the
+/// one the vertex shader reads; the Legacy Viewer's are across theirs
+/// (LLCalculateTangentArray, MikkTSpace), so the vertex keeps its 24 bytes
+/// for what a 16-byte float tangent tells.
+pub fn pack_tangent(normal: [i8; 4], t: [f32; 3], hand: f32) -> i8 {
+    let Some(n) = unpacked_normal(normal) else {
+        return 0;
+    };
+    let t = Vec3::from_array(t);
+    if !t.is_finite() {
+        return 0;
+    }
+    let (b1, b2) = tangent_basis(n);
+    let (x, y) = (t.dot(b1), t.dot(b2));
+    let angle = if x * x + y * y > 1e-12 { y.atan2(x) } else { 0.0 };
+    let step = (angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * TANGENT_STEPS).round() as i32 % TANGENT_STEPS as i32;
+    let code = (step + 1) as i8;
+    if hand < 0.0 { -code } else { code }
+}
+
+/// The tangent and handedness of [`pack_tangent`], as object.wgsl
+/// vertex_tangent reads them; `None` without one.
+pub fn unpack_tangent(normal: [i8; 4]) -> Option<(Vec3, f32)> {
+    let code = normal[3].max(-127);
+    if code == 0 {
+        return None;
+    }
+    let n = unpacked_normal(normal)?;
+    let (b1, b2) = tangent_basis(n);
+    let angle = (code.unsigned_abs() - 1) as f32 * (std::f32::consts::TAU / TANGENT_STEPS);
+    Some((b1 * angle.cos() + b2 * angle.sin(), if code < 0 { -1.0 } else { 1.0 }))
 }
 
 /// Per-vertex skinning data (parallel stream): 4 joint indices and 4

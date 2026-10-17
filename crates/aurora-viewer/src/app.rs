@@ -345,6 +345,8 @@ pub struct App {
     tp_checks: Vec<f32>,
     /// Debug: culling view kept while "Freeze culling" is on.
     frozen_cull: Option<CullView>,
+    /// The camera's recent speed, for the textures' importance to it.
+    texture_motion: crate::scene::texture_importance::CameraMotion,
     /// Interface sounds caused by the widgets (clicks, keys, windows).
     sound_cues: ui::sound_cues::SoundCues,
     /// Last frame: microphone on, context menu open, interactive script
@@ -893,6 +895,7 @@ impl App {
             move_complete_at: None,
             tp_checks: Vec::new(),
             frozen_cull: None,
+            texture_motion: Default::default(),
             sound_cues: Default::default(),
             mic_was: false,
             context_menu_was: false,
@@ -5430,6 +5433,9 @@ impl App {
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
         self.update_hover_height();
+        if self.demo {
+            crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
+        }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
@@ -5656,7 +5662,12 @@ impl App {
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
-        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y);
+        let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
+        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
+            self.camera.forward(),
+            aspect,
+            camera_fast,
+        );
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
             cull = *self.frozen_cull.get_or_insert(cull);
@@ -5677,6 +5688,7 @@ impl App {
         let in_world = self.in_world();
         if in_world {
             self.scene.draw_distance = self.settings.draw_distance;
+            self.scene.synchronize_animations = self.settings.synchronize_animations;
             self.scene.lod_factor = self.settings.lod_factor;
             self.scene.max_avatars = self.settings.max_avatars as usize;
             // reflection lists: planar reflections and reflection probe captures
@@ -5716,8 +5728,27 @@ impl App {
                 crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
             }
             self.update_ao(now);
+            if self.demo && crate::demo::animation_edit_demo() {
+                match self.frame_count {
+                    420 | 750 => {
+                        let local = if self.frame_count == 420 { crate::demo::OWN_RIGGED } else { 9200 };
+                        let idx = self.world.objects.iter().find_map(|(i, o)| (o.key.local_id == local).then_some(i));
+                        self.build.open_build(crate::build::Tool::Edit);
+                        self.build.click_select(&mut self.world, &self.settings.build, idx, false);
+                        log::info!("demo animation edit: frame {}, selected local {local}", self.frame_count);
+                    }
+                    630 | 930 => {
+                        self.build.close(&mut self.world, &mut self.settings.build);
+                        log::info!("demo animation edit: frame {}, released selection", self.frame_count);
+                    }
+                    _ => {}
+                }
+            }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            if self.demo && crate::demo::animation_edit_demo() && matches!(self.frame_count, 420 | 630 | 750 | 930) {
+                log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
+            }
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
             self.scene.update_auto_hover(
@@ -5850,7 +5881,11 @@ impl App {
                 view = self.camera.view();
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
-                cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y);
+                cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
+                    self.camera.forward(),
+                    aspect,
+                    camera_fast,
+                );
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
                 }
@@ -6354,6 +6389,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
+                || self.chat_ui.demo_reorder
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
@@ -6928,6 +6964,53 @@ impl App {
             }
         }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
+            // acos(dot) amplifies f32 normalization error near identical poses.
+            let phase_error = |a: &glam::Quat, b: &glam::Quat| {
+                let relative = a.conjugate() * *b;
+                2.0 * Vec3::new(relative.x, relative.y, relative.z).length().atan2(relative.w.abs())
+            };
+            if crate::demo::animation_sync_demo() && self.frame_count == 300 {
+                let rig = self.scene.avatar_lib.rig.clone();
+                self.scene.anims.insert(
+                    crate::demo::SYNC_DELAYED_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),
+                );
+                log::info!("demo animation sync: delayed asset ready at frame 300");
+            }
+            if crate::demo::animation_sync_demo()
+                && (self.frame_count == 360 || (crate::demo::animation_edit_demo() && self.frame_count == 660))
+                && let Some(&joint) = self.scene.avatar_lib.rig.names.get("mElbowLeft")
+            {
+                let (leader, _) = self.scene.preview_pose(&crate::demo::DEMO_AGENT);
+                let (follower, _) = self
+                    .scene
+                    .preview_pose(&uuid::Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002));
+                if let Some((a, b)) = leader.get(joint).zip(follower.get(joint)) {
+                    log::info!(
+                        "demo animation sync: frame {}, elbow phase error {:.6} rad",
+                        self.frame_count,
+                        phase_error(a, b)
+                    );
+                }
+            }
+            if crate::demo::animation_edit_demo()
+                && self.frame_count == 960
+                && let Some(&joint) = self.scene.avatar_lib.rig.names.get("mHead")
+            {
+                let owners = [9200, 9201].map(|local| {
+                    self.world
+                        .objects
+                        .iter()
+                        .find_map(|(_, o)| (o.key.local_id == local).then_some(o.full_id))
+                });
+                if let [Some(edited), Some(reference)] = owners {
+                    let (a, _) = self.scene.preview_pose(&edited);
+                    let (b, _) = self.scene.preview_pose(&reference);
+                    if let Some((a, b)) = a.get(joint).zip(b.get(joint)) {
+                        log::info!("demo animation sync: animesh resume phase error {:.6} rad", phase_error(a, b));
+                    }
+                }
+            }
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
             }
@@ -11058,7 +11141,12 @@ impl ApplicationHandler for App {
                     // the "Reset this section" confirmation, for captures
                     self.options_ui.ask_reset_section();
                 } else {
-                    self.options_ui.scroll_to_end = filter == "end";
+                    let animation_options =
+                        self.options_ui.tab == ui::options::TAB_AURORA && matches!(filter, "animations" | "animations-sync");
+                    if animation_options {
+                        self.settings.synchronize_animations = filter == "animations-sync";
+                    }
+                    self.options_ui.scroll_to_end = filter == "end" || animation_options;
                     self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
@@ -11212,6 +11300,13 @@ impl ApplicationHandler for App {
                 crate::demo::IDLE_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(demo_anim, &rig)),
             );
+            if crate::demo::animation_sync_demo() {
+                self.settings.synchronize_animations = true;
+                self.scene.anims.insert(
+                    crate::demo::SYNC_LEADER_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),
+                );
+            }
             // AURORA_DEMO_LINK's stand-in simulator signals the stock walk,
             // run, fly and stand: drawn with the demo's own motions
             if self.demo_link_cfg.is_some() {
@@ -12279,6 +12374,18 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::animesh_events() {
                     self.world.apply(ev);
                 }
+                if crate::demo::animation_edit_demo()
+                    && let Some(wearer) = self
+                        .world
+                        .objects
+                        .index_of_uuid(&self.world.agent_id)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map(|o| o.key.local_id)
+                {
+                    for ev in crate::demo::own_rigged_events(wearer) {
+                        self.world.apply(ev);
+                    }
+                }
             }
             // AURORA_DEMO_CLASSIC: classic avatars, shaped and baked
             if std::env::var_os("AURORA_DEMO_CLASSIC").is_some() {
@@ -12402,6 +12509,10 @@ impl ApplicationHandler for App {
             if let Ok(kind) = std::env::var("AURORA_DEMO_CONV_MENU") {
                 self.panels.chat = true;
                 self.chat_ui.demo_menu = Some(kind.trim().to_owned());
+            }
+            if std::env::var_os("AURORA_DEMO_CONV_REORDER").is_some() {
+                self.panels.chat = true;
+                self.chat_ui.demo_reorder = true;
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)

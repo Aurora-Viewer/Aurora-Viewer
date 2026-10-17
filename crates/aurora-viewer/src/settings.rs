@@ -528,6 +528,10 @@ pub struct Settings {
     /// fade slowly. Off, the default until it has been tried on the grid:
     /// Firestorm's, the avatar moves when the simulator's update comes back.
     pub predict_own_motion: bool,
+    /// Preferences › Aurora › Animations: follow the first known signal's
+    /// elapsed time, including late loading and edit release. Off by default:
+    /// the Legacy Viewer starts at asset activation and suspends during edits.
+    pub synchronize_animations: bool,
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
@@ -1119,6 +1123,7 @@ impl Default for Settings {
             classic_restart_alert: false,
             classic_chat_lines: false,
             predict_own_motion: false,
+            synchronize_animations: false,
             region_restart: Default::default(),
             reduce_motion: false,
             color_blindness: crate::colorblind::Deficiency::Off,

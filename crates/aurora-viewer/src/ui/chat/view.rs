@@ -520,7 +520,10 @@ impl View {
         // at least the height in sight: a short conversation's empty dark
         // area under its lines selects too, never moves the window
         let height = self.total.max(viewport.height());
-        let (rect, content) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
+        // Measuring a variable number of rows advances egui's auto ids.
+        // The menu and selection must keep the same owner on every frame.
+        let (_, rect) = ui.allocate_space(egui::vec2(width, height));
+        let content = ui.interact(rect, ui.id().with("conv_content"), egui::Sense::click_and_drag());
         // Aurora's workspace keeps a short conversation against the field,
         // as a chat does: its lines start from the bottom
         let lift = if self.layout.workspace() {
@@ -553,7 +556,7 @@ impl View {
             let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), base + row.y), egui::vec2(width, row.h));
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
-                    .id_salt(("conv_row", first + row.line as u64))
+                    .id(ui.id().with(("conv_row", first + row.line as u64)))
                     .max_rect(row_rect),
             );
             draw(&mut child, &row, true);

@@ -201,7 +201,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                     .sense(egui::Sense::click()),
             );
             if !avatar.is_nil() {
-                line_name_menu(&r, p, world, avatar, line);
+                line_name_menu(&r, p, world, avatar, line, env.menu);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(aurora_i18n::tr!("common-view-profile"))
                     .clicked()
@@ -276,7 +276,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
             if !avatar.is_nil() {
                 let resp = ui.interact(pic, ui.id().with("sender"), egui::Sense::click());
-                line_name_menu(&resp, p, world, avatar, line);
+                line_name_menu(&resp, p, world, avatar, line, env.menu);
                 if resp
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text(name.as_str())
@@ -440,6 +440,7 @@ mod tests {
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
                     plain_history: false,
+                    menu: None,
                     bubbles: Some(true),
                 };
                 draw(ui, &mut env, &line, look, None, true);

@@ -99,6 +99,9 @@ pub mod stream;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
+/// A low-poly ball with a baked normal map (AURORA_DEMO_BUMP=sphere).
+#[path = "demo_tangents.rs"]
+pub mod tangents;
 /// "Refresh textures" on a panel whose disk cache file is stale
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
@@ -5659,7 +5662,19 @@ pub fn loop_animation() -> aurora_assets::Animation {
     anim
 }
 
+pub const SYNC_LEADER_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0021);
+pub const SYNC_DELAYED_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0022);
+
+pub fn animation_sync_demo() -> bool {
+    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| matches!(v.as_str(), "sync" | "sync-edit"))
+}
+
+pub fn animation_edit_demo() -> bool {
+    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| v == "sync-edit")
+}
+
 /// Sequence changes every 120 frames; a real stop/restart every 1200.
+/// In sync mode the second avatar's asset is withheld until frame 300.
 pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
     let step = frame % 1200;
     if step != 1020 && !frame.is_multiple_of(120) {
@@ -5677,7 +5692,16 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
             anims: if step == 960 {
                 Vec::new()
             } else {
-                vec![(IDLE_ANIM, (frame / 120 + 1) as i32)]
+                let id = if animation_sync_demo() {
+                    if avatar == DEMO_AGENT {
+                        SYNC_LEADER_ANIM
+                    } else {
+                        SYNC_DELAYED_ANIM
+                    }
+                } else {
+                    IDLE_ANIM
+                };
+                vec![(id, (frame / 120 + 1) as i32)]
             },
         })
         .collect()
@@ -5885,6 +5909,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(sky) = sky::texture(id) {
         return Some(sky);
     }
+    if let Some(baked) = tangents::texture(id) {
+        return Some(baked);
+    }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;
     let mut px = Vec::with_capacity((N * N * 4) as usize);
@@ -6054,6 +6081,7 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
         alpha_cutoff: 0,
     };
     vec![
+        (tangents::MAT, tangents::material()),
         (MAT_BLEND, base.clone()),
         (
             MAT_NONE,

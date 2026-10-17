@@ -105,6 +105,27 @@ fn cube() -> Model {
 }
 
 #[test]
+fn uploads_carry_the_normalized_scale_their_tangents_are_found_in() {
+    // LLModel::writeModel writes it; LLVolumeFace::cacheOptimize reads it
+    let mut model = cube();
+    for v in &mut model.faces[0].vertices {
+        v.position[0] *= 4.0;
+    }
+    model.normalize().expect("normalized");
+    let data = encode::asset(
+        &[None, None, None, Some(model)],
+        None,
+        &process::Physics::default(),
+        encode::Options::default(),
+    )
+    .expect("encoded");
+    let header = crate::parse_mesh_header(&data).expect("header");
+    let section = crate::mesh::section_bytes(&data, header.lods[3].expect("high lod")).expect("section");
+    let faces = crate::decode_mesh_lod(section).expect("faces");
+    assert_eq!(faces[0].normalized_scale, Some([4.0, 1.0, 1.0]));
+}
+
+#[test]
 fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating_the_source() {
     let mut source = cube();
     let face = &mut source.faces[0];
