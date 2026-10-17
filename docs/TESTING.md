@@ -4064,16 +4064,19 @@ What the inventory must show with these scenarios:
   of the cube, and the folds of the avatars' clothes and skin).
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
-  GTAO method. The main pass is then the visibility bitmask (Therrien et
-  al. 2023, `main_bitmask` in gtao.wgsl): each sample is a surface 0.35 m
-  thick, which hides only the sectors between its front and its back, so
-  thin things no longer darken all that is behind them; and each lights
-  the pixel, for the sectors it is the first to hide, with the previous
-  frame's lit colour where it was (the scene copy, reprojected): one
-  bounce, added to the diffuse light of every surface (`screen_indirect`,
-  common.wgsl). `alt` switches it every second, both kept ready
-  (`AURORA_DEMO_BOUNCE=1`). `g_ssao` includes it (crowd of 40,
-  2560 × 1369, High: about 1.1 ms with it, 0.6 without).
+  GTAO method. A pass after GTAO's gathers the light on a visibility
+  bitmask (Therrien et al. 2023, `main_bitmask` in gtao.wgsl): each sample
+  is a surface 0.35 m thick, which covers the sectors between its front
+  and its back, and lights the pixel, for the sectors it is the first to
+  cover, with the previous frame's lit colour where it was (the scene
+  copy, reprojected): one bounce, weighted by GTAO's occlusion and added
+  to the diffuse light of every surface (`screen_indirect`, common.wgsl).
+  The occlusion itself stays GTAO's: `AURORA_DEMO_DEBUG=ao` shows the same
+  image with the light on or off (the bitmask's own occlusion, used until
+  2026-10-17, was softer in the corners and contacts). `alt` switches it
+  every second, both kept ready (`AURORA_DEMO_BOUNCE=1`). `g_ssao`
+  includes it (crowd of 40, 2560 × 1369, High: about 1.1 ms with it, 0.6
+  without; at 1683 × 900, 0.62 to 0.66 ms with it, 0.23 to 0.31 without).
   Its strength is Preferences › Graphics › Indirect light intensity (0 to
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
