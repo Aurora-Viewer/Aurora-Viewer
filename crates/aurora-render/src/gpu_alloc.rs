@@ -283,6 +283,7 @@ mod tests {
     #[test]
     #[ignore]
     fn a_refused_buffer_is_an_error_not_an_invalid_buffer() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
@@ -317,6 +318,7 @@ mod tests {
     #[test]
     #[ignore]
     fn invalid_buffers_are_seen_and_valid_ones_untouched() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
