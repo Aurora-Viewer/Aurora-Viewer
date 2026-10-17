@@ -2067,6 +2067,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
+| `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
@@ -2437,6 +2438,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `AURORA_WINDOW_SIZE`; capture with `AURORA_FPS_LIMIT=60` at
   `790,1100,1390,1560,1610,2000`. A very low window (`1280,360`) shows only
   the newest toasts that fit.
+- **`AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>`**: the link
+  with the agent's region as the user feels it (`ui/link_health.rs`).
+  `stall` makes the demo region silent from that frame for that many
+  seconds (20 by default, counted at 60 frames a second): after 5 s the
+  pill "Waiting for the region (n s): the connection is unsteady" shows
+  under the top bar and counts, then goes away when the silence ends.
+  `lost` ends the session at that frame as a lost link does (silence of
+  100 s, event queue given up, region gone): the login screen says so and
+  the next login goes back to the region and the spot the user was in
+  (`link lost: "Reconnect" goes back to uri:…` in the log; the demo has no
+  grid, its login only logs `demo login: reconnect to uri:…`). Both can be
+  joined with a comma.
 - **`AURORA_DEMO_RESTART=<seconds>[:options]`**: at frame 600 the demo
   region announces that it restarts in `<seconds>` (AlertInfo
   RegionRestartSeconds): the alert card drops in at the top third of the
