@@ -972,6 +972,11 @@ const TANGENT_VERTEX: u32 = 0x1000u;
 // frame.light_mode.z: the receiver bias of before, a fixed 0.0005 of the
 // cascade's depth range (AURORA_SHADOW_BIAS=legacy; cascade_shadow)
 const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
+// frame.light_mode.z: blended faces take the screen-space occlusion and
+// indirect light of what lies behind them, as before (AURORA_BLEND_AO=old;
+// screen_ao)
+const BLEND_SCREEN_TERMS: u32 = 0x4000u;
+
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
 const SPECULAR_AA: u32 = 0x8000u;
@@ -1252,8 +1257,21 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
 // screen-space one (normal_map_occlusion); none outside the object shader.
 var<private> surface_occlusion: f32 = 0.0;
 
+// False while a blended face is shaded: the screen-space occlusion and
+// indirect light come from the opaque depth, so on a translucent face they
+// are those of what lies behind it, around a closer object a dark halo
+// (#556). The Legacy Viewer's alpha pass applies neither (materialF.glsl,
+// alphaF.glsl: no adjustIrradiance outside softenLightF).
+var<private> screen_surface: bool = true;
+
+// Whether the fragment being shaded takes the screen-space terms (see
+// screen_surface).
+fn screen_terms() -> bool {
+    return screen_surface || (frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u;
+}
+
 fn screen_ao(frag: vec2<f32>) -> f32 {
-    if (frame.misc.x < 0.5 || in_reflection_pass()) {
+    if (frame.misc.x < 0.5 || in_reflection_pass() || !screen_terms()) {
         return 1.0;
     }
     return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
@@ -1269,7 +1287,7 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
 // as is, it lit the creases and contacts back up and the occlusion seemed
 // gone.
 fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass()) {
+    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || !screen_terms()) {
         return vec3<f32>(0.0);
     }
     return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag);

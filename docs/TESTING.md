@@ -1653,6 +1653,7 @@ To check with these scenarios:
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
+| `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
@@ -4069,7 +4070,8 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
-| `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
+| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
+| `AURORA_BLEND_AO=old`, `new` or `alt` | Blended faces with the screen-space occlusion and indirect light of what is behind them, as before |
 
 ### Details
 
@@ -4310,15 +4312,30 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_RIGGED_BLEND=sorted|alt`**: by default the blended faces of
-  rigged meshes (mesh hair, eyelashes, clothes, animesh) are drawn before
-  the other blended faces, back to front among themselves, and write depth,
-  as the Legacy Viewer's alpha pass does (`LLDrawPoolAlpha::render`); a
-  layer in front then hides what is behind it whatever the order of the two
-  objects. `sorted`: the former way, everything sorted by the distance of
+- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default
+  (`depth05`) the blended faces of rigged meshes (mesh hair, eyelashes,
+  clothes, animesh) are drawn before the other blended faces, back to front
+  among themselves, after a depth pass that writes their depth where they
+  are at least half covered; their colour is then depth tested without
+  writing it. A layer in front hides what is behind it where it is opaque,
+  whatever the order of the two objects, and its nearly transparent fringe
+  no longer hides the glass behind it (#556). `write`: their depth written
+  from 1/255 of alpha, as the Legacy Viewer's alpha pass
+  (`LLDrawPoolAlpha::render`, #499): a ring around fur or hair where the
+  glass behind is missing. `sorted`: everything sorted by the distance of
   its object and nothing writing depth (eyelashes showed through mesh
-  hair); `alt`: the former way during one `perf summary` line out of three
-  (`xmode=old`). See `AURORA_DEMO_LASHES`.
+  hair). `alt`: `write` during one `perf summary` line out of three
+  (`xmode=old`). See `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
+- **`AURORA_BLEND_AO=old|new|alt`**: blended faces take neither the
+  screen-space ambient occlusion nor GTAO's indirect light (computed from
+  the opaque depth, they are those of what lies behind the face), as the
+  Legacy Viewer's alpha pass; `old` gives them back, `alt` one second in
+  two.
+- **`AURORA_DEMO_HALO=1`**: a wide translucent pane (35 % opaque) 3 m
+  ahead of the start position (`AURORA_DEMO_POS`), facing the camera, so
+  that our avatar stands between the camera and the pane. With
+  `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=alt`, the ring of
+  #556 (the pane missing around the hair) appears one second in three.
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
   CJK, Arabic, mathematical letters…) become squares again. To compare with
