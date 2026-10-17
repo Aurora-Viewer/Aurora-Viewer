@@ -482,38 +482,33 @@ impl BuildTool {
         }
     }
 
-    /// "link_num_obj_count": "Link number: N" with "Linked edit",
-    /// "Faces: …" with the face tool, one prim selected.
-    pub fn part_info(&self, world: &World, s: &BuildSettings) -> Option<String> {
-        let prims = self.sel_prims(world);
-        if prims.len() != 1 {
-            return None;
-        }
-        let idx = prims[0];
+    /// Numeric footer indicators refer to the primary (latest selected) prim.
+    pub fn selected_link_number(&self, world: &World) -> Option<usize> {
+        let idx = world.objects.index_of(self.selection.first()?)?;
         let o = world.objects.get(idx)?;
-        if self.tool == Tool::Edit && self.edit_mode == EditMode::Face {
-            let faces = self.faces.get(&o.key);
-            let list = match faces {
-                Some(f) if !f.is_empty() && f.len() < self.num_faces(world, idx) => {
-                    f.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
-                }
-                _ => "toutes".into(),
-            };
-            return Some(aurora_i18n::tr!("build-ui-tools-faces", list = list.to_string()));
-        }
-        if s.edit_linked {
-            let n = if o.parent_id == 0 {
-                if world.objects.children_of(&o.key).is_empty() { 0 } else { 1 }
-            } else {
-                let root = crate::build::root_of(world, idx);
-                crate::build::family(world, root)
-                    .iter()
-                    .position(|&i| i == idx)
-                    .map(|i| i + 1)
-                    .unwrap_or(0)
-            };
-            return Some(aurora_i18n::tr!("build-ui-tools-link-number", n = format!("{}", n)));
-        }
-        None
+        Some(if crate::build::root_of(world, idx) == idx {
+            if world.objects.children_of(&o.key).is_empty() { 0 } else { 1 }
+        } else {
+            let root = crate::build::root_of(world, idx);
+            crate::build::family(world, root)
+                .iter()
+                .position(|&i| i == idx)
+                .map(|i| i + 1)
+                .unwrap_or(0)
+        })
+    }
+
+    pub fn selected_face_numbers(&self, world: &World) -> String {
+        let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+            return "—".into();
+        };
+        let Some(o) = world.objects.get(idx) else { return "—".into() };
+        let mut faces: Vec<usize> = match self.faces.get(&o.key).filter(|f| !f.is_empty()) {
+            Some(f) => f.iter().map(|&n| n as usize).collect(),
+            None => (0..self.num_faces(world, idx)).collect(),
+        };
+        faces.sort_unstable();
+        faces.dedup();
+        faces.into_iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
     }
 }

@@ -50,6 +50,7 @@ mod inspect;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
+mod link_health;
 mod marketplace_listings;
 mod movement;
 mod object_actions;
@@ -68,6 +69,7 @@ mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
 mod task_notecards;
+mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
 mod world_click_demo;
@@ -101,6 +103,8 @@ struct TpOverlay {
     shown: f32,
     /// What the screen said when its fade out began; it leaves saying that.
     leaving: Option<ui::loading::BannerText>,
+    /// When the region may show and how the bar finishes.
+    mode: teleport_screen::Mode,
 }
 
 impl TpOverlay {
@@ -113,6 +117,11 @@ impl TpOverlay {
             loading_end,
             shown: 0.0,
             leaving: None,
+            mode: if loading_end {
+                teleport_screen::Mode::Old
+            } else {
+                teleport_screen::Mode::for_next_teleport()
+            },
         }
     }
 }
@@ -450,6 +459,11 @@ pub struct App {
     notif_ui: ui::notifications::NotifUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
+    /// After the link with the region was lost: the grid, the user and the
+    /// place "Reconnect" goes back to (ui/link_health.rs).
+    reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
+    /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
+    demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
     /// Parcel music stream on (radio toggle).
@@ -958,6 +972,8 @@ impl App {
             audio_ui: Default::default(),
             notif_ui: Default::default(),
             region_restart: Default::default(),
+            reconnect_place: None,
+            demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
@@ -1731,6 +1747,9 @@ impl App {
                 self.login_form.adding,
                 !self.login_form.mfa_token.trim().is_empty()
             );
+            if let Some((_, _, place)) = self.reconnect_place.take() {
+                log::info!("demo login: reconnect to {}", place.to_login_string());
+            }
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
@@ -1744,7 +1763,13 @@ impl App {
             }
             return;
         }
-        let start = match self.settings.start_location.as_str() {
+        // "Reconnect" after a lost link: the same place, for the same account
+        let reconnect = self
+            .reconnect_place
+            .take()
+            .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
+            .map(|(_, _, place)| place);
+        let start = reconnect.unwrap_or_else(|| match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
                 name: self.settings.start_region.trim().to_owned(),
@@ -1753,7 +1778,7 @@ impl App {
                 z: 30,
             },
             _ => StartLocation::Last,
-        };
+        });
         let (mac, id0) = self.settings.hashed_ids();
         // typed password first, else the remembered one (already hashed)
         let password = match (&self.login_form.stored, self.login_form.password.is_empty()) {
@@ -2403,15 +2428,7 @@ impl App {
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
             NetEvent::RegionRestart(notice) => self.on_region_restart(notice),
             NetEvent::RegionRestartCancelled => self.on_region_restart_cancelled(),
-            NetEvent::Disconnected { reason } => {
-                // cut by the region's restart: say so, and offer to reconnect
-                let restart = self.restart_disconnect();
-                let reconnect = restart.is_some();
-                self.back_to_login(Some(
-                    restart.unwrap_or_else(|| aurora_i18n::tr!("app-disconnected", reason = reason.to_string())),
-                ));
-                self.login_form.reconnect = reconnect;
-            }
+            NetEvent::Disconnected { reason, lost } => self.on_disconnected(&reason, lost),
             // ---- sounds (process_sound_trigger, setAttachedSound)
             NetEvent::SoundTrigger {
                 sound,
@@ -4664,7 +4681,7 @@ impl App {
             passed = self
                 .down
                 .iter()
-                .filter(|i| crate::keybinds::is_chat_bar_move_input(i))
+                .filter(|i| crate::keybinds::chat_bar_held_moves(i, self.ctrl))
                 .cloned()
                 .collect();
             &passed
@@ -5533,6 +5550,8 @@ impl App {
         if self.left_down && self.color_pipette() && !self.egui_ctx.is_pointer_over_egui() {
             self.sample_build_color();
         }
+        // AURORA_DEMO_LINK's lost link, before the frame takes the window
+        self.demo_link_lost();
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -6203,22 +6222,22 @@ impl App {
                     let terrain = self.world.terrain_progress();
                     let st = self.scene.textures.stats;
                     let tex = st.loaded as f32 / st.total.max(1) as f32;
-                    let ready = (terrain > 0.97 && at.elapsed() > Duration::from_millis(800)) || at.elapsed() > Duration::from_secs(10);
-                    if ready {
+                    if teleport_screen::ready(o.mode, at.elapsed(), terrain) {
                         1.0
                     } else {
                         0.6 + 0.4 * (0.75 * terrain + 0.25 * tex).clamp(0.0, 1.0) * 0.97
                     }
                 }
             };
-            // glide toward the target, never backwards
-            let k = 1.0 - (-2.6 * dt).exp();
-            o.shown = (o.shown + (target - o.shown) * k).max(o.shown).min(1.0);
-            if target >= 1.0 && o.shown > 0.985 && o.end.is_none() {
+            o.shown = teleport_screen::glide(o.mode, o.shown, target, dt);
+            if teleport_screen::done(o.mode, o.shown, target) && o.end.is_none() {
                 o.end = Some(Instant::now());
                 aurora_net::transition::end(
                     Some(aurora_net::transition::Kind::Teleport),
-                    "arrived (teleport screen hidden)",
+                    match o.mode {
+                        teleport_screen::Mode::Quick => "arrived (teleport screen hidden)",
+                        teleport_screen::Mode::Old => "arrived (teleport screen hidden, old screen)",
+                    },
                     &self.net.stats,
                 );
             }
@@ -6541,6 +6560,7 @@ impl App {
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
         }
+        self.build.sync_mesh_inspector(&mut self.world, &mut self.scene);
         if self.in_world() && self.build.open {
             for idx in self.build.sel_prims(&self.world) {
                 if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
@@ -7196,6 +7216,7 @@ impl App {
         self.end_profile_frame(w, h);
         self.end_deep_profile(&gfx.renderer);
         self.gfx = Some(gfx);
+        self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();
         self.demo_action_steps();
@@ -7802,6 +7823,10 @@ impl App {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::MeshLod(level) => {
+                        self.panels.chat = false;
+                        self.build.set_inspected_mesh_lod(level);
+                    }
                     crate::build::demo::Step::ReplaceBegin(contents) => {
                         self.build.begin_replacement(&self.world, &self.settings.build);
                         self.build.replacement.options.contents = contents;
@@ -7992,11 +8017,11 @@ impl App {
                 aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
-            // AURORA_RIGGED_BLEND=alt: the rigged blended faces sorted with
-            // the others, without depth, one second in three
+            // AURORA_RIGGED_BLEND=alt: the rigged blended faces writing
+            // depth from 1/255 (#499) one second in three
             if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
                 let old = self.sync_alt.is_multiple_of(3);
-                crate::scene::blend_order::set_sorted_now(old);
+                crate::scene::blend_order::set_write_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
@@ -10365,6 +10390,7 @@ impl App {
                 };
                 // the region restart over the toasts, under the open list
                 self.show_region_restart(&ctx, &p);
+                self.show_link_health(&ctx, &p);
                 self.order_region_restart(&ctx, aurora);
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);
@@ -11954,16 +11980,24 @@ impl ApplicationHandler for App {
                     None => {}
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared")) {
+            if std::env::var("AURORA_DEMO_BUILD")
+                .is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared") || v.starts_with("mesh-inspector"))
+            {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
-                let complex = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let inspector = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector"));
+                let complex = inspector || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
                 let events = if complex {
                     crate::demo::complex_face_selection_events()
                 } else {
                     crate::demo::face_selection_events(invisible)
                 };
                 if complex && let Some(gfx) = &mut self.gfx {
-                    self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                    if inspector {
+                        let empty = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector-cycle-empty"));
+                        self.scene.install_demo_mesh_inspector(&mut gfx.renderer, empty);
+                    } else {
+                        self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                    }
                 }
                 for event in events {
                     self.world.apply(event);

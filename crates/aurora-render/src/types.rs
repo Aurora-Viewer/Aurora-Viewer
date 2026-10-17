@@ -325,6 +325,10 @@ pub struct DrawLists {
     /// behind it (eyelashes) whatever the order of the two objects
     /// (LLDrawPoolAlpha::render: forwardRender(true) first, depth written).
     pub blend_depth: usize,
+    /// The depth of those rigged faces is written only where they are at
+    /// least half covered (a depth pass with that alpha test, then their
+    /// colour without depth); otherwise from 1/255, as the Legacy Viewer.
+    pub blend_depth_alpha_test: bool,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -426,6 +430,7 @@ impl DrawLists {
         self.blend.clone_from(&src.blend);
         self.blend_glow.clone_from(&src.blend_glow);
         self.blend_depth = src.blend_depth;
+        self.blend_depth_alpha_test = src.blend_depth_alpha_test;
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
@@ -456,6 +461,7 @@ impl DrawLists {
         self.water.clear();
         self.blend.clear();
         self.blend_depth = 0;
+        self.blend_depth_alpha_test = false;
         self.shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();
@@ -679,6 +685,9 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Geometric specular anti-aliasing of the objects' highlights
+    /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
+    pub specular_aa: bool,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -708,6 +717,7 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,

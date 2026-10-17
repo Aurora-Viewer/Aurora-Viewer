@@ -580,6 +580,18 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         m.metallic = 0.0;
         m.roughness = 1.0;
     }
+    // geometric specular anti-aliasing (specular_aa_roughness): the normal's
+    // variance read here, where the derivatives are still allowed
+    let n_var = normal_variance(m.n) + toksvig_variance(select(length(nrm_s.xyz * 2.0 - 1.0), 1.0, rec.tex.y == 1u));
+    if ((frame.light_mode.z & SPECULAR_AA) != 0u) {
+        if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
+            if (m.legacy_spec.a > 0.0) {
+                m.legacy_spec.a = specular_aa_gloss(m.legacy_spec.a, n_var);
+            }
+        } else {
+            m.roughness = specular_aa_roughness(m.roughness, n_var);
+        }
+    }
     m.unlit = 0.0;
     if ((rec.flags.x & FLAG_EMISSIVE_MASK) != 0u) {
         // "emissive mask": the texture alpha says how much of the face
@@ -754,6 +766,7 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     surface_occlusion = m.occlusion;
+    screen_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u;
     // a blended face is in the depth the contact shadows read when it is
     // opaque enough (fs_depth_contact); a more transparent one would get
     // what lies behind it

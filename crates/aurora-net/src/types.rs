@@ -574,6 +574,9 @@ pub enum NetEvent {
     ScriptControlChange(Vec<(bool, u32, bool)>),
     Disconnected {
         reason: String,
+        /// The link was lost (silence, event queue, region gone) rather
+        /// than ended by the grid (kicked): offering to reconnect makes sense.
+        lost: bool,
     },
     LoggedOut,
     /// Agent names resolved (id, first, last).

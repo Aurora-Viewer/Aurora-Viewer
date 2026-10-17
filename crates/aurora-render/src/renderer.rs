@@ -721,6 +721,10 @@ struct Pipelines {
     /// Blended faces of rigged meshes, drawn before the others and writing
     /// depth (`DrawLists::blend_depth`).
     blend_depth: wgpu::RenderPipeline,
+    /// The rigged blended faces' depth where at least half covered, then
+    /// their colour without depth (`DrawLists::blend_depth_alpha_test`).
+    blend_depth_mask: wgpu::RenderPipeline,
+    blend_depth_color: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
     glow_max: wgpu::RenderPipeline,
@@ -1106,6 +1110,51 @@ impl PbrOcclusion {
             PbrOcclusion::Alternate => !secs.is_multiple_of(3),
         }
     }
+}
+
+/// AURORA_SPECULAR_AA: the geometric specular anti-aliasing of the objects
+/// (common.wgsl `specular_aa_roughness`), forced on or off for a launch.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SpecularAa {
+    /// Unset: Preferences › Graphics decides.
+    Setting,
+    On,
+    Off,
+    /// `alt`: on one second, off the next, to compare on screen.
+    Alternate,
+}
+
+impl SpecularAa {
+    fn parse(v: Option<&str>) -> SpecularAa {
+        match v.map(str::trim) {
+            Some("0") => SpecularAa::Off,
+            Some("1") => SpecularAa::On,
+            Some("alt") => SpecularAa::Alternate,
+            _ => SpecularAa::Setting,
+        }
+    }
+
+    fn from_env() -> SpecularAa {
+        static MODE: std::sync::OnceLock<SpecularAa> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| SpecularAa::parse(std::env::var("AURORA_SPECULAR_AA").ok().as_deref()))
+    }
+
+    /// Whether the frame drawn `secs` whole seconds after the start applies
+    /// it, the setting being `on`.
+    fn applied(self, on: bool, secs: u64) -> bool {
+        match self {
+            SpecularAa::Setting => on,
+            SpecularAa::On => true,
+            SpecularAa::Off => false,
+            SpecularAa::Alternate => secs.is_multiple_of(2),
+        }
+    }
+}
+
+fn specular_aa_now(on: bool) -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    SpecularAa::from_env().applied(on, secs)
 }
 
 fn pbr_occlusion_now() -> bool {
@@ -2684,6 +2733,27 @@ impl Backend {
         // LLDrawPoolAlpha::forwardRender(true): rigged alpha writes depth
         // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
         let blend_depth = blend_pipe("blend rigged", true, true);
+        // Aurora's default (`DrawLists::blend_depth_alpha_test`): the rigged
+        // faces' depth only where at least half covered (fs_depth_contact),
+        // then their colour depth tested, nothing written: a soft fringe no
+        // longer hides the glass behind it (#556), an opaque strand still
+        // hides the eyelashes under it
+        let blend_depth_mask = pipe(PipeDesc {
+            fs: Some("fs_depth_contact"),
+            blend: None,
+            write_mask: wgpu::ColorWrites::empty(),
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("blend rigged depth", "vs_main", "fs_blend")
+        });
+        let blend_depth_color = pipe(PipeDesc {
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            constants: &[("BLEND_EARLY_DISCARD", 1.0)],
+            ..base("blend rigged colour", "vs_main", "fs_blend")
+        });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -2992,6 +3062,8 @@ impl Backend {
             blend,
             blend_late,
             blend_depth,
+            blend_depth_mask,
+            blend_depth_color,
             particles,
             glow,
             glow_max,
@@ -4328,6 +4400,19 @@ impl Backend {
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
             main.light_sets.mode[2] |= 0x2000;
         }
+        // AURORA_BLEND_AO=old|new|alt: blended faces take the screen-space
+        // occlusion and indirect light of what lies behind them as before,
+        // not at all, or one second in two each (common.wgsl
+        // BLEND_SCREEN_TERMS)
+        static BLEND_AO: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let blend_ao = *BLEND_AO.get_or_init(|| match std::env::var("AURORA_BLEND_AO").as_deref().map(str::trim) {
+            Ok("old") => 1,
+            Ok("alt") => 2,
+            _ => 0,
+        });
+        if shadow_bias_legacy_now(blend_ao, std::time::SystemTime::now()) {
+            main.light_sets.mode[2] |= 0x4000;
+        }
         // AURORA_TANGENTS=vertex|pixel|derivative|alt (common.wgsl
         // TANGENT_VERTEX, TANGENT_UNIT): the vertices' tangents, the
         // per-pixel frame where a face has none; the per-pixel frame alone;
@@ -4356,6 +4441,10 @@ impl Backend {
         // (common.wgsl SCREEN_INDIRECT)
         if indirect_now {
             main.light_sets.mode[2] |= 0x400;
+        }
+        // (common.wgsl SPECULAR_AA)
+        if specular_aa_now(self.settings.specular_aa) {
+            main.light_sets.mode[2] |= 0x8000;
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
@@ -5649,7 +5738,12 @@ impl Backend {
                 // (the frame group without the scene copy and the depth:
                 // the depth is written here, and fs_blend reads neither)
                 bind_mesh(&mut pass, &self.groups.a);
-                blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                if lists.blend_depth_alpha_test {
+                    draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
+                    blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
+                } else {
+                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                }
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);
             bind_mesh(&mut pass, &self.groups.b);
@@ -6268,6 +6362,20 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn specular_aa_follows_the_setting_unless_forced_and_alternates_each_second() {
+        assert_eq!(SpecularAa::parse(None), SpecularAa::Setting);
+        assert_eq!(SpecularAa::parse(Some(" 0 ")), SpecularAa::Off);
+        assert_eq!(SpecularAa::parse(Some("1")), SpecularAa::On);
+        assert_eq!(SpecularAa::parse(Some("alt")), SpecularAa::Alternate);
+        assert!((0..4).all(|s| SpecularAa::Setting.applied(true, s)));
+        assert!((0..4).all(|s| !SpecularAa::Setting.applied(false, s)));
+        assert!((0..4).all(|s| SpecularAa::On.applied(false, s)));
+        assert!((0..4).all(|s| !SpecularAa::Off.applied(true, s)));
+        let alt: Vec<bool> = (0..4).map(|s| SpecularAa::Alternate.applied(false, s)).collect();
+        assert_eq!(alt, [true, false, true, false]);
+    }
 
     #[test]
     fn pbr_occlusion_is_on_unless_turned_off_and_alternates_one_second_in_three() {

@@ -266,6 +266,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
+| `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
@@ -369,6 +370,13 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.
+- **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
+  before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
+  2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting
+  with the first. The quick screen leaves once the terrain is there and
+  0.4 s have passed, its bar finishing in 0.15 s
+  (`app/teleport_screen.rs`). With `AURORA_PROFILE=1` the teleport
+  timeline ends `arrived (teleport screen hidden)`, or `…, old screen)`.
 - **`AURORA_DEMO_TP_AWAY=1`**: at frame 760, our avatar arrives in a region
   25 km from the demo one, as after a teleport; at frame 960, it comes back
   there, before the demo region's simulator has closed it. The objects of
@@ -927,6 +935,23 @@ Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
 
+**Mesh Shape inspector:** `AURORA_DEMO_BUILD=mesh-inspector,object:99621`
+opens the native Shape section on a mesh with four different generated LODs.
+The counts come from its actual geometries. Capture after frame 710.
+Suffixes `-high`, `-medium`, `-low`, `-lowest` force that LOD locally; compare
+the visible geometry and active row, then restore Default. `-readonly` keeps
+the information/menu available without Modify rights. Link/face numbers belong
+between the respective footer arrows; select multiple faces to check the list
+and its full hover text. Inspection resets on selection/asset/tool changes or
+closing construction, stays across editing sections, never changes object
+data/global preferences and keeps HUDs at high LOD.
+`mesh-inspector-cycle` switches lowest/high/low/medium/default at frames
+630/655/680/705/730 with the camera stationary. Capture each stage just before
+the next transition. `mesh-inspector-cycle-empty` makes lowest a real empty
+geometry: capture at 645 (no faces), 670 (high restored), and 750 (automatic
+restored). Returning from the empty level must not wait for camera movement,
+object updates or the periodic LOD sweep.
+
 **`AURORA_DEMO_BUILD_FOCUS=off|on`** — focus on the selection before taking
 a handle, with "Follow object while editing" disabled / enabled. With `off`,
 the view stays fixed at the centre of the screen; with `on`, it follows the
@@ -1413,6 +1438,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
+| `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1462,6 +1488,13 @@ To check with these scenarios:
   of the cube, an inside corner (floor, back and side) of the
   half-polished metal: with GTAO its reflections fade into the corner
   (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
+- **`AURORA_DEMO_SHIMMER=1`**: ahead of the start position, a 16 × 6 m
+  glossy plate (legacy material, specular exponent 245) whose bump normal
+  map is repeated 48 × 18 times, seen at a grazing angle. With
+  `AURORA_SPECULAR_AA=alt` and a moving camera
+  (`AURORA_DEMO_CAMERA=drift,620,600,1`), compare its far highlights and
+  the rims of the polished spheres (with `AURORA_DEMO_PBR_METAL=1`) from one
+  second to the next.
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
@@ -1630,6 +1663,7 @@ To check with these scenarios:
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
+| `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
@@ -2049,6 +2083,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
+| `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
@@ -2419,6 +2454,18 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `AURORA_WINDOW_SIZE`; capture with `AURORA_FPS_LIMIT=60` at
   `790,1100,1390,1560,1610,2000`. A very low window (`1280,360`) shows only
   the newest toasts that fit.
+- **`AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>`**: the link
+  with the agent's region as the user feels it (`ui/link_health.rs`).
+  `stall` makes the demo region silent from that frame for that many
+  seconds (20 by default, counted at 60 frames a second): after 5 s the
+  pill "Waiting for the region (n s): the connection is unsteady" shows
+  under the top bar and counts, then goes away when the silence ends.
+  `lost` ends the session at that frame as a lost link does (silence of
+  100 s, event queue given up, region gone): the login screen says so and
+  the next login goes back to the region and the spot the user was in
+  (`link lost: "Reconnect" goes back to uri:…` in the log; the demo has no
+  grid, its login only logs `demo login: reconnect to uri:…`). Both can be
+  joined with a comma.
 - **`AURORA_DEMO_RESTART=<seconds>[:options]`**: at frame 600 the demo
   region announces that it restarts in `<seconds>` (AlertInfo
   RegionRestartSeconds): the alert card drops in at the top third of the
@@ -3506,7 +3553,10 @@ relogin; only the human connects and performs these checks.
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
-- `outfits`: the list of outfits; `worn`: the worn items;
+- `outfits`: the list of outfits; `worn`: the worn items. A right click on
+  an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
+  (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
+  at frame 380;
 - `save`: the Save as dialog; `edit`: the outfit editor;
 - `menu`: an expanded outfit with an object that is not worn, for the right
   click menus;
@@ -4063,7 +4113,9 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
-| `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
+| `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
+| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
+| `AURORA_BLEND_AO=old`, `new` or `alt` | Blended faces with the screen-space occlusion and indirect light of what is behind them, as before |
 
 ### Details
 
@@ -4148,6 +4200,15 @@ What the inventory must show with these scenarios:
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
 
+- **`AURORA_SPECULAR_AA=0|1|alt`**: overrides Preferences › Graphics ›
+  Specular anti-aliasing for this launch (`alt`: on one second, off the
+  next, without `AURORA_PROFILE`). It widens a highlight where the shading
+  normal turns faster than a pixel can show (`specular_aa_roughness` in
+  common.wgsl): the rims of small curved objects and fine relief seen
+  from afar; a surface whose normal a pixel can resolve (a ball some 35
+  pixels across or more, a flat face) is unchanged. Look at the rims of
+  the polished spheres (`AURORA_DEMO_PBR_METAL=1`) and the far end of
+  `AURORA_DEMO_SHIMMER=1`.
 - **`AURORA_PBR_OCCLUSION=0|alt`**: by default the reflection of a PBR
   face (and, on skies that are not classic, its ambient light) is
   multiplied by the occlusion of its material, the red channel of its
@@ -4295,15 +4356,30 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_RIGGED_BLEND=sorted|alt`**: by default the blended faces of
-  rigged meshes (mesh hair, eyelashes, clothes, animesh) are drawn before
-  the other blended faces, back to front among themselves, and write depth,
-  as the Legacy Viewer's alpha pass does (`LLDrawPoolAlpha::render`); a
-  layer in front then hides what is behind it whatever the order of the two
-  objects. `sorted`: the former way, everything sorted by the distance of
+- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default
+  (`depth05`) the blended faces of rigged meshes (mesh hair, eyelashes,
+  clothes, animesh) are drawn before the other blended faces, back to front
+  among themselves, after a depth pass that writes their depth where they
+  are at least half covered; their colour is then depth tested without
+  writing it. A layer in front hides what is behind it where it is opaque,
+  whatever the order of the two objects, and its nearly transparent fringe
+  no longer hides the glass behind it (#556). `write`: their depth written
+  from 1/255 of alpha, as the Legacy Viewer's alpha pass
+  (`LLDrawPoolAlpha::render`, #499): a ring around fur or hair where the
+  glass behind is missing. `sorted`: everything sorted by the distance of
   its object and nothing writing depth (eyelashes showed through mesh
-  hair); `alt`: the former way during one `perf summary` line out of three
-  (`xmode=old`). See `AURORA_DEMO_LASHES`.
+  hair). `alt`: `write` during one `perf summary` line out of three
+  (`xmode=old`). See `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
+- **`AURORA_BLEND_AO=old|new|alt`**: blended faces take neither the
+  screen-space ambient occlusion nor GTAO's indirect light (computed from
+  the opaque depth, they are those of what lies behind the face), as the
+  Legacy Viewer's alpha pass; `old` gives them back, `alt` one second in
+  two.
+- **`AURORA_DEMO_HALO=1`**: a wide translucent pane (35 % opaque) 3 m
+  ahead of the start position (`AURORA_DEMO_POS`), facing the camera, so
+  that our avatar stands between the camera and the pane. With
+  `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=alt`, the ring of
+  #556 (the pane missing around the hair) appears one second in three.
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
   CJK, Arabic, mathematical letters…) become squares again. To compare with
@@ -5046,7 +5122,8 @@ their grid coordinates (`1000,1003`).
   arrival (and how far it was from where it was drawn), the previous region
   kept as a neighbour or its circuit closed, the appearance or outfit
   version asked, corrections of our avatar's position. It ends `arrived
-  (teleport screen hidden)`, `failed (TeleportFailed: <reason>)`, `failed (no
+  (teleport screen hidden)` (`…, old screen)` with `AURORA_TP_SCREEN`),
+  `failed (TeleportFailed: <reason>)`, `failed (no
   arrival 90 s after the teleport screen was shown)`, `arrived` 20 s after
   AgentMovementComplete without a screen, `timed out` after 90 s, or
   `interrupted by the next one`. A teleport inside the region ends 2 s after
