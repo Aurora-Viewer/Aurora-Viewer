@@ -7,8 +7,8 @@
 
 pub mod arena;
 pub mod bc7;
-mod contact_shadows;
 mod bloom;
+mod contact_shadows;
 mod dof;
 mod drawn_pick;
 pub mod frame_priority;
