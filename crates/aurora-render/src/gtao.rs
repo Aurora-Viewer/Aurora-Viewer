@@ -16,12 +16,13 @@
 //! GTAO; `AURORA_GTAO_SPECULAR=0|1|alt` turns it off, on (the default) or
 //! on every other second, to compare.
 //!
-//! With the screen-space indirect light of Preferences on, the main pass is
-//! `main_bitmask` instead: the occlusion as a visibility bitmask with a
-//! thickness per sample (Therrien et al. 2023) and one bounce of the
-//! previous frame's lit colour (`scene_copy`, reprojected), blurred like
-//! the occlusion into `Targets::indirect`, which the shading adds to the
-//! diffuse light (`screen_indirect` in common.wgsl). `AURORA_SSIL=0|1|alt`
+//! With the screen-space indirect light of Preferences on, `main_bitmask`
+//! runs after the main pass: one bounce of the previous frame's lit colour
+//! (`scene_copy`, reprojected) gathered on a visibility bitmask with a
+//! thickness per sample (Therrien et al. 2023), blurred like the occlusion
+//! into `Targets::indirect`, which the shading adds to the diffuse light
+//! (`screen_indirect` in common.wgsl). The occlusion stays the main pass's:
+//! the same image with the light on or off. `AURORA_SSIL=0|1|alt`
 //! overrides the setting (`alt`: on every other second).
 
 use crate::types::AoMethod;
@@ -42,8 +43,8 @@ const FINAL_VALUE_POWER: f32 = 2.2;
 const DEPTH_MIP_SAMPLING_OFFSET: f32 = 3.30;
 const DENOISE_BLUR_BETA: f32 = 1.2;
 /// The indirect light's samples: how thick a surface is taken to be behind
-/// its front (metres) and how far the light comes from (metres, also the
-/// occlusion's radius on that path). Its strength is a setting.
+/// its front (metres) and how far the light comes from (metres). Its
+/// strength is a setting.
 const INDIRECT_THICKNESS: f32 = 0.35;
 const INDIRECT_RADIUS: f32 = 1.5;
 /// Blur passes of the bent normal alone, before the occlusion's last one.
@@ -483,8 +484,6 @@ impl Gtao {
                 &[
                     uniform_entry(),
                     texture_entry(4, UNFILTERED),
-                    storage_entry(5, AO_FORMAT),
-                    storage_entry(6, EDGES_FORMAT),
                     texture_entry(13, UNFILTERED),
                     storage_entry(14, LIGHT_FORMAT),
                 ],
@@ -608,10 +607,7 @@ impl Gtao {
                 view(texture("gtao light b", LIGHT_FORMAT, 1)),
             ];
             let result = view(texture("gtao light", LIGHT_FORMAT, 1));
-            let main = group(
-                &self.main_bitmask.1,
-                &[(4, &all_mips), (5, &ao[0]), (6, &edges), (13, scene), (14, &light[0])],
-            );
+            let main = group(&self.main_bitmask.1, &[(4, &all_mips), (13, scene), (14, &light[0])]);
             // four turns more than the occlusion's blur: one bounce from a few
             // samples is grainy, and the light has no sharp detail to keep
             let il_passes = passes + INDIRECT_EXTRA_BLUR;
@@ -669,18 +665,17 @@ impl Gtao {
             pass.set_bind_group(0, bg, &[]);
             dispatch(&mut pass, groups(*size));
         }
-        let il = t.indirect.as_ref().filter(|_| indirect);
-        match il {
-            Some(il) => {
-                pass.set_pipeline(&self.main_bitmask.0);
-                pass.set_bind_group(0, &il.main, &[]);
-            }
-            None => {
-                pass.set_pipeline(&self.main.0);
-                pass.set_bind_group(0, &t.main, &[]);
-            }
-        }
+        // the occlusion (and the edges the blurs follow), with or without the
+        // light, then the light alone
+        pass.set_pipeline(&self.main.0);
+        pass.set_bind_group(0, &t.main, &[]);
         dispatch(&mut pass, groups(t.size));
+        let il = t.indirect.as_ref().filter(|_| indirect);
+        if let Some(il) = il {
+            pass.set_pipeline(&self.main_bitmask.0);
+            pass.set_bind_group(0, &il.main, &[]);
+            dispatch(&mut pass, groups(t.size));
+        }
         for (bg, kind) in &t.denoise {
             pass.set_pipeline(match kind {
                 Blur::Both => &self.denoise.0,

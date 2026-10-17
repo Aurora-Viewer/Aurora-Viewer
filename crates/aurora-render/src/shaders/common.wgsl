@@ -1181,12 +1181,17 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
 // The light the surfaces around bounce onto the fragment at `frag`
 // (irradiance over pi, in the units of the lit colour: a Lambert surface
 // of albedo `c` sends back `c` times it), from GTAO's visibility bitmask
-// pass; none without it, in reflection passes and on the HUD.
+// pass; none without it, in reflection passes and on the HUD. It is
+// weighted by GTAO's occlusion like the rest of the ambient light: the
+// bounce is gathered as if the surfaces it comes from were open, while in
+// a crease the light reaching them and coming back is occluded too; left
+// as is, it lit the creases and contacts back up and the occlusion seemed
+// gone.
 fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
     if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass()) {
         return vec3<f32>(0.0);
     }
-    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
+    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag);
 }
 
 // The solid angle two spherical caps share, divided by 2 pi: caps of

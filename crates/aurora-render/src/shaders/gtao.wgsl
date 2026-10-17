@@ -37,10 +37,11 @@
 //    vector; along each, the highest horizon on both sides gives the
 //    cosine-weighted visible arc (the paper's lines 5 to 27), averaged over
 //    the slices; plus the depth edges with the four neighbours;
-//    With the screen-space indirect light on, `main_bitmask` replaces it:
-//    the occlusion as a visibility bitmask (Therrien et al. 2023) and one
-//    bounce of the previous frame's lit colour, into `il_out`, blurred by
-//    `denoise_il` (then `denoise_il_final`) with the same edges;
+//    With the screen-space indirect light on, `main_bitmask` runs after it:
+//    one bounce of the previous frame's lit colour gathered on a visibility
+//    bitmask (Therrien et al. 2023), into `il_out` alone, blurred by
+//    `denoise_il` (then `denoise_il_final`) with `main`'s edges; the
+//    occlusion stays `main`'s, the same with the light on or off;
 // 4. `denoise` (then `denoise_final`): XeGTAO's edge-aware 3 x 3 blur, which
 //    replaces its temporal accumulation (we have none): the noise is a
 //    Hilbert curve driving the R2 sequence, the same for every frame, so the
@@ -455,7 +456,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(ao_out, px, working(visibility, bent_n));
 }
 
-// ---- 3 bis: the occlusion as a visibility bitmask, with the indirect light
+// ---- 3 bis: the indirect light, on a visibility bitmask
 
 // The sectors of a slice, 32 bits from one side of the hemisphere around
 // the normal to the other, each covering the same share of the cosine-
@@ -464,14 +465,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 fn sector(angle: f32, nn: f32) -> f32 {
     return (sin(clamp(angle - nn, -PI_HALF, PI_HALF)) + 1.0) * 0.5;
 }
-
-// The angle from the normal of each sector's centre: asin((k + 0.5) / 16 - 1).
-const SECTOR_ANGLE = array<f32, 32>(
-    -1.3201407, -1.1343273, -1.0042320, -0.8966658, -0.8020028, -0.7158381, -0.6357113, -0.5600753,
-    -0.4878751, -0.4183464, -0.3509073, -0.2850964, -0.2205333, -0.1568929, -0.0938879, -0.0312551,
-    0.0312551, 0.0938879, 0.1568929, 0.2205333, 0.2850964, 0.3509073, 0.4183464, 0.4878751,
-    0.5600753, 0.6357113, 0.7158381, 0.8020028, 0.8966658, 1.0042320, 1.1343273, 1.3201407,
-);
 
 // The sectors between `t0` and `t1` (0..1, either order).
 fn sectors_between(t0: f32, t1: f32) -> u32 {
@@ -505,13 +498,13 @@ fn previous_radiance(p: vec3<f32>) -> vec4<f32> {
 // Therrien, Levesque and Gilet, "Screen Space Indirect Lighting with
 // Visibility Bitmask" (2023), on GTAO's slices: each sample is a surface of
 // some thickness (its front and its back, pushed away from the camera),
-// which covers the sectors between their two angles; the slice's
-// visibility is the share of sectors left open, and each sample lights the
-// pixel with the lit colour of the previous frame there, for the sectors it
-// is the first to cover (one bounce). Thin things (railings, hair, limbs)
-// occlude only what they cover instead of the whole horizon behind them.
-// The visibility, its bent normal (the mean direction of the open sectors)
-// and the light go where `main`'s do, plus `il_out`.
+// which covers the sectors between their two angles, and lights the pixel
+// with the lit colour of the previous frame there, for the sectors it is
+// the first to cover (one bounce). Only the light comes from here, into
+// `il_out`: the occlusion and its bent normal stay `main`'s, which runs
+// first, so turning the light on does not change them (the bitmask's own
+// visibility, with thin things occluding only what they cover, was softer
+// in the corners and contacts than GTAO's).
 @compute @workgroup_size(8, 8)
 fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = target_size();
@@ -528,9 +521,7 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     let zt = depth0(px + vec2<i32>(0, -1));
     let zb = depth0(px + vec2<i32>(0, 1));
     let edges = calculate_edges(zc, zl, zr, zt, zb);
-    textureStore(edges_out, px, edges);
     if (zc >= FAR * 0.5) {
-        textureStore(ao_out, px, working(1.0, vec3<f32>(0.0, 0.0, -1.0)));
         textureStore(il_out, px, vec4<f32>(0.0));
         return;
     }
@@ -558,9 +549,7 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel_view_size = z * 2.0 / (g.proj.x * size.x);
     let screen_radius = radius / pixel_view_size;
     let min_s = 1.3 / screen_radius;
-    var visibility = 0.0;
     var weight_sum = 0.0;
-    var bent = vec3<f32>(0.0);
     var light = vec3<f32>(0.0);
 
     for (var si = 0; si < i32(slice_count); si++) {
@@ -619,28 +608,10 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
             }
         }
 
-        let open = 32u - countOneBits(occluded);
-        visibility += projected_length * f32(open) / 32.0;
         light += projected_length * slice_light;
         weight_sum += projected_length;
-        // the mean angle (from the normal) of the open sectors
-        if (open > 0u) {
-            var mean = 0.0;
-            for (var k = 0u; k < 32u; k++) {
-                if ((occluded & (1u << k)) == 0u) {
-                    mean += SECTOR_ANGLE[k];
-                }
-            }
-            let a = nn + mean / f32(open);
-            let local_bent = vec3<f32>(direction.x * sin(a), direction.y * sin(a), -cos(a)) * (f32(open) / 32.0);
-            bent += rot_from_to(vec3<f32>(0.0, 0.0, -1.0), view_vec, local_bent) * projected_length;
-        }
     }
-    visibility /= max(weight_sum, 1e-4);
     light /= max(weight_sum, 1e-4);
-    visibility = max(0.03, pow(max(visibility, 0.0), g.quality.x));
-    let bent_n = select(n, normalize(bent), dot(bent, bent) > 1e-8);
-    textureStore(ao_out, px, working(visibility, bent_n));
     textureStore(il_out, px, vec4<f32>(light * g.il.z, 1.0));
 }
 
