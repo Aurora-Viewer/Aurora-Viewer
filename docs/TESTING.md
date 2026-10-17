@@ -4013,7 +4013,7 @@ What the inventory must show with these scenarios:
   the repeats squared; no boost under memory pressure). To compare the
   two: the `texture load:` line (decodes per discard level, Mpx, MB
   downloaded) and `texture_mb` / `pages_mb` of `perf summary`, for example
-  with `AURORA_DEMO_STREAM=200,200,j2k=<cache	ex>,net=200,size=4` and
+  with `AURORA_DEMO_STREAM=200,200,j2k=<cache\tex>,net=200,size=4` and
   `AURORA_DEMO_POS="141,126"` (the first objects 5 m away).
 - **`AURORA_TEXTURE_BUDGET_MB=<n>`**: the texture pages must not exceed
   n MB, whatever the "Texture memory" setting and the video memory the
