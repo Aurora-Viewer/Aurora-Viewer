@@ -10,10 +10,14 @@
 //! Deluxe goes beyond the Legacy Viewer's Ultra list with Aurora's own
 //! effects, which the Legacy Viewer has no level for: the ambient occlusion
 //! by GTAO at High quality (gtao.rs in aurora-render, its specular occlusion
-//! following it), the screen-space indirect light at its default strength,
-//! the contact shadows of the sun and the bloom at its default strength. The
-//! levels below keep the Legacy occlusion (High) or none, and none of these
-//! effects; outside the levels they are all off by default.
+//! following it) and the contact shadows of the sun. The bloom and the
+//! screen-space indirect light, marked experimental in the page, stay off in
+//! every level (decided on 2026-10-17). High goes beyond the Legacy Viewer's
+//! High list for the occlusion too: GTAO at Medium quality (about 0.24 ms at
+//! 2560 x 1369 for 0.1 ms of the Legacy method, measured in the demo crowd),
+//! fit for the mid-range cards it aims at. The levels below High have no
+//! occlusion, and only Deluxe has the contact shadows; outside the levels
+//! these effects are all off by default.
 //!
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
@@ -134,8 +138,10 @@ impl Preset {
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
-            // no projector shadows), SSAO, water reflection, probes with
-            // the terrain, SMAA and CAS sharpening at 0.4
+            // no projector shadows), ambient occlusion (by GTAO at Medium
+            // quality, Aurora's method, where the Legacy Viewer has its SSAO;
+            // decided on 2026-10-17), water reflection, probes with the
+            // terrain, SMAA and CAS sharpening at 0.4
             Preset::High => Values {
                 draw_distance: 128.0,
                 lod_factor: 2.0,
@@ -145,8 +151,8 @@ impl Preset {
                 shadow_quality: 2,
                 projector_shadows: false,
                 ssao: 1,
-                ao_method: 0,
-                gtao_quality: 2,
+                ao_method: 1,
+                gtao_quality: 1,
                 water_reflections: 1,
                 mirrors: 0,
                 ssr: false,
@@ -265,6 +271,19 @@ pub(crate) fn upgrade_deluxe(s: &mut Settings) {
     }
 }
 
+/// The Deluxe of settings version 19: every effect on, the bloom and the
+/// indirect light included.
+fn deluxe_v19() -> Values {
+    Values {
+        effects: Effects {
+            bloom: true,
+            screen_indirect_light: true,
+            ..Effects::DELUXE
+        },
+        ..Preset::Deluxe.values()
+    }
+}
+
 /// Settings files written before Deluxe took the bloom, the contact shadows
 /// and the indirect light (version 19): a profile still exactly on the
 /// Deluxe of version 18 moves to the Deluxe of now; any other keeps them as
@@ -272,6 +291,33 @@ pub(crate) fn upgrade_deluxe(s: &mut Settings) {
 pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v18().as_shown() {
         Preset::Deluxe.apply(s);
+    }
+}
+
+/// Settings files written while Deluxe turned on the bloom and the indirect
+/// light (version 19), both experimental since: a profile still exactly on
+/// that Deluxe moves to the Deluxe of now (both off); any other keeps them.
+pub(crate) fn upgrade_deluxe_experimental(s: &mut Settings) {
+    if Values::read(s).as_shown() == deluxe_v19().as_shown() {
+        Preset::Deluxe.apply(s);
+    }
+}
+
+/// The High of settings version 19: the Legacy occlusion at its low level.
+fn high_v19() -> Values {
+    Values {
+        ao_method: 0,
+        gtao_quality: 2,
+        ..Preset::High.values()
+    }
+}
+
+/// Settings files written before High took GTAO at Medium quality (version
+/// 20): a profile still exactly on the former High follows it; any other, a
+/// level or custom, keeps its occlusion.
+pub(crate) fn upgrade_high_gtao(s: &mut Settings) {
+    if Values::read(s).as_shown() == high_v19().as_shown() {
+        Preset::High.apply(s);
     }
 }
 
@@ -295,11 +341,10 @@ impl Effects {
         screen_indirect_light: false,
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
     };
-    /// All of them, at their default strengths.
+    /// Deluxe's: the contact shadows; the bloom and the indirect light are
+    /// experimental and stay off (their strengths at their defaults).
     pub const DELUXE: Effects = Effects {
-        bloom: true,
         contact_shadows: true,
-        screen_indirect_light: true,
         ..Effects::OFF
     };
 }
@@ -548,10 +593,10 @@ mod tests {
     }
 
     #[test]
-    fn deluxe_takes_gtao_high_and_the_levels_below_keep_theirs() {
+    fn deluxe_takes_gtao_high_high_gtao_medium_and_the_levels_below_none() {
         let ao = |p: Preset| (p.values().ssao, p.values().ao_method, p.values().gtao_quality);
         assert_eq!(ao(Preset::Deluxe), (2, 1, 2));
-        assert_eq!(ao(Preset::High), (1, 0, 2));
+        assert_eq!(ao(Preset::High), (1, 1, 1));
         for p in [Preset::Potato, Preset::Low, Preset::Medium] {
             assert_eq!(p.values().ssao, 0, "{p:?}");
         }
@@ -568,9 +613,14 @@ mod tests {
         s.gtao_quality = 0;
         assert_eq!(Preset::matching(&s), Some(Preset::Medium));
         // Legacy method: the quality of GTAO does not count either
-        Preset::High.apply(&mut s);
+        high_v19().write(&mut s);
+        let shown = Values::read(&s).as_shown();
         s.gtao_quality = 3;
-        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        assert_eq!(Values::read(&s).as_shown(), shown);
+        // High with another GTAO quality, or the Legacy method, is custom
+        Preset::High.apply(&mut s);
+        s.gtao_quality = 2;
+        assert_eq!(Preset::matching(&s), None);
         // Deluxe with another GTAO quality, or the Legacy method, is custom
         Preset::Deluxe.apply(&mut s);
         s.gtao_quality = 3;
@@ -608,10 +658,11 @@ mod tests {
     }
 
     #[test]
-    fn deluxe_turns_on_every_aurora_effect_and_no_other_level_does() {
+    fn deluxe_turns_on_the_contact_shadows_and_no_other_level_does() {
         let mut s = Settings::default();
         Preset::Deluxe.apply(&mut s);
-        assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
+        // the bloom and the indirect light are experimental: off everywhere
+        assert!(s.contact_shadows && !s.bloom && !s.screen_indirect_light);
         assert_eq!(s.bloom_strength, crate::settings::BLOOM_STRENGTH);
         assert_eq!(s.screen_indirect_intensity, crate::settings::SCREEN_INDIRECT_INTENSITY);
         for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High] {
@@ -635,33 +686,48 @@ mod tests {
         s.screen_indirect_intensity = 3.0;
         s.bloom_strength = 0.9;
         assert_eq!(Preset::matching(&s), Some(Preset::Medium));
-        // High has shadows and the Legacy occlusion: contact shadows count,
-        // the indirect light (GTAO only) does not
+        // High has shadows and GTAO: the contact shadows and the indirect
+        // light both count
         Preset::High.apply(&mut s);
         s.screen_indirect_light = true;
-        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        assert_eq!(Preset::matching(&s), None);
+        Preset::High.apply(&mut s);
         s.contact_shadows = true;
         assert_eq!(Preset::matching(&s), None);
+        // the former High (Legacy occlusion): the indirect light, GTAO only,
+        // does not count there
+        let mut legacy = Settings::default();
+        high_v19().write(&mut legacy);
+        let shown = Values::read(&legacy).as_shown();
+        legacy.screen_indirect_light = true;
+        assert_eq!(Values::read(&legacy).as_shown(), shown);
         // the bloom counts whenever it is on
         Preset::High.apply(&mut s);
         s.bloom = true;
         assert_eq!(Preset::matching(&s), None);
-        // Deluxe with an effect off, or another strength, is custom; the
-        // strength the slider shows reads as the level
+        // Deluxe with its contact shadows off, or the bloom or the indirect
+        // light turned on, is custom; the strength of an effect that is off
+        // does not count
         for change in [
-            |s: &mut Settings| s.bloom = false,
             |s: &mut Settings| s.contact_shadows = false,
-            |s: &mut Settings| s.screen_indirect_light = false,
-            |s: &mut Settings| s.bloom_strength = 0.8,
-            |s: &mut Settings| s.screen_indirect_intensity = 2.0,
+            |s: &mut Settings| s.bloom = true,
+            |s: &mut Settings| s.screen_indirect_light = true,
         ] {
             Preset::Deluxe.apply(&mut s);
             change(&mut s);
             assert_eq!(Preset::matching(&s), None);
         }
         Preset::Deluxe.apply(&mut s);
-        s.screen_indirect_intensity = 1.5000001;
+        s.screen_indirect_intensity = 2.0;
+        s.bloom_strength = 0.8;
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // on, the strength the slider shows reads as its own value
+        s.screen_indirect_light = true;
+        s.screen_indirect_intensity = 1.5000001;
+        let mut on = Settings::default();
+        Preset::Deluxe.apply(&mut on);
+        on.screen_indirect_light = true;
+        assert_eq!(Values::read(&s).as_shown(), Values::read(&on).as_shown());
     }
 
     #[test]
@@ -671,7 +737,8 @@ mod tests {
         assert_eq!(Preset::matching(&s), None);
         upgrade_deluxe_effects(&mut s);
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
-        assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
+        // straight to the Deluxe of now: the experimental effects stay off
+        assert!(s.contact_shadows && !s.bloom && !s.screen_indirect_light);
         // a custom profile close to it keeps its effects off
         let mut custom = Settings::default();
         deluxe_v18().write(&mut custom);
@@ -690,6 +757,68 @@ mod tests {
             p.apply(&mut s);
             let before = Values::read(&s);
             upgrade_deluxe_effects(&mut s);
+            assert_eq!(Values::read(&s), before, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn a_profile_on_the_deluxe_of_version_19_turns_the_experimental_effects_off() {
+        let mut s = Settings::default();
+        deluxe_v19().write(&mut s);
+        assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_deluxe_experimental(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        assert!(s.contact_shadows && !s.bloom && !s.screen_indirect_light);
+        // a custom profile close to it keeps its bloom and indirect light
+        let mut custom = Settings::default();
+        deluxe_v19().write(&mut custom);
+        custom.max_particles = 4096;
+        upgrade_deluxe_experimental(&mut custom);
+        assert!(custom.bloom && custom.screen_indirect_light);
+        // that Deluxe with another bloom strength chosen by hand: kept
+        let mut chosen = Settings::default();
+        deluxe_v19().write(&mut chosen);
+        chosen.bloom_strength = 0.8;
+        upgrade_deluxe_experimental(&mut chosen);
+        assert!(chosen.bloom && chosen.screen_indirect_light);
+        // the levels of now are untouched
+        for p in Preset::ALL {
+            let mut s = Settings::default();
+            p.apply(&mut s);
+            let before = Values::read(&s);
+            upgrade_deluxe_experimental(&mut s);
+            assert_eq!(Values::read(&s), before, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn high_takes_gtao_at_medium_and_a_profile_on_the_former_high_follows_once() {
+        let mut s = Settings::default();
+        Preset::High.apply(&mut s);
+        assert_eq!((s.ssao, s.ao_method, s.gtao_quality), (1, 1, 1));
+        // Deluxe stays at High quality
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!((s.ao_method, s.gtao_quality), (1, 2));
+        // exactly on the former High: moves to GTAO Medium
+        let mut old = Settings::default();
+        high_v19().write(&mut old);
+        assert_eq!(Preset::matching(&old), None);
+        upgrade_high_gtao(&mut old);
+        assert_eq!(Preset::matching(&old), Some(Preset::High));
+        assert_eq!((old.ao_method, old.gtao_quality), (1, 1));
+        // a High customized by hand keeps its Legacy occlusion
+        let mut custom = Settings::default();
+        high_v19().write(&mut custom);
+        custom.draw_distance = 192.0;
+        upgrade_high_gtao(&mut custom);
+        assert_eq!(custom.ao_method, 0);
+        // the levels of now are untouched
+        for p in Preset::ALL {
+            let mut s = Settings::default();
+            p.apply(&mut s);
+            let before = Values::read(&s);
+            upgrade_high_gtao(&mut s);
             assert_eq!(Values::read(&s), before, "{p:?}");
         }
     }

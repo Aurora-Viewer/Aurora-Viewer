@@ -2211,6 +2211,7 @@ ui-appearance-items-right-eyeball = Globe oculaire droit
 ui-appearance-items-left-eyeball = Globe oculaire gauche
 ui-options-glow = Glow
 ui-options-bloom = Bloom
+ui-experimental-tip = Expérimental : en cours de développement, peut changer ou coûter plus que prévu
 ui-options-bloom-help = Un halo doux autour des parties les plus lumineuses de l'image (soleil sur le métal, lumières), en plus du glow ; propre à Aurora, désactivé par défaut
 ui-options-bloom-strength = Intensité du bloom
 ui-options-bloom-strength-help = La part de la lumière au-delà du blanc qui se répand dans le halo

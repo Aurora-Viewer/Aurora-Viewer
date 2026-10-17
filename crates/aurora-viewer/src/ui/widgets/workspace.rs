@@ -58,6 +58,21 @@ pub fn paint_glyph(painter: &egui::Painter, name: &str, center: egui::Pos2, size
     }
 }
 
+/// The mark of an experimental option: a small amber warning triangle in
+/// `rect`, which explains itself on hover ("work in progress"). Used beside
+/// the label of a setting that may still change or cost more than expected.
+pub fn experimental_mark(ui: &egui::Ui, p: &Palette, rect: egui::Rect, id: egui::Id) -> egui::Response {
+    paint_glyph(
+        ui.painter(),
+        "alert-triangle-filled",
+        rect.center(),
+        rect.width().min(rect.height()),
+        p.amber,
+    );
+    ui.interact(rect, id, Sense::hover())
+        .on_hover_text(aurora_i18n::tr!("ui-experimental-tip"))
+}
+
 pub fn glyph(ui: &mut egui::Ui, name: &str, color: Color32, size: f32) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     if let Some(icon) = crate::ui::icons::global(name) {
