@@ -521,7 +521,7 @@ pub(super) fn export_csv(list: &[AccessEntry], name: impl Fn(&Uuid) -> String) -
 }
 
 /// ll_sd_from_csv + the "UUID" column of each row.
-pub(super) fn import_csv(text: &str) -> Vec<Uuid> {
+pub(crate) fn import_csv(text: &str) -> Vec<Uuid> {
     let mut lines = text.lines();
     let Some(header) = lines.next() else {
         return Vec::new();

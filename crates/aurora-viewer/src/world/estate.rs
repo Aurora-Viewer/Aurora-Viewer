@@ -56,6 +56,9 @@ pub struct Estate {
     pub stats: Option<(RegionHandle, Arc<SimStats>)>,
     /// Server versions by region (AgentMovementComplete).
     pub versions: HashMap<RegionHandle, String>,
+    /// A change of the lists was sent: the next `setaccess` asks them again
+    /// (LLPanelEstateAccess::setPendingUpdate).
+    access_pending: bool,
     out: Vec<NetCommand>,
 }
 
@@ -112,6 +115,18 @@ impl Estate {
         self.out.push(NetCommand::Estate(EstateCommand::BakeTerrain { handle }));
     }
 
+    /// A change of the estate's lists (accessCoreConfirm: `batch`, one
+    /// answer; importListCallback: each alone). The lists come again once
+    /// the simulator answers.
+    pub fn change_access(&mut self, handle: RegionHandle, flags: u32, ids: Vec<Uuid>, batch: bool) {
+        if ids.is_empty() {
+            return;
+        }
+        self.access_pending = true;
+        self.out
+            .push(NetCommand::Estate(EstateCommand::AccessDelta { handle, flags, ids, batch }));
+    }
+
     fn clear(&mut self) {
         self.region = None;
         self.estate = None;
@@ -119,6 +134,7 @@ impl Estate {
         self.experiences = None;
         self.schedule = None;
         self.environment = None;
+        self.access_pending = false;
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -145,6 +161,11 @@ impl Estate {
             }
             EstateEvent::EstateInfo { handle, info } if shown(handle) => self.estate = Some(info),
             EstateEvent::Access { handle, access } if shown(handle) => self.access = Some(access),
+            // LLDispatchSetEstateAccess: only after a change of ours
+            EstateEvent::AccessChanged { handle } if shown(handle) && self.access_pending => {
+                self.access_pending = false;
+                self.out.push(NetCommand::Estate(EstateCommand::RefreshAccess { handle }));
+            }
             EstateEvent::Experiences { handle, experiences } if shown(handle) => self.experiences = Some(experiences),
             EstateEvent::Schedule { handle, schedule } if shown(handle) => self.schedule = Some(schedule),
             EstateEvent::Environment { handle, environment } if shown(handle) => {
@@ -202,5 +223,32 @@ mod tests {
         // reopened on another region, the old answers go
         e.open(8);
         assert!(e.region.is_none());
+    }
+
+    /// A change of the lists is sent, and the simulator's `setaccess` asks
+    /// them again once; another one (not ours) does not.
+    #[test]
+    fn a_list_change_asks_the_lists_again_once() {
+        use aurora_net::estate::estate_access as ea;
+        let mut e = Estate::default();
+        e.open(7);
+        e.take_commands();
+        e.apply(EstateEvent::AccessChanged { handle: 7 });
+        assert!(e.take_commands().is_empty(), "no change of ours waiting");
+        e.change_access(7, ea::BANNED_AGENT_ADD, Vec::new(), true);
+        assert!(e.take_commands().is_empty(), "nobody to change");
+        e.change_access(7, ea::BANNED_AGENT_ADD, vec![Uuid::from_u128(3)], true);
+        assert!(matches!(
+            &e.take_commands()[..],
+            [NetCommand::Estate(EstateCommand::AccessDelta { handle: 7, flags, ids, batch: true })]
+                if *flags == ea::BANNED_AGENT_ADD && ids.len() == 1
+        ));
+        e.apply(EstateEvent::AccessChanged { handle: 7 });
+        assert!(matches!(
+            e.take_commands()[..],
+            [NetCommand::Estate(EstateCommand::RefreshAccess { handle: 7 })]
+        ));
+        e.apply(EstateEvent::AccessChanged { handle: 7 });
+        assert!(e.take_commands().is_empty());
     }
 }
