@@ -721,6 +721,16 @@ pub fn is_chat_bar_move_input(input: &Input) -> bool {
     CHAT_BAR_MOVE_KEYS.iter().any(|code| *input == Input::key(*code))
 }
 
+/// A held input the chat bar hands to the avatar now: as chat_bar_moves,
+/// an arrow held with Ctrl stays with the field (word moves, history), so
+/// the avatar must not turn or walk while the caret jumps.
+pub fn chat_bar_held_moves(input: &Input, ctrl: bool) -> bool {
+    let arrow = [KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::ArrowUp, KeyCode::ArrowDown]
+        .iter()
+        .any(|code| *input == Input::key(*code));
+    is_chat_bar_move_input(input) && !(arrow && ctrl)
+}
+
 /// Current modifier state.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mods {
@@ -1387,6 +1397,18 @@ mod tests {
             assert!(!chat_bar_moves(code, false, true, true), "{code:?}");
             assert!(!is_chat_bar_move_input(&Input::key(code)));
         }
+    }
+
+    /// While the caret jumps with Ctrl + an arrow, the held arrow does not
+    /// also turn or walk the avatar; Page Up / Down still pass.
+    #[test]
+    fn ctrl_arrows_held_in_the_chat_bar_stay_with_the_field() {
+        for code in [KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::ArrowUp, KeyCode::ArrowDown] {
+            assert!(chat_bar_held_moves(&Input::key(code), false), "{code:?}");
+            assert!(!chat_bar_held_moves(&Input::key(code), true), "Ctrl + {code:?}");
+        }
+        assert!(chat_bar_held_moves(&Input::key(KeyCode::PageUp), true));
+        assert!(!chat_bar_held_moves(&Input::key(KeyCode::KeyW), false));
     }
 
     #[test]

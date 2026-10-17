@@ -4677,7 +4677,7 @@ impl App {
             passed = self
                 .down
                 .iter()
-                .filter(|i| crate::keybinds::is_chat_bar_move_input(i))
+                .filter(|i| crate::keybinds::chat_bar_held_moves(i, self.ctrl))
                 .cloned()
                 .collect();
             &passed

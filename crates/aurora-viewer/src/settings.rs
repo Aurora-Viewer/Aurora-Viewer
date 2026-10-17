@@ -573,7 +573,9 @@ pub struct Settings {
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
-    /// lets them through. Firestorm's `ArrowKeysAlwaysMove`, on by default.
+    /// lets them through. The Legacy Viewer's `ArrowKeysAlwaysMove`, off by
+    /// default (app_settings/settings.xml): with text in the bar the arrows
+    /// move its cursor.
     pub arrow_keys_always_move: bool,
     /// Letter keys move the avatar (WASD) instead of starting the nearby
     /// chat. Firestorm's `LetterKeysAffectsMovementNotFocusChatBar`, on by
@@ -738,7 +740,7 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 21;
+const SETTINGS_VERSION: u32 = 22;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1142,7 +1144,7 @@ impl Default for Settings {
             classic_region_estate: false,
             invert_mouse: false,
             arrows_strafe: false,
-            arrow_keys_always_move: true,
+            arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
@@ -1558,6 +1560,13 @@ impl Settings {
             // profile still exactly on the Medium, High or Deluxe of version
             // 20 follows it, any other keeps its values
             crate::graphics_presets::upgrade_levels_v21(&mut self);
+        }
+        if self.settings_version < 22 {
+            // "Arrow keys always move me" was on by default, unlike the
+            // Legacy Viewer: with text in the chat bar the arrows turned the
+            // avatar instead of moving the cursor. Every earlier file holds
+            // that default, so it goes off once
+            self.arrow_keys_always_move = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -2102,6 +2111,24 @@ mod tests {
             ..Settings::default()
         };
         assert!(!chosen.sanitized().chat_keep_focus);
+    }
+
+    /// ArrowKeysAlwaysMove is off in the Legacy Viewer: the arrows move the
+    /// chat bar's cursor. Earlier files all held Aurora's former "on".
+    #[test]
+    fn arrow_keys_edit_the_chat_bar_by_default_and_once_for_earlier_files() {
+        assert!(!Settings::default().sanitized().arrow_keys_always_move);
+        let old = Settings {
+            settings_version: 21,
+            arrow_keys_always_move: true,
+            ..Settings::default()
+        };
+        assert!(!old.sanitized().arrow_keys_always_move);
+        let chosen = Settings {
+            arrow_keys_always_move: true,
+            ..Settings::default()
+        };
+        assert!(chosen.sanitized().arrow_keys_always_move);
     }
 
     #[test]
