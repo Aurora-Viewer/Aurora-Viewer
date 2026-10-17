@@ -136,7 +136,7 @@ impl HistoryUi {
                     }
                 }
                 Reply::Page { page, entries } if page == self.page => {
-                    self.lines = world.history_lines(entries, false, true).into();
+                    self.lines = world.history_lines(entries, false, true, None).into();
                     self.clock = LineClock::default();
                     self.loaded = Some(page);
                     // the lines are another page's: numbered again

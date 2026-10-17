@@ -166,7 +166,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     let own = line.kind == ChatKind::Own;
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     let name = super::sender_name(world, env.own_name, line);
-    let avatar = if logged || object {
+    // a history line's sender is known when its name was cached
+    // (world/transcripts.rs): its picture shows, dimmed
+    let avatar = if object {
         uuid::Uuid::nil()
     } else if own {
         world.agent_id
@@ -303,8 +305,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     }
 }
 
-/// The picture closing a group: the avatar's (with its status dot), a box
-/// for an object, initials for a history line (nothing is looked up then).
+/// The picture closing a group: the avatar's (with its status dot), dimmed
+/// for a history line; a box for an object; initials while no picture is
+/// known.
 #[allow(clippy::too_many_arguments)]
 fn sender_picture(
     ui: &mut egui::Ui,
@@ -332,7 +335,7 @@ fn sender_picture(
     if !avatar.is_nil() {
         env.wanted.insert(avatar);
     }
-    super::super::widgets::avatar_disc(ui, p, rect, env.pics.get(&avatar).filter(|_| !logged), name, logged);
+    super::super::widgets::avatar_disc(ui, p, rect, env.pics.get(&avatar), name, logged);
     if !avatar.is_nil() {
         let status = presence::of(env.world, &avatar);
         presence::paint_dot(ui.painter(), p, rect, status, p.field);
