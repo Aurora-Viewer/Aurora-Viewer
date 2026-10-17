@@ -1632,6 +1632,15 @@ pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem
 }
 
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
+    // what scripts would hear of a click (AURORA_DEMO_WORLD_CLICKS)
+    use aurora_net::control::{LBUTTON_DOWN, LBUTTON_UP, ML_LBUTTON_DOWN, ML_LBUTTON_UP};
+    match cmd {
+        aurora_net::NetCommand::OneShotControl(f) if f & (LBUTTON_DOWN | LBUTTON_UP | ML_LBUTTON_DOWN | ML_LBUTTON_UP) != 0 => {
+            log::info!("demo server: click bits {f:#010x}");
+        }
+        aurora_net::NetCommand::ObjectGrab { local_id, .. } => log::info!("demo server: ObjectGrab {local_id}"),
+        _ => {}
+    }
     if let Some(events) = hud::reply(cmd) {
         return events;
     }

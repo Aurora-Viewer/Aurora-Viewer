@@ -200,6 +200,9 @@ pub struct World {
     pub script_debug: script_debug::Messages,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
+    /// The controls our scripts took (llTakeControls): who gets the left
+    /// button's clicks (app/script_clicks.rs).
+    pub script_controls: aurora_net::script_controls::ScriptControls,
     pub coarse: HashMap<RegionHandle, Vec<(Uuid, Vec3)>>,
     /// Objects of the regions out of reach, until their simulator closes
     /// them or they are in reach again (parked.rs).
@@ -445,6 +448,7 @@ impl World {
             script_debug: script_debug::Messages::default(),
             sun: None,
             agent: AgentState::default(),
+            script_controls: Default::default(),
             coarse: HashMap::new(),
             parked: HashMap::new(),
             appearances: HashMap::new(),
@@ -1390,6 +1394,8 @@ impl World {
         match ev {
             NetEvent::LoggedIn(l) => {
                 self.agent_id = l.agent_id;
+                // a new session: no script holds a control yet
+                self.script_controls = Default::default();
                 // the account is known: its transcripts open
                 self.chat_log.login(l.agent_id);
                 // LLVOAvatar::getFullname, sent when an offline friendship
@@ -1856,6 +1862,12 @@ impl World {
                 self.teleporting = false;
                 self.tp_failed = true;
                 self.system_message(aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()));
+                None
+            }
+            NetEvent::ScriptControlChange(blocks) => {
+                for (take, controls, pass_on) in blocks {
+                    self.script_controls.apply(take, controls, pass_on);
+                }
                 None
             }
             NetEvent::Alert { message } => {

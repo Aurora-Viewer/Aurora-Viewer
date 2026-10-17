@@ -37,6 +37,7 @@ impl AgentControls {
     /// time, see [`AgentUpdateRule`].
     pub fn update_worthy(&self, prev: &AgentControls) -> bool {
         self.control_flags != prev.control_flags
+            || self.alt_or_ctrl != prev.alt_or_ctrl
             || self.state != prev.state
             || self.flags != prev.flags
             || self.camera_center.distance(prev.camera_center) > CAMERA_MOVE

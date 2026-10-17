@@ -24,6 +24,7 @@ pub mod outfits;
 pub mod probe;
 pub mod profile;
 pub mod region_restart;
+pub mod script_controls;
 pub mod scripts;
 pub mod search;
 mod session;
