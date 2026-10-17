@@ -32,6 +32,10 @@ pub(super) enum Return {
 #[derive(Debug, Default)]
 pub(super) struct CursorHold {
     kind: Option<HoldKind>,
+    /// A give-back asked while the window was out of reach (the frame holds
+    /// it while the interface is built): done as soon as the frame gives the
+    /// window back, so the cursor is never left hidden and locked.
+    pending: Option<bool>,
 }
 
 impl CursorHold {
@@ -42,6 +46,8 @@ impl CursorHold {
     /// Take the cursor; None when it is already held (a drag that turns into
     /// mouselook keeps its first hold).
     pub(super) fn take(&mut self, mouselook: bool, cursor: (f32, f32)) -> Option<HoldKind> {
+        // a hold asked after a postponed give-back keeps the cursor
+        self.pending = None;
         if self.kind.is_some() {
             return None;
         }
@@ -57,6 +63,7 @@ impl CursorHold {
     /// Give the cursor back; None when it was not held. `focus_lost`: the
     /// window lost the focus, the cursor stays where the system left it.
     pub(super) fn give_back(&mut self, focus_lost: bool) -> Option<Return> {
+        self.pending = None;
         let kind = self.kind.take()?;
         Some(match kind {
             _ if focus_lost => Return::Stay,
@@ -109,6 +116,14 @@ impl App {
     /// shown and released where it is; mouselook takes it again when the
     /// window has the focus back.
     pub(super) fn release_cursor(&mut self, focus_lost: bool) {
+        if self.gfx.is_none() {
+            // the window is the frame's for now: forgetting the hold here
+            // left the cursor hidden and locked for good
+            if self.cursor_hold.held() {
+                self.cursor_hold.pending = Some(focus_lost);
+            }
+            return;
+        }
         let Some(back) = self.cursor_hold.give_back(focus_lost) else {
             return;
         };
@@ -123,6 +138,13 @@ impl App {
         }
         if let Some(g) = &self.gfx {
             g.window.set_cursor_visible(true);
+        }
+    }
+
+    /// The give-back the frame postponed, once it has the window back.
+    pub(super) fn release_postponed_cursor(&mut self) {
+        if let Some(focus_lost) = self.cursor_hold.pending {
+            self.release_cursor(focus_lost);
         }
     }
 
@@ -181,5 +203,21 @@ mod tests {
         assert_eq!(hold.give_back(true), Some(Return::Stay));
         // mouselook takes it again once the window has the focus back
         assert_eq!(hold.take(true, (0.0, 0.0)), Some(HoldKind::Mouselook));
+    }
+
+    #[test]
+    fn a_postponed_give_back_is_kept_until_done_and_cancelled_by_a_new_hold() {
+        let mut hold = CursorHold::default();
+        assert!(hold.take(false, (10.0, 20.0)).is_some());
+        // asked while the window was busy: still held, give-back pending
+        hold.pending = Some(false);
+        assert!(hold.held());
+        assert_eq!(hold.give_back(false), Some(Return::At((10.0, 20.0))));
+        assert_eq!(hold.pending, None);
+        assert!(!hold.held());
+        // a new hold before the frame gave the window back drops the pending give-back
+        hold.pending = Some(true);
+        assert!(hold.take(true, (0.0, 0.0)).is_some());
+        assert_eq!(hold.pending, None);
     }
 }

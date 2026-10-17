@@ -5538,6 +5538,8 @@ impl App {
         if self.left_down && self.color_pipette() && !self.egui_ctx.is_pointer_over_egui() {
             self.sample_build_color();
         }
+        // AURORA_DEMO_LINK's lost link, before the frame takes the window
+        self.demo_link_lost();
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -7198,6 +7200,7 @@ impl App {
         self.end_profile_frame(w, h);
         self.end_deep_profile(&gfx.renderer);
         self.gfx = Some(gfx);
+        self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();
         self.demo_action_steps();

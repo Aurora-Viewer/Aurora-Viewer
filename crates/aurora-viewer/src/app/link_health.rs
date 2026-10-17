@@ -75,15 +75,21 @@ impl App {
         self.login_form.reconnect = reconnect;
     }
 
-    /// The pill while the agent's region is silent (and the demo's link).
-    pub(super) fn show_link_health(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        if !matches!(self.screen, Screen::World) {
-            return;
-        }
-        if let Some(demo) = self.demo_link_health
+    /// AURORA_DEMO_LINK's lost link at its frame, at the top of the frame as
+    /// a network event is (never from the interface: the frame holds the
+    /// window, and the login screen needs it to give the cursor back).
+    pub(super) fn demo_link_lost(&mut self) {
+        if matches!(self.screen, Screen::World)
+            && let Some(demo) = self.demo_link_health
             && demo.lost_at == Some(self.frame_count)
         {
             self.on_disconnected(aurora_i18n::tr!("session-connection-to-the-region-was-lost"), true);
+        }
+    }
+
+    /// The pill while the agent's region is silent (and the demo's link).
+    pub(super) fn show_link_health(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if !matches!(self.screen, Screen::World) {
             return;
         }
         let age = match &self.demo_link_health {
