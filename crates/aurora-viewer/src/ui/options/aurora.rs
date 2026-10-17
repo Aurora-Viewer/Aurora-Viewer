@@ -19,7 +19,7 @@ pub enum Look {
     Firestorm,
 }
 
-/// Every choice of the Appearance, Gaze and Movement groups set to one
+/// Every choice of the Appearance, Gaze, Movement and Animations groups set to one
 /// look; the avatar plates' own settings are left as they are.
 pub fn set_all(s: &mut Settings, look: Look) {
     let aurora = look == Look::Aurora;
@@ -48,6 +48,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_restart_alert = !aurora;
     s.classic_chat_lines = !aurora;
     s.predict_own_motion = aurora;
+    s.synchronize_animations = aurora;
 }
 
 /// The aurora gradient at `t` (0 at its start, 1 at its end): the brand's
@@ -376,6 +377,22 @@ fn chat_style_choice(ui: &mut egui::Ui, p: &Palette, style: &mut ChatStyle) -> b
     )
 }
 
+fn animation_clock_choice(ui: &mut egui::Ui, p: &Palette, synchronized: &mut bool) -> bool {
+    let mut legacy = !*synchronized;
+    let changed = look_choice_with(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-options-aurora-animation-clock"),
+        Some(aurora_i18n::tr!("ui-options-aurora-animation-clock-experimental")),
+        aurora_i18n::tr!("ui-options-aurora-animation-clock-help"),
+        aurora_i18n::tr!("ui-options-aurora-animation-clock-synchronized"),
+        aurora_i18n::tr!("ui-options-aurora-animation-clock-legacy"),
+        &mut legacy,
+    );
+    *synchronized = !legacy;
+    changed
+}
+
 /// `reset`: "Reset this section…" was clicked in the page's head.
 pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     let mut c = hero(ui, p, s, reset);
@@ -583,6 +600,10 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             c = true;
         }
     });
+    group(ui, p, aurora_i18n::tr!("ui-options-aurora-animations"), |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        c |= animation_clock_choice(ui, p, &mut s.synchronize_animations);
+    });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-avatar-plates"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         // the plates' settings mean nothing to the classic name tags
@@ -634,6 +655,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn animation_timing_defaults_to_legacy_is_saved_and_resets_with_aurora() {
+        let old: Settings = serde_json::from_str("{}").expect("old settings without the preference");
+        assert!(!old.synchronize_animations);
+        for synchronized in [true, false] {
+            let s = Settings {
+                synchronize_animations: synchronized,
+                ..Settings::default()
+            };
+            let json = serde_json::to_string(&s).expect("settings serialize");
+            let mut back: Settings = serde_json::from_str(&json).expect("settings read back");
+            assert_eq!(back.synchronize_animations, synchronized);
+            super::super::sections::reset(super::super::TAB_AURORA, &mut back);
+            assert!(!back.synchronize_animations, "section reset restores Legacy");
+        }
+    }
+
+    #[test]
+    fn animation_timing_buttons_change_the_saved_preference() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let mut s = Settings::default();
+        let mut texts = Vec::new();
+        let draw = |ui: &mut egui::Ui, s: &mut Settings| {
+            ui.set_width(620.0);
+            animation_clock_choice(ui, &p, &mut s.synchronize_animations)
+        };
+        for _ in 0..2 {
+            texts = frames.run(Vec::new(), |ui| {
+                draw(ui, &mut s);
+            });
+        }
+        for (key, synchronized) in [
+            ("ui-options-aurora-animation-clock-synchronized", true),
+            ("ui-options-aurora-animation-clock-legacy", false),
+        ] {
+            let at = texts
+                .iter()
+                .find(|t| t.source == aurora_i18n::text(key))
+                .expect("the segment is visible")
+                .rect
+                .center();
+            let mut changed = false;
+            for event in [
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ] {
+                texts = frames.run(vec![event], |ui| {
+                    changed |= draw(ui, &mut s);
+                });
+            }
+            assert!(changed, "{key} reports a change for saving");
+            assert_eq!(s.synchronize_animations, synchronized);
+        }
+    }
+
+    #[test]
     fn the_two_buttons_set_every_look_and_leave_the_plates_alone() {
         let mut s = Settings {
             plates_friends_only_full: true,
@@ -657,6 +745,7 @@ mod tests {
         assert!(s.classic_restart_alert, "Firestorm's yellow restart box");
         assert!(s.classic_chat_lines, "the Legacy Viewer's one-line chat lines");
         assert!(!s.predict_own_motion, "the avatar waits for the simulator");
+        assert!(!s.synchronize_animations);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -684,6 +773,8 @@ mod tests {
         assert!(!s.classic_chat_lines && !fresh.classic_chat_lines, "the cards are the default");
         assert!(s.predict_own_motion, "Aurora's movement");
         assert!(!fresh.predict_own_motion, "Firestorm's movement until tried on the grid");
+        assert!(s.synchronize_animations, "the Aurora bulk choice enables receipt clocks");
+        assert!(!fresh.synchronize_animations, "Legacy animation timing is the default");
         assert!(s.plates_friends_only_full);
     }
 
@@ -716,7 +807,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1400.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1800.0))),
                 ..Default::default()
             },
             |ui| {
@@ -762,6 +853,8 @@ mod tests {
             "ui-options-aurora-aim",
             "ui-options-aurora-movement",
             "ui-options-aurora-own-motion",
+            "ui-options-aurora-animations",
+            "ui-options-aurora-animation-clock",
             "ui-options-aurora-avatar-plates",
             "ui-options-plates-hover-expand",
             "ui-options-full-plates-friends-only",

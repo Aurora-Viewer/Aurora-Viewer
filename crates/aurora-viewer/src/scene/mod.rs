@@ -619,6 +619,8 @@ pub struct Scene {
     /// Skeletons whose animations are paused while something they carry is
     /// selected (build/anim_pause.rs), set by the app each frame.
     pub paused_skeletons: HashSet<Uuid>,
+    /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
+    pub synchronize_animations: bool,
     /// Avatar rendering complexity by avatar id (complexity.rs).
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
@@ -1073,6 +1075,7 @@ impl Scene {
             particles: particles::ParticleManager::default(),
             movement_preview: None,
             paused_skeletons: HashSet::new(),
+            synchronize_animations: false,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             sets: SyncSets::default(),
@@ -4012,6 +4015,7 @@ impl Scene {
             };
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
+            motions.set_synchronized(self.synchronize_animations);
             motions.set_paused(self.paused_skeletons.contains(&owner), now);
             match look {
                 Some((true, _)) => motions.look_cleared = true,
@@ -4027,7 +4031,7 @@ impl Scene {
             }
             let anims = &mut self.anims;
             if motions.control {
-                let playing = self.object_signals.entry(owner).or_default().update(world, idx, now);
+                let playing = self.object_signals.entry(owner).or_default().update(world, idx);
                 motions.sync(&playing, now, |id| anims.get(id));
             } else {
                 let mut playing;

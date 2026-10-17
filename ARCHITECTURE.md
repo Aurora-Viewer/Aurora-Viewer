@@ -95,6 +95,24 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+Preferences › Aurora › Animations selects the playback clock for both avatars
+and animesh. Legacy is the persisted default, including older settings files:
+activate at asset loading and suspend playback during editing, following
+LLMotionController::updateLoadingMotions and pauseAllMotions. The opt-in
+Synchronized clock uses the first locally known simulator signal as its origin
+(`world::PlayingAnimation`), independent of asset loading and first visibility.
+In this mode, `scene/anim.rs` freezes only the displayed pose during editing;
+receipt origins remain unchanged, so releasing the selection rejoins the current phase. Changed
+signals and late assets cannot move the held edit pose. Late assets join the
+elapsed phase and expired one-shots report completion once. Animesh
+linkset merging preserves the receipt clocks of the contributing signals.
+This intentionally improves on activation at asset arrival in
+LLMotionController::updateLoadingMotions;
+it cannot recover a simulator start that the viewer never received.
+Switching to synchronized playback rejoins the receipt phase immediately;
+switching back preserves the current phase and uses Legacy timing for future
+starts and edit pauses. Import preview seeking overrides either preference.
+
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these
 separate requests and formats the extended `llGetObjectDetails` report in nearby
