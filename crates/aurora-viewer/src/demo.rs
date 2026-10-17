@@ -3053,7 +3053,7 @@ pub fn events() -> Vec<NetEvent> {
                 id,
                 Vec3::new(p.x, p.y, floor + 1.25),
                 Quat::from_rotation_z(yaw),
-                Vec3::new(0.06, 1.8, 1.8),
+                panel_scale(k, label),
                 boxp,
                 Arc::new(t),
                 ExtraParams::default(),
@@ -5803,6 +5803,18 @@ const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_000
 const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
 const TEX_PICK_FAINT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0013);
 const TEX_PICK_HALF: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0014);
+
+/// Size of a test panel; AURORA_DEMO_BUMP=tall or wide stretches the
+/// normal-mapped one 4:1, its texture four times denser across or along
+/// it (the tangent frame of `perturb_normal`, AURORA_TANGENTS).
+fn panel_scale(k: usize, label: &str) -> Vec3 {
+    let bumpy = k == 5 && label == aurora_i18n::tr!("demo-normal-specular");
+    match std::env::var("AURORA_DEMO_BUMP").as_deref() {
+        Ok("tall") if bumpy => Vec3::new(0.06, 0.45, 1.8),
+        Ok("wide") if bumpy => Vec3::new(0.06, 1.8, 0.45),
+        _ => Vec3::new(0.06, 1.8, 1.8),
+    }
+}
 
 /// (texture, legacy material, hover text) of the test panels.
 fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
