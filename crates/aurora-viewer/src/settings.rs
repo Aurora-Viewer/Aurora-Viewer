@@ -729,7 +729,7 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 19;
+const SETTINGS_VERSION: u32 = 20;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1533,6 +1533,14 @@ impl Settings {
             // Deluxe of version 18 follows it
             crate::graphics_presets::upgrade_deluxe_effects(&mut self);
         }
+        if self.settings_version < 20 {
+            // the bloom and the indirect light are experimental and left
+            // Deluxe, and High takes GTAO at Medium quality: a profile still
+            // exactly on the Deluxe or the High of version 19 follows it,
+            // any other keeps its values
+            crate::graphics_presets::upgrade_deluxe_experimental(&mut self);
+            crate::graphics_presets::upgrade_high_gtao(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1985,13 +1993,57 @@ mod tests {
         old.contact_shadows = false;
         old.screen_indirect_light = false;
         let now = old.sanitized();
-        assert!(now.bloom && now.contact_shadows && now.screen_indirect_light);
+        // through version 19 to the Deluxe of now: the contact shadows, the
+        // experimental bloom and indirect light off
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
         assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
         // turned off after the change: kept off
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
-        chosen.bloom = false;
-        assert!(!chosen.sanitized().bloom);
+        chosen.contact_shadows = false;
+        assert!(!chosen.sanitized().contact_shadows);
+    }
+
+    #[test]
+    fn a_file_on_the_deluxe_of_version_19_turns_the_experimental_effects_off_once() {
+        use crate::graphics_presets::Preset;
+        let mut old = Settings {
+            settings_version: 19,
+            ..Settings::default()
+        };
+        Preset::Deluxe.apply(&mut old);
+        old.bloom = true;
+        old.screen_indirect_light = true;
+        let now = old.sanitized();
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // turned on again after the change: kept on
+        let mut chosen = Settings::default();
+        Preset::Deluxe.apply(&mut chosen);
+        chosen.bloom = true;
+        chosen.screen_indirect_light = true;
+        let kept = chosen.sanitized();
+        assert!(kept.bloom && kept.screen_indirect_light);
+    }
+
+    #[test]
+    fn a_file_on_the_high_of_version_19_moves_to_gtao_medium_once() {
+        use crate::graphics_presets::Preset;
+        let mut old = Settings {
+            settings_version: 19,
+            ..Settings::default()
+        };
+        Preset::High.apply(&mut old);
+        old.ao_method = 0;
+        old.gtao_quality = 2;
+        let now = old.sanitized();
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 1));
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        // the Legacy method chosen after the change: kept
+        let mut chosen = Settings::default();
+        Preset::High.apply(&mut chosen);
+        chosen.ao_method = 0;
+        assert_eq!(chosen.sanitized().ao_method, 0);
     }
 
     #[test]

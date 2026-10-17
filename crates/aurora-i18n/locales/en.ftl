@@ -2210,6 +2210,7 @@ ui-appearance-items-right-eyeball = Right eyeball
 ui-appearance-items-left-eyeball = Left eyeball
 ui-options-glow = Glow
 ui-options-bloom = Bloom
+ui-experimental-tip = Experimental: work in progress, may change or cost more than expected
 ui-options-bloom-help = A soft halo around the brightest parts of the image (sun on metal, lights), beside the glow; Aurora's own, off by default
 ui-options-bloom-strength = Bloom strength
 ui-options-bloom-strength-help = How much of the light above white spreads into the halo
