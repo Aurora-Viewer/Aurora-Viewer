@@ -205,8 +205,9 @@ impl BoundAnim {
 //
 // Port of LLMotionController / LLPoseBlender (indra/llcharacter, Linden
 // Research, originally LGPL 2.1): motions ease in and out (cubic), a motion still
-// loading starts when it arrives, a stopped motion keeps playing while it
-// eases out, and a joint no motion drives keeps its last pose (never back to
+// loading starts on arrival (or catches up to its first known signal when opted
+// in), a stopped motion keeps playing while it eases out, and a joint no motion
+// drives keeps its last pose (never back to
 // the T-pose: LLJointStateBlender::blendJointStates).
 
 /// Most joint states blended per joint (JSB_NUM_JOINT_STATES).
@@ -274,6 +275,8 @@ impl Motion {
 pub struct Controller {
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
+    /// Opt-in receipt clock; the default keeps Legacy Viewer activation / pauses.
+    synchronized: bool,
     /// Newest first (mActiveMotions, push_front).
     motions: Vec<Motion>,
     /// Signals already activated, including completed non-looping motions.
@@ -285,7 +288,7 @@ pub struct Controller {
     /// Animated joint positions as offsets from the rest skeleton, held
     /// like the rotations (a shape change still moves them).
     pos_delta: Vec<Vec3>,
-    pelvis_offset: Vec3,
+    pelvis_offset: Option<Vec3>,
     /// The same held translations, using whole-track upper bounds for a
     /// stable upright height. Rotations and sampled bobbing never enter it.
     tag_pos_delta: Vec<f32>,
@@ -301,8 +304,7 @@ pub struct Controller {
     /// (skeleton space).
     posed: LookJoints<(Quat, Vec3)>,
     last_eval: Option<Instant>,
-    /// Animations paused since then (LLCharacter::requestPause): their
-    /// clock stands still, and they go on from the same point once resumed.
+    /// Pose frozen since then (LLCharacter::requestPause).
     paused_at: Option<Instant>,
     /// Head and eye joint states of the last frame, held during a pause
     /// (LLMotionController::updateIdleActiveMotions does not run them).
@@ -511,6 +513,21 @@ fn facing(dir: Vec3) -> Option<Quat> {
 }
 
 impl Controller {
+    /// Apply Preferences › Aurora › Animations without restarting live loops.
+    /// Enabling catches up to the known phase; disabling keeps the current phase
+    /// and uses the Legacy Viewer clock for subsequent starts and pauses.
+    pub fn set_synchronized(&mut self, synchronized: bool) {
+        if synchronized && !self.synchronized {
+            for m in &mut self.motions {
+                if m.stop.is_none() && !self.preview_start.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                    m.activation = m.signal.sequence_start;
+                    m.continuous_activation = m.signal.continuous_start;
+                }
+            }
+        }
+        self.synchronized = synchronized;
+    }
+
     /// Motions playing (`avatar summary`, AURORA_PROFILE).
     pub fn motion_count(&self) -> usize {
         self.motions.len()
@@ -538,7 +555,7 @@ impl Controller {
         self.rot.clear();
         self.pos_delta.clear();
         self.tag_pos_delta.clear();
-        self.pelvis_offset = Vec3::ZERO;
+        self.pelvis_offset = None;
         self.tag_pelvis_offset = 0.0;
         self.last_eval = None;
         if animations {
@@ -546,30 +563,32 @@ impl Controller {
         }
     }
 
-    /// Pause or resume every motion (LLCharacter::requestPause, released with
-    /// the last LLPauseRequestHandle; LLMotionController::pauseAllMotions):
-    /// the pose stands still and, once resumed, each motion goes on from the
-    /// point it had reached, as the frozen animation time of the Legacy
-    /// Viewer does. An import preview drives its own clock and is never paused.
+    /// Freeze the displayed pose for editing (LLCharacter::requestPause).
+    /// The synchronized mode catches up on release; Legacy suspends playback
+    /// like LLMotionController::pauseAllMotions.
+    /// An import preview drives its own clock and is never paused.
     pub fn set_paused(&mut self, paused: bool, now: Instant) {
         let paused = paused && self.preview_start.is_none();
         match (self.paused_at, paused) {
             (None, true) => self.paused_at = Some(now),
             (Some(at), false) => {
                 self.paused_at = None;
-                self.shift(now.saturating_duration_since(at));
+                let duration = now.saturating_duration_since(at);
+                if !self.synchronized {
+                    for m in &mut self.motions {
+                        m.activation += duration;
+                        m.continuous_activation += duration;
+                        m.stop = m.stop.map(|stop| stop + duration);
+                    }
+                }
+                self.resume_procedural(duration);
             }
             _ => {}
         }
     }
 
-    /// Move every time kept by the motions forward by the length of a pause.
-    fn shift(&mut self, d: Duration) {
-        for m in &mut self.motions {
-            m.activation += d;
-            m.continuous_activation += d;
-            m.stop = m.stop.map(|s| s + d);
-        }
+    /// Head/eye interpolation resumes smoothly in either playback mode.
+    fn resume_procedural(&mut self, d: Duration) {
         let pr = &mut self.procedural;
         for fade in [&mut pr.head, &mut pr.eyes] {
             fade.change = fade.change.map(|c| c + d);
@@ -680,8 +699,8 @@ impl Controller {
         out
     }
 
-    /// Import preview clocks are explicit; ordinary motions still activate on
-    /// arrival. Seeking restarts only the preview, without touching server state.
+    /// Import preview clocks override the first known signal. Seeking restarts
+    /// only the preview, without touching server state.
     pub fn set_preview_clock(&mut self, clock: Option<(Option<Uuid>, Instant)>) {
         if self.preview_start == clock {
             return;
@@ -702,10 +721,10 @@ impl Controller {
         let frozen = self.paused_at;
         let now = frozen.unwrap_or(now);
         let preview = self.preview_start;
-        let activation = |id| {
+        let activation = |id, start: Instant| {
             preview
                 .filter(|(target, _)| target.is_none_or(|target| target == id))
-                .map_or(now, |(_, start)| start)
+                .map_or(if self.synchronized { start } else { now }, |(_, start)| start)
         };
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut() {
@@ -722,9 +741,9 @@ impl Controller {
             self.motions.retain(|m| m.stop != Some(now));
         }
         self.signals.retain(|id, _| playing.iter().any(|p| p.id == *id));
-        // start the new ones, once loaded (updateLoadingMotions: activated
-        // when they arrive). A motion easing out is left to finish and a
-        // new instance starts (startMotion, deprecateMotionInstance).
+        // Synchronized playback joins the receipt phase. Legacy activates on
+        // loading, as LLMotionController::updateLoadingMotions does.
+        // A motion easing out is left to finish while a new instance starts.
         for signal in playing {
             if self.signals.get(&signal.id) == Some(signal) {
                 continue;
@@ -733,7 +752,7 @@ impl Controller {
                 if m.anim.anim.looping && m.signal.continuous_start == signal.continuous_start {
                     // LLVOAvatar signals sequence changes, but startMotion
                     // keeps an already active loop running continuously.
-                    m.activation = activation(signal.id);
+                    m.activation = activation(signal.id, signal.sequence_start);
                     m.signal = *signal;
                     self.signals.insert(signal.id, *signal);
                     continue;
@@ -746,8 +765,8 @@ impl Controller {
                     Motion {
                         id: signal.id,
                         anim,
-                        activation: activation(signal.id),
-                        continuous_activation: activation(signal.id),
+                        activation: activation(signal.id, signal.sequence_start),
+                        continuous_activation: activation(signal.id, signal.continuous_start),
                         signal: *signal,
                         stop: None,
                         residual: 0.0,
@@ -796,6 +815,9 @@ impl Controller {
     pub fn evaluate(&mut self, rig: &Rig, now: Instant, base: Option<&SkeletonBase>, out: &mut [[[f32; 4]; 4]]) {
         let now = self.paused_at.unwrap_or(now);
         let n = rig.len().min(out.len());
+        // Keep the displayed pose even if signals stop/change or a file arrives
+        // during editing. The first evaluation still initializes an unseen rig.
+        let hold_pose = self.paused_at.is_some() && self.rot.len() == rig.len();
         if self.rot.len() != rig.len() {
             self.rot = rig.local_rot.clone();
             self.pos_delta = vec![Vec3::ZERO; rig.len()];
@@ -810,7 +832,7 @@ impl Controller {
         // (LLJointStateBlender::addJointState)
         type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
-        for m in &self.motions {
+        for m in self.motions.iter().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
                 continue;
             }
@@ -842,7 +864,7 @@ impl Controller {
         }
         // head and eye motions, started with the avatar (startDefaultMotions)
         let lj = LookJoints::of(rig);
-        let procedural = if self.control {
+        let procedural = if self.control || hold_pose {
             Vec::new()
         } else if self.paused_at.is_some() {
             self.held_procedural.clone()
@@ -895,7 +917,7 @@ impl Controller {
             if pos_sum > 0.0 {
                 if j == rig.pelvis {
                     // the pelvis is animated relative to the avatar root
-                    self.pelvis_offset = pos;
+                    self.pelvis_offset = Some(pos);
                     self.tag_pelvis_offset = top;
                 } else if let Some(rest) = rest_pos.get(j) {
                     self.pos_delta[j] = pos - *rest;
@@ -912,13 +934,24 @@ impl Controller {
             Some(b) => b.scale.as_slice(),
             None => rig.scale.as_slice(),
         };
-        let world = rig.world_with(&self.rot, self.pelvis_offset, &local_pos, scale);
+        // LLJointStateBlender::blendJointStates sets an absolute local
+        // position, even on a mesh-overridden pelvis. The feet-origin
+        // conversion must not add the rest pelvis translation a second time.
+        let pelvis_rest =
+            rest_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO) - rig.local_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO);
+        let pelvis_offset = self.pelvis_offset.map_or(Vec3::ZERO, |position| position - pelvis_rest);
+        let world = rig.world_with(&self.rot, pelvis_offset, &local_pos, scale);
         // Deliberate difference from LLVOAvatar::idleCalcNameTagPosition:
         // the human requested a stable tag, not one following the posed head.
         // Keep shape / mesh offsets and translation deformers, but measure
         // the upright skeleton with the whole animation's translation bounds.
         // Only the cached root-to-skull chain is summed; no extra matrices.
-        self.name_tag_height = rig.name_tag_height(rest_pos, scale, &self.tag_pos_delta, self.tag_pelvis_offset);
+        let tag_pelvis_offset = if self.pelvis_offset.is_some() {
+            self.tag_pelvis_offset - pelvis_rest.z
+        } else {
+            0.0
+        };
+        self.name_tag_height = rig.name_tag_height(rest_pos, scale, &self.tag_pos_delta, tag_pelvis_offset);
         for j in 0..n {
             out[j] = world[j].to_cols_array_2d();
         }
@@ -1098,6 +1131,124 @@ mod tests {
     use super::*;
 
     #[test]
+    fn attachment_parity_animation_translations_replace_mesh_joint_positions_including_pelvis() {
+        let rig = rig();
+        let hip = rig.names["mHipLeft"];
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.pelvis] += Vec3::new(0.3, -0.2, 0.25);
+        base.local_pos[hip] += Vec3::new(-0.2, 0.1, -0.07);
+        let pelvis_position = Vec3::new(0.08, -0.03, -0.12);
+        let hip_position = rig.local_pos[hip] + Vec3::new(0.03, 0.04, 0.05);
+        let mut animation = swing(&rig).anim.clone();
+        animation.joints = [("mPelvis", pelvis_position), ("mHipLeft", hip_position)]
+            .into_iter()
+            .map(|(name, position)| aurora_assets::JointMotion {
+                joint_name: name.into(),
+                priority: 4,
+                rot_keys: Vec::new(),
+                pos_keys: vec![aurora_assets::anim::PosKey { time: 0.0, position }],
+            })
+            .collect();
+        let animation = Arc::new(BoundAnim::bind(animation, &rig));
+        let now = Instant::now();
+        let mut controller = Controller::for_control_avatar();
+        let id = Uuid::from_u128(42);
+        controller.sync(&[signal(id, 1, now)], now, |_| Some(animation.clone()));
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, now, Some(&base), &mut out);
+        let pelvis = Mat4::from_cols_array_2d(&out[rig.pelvis]).w_axis.truncate();
+        assert!(pelvis.abs_diff_eq(rig.local_pos[rig.pelvis] + pelvis_position, 1e-6));
+        let hip = Mat4::from_cols_array_2d(&out[hip]).w_axis.truncate();
+        assert!(hip.abs_diff_eq(pelvis + hip_position, 1e-6));
+        controller.reset_pose(false);
+        controller.sync(&[], now + Duration::from_secs(3), |_| None);
+        controller.evaluate(&rig, now + Duration::from_secs(4), Some(&base), &mut out);
+        let pelvis = Mat4::from_cols_array_2d(&out[rig.pelvis]).w_axis.truncate();
+        assert!(pelvis.abs_diff_eq(base.local_pos[rig.pelvis], 1e-6));
+    }
+
+    fn synchronized_controller() -> Controller {
+        Controller {
+            synchronized: true,
+            ..Default::default()
+        }
+    }
+
+    /// Both skeleton kinds use Legacy timing until the preference opts in.
+    /// A live switch joins receipt time; switching back preserves the current
+    /// phase and suspends again at the next edit, without restarting the loop.
+    #[test]
+    fn animation_clock_mode_switches_live_for_avatars_and_animesh() {
+        let rig = rig();
+        let anim = swing(&rig);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(Uuid::from_u128(77), 1, t0)];
+        let elbow = rig.names["mElbowLeft"];
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let mut sample = |c: &mut Controller, now| {
+            c.sync(&playing, now, |_| Some(anim.clone()));
+            c.evaluate(&rig, now, None, &mut out);
+            c.rot[elbow]
+        };
+        for control in [false, true] {
+            let mut c = if control {
+                Controller::for_control_avatar()
+            } else {
+                Controller::default()
+            };
+            let mut reference = Controller {
+                control,
+                ..synchronized_controller()
+            };
+            assert!(!c.synchronized);
+            c.sync(&playing, at(0.0), |_| None);
+            assert!(
+                sample(&mut c, at(0.75)).abs_diff_eq(sample(&mut reference, at(0.0)), 1e-6),
+                "Legacy starts at loading"
+            );
+            let held = sample(&mut c, at(1.0));
+            c.set_paused(true, at(1.0));
+            assert!(sample(&mut c, at(4.0)).abs_diff_eq(held, 1e-6));
+            c.set_paused(false, at(4.5));
+            assert!(sample(&mut c, at(4.5)).abs_diff_eq(held, 1e-6), "Legacy resumes the held pose");
+            c.set_synchronized(true);
+            assert!(
+                sample(&mut c, at(4.5)).abs_diff_eq(sample(&mut reference, at(4.5)), 1e-6),
+                "opt-in catches up immediately"
+            );
+            sample(&mut c, at(5.0));
+            c.set_paused(true, at(5.0));
+            c.set_paused(false, at(6.25));
+            let phase = sample(&mut c, at(6.25));
+            assert!(
+                phase.abs_diff_eq(sample(&mut reference, at(6.25)), 1e-6),
+                "synchronized edits keep receipt time"
+            );
+            c.set_synchronized(false);
+            assert!(
+                sample(&mut c, at(6.25)).abs_diff_eq(phase, 1e-6),
+                "opting out keeps the current phase"
+            );
+            let held = sample(&mut c, at(7.0));
+            c.set_paused(true, at(7.0));
+            c.set_paused(false, at(9.0));
+            assert!(sample(&mut c, at(9.0)).abs_diff_eq(held, 1e-6), "Legacy suspends again");
+            assert_eq!(c.motions.len(), 1, "switching does not restart a loop");
+            c.set_paused(true, at(10.0));
+            c.set_synchronized(true);
+            c.set_paused(false, at(12.25));
+            assert!(
+                sample(&mut c, at(12.25)).abs_diff_eq(sample(&mut reference, at(12.25)), 1e-6),
+                "enabling during an edit rejoins on release"
+            );
+        }
+    }
+
+    #[test]
     fn the_look_at_line_leaves_from_between_the_eyes() {
         let close = |a: Option<Vec3>, b: Vec3| a.is_some_and(|a| a.distance(b) < 1e-5);
         let eyes = (Vec3::new(0.1, 0.036, 1.7), Vec3::new(0.1, -0.036, 1.7));
@@ -1130,7 +1281,7 @@ mod tests {
         let sk = Skeleton::parse(&xml).expect("parse");
         let rig = Rig::new(&sk);
         let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
-        Controller::default().evaluate(&rig, Instant::now(), None, &mut out);
+        synchronized_controller().evaluate(&rig, Instant::now(), None, &mut out);
         for (j, joint) in sk.joints.iter().enumerate().take(rig.len()) {
             let m = Mat4::from_cols_array_2d(&out[j]);
             let d = (m - joint.world).to_cols_array().iter().fold(0.0f32, |a, v| a.max(v.abs()));
@@ -1176,7 +1327,7 @@ mod tests {
         let elbow = rig.names["mElbowLeft"];
         let (stand, walk) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let (a_stand, a_walk) = (bend(&rig, 0.5, 0.5), bend(&rig, -0.5, 0.5));
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         let t0 = Instant::now();
         let at = |s: f32| t0 + Duration::from_secs_f32(s);
@@ -1241,58 +1392,80 @@ mod tests {
         Arc::new(BoundAnim::bind(anim, rig))
     }
 
-    /// LLCharacter::requestPause: the pose stands still for the whole pause,
-    /// then the motion goes on from where it was, without jumping ahead.
+    /// Editing freezes the pose, then both kinds of skeleton rejoin the
+    /// uninterrupted reference, including after a long second edit.
     #[test]
-    fn a_paused_avatar_holds_its_pose_and_resumes_where_it_stopped() {
+    fn edited_avatars_and_animesh_rejoin_the_reference_phase_on_release() {
         let rig = rig();
         let elbow = rig.names["mElbowLeft"];
         let a = swing(&rig);
         let id = Uuid::from_u128(7);
         let t0 = Instant::now();
-        let at = |s: f32| t0 + Duration::from_secs_f32(s);
-        let mut c = Controller::default();
-        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
-        let mut angle = |c: &mut Controller, t: Instant| {
-            c.sync(&[signal(id, 1, t0)], t, |_| Some(a.clone()));
-            c.evaluate(&rig, t, None, &mut out);
-            let (axis, angle) = c.rot[elbow].to_axis_angle();
-            angle * axis.z.signum()
-        };
-        assert!(angle(&mut c, at(0.0)).abs() < 1e-3);
-        assert!((angle(&mut c, at(0.5)) - 0.5).abs() < 1e-3);
-        c.set_paused(true, at(0.5));
-        assert!(c.paused_at.is_some());
-        for s in [0.75, 1.0, 2.5] {
-            let held = angle(&mut c, at(s));
-            assert!((held - 0.5).abs() < 1e-3, "{s}: {held}");
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for control in [false, true] {
+            let mut c = Controller {
+                control,
+                synchronized: true,
+                ..Default::default()
+            };
+            let mut reference = Controller {
+                control,
+                synchronized: true,
+                ..Default::default()
+            };
+            let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            let mut angle = |c: &mut Controller, t: Instant| {
+                c.sync(&[signal(id, 1, t0)], t, |_| Some(a.clone()));
+                c.evaluate(&rig, t, None, &mut out);
+                let (axis, angle) = c.rot[elbow].to_axis_angle();
+                angle * axis.z.signum()
+            };
+            assert!(angle(&mut c, at(0.0)).abs() < 1e-3);
+            assert!((angle(&mut c, at(0.5)) - 0.5).abs() < 1e-3);
+            c.set_paused(true, at(0.5));
+            for s in [0.75, 1.0, 2.5] {
+                let held = angle(&mut c, at(s));
+                assert!((held - 0.5).abs() < 1e-3, "{control}, {s}: {held}");
+            }
+            c.set_paused(false, at(3.0));
+            for s in [3.0, 3.25] {
+                assert!((angle(&mut c, at(s)) - angle(&mut reference, at(s))).abs() < 1e-6);
+            }
+            c.set_paused(true, at(3.25));
+            assert!((angle(&mut c, at(607.0)) - 0.75).abs() < 1e-3);
+            c.set_paused(false, at(607.9));
+            assert!((angle(&mut c, at(607.9)) - angle(&mut reference, at(607.9))).abs() < 1e-6);
+            assert_eq!(c.motions[0].continuous_activation, t0);
         }
-        // resumed 2.5 s later: from 0.5 rad on, not 2.5 s further in the loop
-        c.set_paused(false, at(3.0));
-        assert!(c.paused_at.is_none());
-        assert!((angle(&mut c, at(3.0)) - 0.5).abs() < 1e-3);
-        assert!((angle(&mut c, at(3.25)) - 0.75).abs() < 1e-3);
     }
 
-    /// LLMotionController::stopMotionLocally stops at once while paused; a
-    /// motion that starts during the pause waits for its end to play.
+    /// Changed signals and a newly loaded asset cannot move the edited pose.
+    /// Their playback origins still belong to when they were first known.
     #[test]
-    fn motions_stopped_during_a_pause_go_at_once_and_new_ones_wait() {
+    fn signals_changed_during_edit_keep_the_pose_frozen_and_rejoin_on_release() {
         let rig = rig();
         let a = swing(&rig);
         let (old, new) = (Uuid::from_u128(8), Uuid::from_u128(9));
         let t0 = Instant::now();
         let at = |s: f32| t0 + Duration::from_secs_f32(s);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         c.sync(&[signal(old, 1, t0)], at(0.0), |_| Some(a.clone()));
+        c.sync(&[signal(old, 1, t0)], at(0.5), |_| Some(a.clone()));
+        c.evaluate(&rig, at(0.5), None, &mut out);
+        let held = out.clone();
         c.set_paused(true, at(0.5));
-        c.sync(&[signal(new, 2, at(1.0))], at(1.0), |_| Some(a.clone()));
+        c.sync(&[signal(new, 2, at(1.0))], at(1.0), |_| None);
+        c.evaluate(&rig, at(1.0), None, &mut out);
+        assert_eq!(out, held);
+        c.sync(&[signal(new, 2, at(1.0))], at(2.0), |_| Some(a.clone()));
+        c.evaluate(&rig, at(2.0), None, &mut out);
+        assert_eq!(out, held);
         assert_eq!(c.motions.iter().map(|m| m.id).collect::<Vec<_>>(), [new]);
-        // the new motion starts where the pause froze the clock
         c.set_paused(false, at(4.0));
         let m = &c.motions[0];
-        assert_eq!(m.activation, at(4.0));
-        assert!((m.local_time(at(4.5)) - 0.5).abs() < 1e-6);
+        assert_eq!(m.activation, at(1.0));
+        assert!((m.local_time(at(4.5)) - 1.5).abs() < 1e-6);
     }
 
     #[test]
@@ -1301,7 +1474,7 @@ mod tests {
         let animation = Arc::new(BoundAnim::bind(crate::demo::tags::height_animation(&rig), &rig));
         let epoch = Instant::now();
         let playing = [signal(Uuid::from_u128(261), 1, epoch)];
-        let mut controller = Controller::default();
+        let mut controller = synchronized_controller();
         let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         controller.evaluate(&rig, epoch, None, &mut pose);
         let normal = controller.name_tag_height.expect("rest height");
@@ -1333,7 +1506,7 @@ mod tests {
     fn name_tag_height_updates_with_shape_and_mesh_offsets_but_not_look_at() {
         let rig = rig();
         let epoch = Instant::now();
-        let mut controller = Controller::default();
+        let mut controller = synchronized_controller();
         let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         controller.evaluate(&rig, epoch, None, &mut pose);
         let normal = controller.name_tag_height.expect("height");
@@ -1376,7 +1549,7 @@ mod tests {
         let epoch = Instant::now();
         let at = |s: f32| epoch + Duration::from_secs_f32(s);
         let id = Uuid::from_u128(272);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         let torso_z = |c: &mut Controller, t: Instant, pose: &mut Vec<[[f32; 4]; 4]>| {
             c.evaluate(&rig, t, None, pose);
@@ -1419,7 +1592,7 @@ mod tests {
         let high = Arc::new(BoundAnim::bind(deformer, &rig));
         let epoch = Instant::now();
         let (lo, hi) = (Uuid::from_u128(261), Uuid::from_u128(262));
-        let mut controller = Controller::default();
+        let mut controller = synchronized_controller();
         let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         controller.evaluate(&rig, epoch, None, &mut pose);
         let normal = controller.name_tag_height;
@@ -1494,7 +1667,7 @@ mod tests {
         let anim = bend(&rig, 0.7, 2.0);
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let first = signal(id, 1, t0);
         c.sync(&[first], t0, |_| Some(anim.clone()));
         let second = PlayingAnimation {
@@ -1521,14 +1694,16 @@ mod tests {
         let anim = bend(&rig, 0.7, 0.5);
         let t0 = Instant::now();
         let later = t0 + Duration::from_secs(3);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         c.sync(&[signal(id, 1, t0)], t0, |_| Some(anim.clone()));
         // The world observed an empty list then the same UUID and sequence.
-        c.sync(&[signal(id, 1, later)], later, |_| Some(anim.clone()));
+        c.sync(&[signal(id, 1, later)], later, |_| None);
+        let loaded = later + Duration::from_millis(250);
+        c.sync(&[signal(id, 1, later)], loaded, |_| Some(anim.clone()));
         let active = c.motions.iter().find(|m| m.stop.is_none()).expect("restart");
         assert_eq!(active.continuous_activation, later);
-        assert_eq!(active.local_time(later), 0.0);
-        assert_eq!(active.weight, 0.0);
+        assert_eq!(active.local_time(loaded), 0.25);
+        assert_eq!(active.weight, 0.5);
         assert!(c.motions.iter().any(|m| m.stop == Some(later)));
     }
 
@@ -1542,7 +1717,7 @@ mod tests {
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);
         let first = signal(id, 1, t0);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         assert!(c.sync(&[first], t0, |_| Some(anim.clone())).is_empty());
         assert_eq!(c.sync(&[first], at(2.0), |_| Some(anim.clone())), vec![id]);
         assert!(c.motions.is_empty());
@@ -1572,7 +1747,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_jump_notifies_simulator_at_ease_out_once_after_asset_loads() {
+    fn pre_jump_catches_up_after_asset_load_and_notifies_simulator_once() {
         let rig = rig();
         let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
         let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.25).anim.clone(), &rig);
@@ -1581,21 +1756,20 @@ mod tests {
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);
         let playing = [signal(id, 1, t0)];
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let mut agent = crate::agent::AgentState::default();
         agent.record_jump_input(t0);
-        // Loading must not consume the completion; its clock starts on arrival.
+        // A late asset catches up, but its completion still reaches the
+        // simulator exactly once so a delayed pre-jump cannot strand us.
         assert!(c.sync(&playing, t0, |_| None).is_empty());
-        assert!(c.sync(&playing, at(2.0), |_| Some(anim.clone())).is_empty());
-        assert!(c.sync(&playing, at(2.74), |_| Some(anim.clone())).is_empty());
-        let stopped = c.sync(&playing, at(2.75), |_| Some(anim.clone()));
+        let stopped = c.sync(&playing, at(2.0), |_| Some(anim.clone()));
         assert_eq!(stopped, vec![id]);
         assert_eq!(
-            agent.animation_stop_flags(stopped[0], false, at(2.75)),
+            agent.animation_stop_flags(stopped[0], false, at(2.0)),
             aurora_net::control::FINISH_ANIM
         );
-        assert_eq!(c.motions.len(), 1, "notification precedes visual ease-out completion");
-        assert!(c.sync(&playing, at(2.9), |_| Some(anim.clone())).is_empty());
+        assert!(c.motions.is_empty(), "the expired pose must not flash on screen");
+        assert!(c.sync(&playing, at(2.1), |_| Some(anim.clone())).is_empty());
         assert!(c.sync(&playing, at(3.0), |_| Some(anim.clone())).is_empty());
         assert!(c.motions.is_empty());
     }
@@ -1611,7 +1785,7 @@ mod tests {
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);
         let loop_signal = signal(looped, 1, t0);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let get = |id: &Uuid| Some(if *id == once { once_anim.clone() } else { loop_anim.clone() });
         assert!(c.sync(&[signal(once, 1, t0), loop_signal], t0, get).is_empty());
         assert!(c.sync(&[loop_signal], at(0.5), get).is_empty());
@@ -1632,7 +1806,7 @@ mod tests {
         let anim = Arc::new(bound);
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         c.sync(&[signal(id, 1, t0)], t0, |_| Some(anim.clone()));
         c.sync(&[], at(2.25), |_| Some(anim.clone()));
         let residual = aurora_assets::anim::cubic_step(2.25 / 4.0);
@@ -1674,7 +1848,7 @@ mod tests {
         let anim = Arc::new(bound);
         let t0 = Instant::now();
         let at = |s| t0 + Duration::from_secs_f64(s);
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         let first = signal(id, 1, t0);
         c.sync(&[first], t0, |_| Some(anim.clone()));
@@ -1697,33 +1871,83 @@ mod tests {
     }
 
     #[test]
-    fn loaded_motion_starts_on_arrival_and_shared_frame_time_gives_identical_palettes() {
+    fn delayed_loading_and_first_visibility_join_the_same_loop_after_ten_minutes() {
         let rig = rig();
         let id = Uuid::from_u128(22);
-        let anim = bend(&rig, 0.7, 0.5);
+        let mut bound = BoundAnim::bind(swing(&rig).anim.clone(), &rig);
+        bound.anim.loop_in = 0.5;
+        bound.anim.loop_out = 1.5;
+        let anim = Arc::new(bound);
         let t0 = Instant::now();
-        let loaded = t0 + Duration::from_secs(2);
-        let frame = loaded + Duration::from_millis(250);
+        let loaded = t0 + Duration::from_millis(2250);
+        let frame = t0 + Duration::from_millis(607250);
         let first = signal(id, 1, t0);
         let changed = PlayingAnimation {
             sequence: 2,
-            sequence_start: frame,
+            sequence_start: t0 + Duration::from_secs(1),
             ..first
         };
-        let mut a = Controller::default();
-        let mut b = Controller::default();
+        let mut a = synchronized_controller();
+        let mut b = synchronized_controller();
+        let mut unseen = synchronized_controller();
         let mut out_a = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         let mut out_b = out_a.clone();
-        for c in [&mut a, &mut b] {
-            c.sync(&[first], t0, |_| None);
-            c.sync(&[first], loaded, |_| Some(anim.clone()));
+        let mut out_unseen = out_a.clone();
+        a.sync(&[first], t0, |_| Some(anim.clone()));
+        b.sync(&[first], t0, |_| None);
+        b.sync(&[changed], loaded, |_| Some(anim.clone()));
+        for c in [&mut a, &mut b, &mut unseen] {
             c.sync(&[changed], frame, |_| Some(anim.clone()));
-            assert_eq!(c.motions[0].continuous_activation, loaded);
-            assert_eq!(c.motions[0].weight, 0.5);
+            assert_eq!(c.motions[0].continuous_activation, t0);
+            assert!((c.motions[0].local_time(frame) - 1.25).abs() < 1e-12);
         }
         a.evaluate(&rig, frame, None, &mut out_a);
         b.evaluate(&rig, frame, None, &mut out_b);
+        unseen.evaluate(&rig, frame, None, &mut out_unseen);
         assert_eq!(out_a, out_b);
+        assert_eq!(out_a, out_unseen);
+    }
+
+    #[test]
+    fn loading_during_an_edit_preserves_receipt_origins_on_release() {
+        let rig = rig();
+        let anim = swing(&rig);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let old = signal(Uuid::from_u128(23), 1, t0);
+        let new = signal(Uuid::from_u128(24), 1, at(1.0));
+        let mut c = synchronized_controller();
+        c.sync(&[old], t0, |_| None);
+        c.set_paused(true, at(0.5));
+        c.sync(&[old, new], at(1.0), |_| None);
+        c.set_paused(false, at(4.0));
+        c.sync(&[old, new], at(4.25), |_| Some(anim.clone()));
+        let old = c.motions.iter().find(|m| m.id == old.id).expect("old motion");
+        let new = c.motions.iter().find(|m| m.id == new.id).expect("new motion");
+        assert_eq!(old.continuous_activation, t0);
+        assert_eq!(new.continuous_activation, at(1.0));
+        assert!((old.local_time(at(4.25)) - 0.25).abs() < 1e-12);
+        assert!((new.local_time(at(4.25)) - 1.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn an_expired_one_shot_completes_once_when_editing_is_released() {
+        let rig = rig();
+        let id = Uuid::from_u128(25);
+        let mut bound = BoundAnim::bind(swing(&rig).anim.clone(), &rig);
+        bound.anim.looping = false;
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(id, 1, t0)];
+        let mut c = synchronized_controller();
+        c.sync(&playing, t0, |_| Some(anim.clone()));
+        c.set_paused(true, at(0.5));
+        assert!(c.sync(&playing, at(5.0), |_| Some(anim.clone())).is_empty());
+        c.set_paused(false, at(5.25));
+        assert_eq!(c.sync(&playing, at(5.25), |_| Some(anim.clone())), [id]);
+        assert!(c.motions.is_empty());
+        assert!(c.sync(&playing, at(6.0), |_| Some(anim.clone())).is_empty());
     }
 
     #[test]
@@ -1746,7 +1970,7 @@ mod tests {
         let t0 = Instant::now();
         let frame = t0 + Duration::from_millis(250);
         let (lo, hi) = (Uuid::from_u128(23), Uuid::from_u128(24));
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         let playing = [signal(hi, 1, t0), signal(lo, 1, t0)];
         c.sync(&playing, t0, |id| Some(if *id == hi { high.clone() } else { low.clone() }));
         c.sync(&playing, frame, |_| None);
@@ -1771,7 +1995,7 @@ mod tests {
         let newer = bend(&rig, -0.7, 0.0);
         let t0 = Instant::now();
         let playing: Vec<_> = (1..=7).map(|id| signal(Uuid::from_u128(id), 1, t0)).collect();
-        let mut c = Controller::default();
+        let mut c = synchronized_controller();
         c.sync(&playing, t0, |id| {
             Some(if id.as_u128() == 1 { oldest.clone() } else { newer.clone() })
         });

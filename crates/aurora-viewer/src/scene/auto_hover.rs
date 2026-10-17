@@ -193,17 +193,7 @@ impl Scene {
             let on_foot = ap.and_then(|a| a.joint).is_some_and(|j| foot_joint(rig, j));
             let frame = ap
                 .map(|a| {
-                    let delta = a
-                        .joint
-                        .and_then(|j| matrices.get(j).zip(rig.default_world_inv.get(j)))
-                        .map(|(m, inv)| *m * *inv);
-                    let (position, rotation) = match delta {
-                        Some(m) => (
-                            m.transform_point3(a.skel_position),
-                            m.to_scale_rotation_translation().1 * a.rotation,
-                        ),
-                        None => (a.skel_position, a.rotation),
-                    };
+                    let (position, rotation) = a.frame(a.joint.and_then(|j| matrices.get(j)).copied());
                     Mat4::from_rotation_translation(rotation.normalize(), position)
                 })
                 .unwrap_or(Mat4::from_translation(self.avatar_lib.pelvis));

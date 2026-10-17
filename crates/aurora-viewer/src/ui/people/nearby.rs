@@ -164,6 +164,7 @@ const SORTS: [(Column, &str); 4] = [
 /// Open the sheet of `id`; the window grows for it on the next frame if it
 /// is too narrow.
 pub(super) fn open_sheet(st: &mut PeopleUi, id: Uuid) {
+    st.pending_sheet = None;
     if st.sheet.is_none() {
         st.sheet_grow = true;
     }
@@ -175,6 +176,7 @@ pub(super) fn open_sheet(st: &mut PeopleUi, id: Uuid) {
 /// its next frame (`fit_window`).
 pub(super) fn close_sheet(st: &mut PeopleUi) {
     st.sheet = None;
+    st.pending_sheet = None;
     st.sheet_grow = false;
 }
 
@@ -252,6 +254,11 @@ pub fn tab(
     }
 }
 
+/// Whether the list and sheet can be shown beside each other.
+pub(super) fn sheet_fits(width: f32) -> bool {
+    width >= LIST_MIN + SHEET_W
+}
+
 /// The room left in `ui` taken whole, then shared between the list and the
 /// sheet: the list alone, both side by side, or the sheet alone when the
 /// window is too narrow for both (and the list alone on the frame the
@@ -259,7 +266,7 @@ pub fn tab(
 pub(super) fn areas(ui: &mut egui::Ui, st: &PeopleUi) -> (Option<Rect>, Option<Rect>) {
     let body = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
     ui.allocate_rect(body, Sense::hover());
-    let split = body.width() >= LIST_MIN + SHEET_W;
+    let split = sheet_fits(body.width());
     match st.sheet {
         Some(_) if st.sheet_grow => (Some(body), None),
         Some(_) if split => {

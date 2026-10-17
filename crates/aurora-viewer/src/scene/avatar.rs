@@ -4,7 +4,7 @@
 use aurora_assets::{LlmMesh, Skeleton};
 use aurora_llsd::xml;
 use aurora_render::{SkinVertex, Vertex};
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -62,6 +62,10 @@ pub struct AttachPoint {
     /// Skeleton-space (feet at z = 0) rest position, and the rig joint the
     /// point follows when the avatar is animated.
     pub skel_position: Vec3,
+    /// Attachment translation in its bone's local frame. The bone scales
+    /// this offset; neither it nor linked prim scales resize worn geometry.
+    pub local_position: Vec3,
+    pub rest_joint: Mat4,
     pub joint: Option<usize>,
     /// Anchor of the wearer's palette holding the posed point (anchors.rs);
     /// None for a HUD point, or past the anchors a palette has.
@@ -70,6 +74,19 @@ pub struct AttachPoint {
     /// "Attach" and the place in it (LLVOAvatarSelf::buildMenus); 9 is HUD.
     pub group: u8,
     pub pie_slice: u8,
+}
+
+impl AttachPoint {
+    /// LLXformMatrix::update: inherit the bone's scaled child offset and
+    /// world rotation, with unit scale on the attachment joint itself.
+    pub(crate) fn frame(self, joint_world: Option<Mat4>) -> (Vec3, Quat) {
+        let matrix = joint_world.unwrap_or(self.rest_joint);
+        let (_, rotation, _) = matrix.to_scale_rotation_translation();
+        (
+            matrix.transform_point3(self.local_position),
+            (rotation.normalize() * self.rotation).normalize(),
+        )
+    }
 }
 
 /// One base mesh part with its geometry in avatar-local space.
@@ -260,6 +277,8 @@ impl AvatarLibrary {
                                     rotation,
                                     hud,
                                     skel_position: jp + pos,
+                                    local_position: pos,
+                                    rest_joint: Mat4::from_translation(jp),
                                     joint: None,
                                     anchor: None,
                                     group: c.attr("group").and_then(|v| v.parse().ok()).unwrap_or(0),
@@ -281,6 +300,11 @@ impl AvatarLibrary {
         for (id, name) in &joint_names {
             if let Some(ap) = attach_points.get_mut(id) {
                 ap.joint = rig.names.get(name).copied();
+                if let Some(joint) = ap.joint {
+                    ap.rest_joint = rig.default_world_inv[joint].inverse();
+                    ap.skel_position = ap.rest_joint.transform_point3(ap.local_position);
+                    ap.position = ap.skel_position - pelvis;
+                }
             }
         }
         // one anchor per body point, in id order, after the root's

@@ -396,6 +396,7 @@ impl HistoryUi {
         // nothing is looked up for the lines of a transcript
         let mut no_pictures = HashSet::new();
         let own_name = world.own_name();
+        let menu = ui.layer_id().id.with(("history_line_menu", self.page));
         let mut env = LineEnv {
             p,
             icons,
@@ -406,6 +407,7 @@ impl HistoryUi {
             wanted: &mut no_pictures,
             own_name: &own_name,
             plain_history: true,
+            menu: Some(menu),
             bubbles: None,
         };
         let wash = find::wash(p);
@@ -460,6 +462,11 @@ impl HistoryUi {
             state.offset.y += out.inner;
             state.store(ui.ctx(), out.id);
         }
+        super::line_menu::show(ui, menu, p, |ui, target| {
+            if let Some(avatar) = target.sender {
+                super::super::context::chat_sender_menu(ui, p, world, avatar, &target.line);
+            }
+        });
         debug_assert!(self.lines.len() <= PAGE);
     }
 }

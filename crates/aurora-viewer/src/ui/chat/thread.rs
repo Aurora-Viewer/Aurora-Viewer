@@ -246,7 +246,7 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
     if who.avatar.is_nil() {
         return;
     }
-    line_name_menu(&r, env.p, env.world, who.avatar, line);
+    line_name_menu(&r, env.p, env.world, who.avatar, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
@@ -386,7 +386,7 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
         return;
     }
     let r = ui.interact(rect, ui.id().with(("thread_pic", line.time, line.source)), egui::Sense::click());
-    line_name_menu(&r, p, env.world, who.avatar, line);
+    line_name_menu(&r, p, env.world, who.avatar, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name).clicked() {
         crate::ui::profile::request_open(ui.ctx(), who.avatar);
     }
@@ -481,47 +481,26 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
     ui.add_space(2.0);
 }
 
-/// The right-click menu of a message (`drawn`: the rows painted this frame,
-/// `line_of`: a row's line by its number): copy it, quote it in the field,
-/// then its author's menu (a resident's: the profile, an IM, …).
-pub(super) fn message_menu<'l>(
-    ui: &egui::Ui,
-    env: &LineEnv,
-    th: &mut Thread,
-    content: &egui::Response,
-    drawn: &[super::select::Row],
-    line_of: impl Fn(u64) -> Option<&'l ChatLine>,
-) {
-    let key = content.id.with("message_menu");
-    if content.secondary_clicked() {
-        let seq = content
-            .interact_pointer_pos()
-            .and_then(|pos| drawn.iter().find(|r| r.rect.contains(pos)))
-            .map(|r| r.seq);
-        ui.ctx().data_mut(|d| d.insert_temp(key, seq));
-    }
-    let Some(line) = ui.ctx().data(|d| d.get_temp::<Option<u64>>(key)).flatten().and_then(line_of) else {
-        return;
-    };
+/// Actions for the menu's retained message, even after its row leaves the
+/// viewport or its line is evicted: copy, quote, then its author's menu.
+pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, line: &ChatLine) {
     let p = env.p;
     let name = sender_name(env.world, env.own_name, line);
     let who = Who::of(env, line);
-    crate::ui::menu::context_menu(content, p, |ui| {
-        if crate::ui::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ui-chat-copy-message")) {
-            let prefix = super::copy_prefix(line, &name);
-            ui.ctx().copy_text(format!("{prefix}{}", super::shown_text(env.world, line, &name)));
-        }
-        if crate::ui::menu::item(ui, p, "quote-filled", aurora_i18n::tr!("ui-chat-quote-message")) {
-            let (text, _, _) = body(env, line, &name);
-            // the field holds one line: the quote, then the answer after it
-            let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            th.out.push(ThreadAction::Quote(format!("> {one_line} ")));
-        }
-        if !who.avatar.is_nil() {
-            crate::ui::menu::separator(ui, p);
-            crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
-        }
-    });
+    if crate::ui::menu::item(ui, p, "copy-filled", aurora_i18n::tr!("ui-chat-copy-message")) {
+        let prefix = super::copy_prefix(line, &name);
+        ui.ctx().copy_text(format!("{prefix}{}", super::shown_text(env.world, line, &name)));
+    }
+    if crate::ui::menu::item(ui, p, "quote-filled", aurora_i18n::tr!("ui-chat-quote-message")) {
+        let (text, _, _) = body(env, line, &name);
+        // the field holds one line: the quote, then the answer after it
+        let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        th.out.push(ThreadAction::Quote(format!("> {one_line} ")));
+    }
+    if !who.avatar.is_nil() {
+        crate::ui::menu::separator(ui, p);
+        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
+    }
 }
 
 /// The message names us: an explicit mention, or our display or user name

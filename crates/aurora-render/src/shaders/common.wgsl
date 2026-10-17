@@ -966,6 +966,12 @@ const SCREEN_INDIRECT: u32 = 0x400u;
 // frame.light_mode.z: normal maps on a unit, orthogonal tangent frame as the
 // Legacy Viewer's per-vertex tangents (AURORA_TANGENTS, perturb_normal)
 const TANGENT_UNIT: u32 = 0x800u;
+// frame.light_mode.z: normal maps on the tangents of the vertices where
+// they have some (object.wgsl vertex_tangent; AURORA_TANGENTS)
+const TANGENT_VERTEX: u32 = 0x1000u;
+// frame.light_mode.z: the receiver bias of before, a fixed 0.0005 of the
+// cascade's depth range (AURORA_SHADOW_BIAS=legacy; cascade_shadow)
+const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
@@ -1009,6 +1015,23 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let step = span / f32(taps - 1u);
     let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
+    // Receiver bias in metres along the light: two texels of the cascade.
+    // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
+    // each side (about 810 m for the finest), so a fixed 0.0005 of it was
+    // about 0.4 m: a point only fell in shadow behind a caster more than
+    // 0.4 m nearer the sun, and where that distance crossed 0.4 m (a curved
+    // back under the shoulders, a skirt under the waist) the limit followed
+    // the stored depth texel by texel, as sharp stairs that no filter
+    // softens. The normal offset above and the slope-scaled bias of the
+    // shadow pipelines keep the acne away. The Legacy Viewer biases by a
+    // fixed 0.004 of a shadow range fitted to the scene (RenderShadowBias,
+    // shadowUtil.glsl pcfShadow). (frame.light_mode.z SHADOW_BIAS_LEGACY:
+    // the bias of before, AURORA_SHADOW_BIAS.)
+    let depth_per_metre = length(vec3<f32>(m[0].z, m[1].z, m[2].z));
+    var receiver_bias = 2.0 * texel * radius * 2.0 * depth_per_metre;
+    if ((frame.light_mode.z & SHADOW_BIAS_LEGACY) != 0u) {
+        receiver_bias = 0.0005;
+    }
     var sum = 0.0;
     for (var y = 0u; y < taps; y++) {
         for (var x = 0u; x < taps; x++) {
@@ -1017,7 +1040,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
             let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - 0.0005);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
         }
     }
     return sum / f32(taps * taps);
@@ -1380,11 +1403,25 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
 // derived bitangent points down the image; SL normal maps (materialF.glsl
 // getNormal: B = sign * cross(N, T) along +t, GL bottom-left origin) put +Y
 // up the image, hence the green channel is negated.
-fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, map: vec3<f32>) -> vec3<f32> {
+// With the vertices' tangents (`vt`, zero without them, and their
+// handedness `vt_sign`), the frame is theirs, smooth across the triangles.
+fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, vt: vec3<f32>, vt_sign: f32, front: bool, map: vec3<f32>) -> vec3<f32> {
     let dp1 = dpdx(p);
     let dp2 = dpdy(p);
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
+    if (dot(vt, vt) > 1e-12) {
+        // (after the derivatives, which need uniform control flow)
+        // materialF.glsl / pbropaqueF.glsl getNormal: B = sign * cross(N, T)
+        // and T left as interpolated (MikkTSpace's pixel shader), the map
+        // read as it is (the tangents follow the volume's own s and t, +t up
+        // the image), a back face's normal turned once perturbed
+        let f = select(-1.0, 1.0, front);
+        let vn = n * f;
+        let mv = map * 2.0 - vec3<f32>(1.0);
+        let rv = normalize(mv.x * vt + mv.y * (vt_sign * cross(vn, vt)) + mv.z * vn) * f;
+        return select(n, rv, dot(rv, rv) > 0.5);
+    }
     let dp2perp = cross(dp2, n);
     let dp1perp = cross(n, dp1);
     let t = dp2perp * duv1.x + dp1perp * duv2.x;

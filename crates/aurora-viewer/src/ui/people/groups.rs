@@ -636,6 +636,7 @@ mod tests {
                     friends: &mut friends,
                     images: &images,
                     actions: &mut actions,
+                    defer_sheet: false,
                 };
                 group_sheet(ui, &mut c, &data, &mut st, group);
             });

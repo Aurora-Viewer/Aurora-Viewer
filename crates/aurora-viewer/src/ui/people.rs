@@ -120,6 +120,9 @@ pub(super) struct Ctx<'a> {
     /// Group insignias.
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub actions: &'a mut Vec<PeopleAction>,
+    /// The sheet replaces the friends list: keep its row until a second
+    /// click can no longer start an IM.
+    pub defer_sheet: bool,
 }
 
 /// A tab's list side: (ui, context, radar, state, beside a sheet).
@@ -233,6 +236,8 @@ pub struct PeopleUi {
     pic_budget: super::nameplate::PictureBudget,
     /// The person whose sheet is open (Aurora's look).
     pub sheet: Option<Uuid>,
+    /// A single click in Conversations waiting out egui's double-click interval.
+    pending_sheet: Option<(Uuid, f64)>,
     /// A sheet just opened: the window grows for it if it is too narrow.
     sheet_grow: bool,
     /// The width the window took for the sheet, given back when it closes.
@@ -264,6 +269,11 @@ impl PeopleUi {
     /// Open the sheet of `id` in Near you (Aurora's look).
     pub fn open_sheet(&mut self, id: Uuid) {
         nearby::open_sheet(self, id);
+    }
+
+    /// Return from a person's sheet to the list, as its cross does.
+    pub fn close_sheet(&mut self) {
+        nearby::close_sheet(self);
     }
 
     /// Open the sheet of one of our groups (the groups tab).
@@ -389,6 +399,7 @@ pub fn people_window(
                 friends: &mut *friends,
                 images: contacts.images,
                 actions: &mut actions,
+                defer_sheet: false,
             };
             match panels.people_tab {
                 TAB_NEARBY => {
@@ -490,6 +501,7 @@ pub fn friends_pane(
         friends: settings,
         images,
         actions: &mut actions,
+        defer_sheet: !nearby::sheet_fits(ui.available_width()),
     };
     friends::tab(ui, &mut c, data, st);
     for ask in std::mem::take(&mut st.asks) {

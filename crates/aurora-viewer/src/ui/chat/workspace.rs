@@ -108,7 +108,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         contacts,
         contacts_settings,
         show_contacts_tab,
-        friends,
+        mut friends,
         docked,
         compact,
     } = env;
@@ -139,7 +139,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
         } else {
             sidebar::ContactsSub::Lists
         };
-        sidebar::show(
+        let contacts_clicked = sidebar::show(
             ui,
             p,
             pics,
@@ -154,6 +154,9 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
             column,
             h,
         );
+        if contacts_clicked && let Some(friends) = friends.as_mut() {
+            friends.st.close_sheet();
+        }
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
             ui.set_height(h);

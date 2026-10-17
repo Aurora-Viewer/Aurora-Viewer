@@ -42,6 +42,9 @@ struct Harness {
     actions: Vec<ConvAction>,
     /// Preferences › Chat › Show the Contacts tab.
     show_contacts: bool,
+    friends_pane: bool,
+    people: crate::ui::people::PeopleUi,
+    friends: crate::ui::people::FriendsSettings,
 }
 
 impl Harness {
@@ -65,6 +68,9 @@ impl Harness {
             gestures: Default::default(),
             actions: Vec::new(),
             show_contacts: false,
+            friends_pane: false,
+            people: Default::default(),
+            friends: Default::default(),
         }
     }
 
@@ -82,7 +88,21 @@ impl Harness {
             gestures,
             actions,
             show_contacts,
+            friends_pane,
+            people,
+            friends,
         } = self;
+        let radar = crate::world::radar::Radar::default();
+        let mut radar_settings = crate::ui::people::RadarSettings::default();
+        let voice = HashMap::new();
+        let data = crate::ui::people::RadarData {
+            radar: &radar,
+            settings: &mut radar_settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            now: 0.0,
+            pics: &pics,
+        };
         let mut open = true;
         frames.run(events, |ui| {
             actions.extend(show(
@@ -98,7 +118,12 @@ impl Harness {
                 contacts,
                 contacts_settings,
                 *show_contacts,
-                None,
+                (*friends_pane).then_some(crate::ui::people::FriendsPane {
+                    st: people,
+                    data: &data,
+                    settings: friends,
+                    images: &pics,
+                }),
                 &mut open,
             ));
         })
@@ -243,6 +268,252 @@ fn a_narrow_window_has_a_rail() {
 fn sessions_fall_in_their_sections() {
     let h = Harness::new(ChatStyle::Aurora);
     assert_eq!(super::super::sidebar::kind(&h.world, &JANE), Kind::Private);
+}
+
+impl Harness {
+    fn conversation_rect(&mut self, id: Uuid) -> egui::Rect {
+        let texts = self.settle();
+        if self.st.style.workspace() {
+            self.rect(entry_id(Pinned::Conversation(id)))
+        } else {
+            painted(&texts, &self.world.session_title(&id)).rect
+        }
+    }
+
+    fn drag_conversation(&mut self, from: egui::Pos2, to: egui::Pos2, end: Vec<egui::Event>) {
+        self.frame(vec![egui::Event::PointerMoved(from)]);
+        self.frame(vec![egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        for t in [0.3, 0.6, 1.0] {
+            self.frame(vec![egui::Event::PointerMoved(from.lerp(to, t))]);
+        }
+        self.frame(end);
+    }
+
+    fn drop_at(at: egui::Pos2) -> Vec<egui::Event> {
+        vec![egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]
+    }
+}
+
+#[test]
+fn conversation_drag_reorders_every_style_without_switching_or_changing_sessions() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        // The older tabs have automatic widget ids: locate their painted
+        // names, which must be distinct rather than two unresolved "…".
+        h.world.social.names.insert(JANE, "Jane".into());
+        h.world.social.names.insert(BOB, "Bob".into());
+        h.st.selected = Some(BOB);
+        *h.st.draft_mut(Some(BOB)) = "unfinished".into();
+        let jane = h.conversation_rect(JANE).center();
+        let bob = h.conversation_rect(BOB).center() + egui::vec2(0.0, 5.0);
+        h.drag_conversation(jane, bob, Harness::drop_at(bob));
+        let bob = h.conversation_rect(BOB);
+        let jane = h.conversation_rect(JANE);
+        assert!(bob.center().y < jane.center().y, "{style:?}: Bob is now first");
+        assert_eq!(h.st.selected, Some(BOB));
+        assert_eq!(h.st.draft_mut(Some(BOB)), "unfinished");
+        assert_eq!(h.world.social.ims.iter().map(|s| s.other).collect::<Vec<_>>(), [JANE, BOB]);
+        assert!(h.actions.is_empty(), "ordering sends no network action");
+        // Switching presentation keeps the same order.
+        h.st.style = if style.workspace() { ChatStyle::Legacy } else { ChatStyle::Aurora };
+        let bob = h.conversation_rect(BOB);
+        let jane = h.conversation_rect(JANE);
+        assert!(
+            bob.center().y < jane.center().y,
+            "{style:?} to {:?}: Bob {bob:?}, Jane {jane:?}, order {:?}",
+            h.st.style,
+            h.st.reorder.sessions(&h.world)
+        );
+    }
+}
+
+#[test]
+fn conversation_drag_stays_in_its_category_and_keeps_pinned_entries() {
+    const GROUP: Uuid = Uuid::from_u128(0xC0);
+    const GROUP2: Uuid = Uuid::from_u128(0xC1);
+    const CONFERENCE: Uuid = Uuid::from_u128(0xC2);
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.show_contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 650.0));
+    for (id, group) in [(GROUP, true), (GROUP2, true), (CONFERENCE, false)] {
+        let mut info = crate::world::groups::SessionInfo::default();
+        info.group = group;
+        info.name = id.to_string();
+        h.world.groups.sessions.insert(id, info);
+        h.world.conversation_line(id, line("Jane", JANE, ChatKind::Im, "test"));
+    }
+    h.settle();
+    let original = h.st.reorder.sessions(&h.world);
+    for (source, target) in [(JANE, GROUP), (GROUP, JANE), (GROUP, CONFERENCE)] {
+        let from = h.conversation_rect(source).center();
+        let to = h.conversation_rect(target).center();
+        h.drag_conversation(from, to, Harness::drop_at(to));
+        assert_eq!(h.st.reorder.sessions(&h.world), original, "no cross-category move");
+    }
+    for pinned in [Pinned::Contacts, Pinned::Local] {
+        h.settle();
+        let from = h.conversation_rect(JANE).center();
+        let to = h.rect(entry_id(pinned)).center();
+        h.drag_conversation(from, to, Harness::drop_at(to));
+        assert_eq!(h.st.reorder.sessions(&h.world), original);
+        let to = h.conversation_rect(BOB).center();
+        h.drag_conversation(h.rect(entry_id(pinned)).center(), to, Harness::drop_at(to));
+        assert_eq!(h.st.reorder.sessions(&h.world), original, "pinned entries cannot start a move");
+    }
+    let from = h.conversation_rect(GROUP2).center();
+    let to = h.conversation_rect(GROUP).center() - egui::vec2(0.0, 5.0);
+    h.drag_conversation(from, to, Harness::drop_at(to));
+    assert!(h.conversation_rect(GROUP2).center().y < h.conversation_rect(GROUP).center().y);
+}
+
+#[test]
+fn conversation_drag_cancels_outside_and_with_escape_and_works_in_the_rail() {
+    let mut h = Harness::new(ChatStyle::Compact);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(460.0, 500.0));
+    let original = [JANE, BOB];
+    let ids = |h: &Harness| h.st.reorder.sessions(&h.world).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    let from = h.conversation_rect(JANE).center();
+    let outside = egui::pos2(1200.0, 800.0);
+    h.drag_conversation(from, outside, Harness::drop_at(outside));
+    assert_eq!(ids(&h), original);
+    let from = h.conversation_rect(JANE).center();
+    let to = h.conversation_rect(BOB).center() + egui::vec2(0.0, 5.0);
+    h.drag_conversation(
+        from,
+        to,
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }],
+    );
+    h.frame(Harness::drop_at(to));
+    assert_eq!(ids(&h), original);
+    let from = h.conversation_rect(JANE).center();
+    let to = h.conversation_rect(BOB).center() + egui::vec2(0.0, 5.0);
+    h.drag_conversation(from, to, Harness::drop_at(to));
+    assert_eq!(ids(&h), [BOB, JANE]);
+}
+
+#[test]
+fn conversation_order_survives_filtering_messages_and_new_or_closed_sessions() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let from = h.conversation_rect(JANE).center();
+    let to = h.conversation_rect(BOB).center() + egui::vec2(0.0, 5.0);
+    h.drag_conversation(from, to, Harness::drop_at(to));
+    h.st.side_filter = "no matching conversation".into();
+    h.settle();
+    h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "another message"));
+    const NEW: Uuid = Uuid::from_u128(0xD);
+    h.world.conversation_line(NEW, line("New", NEW, ChatKind::Im, "new session"));
+    h.st.side_filter.clear();
+    h.settle();
+    assert_eq!(
+        h.st.reorder.sessions(&h.world).into_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        [BOB, JANE, NEW]
+    );
+    h.world.social.ims.retain(|s| s.other != BOB);
+    h.st.forget(BOB);
+    h.settle();
+    h.world.conversation_line(BOB, line("Bob", BOB, ChatKind::Im, "reopened"));
+    h.settle();
+    assert_eq!(
+        h.st.reorder.sessions(&h.world).into_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        [JANE, NEW, BOB]
+    );
+}
+
+#[test]
+fn conversation_drag_tolerates_small_click_movements_and_a_disappearing_source() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let from = h.conversation_rect(JANE).center();
+    let to = from + egui::vec2(2.0, 1.0);
+    h.drag_conversation(from, to, Harness::drop_at(to));
+    assert_eq!(h.st.selected, Some(JANE), "a small movement is still a click");
+    assert_eq!(
+        h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        [JANE, BOB]
+    );
+    let from = h.conversation_rect(JANE).center();
+    let to = h.conversation_rect(BOB).center() + egui::vec2(0.0, 5.0);
+    h.drag_conversation(from, to, Vec::new());
+    h.world.social.ims.retain(|s| s.other != JANE);
+    h.frame(Vec::new());
+    h.frame(Harness::drop_at(to));
+    assert_eq!(h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(), [BOB]);
+}
+
+#[test]
+fn conversation_drag_scrolls_to_conversations_below_the_viewport() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, 400.0));
+    for n in 0..20 {
+        let id = Uuid::from_u128(0x100 + n);
+        h.world.conversation_line(id, line("Other", id, ChatKind::Im, "test"));
+    }
+    let from = h.conversation_rect(JANE).center();
+    let before = h.rect(entry_id(Pinned::Conversation(BOB))).top();
+    let last_visible = |h: &Harness| {
+        h.world
+            .social
+            .ims
+            .iter()
+            .filter_map(|s| {
+                let r = h.frames.ctx.read_response(entry_id(Pinned::Conversation(s.other)))?.interact_rect;
+                (r.height() > 3.0).then_some(r)
+            })
+            .max_by(|a, b| a.bottom().total_cmp(&b.bottom()))
+            .expect("a visible entry")
+    };
+    let last = last_visible(&h);
+    let edge = egui::pos2(last.center().x, last.bottom() - 2.0);
+    h.drag_conversation(from, edge, Vec::new());
+    for _ in 0..90 {
+        h.frame(Vec::new());
+    }
+    assert!(
+        h.rect(entry_id(Pinned::Conversation(BOB))).top() < before - 100.0,
+        "the list scrolled while held"
+    );
+    let target = last_visible(&h).center();
+    h.frame(vec![egui::Event::PointerMoved(target)]);
+    h.frame(Harness::drop_at(target));
+    let order = h.st.reorder.sessions(&h.world);
+    assert!(
+        order.iter().position(|(id, _)| *id == JANE).unwrap() > 3,
+        "the first conversation moved beyond the initial viewport"
+    );
+}
+
+#[test]
+fn conversation_reorder_demo_uses_the_current_window_position() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.st.demo_reorder = true;
+    h.settle();
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(100.0, 60.0), egui::vec2(800.0, 560.0));
+    h.settle();
+    for frame in 700..=760 {
+        let events = super::super::reorder::demo_events(&h.frames.ctx, frame);
+        h.frame(events);
+    }
+    h.settle();
+    assert!(h.rect(entry_id(Pinned::Conversation(BOB))).top() < h.rect(entry_id(Pinned::Conversation(JANE))).top());
+    assert_eq!(
+        h.st.selected, None,
+        "the synthetic drag does not select text or change conversations"
+    );
 }
 
 /// An entry says who types before its last message.
@@ -439,6 +710,111 @@ fn add_friends(world: &mut World) {
             rights_has: 1,
         });
         world.social.names.insert(id, format!("Friend {i:02}"));
+    }
+}
+
+fn contacts_navigation(style: ChatStyle, width: f32) -> Harness {
+    let mut h = Harness::new(style);
+    add_friends(&mut h.world);
+    h.show_contacts = true;
+    h.friends_pane = true;
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 560.0));
+    h
+}
+
+/// A single click must leave the row available for the second click even
+/// when the friend's sheet will replace the list in a reduced layout.
+#[test]
+fn contacts_navigation_double_click_opens_im_at_every_width() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for width in [960.0, 700.0, 460.0] {
+            for waiting_frames in [0, 10] {
+                let mut h = contacts_navigation(style, width);
+                let texts = h.settle();
+                let at = painted(&texts, "Friend 00").rect.center();
+                h.click(at);
+                assert!(h.actions.is_empty(), "a single click does not start an IM");
+                h.settle();
+                for _ in 0..waiting_frames {
+                    h.frame(Vec::new());
+                }
+                h.click(at);
+                let ims = h
+                    .actions
+                    .iter()
+                    .filter(
+                        |a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::OpenIm(id)) if *id == Uuid::from_u128(0xF000)),
+                    )
+                    .count();
+                assert_eq!(ims, 1, "{style:?} at {width}: double-click starts exactly one IM");
+                if width != 960.0 {
+                    for _ in 0..30 {
+                        h.frame(Vec::new());
+                    }
+                    assert_eq!(h.people.sheet, None, "the cancelled single click cannot show a sheet after the IM");
+                }
+            }
+        }
+    }
+}
+
+/// Contacts returns from a sheet to the list, with the same state as its
+/// close button, both in the column and in the rail of pictures.
+#[test]
+fn contacts_navigation_entry_returns_from_sheet_to_list() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for width in [960.0, 700.0, 460.0] {
+            let mut h = contacts_navigation(style, width);
+            let texts = h.settle();
+            h.people.filter = "Friend 0".into();
+            h.click(painted(&texts, "Friend 00").rect.center());
+            for _ in 0..30 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.people.sheet, Some(Uuid::from_u128(0xF000)), "single click opens the sheet");
+            let selected = h.people.sel.clone();
+            let texts = h.settle();
+            assert_eq!(
+                texts.iter().any(|t| t.source == "Friend 01"),
+                width == 960.0,
+                "{width}: reduced layouts show only the sheet"
+            );
+            h.click(h.rect(entry_id(Pinned::Contacts)).center());
+            let texts = h.settle();
+            assert_eq!(h.people.sheet, None, "{style:?} at {width}: Contacts closes the sheet");
+            assert!(texts.iter().any(|t| t.source == "Friend 01"), "the list is back");
+            assert_eq!(h.people.filter, "Friend 0", "the filter is preserved");
+            assert_eq!(h.people.sel, selected, "the selection is preserved");
+            assert!(h.st.contacts);
+            let at = painted(&texts, "Friend 00").rect.center();
+            h.click(at);
+            h.click(at);
+            assert!(
+                h.actions.iter().any(
+                    |a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::OpenIm(id)) if *id == Uuid::from_u128(0xF000))
+                ),
+                "{style:?} at {width}: double-click still works immediately after returning to Contacts"
+            );
+        }
+    }
+}
+
+#[test]
+fn contacts_navigation_entry_cancels_a_pending_sheet() {
+    for width in [700.0, 460.0] {
+        let mut h = contacts_navigation(ChatStyle::Aurora, width);
+        let texts = h.settle();
+        h.click(painted(&texts, "Friend 00").rect.center());
+        h.click(h.rect(entry_id(Pinned::Contacts)).center());
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        assert_eq!(
+            h.people.sheet, None,
+            "Contacts cancels even a sheet waiting for the double-click interval"
+        );
+        assert!(h.settle().iter().any(|t| t.source == "Friend 01"));
     }
 }
 

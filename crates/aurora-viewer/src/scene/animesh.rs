@@ -76,8 +76,8 @@ pub struct Signals {
 impl Signals {
     /// Merge per-object signals by maximum sequence, as LLControlAvatar does.
     /// Keep the controller's clocks when the same animation changes source.
-    pub fn update(&mut self, world: &World, root: usize, now: Instant) -> Vec<PlayingAnimation> {
-        let mut sequences = HashMap::<Uuid, i32>::new();
+    pub fn update(&mut self, world: &World, root: usize) -> Vec<PlayingAnimation> {
+        let mut sequences = HashMap::<Uuid, PlayingAnimation>::new();
         let mut sources = HashMap::<Uuid, HashMap<Uuid, Instant>>::new();
         for i in members(&world.objects, root) {
             let Some(o) = world.objects.get(i) else { continue };
@@ -85,22 +85,30 @@ impl Signals {
                 sources.entry(a.id).or_default().insert(o.full_id, a.continuous_start);
                 sequences
                     .entry(a.id)
-                    .and_modify(|s| *s = (*s).max(a.sequence))
-                    .or_insert(a.sequence);
+                    .and_modify(|s| {
+                        let continuous_start = s.continuous_start.min(a.continuous_start);
+                        if a.sequence > s.sequence || (a.sequence == s.sequence && a.sequence_start < s.sequence_start) {
+                            *s = *a;
+                        }
+                        s.continuous_start = continuous_start;
+                    })
+                    .or_insert(*a);
             }
         }
         let next: HashMap<_, _> = sequences
             .into_iter()
-            .map(|(id, seq)| {
+            .map(|(id, received)| {
                 let continuing = sources.get(&id).is_some_and(|current| {
                     current
                         .iter()
                         .any(|(obj, start)| self.sources.get(&id).and_then(|previous| previous.get(obj)) == Some(start))
                 });
-                (
-                    id,
-                    PlayingAnimation::from_signal(id, seq, now, self.playing.get(&id).filter(|_| continuing)),
-                )
+                let previous = self.playing.get(&id).filter(|_| continuing);
+                let mut merged = PlayingAnimation::from_signal(id, received.sequence, received.sequence_start, previous);
+                if previous.is_none() {
+                    merged.continuous_start = received.continuous_start;
+                }
+                (id, merged)
             })
             .collect();
         self.playing = next;
@@ -641,24 +649,25 @@ mod tests {
         let root_id = w.objects.get(root).expect("root").full_id;
         let child_id = w.objects.get(child).expect("child").full_id;
         let id = crate::demo::ANIMESH_ANIM;
-        let t = Instant::now();
         let mut signals = Signals::default();
-        let first = signals.update(&w, root, t);
+        let first = signals.update(&w, root);
         assert_eq!(first.len(), 1); // Only the child has a signal.
+        assert_eq!(first[0], w.animations_of(&child_id)[0]);
         w.apply(NetEvent::AvatarAnimations {
             sources: Vec::new(),
             avatar: root_id,
             anims: vec![(id, 9)],
         });
-        let second = signals.update(&w, root, t + Duration::from_secs(1));
+        let second = signals.update(&w, root);
         assert_eq!(second[0].sequence, 9);
+        assert_eq!(second[0].sequence_start, w.animations_of(&root_id)[0].sequence_start);
         assert_eq!(second[0].continuous_start, first[0].continuous_start);
         w.apply(NetEvent::AvatarAnimations {
             sources: Vec::new(),
             avatar: root_id,
             anims: vec![],
         });
-        let third = signals.update(&w, root, t + Duration::from_secs(2));
+        let third = signals.update(&w, root);
         assert_eq!(third[0].sequence, 1);
         assert_eq!(third[0].continuous_start, first[0].continuous_start);
         w.apply(NetEvent::AvatarAnimations {
@@ -666,13 +675,13 @@ mod tests {
             avatar: child_id,
             anims: vec![],
         });
-        assert!(signals.update(&w, root, t + Duration::from_secs(3)).is_empty());
+        assert!(signals.update(&w, root).is_empty());
         w.apply(NetEvent::AvatarAnimations {
             sources: Vec::new(),
             avatar: child_id,
             anims: vec![(id, 10)],
         });
-        let restarted = signals.update(&w, root, t + Duration::from_secs(4));
+        let restarted = signals.update(&w, root);
         assert!(restarted[0].continuous_start > first[0].continuous_start);
         w.apply(NetEvent::AvatarAnimations {
             sources: Vec::new(),
@@ -684,7 +693,7 @@ mod tests {
             avatar: child_id,
             anims: vec![(id, 11)],
         });
-        let between_frames = signals.update(&w, root, t + Duration::from_secs(5));
+        let between_frames = signals.update(&w, root);
         assert!(between_frames[0].continuous_start > restarted[0].continuous_start);
     }
 

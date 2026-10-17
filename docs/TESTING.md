@@ -567,7 +567,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
 | `AURORA_DEMO_BUILD_EDGE=<edge>` | Move to the edge, hold then release |
-| `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window |
+| `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
@@ -579,6 +579,13 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 ### Details
+
+`AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
+`AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
+projector texture picker. Choose None, then OK: the light stays on with the
+same colour, intensity, range and falloff, and its projector controls become
+disabled. Cancel instead restores its texture and projector settings. Use
+`features` without the suffix to inspect the light before or after editing.
 
 `AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
@@ -1263,7 +1270,7 @@ To check with these scenarios:
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_ANIM_LOOP=1` | Animation loops, sequences and stops |
+| `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit` | Animation loops, sequences, stops and synchronization after delayed loading or editing |
 | `AURORA_DEMO_AO=interface\|interface-group\|interface-track\|interface-combine\|interface-swim\|folder-names\|folder-names-wait\|1\|transitions\|off\|movement\|swim\|swim-missing\|firestorm\|firestorm-wait\|migrate\|migrate-done\|empty\|design-current\|design-tabs\|design-movement\|design-section\|design-swim` | Built-in AO and interactive native layout study |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -1279,6 +1286,32 @@ To check with these scenarios:
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
   960 / 1020 every 1200 frames.
+- **`AURORA_DEMO_ANIM_LOOP=sync`**: enables Synchronized clock in the demo
+  settings (normal default: Legacy). The two avatars receive distinct animations
+  together at frame 120; the second file becomes available only at frame 300.
+  Both must then show the same loop phase, including subsequent sequence changes
+  and stop/restart. Capture after frame 360; the log reports the elbow phase error
+  then (expected below 0.001 rad). Unit regressions additionally skip
+  over ten minutes of skeleton evaluation, preserve the loop introduction and
+  exercise delayed loading across an explicit attachment-edit freeze. On the grid,
+  have two avatars dance, turn the camera away and back, move out of range and
+  return, then repeat after ten minutes; also check normal jump completion.
+- **`AURORA_DEMO_ANIM_LOOP=sync-edit`**, with `AURORA_DEMO_ANIMESH=1`: the same
+  delayed-loading pair, then real build selections freeze our worn rigged mesh
+  (frames 420–630) and a ground animesh (750–930). Capture 600/700 and 850/1000:
+  the selected skeleton holds its pose, then rejoins the uninterrupted reference.
+  The log reports avatar phase error at 660 and animesh phase error at 960
+  (expected below 0.001 rad). The edit freezes the displayed pose only; receipt
+  origins stay unchanged, including signals and assets received during editing.
+  Both synchronization scenarios enable Preferences › Aurora › Animations ›
+  Synchronized clock without changing normal-mode settings. On the grid, explicitly
+  enable this choice before testing synchronization. Legacy must remain the
+  default for fresh and older settings files, start newly loaded animations
+  from the beginning and resume the frozen pose after editing. Switching live
+  to Synchronized clock must catch up both avatars and animesh; switching back
+  must preserve their current phase and suspend again during subsequent edits.
+  Check persistence after reopening the viewer, both bulk Aurora/Legacy choices,
+  and Reset this section restoring Legacy.
 - **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
@@ -1596,7 +1629,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
-| `AURORA_DEMO_BUMP=tall` or `wide` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it (tangent frame) |
+| `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
@@ -1661,13 +1694,18 @@ To check with these scenarios:
   coordinates are four times denser one way. With `AURORA_TANGENTS=alt`, the
   relief of its bumps along the denser axis comes and goes (`tall` shows it
   best, the sun lighting the vertical tilts): about three times weaker with
-  the former frame. Seen from `AURORA_DEMO_POS="133.5,128.6"`.
+  the former frame. Seen from `AURORA_DEMO_POS="133.5,128.6"`. `sphere`
+  adds, in front of the panel, a low-poly mesh ball (12 × 8 quads, smooth
+  normals, warped UVs) whose normal map is baked from a round, dimpled ball
+  through the mesh's own MikkTSpace tangents, as a modelling tool bakes one
+  (`demo_tangents.rs`). With the vertices' tangents (`AURORA_TANGENTS`
+  default) it is round and evenly dimpled; with `pixel` or `derivative`
+  each triangle turns the relief its own way and the facets show. Close-up
+  from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
+  at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
+  the sun draws across a low-poly ball.
 - **`AURORA_DEMO_FOLIAGE=1`**: a 2.5 m panel of thin blades and small
-  leaves (256 × 256, its alpha a mask) at 5, 10, 20, 35 and 60 m along the
-  start view, one side then the other. Seen from an open place,
-  `AURORA_DEMO_POS="80,100"` (the row follows the start position). With
   `AURORA_ALPHA_COVERAGE=0` the 10 and 20 m panels thin out; with the
-  coverage kept they stay as full as the nearest one.
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
   `AURORA_DEMO_CROWD` wear a box on each foot's attachment point, opaque or
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces
@@ -2011,6 +2049,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2417,6 +2456,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   check that hiding world indicators leaves the call's controls intact.
 - **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
   jump to the corresponding Sound and voice card for offline captures;
+  `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
+  Synchronized clock selected for avatars and animesh. Combine with
+  `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
   `0:tonemap` opens Graphics scrolled to the Tone mapping row, `0:occlusion`
   to the Indirect light row (contact shadows and ambient occlusion around
   it) and `0:bloom` to the Bloom row, the rows the Deluxe level turns on
@@ -2492,6 +2534,19 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_CONV_REORDER=1`**: with `AURORA_DEMO_CONV=aurora`
+  (also `aurora:compact` or `aurora:narrow`),
+  synthetic pointer events drag the first conversation after the next of
+  its category. Captures simulate logical focus without activating the
+  native window or taking the user's keyboard. Capture frames 690, 740 and 800 at `AURORA_FPS_LIMIT=60`
+  for the initial order, insertion marker and completed move. Manually
+  check upward/downward moves within private messages, groups and
+  conferences; reject drops across categories, on pinned entries and
+  outside the list; Escape cancels. A small pointer movement remains a
+  click. Check filtering, edge scrolling, close buttons, menus and switching
+  chat styles. Order lasts while those conversations remain open; closing
+  and reopening a conversation appends it again. No grid is needed.
+
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
   at frame 701 on the first conversation of that kind in the list (the
@@ -2722,6 +2777,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   oldest entry, consecutive duplicate sends, channel prefixes and emoji.
   No count limit or disk persistence; closing an IM/group/conference
   discards its recall, while hiding Conversations keeps it.
+  Chat context menus (#557): in an active group conversation, right click
+  a resident's name or picture, or a message in Aurora/Compact. Incoming
+  messages must leave the menu and its original target in place, so Ignore,
+  Copy and Quote can still be used. Repeat after scrolling up and in all
+  four styles. New messages must appear immediately with the menu open,
+  following the live end or retaining the normal manual-scroll position.
+  Escape, a click outside or choosing an action closes it normally; dragging
+  the conversation window closes it before the mouse is released. The
+  original target must remain available when the 2,000-message live buffer
+  evicts its line; only the menu's original target is retained.
+  Check that following the live end, manual scrolling, find and text selection still
+  work afterwards. The offline regression injects messages between actual
+  pointer frames: `cargo test --workspace incoming_messages_keep_chat_context_menus_open`.
 - **`AURORA_DEMO_CONV=1|names[:narrow|wide]|many|tp[:sent|reject]`**: `1` opens the conversation of
   the demo group with its participants. `names` shows names longer than
   their space (issue #124): two residents (long display name with user
@@ -2972,6 +3040,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the run; `hidden` disables it with Contacts initially selected, showing
   the fallback to nearby chat. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
+  In the Aurora and Compact conversation styles, test at full width,
+  700 points and 460 points: a double-click on a friend starts their IM.
+  A single click opens their sheet; when it replaces the list, clicking
+  Contacts returns to the list just like the sheet's cross, keeping the
+  filter and selection. Repeat a double-click after returning to the list.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
@@ -3938,9 +4011,10 @@ What the inventory must show with these scenarios:
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
-| `AURORA_TANGENTS=derivative\|alt` | Normal maps on the former tangent frame, or alternated each second, to compare |
+| `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
 | `AURORA_ALPHA_COVERAGE=0` | Mips of alpha-masked textures plainly averaged, as before (foliage thins out with the distance) |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
+| `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
@@ -3956,6 +4030,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
+| `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
@@ -4003,6 +4078,16 @@ What the inventory must show with these scenarios:
   scene is in front of a label. Scene: `AURORA_DEMO_TAGS=wall`; cost:
   `r_egui`, `gpu=` and `draws=` of `perf summary` in a crowd
   (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="129,134"`).
+- **`AURORA_TEXTURE_SIZING=screen`**: the textures of a face are loaded for
+  the diameter of its object on screen times the face's repeats, as before
+  the Legacy Viewer's sizing (`scene/texture_importance.rs`: the circle
+  around the object seen from its nearest point, up to eight times the
+  area for an object within 16 m and in the middle of the view, divided by
+  the repeats squared; no boost under memory pressure). To compare the
+  two: the `texture load:` line (decodes per discard level, Mpx, MB
+  downloaded) and `texture_mb` / `pages_mb` of `perf summary`, for example
+  with `AURORA_DEMO_STREAM=200,200,j2k=<cache\tex>,net=200,size=4` and
+  `AURORA_DEMO_POS="141,126"` (the first objects 5 m away).
 - **`AURORA_TEXTURE_BUDGET_MB=<n>`**: the texture pages must not exceed
   n MB, whatever the "Texture memory" setting and the video memory the
   driver announces (`scene/texture_budget.rs`). Used to put the viewer
@@ -4443,14 +4528,19 @@ What the inventory must show with these scenarios:
     cascades moves, and the shadows close to the camera are sharper there
     (they were reading a farther cascade than the terrain and the small
     neighbouring objects).
-- **`AURORA_TANGENTS=derivative|alt`**: the tangent frame of the normal maps
-  (`perturb_normal`, common.wgsl). By default it is the Legacy Viewer's
-  (LLVolumeFace::createTangents): T along dP/du, of unit length and
-  orthogonal to the normal, B = cross(N, T) with the handedness, built per
-  pixel from the derivatives. `derivative` brings back the cotangent frame
-  of before, scaled by the longer of its two gradients, which divided the
-  relief along the denser texture axis by the density ratio; `alt`
-  alternates the two every second. See `AURORA_DEMO_BUMP`.
+- **`AURORA_TANGENTS=vertex|pixel|derivative|alt`**: the tangent frame of
+  the normal maps (`perturb_normal`, common.wgsl). By default (`vertex`) it
+  is the vertices' tangents, built with the geometry as the Legacy Viewer
+  builds them (`scene/tangents.rs`: Lengyel's for prims, MikkTSpace for
+  meshes), interpolated across the triangles; faces without them (avatar
+  bodies, terrain) take the per-pixel frame. `pixel` uses only the
+  per-pixel frame: T along dP/du of each triangle, of unit length and
+  orthogonal to the normal, B = cross(N, T) with the handedness, built from
+  the derivatives (not smoothed across the triangles' edges). `derivative`
+  brings back the cotangent frame of before, scaled by the longer of its
+  two gradients, which divided the relief along the denser texture axis by
+  the density ratio; `alt` alternates `vertex` and `pixel` every second.
+  See `AURORA_DEMO_BUMP`.
 - **`AURORA_ALPHA_COVERAGE=0`**: the mips of a texture whose alpha is a
   mask are box-filtered as they come (`build_mips`), so a leaf, a blade of
   grass, a strand or a fence wire falls under the alpha cutoff a few levels
@@ -4473,6 +4563,17 @@ What the inventory must show with these scenarios:
   `AURORA_DEBUG_SHADOWS=1`: the edge of the torus's shadow across the
   "Normal + specular" panel is a row of dots with `mapped`, and the shadow
   of our avatar on the plaza has several parallel edges with `gaps`.
+
+- **`AURORA_SHADOW_BIAS=legacy|new|alt`**: the receiver bias of the sun
+  shadow lookup (`cascade_shadow` in `common.wgsl`). `legacy`: a fixed 0.0005
+  of the cascade's depth range, about 0.4 m in the finest cascade (its range
+  is the square plus 400 m on each side), so a point only fell in shadow
+  behind a caster more than 0.4 m nearer the sun and the limit where that
+  distance crossed 0.4 m followed the stored depth texel by texel: sharp
+  stairs on an avatar's back and on a skirt under the waist. `new` (the
+  default): two texels of the cascade, in metres along the light. `alt`:
+  one second in two each. In the demo at noon (`AURORA_DEMO_TOD` unset),
+  camera behind our avatar: the stairs on the skirt under the waist.
 - **`AURORA_DEBUG_SHADOWS=1`**: instead of the image, objects and terrain
   show the cascade each pixel reads — red, green then blue from the finest,
   mixed where two cascades are blended, black beyond the shadow distance —
