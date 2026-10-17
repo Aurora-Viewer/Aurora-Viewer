@@ -55,7 +55,7 @@ fn geometry(face: &aurora_assets::MeshFace) -> Geometry {
 }
 #[derive(Clone)]
 struct Rigid {
-    joint: usize,
+    joint: Option<usize>,
     point: Vec3,
     rotation: Quat,
     local: Mat4,
@@ -301,8 +301,7 @@ impl Rigid {
                 if point.is_some_and(|point| point.hud) {
                     return None;
                 }
-                let rig = &world.avatar_lib.rig;
-                let joint = point.and_then(|point| point.joint).unwrap_or(rig.pelvis);
+                let joint = point.and_then(|point| point.joint);
                 return Some(Self {
                     joint,
                     point: point.map(|point| point.local_position).unwrap_or(Vec3::ZERO),
@@ -312,6 +311,18 @@ impl Rigid {
             }
         }
         None
+    }
+
+    fn transform(&self, joints: &[Mat4], root: Vec3) -> Mat4 {
+        // mRoot (Avatar Center) is outside the animated skeleton. In the
+        // hint's feet-origin space it stays at the default pelvis height.
+        let joint = self
+            .joint
+            .and_then(|joint| joints.get(joint))
+            .copied()
+            .unwrap_or(Mat4::from_translation(root));
+        let (_, rotation, _) = joint.to_scale_rotation_translation();
+        Mat4::from_rotation_translation(rotation.normalize() * self.rotation, joint.transform_point3(self.point)) * self.local
     }
 }
 
@@ -417,14 +428,7 @@ impl Snapshot {
                 .is_none()
                 .then_some(mesh.rigid.as_ref())
                 .flatten()
-                .map(|rigid| {
-                    // Same frame as anchors::attach_frame: the point follows
-                    // the shaped bone, but rigid geometry keeps object scale.
-                    let joint = world.get(rigid.joint).copied().unwrap_or(Mat4::IDENTITY);
-                    let (_, rotation, _) = joint.to_scale_rotation_translation();
-                    Mat4::from_rotation_translation(rotation.normalize() * rigid.rotation, joint.transform_point3(rigid.point))
-                        * rigid.local
-                })
+                .map(|rigid| rigid.transform(&world, avatars.pelvis))
                 .unwrap_or(Mat4::IDENTITY);
             let normal_transform = glam::Mat3::from_mat4(transform).inverse().transpose();
             for (index, face) in faces.iter().enumerate() {
@@ -502,6 +506,48 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_center_hints_keep_root_and_child_sizes_independent_of_the_animated_pelvis() {
+        let library = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        for event in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(event);
+        }
+        let root = world.objects.index_of_uuid(&crate::demo::worn::item_id()).expect("root");
+        let child = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.key.local_id == crate::demo::worn::CHILD)
+            .map(|(i, _)| i)
+            .expect("child");
+        world.objects.get_mut(root).expect("root").state = 40u8.rotate_left(4);
+        world.objects.get_mut(root).expect("root").scale = Vec3::new(2.0, 0.4, 1.3);
+        let root_object = world.objects.get(root).expect("root");
+        let root_local = Mat4::from_rotation_translation(root_object.rotation, root_object.position);
+        let rig = &library.rig;
+        let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
+        let moving: Vec<_> = rest
+            .iter()
+            .map(|matrix| Mat4::from_rotation_translation(Quat::from_rotation_x(0.8), Vec3::new(0.2, -0.3, 0.5)) * *matrix)
+            .collect();
+        for index in [root, child] {
+            let captured = Rigid::capture(&world, index).expect("captured linkset");
+            assert_eq!(captured.joint, None, "Avatar Center belongs to mRoot");
+            let object = world.objects.get(index).expect("object");
+            let local = Mat4::from_scale_rotation_translation(object.scale, object.rotation, object.position);
+            let expected = Mat4::from_translation(library.pelvis) * if index == root { local } else { root_local * local };
+            assert!(captured.transform(&rest, library.pelvis).abs_diff_eq(expected, 1e-6));
+            assert!(captured.transform(&moving, library.pelvis).abs_diff_eq(expected, 1e-6));
+        }
+        world.objects.get_mut(root).expect("root").state = 25u8.rotate_left(4);
+        let hip = Rigid::capture(&world, root).expect("hip attachment");
+        assert_eq!(hip.joint, Some(rig.names["mHipLeft"]));
+        assert!(
+            !hip.transform(&rest, library.pelvis)
+                .abs_diff_eq(hip.transform(&moving, library.pelvis), 1e-4)
+        );
+    }
     fn empty() -> Snapshot {
         Snapshot {
             textures: HashMap::new(),
