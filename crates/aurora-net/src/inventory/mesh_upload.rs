@@ -1,4 +1,4 @@
-//! LLMeshUploadThread fee query and upload (Firestorm llmeshrepository.cpp).
+//! LLMeshUploadThread fee query and upload (Legacy Viewer llmeshrepository.cpp).
 //! The private one-use uploader stays in the session; UI receives only a local
 //! token. Prepared LLSD is serialized by a worker, not by the frame thread.
 
@@ -12,6 +12,8 @@ use std::{sync::Arc, time::Duration};
 pub struct Request {
     pub folder: Uuid,
     pub texture_folder: Uuid,
+    pub name: String,
+    pub description: String,
     pub query: Arc<Vec<u8>>,
     pub resources: Arc<Vec<u8>>,
 }
@@ -19,6 +21,11 @@ impl Request {
     pub fn validate(&self) -> Result<(), Error> {
         if self.folder.is_nil()
             || self.texture_folder.is_nil()
+            || self.name.trim().is_empty()
+            || self.name.len() > 63
+            || self.description.len() > 127
+            || self.name.contains('\0')
+            || self.description.contains('\0')
             || self.query.is_empty()
             || self.resources.is_empty()
             || self.query.len() > 256 * 1024 * 1024
@@ -115,14 +122,7 @@ pub(crate) async fn quote(http: &reqwest::Client, cap: &str, permission: &str, r
     })
 }
 
-pub(crate) async fn upload(
-    http: &reqwest::Client,
-    uploader: String,
-    fetch: &str,
-    owner: Uuid,
-    cost: i32,
-    request: Request,
-) -> Result<Receipt, Error> {
+pub(crate) async fn upload(http: &reqwest::Client, uploader: String, owner: Uuid, cost: i32, request: Request) -> Result<Receipt, Error> {
     request.validate()?;
     let response = http
         .post(uploader)
@@ -142,18 +142,37 @@ pub(crate) async fn upload(
     if response["state"].as_str() != "complete" || id.is_nil() || asset.is_nil() {
         return Err(Error::Uncertain(Rejection::from_response(None, &response)));
     }
-    let reread = super::upload::reread(http, fetch, owner, id).await?;
-    let item = parse_items_response(&reread)
-        .into_iter()
-        .find(|item| {
-            item.id == id
-                && item.asset_id == asset
-                && item.asset_type == 6
-                && item.inv_type == 6
-                && item.parent == request.folder
-                && item.owner == owner
-        })
-        .ok_or(Error::Verification)?;
+    // on_new_single_inventory_upload_complete (llmeshrepository.cpp): the
+    // completed upload is authoritative. FetchInventory2 may still be stale
+    // or unavailable; it must not turn an already paid upload into a failure.
+    // Creation permissions come from the server, never from the requested masks.
+    let granted = response.has("new_next_owner_mask");
+    let item = InvItem {
+        id,
+        parent: request.folder,
+        name: request.name,
+        desc: request.description,
+        asset_id: asset,
+        asset_type: 6,
+        inv_type: 6,
+        owner,
+        creator: owner,
+        base_mask: 0x7fff_ffff,
+        owner_mask: 0x7fff_ffff,
+        next_owner_mask: if granted {
+            response["new_next_owner_mask"].as_u32()
+        } else {
+            super::upload::Permissions::default().next_owner
+        },
+        group_mask: if granted { response["new_group_mask"].as_u32() } else { 0 },
+        everyone_mask: if granted { response["new_everyone_mask"].as_u32() } else { 0 },
+        flags: response["inventory_flags"].as_u32(),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.as_secs() as i64)
+            .unwrap_or_default(),
+        ..Default::default()
+    };
     let paid = match &response["upload_price"] {
         Llsd::Integer(n) if *n >= 0 => *n,
         _ => cost,

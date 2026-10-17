@@ -406,6 +406,42 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
 }
 
 #[test]
+fn mesh_multi_object_file_preserves_instances_through_preparation_and_fee_payload() {
+    let scene = aurora_assets::import_mesh::collada::parse(demo::multiple_dae().as_bytes(), &aurora_assets::Skeleton::default())
+        .expect("multi-object file");
+    let draft = mesh::Draft::new(scene, HashMap::new());
+    let prepared = mesh::prepare(&draft).expect("prepare all objects");
+    let request = mesh::request(
+        &draft,
+        &prepared,
+        Uuid::from_u128(1),
+        Uuid::from_u128(2),
+        "Assembly",
+        "Three objects",
+        Permissions::default(),
+        Default::default(),
+    )
+    .expect("encode multi-object upload");
+    let query = aurora_llsd::from_xml(&request.query).expect("fee query");
+    let resources = aurora_llsd::from_xml(&request.resources).expect("upload resources");
+    assert_eq!(query["asset_resources"]["instance_list"], resources["instance_list"]);
+    assert_eq!(resources["mesh_list"].as_array().len(), 1, "instances share the uploaded geometry");
+    assert_eq!(resources["instance_list"].as_array().len(), 3);
+    for (instance, (name, x)) in resources["instance_list"]
+        .as_array()
+        .iter()
+        .zip([("Left", -1.0), ("Middle", 1.0), ("Right", 3.0)])
+    {
+        assert_eq!(instance["mesh"].as_i32(), 0);
+        assert_eq!(instance["mesh_name"].as_str(), name);
+        assert_eq!(
+            instance["position"].as_array().iter().map(|v| v.as_f64()).collect::<Vec<_>>(),
+            [x, 2.0, 0.0]
+        );
+    }
+}
+
+#[test]
 fn mesh_edits_keep_the_last_preview_debounce_new_jobs_and_replace_only_the_current_generation() {
     let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(mesh_fixture()))), Default::default());
     let model = Arc::new(aurora_render::preview::Model {

@@ -593,6 +593,8 @@ pub fn request(
     Ok(aurora_net::inventory::mesh_upload::Request {
         folder,
         texture_folder: textures_folder,
+        name: name.into(),
+        description: description.into(),
         query: Arc::new(aurora_llsd::to_xml(&query)),
         resources: Arc::new(aurora_llsd::to_xml(&resources)),
     })

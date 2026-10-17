@@ -12,6 +12,16 @@ pub(super) const DAE: &str = r##"<COLLADA><asset><unit meter="1"/><up_axis>Z_UP<
 <triangles count="12"><input semantic="VERTEX" source="#vertices" offset="0"/><p>0 2 1 0 3 2 4 5 6 4 6 7 0 1 5 0 5 4 3 7 6 3 6 2 0 4 7 0 7 3 1 2 6 1 6 5</p></triangles>
 </mesh></geometry></library_geometries><library_visual_scenes><visual_scene id="scene"><node id="node" name="Cube"><instance_geometry url="#cube"/></node></visual_scene></library_visual_scenes><scene><instance_visual_scene url="#scene"/></scene></COLLADA>"##;
 
+pub(super) fn multiple_dae() -> String {
+    DAE.replace(
+        r##"<node id="node" name="Cube"><instance_geometry url="#cube"/></node>"##,
+        r##"<node name="Assembly"><translate>1 2 0</translate>
+<node name="Left"><translate>-2 0 0</translate><instance_geometry url="#cube"/></node>
+<node name="Middle"><instance_geometry url="#cube"/></node>
+<node name="Right"><translate>2 0 0</translate><instance_geometry url="#cube"/></node></node>"##,
+    )
+}
+
 pub(super) fn fixtures(root: &Path) -> Result<(), String> {
     let write = |name: &str, data: &[u8]| std::fs::write(root.join(name), data).map_err(|e| e.to_string());
     std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
@@ -31,6 +41,7 @@ pub(super) fn fixtures(root: &Path) -> Result<(), String> {
         "materials":[{"name":"Demo", "pbrMetallicRoughness":{"baseColorTexture":{"index":0},"roughnessFactor":0.25,"metallicFactor":0.65}}]});
     write("material-demo.gltf", material.to_string().as_bytes())?;
     write("mesh-demo.dae", DAE.as_bytes())?;
+    write("mesh-multiple.dae", multiple_dae().as_bytes())?;
     write("animation-demo.bvh", BVH)?;
     let skeleton =
         aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml")).map_err(|e| e.to_string())?;
@@ -90,7 +101,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-texture-zoom"
         | "material-loading" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
-        | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" => Choice::Mesh,
+        | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" | "mesh-multiple" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" | "sound-split" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
@@ -134,6 +145,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                     ],
                     Choice::Texture => &[("texture-demo.png", Choice::Texture)],
                     Choice::Material => &[("material-demo.gltf", Choice::Material)],
+                    Choice::Mesh if mode == "mesh-multiple" => &[("mesh-multiple.dae", Choice::Mesh)],
                     Choice::Mesh => &[("mesh-demo.dae", Choice::Mesh)],
                     Choice::Animation => &[
                         ("animation-demo.bvh", Choice::Animation),

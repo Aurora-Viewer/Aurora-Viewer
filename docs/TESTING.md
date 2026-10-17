@@ -2320,6 +2320,14 @@ Journal contains actual load/preparation/validation messages. Detailed mode
 affects subsequent diagnostics, never filters existing history; calculation
 starts a fresh log and warnings mark its tab. No grid connection is needed
 for these automated captures.
+`AURORA_DEMO_IMPORTS=mesh-multiple` loads three separated objects from one
+Collada file through the ordinary loader. All three must appear in the preview
+and in the instance count; fee calculation and the final transfer retain the
+same instance list. With `AURORA_DEMO_IMPORT_FILE`, also check a rigged Collada
+whose skin controller has no scene instance: the model must load rather than
+show a file error. On the grid, upload a single mesh and a multi-object file;
+the completed object must appear in inventory with no false verification
+failure. Grid validation and any paid upload are performed by the human.
 
 - **Local import fixtures**: the ignored test
   `local_asset_directory_loads_and_prepares_supported_files` reads the folder

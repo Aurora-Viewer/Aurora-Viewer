@@ -624,6 +624,14 @@ immediately, without rebuilding geometry or changing imported data.
 Multiple keeps the complete inspector and its type tabs;
 `Imports::inspector` keeps that window identity independent of its active
 type tab. Parsing, preview jobs and the confirmed upload queue stay shared.
+Collada skin controllers absent from visual-scene instances are decoded through
+that same scene path, once per controller, following LLDAELoader::OpenFile /
+processDomModel. Explicit instancing and nested transforms remain intact.
+Mesh completion follows LLMeshUploadThread::onCompleted and
+on_new_single_inventory_upload_complete: a complete server acknowledgement
+creates the object inventory entry with the granted permissions and flags.
+An immediate FetchInventory2 re-read is not a condition of paid-upload success;
+ordinary inventory synchronization can subsequently reconcile the entry.
 
 ## Life of a frame
 
