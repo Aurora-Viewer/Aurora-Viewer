@@ -59,6 +59,7 @@ mod own_motion;
 mod pay;
 mod plate_click;
 mod region_restart;
+mod region_window;
 mod report_abuse;
 mod reset_skeleton;
 mod script_clicks;
@@ -10330,6 +10331,9 @@ impl App {
                     ui::widgets::open_floater(&ctx, ui::region::WINDOW, &mut self.panels.region_estate);
                 }
                 let mut open = self.panels.region_estate;
+                if open {
+                    self.feed_region_window();
+                }
                 let region_map = open
                     .then_some(self.world.main_region)
                     .flatten()
@@ -10351,6 +10355,7 @@ impl App {
                     Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
                     Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),
                     Some(ui::region::RegionAction::CustomizeEnvironment) => self.open_region_day_editor(),
+                    Some(ui::region::RegionAction::Deselect) => self.build.deselect_all(&self.world),
                     None => {}
                 }
                 // AURORA_DEMO_REGION: notecards for the covenant, once the
@@ -11465,8 +11470,8 @@ impl ApplicationHandler for App {
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
-                } else if scenario.page == ui::region::Page::People {
-                    // tall enough for the four lists
+                } else if scenario.page == ui::region::Page::People || scenario.manage.advanced {
+                    // tall enough for the four lists, or a section's Advanced fold
                     let pos = egui::pos2(340.0, 50.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(1000.0, 840.0));
                 }

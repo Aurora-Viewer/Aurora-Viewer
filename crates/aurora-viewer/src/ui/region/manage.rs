@@ -8,6 +8,7 @@
 //! bake, the owner's alone. Environment, Experiences and Covenant are
 //! `estate_wide.rs`'s, Interventions `interventions.rs`'s.
 
+use super::advanced::{self, TerrainKind};
 use super::confirm::Ask;
 use super::draft::{Access, Draft};
 use super::top_objects;
@@ -117,7 +118,22 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
     if section != Section::Access || d.pending {
         s.manage.nav.go(section);
         // the changes' bar ends the section
-        s.manage.nav.jump_to_end = d.pending;
+        s.manage.nav.jump_to_end = d.pending || d.advanced;
+    }
+    if d.advanced {
+        match section {
+            Section::Rules => {
+                s.advanced.rules_open = true;
+                s.advanced.demo_jump = true;
+            }
+            Section::Terrain => s.advanced.terrain_open = true,
+            _ => {}
+        }
+    }
+    if d.pbr {
+        let mut t = terrain;
+        advanced::switch_kind(s, TerrainKind::Textures, TerrainKind::Materials, &mut t);
+        s.manage.terrain.set(&terrain, t);
     }
     let heights = d.ask == Some(Ask::TextureHeights);
     let override_off = d.ask == Some(Ask::AccessOverride);
@@ -237,6 +253,10 @@ pub(super) fn show(
         },
     );
     s.manage.nav = state;
+    if std::mem::take(&mut s.advanced.demo_scroll) {
+        s.manage.nav.go(Section::Rules);
+        s.manage.nav.jump_to_end = true;
+    }
 }
 
 fn title(ui: &mut egui::Ui, p: &Palette, sec: Section, right: impl FnOnce(&mut egui::Ui)) {
@@ -476,7 +496,7 @@ fn rules(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
             widgets::maturity_badge_of(ui, p, now.sim_access, 15.0);
         },
     );
-    later_fold(ui, p, aurora_i18n::tr!("region-rules-advanced"));
+    super::advanced::rules_fold(ui, p, s, v, world);
     if now != before {
         s.manage.rules.set(&server, now);
     }
@@ -598,16 +618,6 @@ fn loading(ui: &mut egui::Ui, p: &Palette) {
     ui.label(RichText::new(aurora_i18n::tr!("common-loading")).size(12.0).color(p.muted));
 }
 
-/// An "Advanced" fold whose content comes with a later step: greyed.
-fn later_fold(ui: &mut egui::Ui, p: &Palette, label: &str) {
-    let mut open = false;
-    editable(ui, false, |ui| {
-        ui.scope(|ui| sheet::fold_row(ui, p, &mut open, label))
-            .response
-            .on_disabled_hover_text(aurora_i18n::tr!("common-not-available-in-aurora-yet"));
-    });
-}
-
 /// Corners in the mockup's order (north-west, north-east, south-west,
 /// south-east) and their index in the composition (00 south-west, 01
 /// north-west, 10 south-east, 11 north-east).
@@ -620,8 +630,8 @@ fn corners() -> [(usize, &'static str); 4] {
     ]
 }
 
-/// "Terrain and water": the Terrain panel without its RAW file and PBR
-/// materials.
+/// "Terrain and water": the Terrain panel; its PBR transforms and RAW file
+/// are in the Advanced fold (`advanced.rs`).
 fn terrain(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) {
     title(ui, p, Section::Terrain, |_| {});
     why(ui, p, aurora_i18n::tr!("region-terrain-why"));
@@ -633,6 +643,8 @@ fn terrain(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
     let owner = v.shown == Role::Owner;
     let mut now = s.manage.terrain.shown(&server);
     let before = now;
+    let kind = advanced::kind(s, &server, images);
+    s.advanced.shown_kind = Some(kind);
     srow(ui, p, aurora_i18n::tr!("region-terrain-water"), "", 90.0, |ui| {
         number(ui, &mut now.water_height, 0.0..=100.0, 0.1, 1, " m", 76.0, can);
     });
@@ -672,21 +684,27 @@ fn terrain(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
         aurora_i18n::tr!("region-terrain-cover-desc"),
         220.0,
         |ui| {
-            // PBR materials come with the advanced step: the choice stays on
-            // the textures (Firestorm hides it unless RenderTerrainPBREnabled)
+            // terrain_material_type (RenderTerrainPBREnabled, on by default)
             editable(ui, can, |ui| {
                 let options = [
                     (aurora_i18n::tr!("common-textures"), true),
                     (aurora_i18n::tr!("region-terrain-materials"), true),
                 ];
-                let mut choice = 0;
-                ui.scope(|ui| widgets::segmented(ui, p, &mut choice, &options))
-                    .response
-                    .on_hover_text(aurora_i18n::tr!("region-terrain-materials-later"));
+                let mut choice = usize::from(kind == TerrainKind::Materials);
+                if widgets::segmented(ui, p, &mut choice, &options) {
+                    let to = if choice == 1 {
+                        TerrainKind::Materials
+                    } else {
+                        TerrainKind::Textures
+                    };
+                    advanced::switch_kind(s, kind, to, &mut now);
+                }
             });
         },
     );
-    swatches(ui, p, s, &now, images, can);
+    let kind = s.advanced.kind.unwrap_or(kind);
+    s.advanced.shown_kind = Some(kind);
+    swatches(ui, p, s, &now, images, can, kind);
     for (n, (corner, name)) in corners().into_iter().enumerate() {
         line(ui, p);
         let desc = if n == 0 {
@@ -700,15 +718,21 @@ fn terrain(ui: &mut egui::Ui, p: &Palette, s: &mut RegionUi, v: &View, world: &m
             number(ui, &mut now.start_height[corner], -500.0..=500.0, 0.5, 1, "", 76.0, can);
         });
     }
-    later_fold(ui, p, aurora_i18n::tr!("region-terrain-advanced"));
     if now != before {
         s.manage.terrain.set(&server, now);
     }
-    let pending = s.manage.terrain.pending(&server);
+    advanced::terrain_fold(ui, p, s, v, world, kind);
+    let transforms = advanced::server_transforms(world)
+        .filter(|_| kind == TerrainKind::Materials)
+        .map_or(0, |t| s.advanced.transforms.pending(&t));
+    let pending = s.manage.terrain.pending(&server) + transforms;
     if can && pending > 0 {
         match sheet::pending_bar(ui, p, pending) {
             Some(true) => apply_terrain(s, v, world),
-            Some(false) => s.manage.terrain.cancel(),
+            Some(false) => {
+                s.manage.terrain.cancel();
+                s.advanced.transforms.cancel();
+            }
             None => {}
         }
     }
@@ -723,7 +747,9 @@ fn swatches(
     now: &TerrainSettings,
     images: &HashMap<Uuid, egui::TextureHandle>,
     can: bool,
+    kind: TerrainKind,
 ) {
+    let materials = kind == TerrainKind::Materials;
     const SIZE: Vec2 = Vec2::new(92.0, 56.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
@@ -733,7 +759,7 @@ fn swatches(
                 let sense = if can { Sense::click() } else { Sense::hover() };
                 let (rect, r) = ui.allocate_exact_size(SIZE, sense);
                 let radius = ui.visuals().window_corner_radius;
-                let tex = (!id.is_nil()).then(|| images.get(id)).flatten();
+                let tex = (!id.is_nil() && !materials).then(|| images.get(id)).flatten();
                 match tex {
                     Some(t) => {
                         let [w, h] = t.size();
@@ -744,11 +770,12 @@ fn swatches(
                             .paint_at(ui, rect);
                     }
                     None => {
-                        if !id.is_nil() {
+                        if !id.is_nil() && !materials {
                             s.wanted_images.insert(*id);
                         }
                         ui.painter().rect_filled(rect, radius, p.bar);
-                        sheet::icon_at(ui, "photo-filled", rect.center(), 20.0, p.muted_dim);
+                        let icon = if materials { "palette-filled" } else { "photo-filled" };
+                        sheet::icon_at(ui, icon, rect.center(), 20.0, p.muted_dim);
                     }
                 }
                 if can && r.hovered() {
@@ -763,8 +790,13 @@ fn swatches(
                 ui.label(RichText::new(label).size(11.0).color(p.muted));
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     s.manage.picking = Some(i);
-                    let title = aurora_i18n::tr!("region-terrain-texture-title", n = (i + 1) as i64);
-                    s.texture.open(&title, *id);
+                    if materials {
+                        let title = aurora_i18n::tr!("region-terrain-material-title", n = (i + 1) as i64);
+                        s.texture.open_materials(&title, *id);
+                    } else {
+                        let title = aurora_i18n::tr!("region-terrain-texture-title", n = (i + 1) as i64);
+                        s.texture.open(&title, *id);
+                    }
                 }
             });
         }
@@ -776,6 +808,16 @@ fn swatches(
 /// their high one are confirmed first (validateTextureHeights, unless
 /// RegionCheckTextureHeights was turned off by "Don't ask").
 fn apply_terrain(s: &mut RegionUi, v: &View, world: &mut World) {
+    // validateMaterials first: each material loaded, single-sided, not blended
+    if s.advanced.shown_kind == Some(TerrainKind::Materials)
+        && let Some(server) = server_terrain(world, v)
+    {
+        let ids = s.manage.terrain.shown(&server).textures;
+        if let Some((slot, problem)) = advanced::material_problem(s, &ids) {
+            s.ask = Some(advanced::problem_ask(slot, problem));
+            return;
+        }
+    }
     let inverted = s
         .manage
         .terrain
@@ -794,6 +836,13 @@ pub(super) fn send_terrain(s: &mut RegionUi, v: &View, world: &mut World) {
     };
     if let Some(t) = s.manage.terrain.apply(&server) {
         world.estate.set_terrain(v.handle, t);
+    }
+    // the materials' transforms with every Apply (sendUpdate's ModifyRegion)
+    if s.advanced.shown_kind == Some(TerrainKind::Materials)
+        && let Some(server) = advanced::server_transforms(world)
+    {
+        let now = s.advanced.transforms.apply(&server).unwrap_or(server);
+        world.estate.set_transforms(v.handle, now.0);
     }
 }
 

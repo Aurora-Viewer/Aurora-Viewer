@@ -43,7 +43,7 @@ struct Transfer {
     retries: u8,
 }
 
-fn packet(data: &[u8], chunk: usize, index: u32) -> Option<(u32, Vec<u8>)> {
+pub(super) fn packet(data: &[u8], chunk: usize, index: u32) -> Option<(u32, Vec<u8>)> {
     let start = (index as usize).checked_mul(chunk)?;
     if start >= data.len() {
         return None;

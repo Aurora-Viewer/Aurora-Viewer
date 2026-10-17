@@ -7,6 +7,7 @@
 //! About Land's (`ui/sheet.rs`); the data are `world/estate.rs`'s. Who may
 //! manage the estate can look at it as a resident would ("View as").
 
+mod advanced;
 mod confirm;
 mod draft;
 mod estate_wide;
@@ -22,6 +23,7 @@ use crate::ui::texture_picker::TexturePicker;
 use crate::ui::widgets::{self, Floater};
 use crate::world::World;
 use crate::world::estate::{self, Role};
+pub use advanced::MaterialInfo;
 use aurora_net::RegionHandle;
 pub(crate) use confirm::Ask;
 use egui::Vec2;
@@ -117,6 +119,8 @@ pub enum RegionAction {
     WorldMap,
     /// "Edit the day cycle…": the day editor on the region's day.
     CustomizeEnvironment,
+    /// A spawn point was added: the selection is let go (deselectAll).
+    Deselect,
 }
 
 #[derive(Default)]
@@ -131,6 +135,13 @@ pub struct RegionUi {
     pub wanted_pics: HashSet<Uuid>,
     /// Textures the terrain's swatches and the picker wait for.
     pub wanted_images: HashSet<Uuid>,
+    /// The terrain's ids asked as materials, and what the app's material
+    /// store says of them (PBR terrain).
+    pub wanted_materials: HashSet<Uuid>,
+    pub material_info: HashMap<Uuid, MaterialInfo>,
+    /// The root objects selected in the world, in the window's region,
+    /// when they are all prims (the telehub's Connect and Add).
+    pub selection: Vec<u32>,
     /// An action button was pressed (taken by the app).
     pub action: Option<RegionAction>,
     /// "Manage": its sections' changes and navigation, for `manage_region`.
@@ -142,6 +153,8 @@ pub struct RegionUi {
     interventions: interventions::InterventionsState,
     /// The Top scripts / Top colliders window.
     top: top_objects::TopState,
+    /// The rules' and terrain's Advanced folds.
+    advanced: advanced::AdvancedState,
     /// Environment, Experiences and Covenant: their pickers and dialogs.
     estate_wide: estate_wide::EstateWideState,
     /// The question or notice on screen.
@@ -163,6 +176,11 @@ pub struct ManageDemo {
     pub pending: bool,
     /// The question shown.
     pub ask: Option<Ask>,
+    /// The section's Advanced fold opened (rules: the telehub; terrain:
+    /// transforms and RAW file).
+    pub advanced: bool,
+    /// The terrain turned to PBR materials.
+    pub pbr: bool,
 }
 
 /// The menus' and About Land's request to open the window.
@@ -231,6 +249,7 @@ impl RegionUi {
                 self.interventions.reset();
                 self.top.reset();
                 self.estate_wide.reset();
+                self.advanced.reset();
                 world.estate.close();
             }
             return false;
@@ -252,6 +271,8 @@ impl RegionUi {
             self.interventions.reset();
             self.top.reset();
             self.estate_wide.reset();
+            self.advanced.reset();
+            self.wanted_materials.clear();
             self.manage_region = Some(handle);
             self.ask = None;
         }

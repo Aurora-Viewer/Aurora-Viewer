@@ -57,6 +57,150 @@ pub mod estate_experience {
     pub const BLOCKED_REMOVE: u32 = 1 << 7;
 }
 
+/// MAX_SPAWNPOINTS_PER_TELEHUB (llfloatertelehub.h).
+pub const MAX_SPAWNPOINTS_PER_TELEHUB: usize = 16;
+
+/// A request of the telehub floater (LLFloaterTelehub, through
+/// LLSelectMgr::sendGodlikeRequest: EstateOwnerMessage `telehub` with a
+/// nil invoice, the verb, then the selected root objects' local ids).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelehubVerb {
+    /// "info ui": TelehubInfo comes back.
+    Info,
+    Connect,
+    Delete,
+    AddSpawn,
+    /// "spawnpoint remove" with the spawn point's index, without the
+    /// selection (onClickRemoveSpawnPoint).
+    RemoveSpawn(u32),
+}
+
+impl TelehubVerb {
+    /// The message's parameters.
+    pub fn strings(self, objects: &[u32]) -> Vec<String> {
+        let verb = match self {
+            TelehubVerb::Info => "info ui",
+            TelehubVerb::Connect => "connect",
+            TelehubVerb::Delete => "delete",
+            TelehubVerb::AddSpawn => "spawnpoint add",
+            TelehubVerb::RemoveSpawn(i) => return vec!["spawnpoint remove".to_owned(), i.to_string()],
+        };
+        std::iter::once(verb.to_owned()).chain(objects.iter().map(u32::to_string)).collect()
+    }
+}
+
+/// TelehubInfo: the region's telehub (a nil object without one) and its
+/// spawn points, relative to it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TelehubInfo {
+    pub object: Uuid,
+    pub name: String,
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+    pub spawns: Vec<[f32; 3]>,
+}
+
+/// One terrain material's texture transform (LLGLTFMaterial::TextureTransform,
+/// the same for its four texture infos: the PBR terrain shader takes one).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainTransform {
+    pub scale: [f32; 2],
+    /// Radians.
+    pub rotation: f32,
+    pub offset: [f32; 2],
+}
+
+impl Default for TerrainTransform {
+    fn default() -> Self {
+        TerrainTransform {
+            scale: [1.0, 1.0],
+            rotation: 0.0,
+            offset: [0.0, 0.0],
+        }
+    }
+}
+
+/// GLTF_TEXTURE_INFO_COUNT.
+const TEXTURE_INFOS: usize = 4;
+
+/// The ModifyRegion POST of the terrain's material overrides
+/// (LLPBRTerrainFeatures::queueModify, LLGLTFMaterial::getOverrideLLSD):
+/// an empty map for a default transform, else `ti` with what differs.
+pub fn terrain_overrides_body(transforms: &[TerrainTransform; 4]) -> Llsd {
+    let overrides = transforms
+        .iter()
+        .map(|t| {
+            let mut m = Llsd::new_map();
+            if *t == TerrainTransform::default() {
+                return m;
+            }
+            let pair = |v: [f32; 2]| Llsd::Array(v.iter().map(|x| Llsd::Real(f64::from(*x))).collect());
+            let mut info = Llsd::new_map();
+            if t.offset != [0.0, 0.0] {
+                info.insert("o", pair(t.offset));
+            }
+            if t.scale != [1.0, 1.0] {
+                info.insert("s", pair(t.scale));
+            }
+            if t.rotation != 0.0 {
+                info.insert("r", Llsd::Real(f64::from(t.rotation)));
+            }
+            m.insert("ti", Llsd::Array(vec![info; TEXTURE_INFOS]));
+            m
+        })
+        .collect();
+    let mut body = Llsd::new_map();
+    body.insert("overrides", Llsd::Array(overrides));
+    body
+}
+
+/// queryRegionCoro: the four materials' overrides (the base color's
+/// transform), None when the answer failed or misses some.
+pub fn parse_terrain_overrides(v: &Llsd) -> Option<[TerrainTransform; 4]> {
+    if !v["success"].as_bool() {
+        return None;
+    }
+    let overrides = v["overrides"].as_array();
+    if overrides.len() < 4 {
+        return None;
+    }
+    Some(std::array::from_fn(|i| {
+        let info = &overrides[i]["ti"].at(0);
+        let pair = |key: &str, default: [f32; 2]| {
+            let a = &info[key];
+            if a.is_array() {
+                [a.at(0).as_f32(), a.at(1).as_f32()]
+            } else {
+                default
+            }
+        };
+        TerrainTransform {
+            scale: pair("s", [1.0, 1.0]),
+            rotation: if info.has("r") { info["r"].as_f32() } else { 0.0 },
+            offset: pair("o", [0.0, 0.0]),
+        }
+    }))
+}
+
+/// A RAW terrain file sent or asked (LLPanelRegionTerrainInfo
+/// onDownloadRawFilepickerCB / onUploadRawFilepickerCB): `terrain`
+/// "download filename" / "upload filename" with the local path, then the
+/// file goes by Xfer.
+#[derive(Clone, PartialEq)]
+pub enum RawTransfer {
+    Download { path: String },
+    Upload { path: String, data: Arc<Vec<u8>> },
+}
+
+impl std::fmt::Debug for RawTransfer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RawTransfer::Download { path } => write!(f, "Download({path})"),
+            RawTransfer::Upload { path, data } => write!(f, "Upload({path}, {} bytes)", data.len()),
+        }
+    }
+}
+
 /// ESTATE_MAX_EXPERIENCE_IDS: each of the region's experience lists.
 pub const ESTATE_MAX_EXPERIENCE_IDS: usize = 8;
 
@@ -824,6 +968,19 @@ pub enum EstateCommand {
     /// The covenant replaced by a notecard's asset, or cleared with nil
     /// (LLPanelEstateCovenant::sendChangeCovenantID).
     ChangeCovenant { handle: RegionHandle, asset: Uuid },
+    /// The telehub floater's requests (`telehub`).
+    Telehub {
+        handle: RegionHandle,
+        verb: TelehubVerb,
+        objects: Vec<u32>,
+    },
+    /// "Download RAW…" / "Upload RAW…".
+    TerrainRaw { handle: RegionHandle, transfer: RawTransfer },
+    /// The PBR materials' transforms (ModifyRegion POST, then GET).
+    TerrainTransforms {
+        handle: RegionHandle,
+        transforms: [TerrainTransform; 4],
+    },
     /// "Return selected" / "Return all" (returnObjects): ParcelReturnObjects
     /// for the whole region (local id -1, RT_NONE) with the tasks.
     ReturnTopObjects { handle: RegionHandle, tasks: Vec<Uuid> },
@@ -864,6 +1021,22 @@ pub enum EstateEvent {
     /// `setexperience` of the last invoice: the experience lists changed
     /// (LLDispatchSetEstateExperience).
     ExperiencesChanged { handle: RegionHandle },
+    /// TelehubInfo.
+    Telehub { handle: RegionHandle, info: Arc<TelehubInfo> },
+    /// The RAW file downloaded (callback_download_complete), or why not.
+    RawDownloaded {
+        handle: RegionHandle,
+        path: String,
+        result: Result<Arc<Vec<u8>>, String>,
+    },
+    /// The RAW file sent to the simulator, or why not.
+    RawUploaded { handle: RegionHandle, result: Result<(), String> },
+    /// ModifyRegion's material overrides, or why they are not there (no
+    /// capability, a failed query or change).
+    TerrainTransforms {
+        handle: RegionHandle,
+        transforms: Result<[TerrainTransform; 4], String>,
+    },
     /// LandStatReply: the Top scripts / Top colliders report.
     TopObjects { handle: RegionHandle, report: Arc<TopObjects> },
 }
