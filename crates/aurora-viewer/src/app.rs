@@ -11914,7 +11914,9 @@ impl ApplicationHandler for App {
             }
             if let Some(mode) = &self.ao_demo {
                 crate::ao::demo::assets(&mut self.scene);
-                let selected = if mode == "firestorm-wait" {
+                let selected = if matches!(mode.as_str(), "folder-names" | "folder-names-wait") {
+                    crate::ao::demo::seed_folder_names(&mut self.world.inventory, self.world.agent_id)
+                } else if mode == "firestorm-wait" {
                     crate::ao::demo::seed_firestorm_wait(&mut self.world.inventory, self.world.agent_id)
                 } else if mode.starts_with("migrate") {
                     crate::ao::demo::seed_migration(&mut self.world.inventory, self.world.agent_id)

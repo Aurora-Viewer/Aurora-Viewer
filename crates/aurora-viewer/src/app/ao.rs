@@ -22,7 +22,7 @@ impl App {
             self.world.ao_pose = None;
         }
         if self.demo && self.ao_demo.is_some() {
-            let ready = self.ao_demo.as_deref() != Some("firestorm-wait") || self.frame_count >= 720;
+            let ready = !matches!(self.ao_demo.as_deref(), Some("firestorm-wait" | "folder-names-wait")) || self.frame_count >= 720;
             crate::ao::demo::inventory_services(&mut self.world, ready);
         }
         if self.demo
@@ -36,6 +36,17 @@ impl App {
         }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
+                Some("folder-names" | "folder-names-wait") => {
+                    self.panels.inventory = true;
+                    let inv = &self.world.inventory;
+                    let brand = inventory::child(inv, inv.root, "#Aurora");
+                    let bridge = brand.and_then(|brand| {
+                        inventory::child(inv, brand, crate::world::bridge::SUBFOLDER).or_else(|| inventory::child(inv, brand, "Bridge"))
+                    });
+                    self.inventory_ui
+                        .open_folders([Some(inv.root), brand, bridge].into_iter().flatten());
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
+                }
                 Some("migrate" | "migrate-done") => {
                     self.panels.ao = true;
                     self.ao_ui.migration = Some(Default::default());

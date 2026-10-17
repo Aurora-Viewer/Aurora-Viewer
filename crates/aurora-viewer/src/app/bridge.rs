@@ -23,6 +23,7 @@ impl App {
         self.update_bridge();
     }
     pub(super) fn update_bridge(&mut self) {
+        let folder_names = self.demo && matches!(self.ao_demo.as_deref(), Some("folder-names" | "folder-names-wait"));
         if self.demo && self.frame_count < 300 {
             return;
         }
@@ -30,10 +31,14 @@ impl App {
             && self.frame_count == 300
             && (std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
-                || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some())
+                || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || folder_names)
         {
             crate::world::bridge::demo::seed(&mut self.world);
-            self.movelock_ui.open = std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
+            if self.ao_demo.is_none() {
+                crate::ao::demo::inventory_services(&mut self.world, true);
+            }
+            self.movelock_ui.open = !folder_names && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
             if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "radar") {
                 crate::world::bridge::demo::seed_queries(&mut self.world);
                 self.panels.people = true;
@@ -47,7 +52,8 @@ impl App {
             && (!self.demo
                 || std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
-                || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some());
+                || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || folder_names);
         if !online {
             return;
         }

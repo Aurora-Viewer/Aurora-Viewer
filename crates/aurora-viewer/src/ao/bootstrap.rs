@@ -1,7 +1,11 @@
-//! One startup fallback from Firestorm's AO to Aurora-owned inventory links.
+//! One startup fallback from the Legacy Viewer AO to Aurora-owned inventory links.
 //! Existing Aurora folders, including an empty AO, are always authoritative.
 use super::inventory::{self, Catalog};
-use crate::world::{World, inventory::Inventory};
+use crate::world::{
+    World,
+    inventory::{Inventory, actions},
+};
+use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::Mutation;
 use uuid::Uuid;
 
@@ -16,14 +20,7 @@ impl Bootstrap {
     /// services. Match Session's EditInventory preconditions before consuming
     /// the single startup attempt; no request has been sent while waiting.
     pub fn writable(world: &World) -> bool {
-        world.movement_complete
-            && !world.teleporting
-            && world.inventory.held.is_none()
-            && world.main().is_some_and(|region| {
-                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
-                    .iter()
-                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
-            })
+        world.inventory_writable()
     }
 
     pub fn loading(&self) -> bool {
@@ -44,8 +41,22 @@ impl Bootstrap {
         if self.finished || native.loading || native.failed {
             return None;
         }
-        if native.root.is_some() {
+        if let Some(root) = native.root {
             self.source = Catalog::default();
+            if inv
+                .folders
+                .get(&root)
+                .is_some_and(|folder| folder.info.name == inventory::OLD_FOLDER)
+            {
+                if !writable {
+                    return None;
+                }
+                // Rename in place through the ordinary acknowledged edit path.
+                // The catalogue remains usable; set/link IDs and selection stay
+                // unchanged. A failed/ambiguous edit is not replayed this session.
+                self.finished = true;
+                return Some(actions::patch(inv, root, llsd_map! { "name" => inventory::FOLDER }).map(|change| (change, None)));
+            }
             self.finished = true;
             return None;
         }
