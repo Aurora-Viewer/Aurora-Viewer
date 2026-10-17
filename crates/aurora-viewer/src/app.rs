@@ -50,6 +50,7 @@ mod inspect;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
+mod link_health;
 mod marketplace_listings;
 mod movement;
 mod object_actions;
@@ -458,6 +459,11 @@ pub struct App {
     notif_ui: ui::notifications::NotifUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
+    /// After the link with the region was lost: the grid, the user and the
+    /// place "Reconnect" goes back to (ui/link_health.rs).
+    reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
+    /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
+    demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
     /// Parcel music stream on (radio toggle).
@@ -966,6 +972,8 @@ impl App {
             audio_ui: Default::default(),
             notif_ui: Default::default(),
             region_restart: Default::default(),
+            reconnect_place: None,
+            demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
@@ -1739,6 +1747,9 @@ impl App {
                 self.login_form.adding,
                 !self.login_form.mfa_token.trim().is_empty()
             );
+            if let Some((_, _, place)) = self.reconnect_place.take() {
+                log::info!("demo login: reconnect to {}", place.to_login_string());
+            }
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
@@ -1752,7 +1763,13 @@ impl App {
             }
             return;
         }
-        let start = match self.settings.start_location.as_str() {
+        // "Reconnect" after a lost link: the same place, for the same account
+        let reconnect = self
+            .reconnect_place
+            .take()
+            .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
+            .map(|(_, _, place)| place);
+        let start = reconnect.unwrap_or_else(|| match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
                 name: self.settings.start_region.trim().to_owned(),
@@ -1761,7 +1778,7 @@ impl App {
                 z: 30,
             },
             _ => StartLocation::Last,
-        };
+        });
         let (mac, id0) = self.settings.hashed_ids();
         // typed password first, else the remembered one (already hashed)
         let password = match (&self.login_form.stored, self.login_form.password.is_empty()) {
@@ -2411,15 +2428,7 @@ impl App {
             NetEvent::CameraConstraint(plane) => self.camera.set_collide_plane(plane, &self.settings.camera),
             NetEvent::RegionRestart(notice) => self.on_region_restart(notice),
             NetEvent::RegionRestartCancelled => self.on_region_restart_cancelled(),
-            NetEvent::Disconnected { reason } => {
-                // cut by the region's restart: say so, and offer to reconnect
-                let restart = self.restart_disconnect();
-                let reconnect = restart.is_some();
-                self.back_to_login(Some(
-                    restart.unwrap_or_else(|| aurora_i18n::tr!("app-disconnected", reason = reason.to_string())),
-                ));
-                self.login_form.reconnect = reconnect;
-            }
+            NetEvent::Disconnected { reason, lost } => self.on_disconnected(&reason, lost),
             // ---- sounds (process_sound_trigger, setAttachedSound)
             NetEvent::SoundTrigger {
                 sound,
@@ -5537,6 +5546,8 @@ impl App {
         if self.left_down && self.color_pipette() && !self.egui_ctx.is_pointer_over_egui() {
             self.sample_build_color();
         }
+        // AURORA_DEMO_LINK's lost link, before the frame takes the window
+        self.demo_link_lost();
         let Some(mut gfx) = self.gfx.take() else {
             return;
         };
@@ -7198,6 +7209,7 @@ impl App {
         self.end_profile_frame(w, h);
         self.end_deep_profile(&gfx.renderer);
         self.gfx = Some(gfx);
+        self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();
         self.demo_action_steps();
@@ -10361,6 +10373,7 @@ impl App {
                 };
                 // the region restart over the toasts, under the open list
                 self.show_region_restart(&ctx, &p);
+                self.show_link_health(&ctx, &p);
                 self.order_region_restart(&ctx, aurora);
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);

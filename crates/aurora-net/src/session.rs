@@ -68,7 +68,10 @@ mod search_net;
 mod groups_net;
 use crate::build::BUILD_PARCEL_SEQ;
 
-const SIM_TIMEOUT: Duration = Duration::from_secs(60);
+/// A simulator silent this long is dead: the Legacy Viewer's circuit timeout
+/// (llstartup.cpp, circuit_timeout = 100 s, LLCircuitData::checkPeriodTime).
+/// 60 s cut sessions a laggy region or a short network outage would survive.
+const SIM_TIMEOUT: Duration = Duration::from_secs(100);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
@@ -989,6 +992,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::Disconnected {
                     reason: aurora_i18n::tr!("session-we-are-having-trouble-connecting-you-there-may-be").into(),
+                    lost: true,
                 },
             );
             self.finished = true;
@@ -1013,6 +1017,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::Disconnected {
                         reason: aurora_i18n::tr!("session-the-region-did-not-respond-in-time-agentmovementcomplete").into(),
+                        lost: true,
                     },
                 );
                 self.finished = true;
@@ -1052,6 +1057,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::Disconnected {
                         reason: aurora_i18n::tr!("session-connection-to-the-region-was-lost").into(),
+                        lost: true,
                     },
                 );
                 self.finished = true;
@@ -2910,6 +2916,7 @@ impl Session<'_> {
             self.sh,
             NetEvent::Disconnected {
                 reason: aurora_i18n::tr!("session-connection-to-the-region-was-lost").into(),
+                lost: true,
             },
         );
         self.finished = true;
@@ -3805,6 +3812,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::Disconnected {
                     reason: field_str(&m.user_info.reason),
+                    lost: false,
                 },
             );
             self.finished = true;
@@ -3817,6 +3825,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::Disconnected {
                         reason: aurora_i18n::tr!("session-the-region-closed-the-connection").into(),
+                        lost: true,
                     },
                 );
                 self.finished = true;
@@ -4809,6 +4818,7 @@ mod event_queue_tests {
         session.on_eq_lost(main_addr);
         assert!(session.finished);
         let (_, event) = received.try_recv().expect("disconnection");
-        assert!(matches!(event, NetEvent::Disconnected { .. }), "{event:?}");
+        // a lost link, not a kick: the viewer offers to reconnect
+        assert!(matches!(event, NetEvent::Disconnected { lost: true, .. }), "{event:?}");
     }
 }
