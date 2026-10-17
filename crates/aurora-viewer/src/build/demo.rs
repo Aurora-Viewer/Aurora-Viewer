@@ -64,6 +64,7 @@ pub enum Step {
     Release,
     Focus(bool),
     Linked(bool),
+    MeshLod(Option<u8>),
     Wheel(f32),
     ReplaceBegin(bool),
     ReplacePick(usize),
@@ -311,6 +312,23 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
             260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("mesh-inspector") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 5), Step::Linked(true)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            225 if parts[0] == "mesh-inspector-readonly" => object.into_iter().map(|i| Step::SharedRights(i, false)).collect(),
+            227 => vec![Step::Focus(false)],
+            235 => vec![Step::CloseView],
+            245 => vec![Step::MeshLod(match parts[0] {
+                "mesh-inspector-high" => Some(3),
+                "mesh-inspector-medium" => Some(2),
+                "mesh-inspector-low" => Some(1),
+                "mesh-inspector-lowest" => Some(0),
+                _ => None,
+            })],
             _ => Vec::new(),
         };
     }

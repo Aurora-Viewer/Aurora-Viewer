@@ -3,7 +3,7 @@
 //! size and rotation with copy / paste actions, the prim shape (22
 //! types, Firestorm's "Working33" extra paths included) and sculpties.
 
-use super::common::{Edit, check, combo, label, row, section, small, spin};
+use super::common::{Edit, check, combo, label, row, spin};
 use super::{Env, Request, ShapeClip};
 use crate::build::{BuildSettings, BuildTool, EditMode, MAX_PRIM_SCALE, MIN_PRIM_SCALE};
 use crate::scene::Scene;
@@ -629,6 +629,10 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
     let Some(idx) = world.objects.index_of(&key) else { return };
     let Some(o) = world.objects.get(idx) else { return };
     let (volume, flexible) = (o.volume, o.extra.flexible.is_some());
+    if volume.is_mesh() {
+        super::mesh::show(ui, p, tool, world, idx, env);
+        return;
+    }
     let editable = tool.can_modify(world, idx);
     let single = tool.sel_prims(world).len() == 1 || tool.roots(world).len() == 1;
     let mut chosen_type = None;
@@ -782,11 +786,7 @@ fn shape_column(
     ui.style_mut().override_font_id = Some(egui::FontId::proportional(11.0));
     ui.spacing_mut().button_padding = Vec2::new(3.0, 3.0);
     if volume.is_mesh() {
-        section(ui, p, aurora_i18n::tr!("build-ui-object-mesh"));
-        small(ui, p, aurora_i18n::tr!("build-ui-object-a-mesh-shape-cannot-be-edited-here"));
-        if let Some(n) = tool.face_counts.get(&world.objects.get(idx).map(|o| o.full_id).unwrap_or_default()) {
-            small(ui, p, &aurora_i18n::tr!("face-count", count = n));
-        }
+        super::mesh::show(ui, p, tool, world, idx, env);
         return;
     }
     let ui_now = ui_from_volume(volume);

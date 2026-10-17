@@ -19,6 +19,12 @@ taking over the techniques inherited from OpenGL (see
 **Out of scope for now:** OpenSim grids, support for platforms other than
 Windows for the releases (the code stays portable).
 
+The build mesh inspector (`build/ui/mesh.rs`) reads the actual cached LOD
+geometry through `scene/mesh_inspection.rs`. It retains only the inspected
+mesh's four asynchronous geometry requests and a transient per-object LOD
+override shared by full sync, parallel planning and LOD checks. Neither the
+inspection choice nor the informational distances are simulator properties.
+
 ## File tree
 
 The background of the update and exit dialogs is blurred by

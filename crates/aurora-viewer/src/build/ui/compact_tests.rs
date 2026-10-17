@@ -32,6 +32,79 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
     (world, tool, settings)
 }
 
+#[test]
+fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_in_footer() {
+    let mut inspector = Inspector::new();
+    let idx = inspector.world.objects.index_of(inspector.tool.selection.first().unwrap()).unwrap();
+    let object = inspector.world.objects.get_mut(idx).unwrap();
+    object.volume.sculpt = Some(aurora_prim::params::SculptParams {
+        texture: crate::demo::FACE_SELECTION_MESH,
+        sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+    });
+    object.extra.sculpt = object.volume.sculpt;
+    object.update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+    let key = object.key;
+    let id = object.full_id;
+    inspector.tool.props.get_mut(&id).unwrap().owner_mask &= !perm::MODIFY;
+    assert!(!inspector.tool.can_modify(&inspector.world, idx));
+    inspector.tool.tab = 5;
+    inspector.tool.face_counts.insert(id, 6);
+    inspector.tool.sync_mesh_inspector(&inspector.world, &mut inspector.scene);
+    for _ in 0..5 {
+        inspector.show(Vec::new());
+    }
+    let (rect, texts) = inspector.show(Vec::new());
+    assert!(texts.iter().any(|(t, _)| t == aurora_i18n::tr!("build-mesh-triangles")));
+    assert!(
+        !texts
+            .iter()
+            .any(|(t, _)| t == aurora_i18n::tr!("build-ui-object-a-mesh-shape-cannot-be-edited-here"))
+    );
+    let point = texts
+        .iter()
+        .find(|(t, _)| t == aurora_i18n::tr!("build-mesh-default"))
+        .unwrap()
+        .1
+        .center();
+    let click = |inspector: &mut Inspector, point| {
+        inspector.show(vec![egui::Event::PointerMoved(point)]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    };
+    click(&mut inspector, point);
+    let (_, menu) = inspector.show(Vec::new());
+    let low = menu
+        .iter()
+        .rev()
+        .find(|(t, _)| t == aurora_i18n::tr!("build-mesh-low"))
+        .unwrap()
+        .1
+        .center();
+    click(&mut inspector, low);
+    assert_eq!(inspector.tool.inspected_mesh_lod(), Some(1));
+    inspector.settings.edit_linked = true;
+    inspector.tool.edit_mode = EditMode::Face;
+    inspector.tool.faces.insert(key, [0, 2, 5].into_iter().collect());
+    let (_, texts) = inspector.show(Vec::new());
+    assert!(texts.iter().any(|(t, r)| t == "0, 2, 5" && r.top() > rect.center().y));
+    assert!(texts.iter().any(|(t, r)| t == "0" && r.top() > rect.center().y));
+    for _ in 0..12 {
+        let (next, _) = inspector.show(Vec::new());
+        // A changed row can snap to the next pixel once; repeated frames must
+        // stay within that one point, rather than accumulating window growth.
+        assert!(
+            (next.width() - rect.width()).abs() <= 1.0 && (next.height() - rect.height()).abs() <= 1.0,
+            "before={rect:?}, after={next:?}"
+        );
+    }
+}
+
 fn history_key(key: egui::Key, shift: bool, repeat: bool) -> egui::Event {
     egui::Event::Key {
         key,

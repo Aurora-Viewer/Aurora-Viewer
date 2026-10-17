@@ -194,9 +194,6 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World
                 replace::button(ui, p, tool, world, s);
             });
         });
-        if let Some(info) = tool.part_info(world, s) {
-            common::small(ui, p, &info);
-        }
     });
     ui.add_space(8.0);
 }
@@ -395,13 +392,17 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                         }
                         if s.edit_linked {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                for (next, name, label) in [
-                                    (true, "caret-right-filled", aurora_i18n::tr!("build-linked-next")),
-                                    (false, "caret-left-filled", aurora_i18n::tr!("build-linked-previous")),
-                                ] {
-                                    if icon_button(ui, p, name, label, selected).clicked() {
-                                        tool.select_next_link(world, s, next, mods.shift);
-                                    }
+                                if icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("build-linked-next"), selected).clicked() {
+                                    tool.select_next_link(world, s, true, mods.shift);
+                                }
+                                let number = tool
+                                    .selected_link_number(world)
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| "—".into());
+                                ui.label(RichText::new(&number).size(10.0).color(p.violet_pale))
+                                    .on_hover_text(aurora_i18n::tr!("build-ui-tools-link-number", n = number));
+                                if icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("build-linked-previous"), selected).clicked() {
+                                    tool.select_next_link(world, s, false, mods.shift);
                                 }
                             });
                         }
@@ -420,13 +421,20 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                         }
                         if face {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                for (next, name, label) in [
-                                    (true, "caret-right-filled", aurora_i18n::tr!("build-compact-next")),
-                                    (false, "caret-left-filled", aurora_i18n::tr!("build-compact-previous")),
-                                ] {
-                                    if icon_button(ui, p, name, label, selected).clicked() {
-                                        tool.select_next_part(world, s, next, mods.shift);
-                                    }
+                                let next = icon_button(ui, p, "caret-right-filled", aurora_i18n::tr!("build-compact-next"), selected);
+                                if next.clicked() {
+                                    tool.select_next_part(world, s, true, mods.shift);
+                                }
+                                let numbers = tool.selected_face_numbers(world);
+                                let number_width =
+                                    (ui.available_width() - next.rect.width() - ui.spacing().item_spacing.x).clamp(12.0, 58.0);
+                                ui.add_sized(
+                                    Vec2::new(number_width, 20.0),
+                                    egui::Label::new(RichText::new(&numbers).size(10.0).color(p.violet_pale)).truncate(),
+                                )
+                                .on_hover_text(aurora_i18n::tr!("build-ui-tools-faces", list = numbers));
+                                if icon_button(ui, p, "caret-left-filled", aurora_i18n::tr!("build-compact-previous"), selected).clicked() {
+                                    tool.select_next_part(world, s, false, mods.shift);
                                 }
                             });
                         }

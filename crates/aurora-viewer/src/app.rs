@@ -6534,6 +6534,7 @@ impl App {
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
         }
+        self.build.sync_mesh_inspector(&self.world, &mut self.scene);
         if self.in_world() && self.build.open {
             for idx in self.build.sel_prims(&self.world) {
                 if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
@@ -7795,6 +7796,7 @@ impl App {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::MeshLod(level) => self.build.set_inspected_mesh_lod(level),
                     crate::build::demo::Step::ReplaceBegin(contents) => {
                         self.build.begin_replacement(&self.world, &self.settings.build);
                         self.build.replacement.options.contents = contents;
@@ -11937,16 +11939,23 @@ impl ApplicationHandler for App {
                     None => {}
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared")) {
+            if std::env::var("AURORA_DEMO_BUILD")
+                .is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared") || v.starts_with("mesh-inspector"))
+            {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
-                let complex = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let inspector = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector"));
+                let complex = inspector || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
                 let events = if complex {
                     crate::demo::complex_face_selection_events()
                 } else {
                     crate::demo::face_selection_events(invisible)
                 };
                 if complex && let Some(gfx) = &mut self.gfx {
-                    self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                    if inspector {
+                        self.scene.install_demo_mesh_inspector(&mut gfx.renderer);
+                    } else {
+                        self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                    }
                 }
                 for event in events {
                     self.world.apply(event);

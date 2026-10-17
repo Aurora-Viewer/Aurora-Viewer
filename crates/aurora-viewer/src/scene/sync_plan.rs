@@ -182,6 +182,7 @@ pub(super) struct SyncCtx<'a> {
     eye: Vec3,
     lod_factor: f32,
     fov_y: f32,
+    mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
     mat_gen: u64,
 }
 
@@ -243,7 +244,12 @@ impl SyncCtx<'_> {
             at: g.center,
             bounds: g.radius,
             shown: level(g.geom)?,
-            asked: lod_for(radius, distance, self.lod_factor, self.fov_y),
+            asked: super::mesh_inspection::display_lod(
+                self.mesh_lod_overrides,
+                o,
+                false,
+                lod_for(radius, distance, self.lod_factor, self.fov_y),
+            ),
             radius,
             distance,
             rigged: g.rigged,
@@ -360,12 +366,13 @@ impl SyncCtx<'_> {
     /// cannot be placed.
     pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
         let (pos, _, hud) = self.transform(idx)?;
-        let lod = if hud {
-            3
-        } else {
-            let (radius, distance) = self.lod_metrics(idx, o, pos);
-            lod_for(radius, distance, self.lod_factor, self.fov_y)
-        };
+        let (radius, distance) = self.lod_metrics(idx, o, pos);
+        let lod = super::mesh_inspection::display_lod(
+            self.mesh_lod_overrides,
+            o,
+            hud,
+            lod_for(radius, distance, self.lod_factor, self.fov_y),
+        );
         Some(Scene::object_geom_key(o, lod))
     }
 
@@ -407,11 +414,12 @@ impl SyncCtx<'_> {
         }
         let (pos, _, hud) = xf;
         let metrics = if hud { (0.0, 0.0) } else { self.lod_metrics(idx, o, pos) };
-        let lod = if hud {
-            3
-        } else {
-            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y)
-        };
+        let lod = super::mesh_inspection::display_lod(
+            self.mesh_lod_overrides,
+            o,
+            hud,
+            lod_for(metrics.0, metrics.1, self.lod_factor, self.fov_y),
+        );
         let Some(key) = Scene::object_geom_key(o, lod) else {
             return full();
         };
@@ -518,6 +526,7 @@ impl Scene {
             eye,
             lod_factor: self.lod_factor,
             fov_y: self.fov_y,
+            mesh_lod_overrides: &self.mesh_lod_overrides,
             mat_gen: self.materials.generation,
         }
     }
