@@ -329,6 +329,11 @@ pub struct Settings {
     pub sharpen: f32,
     /// Glow of faces with a glow value (Firestorm RenderGlow, on).
     pub glow: bool,
+    /// Aurora's bloom around the bright parts of the image (the Legacy
+    /// Viewer has none): off by default.
+    pub bloom: bool,
+    /// The share of the light over the threshold it spreads (0.05 to 1).
+    pub bloom_strength: f32,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -998,6 +1003,8 @@ impl Default for Settings {
             exposure: 1.0,
             sharpen: 0.4,
             glow: true,
+            bloom: false,
+            bloom_strength: 0.5,
             occlusion_culling: true,
             lod_factor: 2.0,
             texture_budget_auto: true,
@@ -1551,6 +1558,11 @@ impl Settings {
             self.sharpen.clamp(0.0, 1.0)
         } else {
             0.4
+        };
+        self.bloom_strength = if self.bloom_strength.is_finite() {
+            self.bloom_strength.clamp(0.05, 1.0)
+        } else {
+            0.5
         };
         self.lod_factor = self.lod_factor.clamp(0.5, 4.0);
         self.ui_scale = self.ui_scale.clamp(0.75, 2.0);

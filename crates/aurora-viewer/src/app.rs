@@ -6204,6 +6204,7 @@ impl App {
             exposure: self.photo_exposure(),
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
+            bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
             water_height: self.world.main_water_height(),
             shadows: self.settings.shadow_quality > 0 && matches!(self.screen, Screen::World),
             shadow_distance: self.settings.shadow_params().1,

@@ -3776,6 +3776,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
+| `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3877,6 +3878,19 @@ What the inventory must show with these scenarios:
   light. `g_ssao` of `perf summary` is its GPU time (demo crowd of 40,
   2560 × 1369, RTX 4090: Legacy low about 0.08 to 0.15 ms, GTAO low 0.10,
   medium 0.24, high 0.31, ultra 0.57 ms).
+- **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
+  Bloom, off by default) for this launch, without changing the saved
+  setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),
+  `alt` on one second in two, its levels kept ready. Only what comes close
+  to white blooms (sun on metal, lights, fullbright and emissive faces); the
+  glow of faces with a glow value is the Legacy Viewer's and does not
+  change. To look at: `AURORA_DEMO_PBR_METAL=1`,
+  `AURORA_DEMO_CAMERA=close,675,455,30` (frame 760 at 60 fps): the
+  highlights of the polished sphere gain a soft halo, the rest of the image
+  stays as it is. Off, the post pass reads the scene exactly as before (two
+  captures off differ by the demo's run-to-run noise only). `g_bloom` of
+  `perf summary` is its GPU time (demo, 2560 × 1369, RTX 4090: about
+  0.07 ms on the plaza, 0.09 ms in a crowd of 40).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
@@ -4414,6 +4428,8 @@ thread.
     `g_shadows_depth`;
   - `g_ssao`: the ambient occlusion alone, Legacy or GTAO (`AURORA_AO`),
     also counted in `g_effects`;
+  - `g_bloom`: the bloom levels alone (`AURORA_BLOOM`, 0 while off), also
+    counted in `g_post`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35
     rebuilds per second, `AURORA_STILL_CHECK=1` tells which ones), the worn
