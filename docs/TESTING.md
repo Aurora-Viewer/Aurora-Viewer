@@ -553,7 +553,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
-| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks and other residents' scripted attachments |
+| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
@@ -573,7 +573,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
@@ -584,7 +584,16 @@ Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
 `worn-prim` and `worn-mesh` put a scripted attachment on another resident,
 without move/modify rights; both must log `demo touch_start: prim=975` and
 `demo touch_end: prim=975`, with `held=false` in the final result. The mesh
-scenario installs the existing synthetic skinned mesh locally. All scenarios
+scenario installs the existing synthetic skinned mesh locally. `worn-own`
+wears a scripted prim on our own chest (issue #488): the press must touch it
+(`demo server: ObjectGrab 975`) instead of turning to our avatar.
+`mouselook-gun` makes a script take the mouselook button
+(ScriptControlChange) and enters mouselook: the press and release send only
+`demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
+enters mouselook with nothing taken and puts a touchable panel under the
+crosshair: `click bits 0x10000000`, `ObjectGrab 975`, `click bits
+0x20000000`. `ground` presses the floor beside the avatar: `click bits
+0x10000000` then `0x20000000` (a click nothing takes). All scenarios
 write `demo world click` / `demo world click result`; the camera's final
 focus can be compared with the visible cube/pane. Use the usual `blend-zero`,
 `mask-zero`, invisible build/menu and HUD scenarios for neighbouring behavior.
@@ -1342,7 +1351,7 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
-| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]` | Classic EEP sky with this gamma |
+| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]` | EEP sky with this gamma, classic unless it has a probe ambiance |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
@@ -1441,6 +1450,13 @@ To check with these scenarios:
   `AURORA_DEMO_SKY=1.62,0.8,1.1` and `AURORA_DEMO_PBR_OVERRIDE=1`, the surround
   of each bump of the slabs must be darkened by ambient occlusion, and no
   longer be once ambient occlusion is turned off in the settings.
+  `probe ambiance`: the sky's reflection probe ambiance; above 0 the sky is
+  no longer classic and is tone mapped. With `AURORA_DEMO_SKY=1,0.8,0.25,0.6`,
+  `AURORA_DEMO_TOD=0` (the region's sky, not a saved preset) and
+  `AURORA_DEMO_OPTIONS=0:tonemap` (Graphics, scrolled to the row), the Tone
+  mapping choice is enabled;
+  World › Environment › Midday (a classic sky in the demo) greys it, with its
+  tooltip, and "Use shared environment" enables it again.
 - **`AURORA_DEMO_SKY_OPTICS=rainbow|halo|clear`**: the region's sky carries a
   moisture level of 1 (`rainbow`, sun 12° up in the west) or an ice level of
   1 (`halo`, sun 14° up in the east), and the camera looks east from behind
@@ -2313,7 +2329,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
   check that hiding world indicators leaves the call's controls intact.
 - **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
-  jump to the corresponding Sound and voice card for offline captures. Changes
+  jump to the corresponding Sound and voice card for offline captures;
+  `0:tonemap` opens Graphics scrolled to the Tone mapping row. Changes
   apply live, persist, and reset with the audio page. The microphone popup
   exposes camera/avatar ears and all five noise levels; its processing shortcut
   opens the same card. `AURORA_DEMO_VOICE=cycle` exercises the world indicators

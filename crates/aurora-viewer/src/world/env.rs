@@ -96,6 +96,13 @@ pub fn midday_sun() -> Vec3 {
     Vec3::new(0.35, 0.25, 0.9).normalize()
 }
 
+/// Whether a sky of this reflection probe ambiance is tone mapped: a classic
+/// sky (ambiance 0) is not, whatever the tone mapper chosen (no_post in
+/// LLPipeline::tonemap). Preferences grey the tone mapper choice then.
+pub fn tone_mapped(probe_ambiance: f32) -> bool {
+    probe_ambiance != 0.0
+}
+
 impl Environment {
     /// Environment for a region without (or before) its EEP settings: the
     /// default sky with the simulator's sun.
@@ -220,7 +227,7 @@ impl Environment {
             dome_radius: sky.dome_radius,
             hdr_scale,
             classic: sky.can_auto_adjust,
-            no_post: sky.probe_ambiance == 0.0,
+            no_post: !tone_mapped(sky.probe_ambiance),
             sun_dir: sun,
             moon_dir: moon,
             sun_scale: sky.sun_scale,
@@ -337,6 +344,23 @@ impl Environment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_skies_with_probe_ambiance_are_tone_mapped() {
+        assert!(!tone_mapped(0.0));
+        assert!(tone_mapped(0.5));
+        assert!(tone_mapped(1.0));
+        // the frame says no_post exactly when the sky is not tone mapped
+        let sun = Vec3::new(0.0, 0.3, 0.95);
+        let classic = Environment::from_sun(sun, 96.0);
+        assert!(classic.sky.no_post);
+        let hdr = SkyFrame {
+            probe_ambiance: 0.6,
+            ..SkyFrame::with_sun(sun)
+        };
+        let hdr = Environment::from_eep(&hdr, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+        assert!(!hdr.sky.no_post);
+    }
 
     #[test]
     fn day_and_night() {

@@ -1104,7 +1104,7 @@ impl Session<'_> {
 
     fn send_agent_update_if_due(&mut self, mut c: AgentControls, now: Instant) {
         c.far = self.far;
-        c.control_flags |= self.one_shot;
+        c.control_flags = crate::script_controls::mask_left_button(c.control_flags | self.one_shot, c.alt_or_ctrl);
         let flags_changed = c.control_flags != self.agent_update.sent_flags();
         if self.agent_update.should_send(&c, now) {
             self.sh.stats.agent_update_sent(flags_changed);
@@ -3769,6 +3769,11 @@ impl Session<'_> {
                     message: field_str(&m.alert_data.message),
                 },
             );
+        } else if id == ScriptControlChange::ID {
+            // LLAgent::processScriptControlChange: the counts are the viewer's
+            let m: ScriptControlChange = pkt.decode()?;
+            let blocks = m.data.iter().map(|d| (d.take_controls, d.controls, d.pass_to_agent)).collect();
+            emit(self.sh, NetEvent::ScriptControlChange(blocks));
         } else if id == KickUser::ID {
             let m: KickUser = pkt.decode()?;
             emit(
