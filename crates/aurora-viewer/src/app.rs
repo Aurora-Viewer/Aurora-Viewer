@@ -11434,6 +11434,9 @@ impl ApplicationHandler for App {
                 if let Some(d) = scenario.intervention.clone() {
                     self.region_ui.demo_intervention(d);
                 }
+                if let Some(report) = scenario.top {
+                    self.region_ui.demo_top(report);
+                }
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));

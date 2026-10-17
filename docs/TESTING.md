@@ -3053,7 +3053,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:interventions][:pending][:ask-…]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:interventions][:pending][:ask-…|:top-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -3107,7 +3107,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   schedule it is sent; the message, the teleports home, the kick and the
   return are only logged ("sending estate request '…'").
   `AURORA_DEMO_RESTART=300` with `overview` shows the pill without a
-  dialog.
+  dialog. `scripts` scrolls Manage to Scripts and physics (disable
+  scripts / collisions / physics, kept by the demo simulator in the next
+  RegionInfo), and `top-scripts` or `top-colliders` opens the Top window
+  on that report: five scripted objects with their time, memory and URLs
+  (312 scripts in all), or three colliders; the filter by object, owner
+  or parcel and the returns act on the demo simulator's list.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

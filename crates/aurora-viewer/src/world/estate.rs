@@ -10,7 +10,7 @@
 use super::land::EnvSummary;
 use aurora_net::estate::{
     EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RegionRules, RegionSun, RestartSchedule,
-    SimStats, TerrainSettings,
+    SimStats, TerrainSettings, TopObjects,
 };
 use aurora_net::{NetCommand, RegionHandle};
 use std::collections::HashMap;
@@ -56,6 +56,11 @@ pub struct Estate {
     pub stats: Option<(RegionHandle, Arc<SimStats>)>,
     /// Server versions by region (AgentMovementComplete).
     pub versions: HashMap<RegionHandle, String>,
+    /// The last Top scripts / Top colliders report of the agent's region,
+    /// and whether one was asked and not answered yet (the buttons wait,
+    /// as disableTopButtons / enableTopButtons).
+    pub top: Option<(RegionHandle, Arc<TopObjects>)>,
+    pub top_waiting: bool,
     /// A change of the lists was sent: the next `setaccess` asks them again
     /// (LLPanelEstateAccess::setPendingUpdate).
     access_pending: bool,
@@ -133,6 +138,15 @@ impl Estate {
         self.out.push(NetCommand::Estate(c));
     }
 
+    /// "Top scripts" / "Top colliders" (the Debug panel's estate message)
+    /// or the window's refresh and filters (LandStatRequest): the list
+    /// empties until the report comes.
+    pub fn ask_top(&mut self, c: EstateCommand) {
+        self.top = None;
+        self.top_waiting = true;
+        self.out.push(NetCommand::Estate(c));
+    }
+
     fn clear(&mut self) {
         self.region = None;
         self.estate = None;
@@ -174,6 +188,10 @@ impl Estate {
             }
             EstateEvent::Experiences { handle, experiences } if shown(handle) => self.experiences = Some(experiences),
             EstateEvent::Schedule { handle, schedule } if shown(handle) => self.schedule = Some(schedule),
+            EstateEvent::TopObjects { handle, report } => {
+                self.top = Some((handle, report));
+                self.top_waiting = false;
+            }
             EstateEvent::Environment { handle, environment } if shown(handle) => {
                 self.environment = Some(environment.map(|e| EnvSummary::from_llsd(&e)))
             }

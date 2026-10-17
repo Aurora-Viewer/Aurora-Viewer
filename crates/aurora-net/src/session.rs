@@ -3006,6 +3006,10 @@ impl Session<'_> {
                 let sim = e.sim;
                 self.on_parcel_properties(sim, b);
             }
+            "LandStatReply" => {
+                let sim = e.sim;
+                self.on_land_stat_reply(sim, b);
+            }
             "TeleportFailed" => {
                 let reason = b["Info"][0]["Reason"].as_str().to_owned();
                 transition::end(

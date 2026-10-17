@@ -146,6 +146,155 @@ pub fn restart_schedule_body(days: [bool; 7], seconds: u32) -> Llsd {
     aurora_llsd::llsd_map! { "restart" => restart }
 }
 
+/// The Debug panel's three switches (LLPanelRegionDebugInfo): the region's
+/// `REGION_FLAGS_SKIP_*` bits as processRegionInfo reads them, and
+/// `setregiondebug`'s "Y" / "N" strings as sendUpdate writes them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RegionDebug {
+    pub skip_scripts: bool,
+    pub skip_collisions: bool,
+    pub skip_physics: bool,
+}
+
+/// REGION_FLAGS_SKIP_COLLISIONS, _SKIP_SCRIPTS, _SKIP_PHYSICS (llregionflags.h).
+pub mod skip_flags {
+    pub const COLLISIONS: u64 = 1 << 12;
+    pub const SCRIPTS: u64 = 1 << 13;
+    pub const PHYSICS: u64 = 1 << 14;
+}
+
+impl RegionDebug {
+    pub fn of(d: &RegionDetails) -> Self {
+        RegionDebug {
+            skip_scripts: d.flags & skip_flags::SCRIPTS != 0,
+            skip_collisions: d.flags & skip_flags::COLLISIONS != 0,
+            skip_physics: d.flags & skip_flags::PHYSICS != 0,
+        }
+    }
+
+    pub fn strings(&self) -> Vec<String> {
+        vec![yes_no(self.skip_scripts), yes_no(self.skip_collisions), yes_no(self.skip_physics)]
+    }
+}
+
+/// The Top scripts / Top colliders report (LLFloaterTopObjects,
+/// llfloatertopobjects.h): its two kinds and the filters of LandStatRequest.
+pub mod land_stat {
+    pub const TOP_SCRIPTS: u32 = 0;
+    pub const TOP_COLLIDERS: u32 = 1;
+    pub const FILTER_BY_PARCEL: u32 = 1 << 0;
+    pub const FILTER_BY_OWNER: u32 = 1 << 1;
+    pub const FILTER_BY_OBJECT: u32 = 1 << 2;
+    pub const FILTER_BY_PARCEL_NAME: u32 = 1 << 3;
+}
+
+/// The Debug panel's "Top scripts" / "Top colliders" (onClickTopScripts,
+/// onClickTopColliders): the estate message that asks the report, and its
+/// one string ("6": the top 5 scripts; "1": one physics step).
+pub fn top_request(report: u32) -> (&'static str, &'static str) {
+    if report == land_stat::TOP_COLLIDERS {
+        ("colliders", "1")
+    } else {
+        ("scripts", "6")
+    }
+}
+
+/// One object of the report (handleReply), with DataExtended when sent.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TopObject {
+    pub local_id: u32,
+    pub task_id: Uuid,
+    pub position: [f32; 3],
+    /// Milliseconds of script time, or the collision score.
+    pub score: f32,
+    pub name: String,
+    /// The owner's user name (LLCacheName::buildUsername of OwnerName).
+    pub owner: String,
+    /// "unknown" without the extended data, as the Legacy Viewer shows it.
+    pub parcel: String,
+    /// Seconds since 1970 (0 without the extended data).
+    pub time: u32,
+    /// Script memory in bytes and public URLs (top scripts, extended).
+    pub memory: f32,
+    pub urls: i32,
+    pub extended: bool,
+}
+
+/// A LandStatReply.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TopObjects {
+    pub report: u32,
+    pub flags: u32,
+    pub total: u32,
+    pub objects: Vec<TopObject>,
+}
+
+impl TopObjects {
+    /// The summary's figures: script time (the scores' sum) and memory in
+    /// KB (handleReply's mtotalScore and total_memory / 1024).
+    pub fn totals(&self) -> (f32, u64) {
+        let time = self.objects.iter().map(|o| o.score).sum();
+        let memory = self.objects.iter().map(|o| o.memory as u64).sum::<u64>() / 1024;
+        (time, memory)
+    }
+}
+
+/// LLCacheName::buildUsername: "First Last" → "first.last", "First
+/// Resident" → "first"; the server's trailing spaces trimmed first.
+pub fn username_of(legacy: &str) -> String {
+    let name = legacy.trim();
+    let mut parts = name.split_whitespace();
+    let first = parts.next().unwrap_or_default().to_lowercase();
+    match parts.next() {
+        Some(last) if !last.eq_ignore_ascii_case("resident") => format!("{first}.{}", last.to_lowercase()),
+        _ => first,
+    }
+}
+
+/// LandStatReply as the event queue carries it (its blocks as arrays of
+/// maps; DataExtended beside ReportData, one per object).
+pub fn parse_land_stat(b: &Llsd) -> TopObjects {
+    let rd = &b["RequestData"][0];
+    let rows = &b["ReportData"];
+    let ext = &b["DataExtended"];
+    let objects = (0..rows.len())
+        .map(|i| {
+            let r = rows.at(i);
+            let x = ext.at(i);
+            let extended = ext.len() > i;
+            let parcel = x["ParcelName"].to_string_value();
+            let memory = x["Size"].as_f64() as f32;
+            TopObject {
+                local_id: r["TaskLocalID"].as_u32(),
+                task_id: r["TaskID"].as_uuid(),
+                position: [
+                    r["LocationX"].as_f64() as f32,
+                    r["LocationY"].as_f64() as f32,
+                    r["LocationZ"].as_f64() as f32,
+                ],
+                score: r["Score"].as_f64() as f32,
+                name: r["TaskName"].to_string_value(),
+                owner: username_of(&r["OwnerName"].to_string_value()),
+                parcel: if extended && (!parcel.is_empty() || memory > 0.0) {
+                    parcel
+                } else {
+                    "unknown".to_owned()
+                },
+                time: if extended { x["TimeStamp"].as_u32() } else { 0 },
+                memory: if extended { memory } else { 0.0 },
+                urls: if extended { x["PublicURLs"].as_i32() } else { 0 },
+                extended,
+            }
+        })
+        .collect();
+    TopObjects {
+        report: rd["ReportType"].as_u32(),
+        flags: rd["RequestFlags"].as_u32(),
+        total: rd["TotalObjectCount"].as_u32(),
+        objects,
+    }
+}
+
 /// ESimStatID (llviewerstats.h): the stats of SimStats the window reads.
 pub mod sim_stat {
     pub const TIME_DILATION: u32 = 0;
@@ -636,6 +785,22 @@ pub enum EstateCommand {
         days: [bool; 7],
         seconds: u32,
     },
+    /// The Debug panel's "Apply": `setregiondebug`.
+    SetRegionDebug { handle: RegionHandle, debug: RegionDebug },
+    /// The Debug panel's "Top scripts" / "Top colliders": the estate message
+    /// that has the simulator send its report.
+    TopObjects { handle: RegionHandle, report: u32 },
+    /// The Top objects window's refresh and filters (onRefresh):
+    /// LandStatRequest for the whole region.
+    LandStat {
+        handle: RegionHandle,
+        report: u32,
+        flags: u32,
+        filter: String,
+    },
+    /// "Return selected" / "Return all" (returnObjects): ParcelReturnObjects
+    /// for the whole region (local id -1, RT_NONE) with the tasks.
+    ReturnTopObjects { handle: RegionHandle, tasks: Vec<Uuid> },
 }
 
 /// What the simulator answered.
@@ -670,6 +835,8 @@ pub enum EstateEvent {
     Stats { handle: RegionHandle, stats: Arc<SimStats> },
     /// AgentMovementComplete SimData ChannelVersion (gLastVersionChannel).
     SimVersion { handle: RegionHandle, version: String },
+    /// LandStatReply: the Top scripts / Top colliders report.
+    TopObjects { handle: RegionHandle, report: Arc<TopObjects> },
 }
 
 #[cfg(test)]
@@ -883,6 +1050,85 @@ mod tests {
         // no day: a weekly schedule without days clears it
         let none = restart_schedule_body([false; 7], 0);
         assert_eq!(none["restart"]["days"].to_string_value(), "");
+    }
+
+    #[test]
+    fn the_debug_switches_follow_the_region_flags() {
+        let d = RegionDetails {
+            flags: skip_flags::SCRIPTS | skip_flags::PHYSICS,
+            ..Default::default()
+        };
+        let r = RegionDebug::of(&d);
+        assert!(r.skip_scripts && !r.skip_collisions && r.skip_physics);
+        assert_eq!(r.strings(), ["Y", "N", "Y"].map(String::from).to_vec());
+        assert_eq!(top_request(land_stat::TOP_SCRIPTS), ("scripts", "6"));
+        assert_eq!(top_request(land_stat::TOP_COLLIDERS), ("colliders", "1"));
+    }
+
+    #[test]
+    fn owner_names_become_user_names() {
+        assert_eq!(username_of("Orion Exemple  "), "orion.exemple");
+        assert_eq!(username_of("Pixelboutique Resident"), "pixelboutique");
+        assert_eq!(username_of("lumen"), "lumen");
+        assert_eq!(username_of(""), "");
+    }
+
+    /// handleReply: the extended data when sent, "unknown" parcel without.
+    #[test]
+    fn the_land_stat_reply_of_the_event_queue() {
+        let row = |n: u128, score: f64| {
+            llsd_map! {
+                "TaskLocalID" => Llsd::Integer(n as i32),
+                "TaskID" => Llsd::Uuid(Uuid::from_u128(n)),
+                "LocationX" => Llsd::Real(128.0),
+                "LocationY" => Llsd::Real(64.5),
+                "LocationZ" => Llsd::Real(22.0),
+                "Score" => Llsd::Real(score),
+                "TaskName" => Llsd::String("Fountain".into()),
+                "OwnerName" => Llsd::String("Orion Exemple ".into()),
+            }
+        };
+        let b = llsd_map! {
+            "RequestData" => Llsd::Array(vec![llsd_map! {
+                "ReportType" => Llsd::Integer(0),
+                "RequestFlags" => Llsd::Integer(0),
+                "TotalObjectCount" => Llsd::Integer(412),
+            }]),
+            "ReportData" => Llsd::Array(vec![row(1, 0.25), row(2, 0.125)]),
+            "DataExtended" => Llsd::Array(vec![
+                llsd_map! {
+                    "TimeStamp" => Llsd::Integer(1_760_000_000),
+                    "MonoScore" => Llsd::Real(0.2),
+                    "PublicURLs" => Llsd::Integer(2),
+                    "ParcelName" => Llsd::String("Plaza".into()),
+                    "Size" => Llsd::Real(65_536.0),
+                },
+                llsd_map! {
+                    "TimeStamp" => Llsd::Integer(0),
+                    "MonoScore" => Llsd::Real(0.0),
+                    "PublicURLs" => Llsd::Integer(0),
+                    "ParcelName" => Llsd::String(String::new()),
+                    "Size" => Llsd::Real(0.0),
+                },
+            ]),
+        };
+        let t = parse_land_stat(&b);
+        assert_eq!((t.report, t.total, t.objects.len()), (land_stat::TOP_SCRIPTS, 412, 2));
+        let o = &t.objects[0];
+        assert_eq!(
+            (o.local_id, o.owner.as_str(), o.parcel.as_str(), o.urls),
+            (1, "orion.exemple", "Plaza", 2)
+        );
+        assert_eq!(o.position, [128.0, 64.5, 22.0]);
+        assert_eq!(t.objects[1].parcel, "unknown", "no parcel nor memory sent");
+        let (time, memory) = t.totals();
+        assert!((time - 0.375).abs() < 1e-6);
+        assert_eq!(memory, 64);
+        // without DataExtended
+        let mut short = b.clone();
+        short.insert("DataExtended", Llsd::Array(Vec::new()));
+        let s = parse_land_stat(&short);
+        assert!(!s.objects[0].extended && s.objects[0].parcel == "unknown" && s.objects[0].time == 0);
     }
 
     #[test]
