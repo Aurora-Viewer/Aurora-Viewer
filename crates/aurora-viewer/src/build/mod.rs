@@ -103,7 +103,7 @@ pub struct BuildSettings {
     pub land_brush_size: f32,
     /// LandBrushForce (0.1 .. 100, logarithmic slider).
     pub land_brush_force: f32,
-    /// FSBuildPrefs_ActualRoot: the manipulators pivot on the root prim.
+    /// Actual-root pivot: primary linkset root, or primary prim in linked editing.
     pub actual_root: bool,
     /// SelectReflectionProbes: invisible reflection probes can be picked.
     pub select_probes: bool,
