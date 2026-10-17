@@ -7972,6 +7972,11 @@ impl App {
             if let Some(old) = crate::scene::mat_changes::alternate(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
+            // AURORA_IMPOSTOR_POSES=alt: impostors posed at every frame in the
+            // same seconds
+            if let Some(old) = crate::scene::impostors::alternate_poses(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
             // AURORA_PROBE_WALK=alt: the whole probe list walked one second in three
             if aurora_render::probes::ProbeWalk::from_env() == aurora_render::probes::ProbeWalk::Alternate {
                 let old = self.frame_profile.probe_walk_list();

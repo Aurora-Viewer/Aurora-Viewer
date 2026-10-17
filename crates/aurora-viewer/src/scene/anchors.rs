@@ -33,7 +33,9 @@
 //!
 //! The CPU still wants to know where these objects are (blended faces to
 //! sort, hover, lights, impostors): their centre is recomputed from the
-//! anchors at each frame, a product per object; a rigged mesh's follows its
+//! anchors whenever their anchor changed, a product per object (the
+//! anchors of an impostor that keeps its pose, impostors.rs, do not change
+//! while it stands); a rigged mesh's follows its
 //! skeleton from where its last visit found it, and the lists the CPU still
 //! builds test it with the extent of its skeleton, as LL does. Exact
 //! transforms are computed on demand, as for any object
@@ -169,6 +171,14 @@ pub fn anchor_slot(lib: &AvatarLibrary, point: u8) -> Option<u8> {
     }
 }
 
+/// AURORA_ANCHOR_CENTRES=every: the centre of every anchored object is
+/// recomputed at each frame, as before, instead of those whose anchor
+/// changed (comparison).
+fn every_centre() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_ANCHOR_CENTRES").is_ok_and(|v| v == "every"))
+}
+
 /// AURORA_CPU_ATTACH=1: the sync places everything, as before the anchors.
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -239,6 +249,16 @@ struct Wearer {
     /// Where it is and the extent of its skeleton (`skeleton_extent`).
     at: Vec3,
     extent: f32,
+    /// Anchors whose matrix changed this frame (bit per slot): what hangs
+    /// from the others keeps its centre.
+    changed: u64,
+    /// An object was placed from one of its anchors since the last frame,
+    /// or its extent changed: every centre is brought up to date.
+    refresh: bool,
+    /// Where its anchors were last written from: place, rotation, first
+    /// anchor matrix and anchors in use. A wearer that kept its pose and
+    /// its place (an impostor standing, impostors.rs) has the same anchors.
+    written: Option<(Vec3, Quat, usize, u64)>,
 }
 
 /// The wearer of a run of anchored objects, in `update_anchors`.
@@ -249,6 +269,8 @@ struct Run {
     at: Vec3,
     extent: f32,
     seen: u64,
+    changed: u64,
+    refresh: bool,
 }
 
 /// Joint boxes of the rigged geometries on the GPU (`CullTables::boxes`):
@@ -314,6 +336,9 @@ pub struct Anchors {
     wearers: HashMap<u32, Wearer>,
     /// Anchored objects (validated at each frame, removed lazily).
     members: IndexSet,
+    /// AURORA_SYNC_CHECK: centres left as they were, and those of them not
+    /// where their anchor puts them (must stay 0).
+    pub kept_centres: (u64, u64),
 }
 
 impl Anchors {
@@ -331,7 +356,9 @@ impl Anchors {
             return;
         };
         self.members.insert(idx);
-        self.wearer(a.wearer, wearer.full_id).used |= 1 << a.slot;
+        let w = self.wearer(a.wearer, wearer.full_id);
+        w.used |= 1 << a.slot;
+        w.refresh = true;
     }
 
     /// The entry of palette owner `idx`, new when another object took the
@@ -345,6 +372,9 @@ impl Anchors {
             base: None,
             at: Vec3::ZERO,
             extent: 0.0,
+            changed: 0,
+            refresh: true,
+            written: None,
         };
         let w = self.wearers.entry(idx).or_insert_with(new);
         if w.id != id {
@@ -385,15 +415,18 @@ impl Scene {
     /// placed them at): write the anchors in use, upload them with the
     /// palettes posed in this frame, and bring the centre of every anchored
     /// object up to date for what the CPU does with it (hover index too).
-    pub(super) fn update_anchors(&mut self, renderer: &mut Renderer, world: &mut World, now: Instant) {
+    pub(super) fn update_anchors(&mut self, renderer: &mut Renderer, world: &mut World, now: Instant, verify: bool) {
         let lib = self.avatar_lib.clone();
         let mut posed = std::mem::take(&mut self.posed_slots);
         posed.sort_unstable();
         // anchors of the wearers not posed in this frame
         let mut moved: Vec<std::ops::Range<usize>> = Vec::new();
+        let every_centre = every_centre();
         for (&widx, w) in &mut self.anchors.wearers {
             w.seen = 0;
             w.base = None;
+            w.changed = 0;
+            w.refresh |= every_centre;
             let Some(wearer) = world.objects.get(widx as usize).filter(|o| o.full_id == w.id) else {
                 continue;
             };
@@ -413,7 +446,16 @@ impl Scene {
             };
             w.base = Some(base as u32);
             w.at = pp;
-            w.extent = skeleton_extent(wearer);
+            let extent = skeleton_extent(wearer);
+            w.refresh |= extent != w.extent;
+            w.extent = extent;
+            let written = Some((pp, pr, base, w.used));
+            if !w.refresh && !every_centre && w.written == written && posed.binary_search(&(slot as usize)).is_err() {
+                // not posed in this frame and not moved: its anchors are
+                // those already written
+                continue;
+            }
+            w.written = written;
             let (mut lo, mut hi) = (ANCHORS, 0);
             let mut bits = w.used;
             while bits != 0 {
@@ -434,6 +476,7 @@ impl Scene {
                     *m = anchor;
                     lo = lo.min(s);
                     hi = hi.max(s + 1);
+                    w.changed |= 1 << s;
                 }
             }
             if lo < hi && posed.binary_search(&(slot as usize)).is_err() {
@@ -463,7 +506,11 @@ impl Scene {
 
         // (the prims of what an avatar wears are next to each other in the
         // set: its wearer is looked up once for the run)
-        let Anchors { wearers, members } = &mut self.anchors;
+        let Anchors {
+            wearers,
+            members,
+            kept_centres,
+        } = &mut self.anchors;
         let mut run: Option<Run> = None;
         let close = |run: Option<Run>, wearers: &mut HashMap<u32, Wearer>| {
             if let Some(run) = run
@@ -486,6 +533,8 @@ impl Scene {
                     at: w.at,
                     extent: w.extent,
                     seen: 0,
+                    changed: w.changed,
+                    refresh: w.refresh,
                 });
             }
             let Some((a, run)) = anchor.zip(run.as_mut()) else {
@@ -508,6 +557,20 @@ impl Scene {
                 self.sets.dirty.insert(idx);
                 continue;
             }
+            if !run.refresh && run.changed & (1 << a.slot) == 0 {
+                // (its anchor did not move: its centre is still right)
+                if verify && let (Some(m), Some(g)) = (self.palettes.get(a.matrix as usize), self.gpu.get(idx)) {
+                    let centre = Mat4::from_cols_array_2d(m).transform_point3(g.local_center);
+                    let wide = g.posed.map(|_| (run.at, run.extent));
+                    kept_centres.0 += 1;
+                    if centre.distance(g.center) > 1e-4
+                        || wide.is_some_and(|w| g.wide.is_none_or(|g| g.0.distance(w.0) > 1e-4 || g.1 != w.1))
+                    {
+                        kept_centres.1 += 1;
+                    }
+                }
+                continue;
+            }
             if let (Some(m), Some(g)) = (self.palettes.get(a.matrix as usize), self.gpu.get_mut(idx)) {
                 g.center = Mat4::from_cols_array_2d(m).transform_point3(g.local_center);
                 // a rigged mesh: the CPU's lists test it with its skeleton
@@ -519,6 +582,9 @@ impl Scene {
         // an anchor nothing hangs from any more is no longer written
         wearers.retain(|_, w| {
             w.used = w.seen | std::mem::take(&mut w.kept);
+            // (one that could not be placed keeps its refresh for the frame
+            // it is)
+            w.refresh &= w.base.is_none();
             w.used != 0
         });
         self.stats.anchored = members.len();

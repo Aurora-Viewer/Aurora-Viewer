@@ -4012,7 +4012,10 @@ What the inventory must show with these scenarios:
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
+| `AURORA_SYNC_SLOW=<ms>` | The steps of each frame whose scene sync is slower than `ms` |
 | `AURORA_MATERIAL_REBUILD=all` or `alt` | Every object using materials rebuilt at each material change, as before |
+| `AURORA_IMPOSTOR_POSES=every` or `alt` | Impostors posed at every frame, as before |
+| `AURORA_ANCHOR_CENTRES=every` | The centre of every worn object recomputed at every frame, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
@@ -4445,13 +4448,40 @@ What the inventory must show with these scenarios:
   moves —, `still`) what came out of it: placement verified without writing
   anything / records rewritten / full sync / full sync postponed
   (`scene/sync_check.rs`). Tells which objects keep the sync busy in a
-  place at rest. The line ends with a check of all the objects, made once
-  per second: `detail level behind: a of b at rest, c of d placed by the
-  GPU` counts those whose requested level of detail is not, at that
-  instant, the one their distance gives (a check the sync has not made
-  yet); to be read with the camera moving, with and without
-  `AURORA_SYNC_SLICE=1`. This check costs one walk over all the objects per
-  second. In demo as on the grid.
+  place at rest. The line ends with a check of all the objects, a slice
+  per frame (a whole pass in at most 120 frames), the last full pass:
+  `detail level behind: a of b at rest, c of d placed by the GPU` counts
+  those whose requested level of detail is not, at that instant, the one
+  their distance gives (a check the sync has not made yet); to be read with
+  the camera moving, with and without `AURORA_SYNC_SLICE=1`. Made at once,
+  that pass cost 5 ms in one frame of each second at KB: do not read the
+  frame times of a run with this variable. Every 10 s, an `impostor
+  pictures` line counts the pictures taken with the pose of an earlier
+  frame and the centres of worn objects left as they were that are not
+  where their anchor puts them (both must stay 0; a picture or two in the
+  first seconds, before the palette exists, is the same in both ways of
+  `AURORA_IMPOSTOR_POSES`). In demo as on the grid.
+- **`AURORA_SYNC_SLOW=<ms>`** (8 if not a number): one `slow sync` line for
+  each frame whose scene sync took longer than `ms`: the time of each step
+  (`garbage`, `list`, `plan`, `apply`, `arrivals`, `backlog`, `check`,
+  `anchors`, `flexibles`, `tables`, `geom_gc`, `alpha`…), the moves, the
+  full syncs by kind with their time (`avatars`, `listed` for new
+  geometry or faces, `arrivals`, `backlog`) and the slowest object of the
+  frame (`scene/sync_slow.rs`). The `perf summary` gives the slowest frame
+  of each second by part; this line names the step and the object. Cheap
+  enough for a grid reading.
+- **`AURORA_IMPOSTOR_POSES=every`**: poses the avatars drawn as impostors
+  at every frame, as before. By default an impostor keeps its last pose
+  until its picture is nearly due (`scene/impostors.rs`), as the Legacy
+  Viewer animates an impostor only on the frames that may refresh it; its
+  animations still start and stop on time, and the anchors of what it
+  wears are not written again while it stands. `alt`: the old way one
+  second in three, the same seconds as `AURORA_MATERIAL_REBUILD=alt`
+  (`xmode=old` / `xmode=new`); read `posed`, `poses` and `s_sync_anchors`.
+- **`AURORA_ANCHOR_CENTRES=every`**: recomputes the centre of every object
+  placed from an anchor at every frame, as before, instead of those whose
+  anchor changed, and writes again the anchors of every wearer
+  (`scene/anchors.rs`).
 - **`AURORA_RENDER_THREAD=0`**: draws the frames on the main thread, as
   before the render thread, to compare and debug. By default, the main
   thread hands each frame to the render thread as a self-contained packet
