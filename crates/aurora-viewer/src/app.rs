@@ -6963,6 +6963,11 @@ impl App {
             }
         }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
+            // acos(dot) amplifies f32 normalization error near identical poses.
+            let phase_error = |a: &glam::Quat, b: &glam::Quat| {
+                let relative = a.conjugate() * *b;
+                2.0 * Vec3::new(relative.x, relative.y, relative.z).length().atan2(relative.w.abs())
+            };
             if crate::demo::animation_sync_demo() && self.frame_count == 300 {
                 let rig = self.scene.avatar_lib.rig.clone();
                 self.scene.anims.insert(
@@ -6983,7 +6988,7 @@ impl App {
                     log::info!(
                         "demo animation sync: frame {}, elbow phase error {:.6} rad",
                         self.frame_count,
-                        a.angle_between(*b)
+                        phase_error(a, b)
                     );
                 }
             }
@@ -7001,7 +7006,7 @@ impl App {
                     let (a, _) = self.scene.preview_pose(&edited);
                     let (b, _) = self.scene.preview_pose(&reference);
                     if let Some((a, b)) = a.get(joint).zip(b.get(joint)) {
-                        log::info!("demo animation sync: animesh resume phase error {:.6} rad", a.angle_between(*b));
+                        log::info!("demo animation sync: animesh resume phase error {:.6} rad", phase_error(a, b));
                     }
                 }
             }
