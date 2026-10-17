@@ -5688,6 +5688,7 @@ impl App {
         let in_world = self.in_world();
         if in_world {
             self.scene.draw_distance = self.settings.draw_distance;
+            self.scene.synchronize_animations = self.settings.synchronize_animations;
             self.scene.lod_factor = self.settings.lod_factor;
             self.scene.max_avatars = self.settings.max_avatars as usize;
             // reflection lists: planar reflections and reflection probe captures
@@ -11140,7 +11141,12 @@ impl ApplicationHandler for App {
                     // the "Reset this section" confirmation, for captures
                     self.options_ui.ask_reset_section();
                 } else {
-                    self.options_ui.scroll_to_end = filter == "end";
+                    let animation_options =
+                        self.options_ui.tab == ui::options::TAB_AURORA && matches!(filter, "animations" | "animations-sync");
+                    if animation_options {
+                        self.settings.synchronize_animations = filter == "animations-sync";
+                    }
+                    self.options_ui.scroll_to_end = filter == "end" || animation_options;
                     self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
@@ -11295,6 +11301,7 @@ impl ApplicationHandler for App {
                 Arc::new(crate::scene::anim::BoundAnim::bind(demo_anim, &rig)),
             );
             if crate::demo::animation_sync_demo() {
+                self.settings.synchronize_animations = true;
                 self.scene.anims.insert(
                     crate::demo::SYNC_LEADER_ANIM,
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),

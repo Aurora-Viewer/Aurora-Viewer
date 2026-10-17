@@ -95,18 +95,23 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
-Animation playback uses the first locally known simulator signal as its origin
+Preferences › Aurora › Animations selects the playback clock for both avatars
+and animesh. Legacy is the persisted default, including older settings files:
+activate at asset loading and suspend playback during editing, following
+LLMotionController::updateLoadingMotions and pauseAllMotions. The opt-in
+Synchronized clock uses the first locally known simulator signal as its origin
 (`world::PlayingAnimation`), independent of asset loading and first visibility.
-`scene/anim.rs` freezes only the displayed pose during editing; receipt origins
-remain unchanged, so releasing the selection rejoins the current phase. Changed
+In this mode, `scene/anim.rs` freezes only the displayed pose during editing;
+receipt origins remain unchanged, so releasing the selection rejoins the current phase. Changed
 signals and late assets cannot move the held edit pose. Late assets join the
 elapsed phase and expired one-shots report completion once. Animesh
 linkset merging preserves the receipt clocks of the contributing signals.
-Import previews retain their explicit seek clock. This intentionally improves
-on activation at asset arrival in LLMotionController::updateLoadingMotions;
+This intentionally improves on activation at asset arrival in
+LLMotionController::updateLoadingMotions;
 it cannot recover a simulator start that the viewer never received.
-Rejoining the receipt phase after editing intentionally differs from the
-suspended playback clock of LLMotionController::pauseAllMotions.
+Switching to synchronized playback rejoins the receipt phase immediately;
+switching back preserves the current phase and uses Legacy timing for future
+starts and edit pauses. Import preview seeking overrides either preference.
 
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these
