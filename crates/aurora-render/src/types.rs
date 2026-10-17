@@ -685,6 +685,9 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Geometric specular anti-aliasing of the objects' highlights
+    /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
+    pub specular_aa: bool,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -714,6 +717,7 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,

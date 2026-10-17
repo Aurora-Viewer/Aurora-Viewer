@@ -1112,6 +1112,51 @@ impl PbrOcclusion {
     }
 }
 
+/// AURORA_SPECULAR_AA: the geometric specular anti-aliasing of the objects
+/// (common.wgsl `specular_aa_roughness`), forced on or off for a launch.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum SpecularAa {
+    /// Unset: Preferences › Graphics decides.
+    Setting,
+    On,
+    Off,
+    /// `alt`: on one second, off the next, to compare on screen.
+    Alternate,
+}
+
+impl SpecularAa {
+    fn parse(v: Option<&str>) -> SpecularAa {
+        match v.map(str::trim) {
+            Some("0") => SpecularAa::Off,
+            Some("1") => SpecularAa::On,
+            Some("alt") => SpecularAa::Alternate,
+            _ => SpecularAa::Setting,
+        }
+    }
+
+    fn from_env() -> SpecularAa {
+        static MODE: std::sync::OnceLock<SpecularAa> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| SpecularAa::parse(std::env::var("AURORA_SPECULAR_AA").ok().as_deref()))
+    }
+
+    /// Whether the frame drawn `secs` whole seconds after the start applies
+    /// it, the setting being `on`.
+    fn applied(self, on: bool, secs: u64) -> bool {
+        match self {
+            SpecularAa::Setting => on,
+            SpecularAa::On => true,
+            SpecularAa::Off => false,
+            SpecularAa::Alternate => secs.is_multiple_of(2),
+        }
+    }
+}
+
+fn specular_aa_now(on: bool) -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    SpecularAa::from_env().applied(on, secs)
+}
+
 fn pbr_occlusion_now() -> bool {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let secs = START.get_or_init(Instant::now).elapsed().as_secs();
@@ -4397,6 +4442,10 @@ impl Backend {
         if indirect_now {
             main.light_sets.mode[2] |= 0x400;
         }
+        // (common.wgsl SPECULAR_AA)
+        if specular_aa_now(self.settings.specular_aa) {
+            main.light_sets.mode[2] |= 0x8000;
+        }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -6313,6 +6362,20 @@ impl Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn specular_aa_follows_the_setting_unless_forced_and_alternates_each_second() {
+        assert_eq!(SpecularAa::parse(None), SpecularAa::Setting);
+        assert_eq!(SpecularAa::parse(Some(" 0 ")), SpecularAa::Off);
+        assert_eq!(SpecularAa::parse(Some("1")), SpecularAa::On);
+        assert_eq!(SpecularAa::parse(Some("alt")), SpecularAa::Alternate);
+        assert!((0..4).all(|s| SpecularAa::Setting.applied(true, s)));
+        assert!((0..4).all(|s| !SpecularAa::Setting.applied(false, s)));
+        assert!((0..4).all(|s| SpecularAa::On.applied(false, s)));
+        assert!((0..4).all(|s| !SpecularAa::Off.applied(true, s)));
+        let alt: Vec<bool> = (0..4).map(|s| SpecularAa::Alternate.applied(false, s)).collect();
+        assert_eq!(alt, [true, false, true, false]);
+    }
 
     #[test]
     fn pbr_occlusion_is_on_unless_turned_off_and_alternates_one_second_in_three() {

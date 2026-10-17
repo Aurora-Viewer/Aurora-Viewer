@@ -1665,10 +1665,170 @@ pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Ve
     out
 }
 
+/// Alpha of the cutoff an alpha-tested face draws with when nothing else
+/// sets it (0.5, as a texture whose alpha is a mask): a texel draws from 128.
+pub const MASK_CUTOFF: u8 = 128;
+
+/// Share of the texels of an RGBA8 level whose alpha reaches `cutoff`:
+/// what an alpha test at that cutoff keeps.
+pub fn alpha_coverage(data: &[u8], cutoff: u8) -> f32 {
+    let n = data.len() / 4;
+    if n == 0 {
+        return 0.0;
+    }
+    let kept = data.as_chunks::<4>().0.iter().filter(|p| p[3] >= cutoff).count();
+    kept as f32 / n as f32
+}
+
+/// Keep what an alpha test at `cutoff` draws the same at every level of a
+/// mip chain (Castaño, "Computing Alpha Mipmaps", 2010). The box filter
+/// averages thin opaque texels with the empty ones around them, so a leaf,
+/// a blade of grass, a hair strand or a fence wire falls under the cutoff a
+/// few levels down and the foliage thins out with the distance. Each level
+/// from 1 on gets its alpha scaled so that the share of texels at or above
+/// the cutoff matches level 0's: the threshold of the level that keeps that
+/// share is found on its alpha histogram, and the level is scaled by
+/// cutoff / threshold. Level 0 and the colour are left as they are; a
+/// level that level 0 leaves fully drawn or fully hidden is not touched.
+pub fn preserve_alpha_coverage(mips: &mut [(u32, u32, Vec<u8>)], cutoff: u8) {
+    let cutoff = cutoff.max(1);
+    let Some(target) = mips.first().map(|(_, _, d)| alpha_coverage(d, cutoff)) else {
+        return;
+    };
+    if target <= 0.0 || target >= 1.0 {
+        return;
+    }
+    for (_, _, data) in mips.iter_mut().skip(1) {
+        let n = data.len() / 4;
+        if n == 0 {
+            continue;
+        }
+        let mut hist = [0u32; 256];
+        for p in data.as_chunks::<4>().0 {
+            hist[p[3] as usize] += 1;
+        }
+        // kept[t]: texels with alpha >= t, from 255 down
+        let mut kept = [0u32; 257];
+        for t in (0..256).rev() {
+            kept[t] = kept[t + 1] + hist[t];
+        }
+        let want = target * n as f32;
+        let threshold = (1..256usize)
+            .min_by(|&a, &b| {
+                let da = (kept[a] as f32 - want).abs();
+                let db = (kept[b] as f32 - want).abs();
+                // closest share first; on a tie the lower threshold, the
+                // fuller one (thinning out is what this is against)
+                da.total_cmp(&db).then(a.cmp(&b))
+            })
+            .unwrap_or(cutoff as usize) as u32;
+        if threshold == cutoff as u32 {
+            continue;
+        }
+        // floor(alpha × cutoff / threshold): alpha >= threshold maps to
+        // >= cutoff, alpha < threshold to < cutoff
+        let cut = cutoff as u32;
+        for p in data.as_chunks_mut::<4>().0 {
+            p[3] = (p[3] as u32 * cut / threshold).min(255) as u8;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::writes::QueueSink;
+
+    /// A 64 × 64 grid of one-texel opaque lines every 4 texels (a fence or
+    /// grass blades), the rest transparent.
+    fn thin_lines() -> Vec<u8> {
+        let mut px = vec![0u8; 64 * 64 * 4];
+        for y in 0..64 {
+            for x in 0..64 {
+                let i = (y * 64 + x) * 4;
+                px[i..i + 3].copy_from_slice(&[40, 160, 60]);
+                px[i + 3] = if x % 4 == 0 { 255 } else { 0 };
+            }
+        }
+        px
+    }
+
+    #[test]
+    fn thin_alpha_fades_under_the_cutoff_without_coverage() {
+        let mips = build_mips(64, 64, thin_lines(), 16);
+        assert!((alpha_coverage(&mips[0].2, MASK_CUTOFF) - 0.25).abs() < 1e-3);
+        // two levels down a line is a quarter of a texel: nothing draws
+        assert_eq!(alpha_coverage(&mips[2].2, MASK_CUTOFF), 0.0);
+    }
+
+    /// 128 × 128 texels, a quarter of them opaque, scattered (splitmix64).
+    fn scattered() -> Vec<u8> {
+        let mut px = vec![0u8; 128 * 128 * 4];
+        for i in 0..128 * 128u64 {
+            let mut z = i.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            px[i as usize * 4 + 3] = if (z ^ (z >> 31)) % 4 == 0 { 255 } else { 0 };
+        }
+        px
+    }
+
+    #[test]
+    fn coverage_is_kept_at_every_level() {
+        let plain = build_mips(128, 128, scattered(), 16);
+        let mut mips = plain.clone();
+        preserve_alpha_coverage(&mut mips, MASK_CUTOFF);
+        let target = alpha_coverage(&mips[0].2, MASK_CUTOFF);
+        assert!((target - 0.25).abs() < 0.02, "{target}");
+        // plain mips lose most of it at 32 × 32
+        assert!(alpha_coverage(&plain[2].2, MASK_CUTOFF) < 0.1);
+        // kept ones hold it down to 8 × 8, within what the few alpha values
+        // of a level allow (at 32 × 32, 16 samples a texel: 0.19 or 0.37)
+        for (w, _, d) in mips.iter().take_while(|(w, _, _)| *w >= 8) {
+            let c = alpha_coverage(d, MASK_CUTOFF);
+            assert!((c - target).abs() < 0.13, "{w} × {w}: {c} for {target}");
+        }
+    }
+
+    #[test]
+    fn coverage_leaves_level_0_colour_opaque_and_empty_textures_alone() {
+        let px = thin_lines();
+        let mut mips = build_mips(64, 64, px.clone(), 16);
+        let colours: Vec<Vec<u8>> = mips
+            .iter()
+            .map(|(_, _, d)| d.as_chunks::<4>().0.iter().flat_map(|p| p[..3].to_vec()).collect())
+            .collect();
+        preserve_alpha_coverage(&mut mips, MASK_CUTOFF);
+        assert_eq!(mips[0].2, px);
+        for (i, (_, _, d)) in mips.iter().enumerate() {
+            let c: Vec<u8> = d.as_chunks::<4>().0.iter().flat_map(|p| p[..3].to_vec()).collect();
+            assert_eq!(c, colours[i], "level {i}: only the alpha changes");
+        }
+        // fully opaque and fully transparent chains stay as built
+        for a in [0u8, 255] {
+            let solid = [10, 20, 30, a].repeat(32 * 32);
+            let built = build_mips(32, 32, solid.clone(), 16);
+            let mut kept = built.clone();
+            preserve_alpha_coverage(&mut kept, MASK_CUTOFF);
+            assert_eq!(kept, built);
+        }
+    }
+
+    #[test]
+    fn scaling_puts_the_threshold_on_the_cutoff() {
+        // level 0 half covered; level 1 four texels at 40, 60, 80, 100: the
+        // threshold keeping half of them is 80, so 80 and 100 draw, 40 and 60
+        // do not
+        let mut level0 = [0, 0, 0, 255].repeat(8);
+        level0.extend([0, 0, 0, 0].repeat(8));
+        let level1: Vec<u8> = [40u8, 60, 80, 100].iter().flat_map(|&a| [0, 0, 0, a]).collect();
+        let mut mips = vec![(4, 4, level0), (2, 2, level1)];
+        preserve_alpha_coverage(&mut mips, MASK_CUTOFF);
+        let a: Vec<u8> = mips[1].2.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
+        assert!(a[0] < MASK_CUTOFF && a[1] < MASK_CUTOFF, "{a:?}");
+        assert!(a[2] >= MASK_CUTOFF && a[3] >= MASK_CUTOFF, "{a:?}");
+        assert!((alpha_coverage(&mips[1].2, MASK_CUTOFF) - 0.5).abs() < 1e-6);
+    }
     use std::cell::RefCell;
 
     fn chain<'a>(data: &'a [u8], dims: &[(u32, u32)]) -> Vec<MipLevel<'a>> {

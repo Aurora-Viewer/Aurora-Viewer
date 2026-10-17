@@ -1413,6 +1413,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
+| `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1462,6 +1463,13 @@ To check with these scenarios:
   of the cube, an inside corner (floor, back and side) of the
   half-polished metal: with GTAO its reflections fade into the corner
   (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
+- **`AURORA_DEMO_SHIMMER=1`**: ahead of the start position, a 16 × 6 m
+  glossy plate (legacy material, specular exponent 245) whose bump normal
+  map is repeated 48 × 18 times, seen at a grazing angle. With
+  `AURORA_SPECULAR_AA=alt` and a moving camera
+  (`AURORA_DEMO_CAMERA=drift,620,600,1`), compare its far highlights and
+  the rims of the polished spheres (with `AURORA_DEMO_PBR_METAL=1`) from one
+  second to the next.
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
@@ -1631,6 +1639,7 @@ To check with these scenarios:
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1704,6 +1713,8 @@ To check with these scenarios:
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_FOLIAGE=1`**: a 2.5 m panel of thin blades and small
+  `AURORA_ALPHA_COVERAGE=0` the 10 and 20 m panels thin out; with the
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
   `AURORA_DEMO_CROWD` wear a box on each foot's attachment point, opaque or
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces
@@ -4010,6 +4021,7 @@ What the inventory must show with these scenarios:
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
 | `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
+| `AURORA_ALPHA_COVERAGE=0` | Mips of alpha-masked textures plainly averaged, as before (foliage thins out with the distance) |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
@@ -4040,6 +4052,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
+| `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
 | `AURORA_BLEND_AO=old`, `new` or `alt` | Blended faces with the screen-space occlusion and indirect light of what is behind them, as before |
 
@@ -4126,6 +4139,15 @@ What the inventory must show with these scenarios:
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
 
+- **`AURORA_SPECULAR_AA=0|1|alt`**: overrides Preferences › Graphics ›
+  Specular anti-aliasing for this launch (`alt`: on one second, off the
+  next, without `AURORA_PROFILE`). It widens a highlight where the shading
+  normal turns faster than a pixel can show (`specular_aa_roughness` in
+  common.wgsl): the rims of small curved objects and fine relief seen
+  from afar; a surface whose normal a pixel can resolve (a ball some 35
+  pixels across or more, a flat face) is unchanged. Look at the rims of
+  the polished spheres (`AURORA_DEMO_PBR_METAL=1`) and the far end of
+  `AURORA_DEMO_SHIMMER=1`.
 - **`AURORA_PBR_OCCLUSION=0|alt`**: by default the reflection of a PBR
   face (and, on skies that are not classic, its ambient light) is
   multiplied by the occlusion of its material, the red channel of its
@@ -4554,6 +4576,15 @@ What the inventory must show with these scenarios:
   two gradients, which divided the relief along the denser texture axis by
   the density ratio; `alt` alternates `vertex` and `pixel` every second.
   See `AURORA_DEMO_BUMP`.
+- **`AURORA_ALPHA_COVERAGE=0`**: the mips of a texture whose alpha is a
+  mask are box-filtered as they come (`build_mips`), so a leaf, a blade of
+  grass, a strand or a fence wire falls under the alpha cutoff a few levels
+  down and the foliage thins out with the distance. By default each level
+  keeps level 0's share of texels at or above the 0.5 cutoff
+  (`preserve_alpha_coverage`, Castaño 2010), computed once at decode and
+  stored in the transcoded cache (a file made the other way is decoded
+  again). It is read at start: compare two launches. See
+  `AURORA_DEMO_FOLIAGE`.
 - **`AURORA_SHADOW_FILTER=gaps|mapped|before`**: the sun shadow lookup as it
   was before its edges were cleaned (`cascade_shadow` in `common.wgsl`,
   `shadow_normal` in `object.wgsl`). `gaps`: 4 × 4 filter taps up to two
