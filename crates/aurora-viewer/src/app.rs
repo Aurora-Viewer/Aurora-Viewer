@@ -12207,7 +12207,23 @@ impl ApplicationHandler for App {
                         } else {
                             self.inventory_ui.demo_menu = Some(id);
                         }
-                    } else if matches!(view.as_str(), "properties" | "animation-properties") {
+                    } else if matches!(
+                        view.as_str(),
+                        "properties" | "animation-properties" | "properties-no-mod" | "properties-no-creator"
+                    ) {
+                        // a no-modify object made by someone else, with its creator
+                        // or, as the simulator sends a multi-creator object, without
+                        if let Some(it) = self.world.inventory.items.get_mut(&id)
+                            && view.starts_with("properties-no-")
+                        {
+                            it.owner_mask &= !crate::world::inventory::actions::MODIFY;
+                            it.base_mask &= !crate::world::inventory::actions::MODIFY;
+                            it.creator = if view == "properties-no-creator" {
+                                uuid::Uuid::nil()
+                            } else {
+                                uuid::Uuid::from_u128(100)
+                            };
+                        }
                         self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Properties(id));
                     } else if view.starts_with("note-task") {
                         self.demo_task_notecard(&view);
