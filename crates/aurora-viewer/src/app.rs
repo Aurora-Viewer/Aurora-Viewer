@@ -69,6 +69,7 @@ mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
 mod task_notecards;
+mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
 mod world_click_demo;
@@ -102,6 +103,8 @@ struct TpOverlay {
     shown: f32,
     /// What the screen said when its fade out began; it leaves saying that.
     leaving: Option<ui::loading::BannerText>,
+    /// When the region may show and how the bar finishes.
+    mode: teleport_screen::Mode,
 }
 
 impl TpOverlay {
@@ -114,6 +117,11 @@ impl TpOverlay {
             loading_end,
             shown: 0.0,
             leaving: None,
+            mode: if loading_end {
+                teleport_screen::Mode::Old
+            } else {
+                teleport_screen::Mode::for_next_teleport()
+            },
         }
     }
 }
@@ -6207,22 +6215,22 @@ impl App {
                     let terrain = self.world.terrain_progress();
                     let st = self.scene.textures.stats;
                     let tex = st.loaded as f32 / st.total.max(1) as f32;
-                    let ready = (terrain > 0.97 && at.elapsed() > Duration::from_millis(800)) || at.elapsed() > Duration::from_secs(10);
-                    if ready {
+                    if teleport_screen::ready(o.mode, at.elapsed(), terrain) {
                         1.0
                     } else {
                         0.6 + 0.4 * (0.75 * terrain + 0.25 * tex).clamp(0.0, 1.0) * 0.97
                     }
                 }
             };
-            // glide toward the target, never backwards
-            let k = 1.0 - (-2.6 * dt).exp();
-            o.shown = (o.shown + (target - o.shown) * k).max(o.shown).min(1.0);
-            if target >= 1.0 && o.shown > 0.985 && o.end.is_none() {
+            o.shown = teleport_screen::glide(o.mode, o.shown, target, dt);
+            if teleport_screen::done(o.mode, o.shown, target) && o.end.is_none() {
                 o.end = Some(Instant::now());
                 aurora_net::transition::end(
                     Some(aurora_net::transition::Kind::Teleport),
-                    "arrived (teleport screen hidden)",
+                    match o.mode {
+                        teleport_screen::Mode::Quick => "arrived (teleport screen hidden)",
+                        teleport_screen::Mode::Old => "arrived (teleport screen hidden, old screen)",
+                    },
                     &self.net.stats,
                 );
             }
@@ -6545,6 +6553,7 @@ impl App {
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
         }
+        self.build.sync_mesh_inspector(&mut self.world, &mut self.scene);
         if self.in_world() && self.build.open {
             for idx in self.build.sel_prims(&self.world) {
                 if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
@@ -7807,6 +7816,10 @@ impl App {
                         self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::MeshLod(level) => {
+                        self.panels.chat = false;
+                        self.build.set_inspected_mesh_lod(level);
+                    }
                     crate::build::demo::Step::ReplaceBegin(contents) => {
                         self.build.begin_replacement(&self.world, &self.settings.build);
                         self.build.replacement.options.contents = contents;
@@ -7987,11 +8000,11 @@ impl App {
                 aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
-            // AURORA_RIGGED_BLEND=alt: the rigged blended faces sorted with
-            // the others, without depth, one second in three
+            // AURORA_RIGGED_BLEND=alt: the rigged blended faces writing
+            // depth from 1/255 (#499) one second in three
             if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
                 let old = self.sync_alt.is_multiple_of(3);
-                crate::scene::blend_order::set_sorted_now(old);
+                crate::scene::blend_order::set_write_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
@@ -11950,16 +11963,24 @@ impl ApplicationHandler for App {
                     None => {}
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared")) {
+            if std::env::var("AURORA_DEMO_BUILD")
+                .is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared") || v.starts_with("mesh-inspector"))
+            {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
-                let complex = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let inspector = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector"));
+                let complex = inspector || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
                 let events = if complex {
                     crate::demo::complex_face_selection_events()
                 } else {
                     crate::demo::face_selection_events(invisible)
                 };
                 if complex && let Some(gfx) = &mut self.gfx {
-                    self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                    if inspector {
+                        let empty = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector-cycle-empty"));
+                        self.scene.install_demo_mesh_inspector(&mut gfx.renderer, empty);
+                    } else {
+                        self.scene.install_demo_selection_mesh(&mut gfx.renderer);
+                    }
                 }
                 for event in events {
                     self.world.apply(event);
