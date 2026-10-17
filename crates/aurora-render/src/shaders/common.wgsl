@@ -972,6 +972,61 @@ const TANGENT_VERTEX: u32 = 0x1000u;
 // frame.light_mode.z: the receiver bias of before, a fixed 0.0005 of the
 // cascade's depth range (AURORA_SHADOW_BIAS=legacy; cascade_shadow)
 const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
+// frame.light_mode.z: geometric specular anti-aliasing of the objects
+// (AURORA_SPECULAR_AA, specular_aa_roughness)
+const SPECULAR_AA: u32 = 0x8000u;
+
+// Geometric specular anti-aliasing (Kaplanyan & Hoffman 2016, "Stable
+// Geometric Specular Antialiasing with Projected-Space NDF Filtering", in
+// the form Filament gives it, normalFiltering): where the shading normal
+// turns faster than a pixel, the highlight is widened so it no longer
+// shimmers from one frame to the next. The kernel adds to the GGX lobe's
+// alpha², capped, so a large smooth surface keeps its highlight. Only the
+// change a pixel cannot resolve counts: below SPECULAR_AA_FLOOR (a normal
+// turning about 0.06 rad per pixel: an object some 35 pixels across, or a
+// normal map's relief seen from afar) nothing changes, so a polished ball
+// up close keeps its pinpoint highlights. The
+// variance a normal map's coarser mips lose (their averaged normals are
+// shorter than 1: Toksvig) joins it; a normal a few percent short at its
+// finest level is the map's own quantization and is left out.
+const SPECULAR_AA_VARIANCE: f32 = 0.15;
+const SPECULAR_AA_THRESHOLD: f32 = 0.2;
+const SPECULAR_AA_FLOOR: f32 = 0.001;
+const SPECULAR_AA_TOKSVIG_FROM: f32 = 0.985;
+
+// The screen-space variance of the shading normal, read where control flow
+// is still uniform (the derivatives need it).
+fn normal_variance(n: vec3<f32>) -> f32 {
+    let du = dpdx(n);
+    let dv = dpdy(n);
+    return SPECULAR_AA_VARIANCE * (dot(du, du) + dot(dv, dv));
+}
+
+// The variance a normal map sample of length `map_len` stands for.
+fn toksvig_variance(map_len: f32) -> f32 {
+    let len = clamp(map_len, 1e-3, 1.0);
+    return max(SPECULAR_AA_TOKSVIG_FROM - len, 0.0) / len;
+}
+
+// Perceptual roughness widened by the normal's variance.
+fn specular_aa_roughness(perceptual: f32, variance: f32) -> f32 {
+    let kernel = min(2.0 * max(variance - SPECULAR_AA_FLOOR, 0.0), SPECULAR_AA_THRESHOLD);
+    let a = perceptual * perceptual;
+    return sqrt(sqrt(clamp(a * a + kernel, 0.0, 1.0)));
+}
+
+// The same for a legacy material's glossiness (its Blinn-Phong exponent is
+// gloss² × 368, ll_light_func): through the GGX alpha of the same lobe
+// width, alpha = sqrt(2 / (e + 2)), and back. Without variance the
+// glossiness comes back unchanged.
+fn specular_aa_gloss(gloss: f32, variance: f32) -> f32 {
+    let e = gloss * gloss * 368.0;
+    let alpha = sqrt(2.0 / (e + 2.0));
+    let p = specular_aa_roughness(sqrt(alpha), variance);
+    let a2 = max(p * p, 1e-4);
+    let e2 = max(2.0 / (a2 * a2) - 2.0, 0.0);
+    return clamp(sqrt(e2 / 368.0), 0.0, 1.0);
+}
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,

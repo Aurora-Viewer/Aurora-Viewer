@@ -935,6 +935,23 @@ Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
 
+**Mesh Shape inspector:** `AURORA_DEMO_BUILD=mesh-inspector,object:99621`
+opens the native Shape section on a mesh with four different generated LODs.
+The counts come from its actual geometries. Capture after frame 710.
+Suffixes `-high`, `-medium`, `-low`, `-lowest` force that LOD locally; compare
+the visible geometry and active row, then restore Default. `-readonly` keeps
+the information/menu available without Modify rights. Link/face numbers belong
+between the respective footer arrows; select multiple faces to check the list
+and its full hover text. Inspection resets on selection/asset/tool changes or
+closing construction, stays across editing sections, never changes object
+data/global preferences and keeps HUDs at high LOD.
+`mesh-inspector-cycle` switches lowest/high/low/medium/default at frames
+630/655/680/705/730 with the camera stationary. Capture each stage just before
+the next transition. `mesh-inspector-cycle-empty` makes lowest a real empty
+geometry: capture at 645 (no faces), 670 (high restored), and 750 (automatic
+restored). Returning from the empty level must not wait for camera movement,
+object updates or the periodic LOD sweep.
+
 **`AURORA_DEMO_BUILD_FOCUS=off|on`** — focus on the selection before taking
 a handle, with "Follow object while editing" disabled / enabled. With `off`,
 the view stays fixed at the centre of the screen; with `on`, it follows the
@@ -1421,6 +1438,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
+| `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1470,6 +1488,13 @@ To check with these scenarios:
   of the cube, an inside corner (floor, back and side) of the
   half-polished metal: with GTAO its reflections fade into the corner
   (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
+- **`AURORA_DEMO_SHIMMER=1`**: ahead of the start position, a 16 × 6 m
+  glossy plate (legacy material, specular exponent 245) whose bump normal
+  map is repeated 48 × 18 times, seen at a grazing angle. With
+  `AURORA_SPECULAR_AA=alt` and a moving camera
+  (`AURORA_DEMO_CAMERA=drift,620,600,1`), compare its far highlights and
+  the rims of the polished spheres (with `AURORA_DEMO_PBR_METAL=1`) from one
+  second to the next.
 - **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
   between a red wall and a green one, with a white box against them
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
@@ -4051,6 +4076,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
+| `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -4136,6 +4162,15 @@ What the inventory must show with these scenarios:
     `AURORA_DEMO_POS="160,126"`), `textures=` of `perf summary` never
     exceeds 6095 and the log has no `texture table full` line.
 
+- **`AURORA_SPECULAR_AA=0|1|alt`**: overrides Preferences › Graphics ›
+  Specular anti-aliasing for this launch (`alt`: on one second, off the
+  next, without `AURORA_PROFILE`). It widens a highlight where the shading
+  normal turns faster than a pixel can show (`specular_aa_roughness` in
+  common.wgsl): the rims of small curved objects and fine relief seen
+  from afar; a surface whose normal a pixel can resolve (a ball some 35
+  pixels across or more, a flat face) is unchanged. Look at the rims of
+  the polished spheres (`AURORA_DEMO_PBR_METAL=1`) and the far end of
+  `AURORA_DEMO_SHIMMER=1`.
 - **`AURORA_PBR_OCCLUSION=0|alt`**: by default the reflection of a PBR
   face (and, on skies that are not classic, its ambient light) is
   multiplied by the occlusion of its material, the red channel of its

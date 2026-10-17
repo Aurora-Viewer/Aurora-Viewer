@@ -18,6 +18,7 @@ mod floaters;
 mod general;
 mod item_properties;
 mod keyboard;
+mod mesh;
 mod object;
 mod replace;
 mod texture;
@@ -130,6 +131,7 @@ pub enum Confirm {
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
+    mesh_inspection: mesh::Inspection,
     pub color_picker: crate::ui::color_picker::ColorPicker,
     color_edit: Option<color::Session>,
     color_focused: bool,

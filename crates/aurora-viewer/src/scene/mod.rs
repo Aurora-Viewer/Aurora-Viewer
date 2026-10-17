@@ -26,6 +26,7 @@ mod list_index;
 pub mod loading;
 mod lod_watch;
 pub mod mesh_bytes;
+pub mod mesh_inspection;
 pub mod meshes;
 pub mod morph;
 pub mod particles;
@@ -695,6 +696,10 @@ pub struct Scene {
     /// Build tools: selected mesh / sculpted objects drawn as wireframes
     /// (object index -> root color).
     pub selection_wire: HashMap<usize, bool>,
+    /// Four cached levels held only for the mesh currently being inspected.
+    inspected_mesh: Option<Uuid>,
+    /// Temporary build-tool overrides, never saved or sent to the simulator.
+    mesh_lod_overrides: HashMap<crate::world::objects::ObjKey, u8>,
     /// Selected prims whose deformed silhouette is prepared with their mesh.
     pub selection_silhouettes: HashSet<usize>,
     /// Selected texture-entry bits for each prim; all 45 TE slots must fit.
@@ -1106,6 +1111,8 @@ impl Scene {
             spot_shadows: Default::default(),
             mirror_objects: Default::default(),
             selection_wire: HashMap::new(),
+            inspected_mesh: None,
+            mesh_lod_overrides: HashMap::new(),
             selection_silhouettes: HashSet::new(),
             selection_faces: HashMap::new(),
             selection_changed: None,
@@ -2481,11 +2488,12 @@ impl Scene {
         } else {
             self.sync_ctx(world, &renderer.records, view.eye, now).lod_metrics(idx, o, pos)
         };
-        let lod = if hud {
-            3
-        } else {
-            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y)
-        };
+        let lod = mesh_inspection::display_lod(
+            &self.mesh_lod_overrides,
+            o,
+            hud,
+            lod_for(lod_radius, lod_dist, self.lod_factor, self.fov_y),
+        );
         // (whatever comes of this sync; what the GPU places leaves below)
         self.watch_lod(idx, false, lod_radius, lod_dist);
         let Some(o) = world.objects.get(idx) else {

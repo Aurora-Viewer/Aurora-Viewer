@@ -6,6 +6,26 @@ use aurora_render::{Renderer, Vertex};
 use glam::{Mat4, Quat, Vec3};
 
 impl Scene {
+    /// Four different real geometries for native mesh-inspector captures.
+    pub fn install_demo_mesh_inspector(&mut self, renderer: &mut Renderer, empty_lowest: bool) {
+        let id = crate::demo::FACE_SELECTION_MESH;
+        self.meshes.insert_demo_static(id);
+        let mut params = crate::build::shapes::shapes()[10].params();
+        params.path.scale = [0.45, 0.20];
+        for (lod, detail) in [0.25, 0.5, 1.0, 2.0].into_iter().enumerate() {
+            let volume = aurora_prim::generate_volume(&params, detail);
+            let (mut faces, min, max) = jobs::volume_to_faces(&volume);
+            if empty_lowest && lod == 0 {
+                faces.fill_with(|| None);
+            }
+            let key = GeomKey::Mesh { id, lod: lod as u8 };
+            self.upload_geom(renderer, key, jobs::PreparedGeom::new(faces, min, max, true, None));
+            // These generated fixtures have no downloadable asset bytes. Keep
+            // their four geometries alive until the offline world is destroyed.
+            self.geom_ref(key);
+        }
+    }
+
     pub fn install_demo_selection_mesh(&mut self, renderer: &mut Renderer) {
         let id = crate::demo::FACE_SELECTION_MESH;
         self.meshes.insert_demo_static(id);
