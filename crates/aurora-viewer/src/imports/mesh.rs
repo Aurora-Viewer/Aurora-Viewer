@@ -1,6 +1,8 @@
 //! Mesh drafts, worker preparation and frozen fee requests. Reference:
 //! LLModelPreview and LLMeshUploadThread (Firestorm, originally LGPL 2.1).
 
+pub(super) mod inspector;
+
 use super::*;
 use aurora_assets::{
     AssetError,
@@ -73,6 +75,7 @@ impl Default for Options {
 }
 #[derive(Clone)]
 pub struct Draft {
+    pub inspector: inspector::Inspector,
     pub scene: Arc<Scene>,
     pub images: HashMap<usize, LocalImage>,
     pub lods: [Lod; 4],
@@ -137,6 +140,7 @@ impl Draft {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
         let skin = scene.models.iter().any(|m| m.skin.is_some());
         Self {
+            inspector: inspector::Inspector::new(&scene),
             scene: Arc::new(scene),
             images,
             lods: std::array::from_fn(|i| Lod {
@@ -616,6 +620,8 @@ impl Imports {
             self.mesh_permission_denied = false;
         }
         draft.invalidate_quote();
+        draft.inspector.clear();
+        draft.inspector.push(aurora_i18n::tr!("import-log-calculating"), false);
         let request_id = Uuid::new_v4();
         let generation = entry.preview_generation;
         draft.pending = Some((request_id, generation));
@@ -658,6 +664,7 @@ impl Imports {
                             self.mesh_permission_denied = true;
                         }
                         self.message = ui::error(error);
+                        draft.inspector.push(&self.message, true);
                     }
                 }
                 return;

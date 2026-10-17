@@ -2187,7 +2187,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Check each dedicated window and its filtered file list, then Multiple's
   complete tabs. Permissions belong only to Settings. First-opened windows
   have the same top-left position; moved windows retain their placement.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
@@ -2304,6 +2304,22 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   avatar. The slider and the pose must stay fixed until Resume.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
+
+
+### Import inspector layout
+
+`AURORA_DEMO_IMPORTS=mesh-avatar|mesh-avatar-rigged|mesh-journal` opens the
+complete Avatar or Journal tab of the native import window. The rigged mode
+uses a synthetic weighted cube and the ordinary geometry/preview worker.
+`mesh`, `mesh-options` and `mesh-physics` exercise the compact LOD rows,
+Options and the two-step collision workflow. Check the metadata/preview
+header, vertical tools/settings popup, five tabs and fixed model/fee summary.
+Avatar exposes dependent weights/positions/scale-lock controls, -3..3 m Z
+offset, selectable joints and read-only per-model positions/conflicts.
+Journal contains actual load/preparation/validation messages. Detailed mode
+affects subsequent diagnostics, never filters existing history; calculation
+starts a fresh log and warnings mark its tab. No grid connection is needed
+for these automated captures.
 
 - **Local import fixtures**: the ignored test
   `local_asset_directory_loads_and_prepares_supported_files` reads the folder

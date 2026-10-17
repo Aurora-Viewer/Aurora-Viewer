@@ -90,7 +90,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
         | "material-texture-zoom"
         | "material-loading" => Choice::Material,
         "mesh" | "mesh-low" | "mesh-error" | "mesh-physics" | "mesh-degenerate" | "mesh-options" | "mesh-zoom" | "mesh-normals"
-        | "mesh-colors" => Choice::Mesh,
+        | "mesh-colors" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal" => Choice::Mesh,
         "animation" | "animation-own" => Choice::Animation,
         "sound" | "sound-split" => Choice::Sound,
         mode if mode.starts_with("local") => Choice::Local,
@@ -250,9 +250,39 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                     }
                                 }
                             }
-                            if mode == "mesh-options" {
-                                for entry in &loaded {
-                                    wake.data_mut(|d| d.insert_temp(egui::Id::new(("mesh_section", entry.id)), 2usize));
+                            if matches!(
+                                mode.as_str(),
+                                "mesh-options" | "mesh-avatar" | "mesh-avatar-rigged" | "mesh-journal"
+                            ) {
+                                for entry in &mut loaded {
+                                    if mode == "mesh-avatar-rigged"
+                                        && let Some(Source::Mesh(draft)) = &mut entry.source
+                                    {
+                                        let scene = Arc::make_mut(&mut draft.scene);
+                                        for model in &mut scene.models {
+                                            model.skin = Some(aurora_assets::import_mesh::Skin {
+                                                names: vec!["mPelvis".into()],
+                                                inverse_bind: vec![glam::Mat4::IDENTITY],
+                                                alternate_bind: vec![glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.02))],
+                                                bind_shape: glam::Mat4::IDENTITY,
+                                                pelvis_offset: 0.0,
+                                            });
+                                            for vertex in model.faces.iter_mut().flat_map(|f| &mut f.vertices) {
+                                                vertex.joints = [0; 4];
+                                                vertex.weights = [1.0, 0.0, 0.0, 0.0];
+                                            }
+                                        }
+                                        draft.inspector = mesh::inspector::Inspector::new(&draft.scene);
+                                        draft.options.skin = true;
+                                        draft.options.joints = true;
+                                        draft.preview_weights = true;
+                                    }
+                                    let section = match mode.as_str() {
+                                        "mesh-options" => 2usize,
+                                        "mesh-journal" => 4,
+                                        _ => 3,
+                                    };
+                                    wake.data_mut(|d| d.insert_temp(egui::Id::new(("mesh_section", entry.id)), section));
                                 }
                             }
                             entries.append(&mut loaded);

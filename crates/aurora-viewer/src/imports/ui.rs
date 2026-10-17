@@ -209,6 +209,7 @@ fn metadata_controls(
     picker: &mut destination::Picker,
     demo: bool,
 ) {
+    let mesh = matches!(entry.source, Some(Source::Mesh(_)));
     egui::Grid::new("import_metadata")
         .num_columns(2)
         .spacing(Vec2::new(12.0, 8.0))
@@ -216,7 +217,7 @@ fn metadata_controls(
             ui.label(aurora_i18n::tr!("common-name"));
             ui.add(
                 egui::TextEdit::singleline(&mut entry.name)
-                    .desired_width((ui.available_width() - 100.0).clamp(120.0, 360.0))
+                    .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
                     .char_limit(63),
             );
             ui.end_row();
@@ -224,7 +225,7 @@ fn metadata_controls(
                 ui.label(aurora_i18n::tr!("common-description"));
                 ui.add(
                     egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width((ui.available_width() - 100.0).clamp(120.0, 360.0))
+                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
                         .char_limit(127),
                 );
                 ui.end_row();

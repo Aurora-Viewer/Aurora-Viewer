@@ -1219,3 +1219,10 @@ Approved AO editor integration (2026-10-16): `ui/ao/editor.rs` renders a scrolla
 Aurora folder naming (2026-10-17): native roots are `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`. Discovery prefers these names and falls back to previous native `AO` / `Bridge` folders only when the new sibling is absent. Startup renames the old folders in place with acknowledged AIS patches, preserving all descendant IDs, selected AO set, swimming assignments and the bridge folder UUID embedded in its handshake. An old AO, including an empty one, remains authoritative and cannot trigger legacy reconstruction. An existing new sibling wins without merging/deleting the old one. Failed/ambiguous renames are not replayed automatically in the session; ordinary Reload/Repair uses refreshed inventory. Both generations of interrupted reconstruction staging remain guarded. The LSL, movement motors and legacy inventory protection are unchanged.
 
 Cached bridge provisioning readiness (2026-10-17): `World::inventory_writable` shares the AO startup gate (completed arrival, no crossing/cache hold, nonempty metadata-write and descendant-readback services) with the bridge factory. Provisioning waits before sending edits or spending the stage timeout; pending edits retain their deadline and errors are never blindly replayed. This covers in-place old-folder renames as well as fresh installation. Active bridge physics and authenticated read queries remain independent of inventory-service availability. The offline transport now models unavailable services instead of accepting an impossible startup edit.
+
+The import layout uses `imports/mesh/inspector.rs` for bounded actual worker
+diagnostics and cached per-model joint overrides. `imports/ui/mesh_panel/panels.rs`
+contains the Avatar dependencies/read-only position tables and Journal view;
+`mesh_panel.rs` keeps the metadata/preview header and model/fee footer fixed
+around the scrollable five-tab body. Geometry processing and fee protocol
+remain on their existing worker/session paths.

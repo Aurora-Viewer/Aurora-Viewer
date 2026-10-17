@@ -179,19 +179,31 @@ pub(super) fn show(
                                 actions.push(Action::RestoreDraft(entry.id));
                             }
                             ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready), |ui| {
-                                metadata_controls(
-                                    ui,
-                                    p,
-                                    entry,
-                                    &world.inventory,
-                                    &inventory_prefs.protected,
-                                    &mut imports.destination,
-                                    imports.demo_mode == "destination",
-                                );
-                                ui.add_space(12.0);
+                                if !matches!(entry.source, Some(Source::Mesh(_))) {
+                                    metadata_controls(
+                                        ui,
+                                        p,
+                                        entry,
+                                        &world.inventory,
+                                        &inventory_prefs.protected,
+                                        &mut imports.destination,
+                                        imports.demo_mode == "destination",
+                                    );
+                                    ui.add_space(12.0);
+                                }
                                 if matches!(entry.source, Some(Source::Mesh(_))) {
                                     let remaining_height = (height - (ui.cursor().top() - detail_top)).max(100.0);
-                                    mesh_panel::show(ui, p, entry, prefs, actions, remaining_height);
+                                    mesh_panel::show(ui, p, entry, prefs, actions, remaining_height, |ui, entry| {
+                                        metadata_controls(
+                                            ui,
+                                            p,
+                                            entry,
+                                            &world.inventory,
+                                            &inventory_prefs.protected,
+                                            &mut imports.destination,
+                                            false,
+                                        );
+                                    });
                                 } else if let Some(source) = &mut entry.source {
                                     match source {
                                         Source::Texture(image) => texture(
