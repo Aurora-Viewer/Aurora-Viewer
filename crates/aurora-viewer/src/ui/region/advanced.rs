@@ -485,7 +485,7 @@ fn pick(save: bool) -> mpsc::Receiver<RawFile> {
                 Some(path) => match std::fs::read(&path) {
                     Ok(data) => RawFile::Open(path.display().to_string(), data),
                     Err(e) => {
-                        log::warn!("raw terrain {}: {e}", path.display());
+                        log::warn!("raw terrain file not read: {e}");
                         RawFile::Failed(aurora_i18n::tr!("ui-land-files-could-not-read-the-file").into())
                     }
                 },
@@ -503,7 +503,7 @@ fn write(path: String, data: Arc<Vec<u8>>) -> mpsc::Receiver<RawFile> {
         let done = match std::fs::write(&path, data.as_slice()) {
             Ok(()) => RawFile::Written(path),
             Err(e) => {
-                log::warn!("raw terrain {path}: {e}");
+                log::warn!("raw terrain file not written: {e}");
                 RawFile::Failed(aurora_i18n::tr!("ui-land-files-could-not-save-the-file").into())
             }
         };
