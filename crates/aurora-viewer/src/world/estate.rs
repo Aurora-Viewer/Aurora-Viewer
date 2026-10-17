@@ -10,8 +10,8 @@
 use super::land::EnvSummary;
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
-    EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RegionRules, RegionSun, RestartSchedule,
-    SimStats, TerrainSettings, TopObjects,
+    EstateAccess, EstateCommand, EstateEvent, EstateInfo, RawTransfer, RegionDetails, RegionExperiences, RegionRules, RegionSun,
+    RestartSchedule, SimStats, TelehubInfo, TelehubVerb, TerrainSettings, TerrainTransform, TopObjects,
 };
 use aurora_net::land::LandCommand;
 use aurora_net::{NetCommand, RegionHandle};
@@ -41,6 +41,15 @@ pub fn role(agent: Uuid, owner: Uuid, is_estate_manager: bool) -> Role {
     }
 }
 
+/// How the last RAW terrain file transfer ended: the window writes a
+/// downloaded file and says the rest.
+#[derive(Debug, Clone)]
+pub enum RawDone {
+    Downloaded { path: String, data: Arc<Vec<u8>> },
+    Uploaded,
+    Failed(String),
+}
+
 /// What the simulator answered for the region the window shows.
 #[derive(Debug, Default)]
 pub struct Estate {
@@ -68,6 +77,14 @@ pub struct Estate {
     /// as disableTopButtons / enableTopButtons).
     pub top: Option<(RegionHandle, Arc<TopObjects>)>,
     pub top_waiting: bool,
+    /// The region's telehub and spawn points (TelehubInfo), once asked.
+    pub telehub: Option<Arc<TelehubInfo>>,
+    /// The PBR terrain materials' transforms (ModifyRegion), or why there
+    /// are none.
+    pub transforms: Option<Result<[TerrainTransform; 4], String>>,
+    /// A RAW terrain file is on its way, and how the last one ended.
+    pub raw_busy: bool,
+    pub raw_done: Option<RawDone>,
     /// A change of the lists was sent: the next `setaccess` asks them again
     /// (LLPanelEstateAccess::setPendingUpdate).
     access_pending: bool,
@@ -141,6 +158,27 @@ impl Estate {
             .push(NetCommand::Estate(EstateCommand::AccessDelta { handle, flags, ids, batch }));
     }
 
+    /// A request of the telehub floater; TelehubInfo answers.
+    pub fn telehub(&mut self, handle: RegionHandle, verb: TelehubVerb, objects: Vec<u32>) {
+        self.out.push(NetCommand::Estate(EstateCommand::Telehub { handle, verb, objects }));
+    }
+
+    /// "Download RAW…" / "Upload RAW…": one at a time.
+    pub fn terrain_raw(&mut self, handle: RegionHandle, transfer: RawTransfer) {
+        if self.raw_busy {
+            return;
+        }
+        self.raw_busy = true;
+        self.raw_done = None;
+        self.out.push(NetCommand::Estate(EstateCommand::TerrainRaw { handle, transfer }));
+    }
+
+    /// The PBR materials' transforms (sendUpdate's ModifyRegion POST).
+    pub fn set_transforms(&mut self, handle: RegionHandle, transforms: [TerrainTransform; 4]) {
+        self.out
+            .push(NetCommand::Estate(EstateCommand::TerrainTransforms { handle, transforms }));
+    }
+
     /// A change of the region's experience lists (experienceCoreConfirm);
     /// the lists come again once the simulator answers `setexperience`.
     pub fn change_experiences(&mut self, handle: RegionHandle, flags: u32, ids: Vec<Uuid>) {
@@ -210,6 +248,8 @@ impl Estate {
         self.environment_error = None;
         self.access_pending = false;
         self.experiences_pending = false;
+        self.telehub = None;
+        self.transforms = None;
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -248,6 +288,22 @@ impl Estate {
                 self.out.push(NetCommand::Estate(EstateCommand::RefreshExperiences { handle }));
             }
             EstateEvent::Schedule { handle, schedule } if shown(handle) => self.schedule = Some(schedule),
+            EstateEvent::Telehub { handle, info } if shown(handle) => self.telehub = Some(info),
+            EstateEvent::TerrainTransforms { handle, transforms } if shown(handle) => self.transforms = Some(transforms),
+            EstateEvent::RawDownloaded { path, result, .. } => {
+                self.raw_busy = false;
+                self.raw_done = Some(match result {
+                    Ok(data) => RawDone::Downloaded { path, data },
+                    Err(e) => RawDone::Failed(e),
+                });
+            }
+            EstateEvent::RawUploaded { result, .. } => {
+                self.raw_busy = false;
+                self.raw_done = Some(match result {
+                    Ok(()) => RawDone::Uploaded,
+                    Err(e) => RawDone::Failed(e),
+                });
+            }
             EstateEvent::TopObjects { handle, report } => {
                 self.top = Some((handle, report));
                 self.top_waiting = false;
@@ -364,6 +420,24 @@ mod tests {
             e.take_commands()[..],
             [NetCommand::Estate(EstateCommand::ChangeCovenant { handle: 7, asset })] if asset.is_nil()
         ));
+    }
+
+    /// One RAW transfer at a time; its end frees the buttons.
+    #[test]
+    fn a_raw_transfer_at_a_time() {
+        let mut e = Estate::default();
+        e.open(7);
+        e.take_commands();
+        let down = || RawTransfer::Download { path: "a.raw".into() };
+        e.terrain_raw(7, down());
+        e.terrain_raw(7, down());
+        assert_eq!(e.take_commands().len(), 1);
+        assert!(e.raw_busy);
+        e.apply(EstateEvent::RawUploaded {
+            handle: 7,
+            result: Err("x".into()),
+        });
+        assert!(!e.raw_busy && matches!(e.raw_done, Some(RawDone::Failed(_))));
     }
 
     /// The region environment's answer replaces the summary; a refusal

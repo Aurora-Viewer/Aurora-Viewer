@@ -19,6 +19,7 @@ mod object_cache;
 mod scripts;
 mod slm_net;
 mod task_notecard;
+mod terrain_raw;
 mod wearable_save;
 
 use crate::agent_update::AgentUpdateRule;
@@ -205,6 +206,8 @@ struct Session<'a> {
     land: land_net::LandNet,
     /// Invoice of the last EstateOwnerMessage `getinfo` (session/estate.rs).
     estate_invoice: Uuid,
+    /// The RAW terrain file going by Xfer (session/terrain_raw.rs).
+    terrain_raw: terrain_raw::RawXfers,
     /// Decode failures per message name, to rate-limit their warnings.
     decode_failures: HashMap<&'static str, u64>,
     inventory_uploads: inventory_upload::Uploads,
@@ -327,6 +330,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         tasks: Default::default(),
         land: Default::default(),
         estate_invoice: Uuid::nil(),
+        terrain_raw: Default::default(),
         decode_failures: HashMap::new(),
         inventory_uploads: Default::default(),
         asset_imports: Default::default(),
@@ -898,6 +902,7 @@ impl Session<'_> {
         self.expire_task_inventory();
         self.expire_script_transfers();
         self.expire_inventory_uploads();
+        self.expire_terrain_raw();
         self.expire_asset_imports();
         self.expire_inventory_previews();
         for completion in self.inventory_copies.expire(Instant::now()) {
@@ -3172,6 +3177,7 @@ impl Session<'_> {
             || self.dispatch_inventory_preview(from, pkt)?
             || self.dispatch_script_transfer(from, pkt)?
             || self.dispatch_object_actions(from, pkt)?
+            || self.dispatch_terrain_raw(from, pkt)?
             || self.dispatch_social(from, pkt)?
             || self.dispatch_estate(from, pkt)?
             || self.dispatch_land(from, pkt)?
@@ -4747,6 +4753,7 @@ mod event_queue_tests {
             tasks: Default::default(),
             land: Default::default(),
             estate_invoice: Uuid::nil(),
+            terrain_raw: Default::default(),
             decode_failures: HashMap::new(),
             inventory_uploads: Default::default(),
             asset_imports: Default::default(),

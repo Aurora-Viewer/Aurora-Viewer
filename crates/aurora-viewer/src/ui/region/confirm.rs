@@ -10,6 +10,7 @@
 //! Linden estate) for the parcels' own environments and
 //! EstateChangeCovenant before the covenant is replaced or cleared.
 
+use super::advanced::MaterialProblem;
 use super::{RegionUi, View, estate_wide, manage};
 use crate::theme::Palette;
 use crate::ui::sheet::semibold;
@@ -35,6 +36,11 @@ pub(crate) enum Ask {
     /// A notecard's asset, or nil for "Reset".
     Covenant {
         asset: uuid::Uuid,
+    },
+    /// InvalidTerrainMaterial…: a terrain slot's material cannot be used.
+    TerrainMaterial {
+        slot: u8,
+        problem: MaterialProblem,
     },
 }
 
@@ -62,6 +68,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         "region-ask-env-override",
         estate = world.estate.estate.as_ref().map(|e| e.name.clone()).unwrap_or_default()
     );
+    let material_text = match ask {
+        Ask::TerrainMaterial { slot, problem } => {
+            let n = i64::from(slot) + 1;
+            match problem {
+                MaterialProblem::NotLoaded => aurora_i18n::tr!("region-ask-material-not-loaded", n = n),
+                MaterialProblem::LoadFailed => aurora_i18n::tr!("region-ask-material-failed", n = n),
+                MaterialProblem::DoubleSided => aurora_i18n::tr!("region-ask-material-double-sided", n = n),
+                MaterialProblem::Blend => aurora_i18n::tr!("region-ask-material-blend", n = n),
+            }
+        }
+        _ => String::new(),
+    };
     let (icon, danger, title, text) = match ask {
         Ask::AccessOverride => (
             "alert-triangle-filled",
@@ -117,6 +135,12 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
             aurora_i18n::tr!("region-ask-env-override-title"),
             &*estate_text,
         ),
+        Ask::TerrainMaterial { .. } => (
+            "alert-triangle-filled",
+            false,
+            aurora_i18n::tr!("region-ask-material-title"),
+            &*material_text,
+        ),
         Ask::Covenant { asset } => (
             "gavel",
             asset.is_nil(),
@@ -139,10 +163,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         Ask::EnvironmentOverride { .. } => (aurora_i18n::tr!("region-ask-env-override-ok"), ActionKind::Primary),
         Ask::Covenant { asset } if asset.is_nil() => (aurora_i18n::tr!("region-ask-covenant-reset-ok"), ActionKind::Danger),
         Ask::Covenant { .. } => (aurora_i18n::tr!("region-ask-covenant-ok"), ActionKind::Primary),
-        Ask::AccessOverride | Ask::MaturityChanged => (ok, ActionKind::Primary),
+        Ask::AccessOverride | Ask::MaturityChanged | Ask::TerrainMaterial { .. } => (ok, ActionKind::Primary),
     };
     // a notice has its OK only
-    let notice = matches!(ask, Ask::AccessOverride | Ask::MaturityChanged);
+    let notice = matches!(ask, Ask::AccessOverride | Ask::MaturityChanged | Ask::TerrainMaterial { .. });
     let mut buttons: Vec<(DialogButton<'_>, Choice)> = Vec::new();
     if matches!(ask, Ask::TextureHeights) {
         buttons.push((button(dont_ask, ActionKind::Flat), Choice::DontAsk));

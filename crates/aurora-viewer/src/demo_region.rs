@@ -31,14 +31,20 @@
 //! `ask-covenant` asks before clearing the covenant. The simulator keeps
 //! the region's day, timing and sky altitudes, the experience lists and
 //! the covenant it is sent, and two notecards wait in the inventory.
+//! `telehub` opens the region rules' Advanced fold (the demo region has a
+//! telehub with two spawn points, and keeps what Connect, Disconnect, Add
+//! and the x send), `raw` the terrain's (a download answers a flat RAW
+//! file, an upload is taken), `pbr` turns the terrain to PBR materials with
+//! that fold open (the simulator keeps the transforms it is sent).
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::ui::region::{Ask, EstateWideDialog, Home, InterventionDialog, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList, XpList};
 use crate::world::inventory::Inventory;
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
-    BannedAgent, EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
-    TopObject, TopObjects, estate_access as ea, estate_flags as ef, land_stat, sim_stat, skip_flags,
+    BannedAgent, EstateAccess, EstateCommand, EstateEvent, EstateInfo, RawTransfer, RegionDetails, RegionExperiences, RestartSchedule,
+    SimStats, TelehubInfo, TelehubVerb, TerrainTransform, TopObject, TopObjects, estate_access as ea, estate_flags as ef, land_stat,
+    sim_stat, skip_flags,
 };
 use aurora_net::inventory::InvItem;
 use aurora_net::land::{FoundExperience, LandCommand, LandEvent, REGION_PARCEL_ID, XP_PROPERTY_GRID};
@@ -97,6 +103,19 @@ fn parse(v: &str) -> Scenario {
             "terrain" => s.manage.section = Some(2),
             "interventions" => s.manage.section = Some(3),
             "scripts" => s.manage.section = Some(4),
+            "telehub" => {
+                s.manage.section = Some(1);
+                s.manage.advanced = true;
+            }
+            "raw" => {
+                s.manage.section = Some(2);
+                s.manage.advanced = true;
+            }
+            "pbr" => {
+                s.manage.section = Some(2);
+                s.manage.advanced = true;
+                s.manage.pbr = true;
+            }
             "environment" => s.manage.section = Some(5),
             "experiences" => s.manage.section = Some(6),
             "covenant" => s.manage.section = Some(7),
@@ -457,6 +476,71 @@ pub fn found_experiences() -> Vec<FoundExperience> {
         .collect()
 }
 
+/// The demo region's telehub: "Arrival point" with two spawn points, then
+/// what the window changed.
+static TELEHUB: Mutex<Option<TelehubInfo>> = Mutex::new(None);
+
+fn with_telehub<R>(f: impl FnOnce(&mut TelehubInfo) -> R) -> R {
+    let mut t = TELEHUB.lock().unwrap_or_else(|e| e.into_inner());
+    f(t.get_or_insert_with(|| TelehubInfo {
+        object: Uuid::from_u128(0x7E1E_0000_0000_0000_0000_0000_0000_0001),
+        name: aurora_i18n::tr!("demo-region-telehub").into(),
+        position: [128.0, 128.0, 22.0],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        spawns: vec![[4.0, 0.0, 0.0], [-4.0, 2.5, 0.0]],
+    }))
+}
+
+/// A telehub request applied as the simulator does: Connect makes the
+/// first selected object the telehub, Disconnect drops it and its spawn
+/// points, Add puts a spawn point near each selected object.
+fn apply_telehub(t: &mut TelehubInfo, verb: TelehubVerb, objects: &[u32]) {
+    match verb {
+        TelehubVerb::Info => {}
+        TelehubVerb::Connect => {
+            if let Some(id) = objects.first() {
+                t.object = Uuid::from_u128(0x7E1E_0000_0000_0000_0000_0000_0000_0000 + u128::from(*id));
+                t.name = aurora_i18n::tr!("demo-region-telehub-object").into();
+            }
+        }
+        TelehubVerb::Delete => {
+            t.object = Uuid::nil();
+            t.name.clear();
+            t.spawns.clear();
+        }
+        TelehubVerb::AddSpawn => {
+            for id in objects {
+                if t.spawns.len() < aurora_net::estate::MAX_SPAWNPOINTS_PER_TELEHUB {
+                    t.spawns.push([(id % 7) as f32, 3.0, 0.0]);
+                }
+            }
+        }
+        TelehubVerb::RemoveSpawn(i) => {
+            if (i as usize) < t.spawns.len() {
+                t.spawns.remove(i as usize);
+            }
+        }
+    }
+}
+
+/// The materials' transforms ModifyRegion keeps.
+static TRANSFORMS: Mutex<Option<[TerrainTransform; 4]>> = Mutex::new(None);
+
+fn transforms() -> [TerrainTransform; 4] {
+    TRANSFORMS.lock().unwrap_or_else(|e| e.into_inner()).unwrap_or_default()
+}
+
+/// A flat RAW terrain file of 256 × 256 points (13 channels, the height in
+/// the first, scaled by the second / 128): 20 m everywhere.
+fn raw_file() -> Vec<u8> {
+    let mut data = vec![0u8; 256 * 256 * 13];
+    for px in data.as_chunks_mut::<13>().0 {
+        px[0] = 20;
+        px[1] = 128;
+    }
+    data
+}
+
 /// The covenant the simulator was last sent (its asset, when), if any.
 static COVENANT: Mutex<Option<(Uuid, u32)>> = Mutex::new(None);
 
@@ -789,6 +873,10 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
                 handle,
                 schedule: Ok(schedule()),
             }));
+            out.push(ev(EstateEvent::TerrainTransforms {
+                handle,
+                transforms: Ok(transforms()),
+            }));
             out.push(ev(EstateEvent::Stats {
                 handle,
                 stats: Arc::new(stats()),
@@ -860,6 +948,34 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
         EstateCommand::ReturnTopObjects { tasks, .. } => {
             RETURNED.lock().unwrap_or_else(|e| e.into_inner()).extend(tasks.iter().copied());
             Vec::new()
+        }
+        EstateCommand::Telehub { handle, verb, objects } => {
+            let info = with_telehub(|t| {
+                apply_telehub(t, *verb, objects);
+                t.clone()
+            });
+            vec![ev(EstateEvent::Telehub {
+                handle: *handle,
+                info: Arc::new(info),
+            })]
+        }
+        EstateCommand::TerrainRaw { handle, transfer } => vec![match transfer {
+            RawTransfer::Download { path } => ev(EstateEvent::RawDownloaded {
+                handle: *handle,
+                path: path.clone(),
+                result: Ok(Arc::new(raw_file())),
+            }),
+            RawTransfer::Upload { .. } => ev(EstateEvent::RawUploaded {
+                handle: *handle,
+                result: Ok(()),
+            }),
+        }],
+        EstateCommand::TerrainTransforms { handle, transforms: t } => {
+            *TRANSFORMS.lock().unwrap_or_else(|e| e.into_inner()) = Some(*t);
+            vec![ev(EstateEvent::TerrainTransforms {
+                handle: *handle,
+                transforms: Ok(*t),
+            })]
         }
         EstateCommand::ExperienceDelta { handle, flags, ids } => {
             with_experiences(|x| {
@@ -935,6 +1051,21 @@ mod tests {
         assert_eq!(x.manage.section, Some(6));
         assert!(matches!(x.estate_wide, Some(EstateWideDialog::Scope { add: false, .. })));
         assert_eq!(parse("manage:ask-covenant").manage.ask, Some(Ask::Covenant { asset: Uuid::nil() }));
+    }
+
+    /// The telehub follows Connect, Add, the x and Disconnect.
+    #[test]
+    fn the_demo_telehub() {
+        let mut t = TelehubInfo::default();
+        apply_telehub(&mut t, TelehubVerb::Connect, &[42]);
+        assert!(!t.object.is_nil());
+        apply_telehub(&mut t, TelehubVerb::AddSpawn, &[1, 2]);
+        apply_telehub(&mut t, TelehubVerb::RemoveSpawn(0), &[]);
+        assert_eq!(t.spawns.len(), 1);
+        apply_telehub(&mut t, TelehubVerb::Delete, &[]);
+        assert!(t.object.is_nil() && t.spawns.is_empty());
+        assert_eq!(raw_file().len(), 851_968);
+        assert!(parse("manage:pbr").manage.pbr);
     }
 
     /// The lists change as `estateexperiencedelta` says.

@@ -169,6 +169,50 @@ impl Session<'_> {
                 let invoice = self.estate_invoice;
                 self.send_estate_owner_message(addr, "restart", invoice, &[seconds.to_string()], true);
             }
+            EstateCommand::Telehub { handle, verb, objects } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                // sendGodlikeRequest: no invoice
+                self.send_estate_owner_message(addr, "telehub", Uuid::nil(), &verb.strings(&objects), true);
+            }
+            EstateCommand::TerrainRaw { handle, transfer } => self.terrain_raw(handle, transfer),
+            EstateCommand::TerrainTransforms { handle, transforms } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let Some(url) = self.sim_cap(addr, "ModifyRegion") else {
+                    return;
+                };
+                // modifyRegionCoro, then the simulator's RegionHandshake has
+                // queryRegionCoro ask again
+                let http = self.sh.caps_http.clone();
+                let events = self.sh.events.clone();
+                let body = estate::terrain_overrides_body(&transforms);
+                tokio::spawn(async move {
+                    let posted = crate::caps::post_llsd(&http, &url, &body).await;
+                    let failed = match &posted {
+                        Ok(v) if v["success"].as_bool() => None,
+                        Ok(v) => Some(v["message"].to_string_value()),
+                        Err(e) => Some(e.to_string()),
+                    };
+                    let transforms = match failed {
+                        Some(why) => {
+                            log::warn!("terrain transforms not modified: {why}");
+                            Err(aurora_i18n::tr!("net-estate-transforms-refused", reason = why).to_owned())
+                        }
+                        None => {
+                            log::info!("terrain transforms modified");
+                            fetch_llsd(&http, &url, Get::Transforms)
+                                .await
+                                .as_ref()
+                                .and_then(estate::parse_terrain_overrides)
+                                .ok_or_else(|| aurora_i18n::tr!("net-estate-transforms-unavailable").to_owned())
+                        }
+                    };
+                    let _ = events.send(NetEvent::Estate(EstateEvent::TerrainTransforms { handle, transforms }));
+                });
+            }
             EstateCommand::ExperienceDelta { handle, flags, ids } => {
                 let Some(addr) = self.sim_for_handle(handle) else {
                     return;
@@ -276,7 +320,7 @@ impl Session<'_> {
 
     /// LLPanelRegionInfo::sendEstateOwnerMessage: one parameter per string,
     /// a single empty one when there is none.
-    fn send_estate_owner_message(&mut self, addr: SocketAddr, method: &str, invoice: Uuid, strings: &[String], reliable: bool) {
+    pub(super) fn send_estate_owner_message(&mut self, addr: SocketAddr, method: &str, invoice: Uuid, strings: &[String], reliable: bool) {
         log::info!("sending estate request '{method}'");
         let mut m = EstateOwnerMessage::default();
         m.agent_data.agent_id = self.agent_id();
@@ -326,6 +370,9 @@ impl Session<'_> {
             (cap("RegionExperiences"), Get::Experiences),
             (cap("ExtEnvironment"), Get::Environment),
             (cap("RegionSchedule"), Get::Schedule),
+            // the terrain's material overrides (queueQuery, which the
+            // Legacy Viewer sends at each RegionHandshake)
+            (cap("ModifyRegion"), Get::Transforms),
         ];
         for (url, what) in gets {
             self.estate_get(handle, url, what);
@@ -349,6 +396,32 @@ impl Session<'_> {
     /// processEstateOwnerRequest: `estateupdateinfo` and `setaccess` of the
     /// last invoice.
     pub(super) fn dispatch_estate(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<bool, aurora_msg::DecodeError> {
+        if pkt.id == TelehubInfo::ID {
+            // LLFloaterTelehub::unpackTelehubInfo
+            let m: TelehubInfo = pkt.decode()?;
+            let b = &m.telehub_block;
+            let info = estate::TelehubInfo {
+                object: b.object_id,
+                name: estate::parameter_string(&b.object_name),
+                position: b.telehub_pos.to_array(),
+                rotation: b.telehub_rot.to_array(),
+                spawns: m
+                    .spawn_point_block
+                    .iter()
+                    .take(estate::MAX_SPAWNPOINTS_PER_TELEHUB)
+                    .map(|s| s.spawn_point_pos.to_array())
+                    .collect(),
+            };
+            let handle = self.handle_of(from);
+            emit(
+                self.sh,
+                NetEvent::Estate(EstateEvent::Telehub {
+                    handle,
+                    info: Arc::new(info),
+                }),
+            );
+            return Ok(true);
+        }
         if pkt.id == LandStatReply::ID {
             // an older simulator's UDP answer (UDPDeprecated): the same
             // report as the event queue's, without DataExtended
@@ -462,6 +535,7 @@ enum Get {
     Experiences,
     Environment,
     Schedule,
+    Transforms,
 }
 
 impl Get {
@@ -482,6 +556,13 @@ impl Get {
             Get::Schedule => EstateEvent::Schedule {
                 handle,
                 schedule: body.map(|v| estate::parse_restart_schedule(&v)).ok_or(()),
+            },
+            Get::Transforms => EstateEvent::TerrainTransforms {
+                handle,
+                transforms: body
+                    .as_ref()
+                    .and_then(estate::parse_terrain_overrides)
+                    .ok_or_else(|| aurora_i18n::tr!("net-estate-transforms-unavailable").to_owned()),
             },
         }
     }
