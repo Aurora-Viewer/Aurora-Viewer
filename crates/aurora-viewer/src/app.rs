@@ -5430,6 +5430,9 @@ impl App {
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
         self.update_hover_height();
+        if self.demo {
+            crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
+        }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
