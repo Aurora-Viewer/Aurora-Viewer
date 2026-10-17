@@ -1624,6 +1624,7 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXTURES=<n>` | Texture load test: n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: textures renewed |
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
+| `AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>` | The crowd's worn prims and meshes use a legacy material, and a material nobody uses arrives every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
@@ -1671,6 +1672,14 @@ To check with these scenarios:
   `AURORA_DEMO_STREAM=12000,400` for the motionless objects;
   `AURORA_SYNC_CHECK=1` gives what the sync visits, `AURORA_SYNC_SLICE=alt`
   compares with the old path.
+- **`AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>`** (2 if not a number): with
+  `AURORA_DEMO_CROWD`, the linksets and the rigged meshes the crowd wears use a
+  legacy material, and from 5 s on a new legacy material that no object uses
+  arrives every `seconds`, as the materials of the avatars coming in arrive in
+  a busy place. Combine with `AURORA_MATERIAL_REBUILD=alt`, `AURORA_PROFILE=1`,
+  `AURORA_DEMO_ANIMESH=1` and `AURORA_DEMO_CROWD=52,100`: the old seconds rebuild
+  every worn object (`rebuilt` about 50 a frame, `max: sync` about 7 ms), the
+  new ones none.
 - **`AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]`**: our
   avatar and each avatar of `AURORA_DEMO_CROWD` wear `layers` rigged
   meshes (8 by default, 32 at most), each a shell around the head and
@@ -4003,6 +4012,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
+| `AURORA_MATERIAL_REBUILD=all` or `alt` | Every object using materials rebuilt at each material change, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
@@ -4398,6 +4408,12 @@ What the inventory must show with these scenarios:
   transparent faces of the rigged meshes, which the CPU lists, are tested
   with the extent of their skeleton and no longer with their own bounds
   (`blend` slightly higher).
+- **`AURORA_MATERIAL_REBUILD=all`**: each material that arrives (or is given
+  up) rebuilds every object using materials, as before, instead of the users
+  of that material only (`scene/mat_changes.rs`). `alt`: the old way one second
+  in three, `xmode=old` / `xmode=new` at the end of the `perf summary` line.
+  With `AURORA_DEMO_MATERIAL_ARRIVALS`, the old seconds show the bursts of full
+  syncs (`rebuilt`, `max: sync`).
 - **`AURORA_SYNC_SLICE=1`**: the scene sync comes back to each object every
   24 frames (LOD slice), places the worn HUDs again each frame and sends
   the records in whole blocks of 64, as before, to compare the image and

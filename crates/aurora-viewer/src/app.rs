@@ -4135,6 +4135,10 @@ impl App {
         self.demo_script_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        // AURORA_DEMO_MATERIAL_ARRIVALS: a material nobody uses arrives
+        if let Some((id, m)) = crate::demo::material_arrival_due() {
+            self.scene.legacy_mats.insert(id, m);
+        }
         // AURORA_DEMO_HOVER=1: the cursor swept over the scene, then still
         if let Some(g) = &self.gfx
             && let Some(cursor) = crate::demo::hover_sweep(self.frame_count, g.renderer.size())
@@ -7961,6 +7965,11 @@ impl App {
         if logged || self.sync_alt == 0 {
             self.sync_alt += 1;
             if let Some(old) = crate::scene::sync_sets::alternate_slice(self.sync_alt) {
+                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
+            }
+            // AURORA_MATERIAL_REBUILD=alt: every material user rebuilt at a
+            // material change one second in three
+            if let Some(old) = crate::scene::mat_changes::alternate(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_PROBE_WALK=alt: the whole probe list walked one second in three

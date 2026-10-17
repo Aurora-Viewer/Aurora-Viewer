@@ -5160,6 +5160,51 @@ pub fn crowd_dance_animation() -> aurora_assets::Animation {
     a
 }
 
+/// AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>: the crowd's worn prims and
+/// meshes use a legacy material, and a material nobody uses arrives every
+/// `seconds` (2 if not a number), as the materials of the avatars coming in
+/// do in a busy place; `AURORA_MATERIAL_REBUILD=alt` compares the sync that
+/// rebuilt every material user at each arrival (mat_changes.rs).
+pub fn material_arrivals() -> Option<f32> {
+    let v = std::env::var("AURORA_DEMO_MATERIAL_ARRIVALS").ok()?;
+    Some(v.trim().parse::<f32>().ok().filter(|s| *s > 0.0).unwrap_or(2.0))
+}
+
+/// The `n`th material arriving with `material_arrivals`: used by nothing.
+pub fn arriving_material(n: u32) -> (Uuid, crate::scene::legacy_mat::LegacyMaterial) {
+    let (_, m) = legacy_materials().into_iter().next().expect("the demo has legacy materials");
+    (Uuid::from_u128(0xDE40_3A70_0000_0000_0001_0000_0000_0000 | n as u128), m)
+}
+
+/// The material arriving now, when `material_arrivals`' period has passed
+/// since the last one (the first after 5 s, once the crowd is built).
+pub fn material_arrival_due() -> Option<(Uuid, crate::scene::legacy_mat::LegacyMaterial)> {
+    static NEXT: std::sync::Mutex<Option<(std::time::Instant, u32)>> = std::sync::Mutex::new(None);
+    let every = material_arrivals()?;
+    let now = std::time::Instant::now();
+    let mut next = NEXT.lock().ok()?;
+    let (at, n) = next.get_or_insert((now + std::time::Duration::from_secs(5), 0));
+    if now < *at {
+        return None;
+    }
+    *at = now + std::time::Duration::from_secs_f32(every);
+    *n += 1;
+    Some(arriving_material(*n))
+}
+
+/// A crowd prim's faces: with `material_arrivals`, a legacy material too.
+fn crowd_te(color: [f32; 4], shiny: u8) -> Arc<TextureEntry> {
+    let t = te(color, shiny, false, 0.0);
+    if material_arrivals().is_none() {
+        return t;
+    }
+    let mut t = (*t).clone();
+    for f in &mut t.faces {
+        f.material_id = MAT_NONE;
+    }
+    Arc::new(t)
+}
+
 /// The crowd: avatars on a grid north-east of the start, each playing the
 /// demo idle animation and wearing eight attachment linksets (a root and six
 /// child prims) on bones all over the body, so every worn prim follows its
@@ -5206,6 +5251,9 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
             let mut t = (*te([0.6, 0.7, 0.9, 1.0], 0, false, 0.0)).clone();
             for f in &mut t.faces {
                 f.texture = if dense { ANIMESH_TEXTURE } else { BLANK_TEXTURE };
+                if material_arrivals().is_some() {
+                    f.material_id = MAT_NONE;
+                }
             }
             let mut worn = prim(
                 2_000_000 + k * 512 + i,
@@ -5242,7 +5290,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
                 Quat::IDENTITY,
                 Vec3::splat(0.08),
                 sphere,
-                te(color, 1, false, 0.0),
+                crowd_te(color, 1),
                 ExtraParams::default(),
                 "",
             );
@@ -5257,7 +5305,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
                     Quat::from_rotation_z(angle),
                     Vec3::new(0.05, 0.02, 0.02),
                     boxp,
-                    te(color, 0, false, 0.0),
+                    crowd_te(color, 0),
                     ExtraParams::default(),
                     "",
                 );

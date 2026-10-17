@@ -25,6 +25,7 @@ pub(crate) mod lipsync;
 mod list_index;
 pub mod loading;
 mod lod_watch;
+pub mod mat_changes;
 pub mod mesh_bytes;
 pub mod meshes;
 pub mod morph;
@@ -638,6 +639,9 @@ pub struct Scene {
     /// anchors once the sync has placed their owners.
     posed_slots: Vec<usize>,
     touched_tmp: Vec<usize>,
+    /// When each material last changed: only its own users are rebuilt.
+    pub(crate) mat_changes: mat_changes::MatChanges,
+    mat_changed_tmp: Vec<Uuid>,
     /// Geometries whose last reference went away, oldest first (key, frame).
     geom_zero: VecDeque<(GeomKey, u32)>,
     /// Geometries still being built or downloaded.
@@ -1085,6 +1089,8 @@ impl Scene {
             joint_boxes: Default::default(),
             posed_slots: Vec::new(),
             touched_tmp: Vec::new(),
+            mat_changes: mat_changes::MatChanges::default(),
+            mat_changed_tmp: Vec::new(),
             geom_zero: VecDeque::new(),
             geom_pending: 0,
             slot_users: Default::default(),
@@ -1974,9 +1980,14 @@ impl Scene {
         let mat_gen = self.materials.generation;
         if mat_gen != self.sets.seen_mat_gen {
             self.sets.seen_mat_gen = mat_gen;
-            let users = self.sets.material_users.as_slice().to_vec();
-            for idx in users {
-                self.sets.dirty.insert(idx);
+            for &idx in self.sets.material_users.as_slice() {
+                if self
+                    .gpu
+                    .get(idx)
+                    .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen))
+                {
+                    self.sets.dirty.insert(idx);
+                }
             }
         }
         // detail level checks: by events, or the slice of every object
@@ -1992,6 +2003,7 @@ impl Scene {
                 geoms: &self.geoms,
                 textures: &self.textures,
                 mat_gen,
+                mat_changes: &self.mat_changes,
                 still_huds: events,
             };
             let checks = if events {
@@ -2422,6 +2434,25 @@ impl Scene {
         }
     }
 
+    /// The materials changed since the last frame (arrived, given up, local):
+    /// a new generation for the legacy ones (the glTF store counts its own),
+    /// and each noted at the generation that counts it, so that only their
+    /// users are rebuilt (mat_changes.rs).
+    pub(crate) fn note_material_changes(&mut self) {
+        let mut changed = std::mem::take(&mut self.mat_changed_tmp);
+        self.materials.take_changed(&mut changed);
+        let gltf = changed.len();
+        self.legacy_mats.take_changed(&mut changed);
+        if changed.len() > gltf {
+            self.materials.generation += 1;
+        }
+        let generation = self.materials.generation;
+        for id in changed.drain(..) {
+            self.mat_changes.note(id, generation);
+        }
+        self.mat_changed_tmp = changed;
+    }
+
     /// Bookkeeping after a full sync: what could not finish is retried next
     /// frame, geometry still pending is watched, material users noted, and
     /// a mesh found rigged starts moving. A new object is no longer one.
@@ -2430,7 +2461,7 @@ impl Scene {
         let Some(g) = self.gpu.get(idx) else {
             return;
         };
-        let mats_changed = !g.material_ids.is_empty() && g.mat_generation != mat_gen;
+        let mats_changed = self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen);
         if world
             .objects
             .get(idx)
@@ -2610,7 +2641,11 @@ impl Scene {
             // faces get no record and made this rebuild every frame
             faces: self.gpu[idx].built_faces != geom.faces.iter().filter(|f| f.is_some()).count(),
             geometry: bind_new.is_some(),
-            material_generation: !self.gpu[idx].material_ids.is_empty() && self.gpu[idx].mat_generation != self.materials.generation,
+            material_generation: self.mat_changes.stale(
+                &self.gpu[idx].material_ids,
+                self.gpu[idx].mat_generation,
+                self.materials.generation,
+            ),
         };
         let full_rebuild = why.any();
 
@@ -3789,10 +3824,9 @@ impl Scene {
         self.sounds.fetch(&self.jobs, &net.fetcher, va);
         self.materials.update(&self.jobs, &net.fetcher, va);
         self.settings.update(&self.jobs, &net.fetcher, va);
-        if self.legacy_mats.update(net.runtime(), &net.caps_http()) {
-            // objects using materials are rebuilt on a new generation
-            self.materials.generation += 1;
-        }
+        // (what arrived is counted by note_material_changes)
+        self.legacy_mats.update(net.runtime(), &net.caps_http());
+        self.note_material_changes();
         let t = self.parts.lap(Part::Assets, t);
         for dirty in self.skin_binds.take_dirty() {
             renderer.set_skin_binds(self.skin_binds.list(), dirty);
