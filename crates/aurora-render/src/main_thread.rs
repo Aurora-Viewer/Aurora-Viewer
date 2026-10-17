@@ -897,6 +897,7 @@ impl Renderer {
                 },
                 gpu_depth: self.last_stats.gpu_depth,
                 gpu_ssao: self.last_stats.gpu_ssao,
+                gpu_bloom: self.last_stats.gpu_bloom,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,
