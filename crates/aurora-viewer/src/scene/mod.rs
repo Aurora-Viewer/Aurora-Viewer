@@ -25,6 +25,7 @@ pub(crate) mod lipsync;
 mod list_index;
 pub mod loading;
 mod lod_watch;
+pub mod mat_changes;
 pub mod mesh_bytes;
 pub mod mesh_inspection;
 pub mod meshes;
@@ -41,6 +42,7 @@ pub mod sounds;
 pub mod still_check;
 mod sync_check;
 mod sync_plan;
+mod sync_slow;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
 pub mod tangents;
@@ -639,6 +641,9 @@ pub struct Scene {
     /// anchors once the sync has placed their owners.
     posed_slots: Vec<usize>,
     touched_tmp: Vec<usize>,
+    /// When each material last changed: only its own users are rebuilt.
+    pub(crate) mat_changes: mat_changes::MatChanges,
+    mat_changed_tmp: Vec<Uuid>,
     /// Geometries whose last reference went away, oldest first (key, frame).
     geom_zero: VecDeque<(GeomKey, u32)>,
     /// Geometries still being built or downloaded.
@@ -707,6 +712,16 @@ pub struct Scene {
     selection_changed: Option<Instant>,
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
+    /// The avatars the last lists drew as impostors, by object index.
+    far_avatars: HashMap<usize, impostors::Far>,
+    /// When each skeleton was last posed (an impostor keeps its pose
+    /// between pictures).
+    posed_at: HashMap<Uuid, Instant>,
+    /// The skeletons posed in this frame, by object index.
+    posed_now: HashSet<usize>,
+    /// AURORA_SYNC_CHECK: impostor pictures taken, and those taken with a
+    /// pose of an earlier frame (must stay 0), logged every 10 s.
+    picture_check: (u64, u64, Option<Instant>),
     /// Avatars still loading (clouds).
     loading: loading::Loading,
     /// Hide loading avatars (shown as clouds) until they are complete.
@@ -749,6 +764,8 @@ pub struct Scene {
     pub still: Option<still_check::StillCheck>,
     /// AURORA_SYNC_CHECK: what the sync visits, and what comes of it.
     sync_check: Option<sync_check::SyncCheck>,
+    /// AURORA_SYNC_SLOW: the limit above which a frame's sync is detailed.
+    sync_slow: Option<f32>,
     /// HUD attachments of our avatar and what places them besides their
     /// own updates (screen aspect, local zoom and offset): they are placed
     /// again when it changes, not at each frame.
@@ -1090,6 +1107,8 @@ impl Scene {
             joint_boxes: Default::default(),
             posed_slots: Vec::new(),
             touched_tmp: Vec::new(),
+            mat_changes: mat_changes::MatChanges::default(),
+            mat_changed_tmp: Vec::new(),
             geom_zero: VecDeque::new(),
             geom_pending: 0,
             slot_users: Default::default(),
@@ -1119,6 +1138,10 @@ impl Scene {
             debug_alpha: None,
             last_cull: None,
             impostors: Default::default(),
+            far_avatars: HashMap::new(),
+            posed_at: HashMap::new(),
+            posed_now: HashSet::new(),
+            picture_check: (0, 0, None),
             loading: Default::default(),
             hide_loading: true,
             loading_bars: true,
@@ -1140,6 +1163,7 @@ impl Scene {
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
             sync_check: sync_check::SyncCheck::from_env(),
+            sync_slow: sync_slow::SlowSync::limit_from_env(),
             hud_roots: HashMap::new(),
             hud_roots_tmp: Vec::new(),
             last_sync: None,
@@ -1905,9 +1929,17 @@ impl Scene {
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
         use crate::frame_profile::Part;
         let t0 = Instant::now();
+        let mut slow = self.sync_slow.map(|limit| sync_slow::SlowSync::new(limit, t0));
+        let step = |slow: &mut Option<sync_slow::SlowSync>, name| {
+            if let Some(s) = slow {
+                s.step(name);
+            }
+        };
         self.frame = self.frame.wrapping_add(1);
         self.ensure_avatar_parts(renderer);
+        step(&mut slow, "parts");
         self.collect_garbage(renderer, &mut world.objects, self.sync_budget / 2);
+        step(&mut slow, "garbage");
         // settings assets the environment waits for (the default day, the
         // environment selector's items)
         for id in world.eep.wanted_settings() {
@@ -1946,8 +1978,10 @@ impl Scene {
             self.water.clear(renderer);
         }
 
+        step(&mut slow, "origin");
         self.sync_terrain(renderer, world);
         self.water.sync(renderer, world);
+        step(&mut slow, "terrain");
 
         if self.gpu.len() < world.objects.slots.len() {
             self.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
@@ -1977,13 +2011,19 @@ impl Scene {
         }
         touched.clear();
         self.touched_tmp = touched;
+        step(&mut slow, "touched");
         // a new material generation: the faces using materials are rebuilt
         let mat_gen = self.materials.generation;
         if mat_gen != self.sets.seen_mat_gen {
             self.sets.seen_mat_gen = mat_gen;
-            let users = self.sets.material_users.as_slice().to_vec();
-            for idx in users {
-                self.sets.dirty.insert(idx);
+            for &idx in self.sets.material_users.as_slice() {
+                if self
+                    .gpu
+                    .get(idx)
+                    .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen))
+                {
+                    self.sets.dirty.insert(idx);
+                }
             }
         }
         // detail level checks: by events, or the slice of every object
@@ -1999,6 +2039,7 @@ impl Scene {
                 geoms: &self.geoms,
                 textures: &self.textures,
                 mat_gen,
+                mat_changes: &self.mat_changes,
                 still_huds: events,
             };
             let checks = if events {
@@ -2019,6 +2060,7 @@ impl Scene {
             c.listed(list.sources, list.lod_checked);
         }
         let t_part = self.parts.lap(Part::SyncList, t0);
+        step(&mut slow, "list");
 
         // placement in parallel, one level of the parent chains at a time
         self.xf_cache.next_frame(n);
@@ -2047,6 +2089,7 @@ impl Scene {
             }
         }
         let t_part = self.parts.lap(Part::SyncPlan, t_part);
+        step(&mut slow, "plan");
         let mut synced: Vec<usize> = plans.iter().map(|(idx, _)| *idx).collect();
         // Moves and avatars are applied whatever they cost. The other full
         // syncs (new objects, geometry bound, faces rebuilt) only while the
@@ -2073,6 +2116,9 @@ impl Scene {
                     } else {
                         sync_check::Outcome::Checked
                     });
+                    if let Some(s) = &mut slow {
+                        s.moved();
+                    }
                     self.apply_move(renderer, world, idx, m)
                 }
                 Plan::Full { xf, interim } => {
@@ -2092,6 +2138,10 @@ impl Scene {
                         self.sets.backlog.remove(idx);
                         self.sync_object(renderer, world, idx, now, view, xf);
                         self.after_full_sync(world, idx, mat_gen);
+                        if let Some(s) = &mut slow {
+                            let kind = if avatar { sync_slow::Full::Avatar } else { sync_slow::Full::Listed };
+                            s.full(kind, idx, started);
+                        }
                         if !now_or_never {
                             budget.spend(started.elapsed());
                         }
@@ -2110,8 +2160,14 @@ impl Scene {
         // ask for (a geometry to build, a mesh to download) takes the
         // longest to come, and the objects already waiting for their faces
         // keep the other half.
+        step(&mut slow, "apply");
         let reserve = budget.left() / 2;
+        let (before, started) = (synced.len(), Instant::now());
         self.sync_arrivals(renderer, world, now, view, mat_gen, &mut budget, reserve, &mut synced);
+        if let Some(s) = &mut slow {
+            s.fulls(sync_slow::Full::Arrival, synced.len() - before, started);
+        }
+        step(&mut slow, "arrivals");
         while budget.allows() {
             let Some(idx) = self.sets.backlog.pop() else {
                 break;
@@ -2120,8 +2176,13 @@ impl Scene {
             self.sync_object(renderer, world, idx, now, view, None);
             self.after_full_sync(world, idx, mat_gen);
             synced.push(idx);
+            if let Some(s) = &mut slow {
+                s.full(sync_slow::Full::Backlog, idx, started);
+            }
             budget.spend(started.elapsed());
         }
+        step(&mut slow, "backlog");
+        let (before, started) = (synced.len(), Instant::now());
         self.sync_arrivals(
             renderer,
             world,
@@ -2132,17 +2193,27 @@ impl Scene {
             std::time::Duration::ZERO,
             &mut synced,
         );
+        if let Some(s) = &mut slow {
+            s.fulls(sync_slow::Full::Arrival, synced.len() - before, started);
+        }
+        step(&mut slow, "arrivals");
         self.stats.sync_backlog = self.sets.backlog.len() + self.sets.arrivals.len();
-        if let Some(c) = &mut check
-            && c.frame()
-        {
-            c.write(self.lod_behind(world, &renderer.records, view.eye, now));
+        if let Some(c) = &mut check {
+            let range = c.sweep_range(self.gpu.len());
+            let end = range.end >= self.gpu.len();
+            c.swept(self.lod_behind(world, &renderer.records, view.eye, now, range), end);
+            if c.frame() {
+                c.write();
+            }
         }
         self.sync_check = check;
+        step(&mut slow, "check");
         let t_part = self.parts.lap(Part::SyncApply, t_part);
-        self.update_anchors(renderer, world, now);
+        self.update_anchors(renderer, world, now, self.sync_check.is_some());
         let t_part = self.parts.lap(Part::SyncAnchors, t_part);
+        step(&mut slow, "anchors");
         self.sync_flexibles(renderer, world, &synced, now, view);
+        step(&mut slow, "flexibles");
         // GPU object table: bounds and flags of what was synced (unchanged
         // entries are not uploaded); the same bounds for the hover search,
         // the same flags for the lists
@@ -2153,9 +2224,11 @@ impl Scene {
                 self.list_index.set(idx, g);
             }
         }
+        step(&mut slow, "tables");
 
         self.geom_gc(renderer);
         let t_part = self.parts.lap(Part::SyncApply, t_part);
+        step(&mut slow, "geom_gc");
         self.stats.objects = world.objects.len();
         self.stats.geometries = self.geoms.len();
         self.stats.geom_pending = self.geom_pending;
@@ -2172,6 +2245,21 @@ impl Scene {
         }
         self.alpha_changes_tmp = changed;
         self.parts.lap(Part::SyncAlpha, t_part);
+        if let Some(mut s) = slow {
+            s.step("alpha");
+            let gpu = &self.gpu;
+            let name = |idx: usize| match world.objects.get(idx) {
+                Some(o) => {
+                    let kind = sync_check::Kind::of(world, idx, o, gpu.get(idx));
+                    let faces = gpu.get(idx).map_or(0, |g| g.faces.len());
+                    format!("{kind:?} {} ({faces} faces)", o.key.local_id)
+                }
+                None => format!("removed slot {idx}"),
+            };
+            if let Some(line) = s.line(name) {
+                log::info!("{line}");
+            }
+        }
     }
 
     /// Classify again the faces whose base texture is in one of `slots`
@@ -2336,15 +2424,23 @@ impl Scene {
         }
     }
 
-    /// AURORA_SYNC_CHECK: a look at every object. Those at rest whose
+    /// AURORA_SYNC_CHECK: a look at the objects of `range` (the frame's
+    /// slice of the check's pass over every object). Those at rest whose
     /// detail level could be judged and those whose wanted geometry is not
     /// what their distance asks for at this moment, then the same for the
     /// objects the GPU places from an avatar. New objects and those whose
     /// full sync waits for its turn are left out.
-    fn lod_behind(&self, world: &World, records: &aurora_render::arena::RecordStore, eye: Vec3, now: Instant) -> [usize; 4] {
+    fn lod_behind(
+        &self,
+        world: &World,
+        records: &aurora_render::arena::RecordStore,
+        eye: Vec3,
+        now: Instant,
+        range: std::ops::Range<usize>,
+    ) -> [usize; 4] {
         let ctx = self.sync_ctx(world, records, eye, now);
         let mut out = [0; 4];
-        for (idx, g) in self.gpu.iter().enumerate() {
+        for (idx, g) in self.gpu.iter().enumerate().take(range.end).skip(range.start) {
             let Some(o) = world.objects.get(idx) else {
                 continue;
             };
@@ -2429,6 +2525,25 @@ impl Scene {
         }
     }
 
+    /// The materials changed since the last frame (arrived, given up, local):
+    /// a new generation for the legacy ones (the glTF store counts its own),
+    /// and each noted at the generation that counts it, so that only their
+    /// users are rebuilt (mat_changes.rs).
+    pub(crate) fn note_material_changes(&mut self) {
+        let mut changed = std::mem::take(&mut self.mat_changed_tmp);
+        self.materials.take_changed(&mut changed);
+        let gltf = changed.len();
+        self.legacy_mats.take_changed(&mut changed);
+        if changed.len() > gltf {
+            self.materials.generation += 1;
+        }
+        let generation = self.materials.generation;
+        for id in changed.drain(..) {
+            self.mat_changes.note(id, generation);
+        }
+        self.mat_changed_tmp = changed;
+    }
+
     /// Bookkeeping after a full sync: what could not finish is retried next
     /// frame, geometry still pending is watched, material users noted, and
     /// a mesh found rigged starts moving. A new object is no longer one.
@@ -2437,7 +2552,7 @@ impl Scene {
         let Some(g) = self.gpu.get(idx) else {
             return;
         };
-        let mats_changed = !g.material_ids.is_empty() && g.mat_generation != mat_gen;
+        let mats_changed = self.mat_changes.stale(&g.material_ids, g.mat_generation, mat_gen);
         if world
             .objects
             .get(idx)
@@ -2618,7 +2733,11 @@ impl Scene {
             // faces get no record and made this rebuild every frame
             faces: self.gpu[idx].built_faces != geom.faces.iter().filter(|f| f.is_some()).count(),
             geometry: bind_new.is_some(),
-            material_generation: !self.gpu[idx].material_ids.is_empty() && self.gpu[idx].mat_generation != self.materials.generation,
+            material_generation: self.mat_changes.stale(
+                &self.gpu[idx].material_ids,
+                self.gpu[idx].mat_generation,
+                self.materials.generation,
+            ),
         };
         let full_rebuild = why.any();
 
@@ -3387,6 +3506,22 @@ impl Scene {
             avatar_far[a.idx] = true;
         }
         let mut plan = self.impostors.plan(&imp_avatars, view.eye, Instant::now());
+        self.far_avatars.clear();
+        self.far_avatars.extend(imp_avatars.iter().map(|a| (a.idx, *a)));
+        if self.sync_check.is_some() {
+            let (taken, stale, since) = &mut self.picture_check;
+            *taken += plan.capture.len() as u64;
+            *stale += plan.capture.keys().filter(|i| !self.posed_now.contains(i)).count() as u64;
+            let since = since.get_or_insert_with(Instant::now);
+            if since.elapsed().as_secs() >= 10 {
+                let (kept, wrong) = std::mem::take(&mut self.anchors.kept_centres);
+                let (anchors, wrong_anchors) = std::mem::take(&mut self.anchors.kept_anchors);
+                log::info!(
+                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them | anchors kept: {anchors}, {wrong_anchors} not what their wearer gives"
+                );
+                self.picture_check = (0, 0, Some(Instant::now()));
+            }
+        }
         self.stats.avatars_hidden = imp_avatars.len();
         if aurora_net::probe::enabled() {
             let full: Vec<usize> = avatars.iter().filter(|(_, i)| avatar_ok[*i]).map(|(_, i)| *i).collect();
@@ -3798,10 +3933,9 @@ impl Scene {
         self.sounds.fetch(&self.jobs, &net.fetcher, va);
         self.materials.update(&self.jobs, &net.fetcher, va);
         self.settings.update(&self.jobs, &net.fetcher, va);
-        if self.legacy_mats.update(net.runtime(), &net.caps_http()) {
-            // objects using materials are rebuilt on a new generation
-            self.materials.generation += 1;
-        }
+        // (what arrived is counted by note_material_changes)
+        self.legacy_mats.update(net.runtime(), &net.caps_http());
+        self.note_material_changes();
         let t = self.parts.lap(Part::Assets, t);
         for dirty in self.skin_binds.take_dirty() {
             renderer.set_skin_binds(self.skin_binds.list(), dirty);
@@ -3972,6 +4106,10 @@ impl Scene {
         let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant)> = Vec::new();
         let mut shape_dz: Vec<(Uuid, f32)> = Vec::new();
         let mut posed: Vec<(Uuid, usize)> = Vec::new();
+        self.posed_now.clear();
+        // impostors keeping their last pose
+        let mut held: Vec<Uuid> = Vec::new();
+        let every_frame = impostors::pose_every_frame();
         let owners: Vec<(Uuid, u32)> = self.palette_slots.iter().map(|(k, v)| (*k, *v)).collect();
         let changed = self.changed_skeletons(world);
         for (owner, slot) in owners {
@@ -4060,6 +4198,23 @@ impl Scene {
                     completed.extend(stopped);
                 }
             }
+            // an impostor keeps its last pose until its picture is nearly
+            // due (impostors.rs); its animations above still start and stop
+            // on time
+            if !every_frame
+                && owner != world.agent_id
+                && world.avatar_poses.contains_key(&owner)
+                && let Some(a) = self.far_avatars.get(&idx)
+                && let Some(&at) = self.posed_at.get(&owner)
+                && self.impostors.pose_can_wait(a, eye, at, now)
+            {
+                if let Some(s) = self.skeletons.get(&owner) {
+                    shape_dz.push((owner, s.shape_dz));
+                }
+                self.motions.insert(owner, motions);
+                held.push(owner);
+                continue;
+            }
             let cached = changed.as_ref().is_some_and(|c| !c.contains(&owner))
                 && self.skeletons.get(&owner).is_some_and(|s| {
                     s.appearance_gen == world.appearance_generation(&owner)
@@ -4075,6 +4230,7 @@ impl Scene {
             shape_dz.push((owner, dz));
             work.push((slot as usize, motions, base, owner, pose_now));
             posed.push((owner, slot as usize));
+            self.posed_now.insert(idx);
         }
         self.stats.posed = work.len();
         let pal = &mut self.palettes;
@@ -4103,12 +4259,18 @@ impl Scene {
         for (_, motions, _, owner, _) in work {
             self.motions.insert(owner, motions);
         }
+        for (owner, _) in &posed {
+            self.posed_at.insert(*owner, now);
+        }
         let slots = &self.palette_slots;
+        self.posed_at.retain(|id, _| slots.contains_key(id));
         self.motions.retain(|id, _| slots.contains_key(id));
         self.object_signals.retain(|id, _| slots.contains_key(id));
         // joint matrices for the attachments (rest -> posed, skeleton space)
         let joints = rig.len().min(anim::PALETTE_JOINTS);
-        world.avatar_poses.retain(|id, _| posed.iter().any(|p| p.0 == *id));
+        world
+            .avatar_poses
+            .retain(|id, _| posed.iter().any(|p| p.0 == *id) || held.contains(id));
         world.avatar_shape_dz.clear();
         world.avatar_shape_dz.extend(shape_dz);
         self.skeletons

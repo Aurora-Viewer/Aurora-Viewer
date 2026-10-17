@@ -82,6 +82,7 @@ pub(super) struct FrameState<'a> {
     pub(super) geoms: &'a HashMap<GeomKey, GeomEntry>,
     pub(super) textures: &'a TextureStreamer,
     pub(super) mat_gen: u64,
+    pub(super) mat_changes: &'a super::mat_changes::MatChanges,
     /// HUD attachments are placed when they change, not with their wearer
     /// at each frame (false with AURORA_SYNC_SLICE).
     pub(super) still_huds: bool,
@@ -107,7 +108,7 @@ impl SyncState for FrameState<'_> {
             || self
                 .gpu
                 .get(idx)
-                .is_some_and(|g| !g.material_ids.is_empty() && g.mat_generation != self.mat_gen)
+                .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen))
     }
 
     fn pending_due(&self, idx: usize) -> Option<bool> {
@@ -184,6 +185,7 @@ pub(super) struct SyncCtx<'a> {
     fov_y: f32,
     mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
     mat_gen: u64,
+    mat_changes: &'a super::mat_changes::MatChanges,
 }
 
 impl SyncCtx<'_> {
@@ -409,7 +411,7 @@ impl SyncCtx<'_> {
         if o.shape_dirty || o.material_dirty {
             return full();
         }
-        if g.sculpt_wait.is_some() || (!g.material_ids.is_empty() && g.mat_generation != self.mat_gen) {
+        if g.sculpt_wait.is_some() || self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen) {
             return full();
         }
         let (pos, _, hud) = xf;
@@ -528,6 +530,7 @@ impl Scene {
             fov_y: self.fov_y,
             mesh_lod_overrides: &self.mesh_lod_overrides,
             mat_gen: self.materials.generation,
+            mat_changes: &self.mat_changes,
         }
     }
 

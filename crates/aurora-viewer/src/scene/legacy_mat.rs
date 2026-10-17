@@ -295,6 +295,9 @@ pub struct LegacyMaterials {
     /// runs at every frame and only looks at the entries then: a region
     /// leaves thousands of materials behind, all ready.
     next_expiry: Option<Instant>,
+    /// Materials that arrived since the scene last took them
+    /// (mat_changes.rs).
+    changed: Vec<Uuid>,
 }
 
 impl Default for LegacyMaterials {
@@ -308,6 +311,7 @@ impl Default for LegacyMaterials {
             in_flight: 0,
             errors_logged: 0,
             next_expiry: None,
+            changed: Vec::new(),
         }
     }
 }
@@ -329,6 +333,12 @@ impl LegacyMaterials {
     /// A material known locally (offline demo).
     pub fn insert(&mut self, id: Uuid, m: LegacyMaterial) {
         self.entries.insert(id, State::Ready(Arc::new(m)));
+        self.changed.push(id);
+    }
+
+    /// The materials that arrived since the last call (mat_changes.rs).
+    pub fn take_changed(&mut self, into: &mut Vec<Uuid>) {
+        into.append(&mut self.changed);
     }
 
     /// The material if already known (no request).
@@ -399,6 +409,7 @@ impl LegacyMaterials {
                 }
                 for (id, m) in list {
                     self.entries.insert(id, State::Ready(Arc::new(m)));
+                    self.changed.push(id);
                     arrived = true;
                 }
                 // asked but not in the answer: unknown to this region

@@ -17,6 +17,56 @@ const HALF: f32 = 1.4;
 const MAX_ANGLE_COS: f32 = 0.9976; // 4°
 /// The avatar moved by more than this: take a new one.
 const MAX_MOVE: f32 = 0.3;
+/// An impostor is posed again this long before its picture is due (s), so
+/// that the frame that takes it has a fresh pose.
+const POSE_LEAD: f32 = 0.05;
+
+/// How impostors are posed. The Legacy Viewer animates an impostor only on
+/// the frames that may refresh its picture (LLVOAvatar::computeNeedsUpdate,
+/// every 32 to 64 frames, `updateMotions(HIDDEN_UPDATE)` in between); Aurora
+/// posed every avatar in range at every frame, impostors included (about
+/// half the skeletons posed at KB), and the anchors of all they wear with
+/// them. Now an impostor keeps its last pose until its picture is nearly
+/// due ([`Impostors::pose_can_wait`]); its animations still start and stop
+/// on time. AURORA_IMPOSTOR_POSES=every poses them at every frame as
+/// before; `alt` alternates the two ways by the second (one second in three
+/// the old way).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoseMode {
+    Picture,
+    Every,
+    Alternate,
+}
+
+pub fn pose_mode() -> PoseMode {
+    static MODE: std::sync::OnceLock<PoseMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_IMPOSTOR_POSES").as_deref() {
+        Ok("every") => PoseMode::Every,
+        Ok("alt") => PoseMode::Alternate,
+        _ => PoseMode::Picture,
+    })
+}
+
+static EVERY_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether impostors are posed at every frame in this second (the old way).
+pub fn pose_every_frame() -> bool {
+    match pose_mode() {
+        PoseMode::Every => true,
+        PoseMode::Picture => false,
+        PoseMode::Alternate => EVERY_NOW.load(std::sync::atomic::Ordering::Relaxed),
+    }
+}
+
+/// `AURORA_IMPOSTOR_POSES=alt`: the way of second `n` (true: the old way),
+/// the same seconds as `AURORA_MATERIAL_REBUILD=alt`. None without `alt`.
+pub fn alternate_poses(n: u64) -> Option<bool> {
+    (pose_mode() == PoseMode::Alternate).then(|| {
+        let old = n.is_multiple_of(3);
+        EVERY_NOW.store(old, std::sync::atomic::Ordering::Relaxed);
+        old
+    })
+}
 
 /// An avatar to draw as an impostor.
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +122,32 @@ fn period(distance: f32) -> f32 {
 }
 
 impl Impostors {
+    /// Whether impostor `a` (as the last frame's lists saw it) can keep the
+    /// pose it was given at `posed` in this frame: posed less than its
+    /// picture period ago, and, in view, its picture still good (taken less
+    /// than a period ago, from about the same direction, at the same place,
+    /// as what it is now). Otherwise this frame may take its picture.
+    pub fn pose_can_wait(&self, a: &Far, eye: Vec3, posed: Instant, now: Instant) -> bool {
+        let wait = period(a.distance) - POSE_LEAD;
+        if now.duration_since(posed).as_secs_f32() >= wait {
+            return false;
+        }
+        if !a.in_view {
+            return true;
+        }
+        let Some(s) = self.states.get(&a.idx) else {
+            return false;
+        };
+        let Some((at, d, c)) = s.taken else {
+            return false;
+        };
+        let dir = (a.center - eye).normalize_or(Vec3::X);
+        s.silhouette == a.silhouette
+            && dir.dot(d) >= MAX_ANGLE_COS
+            && a.center.distance(c) <= MAX_MOVE
+            && now.duration_since(at).as_secs_f32() < wait
+    }
+
     /// `avatars`: the avatars to draw as impostors.
     pub fn plan(&mut self, avatars: &[Far], eye: Vec3, now: Instant) -> Plan {
         if !self.initialized {
@@ -207,6 +283,37 @@ mod tests {
             in_view: true,
             silhouette,
         }
+    }
+
+    #[test]
+    fn an_impostor_keeps_its_pose_until_its_picture_is_nearly_due() {
+        let mut imp = Impostors::default();
+        let t0 = Instant::now();
+        let a = far(1, false);
+        let eye = Vec3::new(0.0, -30.0, 1.0);
+        // never pictured: posed
+        assert!(!imp.pose_can_wait(&a, eye, t0, t0));
+        let plan = imp.plan(&[a], eye, t0);
+        assert!(plan.capture.contains_key(&1));
+        let p = period(a.distance);
+        let soon = t0 + std::time::Duration::from_secs_f32(p * 0.5);
+        assert!(imp.pose_can_wait(&a, eye, t0, soon));
+        // its picture is nearly due, or its pose too old
+        let late = t0 + std::time::Duration::from_secs_f32(p - POSE_LEAD * 0.5);
+        assert!(!imp.pose_can_wait(&a, eye, t0, late));
+        // the view turned: the plan takes it at once
+        let turned = Vec3::new(10.0, -30.0, 1.0);
+        assert!(!imp.pose_can_wait(&a, turned, t0, soon));
+        // it moved
+        let moved = Far {
+            center: a.center + Vec3::X,
+            ..a
+        };
+        assert!(!imp.pose_can_wait(&moved, eye, t0, soon));
+        // out of view: only its pose's age counts
+        let hidden = Far { in_view: false, ..moved };
+        assert!(imp.pose_can_wait(&hidden, turned, t0, soon));
+        assert!(!imp.pose_can_wait(&hidden, turned, t0, late));
     }
 
     #[test]
