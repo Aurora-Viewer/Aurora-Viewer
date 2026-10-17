@@ -4027,7 +4027,7 @@ impl Scene {
             }
             let anims = &mut self.anims;
             if motions.control {
-                let playing = self.object_signals.entry(owner).or_default().update(world, idx, now);
+                let playing = self.object_signals.entry(owner).or_default().update(world, idx);
                 motions.sync(&playing, now, |id| anims.get(id));
             } else {
                 let mut playing;

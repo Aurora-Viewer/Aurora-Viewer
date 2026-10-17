@@ -5637,7 +5637,15 @@ pub fn loop_animation() -> aurora_assets::Animation {
     anim
 }
 
+pub const SYNC_LEADER_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0021);
+pub const SYNC_DELAYED_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0022);
+
+pub fn animation_sync_demo() -> bool {
+    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| v == "sync")
+}
+
 /// Sequence changes every 120 frames; a real stop/restart every 1200.
+/// In sync mode the second avatar's asset is withheld until frame 300.
 pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
     let step = frame % 1200;
     if step != 1020 && !frame.is_multiple_of(120) {
@@ -5655,7 +5663,16 @@ pub fn loop_animation_events(frame: u64) -> Vec<NetEvent> {
             anims: if step == 960 {
                 Vec::new()
             } else {
-                vec![(IDLE_ANIM, (frame / 120 + 1) as i32)]
+                let id = if animation_sync_demo() {
+                    if avatar == DEMO_AGENT {
+                        SYNC_LEADER_ANIM
+                    } else {
+                        SYNC_DELAYED_ANIM
+                    }
+                } else {
+                    IDLE_ANIM
+                };
+                vec![(id, (frame / 120 + 1) as i32)]
             },
         })
         .collect()

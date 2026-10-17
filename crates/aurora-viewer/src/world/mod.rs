@@ -144,7 +144,8 @@ pub struct ChatLine {
 /// Aurora's movement (`World::update_own_locomotion`).
 const GLIDE_WALKING: f32 = 0.5;
 
-/// One simulator signal, with independent sequence and continuous clocks.
+/// First known simulator signal, independent of visibility and asset loading.
+/// Sequence changes and uninterrupted loops keep separate receipt clocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayingAnimation {
     pub id: Uuid,

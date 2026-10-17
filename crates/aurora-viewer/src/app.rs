@@ -6944,6 +6944,26 @@ impl App {
             }
         }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
+            if crate::demo::animation_sync_demo() && self.frame_count == 300 {
+                let rig = self.scene.avatar_lib.rig.clone();
+                self.scene.anims.insert(
+                    crate::demo::SYNC_DELAYED_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),
+                );
+                log::info!("demo animation sync: delayed asset ready at frame 300");
+            }
+            if crate::demo::animation_sync_demo()
+                && self.frame_count == 360
+                && let Some(&joint) = self.scene.avatar_lib.rig.names.get("mElbowLeft")
+            {
+                let (leader, _) = self.scene.preview_pose(&crate::demo::DEMO_AGENT);
+                let (follower, _) = self
+                    .scene
+                    .preview_pose(&uuid::Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002));
+                if let Some((a, b)) = leader.get(joint).zip(follower.get(joint)) {
+                    log::info!("demo animation sync: elbow phase error {:.6} rad", a.angle_between(*b));
+                }
+            }
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
             }
@@ -11228,6 +11248,12 @@ impl ApplicationHandler for App {
                 crate::demo::IDLE_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(demo_anim, &rig)),
             );
+            if crate::demo::animation_sync_demo() {
+                self.scene.anims.insert(
+                    crate::demo::SYNC_LEADER_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::loop_animation(), &rig)),
+                );
+            }
             // AURORA_DEMO_LINK's stand-in simulator signals the stock walk,
             // run, fly and stand: drawn with the demo's own motions
             if self.demo_link_cfg.is_some() {

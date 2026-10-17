@@ -205,7 +205,7 @@ impl BoundAnim {
 //
 // Port of LLMotionController / LLPoseBlender (indra/llcharacter, Linden
 // Research, originally LGPL 2.1): motions ease in and out (cubic), a motion still
-// loading starts when it arrives, a stopped motion keeps playing while it
+// loading catches up to its first known signal, a stopped motion keeps playing while it
 // eases out, and a joint no motion drives keeps its last pose (never back to
 // the T-pose: LLJointStateBlender::blendJointStates).
 
@@ -234,6 +234,13 @@ struct Motion {
     /// Weight when the ease out began (mResidualWeight).
     residual: f32,
     weight: f32,
+}
+
+/// Playback origins kept while an asset loads, including explicit edit pauses.
+struct PendingMotion {
+    signal: PlayingAnimation,
+    activation: Instant,
+    continuous_activation: Instant,
 }
 
 impl Motion {
@@ -279,6 +286,7 @@ pub struct Controller {
     /// Signals already activated, including completed non-looping motions.
     /// A still-signaled one-shot must not restart automatically every frame.
     signals: HashMap<Uuid, PlayingAnimation>,
+    pending: HashMap<Uuid, PendingMotion>,
     preview_start: Option<(Option<Uuid>, Instant)>,
     /// Joint rotations of the last frame (None before the first one).
     rot: Vec<Quat>,
@@ -570,6 +578,10 @@ impl Controller {
             m.continuous_activation += d;
             m.stop = m.stop.map(|s| s + d);
         }
+        for m in self.pending.values_mut() {
+            m.activation += d;
+            m.continuous_activation += d;
+        }
         let pr = &mut self.procedural;
         for fade in [&mut pr.head, &mut pr.eyes] {
             fade.change = fade.change.map(|c| c + d);
@@ -680,8 +692,8 @@ impl Controller {
         out
     }
 
-    /// Import preview clocks are explicit; ordinary motions still activate on
-    /// arrival. Seeking restarts only the preview, without touching server state.
+    /// Import preview clocks override the first known signal. Seeking restarts
+    /// only the preview, without touching server state.
     pub fn set_preview_clock(&mut self, clock: Option<(Option<Uuid>, Instant)>) {
         if self.preview_start == clock {
             return;
@@ -689,6 +701,7 @@ impl Controller {
         if let Some((target, _)) = clock {
             self.motions.retain(|m| target.is_some_and(|id| m.id != id));
             self.signals.retain(|id, _| target.is_some_and(|target| *id != target));
+            self.pending.retain(|id, _| target.is_some_and(|target| *id != target));
         }
         self.preview_start = clock;
     }
@@ -702,10 +715,10 @@ impl Controller {
         let frozen = self.paused_at;
         let now = frozen.unwrap_or(now);
         let preview = self.preview_start;
-        let activation = |id| {
+        let activation = |id, start: Instant| {
             preview
                 .filter(|(target, _)| target.is_none_or(|target| target == id))
-                .map_or(now, |(_, start)| start)
+                .map_or(start.min(now), |(_, start)| start)
         };
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut() {
@@ -722,9 +735,10 @@ impl Controller {
             self.motions.retain(|m| m.stop != Some(now));
         }
         self.signals.retain(|id, _| playing.iter().any(|p| p.id == *id));
-        // start the new ones, once loaded (updateLoadingMotions: activated
-        // when they arrive). A motion easing out is left to finish and a
-        // new instance starts (startMotion, deprecateMotionInstance).
+        self.pending.retain(|id, _| playing.iter().any(|p| p.id == *id));
+        // Unlike updateLoadingMotions, loading does not move the playback
+        // origin: a late asset or off-camera skeleton joins the known phase.
+        // A motion easing out is left to finish while a new instance starts.
         for signal in playing {
             if self.signals.get(&signal.id) == Some(signal) {
                 continue;
@@ -733,12 +747,24 @@ impl Controller {
                 if m.anim.anim.looping && m.signal.continuous_start == signal.continuous_start {
                     // LLVOAvatar signals sequence changes, but startMotion
                     // keeps an already active loop running continuously.
-                    m.activation = activation(signal.id);
+                    m.activation = activation(signal.id, signal.sequence_start);
                     m.signal = *signal;
                     self.signals.insert(signal.id, *signal);
                     continue;
                 }
                 m.stop_at(now);
+            }
+            let pending = self.pending.entry(signal.id).or_insert_with(|| PendingMotion {
+                signal: *signal,
+                activation: activation(signal.id, signal.sequence_start),
+                continuous_activation: activation(signal.id, signal.continuous_start),
+            });
+            if pending.signal != *signal {
+                pending.activation = activation(signal.id, signal.sequence_start);
+                if pending.signal.continuous_start != signal.continuous_start {
+                    pending.continuous_activation = activation(signal.id, signal.continuous_start);
+                }
+                pending.signal = *signal;
             }
             if let Some(anim) = get(&signal.id) {
                 self.motions.insert(
@@ -746,8 +772,8 @@ impl Controller {
                     Motion {
                         id: signal.id,
                         anim,
-                        activation: activation(signal.id),
-                        continuous_activation: activation(signal.id),
+                        activation: pending.activation,
+                        continuous_activation: pending.continuous_activation,
                         signal: *signal,
                         stop: None,
                         residual: 0.0,
@@ -755,6 +781,7 @@ impl Controller {
                     },
                 );
                 self.signals.insert(signal.id, *signal);
+                self.pending.remove(&signal.id);
             }
         }
         // weights (LLMotionController::updateMotionsByType)
@@ -1524,11 +1551,13 @@ mod tests {
         let mut c = Controller::default();
         c.sync(&[signal(id, 1, t0)], t0, |_| Some(anim.clone()));
         // The world observed an empty list then the same UUID and sequence.
-        c.sync(&[signal(id, 1, later)], later, |_| Some(anim.clone()));
+        c.sync(&[signal(id, 1, later)], later, |_| None);
+        let loaded = later + Duration::from_millis(250);
+        c.sync(&[signal(id, 1, later)], loaded, |_| Some(anim.clone()));
         let active = c.motions.iter().find(|m| m.stop.is_none()).expect("restart");
         assert_eq!(active.continuous_activation, later);
-        assert_eq!(active.local_time(later), 0.0);
-        assert_eq!(active.weight, 0.0);
+        assert_eq!(active.local_time(loaded), 0.25);
+        assert_eq!(active.weight, 0.5);
         assert!(c.motions.iter().any(|m| m.stop == Some(later)));
     }
 
@@ -1572,7 +1601,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_jump_notifies_simulator_at_ease_out_once_after_asset_loads() {
+    fn pre_jump_catches_up_after_asset_load_and_notifies_simulator_once() {
         let rig = rig();
         let id = uuid::uuid!("7a4e87fe-de39-6fcb-6223-024b00893244");
         let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.25).anim.clone(), &rig);
@@ -1584,18 +1613,17 @@ mod tests {
         let mut c = Controller::default();
         let mut agent = crate::agent::AgentState::default();
         agent.record_jump_input(t0);
-        // Loading must not consume the completion; its clock starts on arrival.
+        // A late asset catches up, but its completion still reaches the
+        // simulator exactly once so a delayed pre-jump cannot strand us.
         assert!(c.sync(&playing, t0, |_| None).is_empty());
-        assert!(c.sync(&playing, at(2.0), |_| Some(anim.clone())).is_empty());
-        assert!(c.sync(&playing, at(2.74), |_| Some(anim.clone())).is_empty());
-        let stopped = c.sync(&playing, at(2.75), |_| Some(anim.clone()));
+        let stopped = c.sync(&playing, at(2.0), |_| Some(anim.clone()));
         assert_eq!(stopped, vec![id]);
         assert_eq!(
-            agent.animation_stop_flags(stopped[0], false, at(2.75)),
+            agent.animation_stop_flags(stopped[0], false, at(2.0)),
             aurora_net::control::FINISH_ANIM
         );
-        assert_eq!(c.motions.len(), 1, "notification precedes visual ease-out completion");
-        assert!(c.sync(&playing, at(2.9), |_| Some(anim.clone())).is_empty());
+        assert!(c.motions.is_empty(), "the expired pose must not flash on screen");
+        assert!(c.sync(&playing, at(2.1), |_| Some(anim.clone())).is_empty());
         assert!(c.sync(&playing, at(3.0), |_| Some(anim.clone())).is_empty());
         assert!(c.motions.is_empty());
     }
@@ -1697,33 +1725,62 @@ mod tests {
     }
 
     #[test]
-    fn loaded_motion_starts_on_arrival_and_shared_frame_time_gives_identical_palettes() {
+    fn delayed_loading_and_first_visibility_join_the_same_loop_after_ten_minutes() {
         let rig = rig();
         let id = Uuid::from_u128(22);
-        let anim = bend(&rig, 0.7, 0.5);
+        let mut bound = BoundAnim::bind(swing(&rig).anim.clone(), &rig);
+        bound.anim.loop_in = 0.5;
+        bound.anim.loop_out = 1.5;
+        let anim = Arc::new(bound);
         let t0 = Instant::now();
-        let loaded = t0 + Duration::from_secs(2);
-        let frame = loaded + Duration::from_millis(250);
+        let loaded = t0 + Duration::from_millis(2250);
+        let frame = t0 + Duration::from_millis(607250);
         let first = signal(id, 1, t0);
         let changed = PlayingAnimation {
             sequence: 2,
-            sequence_start: frame,
+            sequence_start: t0 + Duration::from_secs(1),
             ..first
         };
         let mut a = Controller::default();
         let mut b = Controller::default();
+        let mut unseen = Controller::default();
         let mut out_a = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         let mut out_b = out_a.clone();
-        for c in [&mut a, &mut b] {
-            c.sync(&[first], t0, |_| None);
-            c.sync(&[first], loaded, |_| Some(anim.clone()));
+        let mut out_unseen = out_a.clone();
+        a.sync(&[first], t0, |_| Some(anim.clone()));
+        b.sync(&[first], t0, |_| None);
+        b.sync(&[changed], loaded, |_| Some(anim.clone()));
+        for c in [&mut a, &mut b, &mut unseen] {
             c.sync(&[changed], frame, |_| Some(anim.clone()));
-            assert_eq!(c.motions[0].continuous_activation, loaded);
-            assert_eq!(c.motions[0].weight, 0.5);
+            assert_eq!(c.motions[0].continuous_activation, t0);
+            assert!((c.motions[0].local_time(frame) - 1.25).abs() < 1e-12);
         }
         a.evaluate(&rig, frame, None, &mut out_a);
         b.evaluate(&rig, frame, None, &mut out_b);
+        unseen.evaluate(&rig, frame, None, &mut out_unseen);
         assert_eq!(out_a, out_b);
+        assert_eq!(out_a, out_unseen);
+    }
+
+    #[test]
+    fn loading_during_an_edit_pause_preserves_the_paused_playback_time() {
+        let rig = rig();
+        let anim = swing(&rig);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let old = signal(Uuid::from_u128(23), 1, t0);
+        let new = signal(Uuid::from_u128(24), 1, at(1.0));
+        let mut c = Controller::default();
+        c.sync(&[old], t0, |_| None);
+        c.set_paused(true, at(0.5));
+        c.sync(&[old, new], at(1.0), |_| None);
+        c.set_paused(false, at(3.0));
+        c.sync(&[old, new], at(3.25), |_| Some(anim.clone()));
+        let old = c.motions.iter().find(|m| m.id == old.id).expect("old motion");
+        let new = c.motions.iter().find(|m| m.id == new.id).expect("new motion");
+        assert!((old.local_time(at(3.25)) - 0.75).abs() < 1e-12);
+        assert!((new.local_time(at(3.25)) - 0.25).abs() < 1e-12);
+        assert!(c.pending.is_empty());
     }
 
     #[test]

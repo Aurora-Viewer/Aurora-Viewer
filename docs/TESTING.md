@@ -1263,7 +1263,7 @@ To check with these scenarios:
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_ANIM_LOOP=1` | Animation loops, sequences and stops |
+| `AURORA_DEMO_ANIM_LOOP=1\|sync` | Animation loops, sequences, stops and delayed-asset synchronization |
 | `AURORA_DEMO_AO=interface\|interface-group\|interface-track\|interface-combine\|interface-swim\|folder-names\|folder-names-wait\|1\|transitions\|off\|movement\|swim\|swim-missing\|firestorm\|firestorm-wait\|migrate\|migrate-done\|empty\|design-current\|design-tabs\|design-movement\|design-section\|design-swim` | Built-in AO and interactive native layout study |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -1279,6 +1279,15 @@ To check with these scenarios:
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
   960 / 1020 every 1200 frames.
+- **`AURORA_DEMO_ANIM_LOOP=sync`**: the two avatars receive distinct animations
+  together at frame 120; the second file becomes available only at frame 300.
+  Both must then show the same loop phase, including subsequent sequence changes
+  and stop/restart. Capture after frame 360; the log reports the elbow phase error
+  then (expected below 0.001 rad). Unit regressions additionally skip
+  over ten minutes of skeleton evaluation, preserve the loop introduction and
+  exercise delayed loading across an explicit attachment-edit pause. On the grid,
+  have two avatars dance, turn the camera away and back, move out of range and
+  return, then repeat after ten minutes; also check normal jump completion.
 - **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
