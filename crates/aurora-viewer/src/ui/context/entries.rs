@@ -170,6 +170,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         ui.todo("info-circle-filled", aurora_i18n::tr!("common-profile"));
         ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
         ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
+        ui.item("box", aurora_i18n::tr!("ui-context-object-information"), CtxAction::ObjectInfo(id));
         ui.separator();
         // two objects or more: a right click on a selected one keeps them;
         // one alone has nothing to link to
@@ -446,6 +447,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         !f.object.id.is_nil(),
         CtxAction::ScriptInfo(f.object.id),
     );
+    ui.item_if(
+        "box",
+        aurora_i18n::tr!("ui-context-object-information"),
+        !f.object.id.is_nil(),
+        CtxAction::ObjectInfo(f.object.id),
+    );
     derender_items(
         ui,
         f.object.id,
@@ -657,6 +664,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         "code",
         aurora_i18n::tr!("ui-context-script-info"),
         CtxAction::ScriptInfo(attachment),
+    );
+    ui.item(
+        "box",
+        aurora_i18n::tr!("ui-context-object-information"),
+        CtxAction::ObjectInfo(attachment),
     );
     // the worn object, not its wearer (the selection's root)
     derender_items(ui, attachment, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
@@ -918,6 +930,7 @@ mod tests {
             keys.extend([
                 "ui-context-inspect-2",
                 "ui-context-script-info",
+                "ui-context-object-information",
                 "ui-context-derender-temporarily",
                 "ui-context-derender-blacklist",
                 "ui-context-show-textures",
@@ -1053,6 +1066,7 @@ mod tests {
             "ui-context-object-profile",
             "ui-context-inspect-2",
             "ui-context-script-information",
+            "ui-context-object-information",
             "ui-context-derender-temporarily",
             "ui-context-derender-blacklist",
             "ui-context-show-textures",
@@ -1357,7 +1371,7 @@ mod tests {
 mod bridge_query_tests {
     use super::*;
     #[test]
-    fn object_submenu_dispatches_script_information_for_the_selected_object() {
+    fn object_submenu_dispatches_separate_script_and_extended_information_for_the_selected_object() {
         let object = Uuid::from_u128(101);
         let target = Target::Object {
             key: ObjKey { region: 1, local_id: 10 },
@@ -1370,11 +1384,47 @@ mod bridge_query_tests {
             .find(|e| e.label == aurora_i18n::tr!("common-object"))
             .expect("object submenu");
         let Kind::Submenu(children) = &entry.kind else { panic!("submenu") };
-        let info = children
+        let index = children
             .iter()
-            .find(|e| e.label == aurora_i18n::tr!("ui-context-script-information"))
+            .position(|e| e.label == aurora_i18n::tr!("ui-context-script-information"))
             .expect("script info");
+        let info = &children[index];
         assert!(info.enabled);
         assert!(matches!(&info.kind, Kind::Action(CtxAction::ScriptInfo(id)) if *id == object));
+        let extended = &children[index + 1];
+        assert!(extended.enabled);
+        assert_eq!(extended.label, aurora_i18n::tr!("ui-context-object-information"));
+        assert!(matches!(&extended.kind, Kind::Action(CtxAction::ObjectInfo(id)) if *id == object));
+    }
+
+    #[test]
+    fn attachment_information_uses_the_worn_object_and_follows_script_information() {
+        let object = Uuid::from_u128(102);
+        for target in [
+            Target::Attachment {
+                key: ObjKey { region: 1, local_id: 10 },
+            },
+            Target::Avatar {
+                id: Uuid::from_u128(7),
+                own: false,
+                attachment: Some(object),
+            },
+        ] {
+            let facts = Facts {
+                object: super::super::ObjectFacts {
+                    id: object,
+                    ..Default::default()
+                },
+                ..Facts::default()
+            };
+            let entries = world_menu(&target, &facts, Vec3::ZERO);
+            let index = entries
+                .iter()
+                .position(|e| matches!(e.kind, Kind::Action(CtxAction::ScriptInfo(id)) if id == object))
+                .expect("script info");
+            let extended = &entries[index + 1];
+            assert!(extended.enabled);
+            assert!(matches!(&extended.kind, Kind::Action(CtxAction::ObjectInfo(id)) if *id == object));
+        }
     }
 }

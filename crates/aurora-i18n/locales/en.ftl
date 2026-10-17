@@ -2333,6 +2333,7 @@ ui-contacts-information = Information
 ui-land-mod-information-and-settings-for-the-selected-parcel = Information and settings for the selected parcel
 build-ui-tools-parcel-information = Parcel information
 ui-context-script-information = Script information
+ui-context-object-information = Object information
 ui-place-details-info = Info:
 world-profiles-payment-info-on-file = Payment info on file
 world-profiles-payment-info-used = Payment info used
@@ -7835,6 +7836,33 @@ bridge-script-info-missing = The object is no longer available or is outside the
 bridge-script-info-result = Script info for “{ $name }”: { $running }/{ $total } running scripts; { $memory } KiB allocated memory; { $time } ms CPU. { $pathfinding }
 bridge-script-info-pathfinding = Pathfinding CPU: { $time } ms.
 bridge-script-info-failed = Script information unavailable: { $reason }
+bridge-object-info-loading = Retrieving object information through the Aurora bridge…
+bridge-object-info-region = Object information is only available for an object in your current region.
+bridge-object-info-failed = Object information unavailable: { $reason }
+bridge-object-info-group-owned = Group-owned
+bridge-object-info-result =
+    Object information for “{ $name }”:
+    Object ID: { $object }
+    Description: { $description }
+    Root prim: { $root }
+    Prim count: { $prims }
+    Land impact: { $impact }
+    Inventory items: { $inventory }
+    Velocity: { $velocity } m/s
+    Position: { $position } ({ $distance } m)
+    Rotation: { $rotation } ({ $degrees }°)
+    Angular velocity: { $angular } rad/s
+    Creator: { $creator }
+    Owner: { $owner }
+    Previous owner: { $previous }
+    Rezzed by: { $rezzer }
+    Group: { $group }
+    Creation time: { $created }
+    Rez time: { $rezzed }
+    Pathfinding type: { $pathfinding }
+    Attachment point: { $attachment }
+    Temporarily attached: { $temporary }
+    Your current position: { $observer }
 bridge-query-timeout = The bridge did not return the requested information in time. Try again.
 bridge-query-interrupted = The information request was interrupted by a region or bridge connection change. Try again.
 ao-bootstrap-interrupted = An unfinished AO import already exists in #Aurora. Review it in inventory before retrying.
