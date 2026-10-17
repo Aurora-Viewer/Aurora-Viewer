@@ -1419,7 +1419,6 @@ pub(super) mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
-            aux_repeats: [1.0; 3],
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,
