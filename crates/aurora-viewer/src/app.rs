@@ -7559,6 +7559,9 @@ impl App {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();
                     }
+                    crate::build::demo::Step::SharedRights(idx, granted) => {
+                        crate::build::demo::shared_rights(&mut self.world, idx, granted);
+                    }
                     crate::build::demo::Step::Press => self.click(click_pick::Click::Build),
                     crate::build::demo::Step::Release => self.build_release(),
                     crate::build::demo::Step::Face(idx, face, shift) => {
@@ -11697,7 +11700,7 @@ impl ApplicationHandler for App {
                     None => {}
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces")) {
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared")) {
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
                 let complex = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
                 let events = if complex {

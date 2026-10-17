@@ -235,7 +235,13 @@ fn prim(
         velocity: Vec3::ZERO,
         acceleration: Vec3::ZERO,
         angular_velocity: Vec3::ZERO,
-        update_flags: 0,
+        // Ordinary demo prims have the same editable ownership advertised by
+        // DemoSim's properties. Special interaction fixtures override these.
+        update_flags: crate::ui::context::flags::OBJECT_YOU_OWNER
+            | crate::ui::context::flags::OBJECT_ANY_OWNER
+            | crate::ui::context::flags::OBJECT_MODIFY
+            | crate::ui::context::flags::OBJECT_MOVE
+            | crate::ui::context::flags::OBJECT_COPY,
         owner_id: Uuid::nil(),
         volume,
         texture_entry: Some(t),

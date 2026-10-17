@@ -84,6 +84,90 @@ fn general_and_rights_expose_separate_content_with_the_same_selection() {
 }
 
 #[test]
+fn shared_editing_enables_general_edits_without_sale_or_permission_authority() {
+    use aurora_net::{NetCommand, build::BuildCmd};
+    let (mut world, mut tool, _) = fixture();
+    let idx = world.objects.index_of(&tool.selection[0]).unwrap();
+    let id = world.objects.get(idx).unwrap().full_id;
+    world.objects.get_mut(idx).unwrap().owner_id = uuid::Uuid::from_u128(911);
+    tool.props.get_mut(&id).unwrap().owner_id = uuid::Uuid::from_u128(911);
+    tool.out.clear();
+    let p = crate::theme::Theme::default().palette();
+    let ctx = egui::Context::default();
+    let mut show = |events| frame(&ctx, events, |ui| general::show(ui, &p, &mut tool, &mut world, false));
+    let select_all = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..Default::default()
+    };
+    let mut texts = show(vec![]);
+    for _ in 0..3 {
+        texts = show(vec![]);
+    }
+    let name = texts.iter().find(|(text, _)| text == "Presentation test").unwrap().1.center();
+    show(vec![egui::Event::PointerMoved(name)]);
+    for pressed in [true, false] {
+        show(vec![egui::Event::PointerButton {
+            pos: name,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    show(vec![
+        egui::Event::ModifiersChanged(select_all),
+        egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: select_all,
+        },
+    ]);
+    show(vec![
+        egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+        egui::Event::Text("Shared edit".into()),
+    ]);
+    texts = show(vec![egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    for label in [aurora_i18n::tr!("common-share"), aurora_i18n::tr!("common-for-sale")] {
+        let pos = texts.iter().find(|(text, _)| text == label).unwrap().1.center();
+        show(vec![egui::Event::PointerMoved(pos)]);
+        for pressed in [true, false] {
+            show(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+    }
+    assert!(
+        matches!(&tool.out[..], [NetCommand::Build(BuildCmd::SetName { name, .. })] if name == "Shared edit"),
+        "{:?}",
+        tool.out
+    );
+    let texts = frame(&ctx, vec![], |ui| general::show(ui, &p, &mut tool, &mut world, true));
+    assert!(
+        texts
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("build-ui-general-you-can-edit-this-object"))
+    );
+    world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+    let texts = frame(&ctx, vec![], |ui| general::show(ui, &p, &mut tool, &mut world, true));
+    assert!(
+        texts
+            .iter()
+            .any(|(text, _)| text == aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object"))
+    );
+}
+
+#[test]
 fn transform_actions_leave_the_three_vectors_visible_at_the_top() {
     let (mut world, mut tool, mut settings) = fixture();
     let p = crate::theme::Theme::default().palette();
@@ -666,6 +750,8 @@ fn object_contents_inventory_fills_the_panel_and_follows_height_changes_and_filt
         1
     );
     inspector.tool.props.get_mut(&object_id).unwrap().owner_mask &= !perm::MODIFY;
+    let idx = inspector.world.objects.index_of_uuid(&object_id).unwrap();
+    inspector.world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
     let (readonly_rect, texts) = inspector.show(vec![]);
     assert!((readonly_rect.size() - enlarged.0.size()).length() < 1.0);
     assert!(

@@ -895,6 +895,12 @@ with the full text on hover. Block and Ignore buttons under the menu.
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
 `focus`, `create`, `land`, `select`. `AURORA_DEMO_BUILD_FRAME` changes its
 start frame.
+`shared,object:99620` and `shared-denied,object:99620` select another resident's
+linkset with granted or denied effective Modify rights. Use
+`AURORA_DEMO_BUILD_TAB=texture:bp|texture:pbr|shape|features|general|rights` and
+capture after frame 700. Granted rights enable surface/property edits and
+report an editable object; sale and permission controls remain disabled.
+Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
 
