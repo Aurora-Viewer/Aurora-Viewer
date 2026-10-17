@@ -12,10 +12,19 @@ struct PostParams {
     glow: f32,    // 1: add the blurred glow (glowcombineF.glsl)
     debug_glow: f32, // AURORA_DEBUG_GLOW: show the glow amount of each pixel
     legacy_gamma: f32, // sky gamma on skies without probe ambiance, else 1
+    // Aurora's bloom (bloom.wgsl): the share of the light above the
+    // threshold spread around (0 = off), the threshold and its soft knee in
+    // exposed units (1 = white), the gain / the number of bloom levels
+    bloom: f32,
+    bloom_threshold: f32,
+    bloom_knee: f32,
+    bloom_norm: f32,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
 @group(0) @binding(3) var glow_tex: texture_2d<f32>;
+// The bloom levels added up (half resolution, scene units), see bloom.wgsl.
+@group(1) @binding(0) var bloom_tex: texture_2d<f32>;
 
 struct Out {
     @builtin(position) clip: vec4<f32>,
@@ -102,9 +111,33 @@ fn luma(c: vec3<f32>) -> f32 {
     return dot(sqrt(c), vec3<f32>(0.299, 0.587, 0.114));
 }
 
+// The part of a scene color the bloom spreads: what goes over the
+// threshold once exposed, with a quadratic knee below it (scene units).
+fn bloom_extract(c: vec3<f32>) -> vec3<f32> {
+    let lit = max(c, vec3<f32>(0.0));
+    let b = max(lit.r, max(lit.g, lit.b)) * post.exposure;
+    let knee = max(post.bloom_knee, 1e-4);
+    var soft = clamp(b - post.bloom_threshold + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee);
+    return lit * (max(soft, b - post.bloom_threshold) / max(b, 1e-5));
+}
+
+// The scene color with the bloom: the share `bloom` of the light over the
+// threshold leaves the pixel and comes back spread by the levels (brighter
+// by bloom.rs GAIN, folded into bloom_norm): bright spots keep their
+// shape, gain a soft halo, and nothing far under the threshold moves.
+fn scene(uv: vec2<f32>) -> vec3<f32> {
+    let c = textureSampleLevel(hdr, hdr_sampler, uv, 0.0).rgb;
+    if (post.bloom <= 0.0) {
+        return c;
+    }
+    let spread = textureSampleLevel(bloom_tex, hdr_sampler, uv, 0.0).rgb * post.bloom_norm;
+    return c + post.bloom * (spread - bloom_extract(c));
+}
+
 // Tone mapped color, before legacyGamma (CAS input).
 fn tap_linear(uv: vec2<f32>) -> vec3<f32> {
-    return tonemap(textureSampleLevel(hdr, hdr_sampler, uv, 0.0).rgb);
+    return tonemap(scene(uv));
 }
 
 // Final color as LLPipeline::tonemap writes it (legacyGamma included): what
@@ -190,6 +223,37 @@ fn fs_glow_extract(in: Out) -> @location(0) vec4<f32> {
         acc += vec4<f32>(linear_to_srgb(legacy_gamma(tonemap(c.rgb))) * a, a * a);
     }
     return acc * 0.25;
+}
+
+fn bloom_box(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>) -> vec4<f32> {
+    let m = (a + b + c + d) * 0.25;
+    // Karis average: each box weighs 1 / (1 + its luma), so that one very
+    // bright pixel (a specular on a moving mesh) does not flicker
+    let w = 1.0 / (1.0 + dot(m, vec3<f32>(0.2126, 0.7152, 0.0722)) * post.exposure);
+    return vec4<f32>(m * w, w);
+}
+
+// First bloom level (half resolution): the light over the threshold,
+// downsampled with the 13 taps of bloom.wgsl and the Karis average.
+@fragment
+fn fs_bloom_prefilter(in: Out) -> @location(0) vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(hdr));
+    var t: array<vec3<f32>, 13>;
+    let offs = array<vec2<f32>, 13>(
+        vec2<f32>(-2.0, -2.0), vec2<f32>(0.0, -2.0), vec2<f32>(2.0, -2.0),
+        vec2<f32>(-2.0, 0.0), vec2<f32>(0.0, 0.0), vec2<f32>(2.0, 0.0),
+        vec2<f32>(-2.0, 2.0), vec2<f32>(0.0, 2.0), vec2<f32>(2.0, 2.0),
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
+    );
+    for (var i = 0; i < 13; i++) {
+        t[i] = bloom_extract(textureSampleLevel(hdr, hdr_sampler, in.uv + offs[i] * texel, 0.0).rgb);
+    }
+    var acc = bloom_box(t[9], t[10], t[11], t[12]) * 0.5;
+    acc += bloom_box(t[0], t[1], t[3], t[4]) * 0.125;
+    acc += bloom_box(t[1], t[2], t[4], t[5]) * 0.125;
+    acc += bloom_box(t[3], t[4], t[6], t[7]) * 0.125;
+    acc += bloom_box(t[4], t[5], t[7], t[8]) * 0.125;
+    return vec4<f32>(acc.rgb / max(acc.a, 1e-5), 1.0);
 }
 
 @fragment
