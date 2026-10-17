@@ -3787,6 +3787,7 @@ What the inventory must show with these scenarios:
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
+| `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3896,7 +3897,10 @@ What the inventory must show with these scenarios:
   or a recess, on PBR faces (classic skies included, where the Legacy
   Viewer applies no occlusion to them) and on the glossy reflection of
   legacy materials. Below a roughness of about 0.3 it fades out, so mirrors
-  keep their reflection. It comes with GTAO only: the Legacy method's
+  keep their reflection; the lobe it tests is never narrower than about 26°,
+  and its visibility and bent normal are blurred three times more than the
+  occlusion (`denoise_bent`): without that, an inside corner of
+  half-polished metal showed dark patches and soft waves. It comes with GTAO only: the Legacy method's
   image does not change. `0` leaves it out, as before; `alt` leaves it out
   every other second (`AURORA_DEMO_PBR_METAL=1`: the inside corner left
   of the cube, and the folds of the avatars' clothes and skin).
@@ -3912,6 +3916,10 @@ What the inventory must show with these scenarios:
   common.wgsl). `alt` switches it every second, both kept ready
   (`AURORA_DEMO_BOUNCE=1`). `g_ssao` includes it (crowd of 40,
   2560 × 1369, High: about 0.9 to 1.0 ms with it, 0.4 to 0.5 without).
+  Its strength is Preferences › Graphics › Indirect light intensity (0 to
+  4, default 1.5; 1 is one physical bounce, which hardly shows);
+  `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
+  2 a glow starts around the foot of objects, at 4 it is grainy).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,

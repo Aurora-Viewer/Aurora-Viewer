@@ -48,12 +48,13 @@
 //
 // The result is a visibility (1 = nothing occludes) in `.r` of the last
 // target, sampled where the Legacy occlusion is (screen_ao, common.wgsl),
-// and the bent normal — the mean direction of the unoccluded part of the
-// hemisphere (XE_GTAO_COMPUTE_BENT_NORMALS, the paper's algorithm 2) — in
-// view space, `.gba` mapped from -1..1 to 0..1; the shading turns it into a
-// specular occlusion (specular_occlusion, common.wgsl). The working
-// targets hold the visibility in `.r` and the bent normal unpacked in
-// `.gba`, blurred with the same weights.
+// and, for the specular occlusion (specular_occlusion, common.wgsl), a
+// visibility blurred more in `.g` and the bent normal — the mean direction
+// of the unoccluded part of the hemisphere (XE_GTAO_COMPUTE_BENT_NORMALS,
+// the paper's algorithm 2) — in view space, its x and y in `.ba` mapped
+// from -1..1 to 0..1 (it faces the camera: z is the negative root). The
+// working targets hold the same, unpacked (`working`); `denoise_bent`
+// blurs all but `.r` a few more times.
 // View space here is XeGTAO's: x right, y up, z the distance in front of
 // the camera; screen pixels go down.
 
@@ -287,10 +288,20 @@ fn rot_from_to(src: vec3<f32>, dst: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(dot(r0, v), dot(r1, v), dot(r2, v));
 }
 
-// The view's bent normal into the working target: (visibility / scale,
-// bent normal).
+// The working target: the visibility / scale twice — `.r` blurred as the
+// occlusion is, `.g` blurred more for the specular occlusion — and the
+// bent normal's x and y in `.ba` (it faces the camera: its z is the
+// negative root, `bent_of`).
 fn working(visibility: f32, bent: vec3<f32>) -> vec4<f32> {
-    return vec4<f32>(saturate(visibility / OCCLUSION_TERM_SCALE), bent);
+    let v = saturate(visibility / OCCLUSION_TERM_SCALE);
+    return vec4<f32>(v, v, bent.xy);
+}
+
+// The bent normal of a working texel's `.ba`.
+fn bent_of(xy: vec2<f32>) -> vec3<f32> {
+    let l = length(xy);
+    let flat = select(xy, xy / l, l > 1.0);
+    return vec3<f32>(flat, -sqrt(max(1.0 - dot(flat, flat), 0.0)));
 }
 
 @compute @workgroup_size(8, 8)
@@ -736,6 +747,20 @@ fn denoised(px: vec2<i32>, final_apply: bool) -> vec4<f32> {
     return sum / (w.centre + dot(w.sides, vec4<f32>(1.0)) + dot(w.diagonals, vec4<f32>(1.0)));
 }
 
+// The specular occlusion's visibility and the bent normal blurred once
+// more, the occlusion's own visibility kept: GTAO's few slices leave
+// patches in both, which the specular occlusion (a cone test, sharp at its
+// edge, on metal that has no diffuse to hide them) showed as dark blotches;
+// the occlusion itself keeps its detail.
+@compute @workgroup_size(8, 8)
+fn denoise_bent(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (any(id.xy >= textureDimensions(ao_out))) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    textureStore(ao_out, px, vec4<f32>(ao_at(px).r, denoised(px, false).gba));
+}
+
 @compute @workgroup_size(8, 8)
 fn denoise(@builtin(global_invocation_id) id: vec3<u32>) {
     if (any(id.xy >= textureDimensions(ao_out))) {
@@ -752,7 +777,7 @@ fn denoise_final(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let px = vec2<i32>(id.xy);
     let d = denoised(px, true);
-    let v = saturate(d.r * OCCLUSION_TERM_SCALE);
-    let b = select(vec3<f32>(0.0, 0.0, -1.0), normalize(d.gba), dot(d.gba, d.gba) > 1e-8);
-    textureStore(final_out, px, vec4<f32>(v, b * 0.5 + vec3<f32>(0.5)));
+    let v = saturate(d.rg * OCCLUSION_TERM_SCALE);
+    let b = bent_of(d.ba);
+    textureStore(final_out, px, vec4<f32>(v, b.xy * 0.5 + vec2<f32>(0.5)));
 }

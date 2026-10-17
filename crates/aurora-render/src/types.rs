@@ -615,6 +615,8 @@ pub struct RenderSettings {
     /// With GTAO: its occlusion as a visibility bitmask and one bounce of
     /// light from the surfaces around (gtao.rs, `main_bitmask`).
     pub screen_indirect: bool,
+    /// Its strength (1 = one physical bounce of a Lambert surface).
+    pub screen_indirect_intensity: f32,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -642,6 +644,7 @@ impl Default for RenderSettings {
             ssao: 1,
             ao_method: AoMethod::Legacy,
             screen_indirect: false,
+            screen_indirect_intensity: 1.0,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,

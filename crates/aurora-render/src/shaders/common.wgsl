@@ -1193,11 +1193,15 @@ fn spherical_caps_intersection(cos_a: f32, cos_b: f32, cos_d: f32) -> f32 {
 // is never darkened more than the ambient light (the visibility): what
 // hides the sky is itself lit, which the cones take for black — a polished
 // metal turned black in an inside corner, with the bent normal's noise.
+// And the lobe is never narrower than about 26 degrees here: a narrow lobe
+// swings from open to hidden with the smallest turn of the bent normal,
+// which drew soft patches and waves over an inside corner of half-polished
+// metal; the bent normal and the cone are too coarse for a finer test.
 fn cone_specular_occlusion(bent: vec3<f32>, visibility: f32, r: vec3<f32>, roughness: f32) -> f32 {
     let a = roughness * roughness;
     let cos_v = sqrt(max(1.0 - visibility, 0.0));
-    // the lobe's aperture: log2(10) x alpha^2
-    let cos_s = exp2(-3.321928 * a * a);
+    // the lobe's aperture: log2(10) x alpha^2, at least acos 0.9
+    let cos_s = min(exp2(-3.321928 * a * a), 0.9);
     let cos_b = dot(bent, r);
     let open = spherical_caps_intersection(0.0, cos_s, cos_b);
     if (open <= 1e-6) {
@@ -1214,17 +1218,19 @@ fn specular_occlusion(frag: vec2<f32>, r: vec3<f32>, roughness: f32, otherwise: 
     if (frame.sky_ll.w < 0.5 || frame.misc.x < 1.5 || in_reflection_pass()) {
         return otherwise;
     }
+    // GTAO's result: .g the visibility blurred for this, .ba the bent
+    // normal's x and y in view space (x right, y up, z in front), facing
+    // the camera
     let s = textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0);
-    let bv = s.gba * 2.0 - vec3<f32>(1.0);
-    let len = length(bv);
-    if (len < 0.25) {
-        return otherwise;
+    var xy = s.ba * 2.0 - vec2<f32>(1.0);
+    let l = length(xy);
+    if (l > 1.0) {
+        xy /= l;
     }
-    // view space (x right, y up, z in front) to the world
-    let b = bv / len;
+    let b = vec3<f32>(xy, -sqrt(max(1.0 - dot(xy, xy), 0.0)));
     let forward = cross(frame.cam_up.xyz, frame.cam_right.xyz);
     let bent = normalize(frame.cam_right.xyz * b.x + frame.cam_up.xyz * b.y + forward * b.z);
-    return cone_specular_occlusion(bent, s.r, r, roughness);
+    return cone_specular_occlusion(bent, s.g, r, roughness);
 }
 
 /// How much a surface takes the planar mirror image (SL hero probe).

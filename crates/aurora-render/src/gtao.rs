@@ -42,12 +42,12 @@ const FINAL_VALUE_POWER: f32 = 2.2;
 const DEPTH_MIP_SAMPLING_OFFSET: f32 = 3.30;
 const DENOISE_BLUR_BETA: f32 = 1.2;
 /// The indirect light's samples: how thick a surface is taken to be behind
-/// its front (metres), how far the light comes from (metres, also the
-/// occlusion's radius on that path), and its strength (1 = one physical
-/// bounce of a Lambert surface).
+/// its front (metres) and how far the light comes from (metres, also the
+/// occlusion's radius on that path). Its strength is a setting.
 const INDIRECT_THICKNESS: f32 = 0.35;
 const INDIRECT_RADIUS: f32 = 1.5;
-const INDIRECT_STRENGTH: f32 = 1.0;
+/// Blur passes of the bent normal alone, before the occlusion's last one.
+const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 2;
 
@@ -207,6 +207,19 @@ pub(crate) enum Indirect {
     Alternate,
 }
 
+/// `AURORA_SSIL_INTENSITY`: the indirect light's strength in place of the
+/// setting's (0 to 8).
+pub(crate) fn intensity_override() -> Option<f32> {
+    static VALUE: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| parse_intensity(std::env::var("AURORA_SSIL_INTENSITY").ok().as_deref()))
+}
+
+fn parse_intensity(v: Option<&str>) -> Option<f32> {
+    v.and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(0.0, 8.0))
+}
+
 impl Indirect {
     pub(crate) fn parse(v: Option<&str>) -> Self {
         match v.map(str::trim) {
@@ -254,8 +267,8 @@ struct GtaoU {
 
 /// The constants of a frame drawn with `proj` into targets of `size`;
 /// `reproj` takes its view space (z in front) to the clip space of the
-/// previous frame.
-fn uniforms(proj: Mat4, reproj: Mat4, size: (u32, u32), q: Quality) -> GtaoU {
+/// previous frame; `intensity` scales the indirect light.
+fn uniforms(proj: Mat4, reproj: Mat4, intensity: f32, size: (u32, u32), q: Quality) -> GtaoU {
     GtaoU {
         // scales and off-centre terms (a photo tile's projection has them)
         proj: [proj.x_axis.x, proj.y_axis.y, proj.z_axis.x, proj.z_axis.y],
@@ -265,7 +278,7 @@ fn uniforms(proj: Mat4, reproj: Mat4, size: (u32, u32), q: Quality) -> GtaoU {
         quality: [FINAL_VALUE_POWER, DEPTH_MIP_SAMPLING_OFFSET, q.slices as f32, q.steps as f32],
         misc: [DENOISE_BLUR_BETA, if q.half_res { 2.0 } else { 1.0 }, 0.0, 0.0],
         reproj: reproj.to_cols_array_2d(),
-        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, INDIRECT_STRENGTH, 0.0],
+        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
     }
 }
 
@@ -297,10 +310,22 @@ pub(crate) struct Gtao {
     main: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    denoise_bent: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     main_bitmask: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_il: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_il_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     buffer: wgpu::Buffer,
+}
+
+/// One turn of the occlusion's blur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Blur {
+    /// The visibility and the bent normal.
+    Both,
+    /// The bent normal alone (`denoise_bent`).
+    Bent,
+    /// Both, into the result (`denoise_final`).
+    Final,
 }
 
 /// The screen-space indirect light's targets and bind groups.
@@ -322,7 +347,7 @@ pub(crate) struct Targets {
     prefilter: Vec<wgpu::BindGroup>,
     main: wgpu::BindGroup,
     /// In order; the last one writes `result`.
-    denoise: Vec<(wgpu::BindGroup, bool)>,
+    denoise: Vec<(wgpu::BindGroup, Blur)>,
     /// The visibility in `.r` and the view-space bent normal in `.gba`
     /// (0..1), sampled by the shading.
     pub result: wgpu::TextureView,
@@ -444,6 +469,15 @@ impl Gtao {
                     storage_entry(9, RESULT_FORMAT),
                 ],
             ),
+            denoise_bent: make(
+                "denoise_bent",
+                &[
+                    uniform_entry(),
+                    storage_entry(5, AO_FORMAT),
+                    texture_entry(7, UNFILTERED),
+                    texture_entry(8, UNFILTERED),
+                ],
+            ),
             main_bitmask: make(
                 "main_bitmask",
                 &[
@@ -548,16 +582,24 @@ impl Gtao {
             .map(|l| group(&self.prefilter.1, &[(2, &mip_view(l - 1)), (3, &mip_view(l))]))
             .collect();
         let main = group(&self.main.1, &[(4, &all_mips), (5, &ao[0]), (6, &edges)]);
-        // the passes read a and b by turns; the last one writes the result
+        // the passes read a and b by turns; the bent normal's own turns come
+        // before the last, which writes the result
         let passes = q.denoise_passes.max(1);
-        let denoise = (0..passes)
-            .map(|i| {
-                let (src, dst) = (&ao[i as usize % 2], &ao[(i as usize + 1) % 2]);
-                if i + 1 == passes {
-                    (group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, &result)]), true)
-                } else {
-                    (group(&self.denoise.1, &[(5, dst), (7, src), (8, &edges)]), false)
-                }
+        let kinds: Vec<Blur> = std::iter::repeat_n(Blur::Both, passes as usize - 1)
+            .chain(std::iter::repeat_n(Blur::Bent, BENT_BLUR as usize))
+            .chain(std::iter::once(Blur::Final))
+            .collect();
+        let denoise = kinds
+            .into_iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                let (src, dst) = (&ao[i % 2], &ao[(i + 1) % 2]);
+                let bg = match kind {
+                    Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, &result)]),
+                    Blur::Both => group(&self.denoise.1, &[(5, dst), (7, src), (8, &edges)]),
+                    Blur::Bent => group(&self.denoise_bent.1, &[(5, dst), (7, src), (8, &edges)]),
+                };
+                (bg, kind)
             })
             .collect();
         let indirect = scene.map(|scene| {
@@ -600,9 +642,14 @@ impl Gtao {
     }
 
     /// The constants of this frame (before the encoder runs): `proj` its
-    /// projection, `reproj` from [`reprojection`].
-    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, proj: Mat4, reproj: Mat4) {
-        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&uniforms(proj, reproj, t.size, t.quality)));
+    /// projection, `reproj` from [`reprojection`], `intensity` the indirect
+    /// light's strength.
+    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, proj: Mat4, reproj: Mat4, intensity: f32) {
+        queue.write_buffer(
+            &self.buffer,
+            0,
+            bytemuck::bytes_of(&uniforms(proj, reproj, intensity, t.size, t.quality)),
+        );
     }
 
     /// The passes, after the depth prepass; `indirect` with the indirect
@@ -634,8 +681,12 @@ impl Gtao {
             }
         }
         dispatch(&mut pass, groups(t.size));
-        for (bg, last) in &t.denoise {
-            pass.set_pipeline(if *last { &self.denoise_final.0 } else { &self.denoise.0 });
+        for (bg, kind) in &t.denoise {
+            pass.set_pipeline(match kind {
+                Blur::Both => &self.denoise.0,
+                Blur::Bent => &self.denoise_bent.0,
+                Blur::Final => &self.denoise_final.0,
+            });
             pass.set_bind_group(0, bg, &[]);
             dispatch(&mut pass, groups(t.size));
         }
@@ -706,6 +757,16 @@ mod tests {
         let alt: Vec<bool> = (0..4).map(|s| SpecularOcclusion::Alternate.applied(s)).collect();
         assert_eq!(alt, [true, false, true, false]);
         assert!((0..4).all(|s| SpecularOcclusion::On.applied(s) && !SpecularOcclusion::Off.applied(s)));
+    }
+
+    #[test]
+    fn intensity_override_is_a_clamped_number() {
+        assert_eq!(parse_intensity(None), None);
+        assert_eq!(parse_intensity(Some(" 2.5 ")), Some(2.5));
+        assert_eq!(parse_intensity(Some("40")), Some(8.0));
+        assert_eq!(parse_intensity(Some("-1")), Some(0.0));
+        assert_eq!(parse_intensity(Some("NaN")), None);
+        assert_eq!(parse_intensity(Some("much")), None);
     }
 
     #[test]
@@ -809,7 +870,7 @@ mod tests {
         };
         let a = roughness * roughness;
         let cos_v = (1.0 - visibility).max(0.0).sqrt();
-        let cos_s = (-std::f32::consts::LOG2_10 * a * a).exp2();
+        let cos_s = (-std::f32::consts::LOG2_10 * a * a).exp2().min(0.9);
         let cos_b = bent.dot(r);
         let open = caps(0.0, cos_s, cos_b);
         if open <= 1e-6 {
@@ -858,7 +919,7 @@ mod tests {
     #[test]
     fn uniforms_rebuild_view_positions() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-        let u = uniforms(proj, Mat4::IDENTITY, (1600, 1000), quality(2));
+        let u = uniforms(proj, Mat4::IDENTITY, 1.0, (1600, 1000), quality(2));
         // a point 7 m in front, 1 m right and 0.5 m up (right-handed view: -z)
         let p = glam::Vec4::new(1.0, 0.5, -7.0, 1.0);
         let clip = proj * p;

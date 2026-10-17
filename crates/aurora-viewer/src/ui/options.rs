@@ -1511,6 +1511,26 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-screen-indirect-intensity"),
+                    aurora_i18n::tr!("ui-options-screen-indirect-intensity-help"),
+                    |ui| {
+                        let on = s.ssao > 0 && s.ao_method == 1 && s.screen_indirect_light;
+                        ui.add_enabled_ui(on, |ui| {
+                            ui.spacing_mut().slider_width = SLIDER_W;
+                            ui.add(
+                                egui::Slider::new(&mut s.screen_indirect_intensity, 0.0..=4.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .step_by(0.1)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        })
+                        .inner
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("common-time-of-day"),
                     aurora_i18n::tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
                     |ui| {

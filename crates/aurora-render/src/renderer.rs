@@ -4330,7 +4330,9 @@ impl Backend {
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
-            self.gtao.write(&self.queue, t, f.proj, crate::gtao::reprojection(f.view, prev));
+            let intensity = crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity);
+            self.gtao
+                .write(&self.queue, t, f.proj, crate::gtao::reprojection(f.view, prev), intensity);
         } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {
