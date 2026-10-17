@@ -281,6 +281,7 @@ impl App {
                     }
                 }
                 if start {
+                    self.record_library_asset(asset, 20);
                     self.inventory_ui.preview = self
                         .world
                         .inventory
@@ -298,10 +299,14 @@ impl App {
                 }
             }
             InvAction::Sound(asset) => {
+                self.record_library_asset(asset, 1);
                 self.scene.sounds.want(asset);
                 self.scene.sounds.play_ui(self.audio_engine.as_ref(), asset);
             }
-            InvAction::TriggerSound(asset) => self.send_sound_trigger(asset),
+            InvAction::TriggerSound(asset) => {
+                self.record_library_asset(asset, 1);
+                self.send_sound_trigger(asset);
+            }
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id) => {
@@ -320,6 +325,9 @@ impl App {
                     if Some(it.id) == crate::shape_editor::worn_shape(&self.world) {
                         self.open_shape_editor(it.id);
                         return;
+                    }
+                    if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY != 0 {
+                        self.record_library_use(id);
                     }
                     if it.asset_type == 10 {
                         self.inventory_ui.preview = self.inventory_ui.preview.filter(|preview| *preview != id);

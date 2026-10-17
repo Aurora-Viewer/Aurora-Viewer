@@ -1,5 +1,5 @@
-//! Compact texture/material/object library: the human-selected lateral grid (V1)
-//! and bottom shelf (H3), backed by both library folders under #Aurora.
+//! Compact inventory library: lateral grid and bottom shelf backed by the
+//! actual subtree under #Aurora/Aurora Library.
 
 pub(crate) mod catalogue;
 pub(crate) mod previews;
@@ -56,10 +56,22 @@ pub struct Preferences {
     pub presentation: Presentation,
     pub favorites: HashSet<Uuid>,
     pub recent: Vec<Uuid>,
+    recent_agent: Uuid,
+    recent_by_agent: HashMap<Uuid, Vec<Uuid>>,
     pub texture_preview_size: Option<[f32; 2]>,
     pub material_preview_size: Option<[f32; 2]>,
 }
 impl Preferences {
+    pub fn activate(&mut self, agent: Uuid) {
+        if agent.is_nil() || self.recent_agent == agent {
+            return;
+        }
+        if !self.recent_agent.is_nil() {
+            self.recent_by_agent.insert(self.recent_agent, std::mem::take(&mut self.recent));
+            self.recent = self.recent_by_agent.remove(&agent).unwrap_or_default();
+        }
+        self.recent_agent = agent;
+    }
     fn preview_size(&self, material: bool) -> Option<Vec2> {
         let size = if material {
             self.material_preview_size
@@ -101,6 +113,7 @@ pub enum Action {
     Change(Mutation),
     Reveal(Uuid),
     Apply(Uuid),
+    Open(Uuid),
 }
 #[derive(Default)]
 pub struct LibraryUi {
@@ -108,6 +121,7 @@ pub struct LibraryUi {
     search: String,
     folder: Option<Uuid>,
     kind: Kind,
+    types: Option<HashSet<ResourceKind>>,
     scope: Scope,
     selected: Option<Uuid>,
     windows: Vec<windows::PreviewWindow>,
@@ -124,6 +138,9 @@ impl LibraryUi {
     pub fn demo(&mut self, mode: &str, agent: Uuid) {
         self.reset();
         self.agent = agent;
+        if matches!(mode, "apply" | "drop") {
+            self.kind = Kind::Texture;
+        }
         if mode == "apply-pbr" || mode.starts_with("material-preview") {
             self.kind = Kind::Material;
         }
@@ -167,6 +184,7 @@ impl LibraryUi {
         }
         let mut actions = Vec::new();
         if *open {
+            prefs.activate(world.agent_id);
             self.prepare_root(&mut world.inventory, &mut actions);
             self.catalogue.prepare(&mut world.inventory);
             if self.folder.is_some_and(|id| !self.catalogue.folders.iter().any(|f| f.id == id)) {
@@ -257,7 +275,7 @@ impl LibraryUi {
                                 }
                                 for index in entries.iter().take(end).skip(first) {
                                     let entry = self.catalogue.entries[*index].clone();
-                                    if self.card(
+                                    if let Some(action) = self.card(
                                         ui,
                                         p,
                                         world,
@@ -269,7 +287,7 @@ impl LibraryUi {
                                         false,
                                         entries.first() == Some(index),
                                     ) {
-                                        actions.push(Action::Apply(entry.id));
+                                        actions.push(action);
                                     }
                                 }
                             });
@@ -286,7 +304,7 @@ impl LibraryUi {
                                 ui.horizontal(|ui| {
                                     for index in entries.iter().skip(row * 2).take(2) {
                                         let entry = self.catalogue.entries[*index].clone();
-                                        if self.card(
+                                        if let Some(action) = self.card(
                                             ui,
                                             p,
                                             world,
@@ -298,7 +316,7 @@ impl LibraryUi {
                                             true,
                                             entries.first() == Some(index),
                                         ) {
-                                            actions.push(Action::Apply(entry.id));
+                                            actions.push(action);
                                         }
                                     }
                                 });
@@ -318,7 +336,11 @@ impl LibraryUi {
                             if !entry.kind.object()
                                 && icon_button(ui, p, "arrows-maximize", aurora_i18n::tr!("texture-library-preview")).clicked()
                             {
-                                self.open_preview(ctx, world, entry.id);
+                                if entry.kind.surface() {
+                                    self.open_preview(ctx, world, entry.id);
+                                } else {
+                                    actions.push(Action::Open(entry.id));
+                                }
                             }
                         } else {
                             let hint = if self.kind == Kind::Object {
@@ -368,10 +390,7 @@ impl LibraryUi {
                 if !self.message.is_empty() {
                     ui.add(egui::Label::new(RichText::new(&self.message).size(10.0).color(p.warn)).truncate())
                         .on_hover_text(&self.message);
-                    if self.catalogue.roots.len() < catalogue::LIBRARIES.len()
-                        && self.pending.is_none()
-                        && widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked()
-                    {
+                    if self.pending.is_none() && widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked() {
                         self.prepared = false;
                         self.message.clear();
                     }
@@ -414,19 +433,52 @@ impl LibraryUi {
             change.refresh.push(inv.root);
             id
         };
-        for name in catalogue::LIBRARIES {
-            if catalogue::child(inv, aurora, name).is_some() {
+        let library = if let Some(id) = catalogue::child(inv, aurora, catalogue::LIBRARY) {
+            if inv.folders.get(&id).is_none_or(|f| f.state != FetchState::Fetched) {
+                self.request_root(inv, id);
+                return;
+            }
+            id
+        } else {
+            let id = Uuid::new_v4();
+            change.operations.push(Operation::Folder {
+                id,
+                parent: aurora,
+                name: catalogue::LIBRARY.into(),
+                type_default: -1,
+            });
+            change.refresh.push(id);
+            id
+        };
+        // Preserve old item IDs, favorites and subtrees while adopting the new
+        // convention. Parent changes use the existing reliable inventory move.
+        let mut adopted = HashSet::new();
+        for (legacy, name) in [(catalogue::LEGACY_TEXTURES, "Textures"), (catalogue::OBJECTS_LIBRARY, "Objects")] {
+            if let Some(id) = catalogue::child(inv, aurora, legacy) {
+                let rename = catalogue::child(inv, library, name).is_none();
+                let mut body = aurora_llsd::llsd_map! { "parent_id" => library };
+                if rename {
+                    body.insert("name", aurora_llsd::Llsd::String(name.into()));
+                    adopted.insert(name);
+                }
+                change.operations.push(Operation::Patch { id, folder: true, body });
+                change.refresh.push(id);
+            }
+        }
+        for name in catalogue::DEFAULT_FOLDERS {
+            if adopted.contains(name) || catalogue::child(inv, library, name).is_some() {
                 continue;
             }
             let id = Uuid::new_v4();
             change.operations.push(Operation::Folder {
                 id,
-                parent: aurora,
+                parent: library,
                 name: name.into(),
                 type_default: -1,
             });
             change.refresh.push(id);
         }
+        change.refresh.push(library);
         if change.operations.is_empty() {
             return;
         }
@@ -450,11 +502,16 @@ impl LibraryUi {
             .iter()
             .enumerate()
             .filter(|(_, e)| e.matches(&query, self.folder))
-            .filter(|(_, e)| match self.kind {
-                Kind::All => true,
-                Kind::Texture => e.kind == ResourceKind::Texture,
-                Kind::Material => e.kind == ResourceKind::Material,
-                Kind::Object => e.kind.object(),
+            .filter(|(_, e)| {
+                self.types.as_ref().map_or_else(
+                    || match self.kind {
+                        Kind::All => true,
+                        Kind::Texture => e.kind == ResourceKind::Texture,
+                        Kind::Material => e.kind == ResourceKind::Material,
+                        Kind::Object => e.kind.object(),
+                    },
+                    |types| types.contains(&e.kind.category()),
+                )
             })
             .filter(|(_, e)| match self.scope {
                 Scope::All => true,
@@ -523,25 +580,47 @@ impl LibraryUi {
         reveal
     }
     fn filters(&mut self, ui: &mut egui::Ui, p: &Palette, _prefs: &Preferences) {
-        for (kind, label) in [
-            (Kind::All, aurora_i18n::tr!("common-all")),
-            (Kind::Texture, aurora_i18n::tr!("texture-library-textures")),
-            (Kind::Material, aurora_i18n::tr!("texture-library-pbr")),
-            (Kind::Object, aurora_i18n::tr!("texture-library-objects")),
-        ] {
-            if widgets::action_button(
-                ui,
-                p,
-                "",
-                label,
-                if self.kind == kind { ActionKind::Primary } else { ActionKind::Flat },
-                Vec2::new(if matches!(kind, Kind::Texture | Kind::Object) { 50.0 } else { 30.0 }, 20.0),
-            )
-            .clicked()
-            {
-                self.kind = kind;
+        let selected: HashSet<_> = self.types.clone().unwrap_or_else(|| match self.kind {
+            Kind::All => ResourceKind::TYPES.into_iter().collect(),
+            Kind::Texture => HashSet::from([ResourceKind::Texture]),
+            Kind::Material => HashSet::from([ResourceKind::Material]),
+            Kind::Object => HashSet::from([ResourceKind::Object]),
+        });
+        let label = if selected.len() == ResourceKind::TYPES.len() {
+            aurora_i18n::tr!("texture-library-types-all").to_string()
+        } else if selected.len() == 1 {
+            selected.iter().next().map(|kind| kind.label()).unwrap_or_default().to_string()
+        } else {
+            aurora_i18n::tr!("texture-library-types-count", count = selected.len()).to_string()
+        };
+        let response = widgets::action_button(ui, p, "chevron-down", &label, ActionKind::Flat, Vec2::new(158.0, 20.0));
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::new("library_type_selector"), response.rect.center()));
+        let menu_open = super::menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+            if super::menu::item(ui, p, "check", aurora_i18n::tr!("texture-library-types-all")) {
+                self.types = None;
+                self.kind = Kind::All;
             }
-        }
+            if super::menu::item(ui, p, "x", aurora_i18n::tr!("texture-library-types-none")) {
+                self.types = Some(HashSet::new());
+            }
+            super::menu::separator(ui, p);
+            for kind in ResourceKind::TYPES {
+                let mut checked = selected.contains(&kind);
+                let before = checked;
+                super::menu::toggle(ui, p, kind.icon(), kind.label(), &mut checked);
+                if checked != before {
+                    let types = self.types.get_or_insert_with(|| selected.clone());
+                    if checked {
+                        types.insert(kind);
+                    } else {
+                        types.remove(&kind);
+                    }
+                }
+            }
+        });
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::new("library_type_menu_open"), menu_open));
         if scope_button(
             ui,
             p,
@@ -581,8 +660,8 @@ impl LibraryUi {
         size: f32,
         details: bool,
         first: bool,
-    ) -> bool {
-        let mut apply = false;
+    ) -> Option<Action> {
+        let mut action = None;
         ui.push_id((entry.id, details), |ui| {
             ui.vertical(|ui| {
                 let visible = ui.is_rect_visible(egui::Rect::from_min_size(ui.next_widget_position(), Vec2::splat(size)));
@@ -636,10 +715,16 @@ impl LibraryUi {
                 response.dnd_set_drag_payload(InvDrag(entry.id));
                 if response.clicked() {
                     self.selected = Some(entry.id);
-                    apply = !entry.kind.object() && !response.double_clicked();
+                    if entry.kind.surface() && !response.double_clicked() {
+                        action = Some(Action::Apply(entry.id));
+                    }
                 }
                 if response.double_clicked() && !entry.kind.object() {
-                    self.open_preview(ui.ctx(), world, entry.id);
+                    if entry.kind.surface() {
+                        self.open_preview(ui.ctx(), world, entry.id);
+                    } else {
+                        action = Some(Action::Open(entry.id));
+                    }
                 }
                 response.on_hover_text(if entry.kind.object() {
                     format!(
@@ -648,6 +733,8 @@ impl LibraryUi {
                         entry.path,
                         aurora_i18n::tr!("texture-library-object-drag-hint")
                     )
+                } else if !entry.kind.surface() {
+                    format!("{}\n{}\n{}", entry.name, entry.path, aurora_i18n::tr!("texture-library-open-hint"))
                 } else {
                     format!(
                         "{}\n{}\n{}\n{}",
@@ -664,17 +751,7 @@ impl LibraryUi {
                 .on_hover_text(&entry.name);
                 if details {
                     ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(if entry.kind.object() {
-                                aurora_i18n::tr!("texture-library-objects")
-                            } else if entry.kind == ResourceKind::Material {
-                                aurora_i18n::tr!("texture-library-pbr")
-                            } else {
-                                aurora_i18n::tr!("texture-library-textures")
-                            })
-                            .size(9.0)
-                            .color(p.muted),
-                        );
+                        ui.label(RichText::new(entry.kind.label()).size(9.0).color(p.muted));
                         let favorite = prefs.favorites.contains(&entry.original);
                         if icon_button(
                             ui,
@@ -694,7 +771,7 @@ impl LibraryUi {
                 }
             });
         });
-        apply
+        action
     }
 }
 

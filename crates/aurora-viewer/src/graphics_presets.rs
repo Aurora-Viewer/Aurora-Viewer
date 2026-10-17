@@ -7,10 +7,13 @@
 //! the values follow the Low, LowMid, Mid, High and Ultra lists of
 //! indra/newview/featuretable.txt, mapped onto Aurora's settings).
 //!
-//! Deluxe goes one step beyond the Legacy Viewer's Ultra list for the
-//! ambient occlusion: GTAO at High quality (gtao.rs in aurora-render), an
-//! Aurora method the Legacy Viewer has no level for; the levels below keep
-//! the Legacy method (High) or no occlusion at all.
+//! Deluxe goes beyond the Legacy Viewer's Ultra list with Aurora's own
+//! effects, which the Legacy Viewer has no level for: the ambient occlusion
+//! by GTAO at High quality (gtao.rs in aurora-render, its specular occlusion
+//! following it), the screen-space indirect light at its default strength,
+//! the contact shadows of the sun and the bloom at its default strength. The
+//! levels below keep the Legacy occlusion (High) or none, and none of these
+//! effects; outside the levels they are all off by default.
 //!
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
@@ -80,6 +83,7 @@ impl Preset {
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: false,
+                effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
             // still nothing of the deferred effects
@@ -103,6 +107,7 @@ impl Preset {
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: true,
+                effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
             // anisotropy, manual reflection probes; no shadows yet
@@ -126,6 +131,7 @@ impl Preset {
                 anisotropy: 8,
                 sharpen: 0.0,
                 glow: true,
+                effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
             // no projector shadows), SSAO, water reflection, probes with
@@ -150,6 +156,7 @@ impl Preset {
                 anisotropy: 8,
                 sharpen: 0.4,
                 glow: true,
+                effects: Effects::OFF,
             },
             // "Ultra": 256 m, LOD 3, 16 avatars, 8,192 particles, shadows of
             // the projectors too (detail 2), the whole scene in the probes;
@@ -160,7 +167,7 @@ impl Preset {
             // reflection at half resolution (full
             // costs a second scene), Aurora's mirrors as by default and 16x
             // anisotropy; screen-space reflections stay off, as in every
-            // Firestorm level
+            // Legacy Viewer level; and Aurora's own effects (module comment)
             Preset::Deluxe => Values {
                 draw_distance: 256.0,
                 lod_factor: 3.0,
@@ -181,6 +188,7 @@ impl Preset {
                 anisotropy: 16,
                 sharpen: 0.4,
                 glow: true,
+                effects: Effects::DELUXE,
             },
         }
     }
@@ -233,6 +241,15 @@ impl Preset {
     }
 }
 
+/// The Deluxe of settings version 18: GTAO at High, none of the effects
+/// added since.
+fn deluxe_v18() -> Values {
+    Values {
+        effects: Effects::OFF,
+        ..Preset::Deluxe.values()
+    }
+}
+
 /// Settings files written before Deluxe took GTAO (version 18): a profile
 /// still exactly on the former Deluxe (the Legacy occlusion at its high
 /// level) moves to the Deluxe of now; any other, a level or custom, keeps
@@ -241,11 +258,50 @@ pub(crate) fn upgrade_deluxe(s: &mut Settings) {
     let former = Values {
         ao_method: 0,
         gtao_quality: 2,
-        ..Preset::Deluxe.values()
+        ..deluxe_v18()
     };
     if Values::read(s).as_shown() == former.as_shown() {
         Preset::Deluxe.apply(s);
     }
+}
+
+/// Settings files written before Deluxe took the bloom, the contact shadows
+/// and the indirect light (version 19): a profile still exactly on the
+/// Deluxe of version 18 moves to the Deluxe of now; any other keeps them as
+/// they were.
+pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
+    if Values::read(s).as_shown() == deluxe_v18().as_shown() {
+        Preset::Deluxe.apply(s);
+    }
+}
+
+/// Aurora's effects beyond the Legacy Viewer's levels, which only Deluxe
+/// turns on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Effects {
+    pub bloom: bool,
+    pub bloom_strength: f32,
+    pub contact_shadows: bool,
+    pub screen_indirect_light: bool,
+    pub screen_indirect_intensity: f32,
+}
+
+impl Effects {
+    /// None of them, at their default strengths.
+    pub const OFF: Effects = Effects {
+        bloom: false,
+        bloom_strength: crate::settings::BLOOM_STRENGTH,
+        contact_shadows: false,
+        screen_indirect_light: false,
+        screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
+    };
+    /// All of them, at their default strengths.
+    pub const DELUXE: Effects = Effects {
+        bloom: true,
+        contact_shadows: true,
+        screen_indirect_light: true,
+        ..Effects::OFF
+    };
 }
 
 /// The settings a level writes.
@@ -271,6 +327,7 @@ pub struct Values {
     pub anisotropy: u16,
     pub sharpen: f32,
     pub glow: bool,
+    pub effects: Effects,
 }
 
 impl Values {
@@ -279,11 +336,30 @@ impl Values {
     /// (the complexity slider only stops at its own steps, 302 k for the
     /// 300,000 of "High", like Firestorm's).
     /// The method and quality of the occlusion only count while it is on,
-    /// and GTAO's quality only under GTAO (the page greys them out).
+    /// and GTAO's quality only under GTAO (the page greys them out); the
+    /// same for the effects: the contact shadows only with the shadows, the
+    /// indirect light only with GTAO, a strength only while its effect is on.
     fn as_shown(self) -> Values {
         use crate::scene::complexity::slider;
         let round = |v: f32, step: f32| (v / step).round() * step;
         let ao_method = if self.ssao == 0 { 0 } else { self.ao_method };
+        let e = self.effects;
+        let indirect = ao_method == 1 && e.screen_indirect_light;
+        let effects = Effects {
+            bloom: e.bloom,
+            bloom_strength: if e.bloom {
+                round(e.bloom_strength, 0.05)
+            } else {
+                Effects::OFF.bloom_strength
+            },
+            contact_shadows: self.shadow_quality > 0 && e.contact_shadows,
+            screen_indirect_light: indirect,
+            screen_indirect_intensity: if indirect {
+                round(e.screen_indirect_intensity, 0.1)
+            } else {
+                Effects::OFF.screen_indirect_intensity
+            },
+        };
         Values {
             draw_distance: round(self.draw_distance, 1.0),
             lod_factor: round(self.lod_factor, 0.125),
@@ -291,6 +367,7 @@ impl Values {
             sharpen: round(self.sharpen, 0.05),
             ao_method,
             gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
+            effects,
             ..self
         }
     }
@@ -316,6 +393,13 @@ impl Values {
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
             glow: s.glow,
+            effects: Effects {
+                bloom: s.bloom,
+                bloom_strength: s.bloom_strength,
+                contact_shadows: s.contact_shadows,
+                screen_indirect_light: s.screen_indirect_light,
+                screen_indirect_intensity: s.screen_indirect_intensity,
+            },
         }
     }
 
@@ -340,6 +424,11 @@ impl Values {
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
         s.glow = self.glow;
+        s.bloom = self.effects.bloom;
+        s.bloom_strength = self.effects.bloom_strength;
+        s.contact_shadows = self.effects.contact_shadows;
+        s.screen_indirect_light = self.effects.screen_indirect_light;
+        s.screen_indirect_intensity = self.effects.screen_indirect_intensity;
     }
 }
 
@@ -493,16 +582,17 @@ mod tests {
 
     #[test]
     fn a_profile_on_the_former_deluxe_moves_to_gtao_and_no_other() {
-        // the former Deluxe: the Legacy occlusion at its high level
+        // the former Deluxe: the Legacy occlusion at its high level, none of
+        // the effects added later
         let mut s = Settings::default();
-        Preset::Deluxe.apply(&mut s);
+        deluxe_v18().write(&mut s);
         s.ao_method = 0;
         upgrade_deluxe(&mut s);
         assert_eq!((s.ao_method, s.gtao_quality), (1, 2));
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
         // a custom profile close to it keeps its occlusion
         let mut custom = Settings::default();
-        Preset::Deluxe.apply(&mut custom);
+        deluxe_v18().write(&mut custom);
         custom.ao_method = 0;
         custom.draw_distance = 300.0;
         upgrade_deluxe(&mut custom);
@@ -513,6 +603,93 @@ mod tests {
             p.apply(&mut s);
             let before = Values::read(&s);
             upgrade_deluxe(&mut s);
+            assert_eq!(Values::read(&s), before, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn deluxe_turns_on_every_aurora_effect_and_no_other_level_does() {
+        let mut s = Settings::default();
+        Preset::Deluxe.apply(&mut s);
+        assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
+        assert_eq!(s.bloom_strength, crate::settings::BLOOM_STRENGTH);
+        assert_eq!(s.screen_indirect_intensity, crate::settings::SCREEN_INDIRECT_INTENSITY);
+        for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High] {
+            p.apply(&mut s);
+            assert_eq!(p.values().effects, Effects::OFF, "{p:?}");
+            assert!(!s.bloom && !s.contact_shadows && !s.screen_indirect_light, "{p:?}");
+        }
+        // outside the levels, all off
+        let d = Settings::default();
+        assert!(!d.bloom && !d.contact_shadows && !d.screen_indirect_light);
+    }
+
+    #[test]
+    fn an_effect_only_counts_while_what_it_needs_is_on() {
+        let mut s = Settings::default();
+        // Medium has no shadows and no occlusion: contact shadows, indirect
+        // light and their strengths left from before do not make it custom
+        Preset::Medium.apply(&mut s);
+        s.contact_shadows = true;
+        s.screen_indirect_light = true;
+        s.screen_indirect_intensity = 3.0;
+        s.bloom_strength = 0.9;
+        assert_eq!(Preset::matching(&s), Some(Preset::Medium));
+        // High has shadows and the Legacy occlusion: contact shadows count,
+        // the indirect light (GTAO only) does not
+        Preset::High.apply(&mut s);
+        s.screen_indirect_light = true;
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        s.contact_shadows = true;
+        assert_eq!(Preset::matching(&s), None);
+        // the bloom counts whenever it is on
+        Preset::High.apply(&mut s);
+        s.bloom = true;
+        assert_eq!(Preset::matching(&s), None);
+        // Deluxe with an effect off, or another strength, is custom; the
+        // strength the slider shows reads as the level
+        for change in [
+            |s: &mut Settings| s.bloom = false,
+            |s: &mut Settings| s.contact_shadows = false,
+            |s: &mut Settings| s.screen_indirect_light = false,
+            |s: &mut Settings| s.bloom_strength = 0.8,
+            |s: &mut Settings| s.screen_indirect_intensity = 2.0,
+        ] {
+            Preset::Deluxe.apply(&mut s);
+            change(&mut s);
+            assert_eq!(Preset::matching(&s), None);
+        }
+        Preset::Deluxe.apply(&mut s);
+        s.screen_indirect_intensity = 1.5000001;
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+    }
+
+    #[test]
+    fn a_profile_on_the_deluxe_of_version_18_takes_the_effects_and_no_other() {
+        let mut s = Settings::default();
+        deluxe_v18().write(&mut s);
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_deluxe_effects(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
+        // a custom profile close to it keeps its effects off
+        let mut custom = Settings::default();
+        deluxe_v18().write(&mut custom);
+        custom.max_particles = 4096;
+        upgrade_deluxe_effects(&mut custom);
+        assert!(!custom.bloom && !custom.contact_shadows && !custom.screen_indirect_light);
+        // one effect chosen by hand on the old Deluxe: custom, kept as is
+        let mut chosen = Settings::default();
+        deluxe_v18().write(&mut chosen);
+        chosen.bloom = true;
+        upgrade_deluxe_effects(&mut chosen);
+        assert!(chosen.bloom && !chosen.contact_shadows && !chosen.screen_indirect_light);
+        // the other levels are untouched
+        for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High] {
+            let mut s = Settings::default();
+            p.apply(&mut s);
+            let before = Values::read(&s);
+            upgrade_deluxe_effects(&mut s);
             assert_eq!(Values::read(&s), before, "{p:?}");
         }
     }

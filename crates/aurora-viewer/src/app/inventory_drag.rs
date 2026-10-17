@@ -38,6 +38,9 @@ fn reason_text(reason: &str) -> &'static str {
 }
 
 fn original(world: &World, id: Uuid) -> Result<&InvItem, &'static str> {
+    cargo(world, id, false)
+}
+fn cargo(world: &World, id: Uuid, contents: bool) -> Result<&InvItem, &'static str> {
     let inv = &world.inventory;
     if inv.in_folder_type(id, 53) {
         return Err("rez-marketplace");
@@ -49,7 +52,11 @@ fn original(world: &World, id: Uuid) -> Result<&InvItem, &'static str> {
         .map(|it| it.id)
         .or_else(|| rules::original(inv, id))
         .ok_or("rez-incomplete")?;
-    let item = inv.items.get(&original).filter(|it| it.asset_type == 6).ok_or("rez-object-only")?;
+    let item = inv
+        .items
+        .get(&original)
+        .filter(|it| it.asset_type == 6 || contents && matches!(it.asset_type, 0 | 1 | 3 | 7 | 10 | 20 | 57))
+        .ok_or("rez-object-only")?;
     if inv.in_folder_type(original, 53) {
         return Err("rez-marketplace");
     }
@@ -122,6 +129,7 @@ pub(super) fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bo
         let root = world.objects.get(current).ok_or("rez-no-surface")?;
         if o.pcode != aurora_prim::params::LL_PCODE_VOLUME
             || root.update_flags & OBJECT_MODIFY == 0 && o.update_flags & ALLOW_INVENTORY_DROP == 0
+            || item.asset_type == 10 && root.update_flags & OBJECT_MODIFY == 0
         {
             return Err("rez-contents-denied");
         }
@@ -147,7 +155,11 @@ fn prepare(
     selected: bool,
     under_land: bool,
 ) -> Result<InventoryDrop, &'static str> {
-    let item = original(world, id)?;
+    let item = if ctrl && surface.1.is_some() {
+        cargo(world, id, true)?
+    } else {
+        original(world, id)?
+    };
     let (point, target) = surface;
     if !point.is_finite() || !eye.is_finite() {
         return Err("rez-no-surface");
@@ -187,10 +199,22 @@ fn prepare(
             ..Default::default()
         };
         return Ok(InventoryDrop {
-            command: BuildCmd::UpdateTaskInventory {
-                handle: o.key.region,
-                local_id: o.key.local_id,
-                item: Box::new(task),
+            // LLToolDragAndDrop::dropScript / saveScript use RezScript;
+            // Ctrl inserts scripts stopped, with their actual permissions.
+            command: if item.asset_type == 10 {
+                BuildCmd::RezScript {
+                    handle: o.key.region,
+                    local_id: o.key.local_id,
+                    enabled: !ctrl,
+                    group_id: Uuid::nil(),
+                    item: Box::new(task),
+                }
+            } else {
+                BuildCmd::UpdateTaskInventory {
+                    handle: o.key.region,
+                    local_id: o.key.local_id,
+                    item: Box::new(task),
+                }
             },
             consume: (!copyable(item, world.agent_id)).then_some(item.id),
             selected: false,
@@ -253,7 +277,11 @@ impl App {
         let ppp = ctx.pixels_per_point();
         let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
         let started = Instant::now();
-        let item = original(&self.world, drag.item);
+        let item = if ctrl {
+            cargo(&self.world, drag.item, true)
+        } else {
+            original(&self.world, drag.item)
+        };
         if item.is_ok()
             && (released
                 || self.inventory_drag.ray != Some(ray)
@@ -284,6 +312,8 @@ impl App {
                     return Err("rez-contents-denied");
                 }
                 Ok(egui::CursorIcon::Copy)
+            } else if item.asset_type != 6 {
+                Err("rez-object-only")
             } else if !copyable(item, self.world.agent_id) || self.world.inventory.in_folder_type(item.id, 14) {
                 Ok(egui::CursorIcon::Grabbing)
             } else {
@@ -336,10 +366,10 @@ impl App {
         }
         let rez = matches!(drop.command, BuildCmd::RezInventory(_));
         if let BuildCmd::RezInventory(item) = &drop.command {
-            self.settings.texture_library.record(item.item.id);
-            self.settings.save();
+            self.record_library_use(item.item.id);
         }
-        if let BuildCmd::UpdateTaskInventory { item, .. } = &drop.command {
+        if let BuildCmd::UpdateTaskInventory { item, .. } | BuildCmd::RezScript { item, .. } = &drop.command {
+            self.record_library_use(item.item_id);
             self.build.contents_changed(item.parent_id);
             if self.build.open {
                 self.build.tab = 4;
@@ -618,5 +648,60 @@ mod tests {
         Arc::make_mut(w.parcel.as_mut().unwrap()).group_id = item(8899);
         assert_eq!(group_for_rez(&w, true), item(8800));
         assert!(crate::build::BuildSettings::default().rez_under_land_group);
+    }
+}
+
+#[cfg(test)]
+mod library_contents_tests {
+    use super::*;
+    #[test]
+    fn non_object_library_assets_can_only_drop_into_permitted_contents() {
+        let mut w = World::new(Arc::new(AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+            w.apply(event);
+        }
+        crate::world::inventory::demo::seed(&mut w.inventory, w.agent_id);
+        let target = w.objects.index_of_uuid(&crate::demo::action_id(970)).unwrap();
+        let o = w.objects.get_mut(target).unwrap();
+        o.owner_id = w.agent_id;
+        o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        let point = o.position;
+        for kind in [1, 3, 7, 10, 20] {
+            let id = Uuid::from_u128(50000 + kind as u128);
+            w.inventory.add_items(vec![InvItem {
+                id,
+                parent: w.inventory.root,
+                asset_type: kind,
+                owner: w.agent_id,
+                owner_mask: rules::COPY | rules::TRANSFER,
+                ..Default::default()
+            }]);
+            assert!(prepare(&w, id, Vec3::ZERO, (point, None), true, false, true).is_err());
+            let drop = prepare(&w, id, Vec3::ZERO, (point, Some(target)), true, false, true).unwrap();
+            let task = match drop.command {
+                BuildCmd::RezScript { enabled, item, .. } if kind == 10 => {
+                    assert!(!enabled);
+                    item
+                }
+                BuildCmd::UpdateTaskInventory { item, .. } if kind != 10 => item,
+                _ => panic!("wrong inventory drop command"),
+            };
+            assert_eq!(task.item_id, id);
+            assert_eq!(i32::from(task.asset_type), kind);
+            assert!(drop.consume.is_none());
+            w.inventory.items.get_mut(&id).unwrap().owner_mask &= !rules::COPY;
+            let drop = prepare(&w, id, Vec3::ZERO, (point, Some(target)), true, false, true).unwrap();
+            assert_eq!(drop.consume, Some(id));
+            // AllowInventoryDrop accepts ordinary cargo without Modify, but
+            // RezScript still requires the linkset root's effective Modify.
+            w.objects.get_mut(target).unwrap().update_flags = 1 << 16;
+            let drop = prepare(&w, id, Vec3::ZERO, (point, Some(target)), true, false, true);
+            if kind == 10 {
+                assert_eq!(drop.err(), Some("rez-contents-denied"));
+            } else {
+                assert!(drop.is_ok());
+            }
+            w.objects.get_mut(target).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        }
     }
 }

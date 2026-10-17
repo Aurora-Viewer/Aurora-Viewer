@@ -4113,6 +4113,12 @@ impl App {
     /// Send what the build tools queued.
     fn flush_build(&mut self) {
         for c in std::mem::take(&mut self.build.out) {
+            if let NetCommand::Build(
+                aurora_net::build::BuildCmd::UpdateTaskInventory { item, .. } | aurora_net::build::BuildCmd::RezScript { item, .. },
+            ) = &c
+            {
+                self.record_library_use(item.item_id);
+            }
             self.send(c);
         }
     }
@@ -8037,6 +8043,7 @@ impl App {
             self.contacts_ui.ask_teleport_offer(a.offer_tp, &self.world.region_name());
         }
         if let Some(asset) = a.landmark {
+            self.record_library_asset(asset, 3);
             self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
             self.send(NetCommand::TeleportLandmark(asset));
         }
@@ -11036,6 +11043,8 @@ impl ApplicationHandler for App {
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
                     self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
+                    self.options_ui.scroll_to_occlusion = filter == "occlusion";
+                    self.options_ui.scroll_to_bloom = filter == "bloom";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),

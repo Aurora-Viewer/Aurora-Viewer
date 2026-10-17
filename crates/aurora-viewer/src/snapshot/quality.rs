@@ -63,7 +63,8 @@ impl Held {
             antialiasing,
             anisotropy,
             sharpen,
-            glow
+            glow,
+            effects
         );
         if s.shadows != self.boosted_shadows {
             self.shadows = s.shadows;
@@ -108,8 +109,9 @@ pub const MSAA_8X: u8 = 4;
 
 /// The boosted values: each one at Aurora's most, never lower than the
 /// user's (an unlimited complexity stays unlimited), the anti-aliasing at
-/// MSAA 8x. The particles, the screen-space reflections, the sharpening and
-/// the glow stay the user's own choices.
+/// MSAA 8x. The particles, the screen-space reflections, the sharpening, the
+/// glow and Aurora's effects (bloom, contact shadows, indirect light) stay
+/// the user's own choices.
 pub fn boosted(user: Values) -> Values {
     let top = photo_maxima();
     Values {
