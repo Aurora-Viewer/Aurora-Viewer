@@ -76,14 +76,10 @@ fn mark_tails(looks: &mut [Look], system: impl Fn(usize) -> bool) {
 }
 
 /// One shown line.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Row {
     /// Index of its line in the conversation.
     pub line: usize,
-    pub seq: u64,
-    /// Only visible rows are retained on opening a menu. The live buffer
-    /// may evict their messages while the user chooses an action.
-    pub held: Option<std::sync::Arc<ChatLine>>,
     pub look: Look,
     /// It matches the find bar's text.
     pub hit: bool,
@@ -110,7 +106,6 @@ pub struct Source<'a> {
 #[derive(Default)]
 pub struct View {
     token: u64,
-    first: u64,
     revision: u64,
     len: usize,
     width: f32,
@@ -139,9 +134,6 @@ pub struct View {
     hits: Vec<usize>,
     /// Row to bring in sight at the next `show`.
     scroll_to: Option<usize>,
-    /// A right click in this transcript holds its rows until its menu
-    /// closes, including a sender's picture moving to a new group tail.
-    menu_interaction: bool,
 }
 
 /// Case-insensitive search of `needle` (already lowercase) in `hay`: the
@@ -268,11 +260,6 @@ fn estimate(line: &ChatLine, look: Look, width: f32) -> f32 {
 }
 
 impl View {
-    /// Only a menu opened from this transcript pauses its live end.
-    pub fn menu_open(&self, ctx: &egui::Context) -> bool {
-        self.menu_interaction && egui::Popup::is_any_open(ctx)
-    }
-
     /// Rows matching the find text (indices for `row` and `scroll_to`).
     pub fn hits(&self) -> &[usize] {
         &self.hits
@@ -296,12 +283,6 @@ impl View {
         // (the filter) or split the labels (the find highlight)
         let layout_changed =
             self.token != s.clock.token || self.width != width || self.filter != s.filter || self.find != s.find || self.layout != s.layout;
-        // Keep the clicked row and its grouping intact while its menu is
-        // used. Messages still arrive in World; reconcile them on closing.
-        // Visible rows retain their text even if the live buffer trims it.
-        if self.menu_interaction && !layout_changed {
-            return false;
-        }
         if !layout_changed
             && self.revision == s.clock.revision
             && self.len == s.lines.len()
@@ -320,7 +301,6 @@ impl View {
             };
         }
         self.token = s.clock.token;
-        self.first = s.clock.first;
         self.revision = s.clock.revision;
         self.len = s.lines.len();
         self.width = width;
@@ -368,8 +348,6 @@ impl View {
             }
             self.rows.push(Row {
                 line: i,
-                seq,
-                held: None,
                 look,
                 hit,
                 y,
@@ -391,12 +369,6 @@ impl View {
 
     fn seq(&self, first: u64, row: usize) -> u64 {
         first + self.rows[row].line as u64
-    }
-
-    /// The original target of a menu, even after the live buffer evicts it.
-    pub fn held_line(&self, seq: u64) -> Option<&ChatLine> {
-        let i = self.rows.binary_search_by_key(&seq, |row| row.seq).ok()?;
-        self.rows[i].held.as_deref()
     }
 
     /// Record the measured height of a row; returns the change.
@@ -428,7 +400,7 @@ impl View {
     /// Lay out a row without painting it, when its height is not known.
     /// Returns how much its height changed.
     fn measure(&mut self, ui: &mut egui::Ui, first: u64, i: usize, draw: &mut dyn FnMut(&mut egui::Ui, &Row, bool)) -> f32 {
-        let row = self.rows[i].clone();
+        let row = self.rows[i];
         if row.measured {
             return 0.0;
         }
@@ -459,18 +431,14 @@ impl View {
         &mut self,
         ui: &mut egui::Ui,
         viewport: egui::Rect,
-        lines: &VecDeque<ChatLine>,
+        first: u64,
         draw: &mut dyn FnMut(&mut egui::Ui, &Row, bool),
     ) -> (f32, egui::Response) {
         let width = self.width;
-        let first = self.first;
-        self.menu_interaction =
-            self.menu_open(ui.ctx()) || (ui.rect_contains_pointer(ui.clip_rect()) && ui.input(|i| i.pointer.secondary_clicked()));
         // at the end of the conversation the scroll area follows its growth
         // by itself (stick to bottom), a frame late: the rows are placed
         // against the bottom here instead, no correction to add
-        let at_end = !self.menu_interaction
-            && (viewport.bottom() >= self.shown_height - 1.0 || self.anchored_top.is_some_and(|t| (viewport.top() - t).abs() < 0.5));
+        let at_end = viewport.bottom() >= self.shown_height - 1.0 || self.anchored_top.is_some_and(|t| (viewport.top() - t).abs() < 0.5);
         let target = self.scroll_to.take().filter(|&t| t < self.rows.len());
         let anchored = at_end && target.is_none();
 
@@ -494,7 +462,7 @@ impl View {
                 self.reflow(dirty_from);
             }
         }
-        if self.unmeasured > 0 && !self.menu_interaction {
+        if self.unmeasured > 0 {
             let started = Instant::now();
             let top = self.rows.partition_point(|r| r.y + r.h <= viewport.top());
             let bottom = self.rows.partition_point(|r| r.y < viewport.bottom());
@@ -572,7 +540,7 @@ impl View {
             (rect.top() + lift + viewport.top() - top, self.total - viewport.height())
         } else {
             self.anchored_top = None;
-            (rect.top() + lift - shift_above, viewport.top() + shift_above - lift)
+            (rect.top() + lift - shift_above, viewport.top() + shift_above)
         };
         let view_bottom = view_top + viewport.height();
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
@@ -584,10 +552,7 @@ impl View {
         let mut i = self.rows.partition_point(|r| r.y + r.h <= view_top);
         let mut changed_from = usize::MAX;
         while i < self.rows.len() && self.rows[i].y < view_bottom {
-            if self.menu_interaction && self.rows[i].held.is_none() {
-                self.rows[i].held = lines.get(self.rows[i].line).cloned().map(std::sync::Arc::new);
-            }
-            let row = self.rows[i].clone();
+            let row = self.rows[i];
             let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), base + row.y), egui::vec2(width, row.h));
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
@@ -848,7 +813,7 @@ mod tests {
                             first_unread: None,
                         };
                         view.sync(&source, width);
-                        let (shift, _) = view.show(ui, viewport, &lines, &mut |ui, row, painted| {
+                        let (shift, _) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
                             // a message in sight wraps on two lines when narrow
                             let narrow = ui.max_rect().width() < 350.0;
                             let h = if row.line == 37 && narrow { 40.0 } else { 20.0 };

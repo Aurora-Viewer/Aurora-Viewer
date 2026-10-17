@@ -136,6 +136,19 @@ pub fn context_menu_also(resp: &egui::Response, p: &Palette, also: bool, body: i
     context_menu_popup(popup, p, body)
 }
 
+/// A context menu owned by a containing view instead of a transient row.
+/// Its caller opens `id` in popup memory and retains the original position.
+pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
+    context_menu_popup(
+        Popup::new(id, ui.ctx().clone(), pos, ui.layer_id())
+            .kind(PopupKind::Menu)
+            .layout(egui::Layout::top_down_justified(egui::Align::Min))
+            .open_memory(None),
+        p,
+        body,
+    )
+}
+
 fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
     // below-right of the pointer like the world menu, pushed back into the
     // window by the area's constraint instead of flipping above it

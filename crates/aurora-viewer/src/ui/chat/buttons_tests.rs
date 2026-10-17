@@ -690,11 +690,21 @@ fn incoming_messages_keep_chat_context_menus_open() {
                         h.painted(block),
                         "{style:?}, older={older}, sender={sender}: menu survives message {i}"
                     );
+                }
+                h.settle();
+                assert_eq!(
+                    h.painted("incoming message 19"),
+                    !older,
+                    "{style:?}: chat keeps updating with its menu open"
+                );
+                if older {
                     assert_eq!(
                         h.text_rect(&original),
                         position,
-                        "{style:?}: keep the transcript still while its menu is open"
+                        "{style:?}: keep the normal manual-scroll position"
                     );
+                } else {
+                    assert!(!h.painted(&original), "{style:?}: the menu survives its row scrolling out of sight");
                 }
                 h.press_text(block);
                 assert!(
@@ -712,7 +722,7 @@ fn incoming_messages_keep_chat_context_menus_open() {
                 assert_eq!(
                     h.st.views[&Some(GROUP)].lines().count(),
                     received.lines.len(),
-                    "{style:?}: reconcile after closing"
+                    "{style:?}: the live view contains every received message"
                 );
                 assert_eq!(
                     h.painted("incoming message 19"),
@@ -724,8 +734,8 @@ fn incoming_messages_keep_chat_context_menus_open() {
     }
 }
 
-/// A short, bottom-aligned conversation keeps its sender and its message
-/// in sight too, including a new message from that very same sender.
+/// A short conversation keeps updating while its sender menu is open,
+/// including new messages from that very same sender.
 #[test]
 fn incoming_messages_keep_short_chat_context_menus_open() {
     for style in ALL {
@@ -733,13 +743,15 @@ fn incoming_messages_keep_short_chat_context_menus_open() {
         h.world.groups.sessions.entry(GROUP).or_default().group = true;
         h.open(Some(GROUP));
         h.right_click(h.text_rect("Jane").center());
-        let original = h.text_rect("hi builders");
         for i in 0..3 {
             h.world
                 .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("short incoming {i}")));
             h.frame(Vec::new());
             assert!(h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}: sender menu stays open");
-            assert_eq!(h.text_rect("hi builders"), original, "{style:?}: a short transcript stays still");
+            assert!(
+                h.painted(&format!("short incoming {i}")),
+                "{style:?}: the new message appears with its menu open"
+            );
         }
         h.history_key(egui::Key::Escape, egui::Modifiers::NONE);
         assert!(!egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: Escape closes the menu");
@@ -776,10 +788,13 @@ fn incoming_messages_keep_evicted_chat_context_menu_targets() {
                 h.painted(aurora_i18n::tr!("common-ignore")),
                 "{style:?}, sender={sender}: menu survives eviction"
             );
-            assert_eq!(
-                h.text_rect("hi builders"),
-                original,
-                "{style:?}: keep the visible row until the menu closes"
+            assert!(
+                !h.painted("hi builders"),
+                "{style:?}: the transcript no longer draws the evicted row"
+            );
+            assert!(
+                h.painted("busy incoming 2099"),
+                "{style:?}: the live end updates with its menu open"
             );
             h.press_text(aurora_i18n::tr!("common-ignore"));
             assert!(
@@ -790,6 +805,100 @@ fn incoming_messages_keep_evicted_chat_context_menu_targets() {
             );
             assert!(!egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: the menu closes");
             assert!(h.painted("busy incoming 2099"), "{style:?}: resume at the live end");
+        }
+    }
+}
+
+/// A menu is detached from its message's layout, but closes as soon as
+/// its conversation window is dragged, before the mouse is released.
+#[test]
+fn dragging_the_conversation_closes_its_context_menu() {
+    for style in ALL {
+        for sender in [false, true] {
+            if !style.workspace() && !sender {
+                continue;
+            }
+            let mut h = H::new(style);
+            h.world.groups.sessions.entry(GROUP).or_default().group = true;
+            h.open(Some(GROUP));
+            let at = h.text_rect(if sender { "Jane" } else { "hi builders" }).center();
+            h.right_click(at);
+            assert!(h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}: menu opened");
+            let window = h.frames.ctx.memory(|m| m.area_rect(egui::Id::new("conversations")).unwrap());
+            let grab = h
+                .shown(egui::Id::new("conversations").with("title_double_click"))
+                .expect("window title")
+                .center();
+            h.frame(vec![egui::Event::PointerMoved(grab)]);
+            h.frame(vec![egui::Event::PointerButton {
+                pos: grab,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: Default::default(),
+            }]);
+            for step in 1..=3 {
+                h.frame(vec![egui::Event::PointerMoved(grab + egui::vec2(25.0, 15.0) * step as f32)]);
+            }
+            let moved = h.frames.ctx.memory(|m| m.area_rect(egui::Id::new("conversations")).unwrap());
+            assert!(
+                moved.min.distance(window.min) > 10.0,
+                "{style:?}: the real window moved: {window:?} -> {moved:?}, grab={grab:?}, dragged={:?}",
+                h.frames.ctx.dragged_id()
+            );
+            assert!(
+                !egui::Popup::is_any_open(&h.frames.ctx),
+                "{style:?}: dragging dismisses the menu before release"
+            );
+            assert!(!h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}: no menu is left behind");
+        }
+    }
+}
+
+/// Copy and Quote use the original message even when incoming traffic has
+/// removed it from both the viewport and the bounded live transcript.
+#[test]
+fn the_message_menu_retains_copy_and_quote_after_eviction() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for quote in [false, true] {
+            let mut h = H::new(style);
+            h.open(Some(JANE));
+            h.right_click(h.text_rect("hello from Jane").center());
+            for i in 0..2100 {
+                h.world
+                    .conversation_line(JANE, line("Bob", BOB, ChatKind::Im, &format!("later message {i}")));
+            }
+            h.settle();
+            assert!(!h.painted("hello from Jane"), "{style:?}: the original message left the transcript");
+            assert!(h.painted("later message 2099"), "{style:?}: the transcript keeps updating");
+            if quote {
+                h.press_text(aurora_i18n::tr!("ui-chat-quote-message"));
+                assert_eq!(
+                    h.st.draft_mut(Some(JANE)),
+                    "> hello from Jane ",
+                    "{style:?}: quote the original message"
+                );
+            } else {
+                let pos = h.text_rect(aurora_i18n::tr!("ui-chat-copy-message")).center();
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(pos)]);
+                h.frame(vec![button(true)]);
+                let out = h.frame_out(vec![button(false)]);
+                assert!(
+                    out.commands
+                        .iter()
+                        .any(|c| matches!(c, egui::OutputCommand::CopyText(text) if text.ends_with("hello from Jane"))),
+                    "{style:?}: copy the original message"
+                );
+            }
+            assert!(
+                !egui::Popup::is_any_open(&h.frames.ctx),
+                "{style:?}: the chosen action dismisses the menu"
+            );
         }
     }
 }

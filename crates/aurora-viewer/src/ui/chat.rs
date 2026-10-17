@@ -12,6 +12,7 @@ mod header;
 pub mod history;
 mod input_history;
 mod invite_card;
+mod line_menu;
 mod members;
 mod reorder;
 pub(crate) mod select;
@@ -938,8 +939,12 @@ fn web_target(url: &str) -> Cow<'_, str> {
 
 /// Right click on the sender of a chat line: the name menu, its report on
 /// the line.
-fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine) {
-    super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    if let Some(menu) = menu {
+        line_menu::sender(r, menu, id, line);
+    } else {
+        super::menu::context_menu(r, p, |ui| super::context::chat_sender_menu(ui, p, world, id, line));
+    }
 }
 
 /// Right click on an avatar name in a conversation (menu_url_agent.xml).
@@ -1519,6 +1524,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             None => (None, w.chat_clock),
         },
     };
+    let menu = ui.layer_id().id.with(("chat_line_menu", st.selected));
     let mut env = LineEnv {
         p,
         icons,
@@ -1529,6 +1535,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         wanted: &mut st.wanted_pics,
         own_name,
         plain_history: false,
+        menu: Some(menu),
         bubbles: match rows {
             Rows::Classic(style) => style,
             Rows::Thread(_) => None,
@@ -1538,12 +1545,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
     let out = egui::ScrollArea::vertical()
         .id_salt(("conv", st.selected))
-        .stick_to_bottom(!view.menu_open(ui.ctx()))
-        .scroll_source(if view.menu_open(ui.ctx()) {
-            egui::scroll_area::ScrollSource::NONE
-        } else {
-            Default::default()
-        })
+        .stick_to_bottom(true)
         .auto_shrink([false, false])
         .max_height(height)
         .min_scrolled_height(height)
@@ -1568,8 +1570,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
-            let (shift, content) = view.show(ui, viewport, lines, &mut |ui, row, painted| {
-                let Some(line) = row.held.as_deref().or_else(|| lines.get(row.line)) else {
+            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
+                let Some(line) = lines.get(row.line) else {
                     return;
                 };
                 let mark = mark.filter(|_| row.hit);
@@ -1582,7 +1584,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     // a card: its own labels and buttons
                     draw(ui);
                 } else {
-                    let seq = row.seq;
+                    let seq = clock.first + row.line as u64;
                     select::row(ui, seq, selection.of_row(seq), painted, draw);
                 }
                 if painted && current == Some(row.line) {
@@ -1601,11 +1603,10 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
-            if let Rows::Thread(th) = &mut rows {
+            if matches!(rows, Rows::Thread(_)) {
                 let first = clock.first;
-                thread::message_menu(ui, &env, th, &content, &drawn, |seq| {
-                    view.held_line(seq)
-                        .or_else(|| seq.checked_sub(first).and_then(|i| lines.get(i as usize)))
+                line_menu::message(&content, menu, &drawn, |seq| {
+                    seq.checked_sub(first).and_then(|i| lines.get(i as usize))
                 });
             }
             shift
@@ -1616,6 +1617,13 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         state.offset.y += out.inner;
         state.store(ui.ctx(), out.id);
     }
+    line_menu::show(ui, menu, p, |ui, target| {
+        if let Some(avatar) = target.sender {
+            super::context::chat_sender_menu(ui, p, w, avatar, &target.line);
+        } else if let Rows::Thread(th) = &mut rows {
+            thread::message_menu(ui, &env, th, &target.line);
+        }
+    });
     to_field
 }
 
@@ -1634,6 +1642,8 @@ pub(crate) struct LineEnv<'a> {
     /// History lines in the colors of new ones (the History window, where
     /// every line is history; Firestorm's is_conversation_log).
     pub plain_history: bool,
+    /// A transcript-owned popup; None for nearby-chat toasts and fixtures.
+    pub menu: Option<egui::Id>,
     /// The lines as bubbles (`bubbles.rs`), with the sender's name opening
     /// each group when `Some(true)` (several people write); `None`: the
     /// classic lines with their header strips.
@@ -1729,7 +1739,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         _ => line.source,
                     };
                     if !object && !avatar.is_nil() {
-                        line_name_menu(&r, p, world, avatar, line);
+                        line_name_menu(&r, p, world, avatar, line, env.menu);
                     }
                     if !object
                         && !avatar.is_nil()
@@ -2703,7 +2713,7 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             match target {
                 SenderLink::Resident(id) => {
-                    line_name_menu(&resp, p, world, id, line);
+                    line_name_menu(&resp, p, world, id, line, None);
                     if resp.clicked() {
                         super::profile::request_open(ui.ctx(), id);
                     }
