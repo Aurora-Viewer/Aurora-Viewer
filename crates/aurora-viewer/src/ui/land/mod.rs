@@ -353,11 +353,14 @@ impl LandUi {
             });
             return;
         }
-        if key == "scripts" {
+        if matches!(
+            key.as_str(),
+            "scripts" | "scripts-descending" | "scripts-name" | "scripts-owner" | "scripts-empty" | "scripts-attachments"
+        ) {
             self.page = Page::Manage;
             self.manage_nav.go(manage::Section::Sale);
             self.manage_open.insert(manage::Section::Sale);
-            self.scripts.open();
+            self.scripts.demo(&key);
             return;
         }
         if key == "show-objects" {

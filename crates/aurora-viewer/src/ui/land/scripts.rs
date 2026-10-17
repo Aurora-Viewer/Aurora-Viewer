@@ -15,6 +15,9 @@ use egui::{RichText, Sense, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
 
+mod table;
+use table::{Column, Row, Sort, Table};
+
 /// SIZE_OF_ONE_KB.
 const KB: i64 = 1024;
 
@@ -28,6 +31,8 @@ pub(super) struct ScriptsUi {
     /// The request chain waits for the parcel UUID (RemoteParcelRequest).
     pending: bool,
     mine_asked: bool,
+    parcel_table: Table,
+    mine_table: Table,
 }
 
 impl ScriptsUi {
@@ -38,6 +43,21 @@ impl ScriptsUi {
         self.pending = true;
         self.mine_asked = false;
         self.selected.clear();
+        self.parcel_table.revision = None;
+        self.mine_table.revision = None;
+    }
+
+    /// Explicit offline fixtures of the real tables, never grid requests.
+    pub(super) fn demo(&mut self, mode: &str) {
+        self.open();
+        match mode {
+            "scripts-descending" => self.parcel_table.sort.descending = true,
+            "scripts-name" => self.parcel_table.filter = aurora_i18n::tr!("demo-fountain").into(),
+            "scripts-owner" => self.parcel_table.filter = "Aurora".into(),
+            "scripts-empty" => self.parcel_table.filter = aurora_i18n::tr!("common-no-results").into(),
+            "scripts-attachments" => self.tab = 1,
+            _ => {}
+        }
     }
 }
 
@@ -90,28 +110,60 @@ fn not_available(v: &View, world: &World) -> Option<&'static str> {
     }
 }
 
-/// Columns of a list: (title, width, right aligned); a zero width shares
+/// Columns of a list: (key, title, width, right aligned); a zero width shares
 /// the room left, beside the strip of the scroll bar of the rows below.
-fn head(ui: &mut egui::Ui, p: &Palette, cols: &[(&str, f32, bool)]) -> Vec<f32> {
-    let flex = cols.iter().filter(|c| c.1 == 0.0).count().max(1) as f32;
-    let fixed: f32 = cols.iter().map(|c| c.1).sum();
+fn head(ui: &mut egui::Ui, p: &Palette, cols: &[(Column, &str, f32, bool)], sort: &mut Sort) -> Vec<f32> {
+    let flex = cols.iter().filter(|c| c.2 == 0.0).count().max(1) as f32;
+    let fixed: f32 = cols.iter().map(|c| c.2).sum();
     let share = ((widgets::scrolled_width(ui) - fixed) / flex).max(60.0);
-    let widths: Vec<f32> = cols.iter().map(|c| if c.1 == 0.0 { share } else { c.1 }).collect();
+    let widths: Vec<f32> = cols.iter().map(|c| if c.2 == 0.0 { share } else { c.2 }).collect();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        for ((title, _, right), w) in cols.iter().zip(&widths) {
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(*w, 20.0), Sense::hover());
-            let g = ui.painter().layout_job(super::aurora::semibold(ui, title, 11.0, p.muted_dim));
+        for ((column, title, _, right), w) in cols.iter().zip(&widths) {
+            let (rect, r) = ui.allocate_exact_size(Vec2::new(*w, 20.0), Sense::click());
+            let sorted = sort.column == *column;
+            let caret_w = if sorted { widgets::caret_room(9.0) } else { 0.0 };
+            let color = if sorted { p.violet_light } else { p.muted_dim };
+            let mut job = super::aurora::semibold(ui, title, 11.0, color);
+            job.wrap = egui::text::TextWrapping::truncate_at_width((w - 14.0 - caret_w).max(0.0));
+            let g = ui.painter().layout_job(job);
             let x = if *right {
-                rect.right() - 8.0 - g.size().x
+                rect.right() - 8.0 - g.size().x - caret_w
             } else {
                 rect.left() + 6.0
             };
             let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
-            ui.painter().galley(at, g, p.muted_dim);
+            ui.painter().galley(at, g, color);
+            if sorted {
+                let center = egui::pos2(rect.right() - 12.5, rect.center().y);
+                widgets::paint_glyph(ui.painter(), widgets::sort_caret(!sort.descending), center, 9.0, color);
+            }
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(aurora_i18n::tr!("ui-land-scripts-sort-tip"))
+                .clicked()
+            {
+                sort.click(*column);
+            }
         }
     });
     widths
+}
+
+fn search(ui: &mut egui::Ui, p: &Palette, table: &mut Table, hint: &str) {
+    ui.add_space(5.0);
+    ui.horizontal(|ui| {
+        widgets::search_box(ui, p, &mut table.filter, hint, ui.available_width());
+    });
+    table.prepare();
+    ui.label(
+        RichText::new(aurora_i18n::tr!(
+            "ui-land-scripts-results",
+            shown = table.visible.len() as i64,
+            total = table.rows.len() as i64
+        ))
+        .size(12.0)
+        .color(p.muted),
+    );
 }
 
 /// One row: its cells, right aligned where asked; true when clicked.
@@ -195,22 +247,30 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, st: &mut ScriptsUi, v: &Vie
 }
 
 fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, world: &mut World) {
-    let info = world.land.scripts.clone();
+    let table = &mut st.parcel_table;
+    if table.revision != Some(world.land.scripts.revision) {
+        let rows = world
+            .land
+            .scripts
+            .details
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map_or_else(Vec::new, |parcels| {
+                parcels
+                    .iter()
+                    .flat_map(|pa| pa.objects.iter().map(|o| Row::new(o.clone(), pa.local_id, pa.name.clone())))
+                    .collect()
+            });
+        table.replace(rows, world.land.scripts.revision);
+    }
+    table.sync_names(&mut world.land, &mut world.social, &world.groups.groups);
+    let info = &world.land.scripts;
     let reason = not_available(v, world);
     let parcels = match &info.details {
-        Some(Ok(list)) => list.clone(),
-        _ => Vec::new(),
+        Some(Ok(list)) => list.as_slice(),
+        _ => &[],
     };
-    let objects: Vec<(i32, Option<i32>, String, ScriptObject)> = parcels
-        .iter()
-        .flat_map(|pa| {
-            pa.objects
-                .iter()
-                .map(|o| (pa.local_id.unwrap_or(0), pa.local_id, pa.name.clone(), o.clone()))
-        })
-        .collect();
-    st.selected.retain(|id| objects.iter().any(|o| o.3.id == *id));
-    let has_locations = objects.iter().any(|o| o.3.location.is_some());
+    let has_locations = table.rows.iter().any(|r| r.object.location.is_some());
     let has_local_ids = parcels.iter().any(|pa| pa.local_id.is_some());
     // summary
     match (reason, &info.summary) {
@@ -230,41 +290,44 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
                 .color(p.muted),
         );
     }
+    search(ui, p, table, aurora_i18n::tr!("ui-land-scripts-search"));
     ui.add_space(4.0);
     let widths = head(
         ui,
         p,
         &[
-            (aurora_i18n::tr!("ui-land-scripts-size"), 80.0, true),
-            (aurora_i18n::tr!("ui-land-scripts-urls-head"), 50.0, true),
-            (aurora_i18n::tr!("common-name"), 0.0, false),
-            (aurora_i18n::tr!("common-owner"), 0.0, false),
-            (aurora_i18n::tr!("ui-land-scripts-parcel"), 0.0, false),
-            (aurora_i18n::tr!("ui-land-scripts-location"), 110.0, false),
+            (Column::Memory, aurora_i18n::tr!("ui-land-scripts-size"), 96.0, true),
+            (Column::Urls, aurora_i18n::tr!("ui-land-scripts-urls-head"), 50.0, true),
+            (Column::Name, aurora_i18n::tr!("common-name"), 0.0, false),
+            (Column::Owner, aurora_i18n::tr!("common-owner"), 0.0, false),
+            (Column::Place, aurora_i18n::tr!("ui-land-scripts-parcel"), 0.0, false),
+            (Column::Position, aurora_i18n::tr!("ui-land-scripts-location"), 110.0, false),
         ],
+        &mut table.sort,
     );
-    let list_h = (ui.available_height() - 40.0).max(80.0);
+    table.prepare();
+    st.selected.retain(|id| table.visible_ids.contains(id));
+    if table.visible.is_empty() && !table.rows.is_empty() {
+        status(ui, p, aurora_i18n::tr!("common-no-results"));
+    }
+    let list_h = (ui.available_height() - 40.0).max(0.0);
+    let old_spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 1.0;
     egui::ScrollArea::vertical()
         .id_salt("land_scripts_parcel")
         .max_height(list_h)
         .min_scrolled_height(list_h)
         .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            for (_, _, parcel_name, o) in &objects {
-                let owner = if o.group_owned {
-                    let groups = world.groups.groups.clone();
-                    world.land.group_name(&o.owner, &groups).unwrap_or_default()
-                } else {
-                    world.social.want_name(o.owner);
-                    world.social.name_of(&o.owner)
-                };
+        .show_rows(ui, 24.0, table.visible.len(), |ui, range| {
+            for index in range {
+                let entry = &table.rows[table.visible[index]];
+                let o = &entry.object;
                 let cells = [
                     (aurora_i18n::integer(o.memory / KB), true),
                     (aurora_i18n::integer(o.urls), true),
                     (o.name.clone(), false),
-                    (owner, false),
-                    (parcel_name.clone(), false),
+                    (entry.owner.clone(), false),
+                    (entry.place.clone(), false),
                     (location_text(o), false),
                 ];
                 let r = row(ui, p, &widths, &cells, st.selected.contains(&o.id));
@@ -279,11 +342,12 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
                 }
             }
         });
+    ui.spacing_mut().item_spacing.y = old_spacing;
     ui.add_space(6.0);
+    let loading = reason.is_none() && info.summary.is_none();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let size = Vec2::new(0.0, 26.0);
-        let loading = reason.is_none() && info.summary.is_none();
         // the button is off until the answer comes (no hammering)
         if widgets::action_button_if(
             ui,
@@ -298,8 +362,7 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
         {
             st.pending = true;
             st.selected.clear();
-            world.land.scripts.summary = None;
-            world.land.scripts.details = None;
+            world.land.scripts.clear_parcel();
         }
         if has_locations
             && widgets::action_button_if(
@@ -315,7 +378,11 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
             .clicked()
         {
             // showBeacon: the first selected object's place, tracked
-            if let Some((_, _, _, o)) = objects.iter().find(|o| st.selected.contains(&o.3.id))
+            if let Some(o) = table
+                .visible
+                .iter()
+                .map(|i| &table.rows[*i].object)
+                .find(|o| st.selected.contains(&o.id))
                 && let Some(l) = o.location
             {
                 let (ox, oy) = aurora_net::handle_to_origin(v.handle);
@@ -336,9 +403,12 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
         {
             // returnObjects: one message per parcel, then a refresh
             let mut by_parcel: std::collections::BTreeMap<i32, Vec<Uuid>> = Default::default();
-            for (local_id, has_id, _, o) in &objects {
-                if has_id.is_some() && st.selected.contains(&o.id) {
-                    by_parcel.entry(*local_id).or_default().push(o.id);
+            for index in &table.visible {
+                let entry = &table.rows[*index];
+                if let Some(local_id) = entry.parcel_id
+                    && st.selected.contains(&entry.object.id)
+                {
+                    by_parcel.entry(local_id).or_default().push(entry.object.id);
                 }
             }
             for (local_id, tasks) in by_parcel {
@@ -346,14 +416,34 @@ fn parcel_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, v: &View, worl
             }
             st.pending = true;
             st.selected.clear();
-            world.land.scripts.summary = None;
-            world.land.scripts.details = None;
+            world.land.scripts.clear_parcel();
         }
     });
 }
 
 fn mine_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, world: &mut World) {
-    let mine = world.land.scripts.mine.clone();
+    let table = &mut st.mine_table;
+    if table.revision != Some(world.land.scripts.revision) {
+        let rows = world
+            .land
+            .scripts
+            .mine
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map_or_else(Vec::new, |(_, attachments)| {
+                attachments
+                    .iter()
+                    .flat_map(|a| {
+                        a.objects
+                            .iter()
+                            .map(|o| Row::attachment(o.clone(), a.location.clone(), world.agent_id))
+                    })
+                    .collect()
+            });
+        table.replace(rows, world.land.scripts.revision);
+    }
+    table.sync_names(&mut world.land, &mut world.social, &world.groups.groups);
+    let mine = &world.land.scripts.mine;
     match &mine {
         None => status(ui, p, aurora_i18n::tr!("ui-land-scripts-waiting")),
         Some(Err(e)) => status(ui, p, &format!("{} ({e})", aurora_i18n::tr!("ui-land-scripts-error"))),
@@ -363,39 +453,45 @@ fn mine_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, world: &mut Worl
             }
         }
     }
+    search(ui, p, table, aurora_i18n::tr!("ui-land-scripts-attachments-search"));
     ui.add_space(4.0);
     let widths = head(
         ui,
         p,
         &[
-            (aurora_i18n::tr!("ui-land-scripts-size"), 80.0, true),
-            (aurora_i18n::tr!("ui-land-scripts-urls-head"), 50.0, true),
-            (aurora_i18n::tr!("common-name"), 0.0, false),
-            (aurora_i18n::tr!("ui-land-scripts-attachment"), 0.0, false),
+            (Column::Memory, aurora_i18n::tr!("ui-land-scripts-size"), 96.0, true),
+            (Column::Urls, aurora_i18n::tr!("ui-land-scripts-urls-head"), 50.0, true),
+            (Column::Name, aurora_i18n::tr!("common-name"), 0.0, false),
+            (Column::Place, aurora_i18n::tr!("ui-land-scripts-attachment"), 0.0, false),
         ],
+        &mut table.sort,
     );
-    let list_h = (ui.available_height() - 40.0).max(80.0);
+    table.prepare();
+    if table.visible.is_empty() && !table.rows.is_empty() {
+        status(ui, p, aurora_i18n::tr!("common-no-results"));
+    }
+    let list_h = (ui.available_height() - 40.0).max(0.0);
+    let old_spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 1.0;
     egui::ScrollArea::vertical()
         .id_salt("land_scripts_mine")
         .max_height(list_h)
         .min_scrolled_height(list_h)
         .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            if let Some(Ok((_, attachments))) = &mine {
-                for a in attachments {
-                    for o in &a.objects {
-                        let cells = [
-                            (aurora_i18n::integer(o.memory / KB), true),
-                            (aurora_i18n::integer(o.urls), true),
-                            (o.name.clone(), false),
-                            (a.location.clone(), false),
-                        ];
-                        row(ui, p, &widths, &cells, false);
-                    }
-                }
+        .show_rows(ui, 24.0, table.visible.len(), |ui, range| {
+            for index in range {
+                let entry = &table.rows[table.visible[index]];
+                let o = &entry.object;
+                let cells = [
+                    (aurora_i18n::integer(o.memory / KB), true),
+                    (aurora_i18n::integer(o.urls), true),
+                    (o.name.clone(), false),
+                    (entry.place.clone(), false),
+                ];
+                row(ui, p, &widths, &cells, false);
             }
         });
+    ui.spacing_mut().item_spacing.y = old_spacing;
     ui.add_space(6.0);
     if widgets::action_button_if(
         ui,
@@ -415,6 +511,28 @@ fn mine_tab(ui: &mut egui::Ui, p: &Palette, st: &mut ScriptsUi, world: &mut Worl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_keeps_room_for_the_table_and_actions_at_every_window_height() {
+        let p = crate::theme::Theme::default().palette();
+        for height in [300.0, 440.0, 800.0] {
+            let ctx = egui::Context::default();
+            let mut table = Table::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(680.0, height))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let start = ui.cursor().min.y;
+                    search(ui, &p, &mut table, aurora_i18n::tr!("ui-land-scripts-search"));
+                    assert!(ui.cursor().min.y - start < 90.0, "search consumed the table at height {height}");
+                },
+            );
+            // Headless tests do not submit texture uploads to a renderer.
+            output.textures_delta.clear();
+        }
+    }
 
     #[test]
     fn summaries_in_kilobytes() {

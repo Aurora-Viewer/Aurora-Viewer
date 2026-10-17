@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod bc7;
 mod bloom;
+mod contact_shadows;
 mod dof;
 mod drawn_pick;
 pub mod frame_priority;
@@ -148,6 +149,11 @@ mod shader_tests {
     #[test]
     fn ssao_shader_is_valid() {
         validate(include_str!("shaders/ssao.wgsl"));
+    }
+
+    #[test]
+    fn contact_shadows_shader_is_valid() {
+        validate(include_str!("shaders/contact_shadows.wgsl"));
     }
 
     #[test]

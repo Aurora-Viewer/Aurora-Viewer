@@ -5362,6 +5362,60 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+/// AURORA_DEMO_FEET=opaque|blend: our avatar and each one of the crowd
+/// (AURORA_DEMO_CROWD) wear a shoe on each foot, a box on the foot's
+/// attachment point, opaque or blended (its color's alpha 0.95, as the
+/// many mesh bodies and shoes whose faces are blended though they look
+/// opaque): what the contact shadows see of what touches the ground. Two
+/// blocks also stand on the ground in front of the start position of
+/// AURORA_DEMO_POS="129,134", left of the view: an opaque one and, further
+/// left, a blended one.
+pub fn feet_demo() -> Option<bool> {
+    match std::env::var("AURORA_DEMO_FEET").ok()?.trim() {
+        "blend" => Some(true),
+        "opaque" => Some(false),
+        _ => None,
+    }
+}
+
+/// The shoes of [`feet_demo`] (`blend`: blended faces).
+pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
+    let alpha = if blend { 0.95 } else { 1.0 };
+    let mut objects = Vec::new();
+    let avatars = std::iter::once(9000).chain((0..crowd).map(|k| 100_000 + k * 64));
+    for (k, avatar_id) in avatars.enumerate() {
+        // left foot, right foot
+        for (side, point) in [7u8, 8].into_iter().enumerate() {
+            let mut shoe = prim(
+                210_000 + k as u32 * 4 + side as u32,
+                Vec3::new(0.0, 0.04, -0.05),
+                Quat::IDENTITY,
+                Vec3::new(0.12, 0.26, 0.1),
+                aurora_prim::VolumeParams::default(),
+                te([0.25, 0.12, 0.35, alpha], 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            shoe.parent_id = avatar_id;
+            shoe.state = point;
+            objects.push(shoe);
+        }
+    }
+    for (i, (x, y, a)) in [(130.6, 137.4, 1.0), (131.4, 138.8, 0.95)].into_iter().enumerate() {
+        objects.push(prim(
+            210_900 + i as u32,
+            Vec3::new(x, y, floor_at(x, y) + 0.3),
+            Quat::IDENTITY,
+            Vec3::new(0.3, 0.3, 0.6),
+            aurora_prim::VolumeParams::default(),
+            te([0.25, 0.12, 0.35, a], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 /// Pixels of [`TEX_HAIR`] (RGBA8, 256×256): strands along t, `period`
 /// texels apart, `empty` percent of each period fully transparent; the
 /// strands thin out from the roots (top) to the tips.
