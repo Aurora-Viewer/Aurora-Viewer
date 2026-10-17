@@ -3477,6 +3477,31 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_SHIMMER=1: a long glossy plate ahead of the start position,
+    // its fine normal map repeated many times, seen at a grazing angle: far
+    // away its relief is smaller than a pixel and its highlights shimmer as
+    // the camera moves, unless the specular anti-aliasing widens them
+    // (AURORA_SPECULAR_AA)
+    if std::env::var_os("AURORA_DEMO_SHIMMER").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let mut t = TextureEntry::default();
+        for f in t.faces.iter_mut() {
+            f.texture = BLANK_TEXTURE;
+            f.color = [0.35, 0.36, 0.4, 1.0];
+            f.material_id = MAT_SHIMMER;
+        }
+        add(prim(
+            id,
+            Vec3::new(142.0, 127.0, floor + 0.03),
+            Quat::IDENTITY,
+            Vec3::new(16.0, 6.0, 0.06),
+            boxp,
+            Arc::new(t),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_BOUNCE=1: a white floor between a red wall and a green
     // one, with a white box against them, left of the start position: with
     // GTAO's indirect light the floor and the box take the walls' colours
@@ -5800,6 +5825,8 @@ const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
 const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0004);
 const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0005);
+/// Glossy plate of AURORA_DEMO_SHIMMER: the bumps repeated many times.
+const MAT_SHIMMER: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0020);
 const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
 const TEX_PICK_FAINT: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0013);
 const TEX_PICK_HALF: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0014);
@@ -6057,6 +6084,17 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
                 normal_st: [2.0, 2.0, 0.0, 0.0],
                 specular_exp: 220,
                 env_intensity: 120,
+                diffuse_alpha_mode: alpha_mode::NONE,
+                ..base.clone()
+            },
+        ),
+        (
+            MAT_SHIMMER,
+            LegacyMaterial {
+                normal_map: TEX_BUMPS,
+                normal_st: [48.0, 18.0, 0.0, 0.0],
+                specular_exp: 245,
+                env_intensity: 60,
                 diffuse_alpha_mode: alpha_mode::NONE,
                 ..base
             },

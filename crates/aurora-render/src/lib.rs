@@ -32,6 +32,8 @@ mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
 #[cfg(test)]
+mod specular_aa;
+#[cfg(test)]
 mod test_gpu;
 pub mod tex_anim;
 pub mod textures;

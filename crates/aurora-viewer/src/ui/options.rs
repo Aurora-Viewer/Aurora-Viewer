@@ -1788,6 +1788,13 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-specular-aa"),
+                    aurora_i18n::tr!("ui-options-specular-aa-help"),
+                    |ui| toggle(ui, p, &mut s.specular_aa),
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-tone-mapping"),
                     aurora_i18n::tr!("ui-options-khronos-pbr-neutral-is-used-by-second-life"),
                     |ui| {

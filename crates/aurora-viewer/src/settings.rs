@@ -606,6 +606,11 @@ pub struct Settings {
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt)
     pub antialiasing: u8,
+    /// Geometric specular anti-aliasing (common.wgsl `specular_aa_roughness`):
+    /// highlights widened where the shading normal turns faster than a
+    /// pixel, so they stop shimmering as the camera moves. An Aurora
+    /// improvement, on by default.
+    pub specular_aa: bool,
     /// 0 Khronos PBR Neutral, 1 ACES
     pub tonemapper: u8,
     /// Optional frame rate cap (on by default at 120 images per second).
@@ -1143,6 +1148,7 @@ impl Default for Settings {
             projector_shadows: true,
             contact_shadows: false,
             antialiasing: 6,
+            specular_aa: true,
             tonemapper: 0,
             fps_cap: true,
             fps_limit: 120,
@@ -1775,6 +1781,7 @@ impl Settings {
             screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             screen_indirect_intensity: self.screen_indirect_intensity,
             contact_shadows: self.contact_shadows,
+            specular_aa: self.specular_aa,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 64),
