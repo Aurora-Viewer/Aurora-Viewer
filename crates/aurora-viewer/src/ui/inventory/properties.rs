@@ -72,6 +72,38 @@ pub(super) fn show(
     false
 }
 
+#[derive(Clone, Copy)]
+enum Role {
+    Owner,
+    Creator,
+}
+
+#[derive(Debug, PartialEq)]
+enum ResidentLabel<'a> {
+    /// A resident's name opening their profile.
+    Link(&'a str),
+    /// No resident to open, with the reason on hover.
+    Plain(&'static str, Option<&'static str>),
+}
+
+/// What the owner / creator row shows. The simulator sends no creator for an
+/// object whose parts were made by several residents
+/// (LLPermissions::accumulate keeps a creator only when all parts share it),
+/// which is common on no-modify objects: the Legacy Viewer shows
+/// "(unknown / multiple)" without a link then (LLSidepanelItemInfo::refreshFromItem).
+fn resident_label<'a>(role: Role, id: Uuid, names: &'a HashMap<Uuid, String>) -> ResidentLabel<'a> {
+    if id.is_nil() {
+        return match role {
+            Role::Creator => ResidentLabel::Plain(
+                aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple"),
+                Some(aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple-hint")),
+            ),
+            Role::Owner => ResidentLabel::Plain(aurora_i18n::tr!("common-unknown"), None),
+        };
+    }
+    ResidentLabel::Link(names.get(&id).map(String::as_str).unwrap_or(aurora_i18n::tr!("common-unknown")))
+}
+
 /// One properties layout for agent inventory and object contents. The caller
 /// supplies access and saves through the appropriate inventory protocol.
 pub(crate) struct PropertyPanel<'a> {
@@ -130,22 +162,27 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.horizontal_top(|ui| {
             thumbnail::picture(ui, p, it.thumbnail, 128.0, images, wanted_images);
             ui.vertical(|ui| {
-                for (label, resident) in [
-                    (aurora_i18n::tr!("common-owner-2"), it.owner),
-                    (aurora_i18n::tr!("common-creator-2"), it.creator),
+                for (label, resident, role) in [
+                    (aurora_i18n::tr!("common-owner-2"), it.owner, Role::Owner),
+                    (aurora_i18n::tr!("common-creator-2"), it.creator, Role::Creator),
                 ] {
                     ui.label(RichText::new(label).size(12.0).color(p.muted));
-                    let name = names
-                        .get(&resident)
-                        .map(String::as_str)
-                        .unwrap_or(aurora_i18n::tr!("common-unknown"));
-                    if ui
-                        .link(RichText::new(name).size(12.0).color(p.violet_light))
-                        .on_hover_text(resident.to_string())
-                        .clicked()
-                        && !resident.is_nil()
-                    {
-                        response.profile = Some(resident);
+                    match resident_label(role, resident, names) {
+                        ResidentLabel::Link(name) => {
+                            if ui
+                                .link(RichText::new(name).size(12.0).color(p.violet_light))
+                                .on_hover_text(resident.to_string())
+                                .clicked()
+                            {
+                                response.profile = Some(resident);
+                            }
+                        }
+                        ResidentLabel::Plain(text, hint) => {
+                            let label = ui.label(RichText::new(text).size(12.0).color(p.muted));
+                            if let Some(hint) = hint {
+                                label.on_hover_text(hint);
+                            }
+                        }
                     }
                 }
                 ui.label(
@@ -336,4 +373,56 @@ fn acquired(timestamp: i64) -> String {
         seconds / 60 % 60,
         seconds % 60
     )
+}
+
+#[cfg(test)]
+mod resident_tests {
+    use super::*;
+
+    #[test]
+    fn an_object_without_creator_shows_unknown_multiple_without_a_link() {
+        let names = HashMap::new();
+        assert_eq!(
+            resident_label(Role::Creator, Uuid::nil(), &names),
+            ResidentLabel::Plain(
+                aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple"),
+                Some(aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple-hint"))
+            )
+        );
+        assert_eq!(
+            resident_label(Role::Owner, Uuid::nil(), &names),
+            ResidentLabel::Plain(aurora_i18n::tr!("common-unknown"), None)
+        );
+    }
+
+    #[test]
+    fn a_known_creator_is_a_link_whatever_the_permissions() {
+        let creator = Uuid::from_u128(7);
+        let names = HashMap::from([(creator, "Nova Exemple".to_owned())]);
+        assert_eq!(resident_label(Role::Creator, creator, &names), ResidentLabel::Link("Nova Exemple"));
+        // a name still loading keeps the link
+        let other = Uuid::from_u128(8);
+        assert_eq!(
+            resident_label(Role::Creator, other, &names),
+            ResidentLabel::Link(aurora_i18n::tr!("common-unknown"))
+        );
+    }
+
+    #[test]
+    fn a_no_modify_item_keeps_the_creator_it_was_sent() {
+        let creator = Uuid::from_u128(9);
+        let v = aurora_llsd::llsd_map! {
+            "item_id" => Uuid::from_u128(1),
+            "shadow_id" => Uuid::from_u128(2),
+            "permissions" => aurora_llsd::llsd_map! {
+                "creator_id" => creator,
+                "owner_id" => Uuid::from_u128(3),
+                "base_mask" => 0x0008_8000_i32,
+                "owner_mask" => 0x0008_8000_i32,
+            },
+        };
+        let it = aurora_net::inventory::item_from_llsd(&v).expect("item");
+        assert_eq!(it.owner_mask & rules::MODIFY, 0);
+        assert_eq!(it.creator, creator);
+    }
 }

@@ -2227,6 +2227,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Ctrl+A / Backspace at 730–731. Capture at 680 and 820: the selection stays
   highlighted, its parent folder opens and the full inventory scrolls to
   it. At frame 800 the log reports the empty query, selection and visibility.
+- **`AURORA_DEMO_INVENTORY=properties-no-mod|properties-no-creator`**: the
+  properties of a no-modify object made by another resident. `no-mod` shows
+  its creator as a link; `no-creator` gives it no creator, as the simulator
+  sends an object whose parts have several creators: the row reads
+  "(unknown / multiple)", without a link, with the reason on hover.
 - **`AURORA_DEMO_WINDOWS=1|restore|drag`**, with `AURORA_DEMO_INVENTORY=1`:
   double-click on the real title bar of the inventory at frames 660–665; `1`
   keeps the bar collapsed, `restore` expands it at frames 1000–1005,
