@@ -2027,7 +2027,7 @@ impl App {
                         self.world.inventory.remove(&reply.removed);
                         self.world.inventory.apply(reply.contents);
                     }
-                    Err(reason) => log::warn!("refused inventory offer not moved to the Trash: {reason}"),
+                    Err(reason) => log::warn!("background inventory change not saved: {reason}"),
                 }
                 return;
             }
@@ -5392,7 +5392,7 @@ impl App {
             for cmd in self.world.take_social_commands() {
                 self.send(cmd);
             }
-            // refused offers: to the Trash, whatever the inventory window does
+            // Background inventory changes, whatever the inventory window does.
             self.update_marketplace_listings();
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
@@ -6110,6 +6110,7 @@ impl App {
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
         let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        self.options_ui.sky_tone_mapped = !env.sky.no_post;
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
             let key = {
@@ -10934,6 +10935,7 @@ impl ApplicationHandler for App {
                     self.options_ui.ask_reset_section();
                 } else {
                     self.options_ui.scroll_to_end = filter == "end";
+                    self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),

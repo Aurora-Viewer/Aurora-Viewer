@@ -3930,12 +3930,18 @@ pub fn events() -> Vec<NetEvent> {
     // With a haze distance multiplier (0.8 by default, 37 in a misty sky),
     // what is a few tens of metres away is hazed. With an ambient level (0.25
     // by default, above 1 in the brightest skies), what only dims the ambient
-    // light shows: the ambient occlusion
+    // light shows: the ambient occlusion. With a reflection probe ambiance
+    // (4th value, above 0) the sky is no longer classic: it is tone mapped
     let sky = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| {
         let mut values = v.split(',').map(|s| s.trim().parse::<f64>().ok());
-        Some((values.next()??, values.next().flatten(), values.next().flatten()))
+        Some((
+            values.next()??,
+            values.next().flatten(),
+            values.next().flatten(),
+            values.next().flatten(),
+        ))
     });
-    if let Some((gamma, haze_distance, ambient)) = sky {
+    if let Some((gamma, haze_distance, ambient, probe_ambiance)) = sky {
         // an EEP region: without the ExtEnvironment capability its day is
         // not shown (the simulator sun is)
         ev.push(NetEvent::Capabilities {
@@ -3952,7 +3958,13 @@ pub fn events() -> Vec<NetEvent> {
         ev.push(NetEvent::Environment {
             handle: HANDLE,
             parcel_id: -1,
-            environment: demo_sky(Vec3::new(0.55, 0.35, 0.6).normalize(), gamma, haze_distance, ambient),
+            environment: demo_sky(
+                Vec3::new(0.55, 0.35, 0.6).normalize(),
+                gamma,
+                haze_distance,
+                ambient,
+                probe_ambiance,
+            ),
         });
     }
     ev.push(NetEvent::FriendsOnline {
@@ -5965,7 +5977,7 @@ pub fn seat_animation() -> aurora_assets::Animation {
 }
 
 /// Day cycle with a single classic sky frame (see AURORA_DEMO_SKY).
-fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f64>) -> Llsd {
+fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f64>, probe_ambiance: Option<f64>) -> Llsd {
     use aurora_llsd::llsd_map;
     let q = Quat::from_rotation_arc(Vec3::X, sun);
     let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
@@ -5984,6 +5996,9 @@ fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f
     }
     if let (false, Llsd::Map(m)) = (haze.is_empty(), &mut sky) {
         m.insert("legacy_haze".into(), Llsd::Map(haze));
+    }
+    if let (Some(a), Llsd::Map(m)) = (probe_ambiance, &mut sky) {
+        m.insert("reflection_probe_ambiance".into(), Llsd::Real(a));
     }
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);

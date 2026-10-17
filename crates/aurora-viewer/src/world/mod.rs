@@ -282,7 +282,7 @@ pub struct World {
     /// The inventory cache being read by its thread since the login reply
     /// (`poll_inventory_cache`), and when the read started.
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
-    /// Refused offers to move to the Trash (`take_inventory_edits`).
+    /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
@@ -1569,6 +1569,13 @@ impl World {
                     if is_me {
                         self.on_seat_parent_change(handle, parent);
                     }
+                    if u.parent_id == 0
+                        && Some(handle) == self.main_region
+                        && !self.teleporting
+                        && let Some(idx) = self.objects.index_of_uuid(&u.full_id)
+                    {
+                        self.unregister_attachment(idx);
+                    }
                     self.on_camera_parent_change(handle, &u);
                     self.objects.upsert_at(handle, u, self.received);
                     if is_me {
@@ -1646,6 +1653,7 @@ impl World {
                             .and_then(|i| self.objects.get(i))
                             .is_some_and(|o| !o.is_avatar());
                     if let Some(i) = self.objects.index_of(&key) {
+                        self.unregister_attachment(i);
                         for child in self.objects.subtree(i) {
                             if let Some(o) = self.objects.get(child) {
                                 self.scripted_camera.clear(o.full_id);
@@ -3025,6 +3033,26 @@ impl World {
     /// to send.
     pub fn take_inventory_edits(&mut self) -> Vec<aurora_net::inventory::operations::Mutation> {
         std::mem::take(&mut self.inventory_edits)
+    }
+
+    /// Run before a confirmed detach unlinks/removes its root, while the
+    /// avatar parent and AttachItemID are still available. Child prims,
+    /// temporary attachments and other avatars cannot change our COF.
+    fn unregister_attachment(&mut self, idx: usize) {
+        let Some(object) = self.objects.get(idx).filter(|o| !o.is_avatar()) else {
+            return;
+        };
+        let ours = self
+            .objects
+            .parent_of(object)
+            .and_then(|p| self.objects.get(p))
+            .is_some_and(|p| p.is_avatar() && p.full_id == self.agent_id);
+        if ours
+            && let Some(item) = object.attachment_item_id()
+            && let Some(change) = appearance::unlink_attachment(&mut self.inventory, item)
+        {
+            self.inventory_edits.push(change);
+        }
     }
 
     /// Name of an avatar by id (from its object name-values).
@@ -4740,6 +4768,155 @@ mod motion_tests {
         });
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
         assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
+    }
+
+    fn scripted_detach_fixture(point: u8) -> (World, aurora_net::objects::ObjectUpdate, RegionHandle) {
+        let (mut world, _, mut worn, here, _) = worn_fixture();
+        appearance::seed_demo(&mut world.inventory, world.agent_id);
+        worn.state = point.rotate_left(4);
+        worn.name_values = format!("AttachItemID STRING RW SV {}", Uuid::from_u128(717));
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![worn.clone()],
+        });
+        (world, worn, here)
+    }
+
+    #[test]
+    fn a_scripted_detach_is_not_undone_by_the_next_inventory_attach_or_detach() {
+        use aurora_net::{NetCommand, inventory::operations::Operation};
+        for point in [2, 35] {
+            for killed in [true, false] {
+                for attach in [true, false] {
+                    let (mut world, mut worn, handle) = scripted_detach_fixture(point);
+                    let item = Uuid::from_u128(717);
+                    let cof = appearance::cof(&world.inventory).expect("COF");
+                    let saved = Uuid::from_u128(704);
+                    let saved_links = appearance::folder_links(&world.inventory, saved);
+                    let before = appearance::folder_links(&world.inventory, cof);
+                    let link_ids: HashSet<_> = world.inventory.folders[&cof]
+                        .items
+                        .iter()
+                        .copied()
+                        .filter(|id| world.inventory.items[id].asset_id == item)
+                        .collect();
+                    if killed {
+                        world.apply(NetEvent::ObjectsKilled {
+                            handle,
+                            local_ids: vec![worn.local_id],
+                        });
+                    } else {
+                        worn.parent_id = 0;
+                        world.apply(NetEvent::ObjectUpdates {
+                            handle,
+                            objects: vec![worn.clone()],
+                        });
+                    }
+                    assert!(!world.worn_attachment_items().contains(&item));
+                    let mut expected = before;
+                    expected.retain(|link| link.target != item);
+                    assert_eq!(appearance::folder_links(&world.inventory, cof), expected);
+                    assert_eq!(appearance::folder_links(&world.inventory, saved), saved_links);
+                    assert!(world.inventory.items.contains_key(&item), "keep the inventory original");
+                    let edits = world.take_inventory_edits();
+                    assert_eq!(edits.len(), 1, "persist the detach without a user inventory action");
+                    assert_eq!(edits[0].refresh, [cof]);
+                    assert_eq!(edits[0].removed.iter().copied().collect::<HashSet<_>>(), link_ids);
+                    assert!(
+                        edits[0]
+                            .operations
+                            .iter()
+                            .all(|op| matches!(op, Operation::Delete { id, folder: false } if link_ids.contains(id)))
+                    );
+                    // The unrelated action can occur before AIS answers the unlink.
+                    let action = if attach {
+                        appearance::Action::Add(Uuid::from_u128(723))
+                    } else {
+                        appearance::Action::Remove(Uuid::from_u128(718))
+                    };
+                    let (change, sync) =
+                        appearance::plan(&world.inventory, action, &world.worn_attachment_points()).expect("inventory action");
+                    assert!(sync);
+                    appearance::demo_mutate(&mut world.inventory, world.agent_id, &change).expect("COF reply");
+                    assert!(
+                        !appearance::sync_commands(&world.inventory, world.agent_id, &world.worn_attachment_items())
+                            .iter()
+                            .any(|cmd| matches!(cmd, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == item)))
+                    );
+                    // Repeated packets must not enqueue another deletion.
+                    world.apply(NetEvent::ObjectsKilled {
+                        handle,
+                        local_ids: vec![worn.local_id],
+                    });
+                    assert!(world.take_inventory_edits().is_empty());
+                    let (change, _) = appearance::plan(&world.inventory, appearance::Action::Add(item), &world.worn_attachment_points())
+                        .expect("explicitly wearing the detached original still works");
+                    assert!(change.links.iter().any(|link| link.target == item));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn teleport_and_border_crossing_kills_do_not_unlink_our_attachments() {
+        for teleport in [true, false] {
+            let (mut world, worn, here) = scripted_detach_fixture(35);
+            let cof = appearance::cof(&world.inventory).expect("COF");
+            let links = appearance::folder_links(&world.inventory, cof);
+            if teleport {
+                world.teleporting = true;
+            } else {
+                world.apply(NetEvent::MainRegionChanged {
+                    handle: here + (256u64 << 32),
+                });
+            }
+            world.apply(NetEvent::ObjectsKilled {
+                handle: here,
+                local_ids: vec![worn.local_id],
+            });
+            assert!(world.worn_attachment_items().contains(&Uuid::from_u128(717)));
+            assert_eq!(appearance::folder_links(&world.inventory, cof), links);
+            assert!(world.take_inventory_edits().is_empty());
+        }
+    }
+
+    #[test]
+    fn child_other_avatar_and_temporary_attachment_detaches_do_not_unlink_our_outfit() {
+        for kind in 0..3 {
+            let (mut world, worn, handle) = scripted_detach_fixture(35);
+            let mut other = prim(&worn, 950, worn.local_id);
+            other.name_values.clone_from(&worn.name_values);
+            if kind == 1 {
+                let mut avatar = crate::demo::action_avatar(false);
+                avatar.local_id = 951;
+                avatar.full_id = Uuid::from_u128(951);
+                other.parent_id = avatar.local_id;
+                world.apply(NetEvent::ObjectUpdates {
+                    handle,
+                    objects: vec![avatar],
+                });
+            } else if kind == 2 {
+                other.parent_id = world
+                    .objects
+                    .get(world.objects.index_of_uuid(&world.agent_id).expect("our avatar"))
+                    .expect("avatar")
+                    .key
+                    .local_id;
+                other.name_values = format!("AttachItemID STRING RW SV {}", Uuid::nil());
+            }
+            let cof = appearance::cof(&world.inventory).expect("COF");
+            let links = appearance::folder_links(&world.inventory, cof);
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![other.clone()],
+            });
+            world.apply(NetEvent::ObjectsKilled {
+                handle,
+                local_ids: vec![other.local_id],
+            });
+            assert_eq!(appearance::folder_links(&world.inventory, cof), links);
+            assert!(world.take_inventory_edits().is_empty());
+        }
     }
 
     /// Another avatar in `handle`, made from ours.
