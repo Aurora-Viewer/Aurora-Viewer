@@ -800,7 +800,7 @@ mod tests {
             // Open through the actual Features swatch, so the test also
             // covers whether this caller exposes the None preset.
             let mut draw_features = |time, events| {
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
                         time: Some(time),
@@ -809,6 +809,7 @@ mod tests {
                     },
                     |ui| super::super::features::show(ui, &theme.palette(), tool, world, &mut Default::default(), env),
                 );
+                output.textures_delta.clear();
                 output.shapes.into_iter().find_map(|shape| match shape.shape {
                     egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("common-texture") => {
                         // Caption below the 40-point swatch, with a 14-point
