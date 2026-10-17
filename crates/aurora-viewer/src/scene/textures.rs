@@ -1246,7 +1246,7 @@ impl TextureStreamer {
         }
         if let Some((px, w, h)) = crate::demo::local_texture(&id) {
             let alpha = super::jobs::classify_alpha(&px);
-            let levels = aurora_render::build_mips(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 });
+            let levels = mips_for(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 }, alpha);
             let mips: Vec<MipLevel> = levels
                 .iter()
                 .map(|(width, height, data)| MipLevel {
@@ -2655,6 +2655,29 @@ pub fn texture_result(
 /// larger ones: its refusal is not written to the transcoded cache.
 const KEEP_RGBA_FROM: u32 = 128;
 
+/// The mips of a texture whose alpha is a mask keep what the alpha test
+/// draws at every level (`aurora_render::preserve_alpha_coverage`), so that
+/// foliage, grass, fences and hair cut out of a texture do not thin out with
+/// the distance. The Legacy Viewer leaves the box-filtered mips of the
+/// driver (LLImageGL), which do; this is a deliberate improvement.
+/// `AURORA_ALPHA_COVERAGE=0` keeps the plain mips, to compare.
+pub(crate) fn alpha_coverage_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_ALPHA_COVERAGE").map_or(true, |v| v.trim() != "0"))
+}
+
+/// The mip chain of a decoded texture, with its alpha coverage kept when
+/// its alpha is a mask. The texture does not know the cutoff of the faces
+/// that will use it: the default one (0.5) is taken, the cutoff of every
+/// face whose alpha is detected as a mask and of most masked materials.
+fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKind) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut mips = build_mips(width, height, rgba, levels);
+    if alpha == AlphaKind::Mask && alpha_coverage_on() {
+        aurora_render::preserve_alpha_coverage(&mut mips, aurora_render::MASK_CUTOFF);
+    }
+    mips
+}
+
 /// Where a decode job leaves its result in the transcoded cache.
 struct CacheWrite<'a> {
     path: &'a std::path::Path,
@@ -2830,7 +2853,7 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
                 })
             });
             let before_mips = start.elapsed();
-            let mips = build_mips(img.width, img.height, rgba, 16);
+            let mips = mips_for(img.width, img.height, rgba, 16, alpha);
             let mips_done = start.elapsed();
             let tried = bc7 && pool.is_some();
             let compressed = tried

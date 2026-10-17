@@ -52,7 +52,7 @@ pub use hud::HudView;
 pub use label_depth::world_label_at;
 pub use main_thread::{GpuInfo, Renderer};
 pub use renderer::{CASCADES, RenderError};
-pub use textures::{MipLevel, build_mips};
+pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::blurred_backdrop;
 pub use ui_frame::{EguiFrame, EguiHandOver};
