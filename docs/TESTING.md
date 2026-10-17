@@ -3957,6 +3957,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
+| `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
@@ -4004,6 +4005,16 @@ What the inventory must show with these scenarios:
   scene is in front of a label. Scene: `AURORA_DEMO_TAGS=wall`; cost:
   `r_egui`, `gpu=` and `draws=` of `perf summary` in a crowd
   (`AURORA_DEMO_CROWD=40`, `AURORA_DEMO_POS="129,134"`).
+- **`AURORA_TEXTURE_SIZING=screen`**: the textures of a face are loaded for
+  the diameter of its object on screen times the face's repeats, as before
+  the Legacy Viewer's sizing (`scene/texture_importance.rs`: the circle
+  around the object seen from its nearest point, up to eight times the
+  area for an object within 16 m and in the middle of the view, divided by
+  the repeats squared; no boost under memory pressure). To compare the
+  two: the `texture load:` line (decodes per discard level, Mpx, MB
+  downloaded) and `texture_mb` / `pages_mb` of `perf summary`, for example
+  with `AURORA_DEMO_STREAM=200,200,j2k=<cache	ex>,net=200,size=4` and
+  `AURORA_DEMO_POS="141,126"` (the first objects 5 m away).
 - **`AURORA_TEXTURE_BUDGET_MB=<n>`**: the texture pages must not exceed
   n MB, whatever the "Texture memory" setting and the video memory the
   driver announces (`scene/texture_budget.rs`). Used to put the viewer
