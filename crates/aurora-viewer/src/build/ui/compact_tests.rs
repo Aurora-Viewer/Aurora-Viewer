@@ -72,6 +72,139 @@ fn history_frame(
 }
 
 #[test]
+fn duplicate_and_linked_edit_commands_own_their_presses_and_do_not_repeat() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let ctx = egui::Context::default();
+    tool.out.clear();
+    let remaining = history_frame(
+        &ctx,
+        &mut world,
+        &mut tool,
+        &mut settings,
+        vec![
+            history_key(egui::Key::D, false, false),
+            history_key(egui::Key::D, false, true),
+            history_key(egui::Key::E, true, false),
+            history_key(egui::Key::E, true, true),
+        ],
+    );
+    assert_eq!(
+        tool.out
+            .iter()
+            .filter(|cmd| matches!(cmd, aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Duplicate { .. })))
+            .count(),
+        1
+    );
+    assert!(settings.edit_linked, "the repeated press must not toggle linked edit back off");
+    assert!(
+        !remaining
+            .iter()
+            .any(|event| matches!(event, egui::Event::Key { pressed: true, .. }))
+    );
+}
+
+#[test]
+fn build_commands_reserve_logical_keys_and_preserve_text_alt_camera_and_closed_tools() {
+    use crate::keybinds::{Action, Binding, Input, KeyBindings, Mods as KeyMods};
+    use winit::keyboard::{Key as NativeKey, KeyCode};
+    for (letter, code, mods) in [
+        (
+            "d",
+            KeyCode::KeyD,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "e",
+            KeyCode::KeyE,
+            KeyMods {
+                ctrl: true,
+                shift: true,
+                alt: false,
+            },
+        ),
+        (
+            "l",
+            KeyCode::KeyL,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "l",
+            KeyCode::KeyL,
+            KeyMods {
+                ctrl: true,
+                shift: true,
+                alt: false,
+            },
+        ),
+        ("g", KeyCode::KeyG, KeyMods::default()),
+        (
+            "g",
+            KeyCode::KeyG,
+            KeyMods {
+                shift: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "x",
+            KeyCode::KeyX,
+            KeyMods {
+                shift: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "b",
+            KeyCode::KeyB,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "ю",
+            KeyCode::KeyD,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let key = NativeKey::Character(letter.into());
+        let input = Input::key(code);
+        let mut kb = KeyBindings::default();
+        kb.set(Action::Forward, 0, Some(Binding::captured(input.clone(), KeyMods::default())));
+        kb.set(Action::CamZoomIn, 0, Some(Binding::captured(input.clone(), KeyMods::default())));
+        let mut down = std::collections::HashSet::from([input.clone()]);
+        assert!(super::super::Shortcut::take_native_key(&key, code, mods, true, true, &mut down).is_some());
+        assert!(down.is_empty());
+        assert!(!kb.held(Action::Forward, &down, KeyMods::default()));
+        assert!(!kb.held(Action::CamZoomIn, &down, KeyMods::default()));
+        // A focused field owns its own editing events, even if build is open.
+        assert!(super::super::Shortcut::take_native_key(&key, code, mods, true, false, &mut down).is_none());
+        assert!(super::super::Shortcut::take_native_key(&key, code, KeyMods { alt: true, ..mods }, true, true, &mut down).is_none());
+    }
+    assert!(
+        super::super::Shortcut::from_key(
+            egui::Key::D,
+            KeyMods {
+                ctrl: true,
+                ..Default::default()
+            },
+            false
+        )
+        .is_none()
+    );
+    assert!(super::super::Shortcut::from_key(egui::Key::G, KeyMods::default(), false).is_none());
+}
+
+#[test]
 fn history_dispatch_uses_each_event_modifiers_and_supports_repeats_and_both_redo_keys() {
     let (mut world, mut tool, mut settings) = fixture();
     let ctx = egui::Context::default();

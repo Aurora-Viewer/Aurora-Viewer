@@ -2771,13 +2771,10 @@ impl App {
 
     /// A key or a bindable mouse button changed state.
     fn on_input(&mut self, input: Input, pressed: bool) {
-        if pressed {
-            self.down.insert(input.clone());
-        } else {
-            self.down.remove(&input);
-        }
+        let mods = self.mods();
+        let action = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
         if let Some(group) = self.run_group(&input) {
-            self.walk_tap(group, pressed);
+            self.walk_tap(group, pressed && action.is_none());
         }
         if !pressed || !self.in_world() {
             return;
@@ -2796,7 +2793,7 @@ impl App {
             self.pass_wall();
             return;
         }
-        let Some(action) = self.settings.keybinds.triggered(&input, self.mods()) else {
+        let Some(action) = action else {
             return;
         };
         match action {
@@ -4639,10 +4636,15 @@ impl App {
     }
 
     fn update_move_input(&mut self, typing: bool, dt: f32) {
+        let web_or_popup = self.media.focus.is_some()
+            || self.profile_ui.focused_web().is_some()
+            || self.search_ui.focused_web().is_some()
+            || egui::Popup::is_any_open(&self.egui_ctx);
+        let typing = typing || web_or_popup;
         let (kb, m) = (&self.settings.keybinds, self.mods());
         // typing in the chat bar, only the keys it hands to the avatar move
         // it (crate::keybinds::chat_bar_moves)
-        let chat_moves = typing && self.chat_bar_moves_avatar();
+        let chat_moves = typing && !web_or_popup && self.chat_bar_moves_avatar();
         let passed: HashSet<Input>;
         let down = if chat_moves {
             passed = self
@@ -12592,6 +12594,13 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event: ke, .. } => {
                 self.last_input = Instant::now();
+                // Clear held controls before a dialog, capture or web/media
+                // page can return early after receiving the native release.
+                if ke.state == ElementState::Released
+                    && let PhysicalKey::Code(code) = ke.physical_key
+                {
+                    self.on_input(Input::key(code), false);
+                }
                 if self.exit_prompt.open {
                     return;
                 }
@@ -12627,33 +12636,41 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
-                    // egui already received history keys. Keep them out of
-                    // held controls and gestures even when no field owns focus;
-                    // web/media forwarding below still gets its own undo/redo.
-                    let history_key = pressed
-                        && crate::keybinds::EditHistory::take_native_key(&ke.logical_key, code, self.mods(), &mut self.down).is_some();
-                    if history_key {
+                    // The command table is shared with egui's dispatcher:
+                    // an editing accelerator must never become a held move.
+                    let input = Input::key(code);
+                    let mods = self.mods();
+                    let build_keyboard =
+                        self.in_world() && !self.egui_ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(&self.egui_ctx);
+                    let ui_shortcut = pressed
+                        && crate::build::ui::Shortcut::take_native_key(
+                            &ke.logical_key,
+                            code,
+                            mods,
+                            self.build.open,
+                            build_keyboard,
+                            &mut self.down,
+                        )
+                        .is_some();
+                    let command_key = pressed && self.settings.keybinds.triggered(&input, mods).is_some();
+                    if ui_shortcut || command_key {
+                        self.down.remove(&input);
                         self.check_temp_run();
                     }
                     // A gesture key must still be held when the chat or a web
                     // page has keyboard focus; it only owns a visible HUD drag.
-                    let input = Input::key(code);
-                    if !history_key && (!pressed || !ke.repeat) && self.settings.keybinds.uses_input(Action::HudDrag, &input) {
-                        if pressed {
-                            self.down.insert(input);
-                        } else {
-                            self.down.remove(&input);
-                        }
+                    if pressed && !ke.repeat && !ui_shortcut && self.settings.keybinds.uses_input(Action::HudDrag, &input) {
+                        let _ = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
                     }
                     // Releases always go through so keys never get stuck.
-                    let typing = self.egui_ctx.egui_wants_keyboard_input();
+                    let typing = self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx);
                     use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
                     let gesture_key = crate::gestures::keys::from_key(code, &ke.key_without_modifiers());
                     if !pressed && let Some(key) = gesture_key {
                         self.gesture_state.manager.release(Some(key));
                     }
                     if pressed
-                        && !history_key
+                        && !ui_shortcut
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()
@@ -12708,6 +12725,7 @@ impl ApplicationHandler for App {
                         && !ke.repeat
                         && !typing
                         && !self.settings.letter_keys_move
+                        && !ui_shortcut
                         && self.in_world()
                         && !self.ctrl
                         && !self.alt
@@ -12737,11 +12755,7 @@ impl ApplicationHandler for App {
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
                     let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
-                    if (!pressed || (!resp.consumed && !typing) || shortcut || chat_pass)
-                        && !(pressed && ke.repeat)
-                        && !find_taken
-                        && !history_key
-                    {
+                    if pressed && ((!resp.consumed && !typing) || shortcut || chat_pass) && !ke.repeat && !find_taken && !ui_shortcut {
                         self.on_input(Input::key(code), pressed);
                     }
                 }

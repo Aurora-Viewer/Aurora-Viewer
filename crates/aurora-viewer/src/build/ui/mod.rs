@@ -17,6 +17,7 @@ mod features;
 mod floaters;
 mod general;
 mod item_properties;
+mod keyboard;
 mod object;
 mod replace;
 mod texture;
@@ -37,6 +38,7 @@ use uuid::Uuid;
 
 pub(super) use color::ColorTarget;
 pub use floaters::MediaSettingsState;
+pub use keyboard::Shortcut;
 
 /// What the floater needs from the rest of the viewer.
 pub struct Env<'a> {
@@ -200,7 +202,6 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
         }
         return;
     }
-    use egui::Key;
     let pressed = ctx.input(|i| i.events.clone());
     for ev in pressed {
         let egui::Event::Key {
@@ -213,63 +214,24 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
         else {
             continue;
         };
-        let (ctrl, shift) = (m.command || m.ctrl, m.shift);
-        if let Some(history) = crate::keybinds::EditHistory::from_key(key, crate::keybinds::Mods { ctrl, shift, alt: m.alt }) {
-            // LLToolBrushLand has UndoLand only: redo must not fall through
-            // to an object selection left over from another tool.
-            if tool.open {
-                if tool.tool == Tool::Land {
-                    if history == crate::keybinds::EditHistory::Undo {
-                        let mut cmds = Vec::new();
-                        tool.land.undo(&mut cmds);
-                        for c in cmds {
-                            tool.send(c);
-                        }
-                    }
-                } else {
-                    tool.undo(world, history == crate::keybinds::EditHistory::Redo);
-                }
+        let mods = crate::keybinds::Mods {
+            ctrl: m.command || m.ctrl,
+            shift: m.shift,
+            alt: m.alt,
+        };
+        if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
+            // The picker owns Escape in stages (pipette, then dialog).
+            // Leave its event intact instead of consuming a no-op Close.
+            if command == Shortcut::Close && tool.ui.color_picker.is_open() {
+                continue;
             }
+            if !repeat || matches!(command, Shortcut::History(_)) {
+                command.run(tool, world, s);
+            }
+            // Repeated non-repeatable commands still own their keys.
             ctx.input_mut(|i| {
                 i.consume_key(m, key);
             });
-            continue;
-        }
-        if repeat {
-            continue;
-        }
-        match (key, ctrl, shift) {
-            (Key::B, true, false) => {
-                if tool.open {
-                    tool.close(world, s);
-                } else {
-                    // LLToolMgr::enterBuildMode selects the Create tool
-                    tool.open_build(Tool::Create);
-                }
-            }
-            (Key::Num1, true, false) => tool.open_build(Tool::Focus),
-            (Key::Num2, true, false) => tool.open_build(Tool::Grab),
-            (Key::Num3, true, false) => tool.open_build(Tool::Edit),
-            (Key::Num4, true, false) => tool.open_build(Tool::Create),
-            (Key::Num5, true, false) => tool.open_build(Tool::Land),
-            (Key::B, true, true) => tool.ui.grid_options_open = !tool.ui.grid_options_open,
-            _ if !tool.open => {}
-            (Key::Escape, false, false) if tool.ui.color_picker.is_open() => {}
-            (Key::Escape, false, false) => tool.close(world, s),
-            (Key::Delete, false, false) => tool.delete(world),
-            (Key::D, true, false) => tool.duplicate(world, Vec3::new(0.5, 0.5, 0.0), true),
-            (Key::L, true, false) => tool.link(world),
-            (Key::L, true, true) => tool.unlink(world),
-            (Key::E, true, true) => {
-                let on = !s.edit_linked;
-                tool.set_edit_linked(world, s, on);
-            }
-            (Key::G, false, false) => s.snap = !s.snap,
-            (Key::G, false, true) => tool.use_selection_for_grid(world, s),
-            (Key::X, false, true) => tool.snap_xy_to_grid(world, s),
-            (Key::Period, true, sh) => tool.select_next_part(world, s, true, sh),
-            (Key::Comma, true, sh) => tool.select_next_part(world, s, false, sh),
-            _ => {}
         }
     }
 }
