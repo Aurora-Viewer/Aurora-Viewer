@@ -887,9 +887,38 @@ pub struct Person<'a> {
     /// At the right end (time left, a date), amber when `timed`.
     pub exp: &'a str,
     pub timed: bool,
+    /// A column before `exp`: `exp` and it then keep the widths of
+    /// `person_head`'s columns (the estate's banned residents).
+    pub mid: Option<&'a str>,
+    /// A group: a square picture, no status, its profile on double click.
+    pub group: bool,
     pub selected: bool,
     /// The box can be ticked.
     pub can: bool,
+}
+
+/// The widths of `Person::mid` and of `exp` when there is a `mid`.
+const MID_W: f32 = 116.0;
+const EXP_W: f32 = 96.0;
+/// Where a row's names start: box, picture and their gaps.
+const NAME_X: f32 = 26.0 + 9.0 + 30.0 + 9.0;
+
+/// The x of a row's `mid` and `exp` columns, from its right end.
+fn columns(right: f32) -> (f32, f32) {
+    let exp = right - 8.0 - EXP_W;
+    (exp - 8.0 - MID_W, exp)
+}
+
+/// The head of a list with `Person::mid` columns: the names', the middle
+/// one's and the right one's titles, over the rows' columns.
+pub fn person_head(ui: &mut egui::Ui, p: &Palette, width: f32, name: &str, mid: &str, exp: &str) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::hover());
+    let (mid_x, exp_x) = columns(rect.right());
+    for (text, x) in [(name, rect.left() + NAME_X), (mid, mid_x), (exp, exp_x)] {
+        let g = ui.painter().layout_job(semibold(ui, &text.to_uppercase(), 10.5, p.muted_dim));
+        let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+        ui.painter().galley(at, g, p.muted_dim);
+    }
 }
 
 /// What a click on a row asks for.
@@ -922,26 +951,46 @@ pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_
     let toggled = widgets::checkbox(&mut child, p, &mut on, "").changed() || (row.can && r.clicked());
     // picture and status
     let disc = Rect::from_center_size(egui::pos2(rect.left() + 26.0 + 9.0 + 15.0, rect.center().y), Vec2::splat(30.0));
-    widgets::avatar_disc(ui, p, disc, row.pic, row.name, false);
-    let status = if row.id == world.agent_id {
-        presence::Status::Online
+    if row.group {
+        widgets::avatar_picture(ui, p, disc, row.pic, row.name, false);
     } else {
-        presence::of(world, &row.id)
-    };
-    if status != presence::Status::Unknown {
-        presence::paint_dot(ui.painter(), p, disc, status, p.field);
+        widgets::avatar_disc(ui, p, disc, row.pic, row.name, false);
+        let status = if row.id == world.agent_id {
+            presence::Status::Online
+        } else {
+            presence::of(world, &row.id)
+        };
+        if status != presence::Status::Unknown {
+            presence::paint_dot(ui.painter(), p, disc, status, p.field);
+        }
     }
     // the right end, then the names in the room before it
-    let exp_g = ui.painter().layout_no_wrap(
-        row.exp.to_owned(),
-        FontId::proportional(11.5),
-        if row.timed { p.amber } else { p.muted },
-    );
-    let exp_w = exp_g.size().x;
-    let at = crate::ui::widgets::row_text_origin(ui.painter(), &exp_g, rect.right() - 8.0 - exp_w, rect.center().y);
-    ui.painter().galley(at, exp_g, p.muted);
+    let small = |text: &str, width: f32, color| {
+        let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), FontId::proportional(11.5), color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        ui.painter().layout_job(job)
+    };
+    let exp_color = if row.timed { p.amber } else { p.muted };
+    let names_end = match row.mid {
+        // two columns of the head's widths
+        Some(mid) => {
+            let (mid_x, exp_x) = columns(rect.right());
+            for (g, x) in [(small(mid, MID_W, p.muted), mid_x), (small(row.exp, EXP_W, exp_color), exp_x)] {
+                let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
+                ui.painter().galley(at, g, p.muted);
+            }
+            mid_x - 8.0
+        }
+        None => {
+            let exp_g = small(row.exp, f32::INFINITY, exp_color);
+            let exp_w = exp_g.size().x;
+            let at = crate::ui::widgets::row_text_origin(ui.painter(), &exp_g, rect.right() - 8.0 - exp_w, rect.center().y);
+            ui.painter().galley(at, exp_g, p.muted);
+            rect.right() - 16.0 - exp_w
+        }
+    };
     let text_left = disc.right() + 9.0;
-    let text_w = (rect.right() - 16.0 - exp_w - text_left).max(20.0);
+    let text_w = (names_end - text_left).max(20.0);
     let mut job = semibold(ui, row.name, 12.5, p.ink);
     job.wrap = egui::text::TextWrapping::truncate_at_width(text_w);
     let name_g = ui.painter().layout_job(job);
@@ -958,7 +1007,11 @@ pub fn person_row(ui: &mut egui::Ui, p: &Palette, world: &World, row: &Person<'_
         ui.painter().galley(egui::pos2(text_left, top + name_h), g, p.muted);
     }
     if r.double_clicked() {
-        crate::ui::profile::request_open(ui.ctx(), row.id);
+        if row.group {
+            crate::ui::group_profile::request_open(ui.ctx(), row.id);
+        } else {
+            crate::ui::profile::request_open(ui.ctx(), row.id);
+        }
     }
     RowAnswer {
         toggled,

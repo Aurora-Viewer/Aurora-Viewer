@@ -86,7 +86,7 @@ impl App {
         }
         if self.demo
             && self.frame_count == 700
-            && std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| matches!(m.as_str(), "scripts" | "error"))
+            && std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| matches!(m.as_str(), "scripts" | "object" | "error"))
         {
             let object = self
                 .world
@@ -95,7 +95,11 @@ impl App {
                 .find(|(_, o)| !o.is_avatar() && Some(o.key.region) == self.world.main_region)
                 .map(|(_, o)| o.full_id);
             if let Some(object) = object {
-                self.inspect_scripts(object);
+                if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "object") {
+                    self.on_ctx_action(crate::ui::context::CtxAction::ObjectInfo(object));
+                } else {
+                    self.inspect_scripts(object);
+                }
             }
         }
     }
@@ -114,6 +118,12 @@ impl App {
         endpoint
     }
     pub(super) fn inspect_scripts(&mut self, object: Uuid) {
+        self.inspect_bridge_information(object, false);
+    }
+    pub(super) fn inspect_object_information(&mut self, object: Uuid) {
+        self.inspect_bridge_information(object, true);
+    }
+    fn inspect_bridge_information(&mut self, object: Uuid, extended: bool) {
         if !self.in_world() {
             return;
         }
@@ -124,15 +134,29 @@ impl App {
             .and_then(|i| self.world.objects.get(i))
             .is_some_and(|o| Some(o.key.region) == self.world.main_region);
         if !valid {
-            self.world.system_message(aurora_i18n::tr!("bridge-script-info-region"));
+            self.world.system_message(if extended {
+                aurora_i18n::tr!("bridge-object-info-region")
+            } else {
+                aurora_i18n::tr!("bridge-script-info-region")
+            });
             return;
         }
         let _ = self.sync_bridge_queries();
-        if self.bridge_services.inspect(object, Instant::now()) {
+        let queued = if extended {
+            self.bridge_services
+                .inspect_object(object, Instant::now(), &self.world.avatar_lib.attach_names)
+        } else {
+            self.bridge_services.inspect(object, Instant::now())
+        };
+        if queued {
             if self.bridge_runtime.error.is_some() {
                 self.bridge_runtime.retry(Instant::now());
             }
-            self.world.system_message(aurora_i18n::tr!("bridge-script-info-loading"));
+            self.world.system_message(if extended {
+                aurora_i18n::tr!("bridge-object-info-loading")
+            } else {
+                aurora_i18n::tr!("bridge-script-info-loading")
+            });
         }
     }
     pub(super) fn bridge_demo_command(&mut self, command: &NetCommand) -> bool {

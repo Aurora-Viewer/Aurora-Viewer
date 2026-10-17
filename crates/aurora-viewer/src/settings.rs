@@ -710,7 +710,7 @@ pub struct Settings {
     pub new_profile: bool,
 }
 
-const SETTINGS_VERSION: u32 = 17;
+const SETTINGS_VERSION: u32 = 18;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1499,6 +1499,11 @@ impl Settings {
             // (every file wrote the old "off")
             self.chat_keep_focus = true;
         }
+        if self.settings_version < 18 {
+            // Deluxe now takes GTAO: a profile still exactly on the former
+            // Deluxe follows it, any other keeps its occlusion
+            crate::graphics_presets::upgrade_deluxe(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1904,6 +1909,24 @@ mod tests {
 
     /// The chat bar keeps the keyboard by default, earlier files get it once
     /// (they all wrote the old "off"), a later choice stays.
+    #[test]
+    fn a_file_on_the_former_deluxe_moves_to_gtao_once() {
+        use crate::graphics_presets::Preset;
+        let mut old = Settings {
+            settings_version: 17,
+            ..Settings::default()
+        };
+        Preset::Deluxe.apply(&mut old);
+        old.ao_method = 0;
+        let now = old.sanitized();
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
+        // chosen after the change: kept
+        let mut chosen = Settings::default();
+        Preset::Deluxe.apply(&mut chosen);
+        chosen.ao_method = 0;
+        assert_eq!(chosen.sanitized().ao_method, 0);
+    }
+
     #[test]
     fn chat_bar_keeps_focus_by_default_and_once_for_earlier_files() {
         assert!(Settings::default().sanitized().chat_keep_focus);

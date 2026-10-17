@@ -328,7 +328,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -336,7 +336,14 @@ when unfocused") is ignored during a screenshot.
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
-  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
+  world view" above the bottom bar); `ml-zoom`: the right button held in
+  mouselook at 640 (the normal angle stays: no zoom was set with the wheel
+  yet), 3 wheel clicks in at 650 (`fov` in the log drops by 17.2° at once),
+  released at 680 (the normal angle again, exactly), held again at 720 (the
+  zoom at once), released at 760, a wheel click out at 800 (leaves mouselook);
+  `ml-zoom-alt`: Alt + right click in mouselook at 640, no context menu
+  unless Preferences › Camera › Mouselook › "Context menu with Alt + right
+  click" is on; wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
@@ -553,7 +560,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
-| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks and other residents' scripted attachments |
+| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
@@ -565,7 +572,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=on\|off\|moving\|seated\|error\|timeout\|endpoint` | Aurora bridge creation, confirmed position lock, movement/sitting pause and simulated failure |
-| `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|error` | Bridge altitude correction and object script-information local reports |
+| `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending` | Movement options, local swimming poses and synthetic passage feedback |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
@@ -573,7 +580,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
@@ -584,7 +591,16 @@ Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
 `worn-prim` and `worn-mesh` put a scripted attachment on another resident,
 without move/modify rights; both must log `demo touch_start: prim=975` and
 `demo touch_end: prim=975`, with `held=false` in the final result. The mesh
-scenario installs the existing synthetic skinned mesh locally. All scenarios
+scenario installs the existing synthetic skinned mesh locally. `worn-own`
+wears a scripted prim on our own chest (issue #488): the press must touch it
+(`demo server: ObjectGrab 975`) instead of turning to our avatar.
+`mouselook-gun` makes a script take the mouselook button
+(ScriptControlChange) and enters mouselook: the press and release send only
+`demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
+enters mouselook with nothing taken and puts a touchable panel under the
+crosshair: `click bits 0x10000000`, `ObjectGrab 975`, `click bits
+0x20000000`. `ground` presses the floor beside the avatar: `click bits
+0x10000000` then `0x20000000` (a click nothing takes). All scenarios
 write `demo world click` / `demo world click result`; the camera's final
 focus can be compared with the visible cube/pane. Use the usual `blend-zero`,
 `mask-zero`, invisible build/menu and HUD scenarios for neighbouring behavior.
@@ -895,6 +911,12 @@ with the full text on hover. Block and Ignore buttons under the menu.
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
 `focus`, `create`, `land`, `select`. `AURORA_DEMO_BUILD_FRAME` changes its
 start frame.
+`shared,object:99620` and `shared-denied,object:99620` select another resident's
+linkset with granted or denied effective Modify rights. Use
+`AURORA_DEMO_BUILD_TAB=texture:bp|texture:pbr|shape|features|general|rights` and
+capture after frame 700. Granted rights enable surface/property edits and
+report an editable object; sale and permission controls remain disabled.
+Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
 
@@ -1342,7 +1364,7 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
-| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>]]` | Classic EEP sky with this gamma |
+| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]` | EEP sky with this gamma, classic unless it has a probe ambiance |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
@@ -1441,6 +1463,13 @@ To check with these scenarios:
   `AURORA_DEMO_SKY=1.62,0.8,1.1` and `AURORA_DEMO_PBR_OVERRIDE=1`, the surround
   of each bump of the slabs must be darkened by ambient occlusion, and no
   longer be once ambient occlusion is turned off in the settings.
+  `probe ambiance`: the sky's reflection probe ambiance; above 0 the sky is
+  no longer classic and is tone mapped. With `AURORA_DEMO_SKY=1,0.8,0.25,0.6`,
+  `AURORA_DEMO_TOD=0` (the region's sky, not a saved preset) and
+  `AURORA_DEMO_OPTIONS=0:tonemap` (Graphics, scrolled to the row), the Tone
+  mapping choice is enabled;
+  World › Environment › Midday (a classic sky in the demo) greys it, with its
+  tooltip, and "Use shared environment" enables it again.
 - **`AURORA_DEMO_SKY_OPTICS=rainbow|halo|clear`**: the region's sky carries a
   moisture level of 1 (`rainbow`, sun 12° up in the west) or an ice level of
   1 (`halo`, sun 14° up in the east), and the camera looks east from behind
@@ -1544,6 +1573,7 @@ To check with these scenarios:
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
+| `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -1631,6 +1661,17 @@ To check with these scenarios:
   the loading screen (`geometry arena grown ahead behind the loading
   screen` in the log) and no growth happens in the scene any more. Delete
   that file to measure a first visit again.
+- **`AURORA_GPU_OOM=<mb>`** (demo or grid): every allocation of `mb`
+  megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
+  if video memory were full (`0`: all of them): the geometry arena, the
+  draw records, the culling tables, the joint palettes and skin bindings,
+  the texture pages. With `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
+  the vertex arena grows by smaller steps up to 63 MB, then the log says
+  once `vertex arena could not grow past 63 MB (out of video memory
+  (AURORA_GPU_OOM))` and the meshes left over are not drawn; the view keeps
+  drawing and the log holds no `wgpu error` line. Without the variable, a
+  buffer the driver could not make used to be installed anyway, invalid,
+  and every write into it was an error, every frame.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first
@@ -1936,7 +1977,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
+| `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
@@ -2324,7 +2365,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
   check that hiding world indicators leaves the call's controls intact.
 - **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
-  jump to the corresponding Sound and voice card for offline captures. Changes
+  jump to the corresponding Sound and voice card for offline captures;
+  `0:tonemap` opens Graphics scrolled to the Tone mapping row. Changes
   apply live, persist, and reset with the audio page. The microphone popup
   exposes camera/avatar ears and all five noise levels; its processing shortcut
   opens the same card. `AURORA_DEMO_VOICE=cycle` exercises the world indicators
@@ -2994,7 +3036,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -3011,7 +3053,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `resident` gets neither: no People tab, no "View as", no managers nor
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
-  icons). People is greyed until a next step. `manage` opens on Manage
+  icons). `manage` opens on Manage
   (who can come, region rules, terrain and water; the other sections of
   the navigation are greyed): `access`, `rules` or `terrain` scrolls to
   that section, `pending` makes two changes there and scrolls to the bar
@@ -3024,7 +3066,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   textures and elevations, which a real simulator sends back in a new
   RegionHandshake, stay shown as sent. A manager sees the bake greyed
   with the amber "estate owner" lock, a resident (or `preview`) the amber
-  banner and a sentence instead of the estate's access.
+  banner and a sentence instead of the estate's access. `people` opens on
+  People, the window 840 px high: the four lists (2 managers, 3 allowed
+  residents, the group "Aurora Builders", 2 banned residents with their
+  ban date, who banned them and their last login). `select` ticks Orion in
+  the allowed residents ("1 selected · Remove…"), `pick` opens the
+  resident picker on them, `ask-ban` asks to ban Orion (this estate / all
+  the estates you own) and `ask-remove` to remove him. The demo simulator
+  applies each `estateaccessdelta`, answers `setaccess` and sends the
+  lists again: what is added, banned or removed shows in the list. A
+  manager sees the managers' list greyed with the amber "estate owner"
+  lock; `preview` shows the card that says the simulator sends the lists
+  to the owner and the managers only.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members
@@ -4783,7 +4836,7 @@ Surface-return follow-up: regressions compare automatic entry with an actual und
 Gentler surface-return follow-up (bridge 1.19): actual-LSL evaluation covers command caps at selected speeds 0.5/1/2/5/8 m/s, the 1.5 m/s-per-second vertical command ramp, smaller goals near flotation, bounded goals that still converge, and release/mode-switch/Movelock resets. Its deterministic position tracker is not Havok and cannot establish real acceleration or smoothness. Existing water/gesture/watchdog/ownership, accepted run, remote-anchor and quiet discovery checks remain covered. Human follow-up is the same fall and short underwater ascent tap: the lift should start gently and slow before reaching the configured flotation height; up/down interruption remains available. The viewer must install the compatible 1.19 script into the existing bridge.
 
 
-**`AURORA_DEMO_BRIDGE_QUERY=radar|scripts|error`** — authenticated read-only bridge services (1.20). Set `AURORA_DEMO=1` and use the usual automated-window title/border. The scenario provisions the real offline factory; all BridgeQuery commands receive synthetic replies without using a network endpoint. `radar` adds Sky Visitor with an unknown coarse altitude (1020 m), opens People / Nearby and returns 2048 m through the bridge service; its displayed distance must become approximately 2 km. Known native/coarse heights remain authoritative and are not queried. The demo opens the real radar options to inspect the simple correction toggle without diagnostic counters. `scripts` asks for a demo object at frame 700; local chat must show 12/17 running scripts, 1088 KiB allocated memory, 1.250 ms CPU and 0.200 ms pathfinding (localized decimal separators). `error` produces a safe missing/unavailable-object report rather than a raw HTTP body or private address. Capture at frame 1050 or later, after the factory save/reattach delay. These fixtures cover UI and dispatch, not the real LSL runtime.
+**`AURORA_DEMO_BRIDGE_QUERY=radar|scripts|object|error`** — authenticated read-only bridge services (1.21). Set `AURORA_DEMO=1` and use the usual automated-window title/border. The scenario provisions the real offline factory; all BridgeQuery commands receive synthetic replies without using a network endpoint. `radar` adds Sky Visitor with an unknown coarse altitude (1020 m), opens People / Nearby and returns 2048 m through the bridge service; its displayed distance must become approximately 2 km. Known native/coarse heights remain authoritative and are not queried. The demo opens the real radar options to inspect the simple correction toggle without diagnostic counters. `scripts` asks for a demo object at frame 700; local chat must show 12/17 running scripts, 1088 KiB allocated memory, 1.250 ms CPU and 0.200 ms pathfinding (localized decimal separators). `object` dispatches the real Object information context action at frame 700 and reports the basic script summary followed by all extended object fields (three prims, land impact two, nineteen inventory items, four-metre distance, identity links, UTC timestamps and attachment status), without changing a preference. `error` produces a safe missing/unavailable-object report rather than a raw HTTP body or private address. Capture at frame 1050 or later, after the factory save/reattach delay. These fixtures cover UI and dispatch, not the real LSL runtime.
 
 Read-only bridge unit coverage includes batch/rate limits and fair coverage of a 320-avatar crowd, partial/empty results, strict requested-UUID/numeric/name decoding, known-position priority, fourteen-second expiry, region/session/teleport cleanup, disabled correction, inspection priority/provisioning/timeouts and stale replies. A failed current query triggers only quiet throttled discovery, preserving the confirmed lock and in-flight motor command; obsolete replies cannot initiate recovery. The actual shipped LSL query/auth control flow is also evaluated with deterministic API stubs for bounded requests, token rejection, unavailable targets, unusual names and metric units, asserting no writes to motor globals, sequencing or watchdog. Existing run/water/passage/discovery regression evaluators still apply; this is not a simulator/Havok test.
 

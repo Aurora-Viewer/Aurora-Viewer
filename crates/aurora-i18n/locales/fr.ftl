@@ -2336,6 +2336,7 @@ ui-contacts-information = Informations
 ui-land-mod-information-and-settings-for-the-selected-parcel = Informations et réglages de la parcelle sélectionnée
 build-ui-tools-parcel-information = Informations sur la parcelle
 ui-context-script-information = Informations sur les scripts
+ui-context-object-information = Informations sur l’objet
 ui-place-details-info = Infos :
 world-profiles-payment-info-on-file = Infos de paiement enregistrées
 world-profiles-payment-info-used = Infos de paiement utilisées
@@ -4158,6 +4159,7 @@ ui-perf-render-thread = Thread de rendu
 ui-place-details-title = Titre :
 ui-contacts-titles = Titres
 ui-options-tone-mapping = Tone mapping
+ui-options-tone-mapping-classic-sky = Sans effet avec un ciel classique (ambiance des sondes à 0) : il n'est pas tone mappé
 common-torus = Tore
 ui-options-camera-press-m-or-zoom-into-your-avatar-s-head = Touche M, ou zoomer jusque dans la tête de l'avatar
 ui-options-practical-movement-key = Touche de déplacement
@@ -4178,6 +4180,8 @@ app-double-click-ground-set = Double-clic au sol : { $action }
 keybinds-orbit-clockwise = Tourner autour (sens horaire)
 keybinds-orbit-counterclockwise = Tourner autour (sens inverse)
 ui-options-camera-scroll-toward-yourself-to-leave-mouselook = Tourner la molette vers soi quitte la vue subjective
+ui-options-camera-alt-right-click-menu = Menu contextuel avec Alt + clic droit
+ui-options-camera-alt-right-click-menu-tip = En vue subjective, Alt + clic droit ouvre le menu contextuel. Un clic droit seul zoome tant qu'il est maintenu, et la molette règle ce zoom.
 ui-options-camera-show-how-to-leave = Indiquer comment en sortir
 ui-options-camera-show-how-to-leave-tip = « Appuyez sur Échap pour quitter la vue subjective » en bas de l'écran en vue subjective
 ui-options-camera-show-interface = Afficher l'interface en vue subjective
@@ -6396,6 +6400,83 @@ ui-land-overview-view-as-tip = Voir la parcelle comme un visiteur la voit : rien
 region-title = Région / Domaine
 region-help = La région où vous êtes et son domaine : règles, santé du simulateur, règlement
 region-people-tab = Personnes
+region-people-managers = Gérants du domaine
+region-people-allowed = Accès autorisé
+region-people-groups = Groupes autorisés
+region-people-banned = Bannis
+region-people-list-managers = les gérants du domaine
+region-people-list-allowed = les résidents autorisés
+region-people-list-groups = les groupes autorisés
+region-people-list-banned = les bannis
+region-people-managers-hint = Un gérant a presque tous les droits du propriétaire du domaine.
+region-people-allowed-hint = Ils entrent même quand l'accès est limité aux listes.
+region-people-groups-hint = Leurs membres entrent même quand l'accès est limité aux listes.
+region-people-banned-hint = Pas de durée : un bannissement de domaine dure jusqu'à ce qu'on le lève.
+region-people-owner-only = Seul le propriétaire du domaine les nomme.
+region-people-linden-ban = Personne ne peut être banni d'un domaine Linden.
+region-people-ban = Bannir
+region-people-remove = Retirer…
+region-people-copy = Copier les noms
+region-people-import = Importer un fichier CSV avec une colonne UUID
+region-people-export = Exporter en fichier CSV
+region-people-head-resident = Résident
+region-people-head-banned = Banni le, par
+region-people-head-login = Dernière connexion
+region-people-banned-on = { $date }, { $by }
+region-people-you = vous
+region-people-not-known = n/d
+region-people-loading = Chargement des listes…
+region-people-refused = Le simulateur n'a pas envoyé les listes du domaine.
+region-people-not-sent-title = Listes réservées au propriétaire et aux gérants
+region-people-not-sent = Le simulateur n'envoie les gérants, les autorisés et les bannis qu'à eux.
+region-people-owner-is = Le propriétaire du domaine est { $name }.
+region-people-and-more = { $names } et { $count } de plus
+region-people-ask-add-managers-title = Ajouter des gérants
+region-people-ask-add-managers = { $names } pourra changer presque tout ce que peut le propriétaire du domaine.
+region-people-ask-add-allowed-title = Autoriser sur le domaine
+region-people-ask-add-allowed = { $names } entrera même quand l'accès est limité aux listes.
+region-people-ask-add-groups-title = Autoriser un groupe
+region-people-ask-add-groups = Les membres de { $names } entreront même quand l'accès est limité aux listes.
+region-people-ask-add-banned-title = Bannir du domaine
+region-people-ask-add-banned = { $names } ne pourra plus entrer dans le domaine ni le survoler, jusqu'à ce que le bannissement soit levé.
+region-people-ask-remove-managers-title = Retirer des gérants
+region-people-ask-remove-allowed-title = Retirer des résidents autorisés
+region-people-ask-remove-groups-title = Retirer des groupes autorisés
+region-people-ask-remove-banned-title = Lever des bannissements
+region-people-ask-remove-managers = { $names } ne gérera plus le domaine.
+region-people-ask-remove-allowed = { $names } sera retiré des résidents autorisés.
+region-people-ask-remove-groups = { $names } sera retiré des groupes autorisés.
+region-people-ask-remove-banned = Le bannissement de { $names } sera levé.
+region-people-applies-to = S'applique à
+region-people-this-estate = Ce domaine seulement
+region-people-all-owned = Tous les domaines dont vous êtes propriétaire
+region-people-all-managed = Tous les domaines que vous gérez pour { $owner }
+region-people-ok-allow = Autoriser
+region-people-ok-unban = Lever le bannissement
+region-people-ask-linden-title = Modifier les listes d'un domaine Linden ?
+region-people-ask-linden = Vous allez modifier les listes d'accès d'un domaine qui appartient à Linden Lab (continent, grille ado, orientation…). C'est dangereux : cela change des milliers de régions à la fois et ralentit les serveurs. Cela ne sert qu'à faire entrer ou sortir des objets ou des L$ d'une grille.
+region-people-ask-linden-ok = Modifier les listes
+region-people-notice-title = Listes du domaine
+region-people-max-managers = Vous ne pouvez avoir que { $max } gérants.
+region-people-max-allowed = Vous ne pouvez avoir que { $max } résidents autorisés.
+region-people-max-groups = Vous ne pouvez avoir que { $max } groupes autorisés.
+region-people-max-banned = Vous ne pouvez avoir que { $max } bannis.
+region-people-batch-too-many = Impossible d'ajouter { $count } résidents : ce serait { $excess } de plus que les { $max } que la liste peut contenir.
+region-people-already = { $count ->
+    [one] { $names } est déjà dans { $list }.
+   *[other] { $names } sont déjà dans { $list }.
+    }
+region-people-owner-ban = Le propriétaire du domaine ne peut pas être banni.
+region-people-manager-ban = { $names } ne peut pas être banni : un gérant ne peut pas l'être.
+region-people-list-empty = La liste est vide.
+region-people-import-too-large = Trop d'entrées : le fichier en a { $count } et { $max } places sont libres.
+region-people-imported = { $count ->
+    [one] { $count } entrée envoyée.
+   *[other] { $count } entrées envoyées.
+    }
+region-people-exported = Enregistré dans { $path }.
+region-people-pick-group = Choisir un groupe
+region-people-no-groups = Vous n'appartenez à aucun groupe.
 region-role-owner = Propriétaire du domaine
 region-role-manager = Gérant
 region-role-resident = Résident
@@ -7839,6 +7920,33 @@ bridge-script-info-missing = L’objet n’est plus disponible ou se trouve hors
 bridge-script-info-result = Scripts de « { $name } » : { $running }/{ $total } en cours ; { $memory } Kio de mémoire allouée ; { $time } ms CPU. { $pathfinding }
 bridge-script-info-pathfinding = CPU du pathfinding : { $time } ms.
 bridge-script-info-failed = Informations sur les scripts indisponibles : { $reason }
+bridge-object-info-loading = Récupération des informations sur l’objet via le bridge Aurora…
+bridge-object-info-region = Les informations sur l’objet ne sont disponibles que pour un objet de votre région actuelle.
+bridge-object-info-failed = Informations sur l’objet indisponibles : { $reason }
+bridge-object-info-group-owned = Propriété d’un groupe
+bridge-object-info-result =
+    Informations sur l’objet « { $name } » :
+    UUID de l’objet : { $object }
+    Description : { $description }
+    Prim racine : { $root }
+    Nombre de prims : { $prims }
+    Impact terrain : { $impact }
+    Éléments d’inventaire : { $inventory }
+    Vitesse : { $velocity } m/s
+    Position : { $position } ({ $distance } m)
+    Rotation : { $rotation } ({ $degrees }°)
+    Vitesse angulaire : { $angular } rad/s
+    Créateur : { $creator }
+    Propriétaire : { $owner }
+    Propriétaire précédent : { $previous }
+    Rez par : { $rezzer }
+    Groupe : { $group }
+    Date de création : { $created }
+    Date de rez : { $rezzed }
+    Type de pathfinding : { $pathfinding }
+    Point d’attache : { $attachment }
+    Attachement temporaire : { $temporary }
+    Votre position actuelle : { $observer }
 bridge-query-timeout = Le bridge n’a pas répondu à la demande d’informations à temps. Réessayez.
 bridge-query-interrupted = La demande d’informations a été interrompue par un changement de région ou de connexion du bridge. Réessayez.
 ao-bootstrap-interrupted = Un import AO inachevé existe déjà dans #Aurora. Vérifiez-le dans l’inventaire avant de réessayer.

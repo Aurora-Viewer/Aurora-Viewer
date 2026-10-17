@@ -669,6 +669,47 @@ fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
     }
 }
 
+/// LLAppearanceMgr::unregisterAttachment / removeCOFItemLinks
+/// (indra/newview/llappearancemgr.cpp): a simulator-confirmed detach removes
+/// only the COF links, without triggering another appearance synchronization.
+pub fn unlink_attachment(inv: &mut Inventory, item: Uuid) -> Option<aurora_net::inventory::operations::Mutation> {
+    use aurora_net::inventory::operations::{Mutation, Operation};
+    if item.is_nil() {
+        return None;
+    }
+    let cof = cof(inv)?;
+    let removed: Vec<_> = inv
+        .folders
+        .get(&cof)?
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|link| link.parent == cof && link.asset_type == 24 && link.asset_id == item)
+        .map(|link| link.id)
+        .collect();
+    if removed.is_empty() {
+        return None;
+    }
+    // Update the local model before the next inventory action can plan a COF
+    // replacement. The original and saved outfits remain in the inventory.
+    for id in &removed {
+        inv.consume_item(*id);
+    }
+    if let Some(folder) = inv.folders.get_mut(&cof)
+        && folder.info.version >= 0
+    {
+        // LLInventoryModel::accountForUpdate: each AIS removal advances the
+        // parent version. Older in-flight folder snapshots must not undo it.
+        folder.info.version = folder.info.version.saturating_add(removed.len().min(i32::MAX as usize) as i32);
+    }
+    Some(Mutation {
+        operations: removed.iter().map(|id| Operation::Delete { id: *id, folder: false }).collect(),
+        refresh: vec![cof],
+        removed,
+        ..Default::default()
+    })
+}
+
 pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<NetCommand> {
     let Some(cof) = cof(inv) else {
         return Vec::new();
@@ -1401,6 +1442,32 @@ mod tests {
             ids.iter().copied().collect::<HashSet<_>>()
         );
         assert!(ids.iter().all(|id| inv.items.contains_key(id)), "originals remain in inventory");
+    }
+
+    #[test]
+    fn confirmed_detach_removes_duplicate_cof_links_and_rejects_an_older_snapshot() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        seed_duplicate_response(&mut inv, agent);
+        let cof = cof(&inv).expect("COF");
+        let before = aurora_net::inventory::FolderContents {
+            folder_id: cof,
+            owner_id: agent,
+            version: inv.folders[&cof].info.version,
+            folders: Vec::new(),
+            items: inv.folders[&cof].items.iter().filter_map(|id| inv.items.get(id).cloned()).collect(),
+        };
+        let change = unlink_attachment(&mut inv, Uuid::from_u128(717)).expect("unlink");
+        assert_eq!(change.removed.len(), 2);
+        assert_eq!(inv.folders[&cof].info.version, before.version + 2);
+        inv.apply(vec![before]);
+        assert!(!folder_links(&inv, cof).iter().any(|link| link.target == Uuid::from_u128(717)));
+        assert!(unlink_attachment(&mut inv, Uuid::from_u128(717)).is_none());
+        assert!(unlink_attachment(&mut inv, Uuid::nil()).is_none());
+        let reply = super::super::inventory::actions::demo_mutate(&mut inv, agent, change).expect("AIS reply");
+        inv.remove(&reply.removed);
+        inv.apply(reply.contents);
+        assert!(!folder_links(&inv, cof).iter().any(|link| link.target == Uuid::from_u128(717)));
     }
 
     #[test]

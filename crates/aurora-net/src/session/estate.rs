@@ -78,6 +78,25 @@ impl Session<'_> {
                 let invoice = self.estate_invoice;
                 self.send_estate_owner_message(addr, "terrain", invoice, &["bake".to_owned()], true);
             }
+            EstateCommand::AccessDelta { handle, flags, ids, batch } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                // sendEstateAccessDelta, reliable, with the last invoice
+                let invoice = self.estate_invoice;
+                let agent = self.agent_id();
+                for (id, f) in ids.iter().zip(estate::access_delta_flags(flags, ids.len(), batch)) {
+                    let strings = estate::access_delta_strings(agent, f, *id);
+                    self.send_estate_owner_message(addr, "estateaccessdelta", invoice, &strings, true);
+                }
+            }
+            EstateCommand::RefreshAccess { handle } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let url = self.sim_cap(addr, "EstateAccess");
+                self.estate_get(handle, url, Get::Access);
+            }
         }
     }
 
@@ -167,7 +186,8 @@ impl Session<'_> {
         });
     }
 
-    /// processEstateOwnerRequest: `estateupdateinfo` of the last invoice.
+    /// processEstateOwnerRequest: `estateupdateinfo` and `setaccess` of the
+    /// last invoice.
     pub(super) fn dispatch_estate(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<bool, aurora_msg::DecodeError> {
         if pkt.id != EstateOwnerMessage::ID {
             return Ok(false);
@@ -193,6 +213,10 @@ impl Session<'_> {
                 }
                 None => log::warn!("estate: estateupdateinfo with {} strings", strings.len()),
             }
+        } else if method == "setaccess" {
+            // its lists are not read: the window asks EstateAccess again
+            let handle = self.handle_of(from);
+            emit(self.sh, NetEvent::Estate(EstateEvent::AccessChanged { handle }));
         }
         Ok(true)
     }

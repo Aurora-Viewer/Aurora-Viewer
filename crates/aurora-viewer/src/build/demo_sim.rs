@@ -86,12 +86,23 @@ impl DemoSim {
                 .and_then(|i| world.objects.get(i))
                 .map(|o| o.key.local_id);
             let (touch_name, sit_name) = local_id.and_then(crate::demo::object_menu::texts).unwrap_or_default();
+            let owner_id = world
+                .objects
+                .index_of_uuid(&id)
+                .and_then(|i| world.objects.get(i))
+                .map(|o| o.owner_id)
+                .filter(|owner| !owner.is_nil())
+                .unwrap_or(crate::demo::DEMO_AGENT);
             ObjectProps {
                 object_id: id,
                 full: true,
                 creator_id: DEMO_CREATOR,
-                owner_id: crate::demo::DEMO_AGENT,
-                group_id: crate::demo::DEMO_GROUP1,
+                owner_id,
+                group_id: if owner_id == crate::demo::DEMO_AGENT {
+                    crate::demo::DEMO_GROUP1
+                } else {
+                    Uuid::nil()
+                },
                 last_owner_id: DEMO_CREATOR,
                 creation_date: 1_700_000_000_000_000,
                 base_mask: PERM_ALL,
