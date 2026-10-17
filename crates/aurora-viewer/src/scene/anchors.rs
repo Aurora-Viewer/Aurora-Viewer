@@ -339,6 +339,9 @@ pub struct Anchors {
     /// AURORA_SYNC_CHECK: centres left as they were, and those of them not
     /// where their anchor puts them (must stay 0).
     pub kept_centres: (u64, u64),
+    /// AURORA_SYNC_CHECK: anchors left as they were, and those of them not
+    /// what the wearer's pose and place give (must stay 0).
+    pub kept_anchors: (u64, u64),
 }
 
 impl Anchors {
@@ -421,7 +424,13 @@ impl Scene {
         posed.sort_unstable();
         // anchors of the wearers not posed in this frame
         let mut moved: Vec<std::ops::Range<usize>> = Vec::new();
-        let every_centre = every_centre();
+        let (kept_anchors, wrong_anchors) = {
+            let k = &mut self.anchors.kept_anchors;
+            (&mut k.0, &mut k.1)
+        };
+        // (the seconds of AURORA_IMPOSTOR_POSES=every or alt that pose every
+        // impostor are the old way here too)
+        let every_centre = every_centre() || super::impostors::pose_every_frame();
         for (&widx, w) in &mut self.anchors.wearers {
             w.seen = 0;
             w.base = None;
@@ -450,9 +459,10 @@ impl Scene {
             w.refresh |= extent != w.extent;
             w.extent = extent;
             let written = Some((pp, pr, base, w.used));
-            if !w.refresh && !every_centre && w.written == written && posed.binary_search(&(slot as usize)).is_err() {
-                // not posed in this frame and not moved: its anchors are
-                // those already written
+            // not posed in this frame and not moved: its anchors are those
+            // already written (computed anyway to check them)
+            let kept = !w.refresh && !every_centre && w.written == written && posed.binary_search(&(slot as usize)).is_err();
+            if kept && !verify {
                 continue;
             }
             w.written = written;
@@ -472,6 +482,13 @@ impl Scene {
                     None => skeleton_model(world, &self.meshes, widx as usize, pp, pr, 1.0),
                 }
                 .to_cols_array_2d();
+                if kept {
+                    *kept_anchors += 1;
+                    if *m != anchor {
+                        *wrong_anchors += 1;
+                    }
+                    continue;
+                }
                 if *m != anchor {
                     *m = anchor;
                     lo = lo.min(s);
@@ -510,6 +527,7 @@ impl Scene {
             wearers,
             members,
             kept_centres,
+            ..
         } = &mut self.anchors;
         let mut run: Option<Run> = None;
         let close = |run: Option<Run>, wearers: &mut HashMap<u32, Wearer>| {

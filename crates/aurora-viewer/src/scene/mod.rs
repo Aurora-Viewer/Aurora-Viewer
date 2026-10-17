@@ -3507,8 +3507,9 @@ impl Scene {
             let since = since.get_or_insert_with(Instant::now);
             if since.elapsed().as_secs() >= 10 {
                 let (kept, wrong) = std::mem::take(&mut self.anchors.kept_centres);
+                let (anchors, wrong_anchors) = std::mem::take(&mut self.anchors.kept_anchors);
                 log::info!(
-                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them"
+                    "impostor pictures: {taken} taken, {stale} with the pose of an earlier frame | anchored centres kept: {kept}, {wrong} not where their anchor puts them | anchors kept: {anchors}, {wrong_anchors} not what their wearer gives"
                 );
                 self.picture_check = (0, 0, Some(Instant::now()));
             }

@@ -1625,6 +1625,7 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: textures renewed |
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
 | `AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>` | The crowd's worn prims and meshes use a legacy material, and a material nobody uses arrives every `seconds` |
+| `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
@@ -1680,6 +1681,12 @@ To check with these scenarios:
   `AURORA_DEMO_ANIMESH=1` and `AURORA_DEMO_CROWD=52,100`: the old seconds rebuild
   every worn object (`rebuilt` about 50 a frame, `max: sync` about 7 ms), the
   new ones none.
+- **`AURORA_DEMO_IMPOSTOR_FLIP=<seconds>`** (2 if not a number): the
+  avatar limit alternates between its setting and one every `seconds`, so
+  that the crowd's avatars go from impostor to drawn in full and back. With
+  `AURORA_DEMO_CROWD=52,100`, `AURORA_DEMO_HAIR=3` and `AURORA_SYNC_CHECK=1`,
+  the `impostor pictures` line must count no stale picture, centre or anchor
+  (`AURORA_IMPOSTOR_POSES`).
 - **`AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]`**: our
   avatar and each avatar of `AURORA_DEMO_CROWD` wear `layers` rigged
   meshes (8 by default, 32 at most), each a shell around the head and
@@ -4478,6 +4485,10 @@ What the inventory must show with these scenarios:
   wears are not written again while it stands. `alt`: the old way one
   second in three, the same seconds as `AURORA_MATERIAL_REBUILD=alt`
   (`xmode=old` / `xmode=new`); read `posed`, `poses` and `s_sync_anchors`.
+  Its old seconds also write every anchor and every centre again, as
+  `AURORA_ANCHOR_CENTRES=every`: with `AURORA_MATERIAL_REBUILD=alt` too,
+  they are the sync of before this work, to tell whether a fault on the
+  grid comes from it (it then shows one second in three only).
 - **`AURORA_ANCHOR_CENTRES=every`**: recomputes the centre of every object
   placed from an anchor at every frame, as before, instead of those whose
   anchor changed, and writes again the anchors of every wearer

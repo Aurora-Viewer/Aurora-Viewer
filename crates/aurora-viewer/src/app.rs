@@ -5695,6 +5695,9 @@ impl App {
             self.scene.synchronize_animations = self.settings.synchronize_animations;
             self.scene.lod_factor = self.settings.lod_factor;
             self.scene.max_avatars = self.settings.max_avatars as usize;
+            if self.demo {
+                self.scene.max_avatars = crate::demo::impostor_flip(self.scene.max_avatars);
+            }
             // reflection lists: planar reflections and reflection probe captures
             self.scene.reflections = self.settings.water_reflections > 0 || self.settings.mirrors > 0 || in_world;
             self.scene.fov_y = self.camera.fov_y;
