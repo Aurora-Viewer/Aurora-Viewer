@@ -328,7 +328,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -336,7 +336,14 @@ when unfocused") is ignored during a screenshot.
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
-  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
+  world view" above the bottom bar); `ml-zoom`: the right button held in
+  mouselook at 640 (no zoom the first time: the remembered angle starts at
+  the default one), 3 wheel clicks in at 650 (`fov` in the log goes from 60°
+  to 42.8° at once), released at 680 (60° again), held again at 720 (42.8°
+  at once), released at 760, a wheel click out at 800 (leaves mouselook);
+  `ml-zoom-alt`: Alt + right click in mouselook at 640, no context menu
+  unless Preferences › Camera › Mouselook › "Context menu with Alt + right
+  click" is on; wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).

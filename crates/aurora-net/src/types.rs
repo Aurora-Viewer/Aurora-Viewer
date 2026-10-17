@@ -1286,6 +1286,9 @@ pub enum NetCommand {
     },
     /// Change the draw distance used in AgentUpdate (`Far`).
     SetDrawDistance(f32),
+    /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
+    /// and again at each arrival (LLViewerCamera::setView).
+    SetFov(f32),
     /// Controls that changed enough to be sent now (`NetClient::set_controls`).
     /// Every change of the control flags comes through here, in order: a
     /// key tapped between two ticks of the session is not lost.
