@@ -353,7 +353,9 @@ impl LandTool {
 
     /// Undo the last stroke (UndoLand to every region it touched).
     pub fn undo(&mut self, out: &mut Vec<BuildCmd>) {
-        for handle in self.last_regions.drain(..) {
+        // LLToolBrushLand::undo keeps the touched regions: another Ctrl+Z
+        // asks the simulator for the next step in its terrain history.
+        for handle in self.last_regions.iter().copied() {
             out.push(BuildCmd::UndoLand { handle });
         }
     }

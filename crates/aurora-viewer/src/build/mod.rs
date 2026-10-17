@@ -1261,7 +1261,7 @@ impl BuildTool {
             }
         }
         for (handle, ids) in by_region {
-            let group_id = Uuid::nil();
+            let group_id = world.groups.active;
             self.send(if redo {
                 BuildCmd::Redo { handle, ids, group_id }
             } else {

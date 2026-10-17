@@ -729,6 +729,63 @@ pub struct Mods {
     pub alt: bool,
 }
 
+/// Editing history takes priority over held movement and camera bindings:
+/// LLViewerInput::scanKey (indra/newview/llviewerinput.cpp), LLEditUndo /
+/// LLEditRedo (indra/newview/llviewermenu.cpp). Text and media keep their
+/// own history; Ctrl+Shift+Z also matches egui's native redo shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditHistory {
+    Undo,
+    Redo,
+}
+
+impl EditHistory {
+    pub fn from_key(key: egui::Key, mods: Mods) -> Option<Self> {
+        if !mods.ctrl || mods.alt {
+            return None;
+        }
+        match (key, mods.shift) {
+            (egui::Key::Z, false) => Some(Self::Undo),
+            (egui::Key::Y, false) | (egui::Key::Z, true) => Some(Self::Redo),
+            _ => None,
+        }
+    }
+}
+
+/// The same logical letters/punctuation and non-Latin physical fallback as
+/// egui-winit, restricted to keys used by the fixed editing accelerators.
+pub fn native_shortcut_key(key: &winit::keyboard::Key, code: KeyCode) -> Option<egui::Key> {
+    use egui::Key as E;
+    use winit::keyboard::{Key, KeyCode as K, NamedKey};
+    let logical = match key {
+        Key::Character(letter) => E::from_name(letter),
+        Key::Named(NamedKey::Escape) => Some(E::Escape),
+        Key::Named(NamedKey::Delete) => Some(E::Delete),
+        Key::Named(_) => return None,
+        _ => None,
+    };
+    logical.or(match code {
+        K::KeyB => Some(E::B),
+        K::KeyD => Some(E::D),
+        K::KeyE => Some(E::E),
+        K::KeyG => Some(E::G),
+        K::KeyL => Some(E::L),
+        K::KeyX => Some(E::X),
+        K::KeyZ => Some(E::Z),
+        K::KeyY => Some(E::Y),
+        K::Digit1 | K::Numpad1 => Some(E::Num1),
+        K::Digit2 | K::Numpad2 => Some(E::Num2),
+        K::Digit3 | K::Numpad3 => Some(E::Num3),
+        K::Digit4 | K::Numpad4 => Some(E::Num4),
+        K::Digit5 | K::Numpad5 => Some(E::Num5),
+        K::Period | K::NumpadDecimal => Some(E::Period),
+        K::Comma => Some(E::Comma),
+        K::Escape => Some(E::Escape),
+        K::Delete => Some(E::Delete),
+        _ => None,
+    })
+}
+
 /// Legacy single-key HUD setting, read only to migrate older settings files.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HoldKey {
@@ -871,6 +928,7 @@ impl KeyBindings {
             };
             pressed
                 && fits(b)
+                && self.triggered(&b.input, m).is_none()
                 // HUD ownership is decided on left press over a visible HUD;
                 // its binding must not suppress movement or camera elsewhere.
                 && (a == Action::HudDrag || !self.map.iter().any(|(x, bs)| {
@@ -899,6 +957,19 @@ impl KeyBindings {
             .iter()
             .find(|(a, bs)| !is_held(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
             .map(|(a, _)| *a)
+    }
+
+    /// A menu/window action owns the press, including a key held before
+    /// its modifiers arrived. Never start a walk tap or resume movement
+    /// when those modifiers are released before the letter.
+    pub fn update_held_input(&self, down: &mut HashSet<Input>, input: &Input, pressed: bool, mods: Mods) -> Option<Action> {
+        let command = pressed.then(|| self.triggered(input, mods)).flatten();
+        if pressed && command.is_none() {
+            down.insert(input.clone());
+        } else {
+            down.remove(input);
+        }
+        command
     }
 
     /// Follow the actual jump bindings; explicit action or camera bindings win.
@@ -951,6 +1022,173 @@ impl KeyBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::ui::Shortcut;
+
+    #[test]
+    fn history_keys_never_reach_avatar_camera_or_other_held_bindings_in_any_layout() {
+        for (code, letter, history) in [
+            (KeyCode::KeyZ, "z", EditHistory::Undo),
+            (KeyCode::KeyW, "z", EditHistory::Undo), // AZERTY
+            (KeyCode::KeyY, "z", EditHistory::Undo), // QWERTZ
+            (KeyCode::KeyY, "Y", EditHistory::Redo),
+            (KeyCode::KeyZ, "y", EditHistory::Redo), // QWERTZ
+            (KeyCode::KeyZ, "я", EditHistory::Undo), // egui's non-Latin fallback
+        ] {
+            let input = Input::key(code);
+            let key = winit::keyboard::Key::Character(letter.into());
+            let ctrl = Mods {
+                ctrl: true,
+                ..Default::default()
+            };
+            let mut bindings = KeyBindings::default();
+            for action in [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag] {
+                bindings.set(action, 0, Some(Binding::plain(input.clone())));
+            }
+            let other = Input::key(KeyCode::ArrowDown);
+            // Also cancel a key already held before Ctrl or a repeat arrives.
+            let mut down = HashSet::from([input.clone(), other.clone()]);
+            for _ in 0..3 {
+                assert_eq!(
+                    Shortcut::take_native_key(&key, code, ctrl, false, false, &mut down),
+                    Some(Shortcut::History(history))
+                );
+                assert_eq!(down, HashSet::from([other.clone()]));
+                for mods in [ctrl, Mods::default()] {
+                    for action in [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag] {
+                        assert!(!bindings.held(action, &down, mods), "{letter}: {action:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn history_reservation_keeps_plain_movement_altgr_and_other_letters() {
+        let input = Input::key(KeyCode::KeyW);
+        let z = winit::keyboard::Key::Character("z".into());
+        for mods in [
+            Mods::default(),
+            Mods {
+                ctrl: true,
+                alt: true,
+                shift: false,
+            },
+        ] {
+            let mut down = HashSet::from([input.clone()]);
+            assert_eq!(Shortcut::take_native_key(&z, KeyCode::KeyW, mods, false, false, &mut down), None);
+            assert!(down.contains(&input));
+        }
+        let mut down = HashSet::from([Input::key(KeyCode::KeyZ)]);
+        assert_eq!(
+            Shortcut::take_native_key(
+                &winit::keyboard::Key::Character("w".into()),
+                KeyCode::KeyZ,
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+                false,
+                false,
+                &mut down,
+            ),
+            None,
+            "AZERTY Ctrl+W is not Ctrl+Z"
+        );
+        assert!(down.contains(&Input::key(KeyCode::KeyZ)));
+        assert_eq!(
+            EditHistory::from_key(
+                egui::Key::Z,
+                Mods {
+                    ctrl: true,
+                    shift: true,
+                    alt: false
+                }
+            ),
+            Some(EditHistory::Redo)
+        );
+    }
+
+    #[test]
+    fn viewer_window_commands_do_not_hold_walk_jump_camera_or_microphone_inputs() {
+        let kb = KeyBindings::us_places([KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD]);
+        let mods = Mods {
+            ctrl: true,
+            shift: true,
+            alt: false,
+        };
+        for (code, action, movement) in [
+            (KeyCode::KeyS, Action::PhotoWindow, Action::Back),
+            (KeyCode::KeyC, Action::CameraControls, Action::Down),
+            (KeyCode::KeyA, Action::People, Action::Left),
+        ] {
+            let input = Input::key(code);
+            let mut down = HashSet::from([input.clone()]);
+            assert!(!kb.held(movement, &down, mods), "modifier changes already reserve the command");
+            assert_eq!(kb.update_held_input(&mut down, &input, true, mods), Some(action));
+            assert!(down.is_empty());
+            assert!(
+                !kb.held(movement, &down, Mods::default()),
+                "releasing Ctrl first cannot resume walking"
+            );
+            assert_eq!(kb.update_held_input(&mut down, &input, false, Mods::default()), None);
+            assert!(down.is_empty());
+            assert_eq!(kb.update_held_input(&mut down, &input, true, Mods::default()), None);
+            assert!(kb.held(movement, &down, Mods::default()), "a new ordinary press still moves");
+        }
+        let mut kb = kb;
+        let input = Input::key(KeyCode::KeyT);
+        for action in [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag] {
+            kb.set(action, 0, Some(Binding::plain(input.clone())));
+        }
+        let mut down = HashSet::from([input.clone()]);
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.update_held_input(&mut down, &input, true, ctrl), Some(Action::Conversations));
+        for action in [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag] {
+            assert!(!kb.held(action, &down, ctrl));
+            assert!(!kb.held(action, &down, Mods::default()));
+        }
+    }
+
+    #[test]
+    fn held_camera_combinations_keep_their_own_input_after_command_reservation() {
+        let kb = KeyBindings::default();
+        let input = Input::key(KeyCode::ArrowUp);
+        for (mods, action) in [
+            (
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                },
+                Action::CamZoomIn,
+            ),
+            (
+                Mods {
+                    alt: true,
+                    ctrl: true,
+                    shift: false,
+                },
+                Action::CamOrbitOver,
+            ),
+            (
+                Mods {
+                    alt: true,
+                    ctrl: true,
+                    shift: true,
+                },
+                Action::CamPanUp,
+            ),
+        ] {
+            let mut down = HashSet::new();
+            assert_eq!(kb.update_held_input(&mut down, &input, true, mods), None);
+            assert!(kb.held(action, &down, mods));
+            assert!(!kb.held(Action::Forward, &down, mods));
+            let _ = kb.update_held_input(&mut down, &input, false, mods);
+            assert!(!kb.held(action, &down, mods));
+        }
+    }
 
     #[test]
     fn import_shortcut_migrates_rebinds_and_keeps_explicitly_cleared_slots() {
