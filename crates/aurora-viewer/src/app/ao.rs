@@ -36,6 +36,11 @@ impl App {
         }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
+                Some("folder-names") => {
+                    self.panels.inventory = true;
+                    self.inventory_ui.open_folders(self.world.inventory.folders.keys().copied());
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
+                }
                 Some("migrate" | "migrate-done") => {
                     self.panels.ao = true;
                     self.ao_ui.migration = Some(Default::default());

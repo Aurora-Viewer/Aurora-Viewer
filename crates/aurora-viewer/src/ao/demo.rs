@@ -53,7 +53,7 @@ pub fn seed_firestorm(inv: &mut Inventory, owner: Uuid) -> Uuid {
     let Some(brand) = inventory::child(inv, inv.root, "#Aurora") else {
         return selected;
     };
-    let Some(root) = inventory::child(inv, brand, "AO") else {
+    let Some(root) = inventory::child(inv, brand, inventory::FOLDER) else {
         return selected;
     };
     let inventory_root = inv.root;
@@ -138,6 +138,21 @@ pub fn inventory_services(world: &mut crate::world::World, ready: bool) {
 
 pub fn seed_movement_design(inv: &mut Inventory, owner: Uuid) -> Uuid {
     seed_options(inv, owner, true)
+}
+
+/// An existing native AO and bridge directory under their previous names.
+pub fn seed_folder_names(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    let selected = seed_movement_design(inv, owner);
+    if let Some(brand) = inventory::child(inv, inv.root, "#Aurora") {
+        if let Some(root) = inventory::child(inv, brand, inventory::FOLDER)
+            && let Some(root) = inv.folders.get_mut(&root)
+        {
+            root.info.name = inventory::OLD_FOLDER.into();
+        }
+        folder(inv, brand, Uuid::from_u128(0xd0d0_a000_0000_0000_0000_0000_0000_1010), "Bridge", -1);
+        inv.generation = inv.generation.wrapping_add(1);
+    }
+    selected
 }
 
 /// Explicit offline fixtures only; never add sample entries to a user's AO.

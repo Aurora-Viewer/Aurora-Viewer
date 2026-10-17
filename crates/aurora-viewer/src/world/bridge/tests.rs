@@ -685,6 +685,99 @@ fn bridge_factory_waits_for_copy_script_save_and_reattachment_without_duplicates
 }
 
 #[test]
+fn old_bridge_folder_is_renamed_without_replacing_its_worn_controller_or_script() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let (folder, item, object) = (sim.bridge.folder, sim.bridge.item, sim.bridge.object);
+    let counts = (sim.copies, sim.uploads, sim.attaches);
+    let contents = sim.world.inventory.folders[&folder].items.clone();
+    let hello = sim.demo.handshake(&sim.bridge, &sim.world).expect("existing script handshake");
+    sim.world.inventory.folders.get_mut(&folder).expect("folder").info.name = OLD_SUBFOLDER.into();
+    sim.bridge = Bridge::default();
+    sim.event(hello);
+    sim.ready();
+    assert_eq!((sim.bridge.folder, sim.bridge.item, sim.bridge.object), (folder, item, object));
+    assert_eq!(
+        (sim.copies, sim.uploads, sim.attaches),
+        counts,
+        "no copy, upload, detach or reattach for a rename"
+    );
+    assert_eq!(sim.world.inventory.folders[&folder].items, contents);
+    assert_eq!(sim.world.inventory.folders[&folder].info.name, SUBFOLDER);
+    assert!(sim.world.worn_attachment(&item).is_some());
+    for _ in 0..40 {
+        sim.step();
+    }
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), counts);
+}
+
+#[test]
+fn bridge_folder_rename_waits_for_acknowledgement_and_does_not_create_after_failure() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let folder = sim.bridge.folder;
+    let counts = (sim.copies, sim.uploads, sim.attaches);
+    sim.world.inventory.folders.get_mut(&folder).expect("folder").info.name = OLD_SUBFOLDER.into();
+    sim.bridge = Bridge::default();
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    let request = sim.bridge.mutation.expect("rename pending");
+    let edits: Vec<_> = sim
+        .bridge
+        .commands
+        .iter()
+        .filter_map(|command| {
+            if let NetCommand::EditInventory { change, .. } = command {
+                Some(change)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(edits.len(), 1);
+    assert!(
+        matches!(edits[0].operations.as_slice(), [Operation::Patch { id, folder: true, body }]
+        if *id == folder && body["name"].as_str() == SUBFOLDER)
+    );
+    sim.bridge.commands.clear();
+    sim.now += Duration::from_secs(1);
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert!(sim.bridge.commands.is_empty(), "wait rather than replay or create another folder");
+    sim.event(NetEvent::InventoryEdited {
+        request,
+        result: Err("Synthetic failure".into()),
+    });
+    for _ in 0..40 {
+        sim.step();
+    }
+    assert_eq!(sim.bridge.phase, Phase::Failed);
+    assert_eq!(sim.world.inventory.folders[&folder].info.name, OLD_SUBFOLDER);
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), counts);
+}
+
+#[test]
+fn existing_new_bridge_folder_wins_and_leaves_an_old_named_sibling_untouched() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let (folder, item) = (sim.bridge.folder, sim.bridge.item);
+    let counts = (sim.copies, sim.uploads, sim.attaches);
+    let old = Uuid::new_v4();
+    sim.world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: old,
+        parent: sim.bridge.container,
+        name: OLD_SUBFOLDER.into(),
+        type_default: -1,
+        ..Default::default()
+    }]);
+    let hello = sim.demo.handshake(&sim.bridge, &sim.world).expect("existing script handshake");
+    sim.bridge = Bridge::default();
+    sim.event(hello);
+    sim.ready();
+    assert_eq!((sim.bridge.folder, sim.bridge.item), (folder, item));
+    assert_eq!(sim.world.inventory.folders[&old].info.name, OLD_SUBFOLDER);
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), counts);
+}
+
+#[test]
 fn startup_provisions_the_bridge_without_an_ao_or_enabled_movelock() {
     let mut sim = Simulator::new();
     sim.prefs.enabled = false;
@@ -697,7 +790,7 @@ fn startup_provisions_the_bridge_without_an_ao_or_enabled_movelock() {
     assert!(sim.bridge.ready(), "startup must not depend on an enabled feature");
     assert!(!sim.bridge.locked() && !sim.bridge.ack.enabled);
     assert_eq!((sim.copies, sim.uploads, sim.attaches), (1, 1, 2));
-    assert!(crate::ao::inventory::child(&sim.world.inventory, sim.bridge.container, "AO").is_none());
+    assert!(crate::ao::inventory::child(&sim.world.inventory, sim.bridge.container, crate::ao::inventory::FOLDER).is_none());
     for _ in 0..30 {
         sim.step();
     }

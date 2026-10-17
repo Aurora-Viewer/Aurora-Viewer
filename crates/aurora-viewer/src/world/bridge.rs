@@ -1,6 +1,6 @@
 //! Aurora's private attachment factory and confirmed Movelock state.
 //! The library-copy/attach/script-upload sequence follows FSLSLBridge
-//! (Firestorm indra/newview/fslslbridge.cpp, originally LGPL 2.1).
+//! (indra/newview/fslslbridge.cpp, originally LGPL 2.1).
 use super::{World, inventory::FetchState};
 use aurora_net::bridge::{Ack, Command, Endpoint, Motion};
 use aurora_net::build::{BuildCmd, TaskItem, perm};
@@ -13,7 +13,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 pub const FOLDER: &str = "#Aurora";
-pub const SUBFOLDER: &str = "Bridge";
+pub const SUBFOLDER: &str = "Aurora Bridge";
+const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
@@ -607,13 +608,39 @@ impl Bridge {
                 let Some(container) = inv.folders.get(&folder).filter(|f| f.state == FetchState::Fetched) else {
                     return;
                 };
-                let subfolder = container
-                    .children
-                    .iter()
-                    .filter_map(|id| inv.folders.get(id))
-                    .filter(|f| !f.library && f.info.name == SUBFOLDER)
-                    .map(|f| f.info.id)
-                    .min();
+                let named = |name: &str| {
+                    container
+                        .children
+                        .iter()
+                        .filter_map(|id| inv.folders.get(id))
+                        .filter(|f| !f.library && f.info.parent == folder && f.info.name == name)
+                        .map(|f| f.info.id)
+                        .min()
+                };
+                let subfolder = named(SUBFOLDER);
+                if subfolder.is_none()
+                    && let Some(old) = named(OLD_SUBFOLDER)
+                {
+                    self.folder = old;
+                    if self.phase != Phase::Subfolder {
+                        // Keep the folder UUID used by the script handshake,
+                        // its contents and any currently worn controller intact.
+                        self.mutate(
+                            Mutation {
+                                operations: vec![Operation::Patch {
+                                    id: old,
+                                    folder: true,
+                                    body: aurora_llsd::llsd_map! { "name" => SUBFOLDER },
+                                }],
+                                refresh: vec![folder, old],
+                                ..Default::default()
+                            },
+                            Phase::Subfolder,
+                            now,
+                        );
+                    }
+                    return;
+                }
                 let Some(folder) = subfolder else {
                     if self.phase != Phase::Subfolder {
                         self.mutate(

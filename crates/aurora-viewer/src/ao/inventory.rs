@@ -1,5 +1,5 @@
 //! AOEngine::{tick, update, reloadStateAnimations, parseNotecard, saveSet,
-//! saveState, addAnimation}: Aurora-owned AO folders using Firestorm's format.
+//! saveState, addAnimation}: Aurora-owned AO folders using the legacy format.
 
 use super::*;
 
@@ -9,6 +9,12 @@ use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{Mutation, Operation};
 use aurora_net::outfits::OutfitLink;
 use std::collections::HashSet;
+
+pub const FOLDER: &str = "Aurora AO";
+pub(super) const OLD_FOLDER: &str = "AO";
+const STAGING: &str = "Aurora AO (Legacy Viewer import)";
+// Existing interrupted imports must still prevent an automatic second copy.
+const OLD_STAGING: &str = "AO (Firestorm import)";
 
 #[derive(Default)]
 pub struct Catalog {
@@ -34,6 +40,11 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
                 .is_some_and(|f| !f.library && f.info.parent == parent && f.info.name == name)
         })
         .min()
+}
+
+fn native_root(inv: &Inventory, brand: Uuid) -> Option<Uuid> {
+    // Prefer the requested name when both exist; never merge or discard data.
+    child(inv, brand, FOLDER).or_else(|| child(inv, brand, OLD_FOLDER))
 }
 
 fn fetch(inv: &mut Inventory, id: Uuid, waiting: &mut Vec<(Uuid, FetchState)>, failed: &mut bool) -> bool {
@@ -140,7 +151,7 @@ impl Catalog {
             return;
         };
         self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
-        self.root = child(inv, fs, if firestorm { "#AO" } else { "AO" });
+        self.root = if firestorm { child(inv, fs, "#AO") } else { native_root(inv, fs) };
         let Some(root) = self.root else {
             self.sets.clear();
             return;
@@ -278,7 +289,7 @@ impl Catalog {
                 f.state = FetchState::Unknown;
             }
         }
-        for name in ["#Aurora", "AO", "#Firestorm", "#AO"] {
+        for name in ["#Aurora", FOLDER, OLD_FOLDER, "#Firestorm", "#AO"] {
             let ids: Vec<_> = inv
                 .folders
                 .values()
@@ -375,7 +386,7 @@ pub fn create(inv: &Inventory, catalog: &Catalog, set: &Set) -> Result<(Mutation
     }
     let mut change = Mutation::default();
     let fs = child(inv, inv.root, "#Aurora").unwrap_or_else(|| folder(&mut change, inv.root, "#Aurora".into()));
-    let root = catalog.root.unwrap_or_else(|| folder(&mut change, fs, "AO".into()));
+    let root = catalog.root.unwrap_or_else(|| folder(&mut change, fs, FOLDER.into()));
     let id = append_set(&mut change, root, set)?;
     Ok((finish(change), id))
 }
@@ -424,11 +435,11 @@ fn append_set(change: &mut Mutation, root: Uuid, set: &Set) -> Result<Uuid, Stri
 /// import stays separate and is never blindly replayed over user AO data.
 pub(super) fn reconstruct(inv: &Inventory, source: &Catalog, selected: Uuid) -> Result<(Mutation, Option<Uuid>), String> {
     let brand = child(inv, inv.root, "#Aurora").ok_or(aurora_i18n::tr!("ao-name-or-loading"))?;
-    if child(inv, brand, "AO").is_some() || child(inv, brand, "AO (Firestorm import)").is_some() {
+    if native_root(inv, brand).is_some() || [STAGING, OLD_STAGING].iter().any(|name| child(inv, brand, name).is_some()) {
         return Err(aurora_i18n::tr!("ao-bootstrap-interrupted").into());
     }
     let mut change = Mutation::default();
-    let root = folder(&mut change, brand, "AO (Firestorm import)".into());
+    let root = folder(&mut change, brand, STAGING.into());
     let preferred = source.selected(selected).map(|s| s.id);
     let mut select = None;
     for set in &source.sets {
@@ -440,7 +451,7 @@ pub(super) fn reconstruct(inv: &Inventory, source: &Catalog, selected: Uuid) -> 
     change.operations.push(Operation::Patch {
         id: root,
         folder: true,
-        body: llsd_map! { "name" => "AO" },
+        body: llsd_map! { "name" => FOLDER },
     });
     change.refresh.push(brand);
     if change.operations.len() > 2048 {

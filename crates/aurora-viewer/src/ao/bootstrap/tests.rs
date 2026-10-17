@@ -56,6 +56,86 @@ fn folder(inv: &mut Inventory, parent: Uuid, name: &str) -> Uuid {
 }
 
 #[test]
+fn old_native_folder_is_renamed_once_without_reimporting_or_changing_selection_and_contents() {
+    let (mut inv, owner, _) = source();
+    let selected = demo::seed_movement_design(&mut inv, owner);
+    let target = native(&mut inv);
+    let root = target.root.expect("native root");
+    let before = target.sets.clone();
+    assert!(target.swimming_ready(selected));
+    inv.folders.get_mut(&root).expect("root").info.name = inventory::OLD_FOLDER.into();
+    inv.generation += 1;
+    let untouched = firestorm_snapshot(&inv);
+    let mut target = native(&mut inv);
+    let mut startup = Bootstrap::default();
+    assert!(
+        startup.poll(&mut inv, &target, selected, false).is_none(),
+        "wait for inventory services"
+    );
+    let (change, select) = startup.poll(&mut inv, &target, selected, true).expect("rename").expect("plan");
+    assert_eq!(select, None, "keep the saved set UUID");
+    assert!(matches!(change.operations.as_slice(), [Operation::Patch { id, folder: true, body }]
+        if *id == root && body["name"].as_str() == inventory::FOLDER));
+    assert!(inventory::editable(&inv, &change, &Default::default()));
+    assert!(!inventory::editable(&inv, &change, &std::collections::HashSet::from([root])));
+    assert!(startup.source.root.is_none(), "never read the legacy catalogue for a native rename");
+    assert!(
+        startup.poll(&mut inv, &target, selected, true).is_none(),
+        "no replay before acknowledgement"
+    );
+    actions::demo_mutate(&mut inv, owner, change).expect("acknowledgement");
+    target.refresh(&mut inv);
+    assert_eq!(target.root, Some(root));
+    assert_eq!(target.sets, before, "all animation links, options and swim slots survive");
+    assert!(target.swimming_ready(selected));
+    assert!(
+        Bootstrap::default().poll(&mut inv, &target, selected, true).is_none(),
+        "relog is idempotent"
+    );
+    assert_eq!(firestorm_snapshot(&inv), untouched);
+}
+
+#[test]
+fn an_empty_old_native_folder_is_renamed_instead_of_importing_a_populated_legacy_ao() {
+    let (mut inv, owner, selected) = source();
+    let brand = inventory::child(&inv, inv.root, "#Aurora").expect("brand");
+    let root = folder(&mut inv, brand, inventory::OLD_FOLDER);
+    let target = native(&mut inv);
+    assert_eq!(target.root, Some(root));
+    let (change, _) = Bootstrap::default()
+        .poll(&mut inv, &target, selected, true)
+        .expect("rename")
+        .expect("plan");
+    actions::demo_mutate(&mut inv, owner, change).expect("acknowledgement");
+    let target = native(&mut inv);
+    assert_eq!(target.root, Some(root));
+    assert!(target.sets.is_empty());
+    assert_eq!(inv.folders[&root].info.name, inventory::FOLDER);
+}
+
+#[test]
+fn new_native_folder_wins_when_both_names_exist_and_old_interrupted_imports_still_block_recopying() {
+    let (mut inv, _, selected) = source();
+    let brand = inventory::child(&inv, inv.root, "#Aurora").expect("brand");
+    let old = folder(&mut inv, brand, inventory::OLD_FOLDER);
+    let current = folder(&mut inv, brand, inventory::FOLDER);
+    let target = native(&mut inv);
+    assert_eq!(target.root, Some(current));
+    assert!(Bootstrap::default().poll(&mut inv, &target, selected, true).is_none());
+    assert_eq!(inv.folders[&old].info.name, inventory::OLD_FOLDER);
+
+    inv.remove(&[old, current]);
+    folder(&mut inv, brand, "AO (Firestorm import)");
+    let target = native(&mut inv);
+    assert!(target.root.is_none());
+    assert!(
+        Bootstrap::default()
+            .poll(&mut inv, &target, selected, true)
+            .is_some_and(|result| result.is_err())
+    );
+}
+
+#[test]
 fn reconstructs_all_sets_groups_tracks_options_and_selection_without_changing_firestorm() {
     let (mut inv, owner, _) = source();
     let mut fs = Catalog::default();
@@ -94,7 +174,9 @@ fn reconstructs_all_sets_groups_tracks_options_and_selection_without_changing_fi
         .expect("reconstruction");
     assert!(change.copies.is_empty());
     assert!(inventory::editable(&inv, &change, &Default::default()));
-    assert!(matches!(change.operations.last(), Some(Operation::Patch { folder: true, body, .. }) if body["name"].as_str() == "AO"));
+    assert!(
+        matches!(change.operations.last(), Some(Operation::Patch { folder: true, body, .. }) if body["name"].as_str() == inventory::FOLDER)
+    );
     let source_folders: Vec<_> = inv.folders.keys().copied().collect();
     assert!(change.operations.iter().all(|op| match op {
         Operation::Folder { .. } | Operation::Links { .. } => true,
@@ -152,18 +234,18 @@ fn reconstructs_all_sets_groups_tracks_options_and_selection_without_changing_fi
         inv.folders[&brand]
             .children
             .iter()
-            .filter(|id| inv.folders[id].info.name == "AO")
+            .filter(|id| inv.folders[id].info.name == inventory::FOLDER)
             .count(),
         1
     );
-    assert!(inventory::child(&inv, brand, "AO (Firestorm import)").is_none());
+    assert!(inventory::child(&inv, brand, "Aurora AO (Legacy Viewer import)").is_none());
 }
 
 #[test]
 fn an_existing_aurora_ao_is_authoritative_even_when_empty_and_firestorm_is_populated() {
     let (mut inv, _, selected) = source();
     let brand = inventory::child(&inv, inv.root, "#Aurora").expect("brand");
-    let root = folder(&mut inv, brand, "AO");
+    let root = folder(&mut inv, brand, inventory::FOLDER);
     let target = native(&mut inv);
     assert_eq!(target.root, Some(root));
     assert!(target.sets.is_empty());
@@ -227,8 +309,8 @@ fn interrupted_imports_are_not_published_or_blindly_replayed() {
     change.refresh = vec![inventory::child(&inv, inv.root, "#Aurora").expect("brand")];
     actions::demo_mutate(&mut inv, owner, change).expect("simulate acknowledged prefix before network failure");
     let brand = inventory::child(&inv, inv.root, "#Aurora").expect("brand");
-    assert!(inventory::child(&inv, brand, "AO").is_none());
-    assert!(inventory::child(&inv, brand, "AO (Firestorm import)").is_some());
+    assert!(inventory::child(&inv, brand, inventory::FOLDER).is_none());
+    assert!(inventory::child(&inv, brand, "Aurora AO (Legacy Viewer import)").is_some());
     assert_eq!(
         firestorm_snapshot(&inv),
         untouched,
@@ -419,7 +501,7 @@ fn cached_firestorm_set_waits_for_inventory_services_and_reconstructs_once_when_
         inv.folders[&brand]
             .children
             .iter()
-            .filter(|id| inv.folders[id].info.name == "AO")
+            .filter(|id| inv.folders[id].info.name == inventory::FOLDER)
             .count(),
         1
     );
@@ -467,7 +549,7 @@ fn a_native_ao_arriving_while_services_are_delayed_cancels_fallback_without_touc
     assert!(startup.poll(&mut inv, &target, selected, false).is_none());
     assert!(startup.loading());
     let brand = inventory::child(&inv, inv.root, "#Aurora").expect("brand");
-    let native_root = folder(&mut inv, brand, "AO");
+    let native_root = folder(&mut inv, brand, inventory::FOLDER);
     target.refresh(&mut inv);
     assert!(startup.poll(&mut inv, &target, selected, true).is_none());
     assert!(startup.finished && !startup.loading());
