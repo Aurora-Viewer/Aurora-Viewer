@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 
+use crate::gpu_alloc::{Backoff, try_buffer};
 use crate::shadow_cull::{SHADOW_PLANES, casts_into, merged_from_finer};
 use crate::types::{DrawIndexedIndirect, SKELETON_ANCHOR, SkinBind};
 use crate::writes::GpuWrites;
@@ -610,28 +611,31 @@ pub struct GpuTable<T: Pod + PartialEq> {
     pub generation: u64,
     /// Bytes sent by the last `flush`.
     pub uploaded: u64,
+    /// The buffer could not grow (video memory full): when to try again.
+    backoff: Backoff,
 }
 
 impl<T: Pod + PartialEq> GpuTable<T> {
     pub fn new(device: &wgpu::Device, label: &'static str, cap: usize, fill: T) -> Self {
         GpuTable {
             label,
-            buffer: Self::make(device, label, cap.max(1)),
+            buffer: device.create_buffer(&Self::desc(label, cap.max(1))),
             mirror: Vec::with_capacity(cap),
             fill,
             dirty: DirtyChunks::default(),
             generation: 0,
             uploaded: 0,
+            backoff: Backoff::default(),
         }
     }
 
-    fn make(device: &wgpu::Device, label: &str, cap: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+    fn desc(label: &str, cap: usize) -> wgpu::BufferDescriptor<'_> {
+        wgpu::BufferDescriptor {
             label: Some(label),
             size: (cap * std::mem::size_of::<T>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        })
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -696,16 +700,40 @@ impl<T: Pod + PartialEq> GpuTable<T> {
         let size = std::mem::size_of::<T>();
         self.uploaded = 0;
         let needed = (self.mirror.len() * size) as u64;
-        if needed > self.buffer.size() {
+        let now = std::time::Instant::now();
+        if needed > self.buffer.size() && self.backoff.ready(now) {
             let cap = self.mirror.len().next_power_of_two();
-            self.buffer = Self::make(device, self.label, cap);
-            self.generation += 1;
-            writes.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
-            self.uploaded = needed;
-            self.dirty.clear();
-            return;
+            match try_buffer(device, &Self::desc(self.label, cap)) {
+                Ok(buffer) => {
+                    self.backoff.succeeded();
+                    self.buffer = buffer;
+                    self.generation += 1;
+                    writes.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.mirror));
+                    self.uploaded = needed;
+                    self.dirty.clear();
+                    return;
+                }
+                Err(e) => {
+                    if !self.backoff.waiting() {
+                        log::warn!(
+                            "{} not grown to {} MB ({e}): video memory is full, the entries past {} wait for it",
+                            self.label,
+                            (cap * size) >> 20,
+                            self.buffer.size() as usize / size
+                        );
+                    }
+                    self.backoff.failed(now);
+                }
+            }
         }
+        // (while the buffer could not grow, what it has no room for waits:
+        // the growth writes the whole table)
+        let fits = self.buffer.size() as usize / size;
         for r in self.dirty.take_ranges(self.mirror.len()) {
+            let r = r.start.min(fits)..r.end.min(fits);
+            if r.is_empty() {
+                continue;
+            }
             writes.write_buffer(&self.buffer, (r.start * size) as u64, bytemuck::cast_slice(&self.mirror[r.clone()]));
             self.uploaded += (r.len() * size) as u64;
         }

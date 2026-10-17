@@ -183,7 +183,15 @@ impl PageWorker {
                 match job {
                     PageJob::Make { key, layers } => {
                         let t0 = Instant::now();
-                        let (texture, view) = make_page(&device, key, layers);
+                        let (texture, view) = match make_page(&device, key, layers) {
+                            Ok(page) => page,
+                            Err(e) => {
+                                // (nothing comes back: once the request times
+                                // out, the frame's thread tries again itself)
+                                log::debug!("texture page not made by the page thread: {e}");
+                                continue;
+                            }
+                        };
                         let ms = t0.elapsed().as_secs_f32() * 1000.0;
                         // (the table is gone: the page is dropped here)
                         let _ = made_tx.send(MadePage {
@@ -274,8 +282,9 @@ fn log_slow_page(key: PageKey, layers: u32, ms: f32, by: &str) {
     }
 }
 
-fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> DeadPage {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+/// A page, or why video memory could not hold it.
+fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> Result<DeadPage, String> {
+    let desc = wgpu::TextureDescriptor {
         label: Some("texture page"),
         size: wgpu::Extent3d {
             width: key.width,
@@ -289,13 +298,13 @@ fn make_page(device: &wgpu::Device, key: PageKey, layers: u32) -> DeadPage {
         // COPY_SRC: compaction copies layers between pages
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
-    });
+    };
     // explicit: the default view of a one-layer texture would be D2
-    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+    let view = wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::D2Array),
         ..Default::default()
-    });
-    (texture, view)
+    };
+    crate::gpu_alloc::try_texture(device, &desc, &view, layers as u64 * key.layer_bytes())
 }
 
 const NO_SLOT: u32 = u32::MAX;
@@ -532,6 +541,8 @@ struct PageStore {
     /// (`compaction_pick`).
     eager: bool,
     warned_full: bool,
+    /// A page could not be made (video memory full): when to try again.
+    page_backoff: crate::gpu_alloc::Backoff,
     /// Pages created so far, by whom and in how long (AURORA_PROFILE).
     made: PagesMade,
     /// Pages the page thread made, waiting for the first texture of their
@@ -579,6 +590,7 @@ impl PageStore {
             freed: false,
             eager: false,
             warned_full: false,
+            page_backoff: Default::default(),
             made: PagesMade::default(),
             spares: Vec::new(),
             retired: Vec::new(),
@@ -694,6 +706,43 @@ impl PageStore {
     /// A new page of that size in the table: the spare one the page thread
     /// made if there is one, else created here.
     fn new_page(&mut self, device: &wgpu::Device, key: PageKey) -> Option<u32> {
+        let spare = self.spares.iter().position(|(p, _)| p.key == key);
+        let made = match spare {
+            Some(_) => None,
+            None => {
+                // a page video memory could not hold is not installed (an
+                // invalid texture failed every upload into it): the
+                // texture waits, and the page is asked again a little later
+                let now = Instant::now();
+                if !self.page_backoff.ready(now) {
+                    return None;
+                }
+                let layers = self.next_page_layers(key);
+                let t0 = Instant::now();
+                match make_page(device, key, layers) {
+                    Ok((texture, view)) => {
+                        self.page_backoff.succeeded();
+                        let ms = t0.elapsed().as_secs_f32() * 1000.0;
+                        self.made.inline += 1;
+                        self.made.inline_ms += ms;
+                        log_slow_page(key, layers, ms, "main thread");
+                        Some((layers, texture, view))
+                    }
+                    Err(e) => {
+                        if !self.page_backoff.waiting() {
+                            log::warn!(
+                                "texture page {}×{} ({} MB) not made ({e}): video memory is full, the textures that need it wait",
+                                key.width,
+                                key.height,
+                                (layers as u64 * key.layer_bytes()) >> 20
+                            );
+                        }
+                        self.page_backoff.failed(now);
+                        return None;
+                    }
+                }
+            }
+        };
         let index = match self.free_pages.pop() {
             Some(Reverse(i)) => i,
             None if (self.pages.len() as u32) < self.page_capacity => {
@@ -707,21 +756,13 @@ impl PageStore {
                 return None;
             }
         };
-        let (layers, texture, view) = match self.spares.iter().position(|(p, _)| p.key == key) {
-            Some(at) => {
+        let (layers, texture, view) = match (spare, made) {
+            (_, Some(made)) => made,
+            (Some(at), None) => {
                 let (page, _) = self.spares.swap_remove(at);
                 (page.layers, page.texture, page.view)
             }
-            None => {
-                let layers = self.next_page_layers(key);
-                let t0 = Instant::now();
-                let (texture, view) = make_page(device, key, layers);
-                let ms = t0.elapsed().as_secs_f32() * 1000.0;
-                self.made.inline += 1;
-                self.made.inline_ms += ms;
-                log_slow_page(key, layers, ms, "main thread");
-                (layers, texture, view)
-            }
+            (None, None) => return None,
         };
         self.page_bytes += layers as u64 * key.layer_bytes();
         self.pages[index as usize] = Some(Page {
