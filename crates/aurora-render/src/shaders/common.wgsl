@@ -64,7 +64,7 @@ struct Frame {
     sky_moon: vec4<f32>,        // moon dir, moon scale
     sky_misc: vec4<f32>,        // dome offset, dome radius, moon brightness, star brightness
     tex_slots: vec4<u32>,       // cloud, sun, moon, water normal map
-    sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied
+    sky_ll: vec4<f32>,          // x classic sky (1 = no reflection probe ambiance), y distance multiplier, z 1 = PBR materials' occlusion applied, w 1 = specular occlusion from GTAO's bent normal (in ao_tex.gba)
     sky_obj_light: vec4<f32>,   // rgb sun / moon color lighting objects (mSunDiffuse, max component <= 1)
     sky_optics: vec4<f32>,      // x moisture level (rainbow), y droplet radius, z ice level (22° halo)
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
@@ -1142,6 +1142,76 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
     return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
 }
 
+// The solid angle two spherical caps share, divided by 2 pi: caps of
+// cosines `cos_a` and `cos_b` whose axes are `cos_d` apart. Oat and Sander,
+// "Ambient Aperture Lighting" (2007), with the smooth approximation of the
+// partial overlap Filament uses (sphericalCapsIntersection).
+fn spherical_caps_intersection(cos_a: f32, cos_b: f32, cos_d: f32) -> f32 {
+    let ra = acos(clamp(cos_a, -1.0, 1.0));
+    let rb = acos(clamp(cos_b, -1.0, 1.0));
+    let d = acos(clamp(cos_d, -1.0, 1.0));
+    if (min(ra, rb) <= max(ra, rb) - d) {
+        // one cap inside the other
+        return 1.0 - max(cos_a, cos_b);
+    }
+    if (ra + rb <= d) {
+        return 0.0;
+    }
+    let delta = abs(ra - rb);
+    let x = 1.0 - clamp((d - delta) / max(ra + rb - delta, 1e-4), 0.0, 1.0);
+    return x * x * (3.0 - 2.0 * x) * (1.0 - max(cos_a, cos_b));
+}
+
+// How much of a reflection the surface's surroundings let through: the
+// visibility cone around the bent normal (its aperture from the visibility,
+// cos = sqrt(1 - V)) against the specular cone around the reflected ray
+// (from the roughness), as Jimenez et al., "Practical Real-Time Strategies
+// for Accurate Indirect Occlusion" (2016), section 6. Below a roughness of
+// about 0.3 the occlusion fades out as in Filament (specularAO_Cones): a
+// mirror's narrow lobe would otherwise lose every reflection to the
+// screen-space visibility's noise.
+// Measured against the open hemisphere (visibility 1) around the same bent
+// normal: the part of a lobe below the horizon is already the probes' and
+// the environment BRDF's business, and counting it here darkened the rims
+// of convex shapes, whose grazing reflections nothing hides (Aurora's
+// choice; an open surface keeps exactly its reflection). And a reflection
+// is never darkened more than the ambient light (the visibility): what
+// hides the sky is itself lit, which the cones take for black — a polished
+// metal turned black in an inside corner, with the bent normal's noise.
+fn cone_specular_occlusion(bent: vec3<f32>, visibility: f32, r: vec3<f32>, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let cos_v = sqrt(max(1.0 - visibility, 0.0));
+    // the lobe's aperture: log2(10) x alpha^2
+    let cos_s = exp2(-3.321928 * a * a);
+    let cos_b = dot(bent, r);
+    let open = spherical_caps_intersection(0.0, cos_s, cos_b);
+    if (open <= 1e-6) {
+        return 1.0;
+    }
+    let so = spherical_caps_intersection(cos_v, cos_s, cos_b) / open;
+    return mix(1.0, max(clamp(so, 0.0, 1.0), visibility), smoothstep(0.01, 0.09, a));
+}
+
+// The specular occlusion of the fragment at `frag` for the reflected ray
+// `r` (world) and the perceptual `roughness`, from GTAO's bent normal
+// (frame.sky_ll.w), or `otherwise` (what the reflection took before).
+fn specular_occlusion(frag: vec2<f32>, r: vec3<f32>, roughness: f32, otherwise: f32) -> f32 {
+    if (frame.sky_ll.w < 0.5 || frame.misc.x < 1.5 || in_reflection_pass()) {
+        return otherwise;
+    }
+    let s = textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0);
+    let bv = s.gba * 2.0 - vec3<f32>(1.0);
+    let len = length(bv);
+    if (len < 0.25) {
+        return otherwise;
+    }
+    // view space (x right, y up, z in front) to the world
+    let b = bv / len;
+    let forward = cross(frame.cam_up.xyz, frame.cam_right.xyz);
+    let bent = normalize(frame.cam_right.xyz * b.x + frame.cam_up.xyz * b.y + forward * b.z);
+    return cone_specular_occlusion(bent, s.r, r, roughness);
+}
+
 /// How much a surface takes the planar mirror image (SL hero probe).
 fn mirror_weight(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
     if (dot(frame.mirror_plane.xyz, frame.mirror_plane.xyz) < 0.5 || in_reflection_pass()) {
@@ -1211,7 +1281,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     var amb = hemi;
     let r = reflect(-v, n);
     var env = mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness);
-    var occl = (0.35 + 0.65 * shadow) * (1.0 - 0.75 * roughness) * ao;
+    // with GTAO, the occlusion of the reflected ray instead of the ambient one
+    let spec_ao = specular_occlusion(frag, r, roughness, ao);
+    var occl = (0.35 + 0.65 * shadow) * (1.0 - 0.75 * roughness) * spec_ao;
     if (probes_on()) {
         // non classic skies: ambient from the probes' irradiance along the
         // normal, each probe mixed with the sky ambient by its ambiance
@@ -1223,7 +1295,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         }
         if (s.b.w > 0.0) {
             env = s.b.rgb;
-            occl = ao;
+            occl = spec_ao;
         }
     }
     col += diffuse_color * amb * ao * mat_ao;
@@ -1801,8 +1873,10 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
     }
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
     // SSAO darkens the irradiance alone (adjustIrradiance). The classic
-    // ambient (finalAmbient) does not take that occlusion.
-    col += env * env_brdf(f0, roughness, nv) * mat_ao;
+    // ambient (finalAmbient) does not take that occlusion. GTAO adds its
+    // specular occlusion (Aurora's own: the Legacy Viewer has no bent
+    // normal), 1 otherwise.
+    col += env * env_brdf(f0, roughness, nv) * mat_ao * specular_occlusion(frag, r, roughness, 1.0);
     return col;
 }
 

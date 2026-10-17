@@ -585,6 +585,11 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     // wash a shiny face out
     gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
     env_sky = clamp(env_sky, vec3<f32>(0.0), vec3<f32>(10.0));
+    // with GTAO, the glossy reflection fades in creases as a PBR one
+    // (specular_occlusion; its roughness from the glossiness, as the probe
+    // level above); the sharp environment is a mirror's lobe, which that
+    // occlusion leaves alone
+    gloss_sky *= specular_occlusion(frag, r, 1.0 - spec.a, 1.0);
     if (spec.a > 0.0) {
         let l = normalize(frame.sun_dir.xyz);
         col += ll_spec(n, v, l, spec.a) * shadow * sun_lin * spec.rgb;

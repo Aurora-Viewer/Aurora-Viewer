@@ -1079,6 +1079,14 @@ fn pbr_occlusion_now() -> bool {
     PbrOcclusion::from_env().applied(secs)
 }
 
+/// Whether this frame takes the specular occlusion of GTAO's bent normal
+/// (with GTAO shown; AURORA_GTAO_SPECULAR).
+fn gtao_specular_now() -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    crate::gtao::SpecularOcclusion::from_env().applied(secs)
+}
+
 /// AURORA_PROFILE: the summary also wants the time each step waited.
 fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -4061,6 +4069,9 @@ impl Backend {
             if do_water_refl { 1.0 } else { 0.0 },
             0.0,
         ];
+        // the reflections occluded along GTAO's bent normal
+        // (specular_occlusion, common.wgsl)
+        main.sky_ll[3] = if self.targets.gtao_shown && gtao_specular_now() { 1.0 } else { 0.0 };
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();

@@ -3440,6 +3440,17 @@ pub fn events() -> Vec<NetEvent> {
             MAT_PBR_METAL[0],
         ));
         id += 1;
+        // left of the cube, an inside corner of the half-polished metal
+        // (floor, back and side): its reflections fade into the corner with
+        // GTAO's specular occlusion (AURORA_GTAO_SPECULAR)
+        for (pos, scale) in [
+            (Vec3::new(135.3, 133.6, floor + 0.05), Vec3::new(1.4, 1.4, 0.1)),
+            (Vec3::new(136.0, 133.6, floor + 0.6), Vec3::new(0.1, 1.4, 1.2)),
+            (Vec3::new(135.3, 134.25, floor + 0.6), Vec3::new(1.4, 0.1, 1.2)),
+        ] {
+            add(metal(id, pos, scale, boxp, MAT_PBR_METAL[1]));
+            id += 1;
+        }
     }
     // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
     // of panels facing the start position, in place of the alpha panels

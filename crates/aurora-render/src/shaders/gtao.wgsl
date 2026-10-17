@@ -43,7 +43,13 @@
 //    result does not flicker and the blur removes its pattern.
 //
 // The result is a visibility (1 = nothing occludes) in `.r` of the last
-// target, sampled where the Legacy occlusion is (screen_ao, common.wgsl).
+// target, sampled where the Legacy occlusion is (screen_ao, common.wgsl),
+// and the bent normal — the mean direction of the unoccluded part of the
+// hemisphere (XE_GTAO_COMPUTE_BENT_NORMALS, the paper's algorithm 2) — in
+// view space, `.gba` mapped from -1..1 to 0..1; the shading turns it into a
+// specular occlusion (specular_occlusion, common.wgsl). The working
+// targets hold the visibility in `.r` and the bent normal unpacked in
+// `.gba`, blurred with the same weights.
 // View space here is XeGTAO's: x right, y up, z the distance in front of
 // the camera; screen pixels go down.
 
@@ -69,7 +75,7 @@ struct GtaoParams {
 @group(0) @binding(2) var src_mip: texture_2d<f32>;
 @group(0) @binding(3) var dst_mip: texture_storage_2d<r32float, write>;
 @group(0) @binding(4) var depth_mips: texture_2d<f32>;
-@group(0) @binding(5) var ao_out: texture_storage_2d<r32float, write>;
+@group(0) @binding(5) var ao_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(6) var edges_out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(7) var ao_in: texture_2d<f32>;
 @group(0) @binding(8) var edges_in: texture_2d<f32>;
@@ -244,6 +250,34 @@ fn fast_acos(x_in: f32) -> f32 {
     return select(PI - res, res, x_in >= 0.0);
 }
 
+// XeGTAO_RotFromToMatrix applied to `v`, for its one use: `src` is
+// (0, 0, -1), the slice frame's direction towards the camera, `dst` the
+// view vector of the pixel.
+fn rot_from_to(src: vec3<f32>, dst: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+    let e = dot(src, dst);
+    if (abs(e) > 1.0 - 0.0003) {
+        return v;
+    }
+    let c = cross(src, dst);
+    let h = 1.0 / (1.0 + e);
+    let hvx = h * c.x;
+    let hvz = h * c.z;
+    let hvxy = hvx * c.y;
+    let hvxz = hvx * c.z;
+    let hvyz = hvz * c.y;
+    // the rows of XeGTAO's matrix
+    let r0 = vec3<f32>(e + hvx * c.x, hvxy - c.z, hvxz + c.y);
+    let r1 = vec3<f32>(hvxy + c.z, e + h * c.y * c.y, hvyz - c.x);
+    let r2 = vec3<f32>(hvxz - c.y, hvyz + c.x, e + hvz * c.z);
+    return vec3<f32>(dot(r0, v), dot(r1, v), dot(r2, v));
+}
+
+// The view's bent normal into the working target: (visibility / scale,
+// bent normal).
+fn working(visibility: f32, bent: vec3<f32>) -> vec4<f32> {
+    return vec4<f32>(saturate(visibility / OCCLUSION_TERM_SCALE), bent);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = target_size();
@@ -262,7 +296,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let edges = calculate_edges(zc, zl, zr, zt, zb);
     textureStore(edges_out, px, edges);
     if (zc >= FAR * 0.5) {
-        textureStore(ao_out, px, vec4<f32>(1.0 / OCCLUSION_TERM_SCALE, 0.0, 0.0, 0.0));
+        textureStore(ao_out, px, working(1.0, vec3<f32>(0.0, 0.0, -1.0)));
         return;
     }
 
@@ -302,6 +336,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var visibility = saturate((10.0 - screen_radius) / 100.0) * 0.5;
     // the first sample stays clear of the centre pixel
     let min_s = 1.3 / screen_radius;
+    var bent = vec3<f32>(0.0);
 
     for (var si = 0; si < i32(slice_count); si++) {
         let slice = f32(si);
@@ -377,12 +412,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let iarc0 = (cos_norm + 2.0 * h0 * sin(nn) - cos(2.0 * h0 - nn)) / 4.0;
         let iarc1 = (cos_norm + 2.0 * h1 * sin(nn) - cos(2.0 * h1 - nn)) / 4.0;
         visibility += projected_length * (iarc0 + iarc1);
+        // the paper's algorithm 2: the slice's bent normal, in a frame whose
+        // -z looks at the camera, turned to the view vector
+        let t0 = (6.0 * sin(h0 - nn) - sin(3.0 * h0 - nn) + 6.0 * sin(h1 - nn) - sin(3.0 * h1 - nn) + 16.0 * sin(nn)
+            - 3.0 * (sin(h0 + nn) + sin(h1 + nn))) / 12.0;
+        let t1 = (-cos(3.0 * h0 - nn) - cos(3.0 * h1 - nn) + 8.0 * cos(nn) - 3.0 * (cos(h0 + nn) + cos(h1 + nn))) / 12.0;
+        let local_bent = vec3<f32>(direction.x * t0, direction.y * t0, -t1);
+        bent += rot_from_to(vec3<f32>(0.0, 0.0, -1.0), view_vec, local_bent) * projected_length;
     }
     visibility /= slice_count;
     visibility = pow(max(visibility, 0.0), g.quality.x);
     // a visible pixel is never fully occluded
     visibility = max(0.03, visibility);
-    textureStore(ao_out, px, vec4<f32>(saturate(visibility / OCCLUSION_TERM_SCALE), 0.0, 0.0, 0.0));
+    // (no slice: the surface's own normal)
+    let bent_n = select(n, normalize(bent), dot(bent, bent) > 1e-8);
+    textureStore(ao_out, px, working(visibility, bent_n));
 }
 
 // ---- 4: the blur
@@ -392,15 +436,16 @@ fn edges_at(p: vec2<i32>) -> vec4<f32> {
     return textureLoad(edges_in, clamp(p, vec2<i32>(0), size - vec2<i32>(1)), 0);
 }
 
-fn ao_at(p: vec2<i32>) -> f32 {
+fn ao_at(p: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(ao_in));
-    return textureLoad(ao_in, clamp(p, vec2<i32>(0), size - vec2<i32>(1)), 0).x;
+    return textureLoad(ao_in, clamp(p, vec2<i32>(0), size - vec2<i32>(1)), 0);
 }
 
 // XeGTAO_Denoise for one pixel: its own value and its eight neighbours,
 // each weighted by the edges between them; the last pass weights the
-// centre more (DenoiseBlurBeta) so the image stays sharp.
-fn denoised(px: vec2<i32>, final_apply: bool) -> f32 {
+// centre more (DenoiseBlurBeta) so the image stays sharp. The visibility
+// and the bent normal take the same weights.
+fn denoised(px: vec2<i32>, final_apply: bool) -> vec4<f32> {
     let beta = g.misc.x;
     let blur_amount = select(beta / 5.0, beta, final_apply);
     let diag = 0.85 * 0.5;
@@ -439,7 +484,7 @@ fn denoise(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(id.xy);
-    textureStore(ao_out, px, vec4<f32>(denoised(px, false), 0.0, 0.0, 0.0));
+    textureStore(ao_out, px, denoised(px, false));
 }
 
 @compute @workgroup_size(8, 8)
@@ -448,6 +493,8 @@ fn denoise_final(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let px = vec2<i32>(id.xy);
-    let v = saturate(denoised(px, true) * OCCLUSION_TERM_SCALE);
-    textureStore(final_out, px, vec4<f32>(v, v, v, 1.0));
+    let d = denoised(px, true);
+    let v = saturate(d.r * OCCLUSION_TERM_SCALE);
+    let b = select(vec3<f32>(0.0, 0.0, -1.0), normalize(d.gba), dot(d.gba, d.gba) > 1e-8);
+    textureStore(final_out, px, vec4<f32>(v, b * 0.5 + vec3<f32>(0.5)));
 }

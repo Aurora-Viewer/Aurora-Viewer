@@ -1384,7 +1384,10 @@ To check with these scenarios:
   polished metal cube whose packed map (occlusion, roughness, metal) has
   an occlusion of 0 but for a disc on each face: the cube is dark and only
   reflects the sky in the discs, as in the Legacy Viewer
-  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three).
+  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three). Left
+  of the cube, an inside corner (floor, back and side) of the
+  half-polished metal: with GTAO its reflections fade into the corner
+  (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
@@ -3776,6 +3779,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
+| `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3877,6 +3881,18 @@ What the inventory must show with these scenarios:
   light. `g_ssao` of `perf summary` is its GPU time (demo crowd of 40,
   2560 × 1369, RTX 4090: Legacy low about 0.08 to 0.15 ms, GTAO low 0.10,
   medium 0.24, high 0.31, ultra 0.57 ms).
+- **`AURORA_GTAO_SPECULAR=0|alt`**: GTAO also gives each pixel its bent
+  normal (the mean direction of the open part of its hemisphere, XeGTAO's
+  `XE_GTAO_COMPUTE_BENT_NORMALS`), from which the shading takes a specular
+  occlusion (`specular_occlusion`, common.wgsl; Jimenez et al. 2016): a
+  reflection fades where the ray leaves away from the opening of a crease
+  or a recess, on PBR faces (classic skies included, where the Legacy
+  Viewer applies no occlusion to them) and on the glossy reflection of
+  legacy materials. Below a roughness of about 0.3 it fades out, so mirrors
+  keep their reflection. It comes with GTAO only: the Legacy method's
+  image does not change. `0` leaves it out, as before; `alt` leaves it out
+  every other second (`AURORA_DEMO_PBR_METAL=1`: the inside corner left
+  of the cube, and the folds of the avatars' clothes and skin).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,

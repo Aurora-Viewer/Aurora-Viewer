@@ -9,6 +9,12 @@
 //! `AURORA_AO=legacy|gtao|alt` overrides the method of the settings for a
 //! comparison; `alt` switches every second, both methods kept ready;
 //! `gtao:<0-3>` and `alt:<0-3>` also choose GTAO's quality.
+//!
+//! The result also carries XeGTAO's bent normal, from which the shading
+//! takes a specular occlusion (`specular_occlusion` in common.wgsl): the
+//! reflections fade in the creases and recesses GTAO finds. It comes with
+//! GTAO; `AURORA_GTAO_SPECULAR=0|1|alt` turns it off, on (the default) or
+//! on every other second, to compare.
 
 use crate::types::AoMethod;
 use bytemuck::{Pod, Zeroable};
@@ -139,6 +145,40 @@ impl Override {
     }
 }
 
+/// `AURORA_GTAO_SPECULAR`: the specular occlusion from GTAO's bent normal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpecularOcclusion {
+    On,
+    Off,
+    /// On one second, off the next.
+    Alternate,
+}
+
+impl SpecularOcclusion {
+    pub(crate) fn parse(v: Option<&str>) -> Self {
+        match v.map(str::trim) {
+            Some("0") | Some("off") => SpecularOcclusion::Off,
+            Some("alt") => SpecularOcclusion::Alternate,
+            _ => SpecularOcclusion::On,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        static MODE: std::sync::OnceLock<SpecularOcclusion> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| SpecularOcclusion::parse(std::env::var("AURORA_GTAO_SPECULAR").ok().as_deref()))
+    }
+
+    /// Whether the frame drawn `secs` whole seconds into the session takes
+    /// it (with GTAO shown).
+    pub(crate) fn applied(self, secs: u64) -> bool {
+        match self {
+            SpecularOcclusion::On => true,
+            SpecularOcclusion::Off => false,
+            SpecularOcclusion::Alternate => secs.is_multiple_of(2),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GtaoU {
@@ -196,7 +236,8 @@ pub(crate) struct Targets {
     main: wgpu::BindGroup,
     /// In order; the last one writes `result`.
     denoise: Vec<(wgpu::BindGroup, bool)>,
-    /// The visibility in `.r`, sampled by the shading.
+    /// The visibility in `.r` and the view-space bent normal in `.gba`
+    /// (0..1), sampled by the shading.
     pub result: wgpu::TextureView,
 }
 
@@ -241,7 +282,8 @@ fn storage_entry(binding: u32, format: wgpu::TextureFormat) -> wgpu::BindGroupLa
 
 const UNFILTERED: wgpu::TextureSampleType = wgpu::TextureSampleType::Float { filterable: false };
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// The visibility and the bent normal while they are blurred.
+const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const EDGES_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
@@ -482,6 +524,85 @@ mod tests {
         assert_eq!(Override::None.level(gtao), 1);
         assert_eq!(Override::Gtao(None).level(AoMethod::Legacy), 2);
         assert_eq!(Override::Gtao(Some(0)).level(gtao), 0);
+    }
+
+    #[test]
+    fn specular_switch_is_on_by_default_and_alternates_every_second() {
+        assert_eq!(SpecularOcclusion::parse(None), SpecularOcclusion::On);
+        assert_eq!(SpecularOcclusion::parse(Some("1")), SpecularOcclusion::On);
+        assert_eq!(SpecularOcclusion::parse(Some(" 0 ")), SpecularOcclusion::Off);
+        assert_eq!(SpecularOcclusion::parse(Some("alt")), SpecularOcclusion::Alternate);
+        let alt: Vec<bool> = (0..4).map(|s| SpecularOcclusion::Alternate.applied(s)).collect();
+        assert_eq!(alt, [true, false, true, false]);
+        assert!((0..4).all(|s| SpecularOcclusion::On.applied(s) && !SpecularOcclusion::Off.applied(s)));
+    }
+
+    /// The shader's `cone_specular_occlusion` (common.wgsl), line for line.
+    fn cone_specular_occlusion(bent: glam::Vec3, visibility: f32, r: glam::Vec3, roughness: f32) -> f32 {
+        fn caps(cos_a: f32, cos_b: f32, cos_d: f32) -> f32 {
+            let (ra, rb, d) = (
+                cos_a.clamp(-1.0, 1.0).acos(),
+                cos_b.clamp(-1.0, 1.0).acos(),
+                cos_d.clamp(-1.0, 1.0).acos(),
+            );
+            if ra.min(rb) <= ra.max(rb) - d {
+                return 1.0 - cos_a.max(cos_b);
+            }
+            if ra + rb <= d {
+                return 0.0;
+            }
+            let delta = (ra - rb).abs();
+            let x = 1.0 - ((d - delta) / (ra + rb - delta).max(1e-4)).clamp(0.0, 1.0);
+            x * x * (3.0 - 2.0 * x) * (1.0 - cos_a.max(cos_b))
+        }
+        let smooth = |e0: f32, e1: f32, x: f32| {
+            let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let a = roughness * roughness;
+        let cos_v = (1.0 - visibility).max(0.0).sqrt();
+        let cos_s = (-std::f32::consts::LOG2_10 * a * a).exp2();
+        let cos_b = bent.dot(r);
+        let open = caps(0.0, cos_s, cos_b);
+        if open <= 1e-6 {
+            return 1.0;
+        }
+        let so = caps(cos_v, cos_s, cos_b) / open;
+        1.0 + (so.clamp(0.0, 1.0).max(visibility) - 1.0) * smooth(0.01, 0.09, a)
+    }
+
+    /// Open surroundings let a reflection through, a crease hides the rays
+    /// that leave away from its opening, and a mirror keeps its reflection.
+    #[test]
+    fn specular_occlusion_follows_the_opening_and_spares_mirrors() {
+        let up = glam::Vec3::Z;
+        // nothing around: the visibility cone is the whole hemisphere, and
+        // a grazing ray (the rim of a sphere) keeps its reflection too
+        assert!((cone_specular_occlusion(up, 1.0, up, 0.6) - 1.0).abs() < 1e-5);
+        let rim = glam::Vec3::new(1.0, 0.0, 0.05).normalize();
+        assert!((cone_specular_occlusion(up, 1.0, rim, 0.6) - 1.0).abs() < 1e-5);
+        // a crease opening upwards: a ray up passes, a grazing one is hidden
+        // down to the crease's ambient light, no further
+        let grazing = glam::Vec3::new(1.0, 0.0, 0.1).normalize();
+        let along = cone_specular_occlusion(up, 0.35, up, 0.6);
+        let across = cone_specular_occlusion(up, 0.35, grazing, 0.6);
+        assert!(along > 0.7 && (across - 0.35).abs() < 1e-5, "{along} {across}");
+        // the less visible, the less reflection (same ray, rough enough)
+        let r = glam::Vec3::new(0.5, 0.0, 1.0).normalize();
+        let v: Vec<f32> = [1.0, 0.8, 0.6, 0.4, 0.2]
+            .iter()
+            .map(|&vis| cone_specular_occlusion(up, vis, r, 0.7))
+            .collect();
+        assert!(v.windows(2).all(|w| w[0] >= w[1] - 1e-5), "{v:?}");
+        // a mirror (roughness below 0.3) is left alone, in any crease
+        assert!((cone_specular_occlusion(up, 0.2, grazing, 0.1) - 1.0).abs() < 1e-6);
+        // and the result stays between 0 and 1
+        for vis in [0.0, 0.03, 0.5, 1.0] {
+            for rough in [0.0, 0.3, 0.5, 1.0] {
+                let so = cone_specular_occlusion(up, vis, grazing, rough);
+                assert!((0.0..=1.0).contains(&so), "{vis} {rough} {so}");
+            }
+        }
     }
 
     /// The view depth the shader rebuilds from the projection's terms is the
