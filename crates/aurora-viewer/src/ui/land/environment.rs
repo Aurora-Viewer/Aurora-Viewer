@@ -42,7 +42,7 @@ pub(super) fn unavailable(v: &View, env: &EnvState) -> Option<&'static str> {
 
 /// The day's length and offset in hours as the sliders show them (the
 /// offset between -12 and 12), or the one being dragged.
-pub(super) fn day_hours(summary: Option<&EnvSummary>, drag: Option<(f32, f32)>) -> (f32, f32) {
+pub(crate) fn day_hours(summary: Option<&EnvSummary>, drag: Option<(f32, f32)>) -> (f32, f32) {
     match (summary, drag) {
         (_, Some(d)) => d,
         (Some(e), None) if e.day_length > 0 => {

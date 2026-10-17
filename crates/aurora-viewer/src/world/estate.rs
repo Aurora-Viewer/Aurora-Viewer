@@ -8,10 +8,12 @@
 //! does with refreshFromRegion.
 
 use super::land::EnvSummary;
+use aurora_llsd::Llsd;
 use aurora_net::estate::{
     EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RegionRules, RegionSun, RestartSchedule,
     SimStats, TerrainSettings, TopObjects,
 };
+use aurora_net::land::LandCommand;
 use aurora_net::{NetCommand, RegionHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,6 +54,11 @@ pub struct Estate {
     pub experiences: Option<Option<RegionExperiences>>,
     pub schedule: Option<Result<Option<RestartSchedule>, ()>>,
     pub environment: Option<Option<EnvSummary>>,
+    /// A change of the region environment was sent and not answered yet
+    /// (setControlsEnabled(false) until onEnvironmentReceived), and why
+    /// the last one was refused.
+    pub environment_waiting: bool,
+    pub environment_error: Option<String>,
     /// The agent's region's statistics, the last second's.
     pub stats: Option<(RegionHandle, Arc<SimStats>)>,
     /// Server versions by region (AgentMovementComplete).
@@ -64,6 +71,8 @@ pub struct Estate {
     /// A change of the lists was sent: the next `setaccess` asks them again
     /// (LLPanelEstateAccess::setPendingUpdate).
     access_pending: bool,
+    /// The same for the experiences (`setexperience`).
+    experiences_pending: bool,
     out: Vec<NetCommand>,
 }
 
@@ -132,6 +141,49 @@ impl Estate {
             .push(NetCommand::Estate(EstateCommand::AccessDelta { handle, flags, ids, batch }));
     }
 
+    /// A change of the region's experience lists (experienceCoreConfirm);
+    /// the lists come again once the simulator answers `setexperience`.
+    pub fn change_experiences(&mut self, handle: RegionHandle, flags: u32, ids: Vec<Uuid>) {
+        if ids.is_empty() {
+            return;
+        }
+        self.experiences_pending = true;
+        self.out
+            .push(NetCommand::Estate(EstateCommand::ExperienceDelta { handle, flags, ids }));
+    }
+
+    /// The covenant replaced by a notecard's asset or cleared (nil), unless
+    /// it is already that one (sendChangeCovenantID).
+    pub fn change_covenant(&mut self, handle: RegionHandle, current: Uuid, asset: Uuid) {
+        if asset != current {
+            self.out.push(NetCommand::Estate(EstateCommand::ChangeCovenant { handle, asset }));
+        }
+    }
+
+    /// A change of the region environment (ExtEnvironment without a
+    /// parcel): the panel waits for the answer.
+    pub fn change_environment(&mut self, c: LandCommand) {
+        self.environment_waiting = true;
+        self.environment_error = None;
+        self.out.push(NetCommand::Land(c));
+    }
+
+    /// ExtEnvironment's answer for the region (the window's change, or the
+    /// day editor's "Apply To Region"), while the window is open.
+    pub fn environment_answer(&mut self, result: Result<&Llsd, &String>) {
+        if self.open.is_none() {
+            return;
+        }
+        self.environment_waiting = false;
+        match result {
+            Ok(env) => {
+                self.environment = Some(Some(EnvSummary::from_llsd(env)));
+                self.environment_error = None;
+            }
+            Err(e) => self.environment_error = Some(e.clone()),
+        }
+    }
+
     /// An intervention of the window (message, teleport home, kick,
     /// returned objects, restart, schedule), sent as the panels send it.
     pub fn intervene(&mut self, c: EstateCommand) {
@@ -154,7 +206,10 @@ impl Estate {
         self.experiences = None;
         self.schedule = None;
         self.environment = None;
+        self.environment_waiting = false;
+        self.environment_error = None;
         self.access_pending = false;
+        self.experiences_pending = false;
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
@@ -187,6 +242,11 @@ impl Estate {
                 self.out.push(NetCommand::Estate(EstateCommand::RefreshAccess { handle }));
             }
             EstateEvent::Experiences { handle, experiences } if shown(handle) => self.experiences = Some(experiences),
+            // LLDispatchSetEstateExperience: the same, refreshFromRegion
+            EstateEvent::ExperiencesChanged { handle } if shown(handle) && self.experiences_pending => {
+                self.experiences_pending = false;
+                self.out.push(NetCommand::Estate(EstateCommand::RefreshExperiences { handle }));
+            }
             EstateEvent::Schedule { handle, schedule } if shown(handle) => self.schedule = Some(schedule),
             EstateEvent::TopObjects { handle, report } => {
                 self.top = Some((handle, report));
@@ -274,5 +334,52 @@ mod tests {
         ));
         e.apply(EstateEvent::AccessChanged { handle: 7 });
         assert!(e.take_commands().is_empty());
+    }
+
+    /// An experience change asks the lists again once answered; the
+    /// covenant is not sent again when it is already that notecard.
+    #[test]
+    fn experiences_and_covenant_changes() {
+        use aurora_net::estate::estate_experience as xe;
+        let mut e = Estate::default();
+        e.open(7);
+        e.take_commands();
+        e.apply(EstateEvent::ExperiencesChanged { handle: 7 });
+        assert!(e.take_commands().is_empty());
+        e.change_experiences(7, xe::TRUSTED_ADD, vec![Uuid::from_u128(5)]);
+        assert!(matches!(
+            &e.take_commands()[..],
+            [NetCommand::Estate(EstateCommand::ExperienceDelta { handle: 7, flags, .. })] if *flags == xe::TRUSTED_ADD
+        ));
+        e.apply(EstateEvent::ExperiencesChanged { handle: 7 });
+        assert!(matches!(
+            e.take_commands()[..],
+            [NetCommand::Estate(EstateCommand::RefreshExperiences { handle: 7 })]
+        ));
+        let card = Uuid::from_u128(9);
+        e.change_covenant(7, card, card);
+        assert!(e.take_commands().is_empty());
+        e.change_covenant(7, card, Uuid::nil());
+        assert!(matches!(
+            e.take_commands()[..],
+            [NetCommand::Estate(EstateCommand::ChangeCovenant { handle: 7, asset })] if asset.is_nil()
+        ));
+    }
+
+    /// The region environment's answer replaces the summary; a refusal
+    /// keeps it and says why.
+    #[test]
+    fn the_region_environment_answer() {
+        let mut e = Estate::default();
+        e.environment_answer(Ok(&Llsd::new_map()));
+        assert!(e.environment.is_none(), "the window is closed");
+        e.open(7);
+        e.change_environment(LandCommand::EnvironmentReset { local_id: -1 });
+        assert!(e.environment_waiting);
+        e.environment_answer(Ok(&Llsd::new_map()));
+        assert!(!e.environment_waiting && matches!(e.environment, Some(Some(_))));
+        e.environment_answer(Err(&"refused".to_owned()));
+        assert_eq!(e.environment_error.as_deref(), Some("refused"));
+        assert!(matches!(e.environment, Some(Some(_))));
     }
 }

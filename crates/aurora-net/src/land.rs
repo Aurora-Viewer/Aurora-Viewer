@@ -299,6 +299,15 @@ pub enum LandCommand {
     EnvironmentUpdate { local_id: i32, day_length: i32, day_offset: i32 },
     /// resetParcel: back to the region environment.
     EnvironmentReset { local_id: i32 },
+    /// The region's sky altitudes (onAltSliderMouseUp, onBtnRstAltitudes):
+    /// updateRegion with the day's length and offset as they are and the
+    /// three altitudes of skies 2 to 4.
+    EnvironmentAltitudes {
+        local_id: i32,
+        day_length: i32,
+        day_offset: i32,
+        altitudes: [f32; 3],
+    },
     /// LLPanelEnvironmentInfo::onPickerCommitted: updateParcel with the
     /// settings asset of an inventory item, for the whole day (`track`
     /// None, with the day length / offset) or one track (`trackno`).
@@ -831,6 +840,24 @@ pub fn notecard_text(data: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(&body[..len.min(body.len())]).into_owned();
     Some(text.chars().filter(|c| !('\u{F0000}'..='\u{FFFFD}').contains(c)).collect())
 }
+
+/// Body of an ExtEnvironment PUT changing only the day length / offset
+/// (coroUpdateEnvironment for a parcel; `flags` 0).
+pub fn environment_altitudes_body(day_length: i32, day_offset: i32, altitudes: [f32; 3]) -> Llsd {
+    let mut body = environment_update_body(day_length, day_offset);
+    // coroUpdateEnvironment: only for the region, the three of them
+    let mut env = body["environment"].clone();
+    env.insert(
+        "track_altitudes",
+        Llsd::Array(altitudes.iter().map(|a| Llsd::Real(f64::from(*a))).collect()),
+    );
+    body.insert("environment", env);
+    body
+}
+
+/// The default sky altitudes (onBtnRstAltitudes: ALTITUDE_DEFAULT_HEIGHT_STEP
+/// × 1, 2, 3).
+pub const DEFAULT_SKY_ALTITUDES: [f32; 3] = [1000.0, 2000.0, 3000.0];
 
 /// Body of an ExtEnvironment PUT changing only the day length / offset
 /// (coroUpdateEnvironment for a parcel; `flags` 0).

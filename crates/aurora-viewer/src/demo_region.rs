@@ -22,15 +22,26 @@
 //! schedule it is sent. `scripts` scrolls to Scripts and physics,
 //! `top-scripts` or `top-colliders` opens that report: the simulator lists
 //! the mockup's objects, filters them as LandStatRequest asks, forgets the
-//! returned ones and keeps the debug switches.
+//! returned ones and keeps the debug switches. `environment`,
+//! `experiences` or `covenant` scrolls to that section; `pick-env` opens the
+//! settings picker, `ask-env-reset` or `ask-env-override` asks about the
+//! default environment or the parcels' own; `pick-trusted` opens the
+//! experience picker on the trusted list, `ask-xp` asks where to remove an
+//! allowed experience; `pick-notecard` opens the notecard picker and
+//! `ask-covenant` asks before clearing the covenant. The simulator keeps
+//! the region's day, timing and sky altitudes, the experience lists and
+//! the covenant it is sent, and two notecards wait in the inventory.
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
-use crate::ui::region::{Ask, Home, InterventionDialog, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList};
+use crate::ui::region::{Ask, EstateWideDialog, Home, InterventionDialog, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList, XpList};
+use crate::world::inventory::Inventory;
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
     BannedAgent, EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
     TopObject, TopObjects, estate_access as ea, estate_flags as ef, land_stat, sim_stat, skip_flags,
 };
+use aurora_net::inventory::InvItem;
+use aurora_net::land::{FoundExperience, LandCommand, LandEvent, REGION_PARCEL_ID, XP_PROPERTY_GRID};
 use aurora_net::{NetEvent, region_flags as rf};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -56,6 +67,8 @@ pub struct Scenario {
     pub intervention: Option<InterventionDialog>,
     /// The Top window opened on that report.
     pub top: Option<u32>,
+    /// The picker or question of Environment, Experiences or Covenant.
+    pub estate_wide: Option<EstateWideDialog>,
 }
 
 fn parse(v: &str) -> Scenario {
@@ -68,6 +81,7 @@ fn parse(v: &str) -> Scenario {
         people: PeopleDemo::default(),
         intervention: None,
         top: None,
+        estate_wide: None,
     };
     for part in v.split(':').map(str::trim) {
         match part {
@@ -83,6 +97,42 @@ fn parse(v: &str) -> Scenario {
             "terrain" => s.manage.section = Some(2),
             "interventions" => s.manage.section = Some(3),
             "scripts" => s.manage.section = Some(4),
+            "environment" => s.manage.section = Some(5),
+            "experiences" => s.manage.section = Some(6),
+            "covenant" => s.manage.section = Some(7),
+            "pick-env" => {
+                s.manage.section = Some(5);
+                s.estate_wide = Some(EstateWideDialog::environment());
+            }
+            "ask-env-reset" => {
+                s.manage.section = Some(5);
+                s.manage.ask = Some(Ask::ResetEnvironment);
+            }
+            "ask-env-override" => {
+                s.manage.section = Some(5);
+                s.manage.ask = Some(Ask::EnvironmentOverride { allow: false });
+            }
+            "pick-trusted" => {
+                s.manage.section = Some(6);
+                s.estate_wide = Some(EstateWideDialog::experience(XpList::Trusted));
+            }
+            "ask-xp" => {
+                s.manage.section = Some(6);
+                s.estate_wide = Some(EstateWideDialog::Scope {
+                    list: XpList::Allowed,
+                    add: false,
+                    id: XP_HUNT,
+                    all: false,
+                });
+            }
+            "pick-notecard" => {
+                s.manage.section = Some(7);
+                s.estate_wide = Some(EstateWideDialog::notecard());
+            }
+            "ask-covenant" => {
+                s.manage.section = Some(7);
+                s.manage.ask = Some(Ask::Covenant { asset: Uuid::nil() });
+            }
             "top-scripts" => {
                 s.manage.section = Some(4);
                 s.top = Some(land_stat::TOP_SCRIPTS);
@@ -182,6 +232,13 @@ const ESTATE_ID: u32 = 104_123;
 const XP_WELCOME: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0001);
 const XP_HUNT: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0007);
 const XP_TELEPORTERS: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0008);
+/// A grid-wide experience, the only kind a region can block.
+const XP_GRID_GAME: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0009);
+/// The notecards seeded in the inventory, and their assets.
+const NOTECARDS: [(u128, u128); 2] = [
+    (0x0C0E_0000_0000_0000_0000_0000_0000_0001, 0x0C0E_A000_0000_0000_0000_0000_0000_0001),
+    (0x0C0E_0000_0000_0000_0000_0000_0000_0002, 0x0C0E_A000_0000_0000_0000_0000_0000_0002),
+];
 const ORION: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0022);
 const PIXEL: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0021);
 const BUILDERS: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0001);
@@ -234,16 +291,219 @@ fn stats() -> SimStats {
     }
 }
 
-/// The region's day cycle: "Aube nordique", four hours long.
+/// The region's environment as the simulator keeps it: the names of its
+/// tracks (0 water, 1 ground, 2–4 skies), the day's length and offset
+/// (seconds) and the skies' altitudes.
+#[derive(Clone)]
+struct RegionDay {
+    names: [String; 5],
+    length: i32,
+    offset: i32,
+    altitudes: [f32; 3],
+}
+
+static REGION_DAY: Mutex<Option<RegionDay>> = Mutex::new(None);
+
+/// "Aube nordique", four hours long, eight hours early; once reset, the
+/// grid's default day without a name.
+fn region_day(reset: bool) -> RegionDay {
+    let name = if reset {
+        String::new()
+    } else {
+        aurora_i18n::tr!("demo-region-day-cycle").to_owned()
+    };
+    RegionDay {
+        names: std::array::from_fn(|_| name.clone()),
+        length: 4 * 3600,
+        offset: 16 * 3600,
+        altitudes: aurora_net::land::DEFAULT_SKY_ALTITUDES,
+    }
+}
+
+fn with_day<R>(f: impl FnOnce(&mut RegionDay) -> R) -> R {
+    let mut day = REGION_DAY.lock().unwrap_or_else(|e| e.into_inner());
+    f(day.get_or_insert_with(|| region_day(false)))
+}
+
+/// The region's ExtEnvironment answer.
 fn environment() -> Llsd {
+    let d = with_day(|d| d.clone());
     let mut env = Llsd::new_map();
-    env.insert("day_length", 4 * 3600);
-    env.insert("day_offset", -8 * 3600);
+    env.insert("day_length", d.length);
+    env.insert("day_offset", d.offset);
+    let alts = d.altitudes.iter().map(|a| Llsd::Real(f64::from(*a))).collect();
+    env.insert("track_altitudes", Llsd::Array(alts));
     let mut day = Llsd::new_map();
     day.insert("tracks", Llsd::Array(vec![Llsd::Array(vec![Llsd::new_map()]); 5]));
     env.insert("day_cycle", day);
-    env.insert("day_names", Llsd::String(aurora_i18n::tr!("demo-region-day-cycle").into()));
+    if d.names.iter().all(|n| *n == d.names[0]) {
+        env.insert("day_names", Llsd::String(d.names[0].clone()));
+    } else {
+        env.insert("day_names", Llsd::Array(d.names.iter().map(|n| Llsd::String(n.clone())).collect()));
+    }
     env
+}
+
+/// The demo simulator's answer to a change of the region environment
+/// (ExtEnvironment without a parcel); None for a parcel's. An item or a day
+/// sent inline still changes the demo's sky (`demo_land.rs`).
+pub fn environment_reply(c: &LandCommand) -> Option<Vec<NetEvent>> {
+    let region = |id: &i32| *id == REGION_PARCEL_ID;
+    let mut out = Vec::new();
+    match c {
+        LandCommand::EnvironmentRequest { local_id } if region(local_id) => {}
+        LandCommand::EnvironmentReset { local_id } if region(local_id) => {
+            *REGION_DAY.lock().unwrap_or_else(|e| e.into_inner()) = Some(region_day(true));
+        }
+        LandCommand::EnvironmentUpdate {
+            local_id,
+            day_length,
+            day_offset,
+        } if region(local_id) => with_day(|d| {
+            if *day_length > 0 {
+                d.length = *day_length;
+            }
+            if *day_offset > 0 {
+                d.offset = *day_offset;
+            }
+        }),
+        LandCommand::EnvironmentAltitudes { local_id, altitudes, .. } if region(local_id) => with_day(|d| {
+            let mut a = *altitudes;
+            a.sort_by(f32::total_cmp);
+            d.altitudes = a;
+        }),
+        LandCommand::EnvironmentApply { local_id, track, name, .. } if region(local_id) => {
+            out = super::land::reply(c);
+            with_day(|d| match track {
+                Some(t) if (0..5).contains(t) => d.names[*t as usize] = name.clone(),
+                _ => d.names = std::array::from_fn(|_| name.clone()),
+            });
+        }
+        LandCommand::EnvironmentApplyDay { local_id, day, .. } if region(local_id) => {
+            out = super::land::reply(c);
+            // a refused day keeps the region's
+            if out
+                .iter()
+                .any(|e| matches!(e, NetEvent::Land(LandEvent::Environment { result: Err(_), .. })))
+            {
+                return Some(out);
+            }
+            let name = day["name"].to_string_value();
+            with_day(|d| d.names = std::array::from_fn(|_| name.clone()));
+        }
+        _ => return None,
+    }
+    out.retain(|e| !matches!(e, NetEvent::Land(LandEvent::Environment { .. })));
+    out.push(NetEvent::Land(LandEvent::Environment {
+        local_id: REGION_PARCEL_ID,
+        result: Ok(environment()),
+    }));
+    Some(out)
+}
+
+/// The region's experience lists, then what `estateexperiencedelta` changed.
+static EXPERIENCES: Mutex<Option<RegionExperiences>> = Mutex::new(None);
+
+fn with_experiences<R>(f: impl FnOnce(&mut RegionExperiences) -> R) -> R {
+    let mut x = EXPERIENCES.lock().unwrap_or_else(|e| e.into_inner());
+    f(x.get_or_insert_with(|| RegionExperiences {
+        trusted: vec![XP_WELCOME],
+        allowed: vec![XP_HUNT, XP_TELEPORTERS],
+        blocked: Vec::new(),
+        default: None,
+    }))
+}
+
+/// One `estateexperiencedelta` applied to the lists.
+fn apply_experience(x: &mut RegionExperiences, flags: u32, id: Uuid) {
+    use aurora_net::estate::estate_experience as xe;
+    for (add, remove, list) in [
+        (xe::TRUSTED_ADD, xe::TRUSTED_REMOVE, &mut x.trusted),
+        (xe::ALLOWED_ADD, xe::ALLOWED_REMOVE, &mut x.allowed),
+        (xe::BLOCKED_ADD, xe::BLOCKED_REMOVE, &mut x.blocked),
+    ] {
+        if flags & add != 0 && !list.contains(&id) {
+            list.push(id);
+        }
+        if flags & remove != 0 {
+            list.retain(|e| *e != id);
+        }
+    }
+}
+
+/// The names of the region's experiences (GetExperienceInfo).
+pub fn experience_name(id: Uuid) -> Option<&'static str> {
+    Some(match id {
+        XP_HUNT => aurora_i18n::tr!("demo-region-xp-hunt"),
+        XP_TELEPORTERS => aurora_i18n::tr!("demo-region-xp-teleporters"),
+        XP_GRID_GAME => aurora_i18n::tr!("demo-region-xp-grid-game"),
+        _ => return None,
+    })
+}
+
+/// What the experience picker also finds: the region's allowed ones (the
+/// trusted one is About Land's "Aurora experience"), and a grid-wide one
+/// to block.
+pub fn found_experiences() -> Vec<FoundExperience> {
+    [(XP_HUNT, 0), (XP_TELEPORTERS, 0), (XP_GRID_GAME, XP_PROPERTY_GRID)]
+        .into_iter()
+        .map(|(id, properties)| FoundExperience {
+            id,
+            name: experience_name(id).unwrap_or_default().into(),
+            owner: DEMO_LOUP,
+            maturity: 13,
+            properties,
+        })
+        .collect()
+}
+
+/// The covenant the simulator was last sent (its asset, when), if any.
+static COVENANT: Mutex<Option<(Uuid, u32)>> = Mutex::new(None);
+
+pub fn covenant() -> Option<(Uuid, u32)> {
+    *COVENANT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The text of a covenant replaced by one of the seeded notecards.
+pub fn covenant_text(asset: Uuid) -> Option<&'static str> {
+    NOTECARDS.iter().position(|(_, a)| Uuid::from_u128(*a) == asset).map(|n| {
+        if n == 0 {
+            aurora_i18n::tr!("demo-region-notecard-rules-text")
+        } else {
+            aurora_i18n::tr!("demo-region-notecard-welcome-text")
+        }
+    })
+}
+
+/// AURORA_DEMO_REGION: two notecards in the inventory, for the covenant.
+pub fn seed_notecards(inv: &mut Inventory, agent: Uuid) {
+    if inv.items.contains_key(&Uuid::from_u128(NOTECARDS[0].0)) {
+        return;
+    }
+    let names = [
+        aurora_i18n::tr!("demo-region-notecard-rules"),
+        aurora_i18n::tr!("demo-region-notecard-welcome"),
+    ];
+    inv.add_items(
+        NOTECARDS
+            .iter()
+            .zip(names)
+            .map(|((id, asset), name)| InvItem {
+                id: Uuid::from_u128(*id),
+                parent: inv.root,
+                asset_id: Uuid::from_u128(*asset),
+                asset_type: 7,
+                inv_type: 7,
+                name: name.into(),
+                owner: agent,
+                creator: agent,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                next_owner_mask: 0x7fffffff,
+                ..Default::default()
+            })
+            .collect(),
+    );
 }
 
 /// What "Apply" sent: the demo simulator keeps the region and the estate's
@@ -519,11 +779,7 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             }));
             out.push(ev(EstateEvent::Experiences {
                 handle,
-                experiences: Some(RegionExperiences {
-                    trusted: vec![XP_WELCOME],
-                    allowed: vec![XP_HUNT, XP_TELEPORTERS],
-                    blocked: Vec::new(),
-                }),
+                experiences: Some(with_experiences(|x| x.clone())),
             }));
             out.push(ev(EstateEvent::Environment {
                 handle,
@@ -605,6 +861,25 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             RETURNED.lock().unwrap_or_else(|e| e.into_inner()).extend(tasks.iter().copied());
             Vec::new()
         }
+        EstateCommand::ExperienceDelta { handle, flags, ids } => {
+            with_experiences(|x| {
+                for id in ids {
+                    apply_experience(x, *flags, *id);
+                }
+            });
+            vec![ev(EstateEvent::ExperiencesChanged { handle: *handle })]
+        }
+        EstateCommand::RefreshExperiences { handle } => vec![ev(EstateEvent::Experiences {
+            handle: *handle,
+            experiences: Some(with_experiences(|x| x.clone())),
+        })],
+        EstateCommand::ChangeCovenant { asset, .. } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as u32);
+            *COVENANT.lock().unwrap_or_else(|e| e.into_inner()) = Some((*asset, if asset.is_nil() { 0 } else { now }));
+            Vec::new()
+        }
         // nobody to send home, kick or return in the demo
         EstateCommand::Message { .. }
         | EstateCommand::TeleportHome { .. }
@@ -630,6 +905,7 @@ mod tests {
                 people: PeopleDemo::default(),
                 intervention: None,
                 top: None,
+                estate_wide: None,
             }
         );
         assert_eq!(parse("overview:resident").role, Role::Resident);
@@ -655,6 +931,39 @@ mod tests {
         assert_eq!(parse("manage:ask-restart").intervention, Some(InterventionDialog::restart()));
         let t = parse("manage:top-colliders");
         assert_eq!((t.manage.section, t.top), (Some(4), Some(land_stat::TOP_COLLIDERS)));
+        let x = parse("manage:ask-xp");
+        assert_eq!(x.manage.section, Some(6));
+        assert!(matches!(x.estate_wide, Some(EstateWideDialog::Scope { add: false, .. })));
+        assert_eq!(parse("manage:ask-covenant").manage.ask, Some(Ask::Covenant { asset: Uuid::nil() }));
+    }
+
+    /// The lists change as `estateexperiencedelta` says.
+    #[test]
+    fn the_demo_simulator_keeps_the_experiences() {
+        use aurora_net::estate::estate_experience as xe;
+        let mut x = RegionExperiences::default();
+        apply_experience(&mut x, xe::BLOCKED_ADD | ea::APPLY_TO_ALL_ESTATES, XP_GRID_GAME);
+        apply_experience(&mut x, xe::BLOCKED_ADD, XP_GRID_GAME);
+        assert_eq!(x.blocked, [XP_GRID_GAME]);
+        apply_experience(&mut x, xe::BLOCKED_REMOVE | ea::NO_REPLY, XP_GRID_GAME);
+        assert!(x.blocked.is_empty());
+        assert!(found_experiences().iter().any(|e| e.properties & XP_PROPERTY_GRID != 0));
+    }
+
+    /// A parcel's environment is not the region's.
+    #[test]
+    fn only_the_region_environment_is_answered_here() {
+        assert!(environment_reply(&LandCommand::EnvironmentReset { local_id: 3 }).is_none());
+        let answer = environment_reply(&LandCommand::EnvironmentRequest {
+            local_id: REGION_PARCEL_ID,
+        });
+        assert!(matches!(
+            answer.as_deref(),
+            Some([NetEvent::Land(LandEvent::Environment {
+                local_id: REGION_PARCEL_ID,
+                result: Ok(_)
+            })])
+        ));
     }
 
     /// A restart is answered with the region's notice, a cancel with

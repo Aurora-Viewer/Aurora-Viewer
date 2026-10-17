@@ -29,6 +29,8 @@ mod scripts;
 mod sound;
 
 use aurora::Page;
+pub(crate) use dialogs::{pick_row, settings_flags};
+pub(crate) use environment::day_hours;
 pub(crate) use overview::day;
 
 use super::avatar_picker::AvatarPicker;

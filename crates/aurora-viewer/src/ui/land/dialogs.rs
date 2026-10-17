@@ -87,7 +87,7 @@ pub(super) fn settings_kinds(track: Option<i32>) -> &'static [SettingsKind] {
 }
 
 /// onPickerCommitted: FLAG_NOMOD / FLAG_NOTRANS from the item's permissions.
-pub(super) fn settings_flags(owner_mask: u32) -> u32 {
+pub(crate) fn settings_flags(owner_mask: u32) -> u32 {
     const PERM_TRANSFER: u32 = 1 << 13;
     const PERM_MODIFY: u32 = 1 << 14;
     const FLAG_NOMOD: u32 = 1 << 1;
@@ -659,7 +659,7 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
 }
 
 /// A selectable row of a picker's list.
-fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
+pub(crate) fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {

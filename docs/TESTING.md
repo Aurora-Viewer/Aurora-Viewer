@@ -3079,7 +3079,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:interventions][:pending][:ask-…|:top-…]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain|:scripts|:environment|:experiences|:covenant|:interventions][:pending][:ask-…|:top-…|:pick-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -3098,8 +3098,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
   icons). `manage` opens on Manage
-  (who can come, region rules, terrain and water; the other sections of
-  the navigation are greyed): `access`, `rules` or `terrain` scrolls to
+  (who can come, region rules, terrain and water, scripts and physics,
+  environment, experiences, covenant, interventions): `access`, `rules` or `terrain` scrolls to
   that section, `pending` makes two changes there and scrolls to the bar
   "2 changes not sent yet" (Cancel / Apply), and `ask-override`,
   `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights` or `ask-bake`
@@ -3139,6 +3139,28 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   on that report: five scripted objects with their time, memory and URLs
   (312 scripts in all), or three colliders; the filter by object, owner
   or parcel and the returns act on the demo simulator's list.
+  `environment` scrolls Manage to Environment (the region's day "Nordic
+  Dawn", 4 h, offset by -8 h, the parcels' own environments allowed; the
+  Advanced fold has the day's length and offset, the three sky altitudes
+  and the tracks' settings), `pick-env` opens the settings picker for the
+  whole day (with `AURORA_DEMO_ENV_SELECT=1` for items to pick), `ask-env-reset` asks before going back to the default
+  environment (SettingsConfirmReset) and `ask-env-override` before the
+  parcels lose their own (EstateParcelEnvironmentOverride). The demo
+  simulator keeps the day's timing, the altitudes, the item applied and a
+  reset, and answers each with the region's ExtEnvironment; "Edit the day
+  cycle…" opens the day editor on the region's day. `experiences` scrolls
+  to Experiences (1 trusted, 2 allowed, 0 blocked, "n / 8" each),
+  `pick-trusted` opens the experience picker on the trusted list (a search
+  finds the region's experiences and a grid-wide one, which only the
+  blocked list takes) and `ask-xp` asks where to remove "Treasure hunt"
+  (this estate / all the estates you own); the demo simulator applies each
+  `estateexperiencedelta`, answers `setexperience` and sends the lists
+  again. `covenant` scrolls to Covenant, `pick-notecard` opens the
+  notecard picker (two notecards are seeded in the inventory) and
+  `ask-covenant` asks before clearing it (EstateChangeCovenant); a
+  notecard dropped from the inventory asks the same. The demo simulator
+  keeps the covenant it is sent and answers the next EstateCovenantRequest
+  with it (the notecard's text, or "This estate has no covenant").
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

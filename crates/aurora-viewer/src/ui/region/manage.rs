@@ -5,8 +5,8 @@
 //! its changes until its bar applies them, as those tabs send everything
 //! with "Apply" (`draft.rs`); the rules of what may be changed are theirs:
 //! the estate owner and its managers change everything but the terrain's
-//! bake, the owner's alone. The other sections of the navigation come with
-//! the next steps of the redesign.
+//! bake, the owner's alone. Environment, Experiences and Covenant are
+//! `estate_wide.rs`'s, Interventions `interventions.rs`'s.
 
 use super::confirm::Ask;
 use super::draft::{Access, Draft};
@@ -30,15 +30,21 @@ pub(super) enum Section {
     Rules,
     Terrain,
     Scripts,
+    Environment,
+    Experiences,
+    Covenant,
     Interventions,
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 5] = [
+    pub(super) const ALL: [Section; 8] = [
         Section::Access,
         Section::Rules,
         Section::Terrain,
         Section::Scripts,
+        Section::Environment,
+        Section::Experiences,
+        Section::Covenant,
         Section::Interventions,
     ];
 
@@ -48,6 +54,9 @@ impl Section {
             Section::Rules => "shield-filled",
             Section::Terrain => "mountain-filled",
             Section::Scripts => "code",
+            Section::Environment => "sun-high-filled",
+            Section::Experiences => "flask-filled",
+            Section::Covenant => "gavel",
             Section::Interventions => "bolt-filled",
         }
     }
@@ -58,18 +67,12 @@ impl Section {
             Section::Rules => aurora_i18n::tr!("region-manage-rules"),
             Section::Terrain => aurora_i18n::tr!("region-manage-terrain"),
             Section::Scripts => aurora_i18n::tr!("region-manage-scripts"),
+            Section::Environment => aurora_i18n::tr!("common-environment"),
+            Section::Experiences => aurora_i18n::tr!("ui-land-manage-experiences"),
+            Section::Covenant => aurora_i18n::tr!("region-manage-covenant"),
             Section::Interventions => aurora_i18n::tr!("region-manage-interventions"),
         }
     }
-}
-
-/// The mockup's other sections, greyed in the navigation until their step.
-fn later() -> [(&'static str, &'static str); 3] {
-    [
-        ("sun-high-filled", aurora_i18n::tr!("common-environment")),
-        ("flask-filled", aurora_i18n::tr!("ui-land-manage-experiences")),
-        ("gavel", aurora_i18n::tr!("region-manage-covenant")),
-    ]
 }
 
 /// What the page keeps between frames.
@@ -106,6 +109,9 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
         Some(2) => Section::Terrain,
         Some(3) => Section::Interventions,
         Some(4) => Section::Scripts,
+        Some(5) => Section::Environment,
+        Some(6) => Section::Experiences,
+        Some(7) => Section::Covenant,
         _ => Section::Access,
     };
     if section != Section::Access || d.pending {
@@ -203,24 +209,12 @@ pub(super) fn show(
         if compact {
             sheet::nav_compact(ui, p, sec.icon(), sec.label(), lit)
         } else {
-            widgets::navigation_wrapped(ui, p, sec.icon(), sec.label(), None, lit)
-        }
-    };
-    let tail = |ui: &mut egui::Ui| {
-        let later_tip = aurora_i18n::tr!("common-not-available-in-aurora-yet");
-        for (i, (icon, label)) in later().into_iter().enumerate() {
             // the experiences' count, as the mockup shows it
-            let count = (i == 1).then_some(xp.as_deref()).flatten();
-            editable(ui, false, |ui| {
-                if compact {
-                    sheet::nav_compact(ui, p, icon, label, false)
-                } else {
-                    widgets::navigation_wrapped(ui, p, icon, label, count, false)
-                }
-            })
-            .on_disabled_hover_text(later_tip);
+            let count = (sec == Section::Experiences).then_some(xp.as_deref()).flatten();
+            widgets::navigation_wrapped(ui, p, sec.icon(), sec.label(), count, lit)
         }
     };
+    let tail = |_: &mut egui::Ui| {};
     let mut state = std::mem::take(&mut s.manage.nav);
     sheet::sections_with(
         ui,
@@ -236,6 +230,9 @@ pub(super) fn show(
             Section::Rules => rules(ui, p, s, v, world),
             Section::Terrain => terrain(ui, p, s, v, world, images),
             Section::Scripts => scripts(ui, p, s, v, world),
+            Section::Environment => super::estate_wide::environment(ui, p, s, v, world),
+            Section::Experiences => super::estate_wide::experiences(ui, p, s, v, world),
+            Section::Covenant => super::estate_wide::covenant(ui, p, s, v, world),
             Section::Interventions => super::interventions::section(ui, p, s, v, world),
         },
     );

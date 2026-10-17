@@ -513,19 +513,26 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 o(DEMO_LOUP, false, 2, 86400 * 40),
             ]))]
         }
-        LandCommand::CovenantRequest { .. } => vec![
-            ev(LandEvent::Covenant {
+        LandCommand::CovenantRequest { .. } => {
+            // the covenant Region / Estate replaced, else the estate's
+            let (covenant_id, timestamp) = super::region::covenant().unwrap_or((COVENANT, 1_717_647_528));
+            let mut out = vec![ev(LandEvent::Covenant {
                 handle: super::HANDLE,
-                covenant_id: COVENANT,
-                timestamp: 1_717_647_528,
+                covenant_id,
+                timestamp,
                 estate_name: aurora_i18n::tr!("common-aurora-demo").into(),
                 estate_owner: super::region::estate_owner(),
-            }),
-            ev(LandEvent::CovenantText {
-                covenant_id: COVENANT,
-                text: Some(aurora_i18n::tr!("demo-land-welcome-to-the-aurora-demo-estate-by-buying-land").into()),
-            }),
-        ],
+            })];
+            if !covenant_id.is_nil() {
+                let text = super::region::covenant_text(covenant_id)
+                    .unwrap_or(aurora_i18n::tr!("demo-land-welcome-to-the-aurora-demo-estate-by-buying-land"));
+                out.push(ev(LandEvent::CovenantText {
+                    covenant_id,
+                    text: Some(text.into()),
+                }));
+            }
+            out
+        }
         LandCommand::ParcelIdRequest { local_id, .. } => vec![ev(LandEvent::ParcelId {
             local_id: *local_id,
             id: Some(PARCEL_UUID),
@@ -607,6 +614,7 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             let q = query.to_lowercase();
             let results = found_experiences()
                 .into_iter()
+                .chain(super::region::found_experiences())
                 .filter(|e| q.is_empty() || e.name.to_lowercase().contains(&q))
                 .collect();
             vec![ev(LandEvent::ExperienceSearch {
@@ -762,7 +770,7 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                         XP_BEACH => aurora_i18n::tr!("demo-land-beach-games"),
                         XP_CLUB => aurora_i18n::tr!("demo-land-night-club"),
                         XP_GRID => "Linden Realms",
-                        _ => aurora_i18n::tr!("demo-land-unknown-experience"),
+                        id => super::region::experience_name(id).unwrap_or(aurora_i18n::tr!("demo-land-unknown-experience")),
                     };
                     (*id, name.to_owned())
                 })
