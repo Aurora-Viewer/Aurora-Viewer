@@ -3287,7 +3287,17 @@ impl Backend {
             .map(|i| &i.result)
             .unwrap_or(&dummies.black);
         FrameGroups {
-            a: mk("frame a", frame_buffer, ao, water, mirror, &dummies.black, &dummies.depth, contact, il),
+            a: mk(
+                "frame a",
+                frame_buffer,
+                ao,
+                water,
+                mirror,
+                &dummies.black,
+                &dummies.depth,
+                contact,
+                il,
+            ),
             b: mk("frame b", frame_buffer, ao, water, mirror, &t.scene_copy, &t.depth_ss, contact, il),
             refl: [
                 mk(
