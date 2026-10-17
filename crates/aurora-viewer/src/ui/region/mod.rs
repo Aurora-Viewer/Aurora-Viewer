@@ -9,6 +9,7 @@
 
 mod confirm;
 mod draft;
+mod interventions;
 mod manage;
 mod overview;
 mod people;
@@ -22,6 +23,7 @@ use crate::world::estate::{self, Role};
 use aurora_net::RegionHandle;
 pub(crate) use confirm::Ask;
 use egui::Vec2;
+pub(crate) use interventions::{Dialog as InterventionDialog, Home};
 pub use people::PeopleDemo;
 pub(crate) use people::{List as PeopleList, PeopleAsk};
 use std::collections::{HashMap, HashSet};
@@ -131,6 +133,8 @@ pub struct RegionUi {
     manage_region: Option<RegionHandle>,
     /// "People": its lists' searches, selections, pickers and dialogs.
     people: people::PeopleState,
+    /// "Interventions": the resident picker and the dialog on screen.
+    interventions: interventions::InterventionsState,
     /// The question or notice on screen.
     ask: Option<Ask>,
     /// The terrain textures' picker.
@@ -171,6 +175,11 @@ impl RegionUi {
         self.manage.demo = Some(manage);
     }
 
+    /// AURORA_DEMO_REGION on Manage › Interventions: the dialog shown.
+    pub fn demo_intervention(&mut self, d: InterventionDialog) {
+        self.interventions.demo = Some(d);
+    }
+
     /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
     pub fn demo_people(&mut self, people: PeopleDemo) {
         self.people.demo = Some(people);
@@ -198,6 +207,7 @@ impl RegionUi {
                 self.ask = None;
                 self.texture.open = false;
                 self.people.reset();
+                self.interventions.reset();
                 world.estate.close();
             }
             return false;
@@ -216,6 +226,7 @@ impl RegionUi {
                 ..Default::default()
             };
             self.people.reset();
+            self.interventions.reset();
             self.manage_region = Some(handle);
             self.ask = None;
         }
@@ -312,6 +323,7 @@ impl RegionUi {
         }
         self.wanted_images.extend(self.texture.wanted_images.drain());
         people::dialogs(ctx, p, self, &view, world);
+        interventions::dialogs(ctx, p, self, &view, world);
         let changed = confirm::show(ctx, p, self, &view, world);
         if changed {
             settings.confirm_object_bonus = self.confirm_object_bonus;

@@ -11425,6 +11425,9 @@ impl ApplicationHandler for App {
             if let Some(scenario) = crate::demo::region::scenario() {
                 self.region_ui.demo(scenario.page, scenario.preview, scenario.manage);
                 self.region_ui.demo_people(scenario.people.clone());
+                if let Some(d) = scenario.intervention.clone() {
+                    self.region_ui.demo_intervention(d);
+                }
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));

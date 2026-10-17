@@ -28,16 +28,18 @@ pub(super) enum Section {
     Access,
     Rules,
     Terrain,
+    Interventions,
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 3] = [Section::Access, Section::Rules, Section::Terrain];
+    pub(super) const ALL: [Section; 4] = [Section::Access, Section::Rules, Section::Terrain, Section::Interventions];
 
     fn icon(self) -> &'static str {
         match self {
             Section::Access => "door-enter",
             Section::Rules => "shield-filled",
             Section::Terrain => "mountain-filled",
+            Section::Interventions => "bolt-filled",
         }
     }
 
@@ -46,18 +48,18 @@ impl Section {
             Section::Access => aurora_i18n::tr!("ui-land-manage-access"),
             Section::Rules => aurora_i18n::tr!("region-manage-rules"),
             Section::Terrain => aurora_i18n::tr!("region-manage-terrain"),
+            Section::Interventions => aurora_i18n::tr!("region-manage-interventions"),
         }
     }
 }
 
 /// The mockup's other sections, greyed in the navigation until their step.
-fn later() -> [(&'static str, &'static str); 5] {
+fn later() -> [(&'static str, &'static str); 4] {
     [
         ("code", aurora_i18n::tr!("region-manage-scripts")),
         ("sun-high-filled", aurora_i18n::tr!("common-environment")),
         ("flask-filled", aurora_i18n::tr!("ui-land-manage-experiences")),
         ("gavel", aurora_i18n::tr!("region-manage-covenant")),
-        ("bolt-filled", aurora_i18n::tr!("region-manage-interventions")),
     ]
 }
 
@@ -92,6 +94,7 @@ pub(super) fn demo(s: &mut RegionUi, v: &View, world: &World) {
     let section = match d.section {
         Some(1) => Section::Rules,
         Some(2) => Section::Terrain,
+        Some(3) => Section::Interventions,
         _ => Section::Access,
     };
     if section != Section::Access || d.pending {
@@ -221,6 +224,7 @@ pub(super) fn show(
             Section::Access => access(ui, p, s, v, world),
             Section::Rules => rules(ui, p, s, v, world),
             Section::Terrain => terrain(ui, p, s, v, world, images),
+            Section::Interventions => super::interventions::section(ui, p, s, v, world),
         },
     );
     s.manage.nav = state;
