@@ -288,7 +288,7 @@ pub struct Controller {
     /// Animated joint positions as offsets from the rest skeleton, held
     /// like the rotations (a shape change still moves them).
     pos_delta: Vec<Vec3>,
-    pelvis_offset: Vec3,
+    pelvis_offset: Option<Vec3>,
     /// The same held translations, using whole-track upper bounds for a
     /// stable upright height. Rotations and sampled bobbing never enter it.
     tag_pos_delta: Vec<f32>,
@@ -555,7 +555,7 @@ impl Controller {
         self.rot.clear();
         self.pos_delta.clear();
         self.tag_pos_delta.clear();
-        self.pelvis_offset = Vec3::ZERO;
+        self.pelvis_offset = None;
         self.tag_pelvis_offset = 0.0;
         self.last_eval = None;
         if animations {
@@ -917,7 +917,7 @@ impl Controller {
             if pos_sum > 0.0 {
                 if j == rig.pelvis {
                     // the pelvis is animated relative to the avatar root
-                    self.pelvis_offset = pos;
+                    self.pelvis_offset = Some(pos);
                     self.tag_pelvis_offset = top;
                 } else if let Some(rest) = rest_pos.get(j) {
                     self.pos_delta[j] = pos - *rest;
@@ -934,13 +934,24 @@ impl Controller {
             Some(b) => b.scale.as_slice(),
             None => rig.scale.as_slice(),
         };
-        let world = rig.world_with(&self.rot, self.pelvis_offset, &local_pos, scale);
+        // LLJointStateBlender::blendJointStates sets an absolute local
+        // position, even on a mesh-overridden pelvis. The feet-origin
+        // conversion must not add the rest pelvis translation a second time.
+        let pelvis_rest =
+            rest_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO) - rig.local_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO);
+        let pelvis_offset = self.pelvis_offset.map_or(Vec3::ZERO, |position| position - pelvis_rest);
+        let world = rig.world_with(&self.rot, pelvis_offset, &local_pos, scale);
         // Deliberate difference from LLVOAvatar::idleCalcNameTagPosition:
         // the human requested a stable tag, not one following the posed head.
         // Keep shape / mesh offsets and translation deformers, but measure
         // the upright skeleton with the whole animation's translation bounds.
         // Only the cached root-to-skull chain is summed; no extra matrices.
-        self.name_tag_height = rig.name_tag_height(rest_pos, scale, &self.tag_pos_delta, self.tag_pelvis_offset);
+        let tag_pelvis_offset = if self.pelvis_offset.is_some() {
+            self.tag_pelvis_offset - pelvis_rest.z
+        } else {
+            0.0
+        };
+        self.name_tag_height = rig.name_tag_height(rest_pos, scale, &self.tag_pos_delta, tag_pelvis_offset);
         for j in 0..n {
             out[j] = world[j].to_cols_array_2d();
         }
@@ -1118,6 +1129,46 @@ impl AnimStreamer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_parity_animation_translations_replace_mesh_joint_positions_including_pelvis() {
+        let rig = rig();
+        let hip = rig.names["mHipLeft"];
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.pelvis] += Vec3::new(0.3, -0.2, 0.25);
+        base.local_pos[hip] += Vec3::new(-0.2, 0.1, -0.07);
+        let pelvis_position = Vec3::new(0.08, -0.03, -0.12);
+        let hip_position = rig.local_pos[hip] + Vec3::new(0.03, 0.04, 0.05);
+        let mut animation = swing(&rig).anim.clone();
+        animation.joints = [("mPelvis", pelvis_position), ("mHipLeft", hip_position)]
+            .into_iter()
+            .map(|(name, position)| aurora_assets::JointMotion {
+                joint_name: name.into(),
+                priority: 4,
+                rot_keys: Vec::new(),
+                pos_keys: vec![aurora_assets::anim::PosKey { time: 0.0, position }],
+            })
+            .collect();
+        let animation = Arc::new(BoundAnim::bind(animation, &rig));
+        let now = Instant::now();
+        let mut controller = Controller::for_control_avatar();
+        let id = Uuid::from_u128(42);
+        controller.sync(&[signal(id, 1, now)], now, |_| Some(animation.clone()));
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, now, Some(&base), &mut out);
+        let pelvis = Mat4::from_cols_array_2d(&out[rig.pelvis]).w_axis.truncate();
+        assert!(pelvis.abs_diff_eq(rig.local_pos[rig.pelvis] + pelvis_position, 1e-6));
+        let hip = Mat4::from_cols_array_2d(&out[hip]).w_axis.truncate();
+        assert!(hip.abs_diff_eq(pelvis + hip_position, 1e-6));
+        controller.reset_pose(false);
+        controller.sync(&[], now + Duration::from_secs(3), |_| None);
+        controller.evaluate(&rig, now + Duration::from_secs(4), Some(&base), &mut out);
+        let pelvis = Mat4::from_cols_array_2d(&out[rig.pelvis]).w_axis.truncate();
+        assert!(pelvis.abs_diff_eq(base.local_pos[rig.pelvis], 1e-6));
+    }
 
     fn synchronized_controller() -> Controller {
         Controller {

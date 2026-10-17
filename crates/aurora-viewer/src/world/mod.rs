@@ -220,7 +220,8 @@ pub struct World {
     /// Animated joint matrices (skeleton space, rest -> posed) of the avatars
     /// near the camera, so attachments follow their bone.
     pub avatar_poses: HashMap<Uuid, Vec<glam::Mat4>>,
-    /// Pelvis offset from body size, shape hover and mesh overrides only.
+    /// Root offset from body size, shape hover and mesh pelvis fixups.
+    /// A ground animesh entry holds only its mesh pelvis fixup.
     /// The adjustable hover height stays live, independent of pose timing.
     pub avatar_shape_dz: HashMap<Uuid, f32>,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).

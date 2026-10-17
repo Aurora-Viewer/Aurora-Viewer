@@ -18,6 +18,7 @@ pub mod hud;
 pub mod impostors;
 pub mod inspect;
 pub mod jobs;
+pub(crate) mod joint_overrides;
 pub mod legacy_mat;
 pub mod lights;
 pub(crate) mod lipsync;
@@ -4260,8 +4261,7 @@ impl Scene {
             return (s.base.clone(), s.shape_dz);
         }
         let rig = self.avatar_lib.rig.clone();
-        // joint offsets of the worn meshes
-        let mut overrides: Vec<(usize, Vec3, bool)> = Vec::new();
+        let mut overrides = joint_overrides::JointOverrides::new(&rig);
         for &i in &members {
             let Some(o) = world.objects.get(i) else {
                 continue;
@@ -4269,29 +4269,10 @@ impl Scene {
             if !o.visual_volume().is_mesh() {
                 continue;
             }
-            let Some(skin) = o
-                .visual_volume()
-                .sculpt
-                .and_then(|s| self.meshes.meta(&s.texture))
-                .and_then(|m| m.skin)
-            else {
-                continue;
-            };
-            if skin.alt_inverse_bind.is_empty() || skin.alt_inverse_bind.len() != skin.joint_names.len() {
-                continue;
-            }
-            for (name, alt) in skin.joint_names.iter().zip(&skin.alt_inverse_bind) {
-                // the pelvis stays at the avatar position
-                if name == "mPelvis" {
-                    continue;
-                }
-                let Some(&j) = rig.names.get(name) else {
-                    continue;
-                };
-                let p = alt.w_axis.truncate();
-                if p.is_finite() && (p - rig.local_pos[j]).length_squared() > 1e-8 {
-                    overrides.push((j, p, skin.lock_scale_if_joint_position));
-                }
+            if let Some(mesh) = o.visual_volume().sculpt
+                && let Some(skin) = self.meshes.meta(&mesh.texture).and_then(|m| m.skin)
+            {
+                overrides.add(&rig, mesh.texture, &skin);
             }
         }
         let avatar = world.objects.get(owner_idx).is_some_and(|o| o.is_avatar());
@@ -4302,22 +4283,16 @@ impl Scene {
         } else {
             (rig.local_pos.clone(), rig.scale.clone(), 0.0)
         };
-        for (j, p, lock) in overrides {
-            local_pos[j] = p;
-            if lock {
-                scale[j] = rig.scale[j];
-            }
-        }
+        overrides.apply(&rig, &mut local_pos, &mut scale);
         let shape_dz = if avatar {
-            let pelvis_shift = local_pos[rig.pelvis].z - rig.local_pos[rig.pelvis].z;
             if seated {
-                -pelvis_shift
+                0.0
             } else {
                 let (pelvis_to_foot, height) = shape::body_size(&rig, &local_pos, &scale);
-                hover - (0.5 * height - pelvis_to_foot) - pelvis_shift
+                hover + overrides.pelvis_fixup() - (0.5 * height - pelvis_to_foot)
             }
         } else {
-            0.0
+            overrides.pelvis_fixup()
         };
         let base = Arc::new(anim::SkeletonBase { local_pos, scale });
         self.skeletons.insert(
@@ -4944,7 +4919,7 @@ mod tests {
         let rig = &world.avatar_lib.rig;
         let shape = world.avatar_lib.shape_params.shape(&[], rig);
         let (foot, height) = shape::body_size(rig, &shape.local_pos, &shape.scale);
-        let expected = shape.hover - (0.5 * height - foot) - (shape.local_pos[rig.pelvis].z - rig.local_pos[rig.pelvis].z);
+        let expected = shape.hover - (0.5 * height - foot);
         assert!((standing_dz - expected).abs() < 1e-5);
         assert!((standing_dz - seated_dz).abs() > 0.01, "cache must not keep the seated offset");
         // A ground sit retains the standing/body-height calculation.
