@@ -42,6 +42,9 @@ struct Harness {
     actions: Vec<ConvAction>,
     /// Preferences › Chat › Show the Contacts tab.
     show_contacts: bool,
+    friends_pane: bool,
+    people: crate::ui::people::PeopleUi,
+    friends: crate::ui::people::FriendsSettings,
 }
 
 impl Harness {
@@ -65,6 +68,9 @@ impl Harness {
             gestures: Default::default(),
             actions: Vec::new(),
             show_contacts: false,
+            friends_pane: false,
+            people: Default::default(),
+            friends: Default::default(),
         }
     }
 
@@ -82,7 +88,21 @@ impl Harness {
             gestures,
             actions,
             show_contacts,
+            friends_pane,
+            people,
+            friends,
         } = self;
+        let radar = crate::world::radar::Radar::default();
+        let mut radar_settings = crate::ui::people::RadarSettings::default();
+        let voice = HashMap::new();
+        let data = crate::ui::people::RadarData {
+            radar: &radar,
+            settings: &mut radar_settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            now: 0.0,
+            pics: &pics,
+        };
         let mut open = true;
         frames.run(events, |ui| {
             actions.extend(show(
@@ -98,7 +118,12 @@ impl Harness {
                 contacts,
                 contacts_settings,
                 *show_contacts,
-                None,
+                (*friends_pane).then_some(crate::ui::people::FriendsPane {
+                    st: people,
+                    data: &data,
+                    settings: friends,
+                    images: &pics,
+                }),
                 &mut open,
             ));
         })
@@ -685,6 +710,111 @@ fn add_friends(world: &mut World) {
             rights_has: 1,
         });
         world.social.names.insert(id, format!("Friend {i:02}"));
+    }
+}
+
+fn contacts_navigation(style: ChatStyle, width: f32) -> Harness {
+    let mut h = Harness::new(style);
+    add_friends(&mut h.world);
+    h.show_contacts = true;
+    h.friends_pane = true;
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 560.0));
+    h
+}
+
+/// A single click must leave the row available for the second click even
+/// when the friend's sheet will replace the list in a reduced layout.
+#[test]
+fn contacts_navigation_double_click_opens_im_at_every_width() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for width in [960.0, 700.0, 460.0] {
+            for waiting_frames in [0, 10] {
+                let mut h = contacts_navigation(style, width);
+                let texts = h.settle();
+                let at = painted(&texts, "Friend 00").rect.center();
+                h.click(at);
+                assert!(h.actions.is_empty(), "a single click does not start an IM");
+                h.settle();
+                for _ in 0..waiting_frames {
+                    h.frame(Vec::new());
+                }
+                h.click(at);
+                let ims = h
+                    .actions
+                    .iter()
+                    .filter(
+                        |a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::OpenIm(id)) if *id == Uuid::from_u128(0xF000)),
+                    )
+                    .count();
+                assert_eq!(ims, 1, "{style:?} at {width}: double-click starts exactly one IM");
+                if width != 960.0 {
+                    for _ in 0..30 {
+                        h.frame(Vec::new());
+                    }
+                    assert_eq!(h.people.sheet, None, "the cancelled single click cannot show a sheet after the IM");
+                }
+            }
+        }
+    }
+}
+
+/// Contacts returns from a sheet to the list, with the same state as its
+/// close button, both in the column and in the rail of pictures.
+#[test]
+fn contacts_navigation_entry_returns_from_sheet_to_list() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for width in [960.0, 700.0, 460.0] {
+            let mut h = contacts_navigation(style, width);
+            let texts = h.settle();
+            h.people.filter = "Friend 0".into();
+            h.click(painted(&texts, "Friend 00").rect.center());
+            for _ in 0..30 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.people.sheet, Some(Uuid::from_u128(0xF000)), "single click opens the sheet");
+            let selected = h.people.sel.clone();
+            let texts = h.settle();
+            assert_eq!(
+                texts.iter().any(|t| t.source == "Friend 01"),
+                width == 960.0,
+                "{width}: reduced layouts show only the sheet"
+            );
+            h.click(h.rect(entry_id(Pinned::Contacts)).center());
+            let texts = h.settle();
+            assert_eq!(h.people.sheet, None, "{style:?} at {width}: Contacts closes the sheet");
+            assert!(texts.iter().any(|t| t.source == "Friend 01"), "the list is back");
+            assert_eq!(h.people.filter, "Friend 0", "the filter is preserved");
+            assert_eq!(h.people.sel, selected, "the selection is preserved");
+            assert!(h.st.contacts);
+            let at = painted(&texts, "Friend 00").rect.center();
+            h.click(at);
+            h.click(at);
+            assert!(
+                h.actions.iter().any(
+                    |a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::OpenIm(id)) if *id == Uuid::from_u128(0xF000))
+                ),
+                "{style:?} at {width}: double-click still works immediately after returning to Contacts"
+            );
+        }
+    }
+}
+
+#[test]
+fn contacts_navigation_entry_cancels_a_pending_sheet() {
+    for width in [700.0, 460.0] {
+        let mut h = contacts_navigation(ChatStyle::Aurora, width);
+        let texts = h.settle();
+        h.click(painted(&texts, "Friend 00").rect.center());
+        h.click(h.rect(entry_id(Pinned::Contacts)).center());
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        assert_eq!(
+            h.people.sheet, None,
+            "Contacts cancels even a sheet waiting for the double-click interval"
+        );
+        assert!(h.settle().iter().any(|t| t.source == "Friend 01"));
     }
 }
 
