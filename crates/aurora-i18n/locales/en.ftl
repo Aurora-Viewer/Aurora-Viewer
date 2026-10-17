@@ -2198,6 +2198,10 @@ build-ui-tools-drag-an-arrow-or-the-plane-handle-to-move = Drag an arrow or the 
 ui-appearance-items-right-eyeball = Right eyeball
 ui-appearance-items-left-eyeball = Left eyeball
 ui-options-glow = Glow
+ui-options-bloom = Bloom
+ui-options-bloom-help = A soft halo around the brightest parts of the image (sun on metal, lights), beside the glow; Aurora's own, off by default
+ui-options-bloom-strength = Bloom strength
+ui-options-bloom-strength-help = How much of the light above white spreads into the halo
 ui-options-dof = Depth of field
 ui-options-dof-enable = Depth of field
 ui-options-dof-enable-help = Blurs the view except where the camera focuses, like a real lens (Legacy Viewer: off).
@@ -2333,6 +2337,7 @@ ui-contacts-information = Information
 ui-land-mod-information-and-settings-for-the-selected-parcel = Information and settings for the selected parcel
 build-ui-tools-parcel-information = Parcel information
 ui-context-script-information = Script information
+ui-context-object-information = Object information
 ui-place-details-info = Info:
 world-profiles-payment-info-on-file = Payment info on file
 world-profiles-payment-info-used = Payment info used
@@ -4155,6 +4160,7 @@ ui-perf-render-thread = Render thread
 ui-place-details-title = Title:
 ui-contacts-titles = Titles
 ui-options-tone-mapping = Tone mapping
+ui-options-tone-mapping-classic-sky = No effect with a classic sky (reflection probe ambiance 0): it is not tone mapped
 common-torus = Torus
 ui-options-camera-press-m-or-zoom-into-your-avatar-s-head = Press M, or zoom into your avatar's head
 ui-options-practical-movement-key = Movement key
@@ -4175,6 +4181,8 @@ app-double-click-ground-set = Double-click on the ground: { $action }
 keybinds-orbit-clockwise = Orbit clockwise
 keybinds-orbit-counterclockwise = Orbit counterclockwise
 ui-options-camera-scroll-toward-yourself-to-leave-mouselook = Scroll toward yourself to leave mouselook
+ui-options-camera-alt-right-click-menu = Context menu with Alt + right click
+ui-options-camera-alt-right-click-menu-tip = In mouselook, Alt + right click opens the context menu. A right click alone zooms while it is held, and the mouse wheel sets that zoom.
 ui-options-camera-show-how-to-leave = Show how to leave
 ui-options-camera-show-how-to-leave-tip = "Press Esc to return to world view" at the bottom of the screen in mouselook
 ui-options-camera-show-interface = Show the interface in mouselook
@@ -6396,6 +6404,83 @@ ui-land-overview-view-as-tip = See the parcel as a visitor sees it: nothing can 
 region-title = Region / Estate
 region-help = The region you are in and its estate: rules, simulator health, covenant
 region-people-tab = People
+region-people-managers = Estate managers
+region-people-allowed = Allowed residents
+region-people-groups = Allowed groups
+region-people-banned = Banned residents
+region-people-list-managers = the estate managers
+region-people-list-allowed = the allowed residents
+region-people-list-groups = the allowed groups
+region-people-list-banned = the banned residents
+region-people-managers-hint = A manager has almost all the rights of the estate owner.
+region-people-allowed-hint = They come in even when access is limited to the lists.
+region-people-groups-hint = Their members come in even when access is limited to the lists.
+region-people-banned-hint = No duration: an estate ban lasts until it is lifted.
+region-people-owner-only = Only the estate owner names them.
+region-people-linden-ban = Nobody can be banned from a Linden estate.
+region-people-ban = Ban
+region-people-remove = Remove…
+region-people-copy = Copy the names
+region-people-import = Import a CSV file with a UUID column
+region-people-export = Export as a CSV file
+region-people-head-resident = Resident
+region-people-head-banned = Banned on, by
+region-people-head-login = Last login
+region-people-banned-on = { $date }, { $by }
+region-people-you = you
+region-people-not-known = n/a
+region-people-loading = Loading the lists…
+region-people-refused = The simulator did not send the estate's lists.
+region-people-not-sent-title = Lists kept for the owner and the managers
+region-people-not-sent = The simulator sends the managers, the allowed and the banned residents to them only.
+region-people-owner-is = The estate owner is { $name }.
+region-people-and-more = { $names } and { $count } more
+region-people-ask-add-managers-title = Add estate managers
+region-people-ask-add-managers = { $names } will be able to change almost everything the estate owner can.
+region-people-ask-add-allowed-title = Allow on the estate
+region-people-ask-add-allowed = { $names } will come in even when access is limited to the lists.
+region-people-ask-add-groups-title = Allow a group
+region-people-ask-add-groups = The members of { $names } will come in even when access is limited to the lists.
+region-people-ask-add-banned-title = Ban from the estate
+region-people-ask-add-banned = { $names } will no longer be able to enter the estate nor fly over it, until the ban is lifted.
+region-people-ask-remove-managers-title = Remove estate managers
+region-people-ask-remove-allowed-title = Remove allowed residents
+region-people-ask-remove-groups-title = Remove allowed groups
+region-people-ask-remove-banned-title = Lift bans
+region-people-ask-remove-managers = { $names } will no longer manage the estate.
+region-people-ask-remove-allowed = { $names } will be removed from the allowed residents.
+region-people-ask-remove-groups = { $names } will be removed from the allowed groups.
+region-people-ask-remove-banned = The ban of { $names } will be lifted.
+region-people-applies-to = Applies to
+region-people-this-estate = This estate only
+region-people-all-owned = All the estates you own
+region-people-all-managed = All the estates you manage for { $owner }
+region-people-ok-allow = Allow
+region-people-ok-unban = Lift the ban
+region-people-ask-linden-title = Change a Linden estate's lists?
+region-people-ask-linden = You are about to change the access lists of an estate owned by Linden Lab (mainland, teen grid, orientation…). This is dangerous: it changes thousands of regions at once and slows the servers down. It is only meant to move objects or L$ into or out of a grid.
+region-people-ask-linden-ok = Change the lists
+region-people-notice-title = Estate lists
+region-people-max-managers = You can only have { $max } estate managers.
+region-people-max-allowed = You can only have { $max } allowed residents.
+region-people-max-groups = You can only have { $max } allowed groups.
+region-people-max-banned = You can only have { $max } banned residents.
+region-people-batch-too-many = { $count } residents cannot be added: that would be { $excess } more than the { $max } the list holds.
+region-people-already = { $count ->
+    [one] { $names } is already in { $list }.
+   *[other] { $names } are already in { $list }.
+    }
+region-people-owner-ban = The estate owner cannot be banned.
+region-people-manager-ban = { $names } cannot be banned: estate managers cannot be.
+region-people-list-empty = The list is empty.
+region-people-import-too-large = Too many entries: the file has { $count } and { $max } places are free.
+region-people-imported = { $count ->
+    [one] { $count } entry sent.
+   *[other] { $count } entries sent.
+    }
+region-people-exported = Saved to { $path }.
+region-people-pick-group = Choose a group
+region-people-no-groups = You do not belong to any group.
 region-role-owner = Estate owner
 region-role-manager = Manager
 region-role-resident = Resident
@@ -7836,6 +7921,33 @@ bridge-script-info-missing = The object is no longer available or is outside the
 bridge-script-info-result = Script info for “{ $name }”: { $running }/{ $total } running scripts; { $memory } KiB allocated memory; { $time } ms CPU. { $pathfinding }
 bridge-script-info-pathfinding = Pathfinding CPU: { $time } ms.
 bridge-script-info-failed = Script information unavailable: { $reason }
+bridge-object-info-loading = Retrieving object information through the Aurora bridge…
+bridge-object-info-region = Object information is only available for an object in your current region.
+bridge-object-info-failed = Object information unavailable: { $reason }
+bridge-object-info-group-owned = Group-owned
+bridge-object-info-result =
+    Object information for “{ $name }”:
+    Object ID: { $object }
+    Description: { $description }
+    Root prim: { $root }
+    Prim count: { $prims }
+    Land impact: { $impact }
+    Inventory items: { $inventory }
+    Velocity: { $velocity } m/s
+    Position: { $position } ({ $distance } m)
+    Rotation: { $rotation } ({ $degrees }°)
+    Angular velocity: { $angular } rad/s
+    Creator: { $creator }
+    Owner: { $owner }
+    Previous owner: { $previous }
+    Rezzed by: { $rezzer }
+    Group: { $group }
+    Creation time: { $created }
+    Rez time: { $rezzed }
+    Pathfinding type: { $pathfinding }
+    Attachment point: { $attachment }
+    Temporarily attached: { $temporary }
+    Your current position: { $observer }
 bridge-query-timeout = The bridge did not return the requested information in time. Try again.
 bridge-query-interrupted = The information request was interrupted by a region or bridge connection change. Try again.
 ao-bootstrap-interrupted = An unfinished AO import already exists in #Aurora. Review it in inventory before retrying.

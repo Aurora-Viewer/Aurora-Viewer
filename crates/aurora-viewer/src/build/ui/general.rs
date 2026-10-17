@@ -101,7 +101,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let self_owned = owners_identical && first.owner_id == me;
     let can_manipulate = self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_MANIPULATE));
     let can_sell = self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_SET_SALE));
-    let modify = props.iter().all(|x| x.owner_mask & perm::MODIFY != 0) && can_manipulate;
+    // Editing and changing ownership permissions are separate rights
+    // (LLPanelPermissions::refresh / LLViewerObject::permModify).
+    let modify = targets.iter().all(|&idx| tool.can_modify(world, idx));
 
     let group = perm_state(&refs, |x| x.group_mask);
     let owner = perm_state(&refs, |x| x.owner_mask);
@@ -133,7 +135,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             let mut v = tool.ui.edits.get(field).cloned().unwrap_or_else(|| current.clone());
             row(ui, p, title, LABEL_W - 30.0, |ui| {
                 let r = ui.add_enabled(
-                    first.owner_mask & perm::MODIFY != 0,
+                    modify,
                     egui::TextEdit::singleline(&mut v)
                         .desired_width(ui.available_width())
                         .char_limit(limit)

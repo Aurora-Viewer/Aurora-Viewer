@@ -399,6 +399,7 @@ impl App {
                     .map_or(id, |o| o.full_id);
                 self.inspect_scripts(root);
             }
+            CtxAction::ObjectInfo(id) => self.inspect_object_information(id),
             CtxAction::RefreshTextures(id) => self.refresh_object_textures(id),
             CtxAction::RefreshAvatarTextures(id) => self.refresh_avatar_textures(id),
             CtxAction::Rebake => self.rebake(),

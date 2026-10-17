@@ -555,7 +555,10 @@ impl Job {
                         return Err(aurora_i18n::tr!("replace-missing").into());
                     };
                     if !tool.can_modify(world, idx)
-                        || tool.props.get(&p.id).is_none_or(|props| props.owner_id != world.agent_id)
+                        || tool
+                            .props
+                            .get(&p.id)
+                            .is_none_or(|props| props.owner_id != world.agent_id || props.owner_mask & perm::MODIFY == 0)
                         || world.objects.get(idx).is_none_or(|o| o.parent_id != p.parent)
                         || !p.matches(world)
                     {

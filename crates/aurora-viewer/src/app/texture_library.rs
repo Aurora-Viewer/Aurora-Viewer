@@ -444,7 +444,9 @@ impl App {
                     && !o.is_tree()
                     && o.te.as_ref().is_some_and(|te| (face as usize) < te.faces.len())
                     && (if drag.ctrl {
-                        self.build.contents_editable(&self.world, idx)
+                        // A world drop follows willObjectAcceptInventory;
+                        // the Contents panel's New script rule is narrower.
+                        super::inventory_drag::target_allowed(&self.world, idx, item, true).is_ok()
                     } else {
                         self.build.can_modify(&self.world, idx)
                     })

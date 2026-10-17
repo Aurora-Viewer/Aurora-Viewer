@@ -52,7 +52,7 @@ sections! {
         draw_distance, lod_factor, max_avatars, max_complexity, max_attachment_area, loading_avatars,
         complexity_mode, occlusion_culling, max_particles, texture_budget_auto, texture_budget_mb, anisotropy,
         shadow_quality, shadows, projector_shadows, ssao, ao_method, gtao_quality, screen_indirect_light, screen_indirect_intensity, time_of_day, env_manual_transition, env_persist,
-        exposure, sharpen, glow, water_reflections, mirrors, ssr, reflection_probes, probe_count, antialiasing,
+        exposure, sharpen, glow, bloom, bloom_strength, water_reflections, mirrors, ssr, reflection_probes, probe_count, antialiasing,
         tonemapper, dof, vsync, fps_cap, fps_limit, background_fps_cap, background_fps_limit,
     ],
     1 => [

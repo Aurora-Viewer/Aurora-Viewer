@@ -40,6 +40,9 @@ pub struct OptionsUi {
     pub cache_clearing: bool,
     /// Detected video memory (MB) and integrated GPU; set by the app.
     pub vram: (Option<u64>, bool),
+    /// The sky in use is tone mapped (not classic); set by the app each
+    /// frame: the tone mapper choice is greyed otherwise.
+    pub sky_tone_mapped: bool,
     /// Set by the "describe nearby objects" button, cleared by the app.
     pub describe_nearby: bool,
     /// Audio devices (set by the app) and microphone level (0..1).
@@ -72,6 +75,8 @@ pub struct OptionsUi {
     confirm_erase_logs: bool,
     /// The page opens scrolled to its end (`AURORA_DEMO_OPTIONS=<n>:end`).
     pub scroll_to_end: bool,
+    /// Graphics opens on the tone mapping row (`AURORA_DEMO_OPTIONS=0:tonemap`).
+    pub scroll_to_tone_mapping: bool,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -1604,6 +1609,32 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-glow-around-glowing-faces-as-in-firestorm"),
                     |ui| toggle(ui, p, &mut s.glow),
                 );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-bloom"),
+                    aurora_i18n::tr!("ui-options-bloom-help"),
+                    |ui| toggle(ui, p, &mut s.bloom),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-bloom-strength"),
+                    aurora_i18n::tr!("ui-options-bloom-strength-help"),
+                    |ui| {
+                        ui.add_enabled_ui(s.bloom, |ui| {
+                            ui.spacing_mut().slider_width = SLIDER_W;
+                            ui.add(
+                                egui::Slider::new(&mut s.bloom_strength, 0.05..=1.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .step_by(0.05)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        })
+                        .inner
+                    },
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-reflections"), |ui| {
                 let levels = [
@@ -1706,13 +1737,22 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| {
                         let names = [aurora_i18n::tr!("ui-options-khronos-pbr-neutral"), "ACES"];
                         let mut changed = false;
-                        egui::ComboBox::from_id_salt("tonemap")
-                            .width(SLIDER_W)
-                            .selected_text(names[s.tonemapper.min(1) as usize])
-                            .show_ui(ui, |ui| {
-                                changed |= ui.selectable_value(&mut s.tonemapper, 0, names[0]).changed();
-                                changed |= ui.selectable_value(&mut s.tonemapper, 1, names[1]).changed();
-                            });
+                        if std::mem::take(&mut st.scroll_to_tone_mapping) {
+                            ui.scroll_to_cursor(Some(egui::Align::Center));
+                        }
+                        // a classic sky is not tone mapped (no_post): the
+                        // choice would change nothing
+                        ui.add_enabled_ui(st.sky_tone_mapped, |ui| {
+                            egui::ComboBox::from_id_salt("tonemap")
+                                .width(SLIDER_W)
+                                .selected_text(names[s.tonemapper.min(1) as usize])
+                                .show_ui(ui, |ui| {
+                                    changed |= ui.selectable_value(&mut s.tonemapper, 0, names[0]).changed();
+                                    changed |= ui.selectable_value(&mut s.tonemapper, 1, names[1]).changed();
+                                });
+                        })
+                        .response
+                        .on_disabled_hover_text(aurora_i18n::tr!("ui-options-tone-mapping-classic-sky"));
                         changed
                     },
                 );

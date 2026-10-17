@@ -7,7 +7,7 @@ use super::{BuildTool, family};
 use crate::world::World;
 use aurora_net::NetCommand;
 use aurora_net::RegionHandle;
-use aurora_net::build::{BuildCmd, PhysicsParams, perm, perm_field};
+use aurora_net::build::{BuildCmd, PhysicsParams, perm_field};
 use aurora_prim::extra::{self, FlexibleParams, LightImageParams, LightParams, ReflectionProbeParams};
 use aurora_prim::params::SculptParams;
 use aurora_prim::te::TextureFace;
@@ -179,14 +179,15 @@ impl BuildTool {
         out
     }
 
-    /// Do we own this object with modify rights (props when we have them,
-    /// else the update's owner)?
+    /// LLViewerObject::permModify (indra/newview/llviewerobject.cpp): the
+    /// simulator's effective right includes granted and group editing rights.
+    /// Children inherit their linkset root's right, independently of OwnerID
+    /// and the owner's permission mask in ObjectProperties.
     pub fn can_modify(&self, world: &World, idx: usize) -> bool {
-        let Some(o) = world.objects.get(idx) else { return false };
-        match self.props.get(&o.full_id) {
-            Some(p) => p.owner_mask & perm::MODIFY != 0 && (p.owner_id == world.agent_id || p.group_id == p.owner_id),
-            None => o.owner_id == world.agent_id,
-        }
+        world
+            .objects
+            .get(super::root_of(world, idx))
+            .is_some_and(|root| root.update_flags & crate::ui::context::flags::OBJECT_MODIFY != 0)
     }
 
     fn by_region(world: &World, idxs: &[usize]) -> HashMap<RegionHandle, Vec<u32>> {
@@ -485,7 +486,11 @@ impl BuildTool {
 
     /// ObjectClickAction on every selected prim (SEND_INDIVIDUALS).
     pub fn set_click_action(&mut self, world: &mut World, action: u8) {
-        let prims = self.sel_prims(world);
+        let prims: Vec<_> = self
+            .sel_prims(world)
+            .into_iter()
+            .filter(|&idx| self.can_modify(world, idx))
+            .collect();
         for &i in &prims {
             if let Some(o) = world.objects.get_mut(i) {
                 o.click_action = action;
@@ -530,6 +535,9 @@ impl BuildTool {
     pub fn set_name(&mut self, world: &World, name: &str, description: bool) {
         let targets = self.prop_targets(world);
         for idx in targets {
+            if !self.can_modify(world, idx) {
+                continue;
+            }
             let Some(o) = world.objects.get(idx) else { continue };
             if let Some(p) = self.props.get_mut(&o.full_id) {
                 if description {
@@ -605,6 +613,7 @@ mod tests {
     use crate::build::materials::GltfUpdate;
     use crate::scene::avatar::AvatarLibrary;
     use aurora_assets::material::PbrOverride;
+    use aurora_net::build::perm;
 
     fn color_world() -> (World, BuildTool, Vec<usize>) {
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
@@ -625,6 +634,7 @@ mod tests {
         for &idx in &prims {
             let o = world.objects.get_mut(idx).unwrap();
             o.owner_id = world.agent_id;
+            o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
             // Edit one face, preserving alpha and the other faces.
             let mut te = o.te.as_deref().unwrap().clone();
             te.faces[0].color[3] = 0.4;
@@ -633,6 +643,78 @@ mod tests {
             tool.faces.insert(o.key, vec![0]);
         }
         (world, tool, prims)
+    }
+
+    #[test]
+    fn effective_modify_rights_override_ownership_and_cached_properties() {
+        use crate::ui::context::flags::OBJECT_MODIFY;
+        let (mut world, mut tool, prims) = color_world();
+        let idx = prims[0];
+        let object = world.objects.get_mut(idx).unwrap();
+        object.owner_id = Uuid::from_u128(911);
+        let id = object.full_id;
+        assert!(tool.can_modify(&world, idx), "granted right works before properties arrive");
+        tool.props.insert(
+            id,
+            aurora_net::build::ObjectProps {
+                owner_id: Uuid::from_u128(911),
+                owner_mask: perm::MODIFY,
+                ..Default::default()
+            },
+        );
+        assert!(tool.can_modify(&world, idx), "properties must not revoke the granted right");
+        tool.out.clear();
+        tool.edit_faces(&mut world, |face, _, _| face.glow = 0.25);
+        assert_eq!(world.objects.get(idx).unwrap().te.as_ref().unwrap().faces[0].glow, 0.25);
+        assert!(!tool.out.is_empty());
+        world.objects.get_mut(idx).unwrap().update_flags &= !OBJECT_MODIFY;
+        assert!(!tool.can_modify(&world, idx));
+        let props = tool.props.get_mut(&id).unwrap();
+        props.owner_id = world.agent_id;
+        assert!(
+            !tool.can_modify(&world, idx),
+            "ownership does not override a denied effective right"
+        );
+        let props = tool.props.get_mut(&id).unwrap();
+        props.owner_id = Uuid::from_u128(912);
+        props.group_id = props.owner_id;
+        assert!(!tool.can_modify(&world, idx), "group ownership alone grants no editing right");
+        tool.props.remove(&id);
+        world.objects.get_mut(idx).unwrap().owner_id = world.agent_id;
+        assert!(!tool.can_modify(&world, idx), "missing properties must not bypass denied rights");
+        tool.selection = vec![world.objects.get(idx).unwrap().key];
+        tool.out.clear();
+        tool.set_name(&world, "Denied edit", false);
+        tool.set_click_action(&mut world, CLICK_ACTION_SIT);
+        assert!(tool.out.is_empty(), "pending General edits must recheck revoked rights");
+        assert!(!tool.can_modify(&world, usize::MAX));
+    }
+
+    #[test]
+    fn child_surface_edits_inherit_the_root_right_and_stop_on_revocation() {
+        use crate::ui::context::flags::OBJECT_MODIFY;
+        let (mut world, mut tool, prims) = color_world();
+        let root = prims[0];
+        let child = prims[1];
+        let parent = world.objects.get(root).unwrap().key.local_id;
+        let object = world.objects.get_mut(child).unwrap();
+        object.parent_id = parent;
+        object.owner_id = Uuid::from_u128(911);
+        object.update_flags = 0;
+        assert!(tool.can_modify(&world, child));
+        tool.selection = vec![world.objects.get(child).unwrap().key];
+        tool.selection_linked = true;
+        tool.out.clear();
+        tool.edit_faces(&mut world, |face, _, _| face.glow = 0.5);
+        assert!(!tool.out.is_empty());
+        let before = world.objects.get(child).unwrap().te.clone();
+        world.objects.get_mut(root).unwrap().update_flags &= !OBJECT_MODIFY;
+        world.objects.get_mut(child).unwrap().update_flags |= OBJECT_MODIFY;
+        assert!(!tool.can_modify(&world, child), "a stale child flag cannot override the root");
+        tool.out.clear();
+        tool.edit_faces(&mut world, |face, _, _| face.glow = 0.75);
+        assert_eq!(world.objects.get(child).unwrap().te, before);
+        assert!(tool.out.is_empty());
     }
 
     #[test]

@@ -10,6 +10,7 @@ fn fixture() -> (World, BuildTool, Uuid, Vec<TaskItem>) {
         world.apply(event);
     }
     let idx = world.objects.index_of_uuid(&crate::demo::action_id(118)).unwrap();
+    world.objects.get_mut(idx).unwrap().update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
     let object = world.objects.get(idx).unwrap().full_id;
     let mut tool = BuildTool::default();
     tool.open_build(Tool::Edit);
@@ -108,10 +109,13 @@ fn all_eleven_bulk_filters_fetch_and_update_only_their_type_with_valid_masks() {
 #[test]
 fn bulk_skips_revoked_failed_or_timed_out_sources_without_updating_cached_items() {
     for failure in 0..3 {
-        let (world, mut tool, object, _) = fixture();
+        let (mut world, mut tool, object, _) = fixture();
         tool.start_bulk_permissions(&world);
         match failure {
-            0 => tool.props.get_mut(&object).unwrap().owner_mask &= !perm::MODIFY,
+            0 => {
+                let idx = world.objects.index_of_uuid(&object).unwrap();
+                world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+            }
             1 => tool.replacement_task_inventory_error(object, "Offline test error".into()),
             _ => {}
         }
@@ -154,12 +158,13 @@ fn task_property_save_keeps_the_source_and_uses_update_task_inventory() {
 #[test]
 fn task_property_save_rechecks_access_and_preserves_nonmodifiable_item_text() {
     for revoke_object in [false, true] {
-        let (world, mut tool, object, items) = fixture();
+        let (mut world, mut tool, object, items) = fixture();
         let mut state = super::super::item_properties::TaskProperties::new(object, &items[0]).unwrap();
         state.edit.name = "Changed".into();
         state.edit.desc = "Changed".into();
         if revoke_object {
-            tool.props.get_mut(&object).unwrap().owner_mask &= !perm::MODIFY;
+            let idx = world.objects.index_of_uuid(&object).unwrap();
+            world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
             assert!(!tool.save_item_properties(&world, &state));
             assert!(updates(&tool).is_empty());
         } else {

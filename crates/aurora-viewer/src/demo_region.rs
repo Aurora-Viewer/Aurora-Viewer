@@ -10,14 +10,18 @@
 //! section, `pending` makes changes there that wait for "Apply", and
 //! `ask-override`, `ask-linden`, `ask-bonus`, `ask-maturity`, `ask-heights`
 //! or `ask-bake` shows that question. The simulator keeps what "Apply"
-//! sends and answers with it, as RegionInfo and `estateupdateinfo` do.
+//! sends and answers with it, as RegionInfo and `estateupdateinfo` do. On
+//! `people`, `select` ticks Orion in the allowed residents, `pick` opens the
+//! resident picker on them, `ask-ban` asks to ban Orion and `ask-remove` to
+//! remove him from the allowed residents; the simulator keeps the lists'
+//! changes and answers `setaccess`, then the lists again.
 
 use super::{DEMO_AGENT, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
-use crate::ui::region::{Ask, ManageDemo, Page};
+use crate::ui::region::{Ask, ManageDemo, Page, PeopleAsk, PeopleDemo, PeopleList};
 use aurora_llsd::Llsd;
 use aurora_net::estate::{
-    EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats, estate_flags as ef,
-    sim_stat,
+    BannedAgent, EstateAccess, EstateCommand, EstateEvent, EstateInfo, RegionDetails, RegionExperiences, RestartSchedule, SimStats,
+    estate_access as ea, estate_flags as ef, sim_stat,
 };
 use aurora_net::{NetEvent, region_flags as rf};
 use std::sync::{Arc, Mutex};
@@ -32,13 +36,14 @@ pub enum Role {
 }
 
 /// What AURORA_DEMO_REGION asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Scenario {
     pub page: Page,
     pub role: Role,
     pub preview: bool,
     pub compact: bool,
     pub manage: ManageDemo,
+    pub people: PeopleDemo,
 }
 
 fn parse(v: &str) -> Scenario {
@@ -48,6 +53,7 @@ fn parse(v: &str) -> Scenario {
         preview: false,
         compact: false,
         manage: ManageDemo::default(),
+        people: PeopleDemo::default(),
     };
     for part in v.split(':').map(str::trim) {
         match part {
@@ -76,6 +82,25 @@ fn parse(v: &str) -> Scenario {
             "ask-bake" => {
                 s.manage.section = Some(2);
                 s.manage.ask = Some(Ask::Bake);
+            }
+            "select" => s.people.select = Some(ORION),
+            "pick" => s.people.pick = true,
+            "ask-ban" => {
+                s.people.ask = Some(PeopleAsk::Scope {
+                    list: PeopleList::Banned,
+                    add: true,
+                    ids: vec![ORION],
+                    all: false,
+                })
+            }
+            "ask-remove" => {
+                s.people.select = Some(ORION);
+                s.people.ask = Some(PeopleAsk::Scope {
+                    list: PeopleList::Allowed,
+                    add: false,
+                    ids: vec![ORION],
+                    all: false,
+                });
             }
             _ => {}
         }
@@ -112,6 +137,10 @@ const XP_TELEPORTERS: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_000
 const ORION: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0022);
 const PIXEL: Uuid = Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0021);
 const BUILDERS: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0001);
+/// Members of the demo's generated crowd (`demo_group.rs`): Lune Example
+/// and Quinn Resident, so that every row has its own name.
+const LUNE: Uuid = Uuid::from_u128(0x6E6E_0000_0000_0000_0000_0000_0000_0001);
+const QUINN: Uuid = Uuid::from_u128(0x6E6E_0000_0000_0000_0000_0000_0000_0010);
 
 /// The mockup's region: no terraforming, pushing limited, voice, resale
 /// but no join / subdivide, parcels with their own environment.
@@ -186,6 +215,83 @@ fn with_sent<R>(f: impl FnOnce(&mut (RegionDetails, u64)) -> R) -> R {
         )
     });
     f(state)
+}
+
+/// The estate's lists, as the simulator keeps them: the mockup's, then
+/// what `estateaccessdelta` changed.
+static LISTS: Mutex<Option<EstateAccess>> = Mutex::new(None);
+
+fn with_lists<R>(f: impl FnOnce(&mut EstateAccess) -> R) -> R {
+    let mut lists = LISTS.lock().unwrap_or_else(|e| e.into_inner());
+    let lists = lists.get_or_insert_with(|| EstateAccess {
+        // in the demo, Tess is named Nova and Nova Tess: the mockup's order
+        managers: vec![DEMO_TESS, DEMO_NOVA],
+        allowed_agents: vec![ORION, DEMO_NOVA, LUNE],
+        allowed_groups: vec![BUILDERS],
+        banned: vec![
+            BannedAgent {
+                id: PIXEL,
+                last_login: Some("2026-10-13 18:02".into()),
+                banned_on: Some("2026-10-09 10:00".into()),
+                banned_by: Some(DEMO_TESS),
+            },
+            BannedAgent {
+                id: QUINN,
+                last_login: Some("2026-07-02 21:40".into()),
+                banned_on: Some("2026-05-02 09:12".into()),
+                banned_by: Some(estate_owner()),
+            },
+        ],
+    });
+    f(lists)
+}
+
+/// One `estateaccessdelta` applied to the lists (the scope's flags change
+/// nothing in a single estate). A ban is dated now, by the avatar.
+fn apply_delta(lists: &mut EstateAccess, flags: u32, id: Uuid, now: &str) {
+    let add = |list: &mut Vec<Uuid>| {
+        if !list.contains(&id) {
+            list.push(id);
+        }
+    };
+    if flags & ea::MANAGER_ADD != 0 {
+        add(&mut lists.managers);
+    }
+    if flags & ea::MANAGER_REMOVE != 0 {
+        lists.managers.retain(|m| *m != id);
+    }
+    if flags & ea::ALLOWED_AGENT_ADD != 0 {
+        add(&mut lists.allowed_agents);
+    }
+    if flags & ea::ALLOWED_AGENT_REMOVE != 0 {
+        lists.allowed_agents.retain(|m| *m != id);
+    }
+    if flags & ea::ALLOWED_GROUP_ADD != 0 {
+        add(&mut lists.allowed_groups);
+    }
+    if flags & ea::ALLOWED_GROUP_REMOVE != 0 {
+        lists.allowed_groups.retain(|m| *m != id);
+    }
+    if flags & ea::BANNED_AGENT_ADD != 0 && !lists.banned.iter().any(|b| b.id == id) {
+        lists.banned.push(BannedAgent {
+            id,
+            last_login: None,
+            banned_on: Some(now.to_owned()),
+            banned_by: Some(DEMO_AGENT),
+        });
+    }
+    if flags & ea::BANNED_AGENT_REMOVE != 0 {
+        lists.banned.retain(|b| b.id != id);
+    }
+}
+
+/// "YYYY-MM-DD HH:MM" now, as the capability dates a ban.
+fn now_stamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let (y, m, d, _, h, mi, _) = crate::ui::land::slt_parts(secs);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}")
 }
 
 fn estate_info() -> EstateInfo {
@@ -263,28 +369,7 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             }
             out.push(ev(EstateEvent::Access {
                 handle,
-                access: manages().then(|| {
-                    Arc::new(EstateAccess {
-                        // in the demo, Tess is named Nova and Nova Tess: the mockup's order
-                        managers: vec![DEMO_TESS, DEMO_NOVA],
-                        allowed_agents: vec![ORION, DEMO_NOVA, Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0023)],
-                        allowed_groups: vec![BUILDERS],
-                        banned: vec![
-                            aurora_net::estate::BannedAgent {
-                                id: PIXEL,
-                                last_login: Some("2026-10-13 18:02".into()),
-                                banned_on: Some("2026-10-09 10:00".into()),
-                                banned_by: Some(DEMO_TESS),
-                            },
-                            aurora_net::estate::BannedAgent {
-                                id: Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0024),
-                                last_login: Some("2026-07-02 21:40".into()),
-                                banned_on: Some("2026-05-02 09:12".into()),
-                                banned_by: Some(estate_owner()),
-                            },
-                        ],
-                    })
-                }),
+                access: manages().then(|| Arc::new(with_lists(|l| l.clone()))),
             }));
             out.push(ev(EstateEvent::Experiences {
                 handle,
@@ -316,6 +401,20 @@ pub fn reply(c: &EstateCommand) -> Vec<NetEvent> {
             out
         }
         EstateCommand::RequestRegionInfo { handle } => region_info(*handle),
+        // the last of a batch is answered (NO_REPLY on the others)
+        EstateCommand::AccessDelta { handle, flags, ids, batch } => {
+            let now = now_stamp();
+            with_lists(|l| {
+                for (id, f) in ids.iter().zip(aurora_net::estate::access_delta_flags(*flags, ids.len(), *batch)) {
+                    apply_delta(l, f, *id, &now);
+                }
+            });
+            vec![ev(EstateEvent::AccessChanged { handle: *handle })]
+        }
+        EstateCommand::RefreshAccess { handle } => vec![ev(EstateEvent::Access {
+            handle: *handle,
+            access: manages().then(|| Arc::new(with_lists(|l| l.clone()))),
+        })],
     }
 }
 
@@ -333,6 +432,7 @@ mod tests {
                 preview: false,
                 compact: false,
                 manage: ManageDemo::default(),
+                people: PeopleDemo::default(),
             }
         );
         assert_eq!(parse("overview:resident").role, Role::Resident);
@@ -342,6 +442,30 @@ mod tests {
         let m = parse("manage:manager:rules:pending");
         assert_eq!((m.page, m.manage.section, m.manage.pending), (Page::Manage, Some(1), true));
         assert_eq!(parse("manage:ask-heights").manage.ask, Some(Ask::TextureHeights));
+        let pp = parse("people:manager:select");
+        assert_eq!((pp.page, pp.role, pp.people.select), (Page::People, Role::Manager, Some(ORION)));
+        assert!(matches!(
+            parse("people:ask-ban").people.ask,
+            Some(PeopleAsk::Scope {
+                list: PeopleList::Banned,
+                add: true,
+                ..
+            })
+        ));
+    }
+
+    /// What the window sends changes the lists the simulator answers.
+    #[test]
+    fn the_demo_simulator_keeps_the_lists() {
+        let mut l = EstateAccess::default();
+        apply_delta(&mut l, ea::BANNED_AGENT_ADD | ea::APPLY_TO_ALL_ESTATES, ORION, "2026-10-17 01:00");
+        apply_delta(&mut l, ea::BANNED_AGENT_ADD, ORION, "2026-10-17 01:00");
+        assert_eq!(l.banned.len(), 1);
+        assert_eq!(l.banned[0].banned_on.as_deref(), Some("2026-10-17 01:00"));
+        apply_delta(&mut l, ea::ALLOWED_GROUP_ADD, BUILDERS, "");
+        apply_delta(&mut l, ea::BANNED_AGENT_REMOVE | ea::NO_REPLY, ORION, "");
+        assert!(l.banned.is_empty());
+        assert_eq!(l.allowed_groups, [BUILDERS]);
     }
 
     /// What "Apply" sends comes back in the next RegionInfo.

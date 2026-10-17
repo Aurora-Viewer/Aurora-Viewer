@@ -3,7 +3,7 @@
 
 use std::sync::mpsc;
 
-pub(super) enum Done {
+pub(crate) enum Done {
     Saved(String),
     /// The file's text, for the list kind (AL_ACCESS / AL_BAN).
     Opened(u32, String),
@@ -11,16 +11,16 @@ pub(super) enum Done {
     Cancelled,
 }
 
-pub(super) struct Job(mpsc::Receiver<Done>);
+pub(crate) struct Job(mpsc::Receiver<Done>);
 
 impl Job {
-    pub(super) fn try_take(&self) -> Option<Done> {
+    pub(crate) fn try_take(&self) -> Option<Done> {
         self.0.try_recv().ok()
     }
 }
 
 /// FFSAVE_CSV with a suggested name, then write `text`.
-pub(super) fn save(file_name: &str, text: String) -> Job {
+pub(crate) fn save(file_name: &str, text: String) -> Job {
     let (tx, rx) = mpsc::channel();
     let file_name = file_name.to_owned();
     std::thread::spawn(move || {
@@ -44,7 +44,7 @@ pub(super) fn save(file_name: &str, text: String) -> Job {
 }
 
 /// FFLOAD_ALL, then read the file as text.
-pub(super) fn open(kind: u32) -> Job {
+pub(crate) fn open(kind: u32) -> Job {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let done = match rfd::FileDialog::new()

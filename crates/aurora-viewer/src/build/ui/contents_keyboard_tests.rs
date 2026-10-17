@@ -179,6 +179,8 @@ fn contents_readonly_and_filtered_selection_do_not_fall_back_to_object_delete() 
     inspector.show(vec![]);
     assert_eq!(inspector.tool.ui.contents_selection.items.len(), 1);
     inspector.tool.props.get_mut(&object).unwrap().owner_mask &= !perm::MODIFY;
+    let idx = inspector.world.objects.index_of_uuid(&object).unwrap();
+    inspector.world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
     key(&mut inspector, egui::Key::Delete, egui::Modifiers::NONE);
     assert!(removed(&inspector).is_empty());
     assert_no_object_delete(&inspector);

@@ -218,6 +218,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "coin",
     "compass",
     "copy",
+    "crown",
     "current-location",
     "dashboard",
     "database",

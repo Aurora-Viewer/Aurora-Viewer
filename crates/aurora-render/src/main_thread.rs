@@ -113,6 +113,8 @@ pub struct Renderer {
     /// Video memory budget and use of the moment, as the driver reports
     /// them (vram.rs).
     pub video_memory: crate::vram::VideoMemoryProbe,
+    /// The skin bind or palette buffer could not grow: when to try again.
+    table_backoff: crate::gpu_alloc::Backoff,
     /// The scene's tables of the GPU-driven draw lists (gpu_cull.rs).
     pub cull: CullTables,
     /// Queue writes of the frame being built (writes.rs).
@@ -270,8 +272,17 @@ impl Renderer {
             trace: wgpu::Trace::Off,
         }))
         .map_err(|e| RenderError::Device(e.to_string()))?;
-        device.on_uncaptured_error(Arc::new(|e: wgpu::Error| {
-            log::error!("wgpu error: {e}");
+        // The same error every frame (a write into a buffer that could not
+        // be made) wrote millions of lines a minute: once, then a count.
+        let throttle = std::sync::Mutex::new(crate::gpu_alloc::LogThrottle::new(std::time::Duration::from_secs(10)));
+        device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
+            let line = throttle
+                .lock()
+                .ok()
+                .and_then(|mut t| t.note(&format!("wgpu error: {e}"), std::time::Instant::now()));
+            if let Some(line) = line {
+                log::error!("{line}");
+            }
         }));
         let info = GpuInfo {
             name: ainfo.name.clone(),
@@ -344,6 +355,7 @@ impl Renderer {
             records,
             textures,
             video_memory,
+            table_backoff: Default::default(),
             cull,
             writes,
             palette_buffer,
@@ -394,12 +406,43 @@ impl Renderer {
     }
 
     fn make_skin_bind_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer(&Self::skin_bind_desc(count))
+    }
+
+    fn skin_bind_desc(count: usize) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
             label: Some("skin binds"),
             size: (count.max(1) * std::mem::size_of::<SkinBind>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        })
+        }
+    }
+
+    /// A larger table buffer (skin binds, palettes), or None when video
+    /// memory is full: the caller keeps the one it has and writes what fits
+    /// in it, and the growth is tried again a little later.
+    fn grow_table(&mut self, desc: &wgpu::BufferDescriptor) -> Option<wgpu::Buffer> {
+        let now = std::time::Instant::now();
+        if !self.table_backoff.ready(now) {
+            return None;
+        }
+        match crate::gpu_alloc::try_buffer(&self.device, desc) {
+            Ok(b) => {
+                self.table_backoff.succeeded();
+                Some(b)
+            }
+            Err(e) => {
+                if !self.table_backoff.waiting() {
+                    log::warn!(
+                        "{} not grown to {} MB ({e}): video memory is full, what does not fit is not drawn until it grows",
+                        desc.label.unwrap_or("buffer"),
+                        desc.size >> 20
+                    );
+                }
+                self.table_backoff.failed(now);
+                None
+            }
+        }
     }
 
     /// Upload the skin bindings (inverse bind matrix + palette joint per
@@ -416,10 +459,15 @@ impl Renderer {
             while n < binds.len() {
                 n *= 2;
             }
-            self.skin_bind_buffer = Self::make_skin_bind_buffer(&self.device, n);
-            self.bind_generation += 1;
-            dirty = 0..binds.len();
+            if let Some(b) = self.grow_table(&Self::skin_bind_desc(n)) {
+                self.skin_bind_buffer = b;
+                self.bind_generation += 1;
+                dirty = 0..binds.len();
+            }
         }
+        // (what the buffer has no room for waits for its growth)
+        let fits = self.skin_bind_buffer.size() as usize / size;
+        let dirty = dirty.start.min(fits)..dirty.end.min(fits);
         if !dirty.is_empty() {
             self.writes.write_buffer(
                 &self.skin_bind_buffer,
@@ -430,12 +478,16 @@ impl Renderer {
     }
 
     fn make_palette_buffer(device: &wgpu::Device, matrices: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer(&Self::palette_desc(matrices))
+    }
+
+    fn palette_desc(matrices: usize) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
             label: Some("joint palettes"),
             size: (matrices.max(1) * 64) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        })
+        }
     }
 
     /// Upload joint palettes (column-major matrices). Indices referenced by
@@ -450,11 +502,14 @@ impl Renderer {
             while n * 64 < bytes as usize {
                 n *= 2;
             }
-            self.palette_buffer = Self::make_palette_buffer(&self.device, n);
-            self.bind_generation += 1;
+            if let Some(b) = self.grow_table(&Self::palette_desc(n)) {
+                self.palette_buffer = b;
+                self.bind_generation += 1;
+            }
         }
+        let mats = &mats[..mats.len().min(self.palette_buffer.size() as usize / 64)];
         self.writes.write_buffer(&self.palette_buffer, 0, bytemuck::cast_slice(mats));
-        self.palettes_uploaded += bytes;
+        self.palettes_uploaded += (mats.len() * 64) as u64;
     }
 
     /// Upload only some palettes (`per` matrices each, by slot index): the
@@ -600,10 +655,15 @@ impl Renderer {
 
     /// Grow the geometry arena now to hold that many vertices and indices
     /// (`GeometryArena::grow_ahead`): while a loading screen hides what
-    /// the growth costs the GPU.
+    /// the growth costs the GPU, and within what the video memory budget
+    /// leaves free (another program or viewer may hold the rest).
     pub fn grow_geometry_ahead(&mut self, vertices: u32, indices: u32) -> bool {
+        let allowance = self
+            .video_memory
+            .read(&self.device)
+            .map(|m| crate::gpu_alloc::ahead_allowance(m.budget, m.usage));
         self.geometry
-            .grow_ahead(&self.device, &mut self.writes, &mut self.uploads, vertices, indices)
+            .grow_ahead(&self.device, &mut self.writes, &mut self.uploads, vertices, indices, allowance)
     }
 
     /// Deform an existing allocation without touching indices or draw records.
@@ -837,6 +897,7 @@ impl Renderer {
                 },
                 gpu_depth: self.last_stats.gpu_depth,
                 gpu_ssao: self.last_stats.gpu_ssao,
+                gpu_bloom: self.last_stats.gpu_bloom,
                 occluded: self.last_stats.occluded,
                 visible_objects: self.last_stats.visible_objects,
                 gpu_cull: self.last_stats.gpu_cull,

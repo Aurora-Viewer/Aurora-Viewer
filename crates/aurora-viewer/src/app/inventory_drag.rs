@@ -119,10 +119,13 @@ pub(super) fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bo
     if ctrl {
         use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_YOU_OWNER};
         const ALLOW_INVENTORY_DROP: u32 = 1 << 16;
-        if o.pcode != aurora_prim::params::LL_PCODE_VOLUME || o.update_flags & (OBJECT_MODIFY | ALLOW_INVENTORY_DROP) == 0 {
+        let root = world.objects.get(current).ok_or("rez-no-surface")?;
+        if o.pcode != aurora_prim::params::LL_PCODE_VOLUME
+            || root.update_flags & OBJECT_MODIFY == 0 && o.update_flags & ALLOW_INVENTORY_DROP == 0
+        {
             return Err("rez-contents-denied");
         }
-        let owned = o.owner_id == world.agent_id || o.update_flags & OBJECT_YOU_OWNER != 0;
+        let owned = root.update_flags & OBJECT_YOU_OWNER != 0;
         let transfer = if item.owner == world.agent_id && !item.group_owned {
             item.owner_mask
         } else {
@@ -497,7 +500,7 @@ mod tests {
         let target = object(&w);
         let point = w.objects.get(target).unwrap().position;
         let o = w.objects.get_mut(target).unwrap();
-        o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
+        o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY | crate::ui::context::flags::OBJECT_YOU_OWNER;
         o.owner_id = w.agent_id;
         w.inventory.items.get_mut(&item(8110)).unwrap().created_at = 1;
         let drop = prepare(&w, item(8110), Vec3::ZERO, (point, Some(target)), true, true, true).unwrap();
@@ -513,6 +516,7 @@ mod tests {
         assert!(task.creation_date > 1);
         assert_eq!(original.created_at, 1);
         w.objects.get_mut(target).unwrap().owner_id = item(8990);
+        w.objects.get_mut(target).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
         assert_eq!(
             prepare(&w, item(8110), Vec3::ZERO, (point, Some(target)), true, false, true).err(),
             Some("rez-transfer-denied")
@@ -524,6 +528,33 @@ mod tests {
         );
         // No permission to edit the support is needed for ordinary rez.
         assert!(prepare(&w, item(8100), Vec3::ZERO, (point, Some(target)), false, false, true).is_ok());
+    }
+
+    #[test]
+    fn shared_contents_drop_inherits_root_rights_and_retains_transfer_restrictions() {
+        use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_YOU_OWNER};
+        let mut w = world();
+        let root = object(&w);
+        let child = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let root_id = w.objects.get(root).unwrap().key.local_id;
+        let o = w.objects.get_mut(root).unwrap();
+        o.owner_id = item(8990);
+        o.update_flags = OBJECT_MODIFY;
+        let o = w.objects.get_mut(child).unwrap();
+        o.parent_id = root_id;
+        o.owner_id = item(8990);
+        o.update_flags = 0;
+        assert!(target_allowed(&w, child, &w.inventory.items[&item(8100)], true).is_ok());
+        assert_eq!(
+            target_allowed(&w, child, &w.inventory.items[&item(8110)], true),
+            Err("rez-transfer-denied")
+        );
+        w.objects.get_mut(root).unwrap().update_flags = 0;
+        w.objects.get_mut(child).unwrap().update_flags = OBJECT_MODIFY | OBJECT_YOU_OWNER;
+        assert_eq!(
+            target_allowed(&w, child, &w.inventory.items[&item(8100)], true),
+            Err("rez-contents-denied")
+        );
     }
 
     #[test]

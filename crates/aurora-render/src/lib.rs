@@ -7,9 +7,11 @@
 
 pub mod arena;
 pub mod bc7;
+mod bloom;
 mod dof;
 mod drawn_pick;
 pub mod frame_priority;
+pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
 mod helpers;
@@ -205,6 +207,11 @@ mod shader_tests {
     #[test]
     fn glow_shader_is_valid() {
         validate(include_str!("shaders/glow.wgsl"));
+    }
+
+    #[test]
+    fn bloom_shader_is_valid() {
+        validate(include_str!("shaders/bloom.wgsl"));
     }
 
     #[test]

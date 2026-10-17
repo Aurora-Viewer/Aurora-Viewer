@@ -143,12 +143,15 @@ impl BuildTool {
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?
     pub fn contents_editable(&self, world: &World, idx: usize) -> bool {
+        if !self.can_modify(world, idx) {
+            return false;
+        }
         let Some(o) = world.objects.get(idx) else { return false };
         let Some(p) = self.props.get(&o.full_id) else {
             return o.owner_id == world.agent_id;
         };
         let member = !p.group_id.is_nil() && world.groups.is_member(&p.group_id);
-        p.owner_mask & perm::MODIFY != 0 && (p.owner_id == world.agent_id || member)
+        p.owner_id == world.agent_id || member
     }
 
     /// "New script": RezScript of a default script

@@ -15,7 +15,9 @@ mod covenant;
 mod dialogs;
 mod environment;
 mod experiences;
-mod files;
+pub(crate) mod files;
+/// The FS:PP import of a CSV list, also the estate lists'.
+pub(crate) use access::import_csv;
 mod general;
 mod manage;
 mod media;

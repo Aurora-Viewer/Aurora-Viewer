@@ -31,6 +31,50 @@ pub mod estate_flags {
 /// and the Linden estates (isLindenEstate).
 pub const ESTATE_LAST_LINDEN: u32 = 5;
 
+/// `ESTATE_ACCESS_*` flags of `estateaccessdelta` (llregionflags.h).
+pub mod estate_access {
+    pub const APPLY_TO_ALL_ESTATES: u32 = 1 << 0;
+    pub const APPLY_TO_MANAGED_ESTATES: u32 = 1 << 1;
+    pub const ALLOWED_AGENT_ADD: u32 = 1 << 2;
+    pub const ALLOWED_AGENT_REMOVE: u32 = 1 << 3;
+    pub const ALLOWED_GROUP_ADD: u32 = 1 << 4;
+    pub const ALLOWED_GROUP_REMOVE: u32 = 1 << 5;
+    pub const BANNED_AGENT_ADD: u32 = 1 << 6;
+    pub const BANNED_AGENT_REMOVE: u32 = 1 << 7;
+    pub const MANAGER_ADD: u32 = 1 << 8;
+    pub const MANAGER_REMOVE: u32 = 1 << 9;
+    pub const NO_REPLY: u32 = 1 << 10;
+}
+
+/// The estate lists' limits on Second Life (ESTATE_MAX_MANAGERS,
+/// ESTATE_MAX_ACCESS_IDS, ESTATE_MAX_GROUP_IDS, ESTATE_MAX_BANNED_IDS).
+pub const ESTATE_MAX_MANAGERS: usize = 20;
+pub const ESTATE_MAX_ACCESS_IDS: usize = 500;
+pub const ESTATE_MAX_GROUP_IDS: usize = 63;
+pub const ESTATE_MAX_BANNED_IDS: usize = 750;
+
+/// The flags of each `estateaccessdelta` of one change
+/// (LLPanelEstateAccess::accessCoreConfirm): `NO_REPLY` on all but the last,
+/// so that the simulator answers once. An import sends each one alone
+/// (importListCallback): `batch` false, no `NO_REPLY`.
+pub fn access_delta_flags(flags: u32, count: usize, batch: bool) -> Vec<u32> {
+    (0..count)
+        .map(|i| {
+            if batch && i + 1 != count {
+                flags | estate_access::NO_REPLY
+            } else {
+                flags & !estate_access::NO_REPLY
+            }
+        })
+        .collect()
+}
+
+/// `estateaccessdelta`'s strings (sendEstateAccessDelta): who asks, the
+/// flags (`"%u"`), the resident or group changed.
+pub fn access_delta_strings(agent: Uuid, flags: u32, id: Uuid) -> Vec<String> {
+    vec![agent.hyphenated().to_string(), flags.to_string(), id.hyphenated().to_string()]
+}
+
 /// ESimStatID (llviewerstats.h): the stats of SimStats the window reads.
 pub mod sim_stat {
     pub const TIME_DILATION: u32 = 0;
@@ -479,6 +523,18 @@ pub enum EstateCommand {
     },
     /// "Bake Terrain" (callbackBakeTerrain): `terrain` with "bake".
     BakeTerrain { handle: RegionHandle },
+    /// A change of the Access panel's lists (accessCoreConfirm,
+    /// importListCallback): one `estateaccessdelta` per resident or group,
+    /// with the flags `access_delta_flags` gives.
+    AccessDelta {
+        handle: RegionHandle,
+        flags: u32,
+        ids: Vec<Uuid>,
+        batch: bool,
+    },
+    /// The lists again (LLPanelEstateAccess::updateLists), once the
+    /// simulator answered a change with `setaccess`.
+    RefreshAccess { handle: RegionHandle },
 }
 
 /// What the simulator answered.
@@ -493,6 +549,9 @@ pub enum EstateEvent {
         handle: RegionHandle,
         access: Option<Arc<EstateAccess>>,
     },
+    /// `setaccess` of the last invoice: the lists changed
+    /// (LLDispatchSetEstateAccess).
+    AccessChanged { handle: RegionHandle },
     /// RegionExperiences (None: absent or refused).
     Experiences {
         handle: RegionHandle,
@@ -543,6 +602,23 @@ mod tests {
         assert!(parse_estate_update_info(&s[..4]).is_none());
         assert_eq!(parameter_string(b"104123\0"), "104123");
         assert_eq!(parameter_string(b""), "");
+    }
+
+    /// accessCoreConfirm answers once for a change of several residents;
+    /// an import asks an answer of each.
+    #[test]
+    fn access_delta_flags_reply_once() {
+        use estate_access::*;
+        let f = BANNED_AGENT_ADD | APPLY_TO_ALL_ESTATES;
+        assert_eq!(access_delta_flags(f, 3, true), [f | NO_REPLY, f | NO_REPLY, f]);
+        assert_eq!(access_delta_flags(f, 1, true), [f]);
+        assert_eq!(access_delta_flags(f, 2, false), [f, f]);
+        assert!(access_delta_flags(f, 0, true).is_empty());
+        let s = access_delta_strings(Uuid::from_u128(1), ALLOWED_GROUP_ADD, Uuid::from_u128(2));
+        assert_eq!(
+            s,
+            ["00000000-0000-0000-0000-000000000001", "16", "00000000-0000-0000-0000-000000000002"]
+        );
     }
 
     #[test]

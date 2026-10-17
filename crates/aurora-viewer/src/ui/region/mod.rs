@@ -6,12 +6,12 @@
 //! from a resident, whom the simulator does not send them). The pieces are
 //! About Land's (`ui/sheet.rs`); the data are `world/estate.rs`'s. Who may
 //! manage the estate can look at it as a resident would ("View as").
-//! People comes with the next steps of the redesign.
 
 mod confirm;
 mod draft;
 mod manage;
 mod overview;
+mod people;
 
 use crate::theme::Palette;
 use crate::ui::sheet::{self, PageTab};
@@ -22,6 +22,8 @@ use crate::world::estate::{self, Role};
 use aurora_net::RegionHandle;
 pub(crate) use confirm::Ask;
 use egui::Vec2;
+pub use people::PeopleDemo;
+pub(crate) use people::{List as PeopleList, PeopleAsk};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -127,6 +129,8 @@ pub struct RegionUi {
     /// "Manage": its sections' changes and navigation, for `manage_region`.
     manage: manage::ManageState,
     manage_region: Option<RegionHandle>,
+    /// "People": its lists' searches, selections, pickers and dialogs.
+    people: people::PeopleState,
     /// The question or notice on screen.
     ask: Option<Ask>,
     /// The terrain textures' picker.
@@ -167,6 +171,11 @@ impl RegionUi {
         self.manage.demo = Some(manage);
     }
 
+    /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
+    pub fn demo_people(&mut self, people: PeopleDemo) {
+        self.people.demo = Some(people);
+    }
+
     /// Show the floater; `open` is the panel flag, `map` the mini-map's
     /// image of the region, `avatars` the profile pictures, `images` the
     /// textures. True when `settings` changed.
@@ -188,6 +197,7 @@ impl RegionUi {
                 self.was_open = false;
                 self.ask = None;
                 self.texture.open = false;
+                self.people.reset();
                 world.estate.close();
             }
             return false;
@@ -205,6 +215,7 @@ impl RegionUi {
                 demo,
                 ..Default::default()
             };
+            self.people.reset();
             self.manage_region = Some(handle);
             self.ask = None;
         }
@@ -230,14 +241,13 @@ impl RegionUi {
                 .into_iter()
                 .filter(|pg| *pg != Page::People || view.role != Role::Resident)
                 .collect();
-            let later = aurora_i18n::tr!("common-not-available-in-aurora-yet");
             let tabs: Vec<PageTab<'_, Page>> = pages
                 .iter()
                 .map(|pg| PageTab {
                     page: *pg,
                     icon: pg.icon(),
                     label: pg.label(),
-                    disabled: (*pg == Page::People).then_some(later),
+                    disabled: None,
                 })
                 .collect();
             let role = (view.role != Role::Resident && !compact).then(|| sheet::ViewAs {
@@ -247,8 +257,8 @@ impl RegionUi {
                 // the mockup lights the choice in the accent
                 accent: true,
             });
-            // People comes with the next steps
-            if self.page == Page::People {
+            // a resident's window has no People page
+            if !pages.contains(&self.page) {
                 self.page = Page::Overview;
             }
             sheet::page_tabs(ui, p, &tabs, &mut self.page, role, &mut self.as_resident);
@@ -266,6 +276,19 @@ impl RegionUi {
                     ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
                     manage::demo(self, &view, world);
                     manage::show(ui, p, self, &view, world, images, compact);
+                }
+                Page::People => {
+                    egui::ScrollArea::vertical()
+                        .id_salt("region_estate_people")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width() - 6.0);
+                            // compact, the header keeps only the region's name
+                            overview::header(ui, p, self, &view, world, &pics, compact, compact);
+                            ui.add_space((12.0 - ui.spacing().item_spacing.y).max(0.0));
+                            people::show(ui, p, self, &view, world, avatars, images, compact);
+                            ui.add_space(4.0);
+                        });
                 }
                 _ => {
                     egui::ScrollArea::vertical()
@@ -288,6 +311,7 @@ impl RegionUi {
             manage::picked_texture(self, &view, world, asset);
         }
         self.wanted_images.extend(self.texture.wanted_images.drain());
+        people::dialogs(ctx, p, self, &view, world);
         let changed = confirm::show(ctx, p, self, &view, world);
         if changed {
             settings.confirm_object_bonus = self.confirm_object_bonus;
