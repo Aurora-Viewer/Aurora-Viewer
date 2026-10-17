@@ -75,7 +75,7 @@ pub fn inventory_drag_enabled() -> bool {
 pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
     let aurora = catalogue::child(inv, inv.root, catalogue::AURORA).unwrap_or(id(1));
     let root = catalogue::root(inv).unwrap_or(id(2));
-    let objects = catalogue::child(inv, aurora, catalogue::OBJECTS_LIBRARY).unwrap_or(id(4));
+    let objects = catalogue::child(inv, root, "Objects").unwrap_or(id(4));
     inv.created_folders(vec![
         InvFolder {
             id: aurora,
@@ -93,8 +93,8 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
         },
         InvFolder {
             id: objects,
-            parent: aurora,
-            name: catalogue::OBJECTS_LIBRARY.into(),
+            parent: root,
+            name: "Objects".into(),
             type_default: -1,
             ..Default::default()
         },
@@ -106,6 +106,20 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
             ..Default::default()
         },
     ]);
+    inv.created_folders(
+        catalogue::DEFAULT_FOLDERS
+            .into_iter()
+            .enumerate()
+            .filter(|(_, name)| *name != "Objects")
+            .map(|(n, name)| InvFolder {
+                id: id(30 + n as u128),
+                parent: root,
+                name: name.into(),
+                type_default: -1,
+                ..Default::default()
+            })
+            .collect(),
+    );
     let labels = [
         aurora_i18n::tr!("texture-library-demo-wood"),
         aurora_i18n::tr!("texture-library-demo-stone"),
@@ -204,6 +218,26 @@ pub fn seed(inv: &mut Inventory, scene: &mut Scene, agent: Uuid, empty: bool) {
             } else {
                 0x7fffffff
             },
+            next_owner_mask: 0x7fffffff,
+            ..Default::default()
+        });
+    }
+    for (n, kind) in [20, 1, 7, 3, 10].into_iter().enumerate() {
+        let folder = ["Animations", "Sounds", "Notecards", "Landmarks", "Scripts"][n];
+        items.push(InvItem {
+            id: id(950 + n as u128),
+            parent: if empty {
+                id(3)
+            } else {
+                catalogue::child(inv, root, folder).unwrap_or(root)
+            },
+            asset_type: kind,
+            inv_type: if kind == 20 { 19 } else { kind },
+            name: folder.into(),
+            owner: agent,
+            creator: agent,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
             next_owner_mask: 0x7fffffff,
             ..Default::default()
         });

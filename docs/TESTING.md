@@ -1807,7 +1807,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact texture/material/object library with synthetic inventory and thumbnails. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
@@ -1824,18 +1824,23 @@ vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
 dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 
 `AURORA_DEMO_TEXTURE_LIBRARY`: `vertical` and `horizontal` open the corresponding
-presentation at frame 600; `inventory` also reveals the actual library folder
+presentation at frame 600; `types` and `types-horizontal` also open the checked
+type menu at frame 650 for screenshots; `inventory` also reveals the actual library folder
 in inventory, `search` filters stone PBR materials (including a nested polished
 folder), and `empty` keeps the sample resources outside the empty library. `drop` performs a real card drag onto the
 modifiable demo surface at (480, 430), for a 1280 × 800 window. Library scenarios
 make demo objects modifiable so manual surface drops can also be exercised.
 `objects` and `objects-horizontal` show the Objects filter, with a thumbnail,
 single-object and coalesced-object fallback icons, and a no-copy group with an image.
-The synthetic inventory uses both `#Aurora/Textures Library` and
-`#Aurora/Objects Library`, each containing textures, materials and objects.
+The synthetic inventory uses `#Aurora/Aurora Library` with eight conventional
+folders and mixed actual types in nested folders. The five new types include
+empty document/player fixtures; real asset playback and teleport need human
+grid validation.
 `objects-inventory` also reveals actual object rows in inventory: the group
 must use the same multi-cube icon as its library card. The folder picker lists
-both roots and their subfolders; organizing reveals their common parent.
+the unified root and all real descendants; organizing reveals Aurora Library.
+Click the type selector twice to open then close it. Check several types and
+combine them with search/folder filters. The type selector only uses multiple checks.
 `objects-drop` drags the first object into the world at frame 650 through the
 inventory rez path, using a projected ground point and an elevated camera
 unless `AURORA_DEMO_CAM` is set (capture at frame 800). The offline simulator stands in with

@@ -33,58 +33,65 @@ fn inventory() -> (Inventory, Uuid, Uuid) {
     let aurora = folder(&mut inv, 3, root, -1, catalogue::AURORA);
     let library = folder(&mut inv, 4, aurora, -1, catalogue::LIBRARY);
     let source = folder(&mut inv, 5, root, -1, "Stone");
-    folder(&mut inv, 6, aurora, -1, catalogue::OBJECTS_LIBRARY);
+    for (n, name) in catalogue::DEFAULT_FOLDERS.into_iter().enumerate() {
+        folder(&mut inv, 1000 + n as u128, library, -1, name);
+    }
     (inv, library, source)
 }
 #[test]
-fn texture_library_root_creation_reuses_aurora_and_does_not_repeat() {
+fn library_creates_unified_root_and_default_folders_once() {
     let (mut inv, library, _) = inventory();
-    inv.remove(&[library, Uuid::from_u128(6)]);
+    inv.remove(&[library]);
     let mut ui = LibraryUi::default();
     let mut actions = Vec::new();
     ui.prepare_root(&mut inv, &mut actions);
-    assert_eq!(actions.len(), 1);
-    let Action::Change(change) = &actions[0] else { panic!("creation") };
-    assert_eq!(change.operations.len(), 2);
-    assert!(matches!(&change.operations[0],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::LIBRARY));
-    assert!(
-        matches!(&change.operations[1],Operation::Folder {parent,name,..} if *parent==Uuid::from_u128(3)&&name==catalogue::OBJECTS_LIBRARY)
-    );
+    let [Action::Change(change)] = actions.as_slice() else {
+        panic!("creation")
+    };
+    assert_eq!(change.operations.len(), 9);
+    let Operation::Folder {
+        id: root, parent, name, ..
+    } = &change.operations[0]
+    else {
+        panic!("root")
+    };
+    assert_eq!(*parent, Uuid::from_u128(3));
+    assert_eq!(name, catalogue::LIBRARY);
+    let folders: HashSet<_> = change.operations[1..]
+        .iter()
+        .map(|op| {
+            let Operation::Folder { parent, name, .. } = op else {
+                panic!("default folder")
+            };
+            assert_eq!(parent, root);
+            name.as_str()
+        })
+        .collect();
+    assert_eq!(folders, catalogue::DEFAULT_FOLDERS.into_iter().collect::<HashSet<_>>());
     ui.prepare_root(&mut inv, &mut actions);
-    assert_eq!(actions.len(), 1);
+    assert_eq!(actions.len(), 1, "do not repeat while awaiting server confirmation");
 }
 #[test]
-fn library_creates_only_missing_roots_and_waits_for_the_parent_listing() {
-    for existing in catalogue::LIBRARIES {
-        let (mut inv, library, _) = inventory();
-        inv.remove(&[Uuid::from_u128(6)]);
-        let aurora = inv.folders[&library].info.parent;
-        inv.folders.get_mut(&library).unwrap().info.name = existing.into();
-        let mut ui = LibraryUi::default();
-        let mut actions = Vec::new();
-        inv.folders.get_mut(&aurora).unwrap().state = FetchState::Unknown;
-        ui.prepare_root(&mut inv, &mut actions);
-        assert!(actions.is_empty(), "load the parent before deciding that a root is missing");
-        assert!(inv.queue.iter().any(|(id, _)| *id == aurora));
-        inv.folders.get_mut(&aurora).unwrap().state = FetchState::Fetched;
-        ui.prepare_root(&mut inv, &mut actions);
-        let [Action::Change(change)] = actions.as_slice() else {
-            panic!("missing root creation")
-        };
-        let missing = catalogue::LIBRARIES.into_iter().find(|name| *name != existing).unwrap();
-        assert!(matches!(change.operations.as_slice(), [Operation::Folder { parent, name, .. }] if *parent == aurora && name == missing));
-    }
+fn library_waits_for_listing_and_reuses_defaults_and_legacy_item_ids() {
     let (mut inv, library, _) = inventory();
-    let aurora = inv.folders[&library].info.parent;
     let mut actions = Vec::new();
     LibraryUi::default().prepare_root(&mut inv, &mut actions);
-    assert!(actions.is_empty(), "reuse both existing folders");
-    inv.remove(&[aurora]);
-    LibraryUi::default().prepare_root(&mut inv, &mut actions);
+    assert!(actions.is_empty());
+    inv.folders.get_mut(&library).unwrap().state = FetchState::Unknown;
+    let mut ui = LibraryUi::default();
+    ui.prepare_root(&mut inv, &mut actions);
+    assert!(actions.is_empty());
+    assert!(inv.queue.iter().any(|(id, _)| *id == library));
+    inv.folders.get_mut(&library).unwrap().state = FetchState::Fetched;
+    let textures = catalogue::child(&inv, library, "Textures").unwrap();
+    inv.remove(&[textures]);
+    let legacy = folder(&mut inv, 66, Uuid::from_u128(3), -1, catalogue::LEGACY_TEXTURES);
+    ui.prepare_root(&mut inv, &mut actions);
     let [Action::Change(change)] = actions.as_slice() else {
-        panic!("library tree creation")
+        panic!("adopt legacy folder")
     };
-    assert_eq!(change.operations.len(), 3, "create the parent and both roots together");
+    assert!(matches!(change.operations.as_slice(), [Operation::Patch {id, folder: true, body}]
+        if *id == legacy && body["parent_id"].as_uuid() == library && body["name"].as_str() == "Textures"));
 }
 #[test]
 fn texture_library_presentation_changes_preserve_search_and_selection() {
@@ -292,7 +299,7 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
     use std::sync::Arc;
     let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
     for presentation in [Presentation::Vertical, Presentation::Horizontal] {
-        for kind in [0, 57, 6] {
+        for kind in [0, 57, 6, 1, 7, 3, 20, 10] {
             let (mut inv, library, _) = inventory();
             let item = Uuid::from_u128(80);
             inv.add_items(vec![InvItem {
@@ -372,18 +379,20 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
             }
             assert!(frame(button(source, true), &mut ui).is_empty());
             let actions = frame(button(source, false), &mut ui);
-            if kind == 6 {
-                assert!(actions.is_empty(), "clicking an object only selects it");
+            if !matches!(kind, 0 | 57) {
+                assert!(actions.is_empty(), "non-surface resources only select on single click");
             } else {
                 assert!(matches!(actions.as_slice(), [Action::Apply(id)] if *id == item));
             }
             assert_eq!(ui.selected, Some(item));
             frame(button(source, true), &mut ui);
-            assert!(
-                frame(button(source, false), &mut ui).is_empty(),
-                "the second click opens preview without reapplying"
-            );
-            assert_eq!(ui.windows.iter().any(|window| window.id == item), kind != 6);
+            let opened = frame(button(source, false), &mut ui);
+            if matches!(kind, 0 | 57 | 6) {
+                assert!(opened.is_empty());
+            } else {
+                assert!(matches!(opened.as_slice(), [Action::Open(id)] if *id == item));
+            }
+            assert_eq!(ui.windows.iter().any(|window| window.id == item), matches!(kind, 0 | 57));
         }
     }
 }
@@ -693,4 +702,101 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
     world.inventory.items.get_mut(&items[2]).expect("material").parent = outside;
     frame(Vec::new(), &mut resources, &mut world);
     assert_eq!(resources.windows.len(), 3);
+}
+
+#[test]
+fn library_recent_history_is_per_avatar_and_survives_settings_round_trip() {
+    let mut prefs = Preferences::default();
+    let a = Uuid::from_u128(11);
+    let b = Uuid::from_u128(12);
+    prefs.activate(a);
+    prefs.record(Uuid::from_u128(30));
+    prefs.activate(b);
+    assert!(prefs.recent.is_empty());
+    prefs.record(Uuid::from_u128(31));
+    let json = serde_json::to_string(&prefs).unwrap();
+    let mut prefs: Preferences = serde_json::from_str(&json).unwrap();
+    prefs.activate(a);
+    assert_eq!(prefs.recent, [Uuid::from_u128(30)]);
+    prefs.activate(b);
+    assert_eq!(prefs.recent, [Uuid::from_u128(31)]);
+}
+#[test]
+fn library_multiple_types_combine_with_folder_search_and_recent() {
+    let (mut inv, library, _) = inventory();
+    let objects = catalogue::child(&inv, library, "Objects").unwrap();
+    for (n, kind) in [0, 57, 6, 1, 7, 3, 20, 10].into_iter().enumerate() {
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(50 + n as u128),
+            parent: objects,
+            asset_type: kind,
+            asset_id: Uuid::from_u128(150 + n as u128),
+            name: format!("Resource {n}"),
+            ..Default::default()
+        }]);
+    }
+    let mut ui = LibraryUi::default();
+    ui.catalogue.prepare(&mut inv);
+    ui.types = Some(HashSet::from([ResourceKind::Texture, ResourceKind::Script]));
+    ui.folder = Some(objects);
+    let mut prefs = Preferences::default();
+    assert_eq!(ui.filtered(&prefs).len(), 2);
+    ui.search = "7".into();
+    assert_eq!(ui.filtered(&prefs).len(), 1);
+    ui.search.clear();
+    prefs.record(Uuid::from_u128(57));
+    ui.scope = Scope::Recent;
+    assert_eq!(ui.filtered(&prefs).len(), 1);
+    ui.types = Some(HashSet::new());
+    assert!(ui.filtered(&prefs).is_empty());
+}
+
+#[test]
+fn library_multiple_type_selector_toggles_closed() {
+    let ctx = egui::Context::default();
+    let mut ui = LibraryUi::default();
+    let mut frame = 0;
+    let mut draw = |events| {
+        frame += 1;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(frame as f64 / 60.0),
+                events,
+                ..Default::default()
+            },
+            |host| {
+                host.horizontal(|host| ui.filters(host, &crate::theme::Theme::default().palette(), &Preferences::default()));
+            },
+        );
+        output.textures_delta.clear();
+    };
+    for _ in 0..8 {
+        draw(Vec::new());
+    }
+    let point = ctx
+        .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("library_type_selector")))
+        .unwrap();
+    let open = || {
+        ctx.data(|d| d.get_temp::<bool>(egui::Id::new("library_type_menu_open")))
+            .unwrap_or(false)
+    };
+    for expected in [true, false] {
+        for pressed in [true, false] {
+            draw(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
+        draw(Vec::new());
+        assert_eq!(open(), expected, "selector must toggle its own popup");
+        for _ in 0..24 {
+            draw(Vec::new());
+        }
+    }
 }

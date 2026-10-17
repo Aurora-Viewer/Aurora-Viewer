@@ -7820,7 +7820,7 @@ shape-param-11001-max = Plus élevé
 texture-library-title = Bibliothèque
 texture-library-side = Afficher sur le côté
 texture-library-bottom = Afficher en bas
-texture-library-empty = Placez des textures, matériaux ou objets dans #Aurora/Textures Library ou #Aurora/Objects Library.
+texture-library-empty = Placez vos ressources dans #Aurora/Aurora Library ou ses sous-dossiers.
 texture-library-preparing = Préparation des dossiers de la bibliothèque…
 texture-library-loading = Chargement des dossiers…
 texture-library-retry = Réessayer
@@ -7854,7 +7854,7 @@ texture-library-demo-linen = Lin naturel
 texture-library-demo-sources = Matériaux de démonstration
 texture-library-folder-error = Certains dossiers n’ont pas pu être chargés.
 texture-library-manage = Organiser dans l’inventaire
-texture-library-content-hint = Déplacez ou copiez des textures, matériaux, objets et dossiers dans #Aurora/Textures Library ou #Aurora/Objects Library. Les deux dossiers et leurs sous-dossiers acceptent les trois types d’items.
+texture-library-content-hint = Les noms de dossiers sont une convention : chaque type peut être rangé partout dans Aurora Library.
 texture-library-demo-polished = Poli
 
 texture-library-click-hint = Cliquez pour appliquer aux faces sélectionnées en mode édition.
@@ -8130,3 +8130,14 @@ picker-empty-library = Votre librairie Aurora est vide.
 
 build-link-pending = Liaison demandée — en attente du simulateur.
 build-link-unconfirmed = La liaison n’a pas été confirmée par le simulateur.
+
+# Unified inventory library type filter
+texture-library-animations = Animations
+texture-library-sounds = Sons
+texture-library-notecards = Notecards
+texture-library-landmarks = Landmarks
+texture-library-scripts = Scripts
+texture-library-types-all = Tous les types
+texture-library-types-none = Désélectionner les types
+texture-library-types-count = { $count } types
+texture-library-open-hint = Double-clic pour ouvrir. Glisser dans le contenu d’un objet, ou Ctrl-glisser sur un objet.

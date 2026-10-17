@@ -129,10 +129,11 @@ are planned or in progress: they are not in the viewer yet.
 - **Arrange it your way**: customizable bottom, left and right toolbars,
   favourites in a menu, row or dock, and classic Legacy layouts available
   in Preferences › Aurora.
-- **A quick library** (`Ctrl+Space`): textures, PBR materials and objects from
-  `#Aurora/Textures Library` and `#Aurora/Objects Library`, with search, folders
-  and favourites. Both folders accept all three item types. Objects show
-  their thumbnail or a single/group icon and can be dragged into the world to rez.
+- **A quick library** (`Ctrl+Space`): textures, PBR materials, objects, animations,
+  sounds, notecards, landmarks and scripts from `#Aurora/Aurora Library`, with
+  search, folders, favourites and recent use. Check several actual item types
+  at once; folder names are only conventions. Objects can be dragged into the
+  world to rez, while documents and media use their native editors and players.
 - **People and places at a glance**: redesigned resident and group profiles,
   a People window for friends, groups, contact sets, recent and blocked
   residents, and a world map with floating controls.

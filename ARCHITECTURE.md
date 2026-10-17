@@ -165,13 +165,15 @@ inside the inventory's auxiliary window list (nil root, no tree); they retain
 their own drafts, save acknowledgements and close confirmations, and opening
 the same item raises/restores it. Resource, notecard and script integration
 tests exercise the shared placement with their actual floaters.
-`ui/texture_library/catalogue.rs` caches the `#Aurora/Textures Library` and
-`#Aurora/Objects Library` subtrees as one catalogue
-by inventory generation, includes only actual texture/material/object items and real
-folders/subfolders, and excludes all links and the bridge's sibling data.
-Both roots accept every supported type and appear in the folder filter; the
-organize action reveals their common `#Aurora` parent. Missing roots are created
-only after fetching the parent's children, reusing either existing root.
+`ui/texture_library/catalogue.rs` caches the `#Aurora/Aurora Library` subtree
+by inventory generation. Textures, materials, objects, animations, sounds,
+notecards, landmarks and scripts are classified by actual asset type, in any
+real descendant folder. Links and the bridge's sibling data are excluded.
+The eight English default folder names are conventions. Missing defaults are
+created only after fetching the parent listing; old library folders move under
+the unified root without changing item IDs. A checked type menu combines types
+with OR, then folder/search/favorites/recent with AND. Non-surface cards open existing native
+players, document editors or landmark profiles.
 `previews.rs` assembles bounded, revisioned PBR models on workers
 and draws them with the importer's shared GPU preview. `app/texture_library.rs`
 routes inventory mutations, library clicks on selected edit faces and
@@ -182,7 +184,9 @@ rez drag path (`app/inventory_drag.rs`), including permission checks and no-copy
 Inventory rows, pickers, properties, embedded items, Marketplace and task contents
 share a flags-aware icon selector for single/coalesced objects.
 `Settings::texture_library`
-persists presentation, favorites and recent resources. Ctrl+Space and the
+persists presentation, favorites and 32 deduplicated recent resources per avatar.
+Recent use is recorded for application, rez, contents insertion, document opening,
+playback and landmark teleport, rather than texture/material preview or selection. Ctrl+Space and the
 customizable toolbar command toggle the current floater. `demo_texture_library.rs`
 provides actual synthetic inventory folders, tileable textures and PBR materials offline.
 Inventory texture previews retain the real item as drag cargo, sharing that
