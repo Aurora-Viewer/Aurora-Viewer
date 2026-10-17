@@ -1114,6 +1114,22 @@ fn pbr_occlusion_now() -> bool {
     PbrOcclusion::from_env().applied(secs)
 }
 
+/// Whether this frame takes GTAO's indirect light, the setting being `on`
+/// (AURORA_SSIL).
+fn gtao_indirect_now(on: bool) -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    crate::gtao::Indirect::from_env().applied(on, secs)
+}
+
+/// Whether this frame takes the specular occlusion of GTAO's bent normal
+/// (with GTAO shown; AURORA_GTAO_SPECULAR).
+fn gtao_specular_now() -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    crate::gtao::SpecularOcclusion::from_env().applied(secs)
+}
+
 /// AURORA_PROFILE: the summary also wants the time each step waited.
 fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -2122,6 +2138,8 @@ impl Backend {
                 },
                 // the contact shadows' mask (contact_shadows.rs)
                 float_tex(13),
+                // GTAO's screen-space indirect light (gtao.rs)
+                float_tex(14),
             ],
         });
         let records_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -3107,7 +3125,13 @@ impl Backend {
                 }
             })
         };
-        let gtao = (s.ssao > 0 && gtao_ao).then(|| gtao.targets(device, &depth_ss, w, h, ao_override.level(s.ao_method)));
+        // with the screen-space indirect light, it reads the previous frame
+        // from the scene copy
+        let indirect = crate::gtao::Indirect::from_env().needed(s.screen_indirect);
+        let gtao = (s.ssao > 0 && gtao_ao).then(|| {
+            let scene = indirect.then_some(&scene_copy);
+            gtao.targets(device, &depth_ss, scene, w, h, ao_override.level(s.ao_method))
+        });
         // the method shown first; `AURORA_AO=alt` switches it each second
         let gtao_shown = gtao.is_some() && !legacy_ao;
         let contact = crate::contact_shadows::Override::from_env()
@@ -3178,7 +3202,8 @@ impl Backend {
                   mirror: &wgpu::TextureView,
                   scene: &wgpu::TextureView,
                   depth: &wgpu::TextureView,
-                  contact: &wgpu::TextureView| {
+                  contact: &wgpu::TextureView,
+                  il: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
@@ -3239,6 +3264,10 @@ impl Backend {
                         binding: 13,
                         resource: wgpu::BindingResource::TextureView(contact),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 14,
+                        resource: wgpu::BindingResource::TextureView(il),
+                    },
                 ],
             })
         };
@@ -3251,9 +3280,25 @@ impl Backend {
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let contact = t.contact.as_ref().map(|c| &c.result).unwrap_or(&dummies.black);
+        let il = t
+            .gtao
+            .as_ref()
+            .and_then(|g| g.indirect.as_ref())
+            .map(|i| &i.result)
+            .unwrap_or(&dummies.black);
         FrameGroups {
-            a: mk("frame a", frame_buffer, ao, water, mirror, &dummies.black, &dummies.depth, contact),
-            b: mk("frame b", frame_buffer, ao, water, mirror, &t.scene_copy, &t.depth_ss, contact),
+            a: mk(
+                "frame a",
+                frame_buffer,
+                ao,
+                water,
+                mirror,
+                &dummies.black,
+                &dummies.depth,
+                contact,
+                il,
+            ),
+            b: mk("frame b", frame_buffer, ao, water, mirror, &t.scene_copy, &t.depth_ss, contact, il),
             refl: [
                 mk(
                     "frame water reflection",
@@ -3263,6 +3308,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                     &dummies.black,
                 ),
                 mk(
@@ -3274,6 +3320,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.black,
                 ),
                 mk(
                     "frame probe capture",
@@ -3283,6 +3330,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                     &dummies.black,
                 ),
                 mk(
@@ -3294,6 +3342,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.black,
                 ),
                 mk(
                     "frame impostor 1",
@@ -3303,6 +3352,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                     &dummies.black,
                 ),
                 mk(
@@ -3314,6 +3364,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.black,
                 ),
                 mk(
                     "frame drawn pick",
@@ -3323,6 +3374,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     &dummies.depth,
+                    &dummies.black,
                     &dummies.black,
                 ),
             ],
@@ -3484,6 +3536,7 @@ impl Backend {
             || (s.aa == AntiAliasing::Smaa) != (self.settings.aa == AntiAliasing::Smaa)
             || s.ssao.min(1) != self.settings.ssao.min(1)
             || s.ao_method != self.settings.ao_method
+            || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || s.mirror_scale != self.settings.mirror_scale;
@@ -4179,6 +4232,13 @@ impl Backend {
             if do_water_refl { 1.0 } else { 0.0 },
             0.0,
         ];
+        // the reflections occluded along GTAO's bent normal
+        // (specular_occlusion, common.wgsl)
+        main.sky_ll[3] = if self.targets.gtao_shown && gtao_specular_now() { 1.0 } else { 0.0 };
+        // GTAO's indirect light this frame (screen_indirect, common.wgsl)
+        let indirect_now = self.targets.gtao_shown
+            && self.targets.gtao.as_ref().is_some_and(|g| g.indirect.is_some())
+            && gtao_indirect_now(self.settings.screen_indirect);
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
@@ -4232,6 +4292,10 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
+        // (common.wgsl SCREEN_INDIRECT)
+        if indirect_now {
+            main.light_sets.mode[2] |= 0x400;
+        }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
@@ -4417,7 +4481,10 @@ impl Backend {
             self.contact.write(&self.queue, t, light);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
-            self.gtao.write(&self.queue, t, f.proj);
+            let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
+            let intensity = crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity);
+            self.gtao
+                .write(&self.queue, t, f.proj, crate::gtao::reprojection(f.view, prev), intensity);
         } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {
@@ -5027,7 +5094,7 @@ impl Backend {
         mark(&mut encoder, MARK_DEPTH_END);
         // ---- SSAO
         if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
-            self.gtao.encode(&mut encoder, t);
+            self.gtao.encode(&mut encoder, t, indirect_now);
         } else if let (Some((raw, blurred, _, _)), Some((bg_ssao, bg_blur))) = (&self.targets.ao, &self.ssao_groups) {
             for (view, pipe, bg, label) in [
                 (raw, &self.ssao.ssao, bg_ssao, "ssao"),

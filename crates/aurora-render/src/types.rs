@@ -612,6 +612,11 @@ pub struct RenderSettings {
     pub ssao: u8,
     /// How the occlusion `ssao` turns on is computed.
     pub ao_method: AoMethod,
+    /// With GTAO: its occlusion as a visibility bitmask and one bounce of
+    /// light from the surfaces around (gtao.rs, `main_bitmask`).
+    pub screen_indirect: bool,
+    /// Its strength (1 = one physical bounce of a Lambert surface).
+    pub screen_indirect_intensity: f32,
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
@@ -641,6 +646,8 @@ impl Default for RenderSettings {
             shadow_resolution: 2048,
             ssao: 1,
             ao_method: AoMethod::Legacy,
+            screen_indirect: false,
+            screen_indirect_intensity: 1.0,
             contact_shadows: false,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
