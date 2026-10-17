@@ -776,7 +776,7 @@ fn map_label(slot: usize) -> &'static str {
     }
 }
 fn camera_hint(ui: &mut egui::Ui, p: &Palette) {
-    ui.label(RichText::new(aurora_i18n::tr!("import-preview-gestures")).small().color(p.muted));
+    ui.label(RichText::new(aurora_i18n::tr!("import-preview-gestures")).color(p.muted));
 }
 fn preview_camera_controls(ui: &mut egui::Ui, p: &Palette, view: &mut aurora_render::preview::View) -> egui::Response {
     let response = action_button(

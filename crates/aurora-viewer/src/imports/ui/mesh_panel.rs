@@ -19,12 +19,12 @@ pub(super) fn show(
 ) {
     let top = ui.cursor().top();
     let width = ui.available_width();
+    let metadata_width = (width - 278.0).max(240.0);
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(
-            Vec2::new((width - 278.0).max(240.0), 170.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| metadata(ui, entry),
-        );
+        ui.allocate_ui_with_layout(Vec2::new(metadata_width, 170.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_min_width(metadata_width);
+            metadata(ui, entry);
+        });
         ui.horizontal_top(|ui| {
             preview(ui, p, entry, prefs, 230.0, 170.0, actions);
             ui.vertical(|ui| {
@@ -75,7 +75,6 @@ fn mesh_summary(ui: &mut egui::Ui, p: &Palette, draft: &mesh::Draft) {
                 instances = draft.scene.instances.len(),
                 triangles = draft.scene.models.iter().map(|m| m.triangles()).sum::<usize>()
             ))
-            .small()
             .color(p.muted),
         );
     });
@@ -87,7 +86,7 @@ fn mesh_summary(ui: &mut egui::Ui, p: &Palette, draft: &mesh::Draft) {
                 ("simulation_cost", aurora_i18n::tr!("import-server-cost")),
                 ("physics_cost", aurora_i18n::tr!("import-physics-cost")),
             ] {
-                ui.label(RichText::new(format!("{label}  {:.3}", quote.data[key].as_f64())).small());
+                ui.label(RichText::new(format!("{label}  {:.3}", quote.data[key].as_f64())));
             }
         });
     }
@@ -190,7 +189,7 @@ fn preview(
         response.rect.left_top() + Vec2::splat(8.0),
         egui::Align2::LEFT_TOP,
         aurora_i18n::tr!("import-lod-level", level = lod_label(draft.preview_lod)),
-        egui::TextStyle::Small.resolve(ui.style()),
+        egui::TextStyle::Body.resolve(ui.style()),
         p.muted,
     );
     let canvas_rect = response.rect;
@@ -203,8 +202,8 @@ fn preview(
     }
     let mut hint_painter = ui.painter().clone();
     let hint = hint_painter.layout(
-        aurora_i18n::tr!("import-preview-camera-help").to_owned(),
-        egui::TextStyle::Small.resolve(ui.style()),
+        aurora_i18n::tr!("import-preview-gestures").to_owned(),
+        egui::TextStyle::Body.resolve(ui.style()),
         p.muted,
         width,
     );
@@ -384,21 +383,17 @@ fn mesh_controls(
                             }
                         }
                         if let Some(count) = actual {
-                            ui.label(
-                                RichText::new(aurora_i18n::tr!(
-                                    "import-lod-count-short",
-                                    count = aurora_i18n::number(count as f64, 0)
-                                ))
-                                .small(),
-                            );
+                            ui.label(RichText::new(aurora_i18n::tr!(
+                                "import-lod-count-short",
+                                count = aurora_i18n::number(count as f64, 0)
+                            )));
                             if level < 3 {
                                 ui.label(
                                     RichText::new(aurora_i18n::tr!(
                                         "import-lod-retained",
                                         percent = aurora_i18n::number(count as f64 * 100.0 / triangles.max(1) as f64, 1)
                                     ))
-                                    .small()
-                                    .color(p.muted_dim),
+                                    .color(p.muted),
                                 );
                             }
                         }
@@ -425,7 +420,7 @@ fn mesh_controls(
             ui.horizontal_wrapped(|ui| {
                 checkbox(ui, p, &mut draft.options.normals, aurora_i18n::tr!("import-generate-normals"));
                 ui.add_enabled_ui(draft.options.normals, |ui| {
-                    ui.label(RichText::new(aurora_i18n::tr!("import-crease-angle")).small());
+                    ui.label(RichText::new(aurora_i18n::tr!("import-crease-angle")));
                     ui.add_sized(
                         Vec2::new(62.0, 26.0),
                         egui::DragValue::new(&mut draft.options.crease)
@@ -489,15 +484,16 @@ fn mesh_controls(
             widgets::divider(ui, p);
             checkbox(ui, p, &mut draft.options.decompose, aurora_i18n::tr!("import-collision-step-hulls"));
             ui.add_enabled_ui(draft.options.decompose, |ui| {
+                let column_width = (ui.available_width() - 5.0 * ui.spacing().item_spacing.x) / 6.0;
                 ui.horizontal_top(|ui| {
-                    physics_column(ui, 130.0, aurora_i18n::tr!("import-fill-mode"), |ui| {
+                    physics_column(ui, column_width, aurora_i18n::tr!("import-fill-mode"), |ui| {
                         let labels = [
                             aurora_i18n::tr!("import-fill-flood"),
                             aurora_i18n::tr!("import-fill-surface"),
                             aurora_i18n::tr!("import-fill-raycast"),
                         ];
                         egui::ComboBox::from_id_salt("physics_fill")
-                            .width(120.0)
+                            .width((column_width - 8.0).min(120.0))
                             .truncate()
                             .selected_text(labels[draft.options.fill_mode.min(2) as usize])
                             .show_ui(ui, |ui| {
@@ -506,31 +502,31 @@ fn mesh_controls(
                                 }
                             });
                     });
-                    physics_column(ui, 92.0, aurora_i18n::tr!("import-voxel-resolution"), |ui| {
+                    physics_column(ui, column_width, aurora_i18n::tr!("import-voxel-resolution"), |ui| {
                         ui.add_sized(
                             Vec2::new(90.0, 26.0),
                             egui::DragValue::new(&mut draft.options.resolution).range(1000..=16000000),
                         );
                     });
-                    physics_column(ui, 98.0, aurora_i18n::tr!("import-max-hulls"), |ui| {
+                    physics_column(ui, column_width, aurora_i18n::tr!("import-max-hulls"), |ui| {
                         ui.add_sized(
                             Vec2::new(76.0, 26.0),
                             egui::DragValue::new(&mut draft.options.max_hulls).range(1..=256),
                         );
                     });
-                    physics_column(ui, 104.0, aurora_i18n::tr!("import-hull-vertices"), |ui| {
+                    physics_column(ui, column_width, aurora_i18n::tr!("import-hull-vertices"), |ui| {
                         ui.add_sized(
                             Vec2::new(76.0, 26.0),
                             egui::DragValue::new(&mut draft.options.max_vertices).range(3..=256),
                         );
                     });
-                    physics_column(ui, 90.0, aurora_i18n::tr!("import-error-tolerance"), |ui| {
+                    physics_column(ui, column_width, aurora_i18n::tr!("import-error-tolerance"), |ui| {
                         ui.add_sized(
                             Vec2::new(76.0, 26.0),
                             egui::DragValue::new(&mut draft.options.tolerance).range(0.0001..=99.0).speed(0.001),
                         );
                     });
-                    physics_column(ui, 78.0, "", |ui| {
+                    physics_column(ui, column_width, "", |ui| {
                         if flat_button(ui, p, aurora_i18n::tr!("import-collision-analyze")).clicked() {
                             changed = true;
                         }
@@ -587,10 +583,12 @@ fn mesh_controls(
 }
 
 fn physics_column(ui: &mut egui::Ui, width: f32, label: &str, body: impl FnOnce(&mut egui::Ui)) {
-    ui.allocate_ui_with_layout(Vec2::new(width, 50.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+    ui.allocate_ui_with_layout(Vec2::new(width, 84.0), egui::Layout::top_down(egui::Align::Min), |ui| {
         ui.set_width(width);
-        ui.add_sized(Vec2::new(width, 18.0), egui::Label::new(RichText::new(label).small()).truncate())
-            .on_hover_text(label);
+        ui.allocate_ui_with_layout(Vec2::new(width, 52.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_min_height(52.0);
+            ui.add(egui::Label::new(label).wrap()).on_hover_text(label);
+        });
         body(ui);
     });
 }

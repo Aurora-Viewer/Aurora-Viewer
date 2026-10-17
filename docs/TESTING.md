@@ -2314,6 +2314,10 @@ uses a synthetic weighted cube and the ordinary geometry/preview worker.
 `mesh`, `mesh-options` and `mesh-physics` exercise the compact LOD rows,
 Options and the two-step collision workflow. Check the metadata/preview
 header, vertical tools/settings popup, five tabs and fixed model/fee summary.
+All mesh-inspector text must use at least the normal checkbox-label size,
+including gesture help, LOD results/percentages, collision captions, Avatar
+counts and quote metrics. Check that LOD rows remain on one line in the wider
+mesh window and collision captions wrap without reducing their font size.
 Avatar exposes dependent weights/positions/scale-lock controls, -3..3 m Z
 offset, selectable joints and read-only per-model positions/conflicts.
 Journal contains actual load/preparation/validation messages. Detailed mode

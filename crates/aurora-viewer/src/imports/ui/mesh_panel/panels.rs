@@ -110,11 +110,7 @@ pub(super) fn avatar_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &
                 } else {
                     0
                 };
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("import-avatar-conflicts", count = conflicts, joints = count))
-                        .small()
-                        .color(p.muted),
-                );
+                ui.label(RichText::new(aurora_i18n::tr!("import-avatar-conflicts", count = conflicts, joints = count)).color(p.muted));
             },
         );
         ui.vertical(|ui| {

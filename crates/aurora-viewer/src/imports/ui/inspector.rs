@@ -508,7 +508,8 @@ pub(super) fn dimensions(choice: Choice) -> (Vec2, Vec2) {
         Choice::Texture => (Vec2::new(820.0, 630.0), Vec2::new(740.0, 560.0)),
         Choice::Animation => (Vec2::new(780.0, 700.0), Vec2::new(760.0, 620.0)),
         Choice::Material => (Vec2::new(580.0, 790.0), Vec2::new(560.0, 720.0)),
-        Choice::Mesh | Choice::Local => (Vec2::new(900.0, 720.0), Vec2::new(880.0, 580.0)),
+        Choice::Mesh => (Vec2::new(1040.0, 720.0), Vec2::new(1020.0, 580.0)),
+        Choice::Local => (Vec2::new(900.0, 720.0), Vec2::new(880.0, 580.0)),
         Choice::Bulk => (Vec2::new(900.0, 760.0), Vec2::new(880.0, 580.0)),
     }
 }
