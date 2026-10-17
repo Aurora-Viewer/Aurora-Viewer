@@ -18,7 +18,7 @@ pub(super) struct Inspection {
 impl BuildTool {
     /// Reset on selection/asset/tool changes, retain across editing sections.
     /// Called every frame, including after the window is closed.
-    pub fn sync_mesh_inspector(&mut self, world: &World, scene: &mut Scene) {
+    pub fn sync_mesh_inspector(&mut self, world: &mut World, scene: &mut Scene) {
         let primary = self.selection.first().copied();
         let asset = primary
             .and_then(|k| world.objects.index_of(&k))
@@ -229,30 +229,30 @@ mod tests {
         let mut tool = BuildTool::default();
         tool.open_build(Tool::Edit);
         tool.click_select(&mut world, &settings, Some(idx), false);
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         tool.out.clear();
         tool.set_inspected_mesh_lod(Some(1));
         tool.tab = 1;
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         assert_eq!(tool.ui.mesh_inspection.level, Some(1));
         assert!(tool.out.is_empty());
         tool.tab = 5;
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         assert_eq!(tool.ui.mesh_inspection.level, Some(1));
         tool.click_select(&mut world, &settings, Some(other), false);
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         assert_eq!(tool.ui.mesh_inspection.level, None);
         tool.click_select(&mut world, &settings, Some(idx), false);
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         tool.set_inspected_mesh_lod(Some(0));
         tool.set_tool(Tool::Focus);
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         assert_eq!(tool.ui.mesh_inspection.level, None);
         tool.set_tool(Tool::Edit);
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         tool.set_inspected_mesh_lod(Some(3));
         tool.open = false;
-        tool.sync_mesh_inspector(&world, &mut scene);
+        tool.sync_mesh_inspector(&mut world, &mut scene);
         assert_eq!(tool.ui.mesh_inspection.level, None);
     }
 }

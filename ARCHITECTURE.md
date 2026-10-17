@@ -24,6 +24,8 @@ geometry through `scene/mesh_inspection.rs`. It retains only the inspected
 mesh's four asynchronous geometry requests and a transient per-object LOD
 override shared by full sync, parallel planning and LOD checks. Neither the
 inspection choice nor the informational distances are simulator properties.
+Override changes set the local render invalidation as well as the dirty queue:
+the frame scheduler discards dirty entries whose render state is unchanged.
 
 ## File tree
 

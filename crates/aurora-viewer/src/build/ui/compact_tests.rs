@@ -49,7 +49,7 @@ fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_in_fo
     assert!(!inspector.tool.can_modify(&inspector.world, idx));
     inspector.tool.tab = 5;
     inspector.tool.face_counts.insert(id, 6);
-    inspector.tool.sync_mesh_inspector(&inspector.world, &mut inspector.scene);
+    inspector.tool.sync_mesh_inspector(&mut inspector.world, &mut inspector.scene);
     for _ in 0..5 {
         inspector.show(Vec::new());
     }

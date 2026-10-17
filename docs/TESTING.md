@@ -937,6 +937,12 @@ between the respective footer arrows; select multiple faces to check the list
 and its full hover text. Inspection resets on selection/asset/tool changes or
 closing construction, stays across editing sections, never changes object
 data/global preferences and keeps HUDs at high LOD.
+`mesh-inspector-cycle` switches lowest/high/low/medium/default at frames
+630/655/680/705/730 with the camera stationary. Capture each stage just before
+the next transition. `mesh-inspector-cycle-empty` makes lowest a real empty
+geometry: capture at 645 (no faces), 670 (high restored), and 750 (automatic
+restored). Returning from the empty level must not wait for camera movement,
+object updates or the periodic LOD sweep.
 
 **`AURORA_DEMO_BUILD_FOCUS=off|on`** — focus on the selection before taking
 a handle, with "Follow object while editing" disabled / enabled. With `off`,

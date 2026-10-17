@@ -6534,7 +6534,7 @@ impl App {
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
         }
-        self.build.sync_mesh_inspector(&self.world, &mut self.scene);
+        self.build.sync_mesh_inspector(&mut self.world, &mut self.scene);
         if self.in_world() && self.build.open {
             for idx in self.build.sel_prims(&self.world) {
                 if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
@@ -11955,7 +11955,8 @@ impl ApplicationHandler for App {
                 };
                 if complex && let Some(gfx) = &mut self.gfx {
                     if inspector {
-                        self.scene.install_demo_mesh_inspector(&mut gfx.renderer);
+                        let empty = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector-cycle-empty"));
+                        self.scene.install_demo_mesh_inspector(&mut gfx.renderer, empty);
                     } else {
                         self.scene.install_demo_selection_mesh(&mut gfx.renderer);
                     }

@@ -52,7 +52,7 @@ impl Scene {
 
     /// Mark only changed objects dirty, so forcing/restoring a LOD works even
     /// with a stationary camera and the event-based LOD watcher.
-    pub fn set_mesh_lod_override(&mut self, world: &World, objects: &[ObjKey], level: Option<u8>) {
+    pub fn set_mesh_lod_override(&mut self, world: &mut World, objects: &[ObjKey], level: Option<u8>) {
         let next: HashMap<_, _> = level
             .filter(|&l| l < 4)
             .map(|level| {
@@ -74,7 +74,15 @@ impl Scene {
             return;
         }
         for key in self.mesh_lod_overrides.keys().chain(next.keys()) {
-            if let Some(idx) = world.objects.index_of(key) {
+            if self.mesh_lod_overrides.get(key) != next.get(key)
+                && let Some(idx) = world.objects.index_of(key)
+            {
+                // SyncSets discards dirty entries without a render change.
+                // This local flag also makes restoring an empty LOD immediate;
+                // no simulator update or camera movement is needed.
+                if let Some(object) = world.objects.get_mut_untracked(idx) {
+                    object.render.needs_records = true;
+                }
                 self.sets.dirty.insert(idx);
             }
         }
@@ -124,6 +132,34 @@ pub fn switch_distances(radius: f32, factor: f32) -> Option<[f32; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stationary_frame(scene: &mut Scene, world: &World) -> Vec<usize> {
+        let state = sync_plan::FrameState {
+            gpu: &scene.gpu,
+            geoms: &scene.geoms,
+            textures: &scene.textures,
+            mat_gen: scene.materials.generation,
+            still_huds: true,
+        };
+        scene
+            .sets
+            .frame_list(
+                &world.objects,
+                world.agent_id,
+                1,
+                world.objects.slots.len(),
+                &state,
+                sync_sets::LodChecks::Events {
+                    anchored: &[],
+                    dt: 0.0,
+                    camera_moved: false,
+                },
+            )
+            .items
+            .into_iter()
+            .map(|(idx, _)| idx)
+            .collect()
+    }
 
     fn fixture() -> (World, Scene, usize) {
         let lib = Arc::new(AvatarLibrary::load());
@@ -189,20 +225,49 @@ mod tests {
 
     #[test]
     fn forcing_each_lod_marks_selected_meshes_dirty_and_restores_automatic_without_changing_objects() {
-        let (world, mut scene, idx) = fixture();
+        let (mut world, mut scene, idx) = fixture();
         let object = world.objects.get(idx).unwrap();
-        let scale = object.scale;
+        let (key, scale) = (object.key, object.scale);
         for level in 0..4 {
-            scene.set_mesh_lod_override(&world, &[object.key], Some(level));
+            scene.set_mesh_lod_override(&mut world, &[key], Some(level));
             assert!(scene.sets.dirty.contains(idx));
+            let object = world.objects.get(idx).unwrap();
             assert_eq!(display_lod(&scene.mesh_lod_overrides, object, false, 3), level);
             assert_eq!(display_lod(&scene.mesh_lod_overrides, object, true, 0), 3);
         }
-        scene.set_mesh_lod_override(&world, &[], None);
-        assert_eq!(display_lod(&scene.mesh_lod_overrides, object, false, 2), 2);
+        scene.set_mesh_lod_override(&mut world, &[], None);
+        assert_eq!(display_lod(&scene.mesh_lod_overrides, world.objects.get(idx).unwrap(), false, 2), 2);
         assert_eq!(world.objects.get(idx).unwrap().scale, scale);
-        scene.set_mesh_lod_override(&world, &[object.key], Some(9));
+        scene.set_mesh_lod_override(&mut world, &[key], Some(9));
         assert!(scene.mesh_lod_overrides.is_empty());
+    }
+
+    #[test]
+    fn stationary_mesh_is_scheduled_on_every_lod_change_and_restore_even_after_an_empty_lod() {
+        let (mut world, mut scene, idx) = fixture();
+        let key = world.objects.get(idx).unwrap().key;
+        scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);
+        for object in world.objects.slots.iter_mut().flatten() {
+            object.render.needs_records = false;
+            object.shape_dirty = false;
+            object.material_dirty = false;
+        }
+        assert!(stationary_frame(&mut scene, &world).is_empty());
+        // No moving camera, object updates, materials, or periodic sweep can
+        // rescue a dropped local invalidation here. Lowest has zero triangles.
+        for level in [Some(0), Some(3), Some(1), Some(2), None] {
+            scene.set_mesh_lod_override(&mut world, &[key], level);
+            assert!(
+                stationary_frame(&mut scene, &world).contains(&idx),
+                "LOD {level:?} was not scheduled"
+            );
+            world.objects.get_mut_untracked(idx).unwrap().render.needs_records = false;
+            scene.set_mesh_lod_override(&mut world, &[key], level);
+            assert!(
+                stationary_frame(&mut scene, &world).is_empty(),
+                "unchanged choice was scheduled again"
+            );
+        }
     }
 
     #[test]

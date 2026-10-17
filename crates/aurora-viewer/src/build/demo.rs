@@ -327,8 +327,13 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 "mesh-inspector-medium" => Some(2),
                 "mesh-inspector-low" => Some(1),
                 "mesh-inspector-lowest" => Some(0),
+                "mesh-inspector-cycle" | "mesh-inspector-cycle-empty" => Some(0),
                 _ => None,
             })],
+            270 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(3))],
+            295 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(1))],
+            320 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(2))],
+            345 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(None)],
             _ => Vec::new(),
         };
     }
