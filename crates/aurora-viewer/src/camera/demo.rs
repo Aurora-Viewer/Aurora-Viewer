@@ -17,6 +17,13 @@
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
+//! - `ml-zoom`: into mouselook at 600, right button held at 640 (no zoom
+//!   yet: the normal angle stays until the wheel sets one), 3 wheel clicks in at
+//!   650, released at 680 (the normal angle), held again at 720 (the
+//!   remembered zoom at once), released at 760, a wheel click out at 800
+//!   (leaves mouselook)
+//! - `ml-zoom-alt`: into mouselook at 600, Alt + right click at 640: the
+//!   context menu opens only with "Context menu with Alt + right click"
 //! - `fly`: flying forward from frame 300 (camera lag)
 //! - `sit`: sit on a turning seat with a sit camera at frame 300, stand up
 //!   at 700 (demo::sit_events)
@@ -219,6 +226,37 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
         "ml" => match frame {
             600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
             604 | 608 | 612 | 620 | 640 | 704 | 708 | 712 | 720 | 740 => out.push(Step::Log),
+            _ => {}
+        },
+        "ml-zoom" => match frame {
+            600 => out.extend([Step::ToggleMouselook, Step::Log]),
+            640 | 720 => out.extend([Step::RightButton(true), Step::Log]),
+            650 => out.extend([Step::Wheel(-3.0), Step::Log]),
+            680 | 760 => out.extend([Step::RightButton(false), Step::Log]),
+            800 => out.extend([Step::Wheel(1.0), Step::Log]),
+            _ => {}
+        },
+        "ml-zoom-alt" => match frame {
+            600 => out.extend([Step::ToggleMouselook, Step::Log]),
+            640 => out.extend([
+                Step::Mods {
+                    ctrl: false,
+                    shift: false,
+                    alt: true,
+                },
+                Step::RightButton(true),
+                Step::Log,
+            ]),
+            650 => out.extend([
+                Step::RightButton(false),
+                Step::Mods {
+                    ctrl: false,
+                    shift: false,
+                    alt: false,
+                },
+                Step::Log,
+            ]),
+            700 => out.push(Step::Log),
             _ => {}
         },
         "wheel" => match frame {

@@ -62,7 +62,16 @@ impl Demo {
     ) -> Option<Vec<NetEvent>> {
         match command {
             NetCommand::BridgeQuery { request, query, .. } => {
-                use aurora_net::bridge::query::{Altitude, Query, Reply, ScriptInfo};
+                use aurora_net::bridge::query::{Altitude, ObjectInfo, Query, Reply, ScriptInfo};
+                let scripts = |object| ScriptInfo {
+                    object,
+                    name: "Demo scripted object".into(),
+                    running: 12,
+                    total: 17,
+                    memory: 17 * 65536,
+                    cpu_seconds: 0.00125,
+                    character_seconds: 0.0002,
+                };
                 let result = if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "error") {
                     Err(aurora_i18n::tr!("bridge-script-info-missing").into())
                 } else {
@@ -73,15 +82,31 @@ impl Demo {
                                 .map(|id| Altitude { avatar: *id, z: 2048.0 })
                                 .collect(),
                         ),
-                        Query::ScriptInfo(object) => Reply::ScriptInfo(ScriptInfo {
-                            object: *object,
-                            name: "Demo scripted object".into(),
-                            running: 12,
-                            total: 17,
-                            memory: 17 * 65536,
-                            cpu_seconds: 0.00125,
-                            character_seconds: 0.0002,
-                        }),
+                        Query::ScriptInfo(object) => Reply::ScriptInfo(scripts(*object)),
+                        Query::ObjectInfo(object) => Reply::ObjectInfo(Box::new(ObjectInfo {
+                            scripts: scripts(*object),
+                            description: "Demo object, extended information".into(),
+                            root: *object,
+                            prims: 3,
+                            land_impact: 2,
+                            inventory: 19,
+                            velocity: [0.0; 3],
+                            position: [128.0, 128.0, 26.0],
+                            rotation: [0.0, 0.0, 0.0, 1.0],
+                            rotation_degrees: [0.0; 3],
+                            angular_velocity: [0.0; 3],
+                            creator: world.agent_id,
+                            owner: world.agent_id,
+                            previous_owner: Uuid::nil(),
+                            rezzer: world.agent_id,
+                            group: Uuid::nil(),
+                            created: "2026-10-17T10:00:00Z".into(),
+                            rezzed: "2026-10-17T11:00:00Z".into(),
+                            pathfinding: 0,
+                            attachment_point: 0,
+                            temporary_attachment: false,
+                            observer_position: [128.0, 124.0, 26.0],
+                        })),
                     })
                 };
                 Some(vec![NetEvent::BridgeQueryReply { request: *request, result }])

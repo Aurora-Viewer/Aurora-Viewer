@@ -328,7 +328,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -336,7 +336,14 @@ when unfocused") is ignored during a screenshot.
   close-up, then a very slow orbit (one fiftieth of a mouse pixel per frame)
   until frame 1200; press on our own name plate then drag (steering);
   entering / leaving mouselook (frame 650 shows "Press Esc to return to
-  world view" above the bottom bar); wheel; pulling back in flight; sitting on a
+  world view" above the bottom bar); `ml-zoom`: the right button held in
+  mouselook at 640 (the normal angle stays: no zoom was set with the wheel
+  yet), 3 wheel clicks in at 650 (`fov` in the log drops by 17.2° at once),
+  released at 680 (the normal angle again, exactly), held again at 720 (the
+  zoom at once), released at 760, a wheel click out at 800 (leaves mouselook);
+  `ml-zoom-alt`: Alt + right click in mouselook at 640, no context menu
+  unless Preferences › Camera › Mouselook › "Context menu with Alt + right
+  click" is on; wheel; pulling back in flight; sitting on a
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
@@ -565,7 +572,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
 | `AURORA_DEMO_MOVELOCK=on\|off\|moving\|seated\|error\|timeout\|endpoint` | Aurora bridge creation, confirmed position lock, movement/sitting pause and simulated failure |
-| `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|error` | Bridge altitude correction and object script-information local reports |
+| `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending` | Movement options, local swimming poses and synthetic passage feedback |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
@@ -1559,6 +1566,7 @@ To check with these scenarios:
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
+| `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -1636,6 +1644,17 @@ To check with these scenarios:
   the loading screen (`geometry arena grown ahead behind the loading
   screen` in the log) and no growth happens in the scene any more. Delete
   that file to measure a first visit again.
+- **`AURORA_GPU_OOM=<mb>`** (demo or grid): every allocation of `mb`
+  megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
+  if video memory were full (`0`: all of them): the geometry arena, the
+  draw records, the culling tables, the joint palettes and skin bindings,
+  the texture pages. With `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
+  the vertex arena grows by smaller steps up to 63 MB, then the log says
+  once `vertex arena could not grow past 63 MB (out of video memory
+  (AURORA_GPU_OOM))` and the meshes left over are not drawn; the view keeps
+  drawing and the log holds no `wgpu error` line. Without the variable, a
+  buffer the driver could not make used to be installed anyway, invalid,
+  and every write into it was an error, every frame.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first
@@ -4785,7 +4804,7 @@ Surface-return follow-up: regressions compare automatic entry with an actual und
 Gentler surface-return follow-up (bridge 1.19): actual-LSL evaluation covers command caps at selected speeds 0.5/1/2/5/8 m/s, the 1.5 m/s-per-second vertical command ramp, smaller goals near flotation, bounded goals that still converge, and release/mode-switch/Movelock resets. Its deterministic position tracker is not Havok and cannot establish real acceleration or smoothness. Existing water/gesture/watchdog/ownership, accepted run, remote-anchor and quiet discovery checks remain covered. Human follow-up is the same fall and short underwater ascent tap: the lift should start gently and slow before reaching the configured flotation height; up/down interruption remains available. The viewer must install the compatible 1.19 script into the existing bridge.
 
 
-**`AURORA_DEMO_BRIDGE_QUERY=radar|scripts|error`** — authenticated read-only bridge services (1.20). Set `AURORA_DEMO=1` and use the usual automated-window title/border. The scenario provisions the real offline factory; all BridgeQuery commands receive synthetic replies without using a network endpoint. `radar` adds Sky Visitor with an unknown coarse altitude (1020 m), opens People / Nearby and returns 2048 m through the bridge service; its displayed distance must become approximately 2 km. Known native/coarse heights remain authoritative and are not queried. The demo opens the real radar options to inspect the simple correction toggle without diagnostic counters. `scripts` asks for a demo object at frame 700; local chat must show 12/17 running scripts, 1088 KiB allocated memory, 1.250 ms CPU and 0.200 ms pathfinding (localized decimal separators). `error` produces a safe missing/unavailable-object report rather than a raw HTTP body or private address. Capture at frame 1050 or later, after the factory save/reattach delay. These fixtures cover UI and dispatch, not the real LSL runtime.
+**`AURORA_DEMO_BRIDGE_QUERY=radar|scripts|object|error`** — authenticated read-only bridge services (1.21). Set `AURORA_DEMO=1` and use the usual automated-window title/border. The scenario provisions the real offline factory; all BridgeQuery commands receive synthetic replies without using a network endpoint. `radar` adds Sky Visitor with an unknown coarse altitude (1020 m), opens People / Nearby and returns 2048 m through the bridge service; its displayed distance must become approximately 2 km. Known native/coarse heights remain authoritative and are not queried. The demo opens the real radar options to inspect the simple correction toggle without diagnostic counters. `scripts` asks for a demo object at frame 700; local chat must show 12/17 running scripts, 1088 KiB allocated memory, 1.250 ms CPU and 0.200 ms pathfinding (localized decimal separators). `object` dispatches the real Object information context action at frame 700 and reports the basic script summary followed by all extended object fields (three prims, land impact two, nineteen inventory items, four-metre distance, identity links, UTC timestamps and attachment status), without changing a preference. `error` produces a safe missing/unavailable-object report rather than a raw HTTP body or private address. Capture at frame 1050 or later, after the factory save/reattach delay. These fixtures cover UI and dispatch, not the real LSL runtime.
 
 Read-only bridge unit coverage includes batch/rate limits and fair coverage of a 320-avatar crowd, partial/empty results, strict requested-UUID/numeric/name decoding, known-position priority, fourteen-second expiry, region/session/teleport cleanup, disabled correction, inspection priority/provisioning/timeouts and stale replies. A failed current query triggers only quiet throttled discovery, preserving the confirmed lock and in-flight motor command; obsolete replies cannot initiate recovery. The actual shipped LSL query/auth control flow is also evaluated with deterministic API stubs for bounded requests, token rejection, unavailable targets, unusual names and metric units, asserting no writes to motor globals, sequencing or watchdog. Existing run/water/passage/discovery regression evaluators still apply; this is not a simulator/Havok test.
 

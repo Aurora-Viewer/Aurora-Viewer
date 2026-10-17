@@ -2337,6 +2337,7 @@ ui-contacts-information = Information
 ui-land-mod-information-and-settings-for-the-selected-parcel = Information and settings for the selected parcel
 build-ui-tools-parcel-information = Parcel information
 ui-context-script-information = Script information
+ui-context-object-information = Object information
 ui-place-details-info = Info:
 world-profiles-payment-info-on-file = Payment info on file
 world-profiles-payment-info-used = Payment info used
@@ -4176,6 +4177,8 @@ app-double-click-ground-set = Double-click on the ground: { $action }
 keybinds-orbit-clockwise = Orbit clockwise
 keybinds-orbit-counterclockwise = Orbit counterclockwise
 ui-options-camera-scroll-toward-yourself-to-leave-mouselook = Scroll toward yourself to leave mouselook
+ui-options-camera-alt-right-click-menu = Context menu with Alt + right click
+ui-options-camera-alt-right-click-menu-tip = In mouselook, Alt + right click opens the context menu. A right click alone zooms while it is held, and the mouse wheel sets that zoom.
 ui-options-camera-show-how-to-leave = Show how to leave
 ui-options-camera-show-how-to-leave-tip = "Press Esc to return to world view" at the bottom of the screen in mouselook
 ui-options-camera-show-interface = Show the interface in mouselook
@@ -7837,6 +7840,33 @@ bridge-script-info-missing = The object is no longer available or is outside the
 bridge-script-info-result = Script info for “{ $name }”: { $running }/{ $total } running scripts; { $memory } KiB allocated memory; { $time } ms CPU. { $pathfinding }
 bridge-script-info-pathfinding = Pathfinding CPU: { $time } ms.
 bridge-script-info-failed = Script information unavailable: { $reason }
+bridge-object-info-loading = Retrieving object information through the Aurora bridge…
+bridge-object-info-region = Object information is only available for an object in your current region.
+bridge-object-info-failed = Object information unavailable: { $reason }
+bridge-object-info-group-owned = Group-owned
+bridge-object-info-result =
+    Object information for “{ $name }”:
+    Object ID: { $object }
+    Description: { $description }
+    Root prim: { $root }
+    Prim count: { $prims }
+    Land impact: { $impact }
+    Inventory items: { $inventory }
+    Velocity: { $velocity } m/s
+    Position: { $position } ({ $distance } m)
+    Rotation: { $rotation } ({ $degrees }°)
+    Angular velocity: { $angular } rad/s
+    Creator: { $creator }
+    Owner: { $owner }
+    Previous owner: { $previous }
+    Rezzed by: { $rezzer }
+    Group: { $group }
+    Creation time: { $created }
+    Rez time: { $rezzed }
+    Pathfinding type: { $pathfinding }
+    Attachment point: { $attachment }
+    Temporarily attached: { $temporary }
+    Your current position: { $observer }
 bridge-query-timeout = The bridge did not return the requested information in time. Try again.
 bridge-query-interrupted = The information request was interrupted by a region or bridge connection change. Try again.
 ao-bootstrap-interrupted = An unfinished AO import already exists in #Aurora. Review it in inventory before retrying.

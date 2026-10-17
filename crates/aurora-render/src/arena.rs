@@ -1,11 +1,13 @@
 //! GPU memory arenas: one big vertex buffer, one big u16 index buffer and
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
 
+use crate::gpu_alloc::{Backoff, fallback_capacities, try_buffer};
 use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use crate::upload::{StagedMesh, UploadQueue};
 use crate::writes::GpuWrites;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 
 /// Best-fit range allocator with coalescing (units are elements): the
 /// smallest free range that fits, the lowest one among equals, found
@@ -143,6 +145,34 @@ fn ahead_capacity(old: u32, wanted: u32, max: u32) -> Option<u32> {
     (cap > old).then_some(cap)
 }
 
+/// The (vertices, indices) a growth ahead of need may ask for within
+/// `allowance` bytes of new buffers: the wish when it fits, else the growth
+/// of both buffers scaled down alike (a new buffer is whole, the old one is
+/// freed after the copy). A buffer kept at its size is not replaced.
+fn ahead_within(vertices: (u32, u32), indices: (u32, u32), allowance: u64) -> (u32, u32) {
+    let (vold, vwant) = (vertices.0, vertices.1.max(vertices.0));
+    let (iold, iwant) = (indices.0, indices.1.max(indices.0));
+    let bytes = |v: u32, i: u32| {
+        let vb = if v > vold { v as u64 * (VERTEX_SIZE + SKIN_SIZE) } else { 0 };
+        let ib = if i > iold { i as u64 * 2 } else { 0 };
+        vb + ib
+    };
+    if bytes(vwant, iwant) <= allowance {
+        return (vwant, iwant);
+    }
+    // the largest fraction of the growth that fits, by halving
+    let mut f = 0.5;
+    while f > 1.0 / 64.0 {
+        let v = vold + ((vwant - vold) as f64 * f) as u32;
+        let i = (iold + ((iwant - iold) as f64 * f) as u32) & !1;
+        if bytes(v, i) <= allowance {
+            return (v, i);
+        }
+        f /= 2.0;
+    }
+    (vold, iold)
+}
+
 /// A full buffer is replaced by one twice its size, its content copied on
 /// the GPU. What holds the frame then is not the copy (32 MB: 0.2 ms) but
 /// the first use of the new buffer: fresh video memory costs about 21 µs
@@ -165,6 +195,8 @@ pub struct GeometryArena {
     max_buffer_size: u64,
     /// A growth was refused at the largest buffer: said once.
     full: bool,
+    /// A growth failed for want of video memory: when to try again.
+    backoff: Backoff,
 }
 
 const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
@@ -182,16 +214,25 @@ impl GeometryArena {
             indices: RangeAllocator::new(icap),
             max_buffer_size,
             full: false,
+            backoff: Backoff::default(),
         }
     }
 
     fn make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer(&Self::desc(label, size, usage))
+    }
+
+    fn try_make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> Result<wgpu::Buffer, String> {
+        try_buffer(device, &Self::desc(label, size, usage))
+    }
+
+    fn desc(label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::BufferDescriptor<'_> {
+        wgpu::BufferDescriptor {
             label: Some(label),
             size,
             usage: usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        })
+        }
     }
 
     pub fn bytes(&self) -> u64 {
@@ -228,22 +269,52 @@ impl GeometryArena {
 
     fn grow_vertices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.vertices.capacity();
-        match grown_capacity(old, need, self.max_vertices()) {
-            Some(cap) => {
-                self.grow_vertices_to(device, writes, uploads, cap);
-                true
-            }
-            None => {
-                self.refused("vertex", old as u64 * VERTEX_SIZE);
-                false
+        let Some(cap) = grown_capacity(old, need, self.max_vertices()) else {
+            self.refused("vertex", old as u64 * VERTEX_SIZE);
+            return false;
+        };
+        let now = Instant::now();
+        if !self.backoff.ready(now) {
+            return false;
+        }
+        let mut why = String::new();
+        for c in fallback_capacities(old, need, cap, 1) {
+            match self.grow_vertices_to(device, writes, uploads, c) {
+                Ok(()) => {
+                    self.backoff.succeeded();
+                    return true;
+                }
+                Err(e) => why = e,
             }
         }
+        self.out_of_memory("vertex", old as u64 * VERTEX_SIZE, &why, now);
+        false
     }
 
-    fn grow_vertices_to(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, new_cap: u32) {
+    /// A growth failed at every size down to what the mesh needed: the
+    /// arena keeps its buffers (an invalid one in their place failed every
+    /// write after it), the meshes that do not fit are not drawn, and the
+    /// growth is tried again a little later.
+    fn out_of_memory(&mut self, what: &str, bytes: u64, why: &str, now: Instant) {
+        if !self.backoff.waiting() {
+            log::warn!(
+                "{what} arena could not grow past {} MB ({why}): video memory is full, the meshes that do not fit are not drawn until it grows",
+                bytes / (1024 * 1024)
+            );
+        }
+        self.backoff.failed(now);
+    }
+
+    fn grow_vertices_to(
+        &mut self,
+        device: &wgpu::Device,
+        writes: &mut GpuWrites,
+        uploads: &mut UploadQueue,
+        new_cap: u32,
+    ) -> Result<(), String> {
         let old = self.vertices.capacity();
-        let nb = Self::make(device, "vertex arena", new_cap as u64 * VERTEX_SIZE, wgpu::BufferUsages::VERTEX);
-        let ns = Self::make(device, "skin arena", new_cap as u64 * SKIN_SIZE, wgpu::BufferUsages::VERTEX);
+        let nb = Self::try_make(device, "vertex arena", new_cap as u64 * VERTEX_SIZE, wgpu::BufferUsages::VERTEX)?;
+        let ns = Self::try_make(device, "skin arena", new_cap as u64 * SKIN_SIZE, wgpu::BufferUsages::VERTEX)?;
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow vb") });
         enc.copy_buffer_to_buffer(&self.vertex_buffer, 0, &nb, 0, old as u64 * VERTEX_SIZE);
         enc.copy_buffer_to_buffer(&self.skin_buffer, 0, &ns, 0, old as u64 * SKIN_SIZE);
@@ -254,39 +325,60 @@ impl GeometryArena {
         self.skin_buffer = ns;
         self.vertices.grow(new_cap);
         log::info!("vertex arena grown to {} MB", new_cap as u64 * VERTEX_SIZE / (1024 * 1024));
+        Ok(())
     }
 
     fn grow_indices(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, need: u32) -> bool {
         let old = self.indices.capacity();
-        match grown_capacity(old, need, self.max_indices()) {
-            Some(cap) => {
-                self.grow_indices_to(device, writes, uploads, cap);
-                true
-            }
-            None => {
-                self.refused("index", old as u64 * 2);
-                false
+        let Some(cap) = grown_capacity(old, need, self.max_indices()) else {
+            self.refused("index", old as u64 * 2);
+            return false;
+        };
+        let now = Instant::now();
+        if !self.backoff.ready(now) {
+            return false;
+        }
+        let mut why = String::new();
+        for c in fallback_capacities(old, need, cap, 2) {
+            match self.grow_indices_to(device, writes, uploads, c) {
+                Ok(()) => {
+                    self.backoff.succeeded();
+                    return true;
+                }
+                Err(e) => why = e,
             }
         }
+        self.out_of_memory("index", old as u64 * 2, &why, now);
+        false
     }
 
-    fn grow_indices_to(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, uploads: &mut UploadQueue, new_cap: u32) {
+    fn grow_indices_to(
+        &mut self,
+        device: &wgpu::Device,
+        writes: &mut GpuWrites,
+        uploads: &mut UploadQueue,
+        new_cap: u32,
+    ) -> Result<(), String> {
         let old = self.indices.capacity();
-        let nb = Self::make(device, "index arena", new_cap as u64 * 2, wgpu::BufferUsages::INDEX);
+        let nb = Self::try_make(device, "index arena", new_cap as u64 * 2, wgpu::BufferUsages::INDEX)?;
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("grow ib") });
         enc.copy_buffer_to_buffer(&self.index_buffer, 0, &nb, 0, old as u64 * 2);
         uploads.flush(writes, Some(enc));
         self.index_buffer = nb;
         self.indices.grow(new_cap);
         log::info!("index arena grown to {} MB", new_cap as u64 * 2 / (1024 * 1024));
+        Ok(())
     }
 
     /// Grow the arena now, while nothing it costs can be seen (a loading or
     /// teleport screen), so that it holds `vertices` and `indices` without
     /// growing again in the middle of the scene: each buffer is replaced at
-    /// most once, by one of the size asked for (within the largest buffer
-    /// of the GPU). Nothing happens for a buffer that is already as large.
-    /// Returns whether a buffer was replaced.
+    /// most once, by one of the size asked for, within the largest buffer
+    /// of the GPU and the `allowance` bytes the video memory budget leaves
+    /// (when the driver reports one). Nothing happens for a buffer that is
+    /// already as large, nor when its allocation fails: the arena then
+    /// grows on need, as without this. Returns whether a buffer was
+    /// replaced.
     pub fn grow_ahead(
         &mut self,
         device: &wgpu::Device,
@@ -294,15 +386,30 @@ impl GeometryArena {
         uploads: &mut UploadQueue,
         vertices: u32,
         indices: u32,
+        allowance: Option<u64>,
     ) -> bool {
+        let (vertices, indices) = match allowance {
+            Some(bytes) => ahead_within((self.vertices.capacity(), vertices), (self.indices.capacity(), indices & !1), bytes),
+            None => (vertices, indices & !1),
+        };
         let mut grown = false;
         if let Some(cap) = ahead_capacity(self.vertices.capacity(), vertices, self.max_vertices()) {
-            self.grow_vertices_to(device, writes, uploads, cap);
-            grown = true;
+            match self.grow_vertices_to(device, writes, uploads, cap) {
+                Ok(()) => grown = true,
+                Err(e) => log::warn!(
+                    "vertex arena not grown ahead to {} MB ({e}): it grows on need",
+                    cap as u64 * VERTEX_SIZE / (1024 * 1024)
+                ),
+            }
         }
-        if let Some(cap) = ahead_capacity(self.indices.capacity(), indices & !1, self.max_indices()) {
-            self.grow_indices_to(device, writes, uploads, cap);
-            grown = true;
+        if let Some(cap) = ahead_capacity(self.indices.capacity(), indices, self.max_indices()) {
+            match self.grow_indices_to(device, writes, uploads, cap) {
+                Ok(()) => grown = true,
+                Err(e) => log::warn!(
+                    "index arena not grown ahead to {} MB ({e}): it grows on need",
+                    cap as u64 * 2 / (1024 * 1024)
+                ),
+            }
         }
         grown
     }
@@ -485,6 +592,8 @@ pub struct RecordStore {
     pub generation: u64,
     /// Bytes sent by the last `flush` (AURORA_PROFILE summary).
     pub uploaded: u64,
+    /// The buffer could not grow (video memory full): when to try again.
+    backoff: Backoff,
 }
 
 impl RecordStore {
@@ -499,17 +608,22 @@ impl RecordStore {
             live: 0,
             generation: 0,
             uploaded: 0,
+            backoff: Backoff::default(),
         }
     }
 
     fn make(device: &wgpu::Device, cap: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        device.create_buffer(&Self::desc(cap))
+    }
+
+    fn desc(cap: usize) -> wgpu::BufferDescriptor<'static> {
+        wgpu::BufferDescriptor {
             label: Some("draw records"),
             size: (cap * std::mem::size_of::<DrawRecord>()) as u64,
             // COPY_SRC: a grown buffer takes over this one's records by a GPU copy
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
-        })
+        }
     }
 
     pub fn live(&self) -> u32 {
@@ -599,7 +713,8 @@ impl RecordStore {
         let rec_size = std::mem::size_of::<DrawRecord>();
         self.uploaded = 0;
         let needed = self.mirror.len() * rec_size;
-        if needed as u64 > self.buffer.size() {
+        let now = Instant::now();
+        if needed as u64 > self.buffer.size() && self.backoff.ready(now) {
             let old_size = self.buffer.size();
             let mut cap = old_size as usize / rec_size;
             while cap * rec_size < needed {
@@ -612,22 +727,49 @@ impl RecordStore {
             // after the copy; the new records are all dirty. Writing the
             // whole mirror again through the queue copied 8 to 32 MB on
             // the main thread each time a region outgrew the buffer.
-            let grown = Self::make(device, cap);
-            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("grow draw records"),
-            });
-            enc.copy_buffer_to_buffer(&self.buffer, 0, &grown, 0, old_size);
-            writes.submit(vec![enc]);
-            self.buffer = grown;
-            self.generation += 1;
+            match try_buffer(device, &Self::desc(cap)) {
+                Ok(grown) => {
+                    self.backoff.succeeded();
+                    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("grow draw records"),
+                    });
+                    enc.copy_buffer_to_buffer(&self.buffer, 0, &grown, 0, old_size);
+                    writes.submit(vec![enc]);
+                    self.buffer = grown;
+                    self.generation += 1;
+                }
+                Err(e) => {
+                    if !self.backoff.waiting() {
+                        log::warn!(
+                            "draw records not grown to {} MB ({e}): video memory is full, the records past {} are not drawn until they fit",
+                            (cap * rec_size) >> 20,
+                            old_size as usize / rec_size
+                        );
+                    }
+                    self.backoff.failed(now);
+                }
+            }
         }
         if !self.dirty.any() {
             return;
         }
+        // (records past the buffer wait for its growth, which copies the
+        // old ones and keeps the rest dirty)
+        let fits = self.buffer.size() as usize / rec_size;
+        let mut waiting = Vec::new();
         for range in self.dirty.take_ranges(self.mirror.len()) {
+            if range.end > fits {
+                waiting.push(range.start.max(fits)..range.end);
+            }
+            let range = range.start.min(fits)..range.end.min(fits);
             for (first, records) in self.mirror.runs(range.start, range.end) {
                 writes.write_buffer(&self.buffer, (first * rec_size) as u64, bytemuck::cast_slice(records));
                 self.uploaded += std::mem::size_of_val(records) as u64;
+            }
+        }
+        for r in waiting {
+            for k in r {
+                self.dirty.mark(k);
             }
         }
     }
@@ -906,6 +1048,25 @@ mod tests {
         assert_eq!(ahead_capacity(2 * step, 20 * step - 7, max), Some(20 * step));
         assert_eq!(ahead_capacity(2 * step, 100 * step, max), Some(max));
         assert_eq!(ahead_capacity(max, 100 * step, max), None);
+    }
+
+    #[test]
+    fn growth_ahead_stays_within_the_budget_left() {
+        const MB: u64 = 1 << 20;
+        let per_vertex = VERTEX_SIZE + SKIN_SIZE;
+        // the log's case: 2 M → 30.4 M vertices, 8 M → 138 M indices
+        let (v, i) = ((2_097_152, 30_408_704), (8_388_608, 138_412_032));
+        let whole = 30_408_704 * per_vertex + 138_412_032 * 2;
+        assert_eq!(ahead_within(v, i, whole), (v.1, i.1));
+        // half of it allowed: a fraction of each growth, within it
+        let (nv, ni) = ahead_within(v, i, whole / 2);
+        assert!(nv > v.0 && nv < v.1 && ni > i.0 && ni < i.1 && ni % 2 == 0);
+        assert!(nv as u64 * per_vertex + ni as u64 * 2 <= whole / 2);
+        // nothing left: no growth ahead at all
+        assert_eq!(ahead_within(v, i, 0), (v.0, i.0));
+        assert_eq!(ahead_within(v, i, 10 * MB), (v.0, i.0));
+        // a buffer already large enough costs nothing
+        assert_eq!(ahead_within((5, 5), (8, 1000), 2000), (5, 1000));
     }
 
     #[test]

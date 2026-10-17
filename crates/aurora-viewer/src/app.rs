@@ -152,6 +152,9 @@ const NUDGE_TIME: f32 = 0.25;
 /// steering with the left button (rad/s).
 const STEER_TURN_RATE: f32 = 9.0;
 const FLY_TIME: f32 = 0.5;
+/// Radians: a change of the viewing angle below this is not sent in AgentFOV
+/// (an eased FOV zoom creeps toward its target for ever).
+const FOV_SEND_EPSILON: f32 = 1e-3;
 
 struct LogoData {
     ui: egui::ColorImage,
@@ -236,6 +239,8 @@ pub struct App {
     prev_dt: f32,
     start: Instant,
     right_drag: bool,
+    /// The camera's vertical angle last sent in AgentFOV.
+    sent_fov: f32,
     /// The system cursor hidden and locked by mouselook or a camera drag.
     cursor_hold: cursor_hold::CursorHold,
     numeric_drag: ui::numeric_drag::NumericDrag,
@@ -828,6 +833,7 @@ impl App {
             prev_dt: 0.0,
             start: Instant::now(),
             right_drag: false,
+            sent_fov: crate::camera::DEFAULT_FOV,
             cursor_hold: Default::default(),
             numeric_drag: Default::default(),
             text_menu: Default::default(),
@@ -2619,14 +2625,7 @@ impl App {
                     }
                 }
                 Step::ToggleMouselook => self.toggle_mouselook(),
-                Step::Wheel(clicks) => {
-                    let was = self.camera.mouselook();
-                    self.camera
-                        .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
-                    if was != self.camera.mouselook() {
-                        self.set_mouselook_grab(!was);
-                    }
-                }
+                Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
                 Step::FollowEvents => {
                     if let Some(handle) = self.world.main_region {
@@ -4370,6 +4369,9 @@ impl App {
         if self.hud_drag.is_some() {
             return;
         }
+        if self.mouselook_right_button(pressed, over_ui) {
+            return;
+        }
         let was_drag = self.right_drag;
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if self.mouse_walks() {
@@ -4383,6 +4385,66 @@ impl App {
             // a click (no drag): context menu
             self.open_context_menu();
         }
+    }
+
+    /// The right button in mouselook (LLToolCompGun::handleRightMouseDown /
+    /// Up): held, it zooms; Alt + right click goes on to the context menu
+    /// only with FSEnableRightclickMenuInMouselook. True when it is handled.
+    fn mouselook_right_button(&mut self, pressed: bool, over_ui: bool) -> bool {
+        if pressed {
+            if !self.camera.mouselook() || over_ui || !self.in_world() {
+                return false;
+            }
+            if !self.alt {
+                let aspect = self.view_aspect();
+                self.camera.press_mouselook_zoom(&self.settings.camera, aspect);
+                return true;
+            }
+            return !self.settings.camera.mouselook_alt_right_menu;
+        }
+        let handled = self.end_mouselook_zoom() || (self.camera.mouselook() && !self.settings.camera.mouselook_alt_right_menu);
+        if handled {
+            // a press from before mouselook ends here too, with no menu
+            self.right_drag = false;
+        }
+        handled
+    }
+
+    /// The held mouselook zoom ends: its angle is remembered (saved with the
+    /// settings when it changed). True when it was held.
+    fn end_mouselook_zoom(&mut self) -> bool {
+        let before = self.settings.camera.mouselook_zoom_fov;
+        if !self.camera.release_mouselook_zoom(&mut self.settings.camera) {
+            return false;
+        }
+        if self.settings.camera.mouselook_zoom_fov != before && !self.demo {
+            self.settings.save();
+        }
+        true
+    }
+
+    /// Wheel clicks on the world (SL sign: positive zooms out): the held
+    /// mouselook zoom's angle, or the camera's own use of the wheel.
+    fn camera_wheel(&mut self, clicks: f32) {
+        let aspect = self.view_aspect();
+        if self.camera.scroll_mouselook_zoom(clicks, aspect) {
+            return;
+        }
+        let was = self.camera.mouselook();
+        self.camera
+            .scroll(clicks, self.ctrl, self.shift, &mut self.world.agent, &mut self.settings.camera);
+        if was != self.camera.mouselook() {
+            self.set_mouselook_grab(!was);
+        }
+    }
+
+    /// Width over height of the world view (the camera's limits on its
+    /// viewing angle depend on it).
+    fn view_aspect(&self) -> f32 {
+        self.gfx.as_ref().map_or(16.0 / 9.0, |g| {
+            let (w, h) = g.renderer.size();
+            w as f32 / h.max(1) as f32
+        })
     }
 
     fn on_left_release(&mut self) {
@@ -5514,6 +5576,11 @@ impl App {
             {
                 self.world.agent.follow_seat(p);
             }
+            // mouselook left with the zoom still held (Escape, M, a seat):
+            // the normal angle comes back, the zoomed one is remembered
+            if !self.camera.mouselook() && self.camera.mouselook_zoom_held() {
+                self.end_mouselook_zoom();
+            }
             let frame = crate::camera::FrameInput {
                 dt,
                 now: Instant::now(),
@@ -5756,6 +5823,12 @@ impl App {
             let camera_changed = edit_camera_frame.is_some() || panned;
             if let Some(frame) = edit_camera_frame {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
+            }
+            // every change of the viewing angle goes to the simulator, as
+            // LLViewerCamera::setView (the end of a zoom's easing excepted)
+            if (self.camera.fov_y - self.sent_fov).abs() > FOV_SEND_EPSILON {
+                self.sent_fov = self.camera.fov_y;
+                self.net.send(NetCommand::SetFov(self.sent_fov));
             }
             if camera_changed {
                 view = self.camera.view();
@@ -12702,12 +12775,7 @@ impl ApplicationHandler for App {
                 // avatar's view behind it, or enter mouselook)
                 if !on_media && self.camera.free().is_none() {
                     // SL wheel clicks: positive zooms out
-                    let was = self.camera.mouselook();
-                    self.camera
-                        .scroll(-steps, self.ctrl, self.shift, &mut self.world.agent, &mut self.settings.camera);
-                    if was != self.camera.mouselook() {
-                        self.set_mouselook_grab(!was);
-                    }
+                    self.camera_wheel(-steps);
                 }
             }
             _ => {}

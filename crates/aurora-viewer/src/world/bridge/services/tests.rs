@@ -170,6 +170,104 @@ fn newer_inspections_session_changes_and_timeouts_do_not_publish_old_object_resu
     assert!(s.sync(id(11), Some(1), Some(&rotated)).is_some());
 }
 
+fn object_info(object: Uuid) -> Box<ObjectInfo> {
+    Box::new(ObjectInfo {
+        scripts: ScriptInfo {
+            object,
+            name: "Synthetic extended object".into(),
+            running: 2,
+            total: 3,
+            memory: 196608,
+            cpu_seconds: 0.00125,
+            character_seconds: 0.0002,
+        },
+        description: "Description, with separators | []".into(),
+        root: id(2),
+        prims: 3,
+        land_impact: 2,
+        inventory: 5,
+        velocity: [1.0, -2.0, 0.0],
+        position: [128.0, 130.0, 26.0],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        rotation_degrees: [0.0; 3],
+        angular_velocity: [0.0; 3],
+        creator: id(3),
+        owner: Uuid::nil(),
+        previous_owner: Uuid::nil(),
+        rezzer: id(4),
+        group: id(5),
+        created: "2026-10-17T10:00:00Z".into(),
+        rezzed: "2026-10-17T11:00:00Z".into(),
+        pathfinding: -1,
+        attachment_point: 31,
+        temporary_attachment: true,
+        observer_position: [128.0, 126.0, 26.0],
+    })
+}
+
+#[test]
+fn object_inspection_replaces_a_basic_report_for_the_same_target_and_formats_all_extended_fields() {
+    let (mut s, endpoint, now) = setup();
+    assert!(s.inspect(id(1), now));
+    let old = command_request(s.update(Some(&endpoint), now).0);
+    assert!(s.inspect_object(id(1), now, &HashMap::from([(31, "Center 2".into())])));
+    assert!(!s.inspect_object(id(1), now, &HashMap::from([(31, "Center 2".into())])));
+    assert!(!s.owns(old));
+    let command = s.update(Some(&endpoint), now).0;
+    assert!(matches!(&command, Some(NetCommand::BridgeQuery { query: Query::ObjectInfo(object), .. }) if *object == id(1)));
+    let request = command_request(command);
+    assert!(s.reply(old, Err("obsolete basic report".into()), now).is_none());
+    let message = s
+        .reply(request, Ok(Reply::ObjectInfo(object_info(id(1)))), now)
+        .expect("extended report");
+    for expected in [
+        "Synthetic extended object".to_owned(),
+        "2/3".to_owned(),
+        aurora_i18n::number(192.0, 2),
+        aurora_i18n::number(1.25, 3),
+        aurora_i18n::number(4.0, 3),
+        "Description, with separators | []".to_owned(),
+        id(1).to_string(),
+        id(2).to_string(),
+        format!("secondlife:///app/agent/{}/about", id(3)),
+        id(4).to_string(),
+        format!("secondlife:///app/group/{}/about", id(5)),
+        "2026-10-17T10:00:00Z".to_owned(),
+        "2026-10-17T11:00:00Z".to_owned(),
+        aurora_i18n::tr!("bridge-object-info-group-owned").to_owned(),
+        aurora_i18n::tr!("common-yes").to_owned(),
+        crate::ui::appearance::items::point_name("Center 2").to_owned(),
+    ] {
+        assert!(message.contains(&expected), "missing {expected}");
+    }
+    assert!(message.lines().count() >= 23 && !message.contains("{ $"));
+    assert!(!message.contains(&endpoint.url) && !message.contains(&endpoint.token.to_string()));
+}
+
+#[test]
+fn object_inspection_checks_reply_kind_target_region_rotation_and_timeouts() {
+    let (mut s, endpoint, now) = setup();
+    for reply in [Reply::ObjectInfo(object_info(id(2))), Reply::Altitudes(vec![])] {
+        assert!(s.inspect_object(id(1), now, &HashMap::from([(31, "Center 2".into())])));
+        let request = command_request(s.update(Some(&endpoint), now).0);
+        assert_eq!(
+            s.reply(request, Ok(reply), now).as_deref(),
+            Some(aurora_i18n::tr!("bridge-request-response"))
+        );
+    }
+    s.inspect_object(id(1), now, &HashMap::from([(31, "Center 2".into())]));
+    let request = command_request(s.update(Some(&endpoint), now).0);
+    assert!(s.sync(id(10), Some(2), Some(&endpoint)).is_some());
+    assert!(s.reply(request, Ok(Reply::ObjectInfo(object_info(id(1)))), now).is_none());
+    s.inspect_object(id(1), now, &HashMap::from([(31, "Center 2".into())]));
+    let request = command_request(s.update(Some(&endpoint), now).0);
+    assert_eq!(
+        s.reply(request, Ok(Reply::ObjectInfo(object_info(id(1)))), now + QUERY_TIMEOUT)
+            .as_deref(),
+        Some(aurora_i18n::tr!("bridge-query-timeout"))
+    );
+}
+
 fn radar_world() -> (crate::world::World, RegionHandle, aurora_net::objects::ObjectUpdate) {
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     for event in crate::demo::events() {
