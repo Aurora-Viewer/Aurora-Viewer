@@ -187,6 +187,8 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
                     user: user.as_deref(),
                     exp: &exp,
                     timed: left.is_some(),
+                    mid: None,
+                    group: false,
                     selected: is_sel,
                     can,
                 };

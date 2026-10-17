@@ -1960,7 +1960,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_REZ=<mode>` | Rez by drag and drop from the inventory |
 | `AURORA_DEMO_LAND=<tab>[:role][:classic]` | "About Land" on a page or a tab, as owner, officer, member or visitor |
 | `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` | Objects of the demo parcel, which increase with each answer |
-| `AURORA_DEMO_REGION=overview\|manage[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
+| `AURORA_DEMO_REGION=overview\|manage\|people[:role][:preview][:compact][:section][:pending][:ask-…]` | "Region / Estate" as estate owner, manager or resident |
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
@@ -3019,7 +3019,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each answer of the demo simulator counts that many more: the
   gauge advances on its own at each refresh of the parcel
   (every 15 s with the window open, 1 s after an object is rezzed or removed).
-- **`AURORA_DEMO_REGION=overview|manage[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
+- **`AURORA_DEMO_REGION=overview|manage|people[:owner|:manager|:resident][:preview][:compact][:access|:rules|:terrain][:pending][:ask-…]`**:
   the Region / Estate window opens on the demo region, whose simulator
   answers with the mockup's figures: RegionInfo (limit of 40 avatars, 100
   at most, estate 104 123, no terraforming, pushing limited, voice, resale
@@ -3036,7 +3036,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `resident` gets neither: no People tab, no "View as", no managers nor
   interventions. `preview` opens on "View as" Resident; `compact` opens
   the window 480 px wide (no map, one column, the action buttons as
-  icons). People is greyed until a next step. `manage` opens on Manage
+  icons). `manage` opens on Manage
   (who can come, region rules, terrain and water; the other sections of
   the navigation are greyed): `access`, `rules` or `terrain` scrolls to
   that section, `pending` makes two changes there and scrolls to the bar
@@ -3049,7 +3049,18 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   textures and elevations, which a real simulator sends back in a new
   RegionHandshake, stay shown as sent. A manager sees the bake greyed
   with the amber "estate owner" lock, a resident (or `preview`) the amber
-  banner and a sentence instead of the estate's access.
+  banner and a sentence instead of the estate's access. `people` opens on
+  People, the window 840 px high: the four lists (2 managers, 3 allowed
+  residents, the group "Aurora Builders", 2 banned residents with their
+  ban date, who banned them and their last login). `select` ticks Orion in
+  the allowed residents ("1 selected · Remove…"), `pick` opens the
+  resident picker on them, `ask-ban` asks to ban Orion (this estate / all
+  the estates you own) and `ask-remove` to remove him. The demo simulator
+  applies each `estateaccessdelta`, answers `setaccess` and sends the
+  lists again: what is added, banned or removed shows in the list. A
+  manager sees the managers' list greyed with the amber "estate owner"
+  lock; `preview` shows the card that says the simulator sends the lists
+  to the owner and the managers only.
 - **`AURORA_DEMO_GROUP_PROFILE=1|member|officer|owner|guest[:members|:invite|:notices|:compose|:admin|:identity|:land|:experiences]`**:
   the group profile, as after a click on the group or the owner in "About
   Land". A simulated group server (`demo_group.rs`) answers the members

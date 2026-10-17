@@ -11420,9 +11420,14 @@ impl ApplicationHandler for App {
             // Estate on that page
             if let Some(scenario) = crate::demo::region::scenario() {
                 self.region_ui.demo(scenario.page, scenario.preview, scenario.manage);
+                self.region_ui.demo_people(scenario.people.clone());
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);
                     ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(480.0, 720.0));
+                } else if scenario.page == ui::region::Page::People {
+                    // tall enough for the four lists
+                    let pos = egui::pos2(340.0, 50.0);
+                    ui::widgets::place_floater(&self.egui_ctx, ui::region::WINDOW, pos, egui::vec2(1000.0, 840.0));
                 }
                 self.panels.region_estate = true;
                 self.panels.perf = false;
