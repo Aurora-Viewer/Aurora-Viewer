@@ -1538,7 +1538,12 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
     let out = egui::ScrollArea::vertical()
         .id_salt(("conv", st.selected))
-        .stick_to_bottom(true)
+        .stick_to_bottom(!view.menu_open(ui.ctx()))
+        .scroll_source(if view.menu_open(ui.ctx()) {
+            egui::scroll_area::ScrollSource::NONE
+        } else {
+            Default::default()
+        })
         .auto_shrink([false, false])
         .max_height(height)
         .min_scrolled_height(height)
@@ -1563,8 +1568,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
-            let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
-                let Some(line) = lines.get(row.line) else {
+            let (shift, content) = view.show(ui, viewport, lines, &mut |ui, row, painted| {
+                let Some(line) = row.held.as_deref().or_else(|| lines.get(row.line)) else {
                     return;
                 };
                 let mark = mark.filter(|_| row.hit);
@@ -1577,7 +1582,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     // a card: its own labels and buttons
                     draw(ui);
                 } else {
-                    let seq = clock.first + row.line as u64;
+                    let seq = row.seq;
                     select::row(ui, seq, selection.of_row(seq), painted, draw);
                 }
                 if painted && current == Some(row.line) {
@@ -1599,7 +1604,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             if let Rows::Thread(th) = &mut rows {
                 let first = clock.first;
                 thread::message_menu(ui, &env, th, &content, &drawn, |seq| {
-                    seq.checked_sub(first).and_then(|i| lines.get(i as usize))
+                    view.held_line(seq)
+                        .or_else(|| seq.checked_sub(first).and_then(|i| lines.get(i as usize)))
                 });
             }
             shift

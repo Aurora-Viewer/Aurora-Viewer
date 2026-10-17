@@ -587,6 +587,9 @@ fn the_message_menu_acts() {
         }
         // copy
         h.right_click(text.center());
+        h.world
+            .conversation_line(JANE, line("Bob", BOB, ChatKind::Im, "arriving while copying"));
+        h.settle();
         let row = h.text_rect(aurora_i18n::tr!("ui-chat-copy-message"));
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
@@ -605,12 +608,189 @@ fn the_message_menu_acts() {
         );
         h.settle();
         // quote
+        let text = h.text_rect("hello from Jane");
         h.right_click(text.center());
+        h.world
+            .conversation_line(JANE, line("Bob", BOB, ChatKind::Im, "arriving while quoting"));
+        h.settle();
         h.press_text(aurora_i18n::tr!("ui-chat-quote-message"));
         assert_eq!(h.st.draft_mut(Some(JANE)), "> hello from Jane ", "{style:?}: quote");
         // the author's menu
+        let text = h.text_rect("hello from Jane");
         h.right_click(text.center());
         assert!(h.painted(aurora_i18n::tr!("common-view-profile")), "{style:?}: the author's menu");
+    }
+}
+
+/// Incoming group messages must leave the original sender available to
+/// block, both at the live end and while reading older messages (#557).
+#[test]
+fn incoming_messages_keep_chat_context_menus_open() {
+    for style in ALL {
+        for older in [false, true] {
+            for sender in [false, true] {
+                if !style.workspace() && !sender {
+                    continue;
+                }
+                let mut h = H::new(style);
+                h.world.groups.sessions.entry(GROUP).or_default().group = true;
+                for i in 0..80 {
+                    h.world
+                        .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("earlier message {i}")));
+                    h.world
+                        .conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, &format!("another message {i}")));
+                }
+                h.open(Some(GROUP));
+                for _ in 0..30 {
+                    h.frame(Vec::new());
+                }
+                if older {
+                    let at = h.text_rect("another message 79").center();
+                    h.frame(vec![
+                        egui::Event::PointerMoved(at),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, 250.0),
+                            phase: egui::TouchPhase::Move,
+                            modifiers: Default::default(),
+                        },
+                    ]);
+                    for _ in 0..30 {
+                        h.frame(Vec::new());
+                    }
+                    assert!(!h.painted("another message 79"), "{style:?}: reading older messages");
+                }
+                let bodies: Vec<_> = h.texts.iter().filter(|t| t.source.starts_with("earlier message ")).collect();
+                let body = bodies[bodies.len() / 2];
+                let original = body.source.clone();
+                let at = if sender {
+                    h.texts
+                        .iter()
+                        .filter(|t| t.source == "Jane")
+                        .min_by(|a, b| {
+                            (a.rect.center().y - body.rect.center().y)
+                                .abs()
+                                .total_cmp(&(b.rect.center().y - body.rect.center().y).abs())
+                        })
+                        .unwrap_or_else(|| panic!("{style:?}: Jane's name is painted"))
+                        .rect
+                        .center()
+                } else {
+                    body.rect.center()
+                };
+                h.right_click(at);
+                let block = aurora_i18n::tr!("common-ignore");
+                assert!(h.painted(block), "{style:?}, older={older}, sender={sender}: menu opened");
+                let position = h.text_rect(&original);
+                for i in 0..20 {
+                    h.world
+                        .conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, &format!("incoming message {i}")));
+                    h.frame(Vec::new());
+                    assert!(
+                        h.painted(block),
+                        "{style:?}, older={older}, sender={sender}: menu survives message {i}"
+                    );
+                    assert_eq!(
+                        h.text_rect(&original),
+                        position,
+                        "{style:?}: keep the transcript still while its menu is open"
+                    );
+                }
+                h.press_text(block);
+                assert!(
+                    crate::ui::context::take_requests(&h.frames.ctx)
+                        .iter()
+                        .any(|a| matches!(a, crate::ui::context::CtxAction::ToggleBlock(id) if *id == JANE)),
+                    "{style:?}: block the original sender, not the arriving messages' sender"
+                );
+                assert!(
+                    !egui::Popup::is_any_open(&h.frames.ctx),
+                    "{style:?}: choosing an action closes the menu"
+                );
+                let received = h.world.social.ims.iter().find(|s| s.other == GROUP).expect("group conversation");
+                assert_eq!(received.lines.len(), 181, "{style:?}: every incoming message was received");
+                assert_eq!(
+                    h.st.views[&Some(GROUP)].lines().count(),
+                    received.lines.len(),
+                    "{style:?}: reconcile after closing"
+                );
+                assert_eq!(
+                    h.painted("incoming message 19"),
+                    !older,
+                    "{style:?}: retain live-end or manual-scroll behavior"
+                );
+            }
+        }
+    }
+}
+
+/// A short, bottom-aligned conversation keeps its sender and its message
+/// in sight too, including a new message from that very same sender.
+#[test]
+fn incoming_messages_keep_short_chat_context_menus_open() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.world.groups.sessions.entry(GROUP).or_default().group = true;
+        h.open(Some(GROUP));
+        h.right_click(h.text_rect("Jane").center());
+        let original = h.text_rect("hi builders");
+        for i in 0..3 {
+            h.world
+                .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("short incoming {i}")));
+            h.frame(Vec::new());
+            assert!(h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}: sender menu stays open");
+            assert_eq!(h.text_rect("hi builders"), original, "{style:?}: a short transcript stays still");
+        }
+        h.history_key(egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(!egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: Escape closes the menu");
+        assert!(h.painted("short incoming 2"), "{style:?}: new messages appear after closing");
+    }
+}
+
+/// A busy conversation may evict even the clicked message from its
+/// bounded live buffer; its menu must still act on the original sender.
+#[test]
+fn incoming_messages_keep_evicted_chat_context_menu_targets() {
+    for style in ALL {
+        for sender in [false, true] {
+            if !style.workspace() && !sender {
+                continue;
+            }
+            let mut h = H::new(style);
+            h.world.groups.sessions.entry(GROUP).or_default().group = true;
+            h.open(Some(GROUP));
+            let original = h.text_rect("hi builders");
+            let at = if sender { h.text_rect("Jane").center() } else { original.center() };
+            h.right_click(at);
+            for i in 0..2100 {
+                h.world
+                    .conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, &format!("busy incoming {i}")));
+            }
+            let received = h.world.social.ims.iter().find(|s| s.other == GROUP).expect("group conversation");
+            assert!(
+                received.lines.iter().all(|line| line.text != "hi builders"),
+                "the live buffer evicted the target"
+            );
+            h.settle();
+            assert!(
+                h.painted(aurora_i18n::tr!("common-ignore")),
+                "{style:?}, sender={sender}: menu survives eviction"
+            );
+            assert_eq!(
+                h.text_rect("hi builders"),
+                original,
+                "{style:?}: keep the visible row until the menu closes"
+            );
+            h.press_text(aurora_i18n::tr!("common-ignore"));
+            assert!(
+                crate::ui::context::take_requests(&h.frames.ctx)
+                    .iter()
+                    .any(|a| matches!(a, crate::ui::context::CtxAction::ToggleBlock(id) if *id == JANE)),
+                "{style:?}: the retained menu still ignores Jane"
+            );
+            assert!(!egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: the menu closes");
+            assert!(h.painted("busy incoming 2099"), "{style:?}: resume at the live end");
+        }
     }
 }
 
