@@ -80,6 +80,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "ReadOfflineMsgs",
     "RegionExperiences",
     "RegionSchedule",
+    // LLViewerRegionImpl::buildCapabilityNames: parcel UUID lookup before
+    // About Land's script resources, and remote place profiles.
+    "RemoteParcelRequest",
     "RenderMaterials",
     "RequestTaskInventory",
     "ResourceCostSelected",
@@ -665,7 +668,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_post_advertises_object_animation_without_requiring_a_cap_url() {
+    async fn seed_post_negotiates_parcel_resources_and_advertises_object_animation() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local seed server");
         let seed = format!("http://{}/seed", listener.local_addr().expect("local address"));
         let server = tokio::spawn(async move {
@@ -699,7 +702,15 @@ mod tests {
             let requested = from_xml(&request[body_start..body_start + body_len]).expect("seed LLSD");
             let supports_animesh = requested.as_array().iter().any(|v| v.as_str() == "ObjectAnimation");
             // Support markers may not return a URL. Asset caps must still resolve.
-            let body = to_xml(&llsd_map! { "ViewerAsset" => "http://127.0.0.1/asset" });
+            let mut caps = llsd_map! { "ViewerAsset" => "http://127.0.0.1/asset" };
+            // The simulator only supplies services the viewer requested. A
+            // missing parcel lookup must fail here, before querying resources.
+            for name in ["RemoteParcelRequest", "LandResources", "AttachmentResources"] {
+                if requested.as_array().iter().any(|v| v.as_str() == name) {
+                    caps.insert(name, format!("http://127.0.0.1/{name}"));
+                }
+            }
+            let body = to_xml(&caps);
             let headers = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 body.len()
@@ -719,6 +730,13 @@ mod tests {
         assert!(server.await.expect("seed server"), "simulator was not told to send ObjectAnimation");
         assert_eq!(resolved.get("ViewerAsset").map(String::as_str), Some("http://127.0.0.1/asset"));
         assert!(!resolved.contains_key("ObjectAnimation"));
+        for name in ["RemoteParcelRequest", "LandResources", "AttachmentResources"] {
+            assert_eq!(
+                resolved.get(name),
+                Some(&format!("http://127.0.0.1/{name}")),
+                "the seed must supply {name} before About Land can query script resources"
+            );
+        }
     }
 
     /// A simulator that answers each seed request in turn with one of

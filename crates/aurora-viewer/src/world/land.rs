@@ -454,9 +454,19 @@ pub struct SelectionContext {
 /// None while asked, then the answer or why it failed.
 #[derive(Debug, Clone, Default)]
 pub struct ScriptInfo {
+    /// Resource replies or a new request invalidate the UI's sorted rows.
+    pub revision: u64,
     pub summary: Option<Result<land::ScriptSummary, String>>,
     pub details: Option<Result<Vec<land::ScriptParcel>, String>>,
     pub mine: Option<Result<(land::ScriptSummary, Vec<land::ScriptAttachment>), String>>,
+}
+
+impl ScriptInfo {
+    pub fn clear_parcel(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+        self.summary = None;
+        self.details = None;
+    }
 }
 
 #[derive(Default)]
@@ -618,13 +628,13 @@ impl Land {
 
     /// StartRequestChain once the parcel UUID is known: LandResources.
     pub fn request_scripts(&mut self, parcel_id: Uuid) {
-        self.scripts.summary = None;
-        self.scripts.details = None;
+        self.scripts.clear_parcel();
         self.send(LandCommand::ScriptResources { parcel_id });
     }
 
     /// LLFloaterMyScripts::requestAttachmentDetails.
     pub fn request_attachment_scripts(&mut self) {
+        self.scripts.revision = self.scripts.revision.wrapping_add(1);
         self.scripts.mine = None;
         self.send(LandCommand::AttachmentScripts);
     }
@@ -810,9 +820,18 @@ impl Land {
             }
             LandEvent::ExperienceInfo(list) => self.experience_names.extend(list),
             LandEvent::GroupNames(list) => self.group_names.extend(list),
-            LandEvent::ScriptSummary(r) => self.scripts.summary = Some(r),
-            LandEvent::ScriptDetails(r) => self.scripts.details = Some(r),
-            LandEvent::AttachmentScripts(r) => self.scripts.mine = Some(r),
+            LandEvent::ScriptSummary(r) => {
+                self.scripts.revision = self.scripts.revision.wrapping_add(1);
+                self.scripts.summary = Some(r);
+            }
+            LandEvent::ScriptDetails(r) => {
+                self.scripts.revision = self.scripts.revision.wrapping_add(1);
+                self.scripts.details = Some(r);
+            }
+            LandEvent::AttachmentScripts(r) => {
+                self.scripts.revision = self.scripts.revision.wrapping_add(1);
+                self.scripts.mine = Some(r);
+            }
             LandEvent::Highlight { handle, reset, local_ids } => {
                 if reset {
                     self.highlight.clear();

@@ -102,6 +102,12 @@ chat, retaining the clicked prim's UUID and the basic script summary.
 `aurora-net/src/bridge/query.rs` validates the bounded typed response; bridge
 protocol 1.21 adds this read-only query without changing movement commands.
 
+`ui/land/scripts/table.rs` caches the script-resource rows by the world's
+resource revision, sorts numeric columns by their values and filters object
+or owner names. Late avatar/group name replies refresh the search and owner
+ordering. Each tab keeps its own search and sort; only visible rows are laid
+out, and filtered-out objects leave the action selection.
+
 `ui/widgets.rs` gives the shared floaters and mini-map a click-and-drag
 background response: egui's click tolerance delays movement while the pointer
 can still be clicking, with child controls retaining priority. Deliberate
