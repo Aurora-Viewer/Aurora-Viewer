@@ -22,7 +22,7 @@ enum Original {
     Material { asset: Uuid, over: PbrOverride },
     Map(Uuid),
     Sculpt(Uuid),
-    Light(Option<Uuid>),
+    Light(Option<aurora_prim::extra::LightImageParams>),
 }
 
 struct Saved {
@@ -65,7 +65,7 @@ impl Session {
                     let Some(sculpt) = object.extra.sculpt else { continue };
                     Original::Sculpt(sculpt.texture)
                 }
-                PickTarget::LightTexture => Original::Light(object.extra.light_image.map(|light| light.texture)),
+                PickTarget::LightTexture => Original::Light(object.extra.light_image),
             };
             saved.push(Saved {
                 object: object.full_id,
@@ -177,7 +177,25 @@ impl BuildTool {
                 if matches!(session.target, PickTarget::Diffuse | PickTarget::PbrMaterial) {
                     self.set_local_picker_appearance(world, &sel, None);
                 }
-                self.apply_texture(world, env, session.target, id, &sel);
+                if session.target == PickTarget::LightTexture
+                    && let Some(s) = sel.first()
+                    && let Some(saved) = session.saved.first_mut()
+                    && let Original::Light(Some(original)) = &mut saved.original
+                {
+                    // Keep the projection settings across None -> another
+                    // texture in the same dialog, as LLVOVolume retains its
+                    // parameter block when PARAMS_LIGHT_IMAGE is disabled.
+                    if let Some(current) = world.objects.get(s.idx).and_then(|o| o.extra.light_image) {
+                        original.params = current.params;
+                    }
+                    self.set_extra(
+                        world,
+                        s.idx,
+                        Extra::LightImage((!id.is_nil()).then_some(aurora_prim::extra::LightImageParams { texture: id, ..*original })),
+                    );
+                } else {
+                    self.apply_texture(world, env, session.target, id, &sel);
+                }
                 session.last_preview = Some(id);
                 session.remote_changed = true;
             }
@@ -307,11 +325,13 @@ impl BuildTool {
                         self.set_extra(world, idx, Extra::Sculpt(Some(sculpt)));
                     }
                 }
-                Original::Light(texture) => {
+                Original::Light(original) => {
                     let current = world.objects.get(idx).and_then(|o| o.extra.light_image);
-                    let restored = texture.map(|texture| aurora_prim::extra::LightImageParams {
-                        texture,
-                        ..current.unwrap_or(crate::build::edits::LIGHT_IMAGE_DEFAULT)
+                    let restored = original.map(|original| aurora_prim::extra::LightImageParams {
+                        texture: original.texture,
+                        // Clearing removes the parameter block; Cancel must
+                        // recover its settings as well as its texture.
+                        ..current.unwrap_or(original)
                     });
                     if current != restored {
                         self.set_extra(world, idx, Extra::LightImage(restored));
@@ -753,6 +773,108 @@ mod tests {
                 ],
             );
         }
+    }
+
+    #[test]
+    fn light_picker_none_removes_only_projection_and_cancel_restores_its_settings() {
+        fixture(|world, tool, env, prims| {
+            tool.selection.truncate(1);
+            let idx = prims[0];
+            let light = aurora_prim::extra::LightParams {
+                color: [0.2, 0.4, 0.7, 0.6],
+                radius: 12.0,
+                falloff: 1.25,
+                ..crate::build::edits::LIGHT_DEFAULT
+            };
+            let projector = aurora_prim::extra::LightImageParams {
+                texture: Uuid::from_u128(910),
+                params: glam::Vec3::new(0.8, 2.5, 0.3),
+            };
+            let object = world.objects.get_mut(idx).unwrap();
+            object.extra.light = Some(light);
+            object.extra.light_image = Some(projector);
+            let key = object.key;
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            // Open through the actual Features swatch, so the test also
+            // covers whether this caller exposes the None preset.
+            let mut draw_features = |time, events| {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| super::super::features::show(ui, &theme.palette(), tool, world, &mut Default::default(), env),
+                );
+                output.shapes.into_iter().find_map(|shape| match shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("common-texture") => {
+                        // Caption below the 40-point swatch, with a 14-point
+                        // label and the theme's vertical item spacing.
+                        Some(egui::pos2(text.pos.x + 20.0, text.pos.y - 24.0))
+                    }
+                    _ => None,
+                })
+            };
+            let mut swatch = None;
+            for i in 0..10 {
+                swatch = draw_features(i as f64 / 60.0, vec![]);
+            }
+            let pos = swatch.expect("light texture swatch");
+            for (i, pressed) in [true, false].into_iter().enumerate() {
+                draw_features(
+                    1.0 + i as f64 / 60.0,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(tool.ui.pick_target, Some(PickTarget::LightTexture));
+            let mut positions = HashMap::new();
+            for i in 0..10 {
+                positions = frame(&ctx, tool, world, env, 2.0 + i as f64 / 60.0, vec![]);
+            }
+            tool.out.clear();
+            click(&ctx, tool, world, env, 3.0, positions[aurora_i18n::tr!("common-none-2")]);
+            assert!(tool.ui.picker.open);
+            let object = world.objects.get(idx).unwrap();
+            assert_eq!(object.extra.light, Some(light));
+            assert!(object.extra.light_image.is_none());
+            assert!(matches!(tool.out.as_slice(), [NetCommand::Build(BuildCmd::SetExtraParam {
+                handle, local_id, param_type, in_use: false, ..
+            })] if *handle == key.region && *local_id == key.local_id && *param_type == aurora_prim::extra::PARAMS_LIGHT_IMAGE));
+
+            let positions = frame(&ctx, tool, world, env, 3.2, vec![]);
+            click(&ctx, tool, world, env, 3.3, positions[aurora_i18n::tr!("common-blank")]);
+            assert_eq!(world.objects.get(idx).unwrap().extra.light_image.unwrap().params, projector.params);
+            let positions = frame(&ctx, tool, world, env, 3.5, vec![]);
+            click(&ctx, tool, world, env, 3.6, positions[aurora_i18n::tr!("common-none-2")]);
+            let positions = frame(&ctx, tool, world, env, 4.0, vec![]);
+            click(&ctx, tool, world, env, 5.0, positions[aurora_i18n::tr!("common-cancel")]);
+            assert_eq!(world.objects.get(idx).unwrap().extra.light_image, Some(projector));
+            assert_eq!(world.objects.get(idx).unwrap().extra.light, Some(light));
+
+            tool.ui.picker.open_with_defaults("Light", projector.texture, None, true);
+            tool.ui.pick_target = Some(PickTarget::LightTexture);
+            let positions = frame(&ctx, tool, world, env, 6.0, vec![]);
+            tool.out.clear();
+            click(&ctx, tool, world, env, 7.0, positions[aurora_i18n::tr!("common-none-2")]);
+            let positions = frame(&ctx, tool, world, env, 8.0, vec![]);
+            let sent = tool.out.len();
+            click(&ctx, tool, world, env, 9.0, positions["OK"]);
+            assert!(!tool.ui.picker.open);
+            assert_eq!(tool.out.len(), sent, "OK confirms the removal without resending it");
+            assert!(world.objects.get(idx).unwrap().extra.light_image.is_none());
+            assert_eq!(world.objects.get(idx).unwrap().extra.light, Some(light));
+        });
     }
 
     #[test]
