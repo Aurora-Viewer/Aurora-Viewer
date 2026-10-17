@@ -10,7 +10,12 @@
 //! front of the face) came after the hair (centred on the head) and showed
 //! through it. The rigged faces come first here, back to front among
 //! themselves, then the others back to front; the renderer draws the first
-//! group writing depth (`DrawLists::blend_depth`).
+//! group writing depth (`DrawLists::blend_depth`). Aurora writes that depth
+//! only where a fragment is at least half covered (a depth pass with that
+//! alpha test before their colour, `DrawLists::blend_depth_alpha_test`):
+//! the Legacy Viewer writes it from 1/255, so the nearly transparent fringe
+//! of fur, feathers or hair hid the glass, water and particles behind it, a
+//! halo around the avatar (#556).
 
 use aurora_render::DrawCmd;
 
@@ -26,12 +31,16 @@ pub struct BlendEntry {
     pub rigged: bool,
 }
 
-/// AURORA_RIGGED_BLEND: `sorted`, the rigged faces sorted with the others
-/// and drawn without depth, as before; `alt`, that one second in three
-/// (`xmode=old` on the profile lines); otherwise apart.
+/// AURORA_RIGGED_BLEND: by default (`depth05`) the rigged faces apart,
+/// writing depth where they are at least half covered; `write`, apart and
+/// writing depth from 1/255 as the Legacy Viewer (#499); `sorted`, sorted
+/// with the others and drawn without depth, as before #499; `alt`, `write`
+/// one second in three (`xmode=old` on the profile lines), `depth05` the
+/// others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    Apart,
+    Depth05,
+    Write,
     Sorted,
     Alternate,
 }
@@ -39,25 +48,36 @@ pub enum Mode {
 pub fn mode() -> Mode {
     static MODE: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_RIGGED_BLEND").as_deref().map(str::trim) {
+        Ok("write") => Mode::Write,
         Ok("sorted") => Mode::Sorted,
         Ok("alt") => Mode::Alternate,
-        _ => Mode::Apart,
+        _ => Mode::Depth05,
     })
 }
 
-/// With `alt`: the current second is drawn the former way.
-static SORTED_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// With `alt`: the current second writes depth from 1/255, as #499 did.
+static WRITE_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub fn set_sorted_now(sorted: bool) {
-    SORTED_NOW.store(sorted, std::sync::atomic::Ordering::Relaxed);
+pub fn set_write_now(write: bool) {
+    WRITE_NOW.store(write, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Whether this frame draws the rigged faces apart, writing depth.
 pub fn rigged_apart() -> bool {
-    match mode() {
-        Mode::Apart => true,
-        Mode::Sorted => false,
-        Mode::Alternate => !SORTED_NOW.load(std::sync::atomic::Ordering::Relaxed),
+    mode() != Mode::Sorted
+}
+
+/// Whether the depth of the rigged faces is written only where they are at
+/// least half covered (see the module).
+pub fn depth_alpha_test() -> bool {
+    depth_alpha_test_in(mode(), WRITE_NOW.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+fn depth_alpha_test_in(mode: Mode, write_now: bool) -> bool {
+    match mode {
+        Mode::Depth05 => true,
+        Mode::Write | Mode::Sorted => false,
+        Mode::Alternate => !write_now,
     }
 }
 
@@ -119,6 +139,16 @@ mod tests {
         ];
         assert_eq!(sort(&mut e, true), 2);
         assert_eq!(records(&e), [4, 2, 3, 1]);
+    }
+
+    /// The depth of the rigged faces is alpha tested by default and in the
+    /// `depth05` seconds of `alt`, written from 1/255 with `write`.
+    #[test]
+    fn rigged_depth_is_alpha_tested_unless_written_as_the_legacy_viewer() {
+        assert!(depth_alpha_test_in(Mode::Depth05, false));
+        assert!(!depth_alpha_test_in(Mode::Write, false));
+        assert!(depth_alpha_test_in(Mode::Alternate, false));
+        assert!(!depth_alpha_test_in(Mode::Alternate, true));
     }
 
     #[test]
