@@ -7,6 +7,11 @@
 //! the values follow the Low, LowMid, Mid, High and Ultra lists of
 //! indra/newview/featuretable.txt, mapped onto Aurora's settings).
 //!
+//! Deluxe goes one step beyond the Legacy Viewer's Ultra list for the
+//! ambient occlusion: GTAO at High quality (gtao.rs in aurora-render), an
+//! Aurora method the Legacy Viewer has no level for; the levels below keep
+//! the Legacy method (High) or no occlusion at all.
+//!
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
 //! occlusion culling (only a gain), the environment and the image tuning
@@ -64,6 +69,8 @@ impl Preset {
                 shadow_quality: 0,
                 projector_shadows: false,
                 ssao: 0,
+                ao_method: 0,
+                gtao_quality: 2,
                 water_reflections: 0,
                 mirrors: 0,
                 ssr: false,
@@ -85,6 +92,8 @@ impl Preset {
                 shadow_quality: 0,
                 projector_shadows: false,
                 ssao: 0,
+                ao_method: 0,
+                gtao_quality: 2,
                 water_reflections: 0,
                 mirrors: 0,
                 ssr: false,
@@ -106,6 +115,8 @@ impl Preset {
                 shadow_quality: 0,
                 projector_shadows: false,
                 ssao: 0,
+                ao_method: 0,
+                gtao_quality: 2,
                 water_reflections: 0,
                 mirrors: 0,
                 ssr: false,
@@ -128,6 +139,8 @@ impl Preset {
                 shadow_quality: 2,
                 projector_shadows: false,
                 ssao: 1,
+                ao_method: 0,
+                gtao_quality: 2,
                 water_reflections: 1,
                 mirrors: 0,
                 ssr: false,
@@ -141,8 +154,10 @@ impl Preset {
             // "Ultra": 256 m, LOD 3, 16 avatars, 8,192 particles, shadows of
             // the projectors too (detail 2), the whole scene in the probes;
             // the rest is "the most that stays reasonable": the complexity
-            // of "HighUltra" (Ultra keeps the user's), the highest SSAO and
-            // shadow quality, water reflection at half resolution (full
+            // of "HighUltra" (Ultra keeps the user's), the highest shadow
+            // quality, ambient occlusion by GTAO at High quality (Aurora's
+            // method, beyond the Legacy Viewer's SSAO of Ultra), water
+            // reflection at half resolution (full
             // costs a second scene), Aurora's mirrors as by default and 16x
             // anisotropy; screen-space reflections stay off, as in every
             // Firestorm level
@@ -155,6 +170,8 @@ impl Preset {
                 shadow_quality: 4,
                 projector_shadows: true,
                 ssao: 2,
+                ao_method: 1,
+                gtao_quality: 2,
                 water_reflections: 2,
                 mirrors: 1,
                 ssr: false,
@@ -216,6 +233,21 @@ impl Preset {
     }
 }
 
+/// Settings files written before Deluxe took GTAO (version 18): a profile
+/// still exactly on the former Deluxe (the Legacy occlusion at its high
+/// level) moves to the Deluxe of now; any other, a level or custom, keeps
+/// its occlusion.
+pub(crate) fn upgrade_deluxe(s: &mut Settings) {
+    let former = Values {
+        ao_method: 0,
+        gtao_quality: 2,
+        ..Preset::Deluxe.values()
+    };
+    if Values::read(s).as_shown() == former.as_shown() {
+        Preset::Deluxe.apply(s);
+    }
+}
+
 /// The settings a level writes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Values {
@@ -227,6 +259,9 @@ pub struct Values {
     pub shadow_quality: u8,
     pub projector_shadows: bool,
     pub ssao: u8,
+    /// 0 Legacy, 1 GTAO (`Settings::ao_method`).
+    pub ao_method: u8,
+    pub gtao_quality: u8,
     pub water_reflections: u8,
     pub mirrors: u8,
     pub ssr: bool,
@@ -243,14 +278,19 @@ impl Values {
     /// hand to what its level shows reads as that level again, not custom
     /// (the complexity slider only stops at its own steps, 302 k for the
     /// 300,000 of "High", like Firestorm's).
+    /// The method and quality of the occlusion only count while it is on,
+    /// and GTAO's quality only under GTAO (the page greys them out).
     fn as_shown(self) -> Values {
         use crate::scene::complexity::slider;
         let round = |v: f32, step: f32| (v / step).round() * step;
+        let ao_method = if self.ssao == 0 { 0 } else { self.ao_method };
         Values {
             draw_distance: round(self.draw_distance, 1.0),
             lod_factor: round(self.lod_factor, 0.125),
             max_complexity: slider::to_limit(slider::from_limit(self.max_complexity)),
             sharpen: round(self.sharpen, 0.05),
+            ao_method,
+            gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
             ..self
         }
     }
@@ -265,6 +305,8 @@ impl Values {
             shadow_quality: s.shadow_quality,
             projector_shadows: s.projector_shadows,
             ssao: s.ssao,
+            ao_method: s.ao_method,
+            gtao_quality: s.gtao_quality,
             water_reflections: s.water_reflections,
             mirrors: s.mirrors,
             ssr: s.ssr,
@@ -287,6 +329,8 @@ impl Values {
         s.shadows = self.shadow_quality > 0;
         s.projector_shadows = self.projector_shadows;
         s.ssao = self.ssao;
+        s.ao_method = self.ao_method;
+        s.gtao_quality = self.gtao_quality;
         s.water_reflections = self.water_reflections;
         s.mirrors = self.mirrors;
         s.ssr = self.ssr;
@@ -388,6 +432,7 @@ mod tests {
             assert!((1..=100).contains(&v.max_avatars));
             assert!(v.max_particles <= 8192);
             assert!(v.shadow_quality <= 4 && v.ssao <= 2 && v.reflection_probes <= 3);
+            assert!(v.ao_method <= 1 && v.gtao_quality <= 3);
             assert!(v.water_reflections <= 4 && v.mirrors <= 4);
             assert!((8..=64).contains(&v.probe_count) && v.probe_count % 8 == 0);
             assert!(v.antialiasing <= 6);
@@ -411,6 +456,65 @@ mod tests {
         // what could not be read does not lower the level
         assert_eq!(Preset::for_machine(false, None, None), Preset::High);
         assert_eq!(Preset::for_machine(true, None, None), Preset::Medium);
+    }
+
+    #[test]
+    fn deluxe_takes_gtao_high_and_the_levels_below_keep_theirs() {
+        let ao = |p: Preset| (p.values().ssao, p.values().ao_method, p.values().gtao_quality);
+        assert_eq!(ao(Preset::Deluxe), (2, 1, 2));
+        assert_eq!(ao(Preset::High), (1, 0, 2));
+        for p in [Preset::Potato, Preset::Low, Preset::Medium] {
+            assert_eq!(p.values().ssao, 0, "{p:?}");
+        }
+        // the default method outside the levels stays Legacy
+        assert_eq!(Settings::default().ao_method, 0);
+    }
+
+    #[test]
+    fn the_occlusion_method_only_counts_while_it_is_on() {
+        let mut s = Settings::default();
+        Preset::Medium.apply(&mut s);
+        // occlusion off: a method chosen earlier does not make it custom
+        s.ao_method = 1;
+        s.gtao_quality = 0;
+        assert_eq!(Preset::matching(&s), Some(Preset::Medium));
+        // Legacy method: the quality of GTAO does not count either
+        Preset::High.apply(&mut s);
+        s.gtao_quality = 3;
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        // Deluxe with another GTAO quality, or the Legacy method, is custom
+        Preset::Deluxe.apply(&mut s);
+        s.gtao_quality = 3;
+        assert_eq!(Preset::matching(&s), None);
+        Preset::Deluxe.apply(&mut s);
+        s.ao_method = 0;
+        assert_eq!(Preset::matching(&s), None);
+    }
+
+    #[test]
+    fn a_profile_on_the_former_deluxe_moves_to_gtao_and_no_other() {
+        // the former Deluxe: the Legacy occlusion at its high level
+        let mut s = Settings::default();
+        Preset::Deluxe.apply(&mut s);
+        s.ao_method = 0;
+        upgrade_deluxe(&mut s);
+        assert_eq!((s.ao_method, s.gtao_quality), (1, 2));
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // a custom profile close to it keeps its occlusion
+        let mut custom = Settings::default();
+        Preset::Deluxe.apply(&mut custom);
+        custom.ao_method = 0;
+        custom.draw_distance = 300.0;
+        upgrade_deluxe(&mut custom);
+        assert_eq!(custom.ao_method, 0);
+        // the other levels are untouched
+        for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High] {
+            let mut s = Settings::default();
+            p.apply(&mut s);
+            let before = Values::read(&s);
+            upgrade_deluxe(&mut s);
+            assert_eq!(Values::read(&s), before, "{p:?}");
+        }
     }
 
     #[test]
