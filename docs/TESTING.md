@@ -3458,6 +3458,12 @@ root open and labels aligned left. Creations and mutations simulated
 offline; the files and snapshots uploaded in demo stay offline.
 
 - `1`: the inventory alone.
+- `permissions`: expanded inventory with the approved additive next-owner
+  indicators enabled. Combine with `AURORA_DEMO_BUILD=contents-ready,object:118`
+  and `AURORA_DEMO_BUILD_TAB=contents+next-owner` to inspect both windows.
+  Each switch independently hides/shows only the suffix after the arrow;
+  current rights and the detailed hover remain available. Check filtered,
+  folder and unknown-link rows, horizontal scrolling and item selection.
 - `delete-key`, `delete-button`: select a folder containing three
   levels and their items, then open the confirmation with the Delete key or
   the trash button of the window footer. Capture 660 (selection and trash to

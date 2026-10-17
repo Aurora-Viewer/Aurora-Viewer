@@ -319,7 +319,16 @@ fn rows(
     for index in range {
         let Some(row) = st.plain.rows.get(index).copied() else { break };
         if row.kind != Kind::Empty {
-            let width = row_width(ui, p, inv, facts, row.id, matches!(row.kind, Kind::Folder { .. }), row.level);
+            let width = row_width(
+                ui,
+                p,
+                inv,
+                facts,
+                row.id,
+                matches!(row.kind, Kind::Folder { .. }),
+                row.level,
+                st.show_next_owner,
+            );
             st.plain.width = st.plain.width.max(width);
         }
         ui.horizontal(|ui| {

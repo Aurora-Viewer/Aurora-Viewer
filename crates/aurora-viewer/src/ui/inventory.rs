@@ -272,6 +272,8 @@ pub struct InventoryUi {
     pub wear_copies: std::collections::HashMap<Uuid, bool>,
     pub filters_open: bool,
     pub preferences_open: bool,
+    /// Display owner rights plus next-owner rights in this window only.
+    pub show_next_owner: bool,
     filters_initialized: bool,
     filters: view::Filters,
     saved_filters: Option<view::Filters>,
@@ -556,7 +558,7 @@ fn item_row(
         let font_id = egui::FontId::proportional(13.0);
         let mut label = super::widgets::name_with_suffix(&it.name, &suffix, font_id.clone(), p.ink);
         let name = worn.map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
-        let permissions = permissions::Permissions::inventory(inv, *id);
+        let permissions = permissions::Permissions::inventory(inv, *id).map(|permissions| permissions.with_next_owner(st.show_next_owner));
         if let Some(permissions) = permissions {
             // Keep each item's rights next to its name: a very long sibling
             // must not push every row's badges outside the horizontal viewport.
@@ -708,6 +710,7 @@ fn folder_window_contents(
 ) {
     controls::toolbar(ui, p, st, prefs);
     controls::search(ui, p, inv, st, prefs, aurora_i18n::tr!("ui-inventory-filter-inventory-folder"));
+    next_owner_control(ui, p, st);
     ui.add_space(3.0);
     let q = st.search.trim().to_lowercase();
     let filtered = !q.is_empty() || st.links_filter.is_some() || st.filters.active();
@@ -947,7 +950,7 @@ fn search_rows(
         // Measure only viewport rows. Retain their natural width while scrolling
         // vertically, so the horizontal range doesn't vanish with a long label.
         // A rebuilt tree clears it; the viewport width itself is never retained.
-        let width = row_width(ui, p, inv, facts, row.id, row.folder, row.depth);
+        let width = row_width(ui, p, inv, facts, row.id, row.folder, row.depth, st.show_next_owner);
         st.result_width = st.result_width.max(width);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -968,7 +971,16 @@ fn search_rows(
 /// The natural width of a row of the virtual lists: its indentation, its
 /// label with the worn or loading suffix and the permissions, the caret and
 /// the icon.
-fn row_width(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, facts: &Facts, id: Uuid, folder: bool, depth: usize) -> f32 {
+fn row_width(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    facts: &Facts,
+    id: Uuid,
+    folder: bool,
+    depth: usize,
+    show_next_owner: bool,
+) -> f32 {
     let mut label = rules::name(inv, id);
     if folder {
         label = folder_name(inv, id);
@@ -982,7 +994,7 @@ fn row_width(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, facts: &Facts, id:
     }
     let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
     if !folder && let Some(permissions) = permissions::Permissions::inventory(inv, id) {
-        permissions.append_suffix(&mut label, p);
+        permissions.with_next_owner(show_next_owner).append_suffix(&mut label, p);
     }
     let label_width = ui.fonts_mut(|fonts| fonts.layout_job(label).size().x);
     depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0
@@ -1084,6 +1096,14 @@ fn finish_hidden_rename(inv: &Inventory, st: &mut InventoryUi, prefs: &Inventory
     }
 }
 
+fn next_owner_control(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    if permissions::next_owner_toggle(ui, p, &mut st.show_next_owner) {
+        // Re-measure the virtual lists when changing the suffix length.
+        st.plain.width = 0.0;
+        st.result_width = 0.0;
+    }
+}
+
 fn inventory_contents(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1147,6 +1167,7 @@ fn inventory_contents(
         );
     }
     ui.add_space(6.0);
+    next_owner_control(ui, p, st);
     let list_h = list_height(ui);
     let zone = tree::frame(ui, p, |ui| {
         clipboard::list_focus(ui, st, list_h);
