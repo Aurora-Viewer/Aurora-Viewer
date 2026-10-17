@@ -10,8 +10,10 @@
 //!   conference's; while a resident's name is unknown its lines wait;
 //! - the end of the file is asked for before the first line is written, so
 //!   the history never contains the line that opened the conversation;
-//! - history lines carry `Origin::Log` (greyed by the view) and no avatar
-//!   id: nothing is looked up for them;
+//! - history lines carry `Origin::Log` (greyed by the view); their sender is
+//!   the avatar whose cached user name is the one written (findIdByName on
+//!   buildLegacyName), or the other resident of a private conversation, so
+//!   that their picture shows as on new lines;
 //! - the chat server's recent messages of a group (`Origin::ServerLog`) go
 //!   between the file's history and the new lines, without those the file
 //!   already has.
@@ -342,9 +344,13 @@ impl World {
     /// The lines of a transcript's end as conversation lines
     /// (addMessagesFromHistoryCache). A line without a date takes the time
     /// of the one before. `keep_all`: one line per entry, the empty ones
-    /// too (the History window counts them).
-    pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool) -> Vec<ChatLine> {
+    /// too (the History window counts them). `peer`: the other resident of
+    /// a private conversation, the sender of its lines whose name is not
+    /// cached (a group's or the nearby chat's stay unknown then).
+    pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool, peer: Option<Uuid>) -> Vec<ChatLine> {
         let own = self.own_log_names();
+        let names = &self.social.avatar_names;
+        let trim = names.options.trim_resident;
         let mut last = UNIX_EPOCH;
         entries
             .into_iter()
@@ -360,12 +366,21 @@ impl World {
                 } else {
                     ChatKind::Im
                 };
+                // LLIMSession::addMessagesFromHistoryCache: the id by the
+                // legacy name of what was written
+                let source = match kind {
+                    ChatKind::Im | ChatKind::Local(_) => names
+                        .find_id_by_name(&super::names::build_legacy_name(&e.from, trim))
+                        .or(peer)
+                        .unwrap_or_default(),
+                    _ => Uuid::nil(),
+                };
                 ChatLine {
                     time: last,
                     from: if kind == ChatKind::System { String::new() } else { e.from },
                     text: e.text,
                     kind,
-                    source: Uuid::nil(),
+                    source,
                     origin: Origin::Log,
                 }
             })
@@ -374,7 +389,9 @@ impl World {
 
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        let lines = self.history_lines(loaded.entries, nearby, false);
+        // a private conversation is keyed by the other resident
+        let peer = (!nearby && !self.is_group_session(&loaded.conversation)).then_some(loaded.conversation);
+        let lines = self.history_lines(loaded.entries, nearby, false, peer);
         if nearby {
             self.nearby_history = HistoryState::Done;
             self.chat_clock.pushed_front(lines.len());
@@ -578,8 +595,10 @@ mod tests {
             shown,
             [("hello", Origin::Log), ("hi Jane", Origin::Log), ("are you there?", Origin::Live)]
         );
-        // history lines carry no avatar id and are not counted as unread
-        assert!(s.lines.iter().take(2).all(|l| l.source.is_nil()));
+        // history lines are not counted as unread; Jane's is hers (the
+        // other resident of the conversation), ours names nobody, as live
+        let sources: Vec<Uuid> = s.lines.iter().take(2).map(|l| l.source).collect();
+        assert_eq!(sources, [jane, Uuid::nil()]);
         assert_eq!(s.unread, 1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 3);
         clean(&w, &root);
@@ -854,6 +873,38 @@ mod tests {
         assert_eq!(file_texts(&w, "jane").len(), 1);
         // read after the line was written? no: the history was asked first
         assert!(w.social.ims[0].lines.iter().all(|l| l.origin == Origin::Live));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn history_lines_name_their_sender_when_it_is_known() {
+        let root = temp();
+        let (me, jane, bob) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut w = world(&root, me);
+        w.social.avatar_names.on_legacy(bob, "Bob", "Smith");
+        let entry = |from: &str, text: &str| Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: text.into(),
+        };
+        let entries = || {
+            vec![
+                entry("Bob (bob.smith)", "from Bob"),
+                entry("Alice Liddell", "from someone not cached"),
+                entry(chat_log::format::SYSTEM_FROM, "a notice"),
+            ]
+        };
+        // a group or the nearby chat: the cached name only
+        let sources: Vec<Uuid> = w.history_lines(entries(), false, false, None).iter().map(|l| l.source).collect();
+        assert_eq!(sources, [bob, Uuid::nil(), Uuid::nil()]);
+        // a private conversation: its other resident when the name is unknown
+        let sources: Vec<Uuid> = w
+            .history_lines(entries(), false, false, Some(jane))
+            .iter()
+            .map(|l| l.source)
+            .collect();
+        assert_eq!(sources, [bob, jane, Uuid::nil()]);
         clean(&w, &root);
     }
 

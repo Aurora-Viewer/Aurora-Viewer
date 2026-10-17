@@ -1639,8 +1639,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    // history lines: greyed, and nothing is looked up for them (no name, no
-    // picture, no profile), like Firestorm's message_from_log
+    // history lines: greyed, their name as written (message_from_log); their
+    // sender, when its name was cached, gives the picture and the profile
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
@@ -1702,7 +1702,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                             );
                         }
                     } else {
-                        if !line.source.is_nil() && !logged {
+                        if !line.source.is_nil() {
                             env.wanted.insert(line.source);
                         }
                         avatar_pic(ui, p, env.pics.get(&line.source), &name, 20.0);
@@ -1711,12 +1711,11 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     let time = header_time(ui, p, hhmm(line.time));
                     let reserve = time.size().x + ui.spacing().item_spacing.x;
                     let r = header_names(ui, p, &name, username.as_deref(), col, reserve);
-                    // the inspector in Firestorm; Aurora opens the profile
-                    // (history lines name no avatar)
+                    // the inspector in the Legacy Viewer; Aurora opens the
+                    // profile (a history line's when its sender is known)
                     let avatar = match (logged, own) {
-                        (true, _) => uuid::Uuid::nil(),
                         (false, true) => world.agent_id,
-                        (false, false) => line.source,
+                        _ => line.source,
                     };
                     if !object && !avatar.is_nil() {
                         line_name_menu(&r, p, world, avatar, line);
