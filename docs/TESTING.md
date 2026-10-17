@@ -2986,7 +2986,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   reclaim and the returns, and answers with the parcel changed;
   `show-objects` asks the simulator to highlight the owner's objects (the
   plaza's pillars and orbs outlined in yellow), `scripts` opens Script
-  info (four scripted objects, then two attachments in "My attachments"). Roles: `owner` makes
+  info (four scripted objects, then two attachments in "My attachments").
+  `scripts-descending` starts with largest memory first; `scripts-name`
+  searches for the localized fountain name, `scripts-owner` searches for
+  the seeded Aurora owners, `scripts-empty` shows no matches, and
+  `scripts-attachments` opens the attachment table. Both tables sort by a
+  clicked column (again reverses), search object/owner names without case,
+  show matched/total counts and keep their own search/sort across Refresh.
+  A filtered-out object must leave the selection before Locate/Return.
+  Roles: `owner` makes
   the avatar the owner of the parcel (everything editable); `officer`
   leaves the parcel to the group "Aurora Builders" and gives the avatar
   its land powers except sale, deed, release and terraforming (the
