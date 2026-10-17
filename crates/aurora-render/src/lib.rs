@@ -10,6 +10,7 @@ pub mod bc7;
 mod dof;
 mod drawn_pick;
 pub mod frame_priority;
+pub mod gpu_alloc;
 pub mod gpu_cull;
 mod gtao;
 mod helpers;

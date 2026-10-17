@@ -1543,6 +1543,7 @@ To check with these scenarios:
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
+| `AURORA_GPU_OOM=<mb>` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails |
 | `AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]` | Fast camera turns, again and again |
 
 ### Details
@@ -1620,6 +1621,17 @@ To check with these scenarios:
   the loading screen (`geometry arena grown ahead behind the loading
   screen` in the log) and no growth happens in the scene any more. Delete
   that file to measure a first visit again.
+- **`AURORA_GPU_OOM=<mb>`** (demo or grid): every allocation of `mb`
+  megabytes or more made through `aurora-render/src/gpu_alloc.rs` fails as
+  if video memory were full (`0`: all of them): the geometry arena, the
+  draw records, the culling tables, the joint palettes and skin bindings,
+  the texture pages. With `AURORA_DEMO_GEOMETRY=700,60` and a value of 64,
+  the vertex arena grows by smaller steps up to 63 MB, then the log says
+  once `vertex arena could not grow past 63 MB (out of video memory
+  (AURORA_GPU_OOM))` and the meshes left over are not drawn; the view keeps
+  drawing and the log holds no `wgpu error` line. Without the variable, a
+  buffer the driver could not make used to be installed anyway, invalid,
+  and every write into it was an error, every frame.
 - **`AURORA_DEMO_TURN=<degrees per second>[,<s turning>[,<s still>]]`**:
   once the loading screen is gone, our avatar and the camera behind it
   turn at that rate (180 if the value is not a number) for the first
