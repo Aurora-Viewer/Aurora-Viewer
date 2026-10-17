@@ -2013,6 +2013,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2494,6 +2495,19 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_CONV_REORDER=1`**: with `AURORA_DEMO_CONV=aurora`
+  (also `aurora:compact` or `aurora:narrow`),
+  synthetic pointer events drag the first conversation after the next of
+  its category. Captures simulate logical focus without activating the
+  native window or taking the user's keyboard. Capture frames 690, 740 and 800 at `AURORA_FPS_LIMIT=60`
+  for the initial order, insertion marker and completed move. Manually
+  check upward/downward moves within private messages, groups and
+  conferences; reject drops across categories, on pinned entries and
+  outside the list; Escape cancels. A small pointer movement remains a
+  click. Check filtering, edge scrolling, close buttons, menus and switching
+  chat styles. Order lasts while those conversations remain open; closing
+  and reopening a conversation appends it again. No grid is needed.
+
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
   at frame 701 on the first conversation of that kind in the list (the

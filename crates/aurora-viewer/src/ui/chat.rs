@@ -13,6 +13,7 @@ pub mod history;
 mod input_history;
 mod invite_card;
 mod members;
+mod reorder;
 pub(crate) mod select;
 mod sidebar;
 mod stage;
@@ -67,6 +68,10 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV_MENU=local|im|group|conference`: the conversation
     /// of the list whose right-click menu the demo opens.
     pub demo_menu: Option<String>,
+    /// Explicit offline pointer fixture for conversation rearrangement.
+    pub demo_reorder: bool,
+    /// Presentation order of currently open conversations, shared by all styles.
+    reorder: reorder::State,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
     pub wanted_pics: HashSet<uuid::Uuid>,
     /// Textures the conversation wants by id (the groups' insignias), drawn
@@ -1819,7 +1824,12 @@ fn list_entry(
 ) -> ListEntry {
     // narrower beside the list's scroll bar, when it shows
     let width = ENTRY_W.min(ui.available_width());
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), egui::Sense::click());
+    let sense = if close.is_some() {
+        egui::Sense::click_and_drag()
+    } else {
+        egui::Sense::click()
+    };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LIST_ENTRY_H), sense);
     // the close button stands over the entry and takes its hover: the entry
     // keeps its hovered face while the pointer is on the button
     let over = resp.hovered() || (close.is_some() && ui.rect_contains_pointer(rect));
@@ -1965,6 +1975,7 @@ pub fn show(
     friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> Vec<ConvAction> {
+    st.reorder.begin(ctx, world);
     let mut actions = Vec::new();
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
@@ -2061,7 +2072,7 @@ pub fn show(
                 if local.clicked() {
                     st.select_tab(None);
                 }
-                let sessions: Vec<(uuid::Uuid, usize)> = world.social.ims.iter().map(|s| (s.other, s.unread)).collect();
+                let sessions = st.reorder.sessions(world);
                 // The conversations scroll under the pinned entries above, which
                 // stay in reach (the vertical tabs of FSFloaterIMContainer
                 // scroll with the arrows of LLTabContainer, all together).
@@ -2091,6 +2102,7 @@ pub fn show(
                         }
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
+                        st.reorder.row(world, other, &entry.resp);
                         if entry.close {
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
@@ -2098,6 +2110,7 @@ pub fn show(
                             st.select_tab(Some(other));
                         }
                     }
+                    st.reorder.finish(ui, p, st.demo_reorder);
                 });
             });
             if st.contacts {
@@ -2622,6 +2635,10 @@ fn line_extras(
 /// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
 /// on a conversation of the list (`conv_menu`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let reorder = reorder::demo_events(ctx, frame);
+    if !reorder.is_empty() {
+        return reorder;
+    }
     let menu = conv_menu::demo_events(ctx, frame);
     if !menu.is_empty() {
         return menu;
