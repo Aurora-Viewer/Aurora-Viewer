@@ -1349,4 +1349,31 @@ mod tests {
         assert_eq!(stats.get(sim_stat::FPS), None, "not a number");
         assert_eq!(stats.get(sim_stat::SCRIPTMS), None);
     }
+
+    /// sendGodlikeRequest: the verb, then the selected objects; a spawn
+    /// point's removal names its index alone.
+    #[test]
+    fn the_telehub_requests() {
+        assert_eq!(TelehubVerb::Connect.strings(&[12, 40]), ["connect", "12", "40"]);
+        assert_eq!(TelehubVerb::Info.strings(&[]), ["info ui"]);
+        assert_eq!(TelehubVerb::RemoveSpawn(2).strings(&[9]), ["spawnpoint remove", "2"]);
+    }
+
+    /// getOverrideLLSD writes only what differs; a default transform is an
+    /// empty map; queryRegionCoro reads them back.
+    #[test]
+    fn the_terrain_overrides() {
+        let mut t = [TerrainTransform::default(); 4];
+        t[1].scale = [2.0, 2.0];
+        t[1].rotation = 0.5;
+        let body = terrain_overrides_body(&t);
+        let overrides = body["overrides"].as_array();
+        assert_eq!(overrides.len(), 4);
+        assert!(!overrides[0].has("ti"));
+        assert!(overrides[1]["ti"].at(0).has("s") && !overrides[1]["ti"].at(0).has("o"));
+        let mut answer = body.clone();
+        answer.insert("success", Llsd::Boolean(true));
+        assert_eq!(parse_terrain_overrides(&answer), Some(t));
+        assert_eq!(parse_terrain_overrides(&body), None, "no success");
+    }
 }
