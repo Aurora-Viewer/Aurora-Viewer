@@ -275,7 +275,7 @@ fn gallery(
                     if response.double_clicked() {
                         st.open_outfit(*id);
                     }
-                    gallery::context_menu(&response, p, world, st, *id, actions);
+                    gallery::context_menu(&response, p, world, st, *id, actions, true);
                     let current = model::base(&world.inventory) == Some(*id);
                     let color = if current { p.violet_light } else { p.ink };
                     let font_id = egui::FontId::proportional(12.0);
@@ -381,6 +381,11 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                 }
             });
         });
+        // LLOutfitsList::onOutfitRightClick selects the tab before its menu
+        if response.header.secondary_clicked() {
+            st.selected_outfit = Some(*id);
+        }
+        gallery::context_menu(&response.header, p, world, st, *id, actions, false);
         if is_current && ui.is_rect_visible(response.header.rect) {
             // LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
             // Match the item rows' LLFontGL offset: egui's strong is only a color.

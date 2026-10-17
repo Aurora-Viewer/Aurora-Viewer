@@ -984,6 +984,9 @@ pub struct MaterialStreamer {
     /// Bumped whenever a material arrives or is given up: the faces using
     /// it are rebuilt.
     pub generation: u64,
+    /// Materials whose state changed with the generation, since the scene
+    /// last took them (mat_changes.rs).
+    changed: Vec<Uuid>,
 }
 
 impl MaterialStreamer {
@@ -996,7 +999,13 @@ impl MaterialStreamer {
             next_key: 1,
             cache_dir,
             generation: 0,
+            changed: Vec::new(),
         }
+    }
+
+    /// The materials changed since the last call (mat_changes.rs).
+    pub fn take_changed(&mut self, into: &mut Vec<Uuid>) {
+        into.append(&mut self.changed);
     }
 
     /// The material if it is loaded; requests it otherwise.
@@ -1040,12 +1049,14 @@ impl MaterialStreamer {
         e.state = MatState::Ready;
         self.entries.insert(id, e);
         self.generation += 1;
+        self.changed.push(id);
     }
 
     /// The material if it is loaded, without requesting it (diagnostics).
     pub fn remove_local(&mut self, id: &Uuid) {
         if self.entries.remove(id).is_some() {
             self.generation += 1;
+            self.changed.push(*id);
         }
     }
 
@@ -1172,6 +1183,7 @@ impl MaterialStreamer {
                 if matches!(r.status, 403 | 404) || e.failures >= MATERIAL_ATTEMPTS {
                     Self::give_up(&id, e);
                     self.generation += 1;
+                    self.changed.push(id);
                 } else {
                     e.state = MatState::Retry;
                     e.retry_at = Some(Instant::now() + Duration::from_secs(5));
@@ -1191,6 +1203,7 @@ impl MaterialStreamer {
                 e.state = MatState::Ready;
                 e.retry_at = None;
                 self.generation += 1;
+                self.changed.push(id);
             }
             // cache miss (or unreadable cache file): download it
             None if e.state == MatState::Cache => {
@@ -1202,6 +1215,7 @@ impl MaterialStreamer {
             None => {
                 Self::give_up(&id, e);
                 self.generation += 1;
+                self.changed.push(id);
             }
         }
     }
@@ -1234,6 +1248,7 @@ mod tests {
             next_key: 1,
             cache_dir: PathBuf::new(),
             generation: 0,
+            changed: Vec::new(),
         }
     }
 

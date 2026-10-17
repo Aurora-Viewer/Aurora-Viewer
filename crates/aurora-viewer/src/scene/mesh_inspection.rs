@@ -139,6 +139,7 @@ mod tests {
             geoms: &scene.geoms,
             textures: &scene.textures,
             mat_gen: scene.materials.generation,
+            mat_changes: &scene.mat_changes,
             still_huds: true,
         };
         scene

@@ -4,15 +4,35 @@
 //! each kind how many only had their placement checked, had their records
 //! written again, or went through the full sync. Tells which objects keep
 //! the sync busy in a place at rest. The line ends with a check of every
-//! object, once per second: those whose wanted detail level is not the one
-//! their distance gives at that moment (a check the sync has not made
-//! yet), apart for what the GPU places from an avatar. Costs nothing when
+//! object: those whose wanted detail level is not the one their distance
+//! gives at that moment (a check the sync has not made yet), apart for what
+//! the GPU places from an avatar. That check goes through the objects a
+//! slice per frame ([`SweepRange`]) and the line gives the last full pass:
+//! made at once, it cost 5 ms in one frame of each second at KB (22,000
+//! objects), the spikes the check was there to explain. Costs nothing when
 //! the variable is not set.
 
 use super::ObjGpu;
 use crate::world::World;
 use crate::world::objects::Object;
+use std::ops::Range;
 use std::time::{Duration, Instant};
+
+/// Frames a pass of the detail level check over every object takes at
+/// most (under a second at 160 fps).
+const SWEEP_FRAMES: usize = 120;
+/// Objects the check looks at per frame at least.
+const SWEEP_MIN: usize = 64;
+
+/// The slice of the objects the detail level check goes through in a
+/// frame, and the counts of the pass so far.
+#[derive(Default)]
+struct Sweep {
+    next: usize,
+    sum: [usize; 4],
+    /// The counts of the last full pass.
+    last: Option<[usize; 4]>,
+}
 
 /// What a visited object is, for the sync: the first that applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +156,7 @@ pub struct SyncCheck {
     /// Objects the detail level check looked at (listed or not).
     lod_checked: u64,
     by_kind: [[u64; OUTCOMES]; KINDS],
+    sweep: Sweep,
 }
 
 impl SyncCheck {
@@ -153,6 +174,31 @@ impl SyncCheck {
             sources: [0; 4],
             lod_checked: 0,
             by_kind: [[0; OUTCOMES]; KINDS],
+            sweep: Sweep::default(),
+        }
+    }
+
+    /// The objects the detail level check looks at in this frame, among
+    /// `n`.
+    pub fn sweep_range(&mut self, n: usize) -> Range<usize> {
+        if self.sweep.next >= n {
+            self.sweep.next = 0;
+            self.sweep.sum = [0; 4];
+        }
+        let from = self.sweep.next;
+        let to = (from + n.div_ceil(SWEEP_FRAMES).max(SWEEP_MIN)).min(n);
+        self.sweep.next = to;
+        from..to
+    }
+
+    /// The counts of the frame's slice ([`SyncCheck::sweep_range`]); `end`:
+    /// the slice ended the pass.
+    pub fn swept(&mut self, late: [usize; 4], end: bool) {
+        for (sum, v) in self.sweep.sum.iter_mut().zip(late) {
+            *sum += v;
+        }
+        if end {
+            self.sweep.last = Some(self.sweep.sum);
         }
     }
 
@@ -177,10 +223,12 @@ impl SyncCheck {
         self.since.elapsed() >= Duration::from_secs(1)
     }
 
-    /// Write the second's line. `late`: objects at rest looked at and those
-    /// whose detail level is behind their distance, then the same for the
-    /// objects the GPU places from an avatar.
-    pub fn write(&mut self, late: [usize; 4]) {
+    /// Write the second's line, with the last full pass of the detail level
+    /// check: objects at rest looked at and those whose detail level is
+    /// behind their distance, then the same for the objects the GPU places
+    /// from an avatar.
+    pub fn write(&mut self) {
+        let late = self.sweep.last.unwrap_or_default();
         log::info!(
             "sync check: {} | detail level behind: {} of {} at rest, {} of {} placed by the GPU",
             self.line(),
@@ -189,7 +237,9 @@ impl SyncCheck {
             late[3],
             late[2]
         );
+        let sweep = std::mem::take(&mut self.sweep);
         *self = SyncCheck::new(Instant::now());
+        self.sweep = sweep;
     }
 
     /// Averages per frame over the period.
@@ -259,5 +309,31 @@ mod tests {
         assert!(l.contains(" moving 0.0 / 1.0 / 0.0 / 0.0,"), "{l}");
         assert!(l.ends_with(" still 2.0 / 0.0 / 0.0 / 0.5"), "{l}");
         assert!(!l.contains("hud") && !l.contains("worn"), "{l}");
+    }
+
+    #[test]
+    fn the_level_check_goes_through_every_object_over_frames() {
+        let mut c = SyncCheck::new(Instant::now());
+        let n = 10_000;
+        let mut seen = 0;
+        let mut frames = 0;
+        loop {
+            let r = c.sweep_range(n);
+            assert_eq!(r.start, seen);
+            assert!(r.len() <= n.div_ceil(SWEEP_FRAMES).max(SWEEP_MIN));
+            seen = r.end;
+            frames += 1;
+            c.swept([r.len(), 1, 0, 0], r.end == n);
+            if r.end == n {
+                break;
+            }
+        }
+        assert!(frames <= SWEEP_FRAMES, "{frames}");
+        assert_eq!(c.sweep.last, Some([n, frames, 0, 0]));
+        // the next pass starts again from the first object, the line keeps
+        // the last full pass across seconds
+        assert_eq!(c.sweep_range(n).start, 0);
+        c.write();
+        assert_eq!(c.sweep.last, Some([n, frames, 0, 0]));
     }
 }
