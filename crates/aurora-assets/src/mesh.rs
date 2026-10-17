@@ -171,6 +171,10 @@ pub struct MeshFace {
     pub joints: Vec<[u8; 4]>,
     /// Per-vertex weights matching `joints`, normalized to sum to 1.
     pub weights: Vec<[f32; 4]>,
+    /// The scale the uploader took out to normalize the mesh
+    /// (`NormalizedScale`, LLModel::writeModel): its tangents are found in
+    /// these proportions (LLVolumeFace::cacheOptimize). `None` for 1.
+    pub normalized_scale: Option<[f32; 3]>,
 }
 
 impl MeshFace {
@@ -256,6 +260,10 @@ fn decode_face(face_index: usize, sm: &Llsd) -> MeshFace {
         return face;
     }
 
+    if sm.has("NormalizedScale") {
+        let s = vec3_llsd(&sm["NormalizedScale"]);
+        face.normalized_scale = s.iter().all(|v| v.is_finite() && *v > 0.0).then_some(s);
+    }
     let min_pos = vec3_llsd(&sm["PositionDomain"]["Min"]);
     let max_pos = vec3_llsd(&sm["PositionDomain"]["Max"]);
     let pos_range = [max_pos[0] - min_pos[0], max_pos[1] - min_pos[1], max_pos[2] - min_pos[2]];
@@ -506,6 +514,7 @@ mod tests {
             "TexCoord0Domain" => domain(&[0.0, 0.0], &[2.0, 1.0]),
             "TriangleList" => u16s(&[0, 1, 2, 2]),
             "Weights" => Llsd::Binary(weights),
+            "NormalizedScale" => arr(&[2.0, 4.0, 6.0]),
         };
         let f1 = llsd_map! { "NoGeometry" => true };
         let f2 = llsd_map! {
@@ -531,6 +540,7 @@ mod tests {
         assert_eq!(&f.joints[1][..2], &[0, 1]);
         assert!((f.weights[1][0] - 0.5).abs() < 1e-4 && (f.weights[1][1] - 0.5).abs() < 1e-4);
         assert_eq!(f.joints[2], [0, 1, 2, 3]);
+        assert_eq!(f.normalized_scale, Some([2.0, 4.0, 6.0]));
         for w in &f.weights {
             assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5);
         }
@@ -540,6 +550,7 @@ mod tests {
 
         let f = &faces[2];
         assert!(f.normals.is_empty() && f.uvs.is_empty() && f.joints.is_empty());
+        assert_eq!(f.normalized_scale, None);
         assert_eq!(f.indices, vec![0, 1, 2, 0, 2, 3]); // triangle with index 9 dropped
         assert_eq!(f.positions[2], [1.0, 1.0, 0.0]);
     }

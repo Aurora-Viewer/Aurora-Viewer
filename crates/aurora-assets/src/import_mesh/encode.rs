@@ -101,6 +101,11 @@ pub fn lod(model: &Model, include_skin: bool) -> Result<Llsd, AssetError> {
         if include_skin {
             data.insert("Weights", Llsd::Binary(weights));
         }
+        // the size taken out by the normalization, which the tangents are
+        // found in (LLModel::writeModel, LLVolumeFace::cacheOptimize)
+        if model.size.is_finite() && model.size.min_element() > 0.0 {
+            data.insert("NormalizedScale", floats(model.size.to_array()));
+        }
         faces.push(data);
     }
     Ok(Llsd::Array(faces))

@@ -41,8 +41,10 @@ mod sync_check;
 mod sync_plan;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
+pub mod tangents;
 pub mod texture_budget;
 pub(crate) mod texture_cache;
+pub mod texture_importance;
 mod texture_load;
 pub mod textures;
 pub mod water;
@@ -234,13 +236,13 @@ pub struct FaceDraw {
     /// Normal, specular / metallic-roughness and emissive maps (sized like
     /// the base texture).
     pub aux_tex: [Uuid; 3],
-    /// Repeats of those maps (a finer normal map needs more resolution).
-    pub aux_repeats: [f32; 3],
     pub te_alpha: f32,
     pub pbr_alpha: Option<u8>, // 0 opaque, 1 blend, 2 mask
     /// Legacy material alpha mode (`legacy_mat::alpha_mode`).
     pub legacy_alpha: Option<u8>,
     pub two_sided: bool,
+    /// The smaller of the texture entry's two scales: every texture of the
+    /// face is loaded for it (`texture_importance::per_repeats`).
     pub repeats: f32,
     /// TE glow > 0: also drawn in the glow pass.
     pub glow: bool,
@@ -475,12 +477,15 @@ fn object_visibility(
     })
 }
 
-/// Texture usage of a face whose object covers `px` pixels: its base
-/// texture and those of its material (id, pixels, in view).
+/// Texture usage of a face of an object whose textures are sized `px`
+/// (`texture_importance::texture_pixels`): its base texture and those of
+/// its material, all of the same size, lowered by the face's repeats as the
+/// Legacy Viewer does (id, pixels, in view).
 fn note_face_usage(usage: &mut Vec<(Uuid, f32, bool)>, f: &FaceDraw, px: f32, in_view: bool) {
-    usage.push((f.tex_id, px * f.repeats, in_view));
-    for (t, r) in f.aux_tex.iter().zip(f.aux_repeats).filter(|(t, _)| !t.is_nil()) {
-        usage.push((*t, px * r, in_view));
+    let px = texture_importance::per_repeats(px, f.repeats);
+    usage.push((f.tex_id, px, in_view));
+    for t in f.aux_tex.iter().filter(|t| !t.is_nil()) {
+        usage.push((*t, px, in_view));
     }
 }
 
@@ -801,6 +806,16 @@ pub struct CullView {
     pub eye: Vec3,
     pub screen_height: f32,
     pub tan_half_fov: f32,
+    /// Pixels per radian (LLDrawable::sCurPixelAngle), for the textures'
+    /// sizes (`texture_importance`).
+    pub pixel_angle: f32,
+    /// What `texture_importance` reads of the camera: its view direction,
+    /// the cosine of half its widest field (LLViewerCamera's
+    /// mCosHalfCameraFOV) and whether it moves too fast for the boost.
+    /// Without `with_texture_camera` nothing is important to the camera.
+    pub forward: Vec3,
+    pub cos_half_fov: f32,
+    pub camera_fast: bool,
 }
 
 impl CullView {
@@ -824,7 +839,22 @@ impl CullView {
             eye,
             screen_height,
             tan_half_fov: (fov_y * 0.5).tan(),
+            pixel_angle: screen_height / fov_y.max(1e-3),
+            forward: Vec3::ZERO,
+            cos_half_fov: 1.0,
+            camera_fast: true,
         }
+    }
+
+    /// The camera as `texture_importance` reads it: view direction, window
+    /// aspect (the widest half field, cos(0.5 x fov x max(1, aspect)) as
+    /// LLViewerCamera::updateCameraLocation) and whether it moves fast.
+    pub fn with_texture_camera(mut self, forward: Vec3, aspect: f32, fast: bool) -> CullView {
+        let half = (self.tan_half_fov.atan() * aspect.max(1.0)).min(std::f32::consts::PI);
+        self.forward = forward.normalize_or_zero();
+        self.cos_half_fov = half.cos();
+        self.camera_fast = fast;
+        self
     }
 
     #[inline]
@@ -2722,10 +2752,10 @@ impl Scene {
             }
             let mut pbr_alpha = None;
             let mut aux_tex = [Uuid::nil(); 3];
-            let base_repeats = tf.scale_s.abs().max(tf.scale_t.abs()).clamp(0.1, 16.0);
-            // texture streaming: how many times each map repeats on the face
-            let mut repeats = base_repeats;
-            let mut aux_repeats = [base_repeats; 3];
+            // texture streaming: the face's repeats, the texture entry's
+            // smaller scale for every map (LLViewerTextureList::
+            // updateImageDecodePriority: glTF transforms not counted)
+            let repeats = tf.scale_s.abs().min(tf.scale_t.abs());
             let mut two_sided = false;
             // GLTF material?
             let mat_id = o.visual_material(fi);
@@ -2763,9 +2793,6 @@ impl Scene {
                 rec.spec_uv = so(tmr);
                 rec.spec_color = so(te_);
                 rec.legacy = [tn.rotation, tmr.rotation, te_.rotation, 0.0];
-                let rep = |t: &aurora_assets::material::TextureTransform| t.scale[0].abs().max(t.scale[1].abs()).clamp(0.1, 64.0);
-                repeats = tb.scale[0].abs().max(tb.scale[1].abs()).clamp(0.1, 16.0);
-                aux_repeats = [rep(tn), rep(tmr), rep(te_)];
                 base_tex = m.base_color_texture.unwrap_or(Uuid::nil());
                 let mut slot_of = |id: Option<Uuid>, default: u32, g: &mut ObjGpu, s: &mut Self| -> u32 {
                     match id {
@@ -2808,9 +2835,6 @@ impl Scene {
                     rec.flags[0] |= flags::LEGACY_MAT;
                     aux_tex[0] = lm.normal_map;
                     aux_tex[1] = lm.specular_map;
-                    let rep = |st: [f32; 4]| st[0].abs().max(st[1].abs()).clamp(0.1, 64.0);
-                    aux_repeats[0] = rep(lm.normal_st);
-                    aux_repeats[1] = rep(lm.specular_st);
                     if !lm.normal_map.is_nil() {
                         g.tex_ids.push(lm.normal_map);
                         rec.tex[1] = self.textures.acquire(renderer, lm.normal_map, TexSource::Asset);
@@ -2894,7 +2918,6 @@ impl Scene {
                 base_slot: rec.tex[0],
                 tex_id: base_tex,
                 aux_tex,
-                aux_repeats,
                 te_alpha: if invisible { 0.0 } else { rec.base_color[3] },
                 pbr_alpha,
                 legacy_alpha,
@@ -3086,7 +3109,6 @@ impl Scene {
                     base_slot: slot,
                     tex_id: tex.unwrap_or(Uuid::nil()),
                     aux_tex: [Uuid::nil(); 3],
-                    aux_repeats: [1.0; 3],
                     te_alpha: if hidden { 0.0 } else { 1.0 },
                     pbr_alpha: None,
                     legacy_alpha: None,
@@ -3398,6 +3420,10 @@ impl Scene {
         // objects visited here: all of them on the CPU path; with the GPU
         // lists the special ones, the usage slice, the selection, the
         // pictured impostors and, in debug, all
+        // under memory pressure the textures go back to their size on screen:
+        // no importance boost (the Legacy Viewer divides it out with its
+        // discard bias, updateImageDecodePriority)
+        let boost_textures = self.textures.stats.pressure == 0;
         let usage_phase = (self.frame % 30) as usize;
         // Objects whose faces were built since the last frame have the size
         // of their textures on screen noted now rather than at their turn,
@@ -3554,8 +3580,10 @@ impl Scene {
             if in_view {
                 l.visible += 1;
             }
-            // texture usage and blend order on the object's own bounds
-            let px = view.pixel_size(g.center, g.radius);
+            // texture usage and blend order on the object's own bounds: its
+            // textures as the Legacy Viewer sizes them, finer near the camera
+            // and in the middle of the view
+            let px = texture_importance::texture_pixels(view, g.center, g.radius, in_view && boost_textures);
             let blend_d = (g.center - view.eye).length();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
@@ -5224,7 +5252,6 @@ mod tests {
             base_slot: 0,
             tex_id: Uuid::nil(),
             aux_tex: [Uuid::nil(); 3],
-            aux_repeats: [1.0; 3],
             te_alpha: 1.0,
             pbr_alpha: None,
             legacy_alpha: None,

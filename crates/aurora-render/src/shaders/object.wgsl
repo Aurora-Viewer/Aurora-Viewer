@@ -29,6 +29,39 @@ fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
 fn vertex_position(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.pos + lip_delta(rec, in)[0]; }
 fn vertex_normal(rec: DrawRecord, in: VsIn) -> vec3<f32> { return in.normal.xyz + lip_delta(rec, in)[1]; }
 
+// The tangent packed in the normal's w (aurora_render::pack_tangent): an
+// angle in 127 steps around the normal, from the axis pair of
+// tangent_basis (Duff et al. 2017), the handedness as its sign. Zero
+// without one.
+fn vertex_tangent(in: VsIn) -> vec4<f32> {
+    let code = round(in.normal.w * 127.0);
+    if (code == 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let n = normalize(in.normal.xyz);
+    let s = select(-1.0, 1.0, n.z >= 0.0);
+    let a = -1.0 / (s + n.z);
+    let b = n.x * n.y * a;
+    let b1 = vec3<f32>(1.0 + s * n.x * n.x * a, s * b, -s * n.x);
+    let b2 = vec3<f32>(b, s + n.y * n.y * a, -n.y);
+    let angle = (abs(code) - 1.0) * (6.2831853 / 127.0);
+    return vec4<f32>(b1 * cos(angle) + b2 * sin(angle), sign(code));
+}
+
+// textureUtilV.glsl tangent_space_transform, without the texture
+// animation (an animated PBR face keeps the per-pixel frame, derived from
+// its animated coordinates): the tangent turned back by the normal map's
+// KHR rotation and flipped with the signs of its scale.
+fn tangent_space_transform(t: vec3<f32>, w: f32, n: vec3<f32>, scale: vec2<f32>, rotation: f32) -> vec4<f32> {
+    let scale_sign = sign(scale);
+    var weights = vec2<f32>(cos(rotation), sin(rotation)) * scale_sign;
+    weights.x += 1.0 - abs(sign(sign(weights.x) + 0.5 * sign(weights.y)));
+    weights = normalize(weights);
+    weights.y = -weights.y;
+    let b = w * cross(n, t);
+    return vec4<f32>(weights.x * t + weights.y * b, w * scale_sign.x * scale_sign.y);
+}
+
 // Skinning matrix of one mesh joint: owner joint world matrix times the
 // mesh's inverse bind matrix (LLSkinningUtil::initSkinningMatrixPalette).
 fn joint_matrix(rec: DrawRecord, j: u32) -> mat4x4<f32> {
@@ -102,6 +135,10 @@ struct VsOut {
     @location(7) uv_e: vec2<f32>,
     // coordinates the tangent frame of the normal map is derived from
     @location(8) uv_t: vec2<f32>,
+    // the vertices' tangent frame (materialV.glsl vary_tangent, vary_sign):
+    // zero for the per-pixel one
+    @location(9) tangent: vec3<f32>,
+    @location(10) @interpolate(flat) tangent_sign: f32,
 };
 
 fn cofactor(m: mat4x4<f32>) -> mat3x3<f32> {
@@ -376,6 +413,30 @@ fn vs_main(in: VsIn) -> VsOut {
     if ((rec.flags.x & FLAG_PBR) == 0u) {
         out.uv_t = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
     }
+    // The tangents built with the face (scene/tangents.rs), moved as the
+    // Legacy Viewer moves them: by the normal's matrix, a rigged vertex's by
+    // its skinning matrix (materialV.glsl, pbropaqueV.glsl)
+    out.tangent = vec3<f32>(0.0);
+    out.tangent_sign = 1.0;
+    let pbr = (rec.flags.x & FLAG_PBR) != 0u;
+    var vt = vec4<f32>(0.0);
+    if ((frame.light_mode.z & TANGENT_VERTEX) != 0u && !(pbr && animated)) {
+        vt = vertex_tangent(in);
+    }
+    if (vt.w != 0.0) {
+        var t = cofactor(model) * vt.xyz;
+        if ((rec.flags.x & FLAG_SKINNED) != 0u) {
+            t = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz) * vt.xyz;
+        }
+        var tw = vec4<f32>(t, vt.w);
+        if (pbr) {
+            tw = tangent_space_transform(t, vt.w, normalize(out.normal), rec.mat_uv.xy, rec.legacy.x);
+        }
+        if (dot(tw.xyz, tw.xyz) > 1e-20) {
+            out.tangent = normalize(tw.xyz);
+            out.tangent_sign = tw.w;
+        }
+    }
     out.record = in.instance;
     out.view_depth = distance(ep.xyz, frame.camera_pos.xyz - frame.eye.xyz);
     return out;
@@ -493,7 +554,7 @@ fn eval_material(in: VsOut, front: bool) -> Material {
         m.color = vec4<f32>(srgb_to_linear(base_s.rgb * rec.base_color.rgb), base_s.a * rec.base_color.a);
     }
     m.geo_n = n;
-    m.n = perturb_normal(n, in.world_pos, in.uv_t, nrm_s.xyz);
+    m.n = perturb_normal(n, in.world_pos, in.uv_t, in.tangent, in.tangent_sign, front, nrm_s.xyz);
     if (rec.tex.y == 1u) {
         m.n = n;
     }

@@ -99,6 +99,9 @@ pub mod stream;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
+/// A low-poly ball with a baked normal map (AURORA_DEMO_BUMP=sphere).
+#[path = "demo_tangents.rs"]
+pub mod tangents;
 /// "Refresh textures" on a panel whose disk cache file is stale
 /// (AURORA_DEMO_TEXREFRESH).
 #[path = "demo_tex_refresh.rs"]
@@ -5858,6 +5861,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if let Some(sky) = sky::texture(id) {
         return Some(sky);
     }
+    if let Some(baked) = tangents::texture(id) {
+        return Some(baked);
+    }
     const N: u32 = 64;
     let tau = std::f32::consts::TAU;
     let mut px = Vec::with_capacity((N * N * 4) as usize);
@@ -6027,6 +6033,7 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
         alpha_cutoff: 0,
     };
     vec![
+        (tangents::MAT, tangents::material()),
         (MAT_BLEND, base.clone()),
         (
             MAT_NONE,

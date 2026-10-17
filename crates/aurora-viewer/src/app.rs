@@ -345,6 +345,8 @@ pub struct App {
     tp_checks: Vec<f32>,
     /// Debug: culling view kept while "Freeze culling" is on.
     frozen_cull: Option<CullView>,
+    /// The camera's recent speed, for the textures' importance to it.
+    texture_motion: crate::scene::texture_importance::CameraMotion,
     /// Interface sounds caused by the widgets (clicks, keys, windows).
     sound_cues: ui::sound_cues::SoundCues,
     /// Last frame: microphone on, context menu open, interactive script
@@ -893,6 +895,7 @@ impl App {
             move_complete_at: None,
             tp_checks: Vec::new(),
             frozen_cull: None,
+            texture_motion: Default::default(),
             sound_cues: Default::default(),
             mic_was: false,
             context_menu_was: false,
@@ -5430,6 +5433,9 @@ impl App {
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
         self.update_hover_height();
+        if self.demo {
+            crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
+        }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
             self.send(NetCommand::AgentAnimation { anim, start: false });
@@ -5656,7 +5662,12 @@ impl App {
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
-        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y);
+        let camera_fast = self.texture_motion.update(self.camera.position, self.camera.forward(), dt);
+        let mut cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
+            self.camera.forward(),
+            aspect,
+            camera_fast,
+        );
         // debug: frozen culling view (move around to see what it drops)
         if self.settings.debug.freeze_culling {
             cull = *self.frozen_cull.get_or_insert(cull);
@@ -5850,7 +5861,11 @@ impl App {
                 view = self.camera.view();
                 proj = frame_proj(&self.camera);
                 vp = proj * view;
-                cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y);
+                cull = CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y).with_texture_camera(
+                    self.camera.forward(),
+                    aspect,
+                    camera_fast,
+                );
                 if self.settings.debug.freeze_culling {
                     cull = *self.frozen_cull.get_or_insert(cull);
                 }
