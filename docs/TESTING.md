@@ -927,6 +927,23 @@ Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
 
+**Mesh Shape inspector:** `AURORA_DEMO_BUILD=mesh-inspector,object:99621`
+opens the native Shape section on a mesh with four different generated LODs.
+The counts come from its actual geometries. Capture after frame 710.
+Suffixes `-high`, `-medium`, `-low`, `-lowest` force that LOD locally; compare
+the visible geometry and active row, then restore Default. `-readonly` keeps
+the information/menu available without Modify rights. Link/face numbers belong
+between the respective footer arrows; select multiple faces to check the list
+and its full hover text. Inspection resets on selection/asset/tool changes or
+closing construction, stays across editing sections, never changes object
+data/global preferences and keeps HUDs at high LOD.
+`mesh-inspector-cycle` switches lowest/high/low/medium/default at frames
+630/655/680/705/730 with the camera stationary. Capture each stage just before
+the next transition. `mesh-inspector-cycle-empty` makes lowest a real empty
+geometry: capture at 645 (no faces), 670 (high restored), and 750 (automatic
+restored). Returning from the empty level must not wait for camera movement,
+object updates or the periodic LOD sweep.
+
 **`AURORA_DEMO_BUILD_FOCUS=off|on`** — focus on the selection before taking
 a handle, with "Follow object while editing" disabled / enabled. With `off`,
 the view stays fixed at the centre of the screen; with `on`, it follows the

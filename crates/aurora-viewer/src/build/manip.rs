@@ -216,12 +216,13 @@ pub(super) fn frame(
             super::SelectType::World => {}
         }
     }
-    // FSBuildPrefs_ActualRoot (LLManip::getPivotPoint): pivot on the
-    // primary object's root prim rather than the selection's center
+    // LLManip::getPivotPoint's actual-root option anchors whole-object selections
+    // on the primary linkset's root. Linked editing deliberately follows the primary
+    // prim instead, even if another selected prim is a root.
     let pivot = if s.actual_root {
         sel.first()
             .and_then(|k| world.objects.index_of(k))
-            .map(|i| super::root_of(world, i))
+            .map(|i| if linked { i } else { super::root_of(world, i) })
             .and_then(|r| Scene::object_edit_pivot(world, r, now))
             .unwrap_or(bounds.center)
     } else if prims == 1 {
@@ -1675,6 +1676,48 @@ fn draw_scale_ruler(p: &mut Painter3d, s: &BuildSettings, start: Vec3, dir: Vec3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn actual_root_pivot_follows_latest_prim_in_linked_editing_and_latest_whole_object_otherwise() {
+        let mut world = hud_world();
+        for event in crate::demo::face_selection_events(false) {
+            world.apply(event);
+        }
+        let root = world.objects.index_of_uuid(&crate::demo::action_id(99620)).unwrap();
+        let child = world.objects.index_of_uuid(&crate::demo::action_id(99621)).unwrap();
+        let other = world.objects.index_of_uuid(&crate::demo::action_id(99622)).unwrap();
+        let now = Instant::now();
+        for (linked, selection, expected) in [
+            (false, vec![root, other], other),
+            (false, vec![other, child], root),
+            (true, vec![child], child),
+            (true, vec![root, child], child),
+            (true, vec![child, root], root),
+            (true, vec![other, child], child),
+        ] {
+            let mut settings = BuildSettings {
+                actual_root: true,
+                edit_linked: linked,
+                ..Default::default()
+            };
+            let mut tool = super::super::BuildTool::default();
+            for (i, idx) in selection.into_iter().enumerate() {
+                tool.click_select(&mut world, &settings, Some(idx), i > 0);
+            }
+            assert_eq!(tool.selection.first(), Some(&world.objects.get(expected).unwrap().key));
+            let pivot = Scene::object_edit_pivot(&world, expected, now).unwrap();
+            for grid_mode in 0..=2 {
+                settings.grid_mode = grid_mode;
+                let f = frame(&world, &settings, &tool.selection, linked, now, None).unwrap();
+                assert!(f.pivot.abs_diff_eq(pivot, 1e-5), "linked={linked}, grid={grid_mode}");
+            }
+            if tool.selection.len() > 1 {
+                settings.actual_root = false;
+                let f = frame(&world, &settings, &tool.selection, linked, now, None).unwrap();
+                assert!(f.pivot.abs_diff_eq(f.bounds.center, 1e-5));
+            }
+        }
+    }
 
     #[test]
     fn world_drag_refuses_denied_or_mixed_selection_and_rechecks_revoked_permissions() {
