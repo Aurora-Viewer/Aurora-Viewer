@@ -305,7 +305,7 @@ impl Rigid {
                 let joint = point.and_then(|point| point.joint).unwrap_or(rig.pelvis);
                 return Some(Self {
                     joint,
-                    point: point.map(|point| point.skel_position).unwrap_or(world.avatar_lib.pelvis),
+                    point: point.map(|point| point.local_position).unwrap_or(Vec3::ZERO),
                     rotation: point.map(|point| point.rotation).unwrap_or(Quat::IDENTITY),
                     local: local * scale,
                 });
@@ -320,26 +320,13 @@ impl Snapshot {
         let weights = avatars.shape_params.weights_with(values, params);
         let mut shape = avatars.shape_params.shape_weights(weights.clone(), &avatars.rig);
         let rig = &avatars.rig;
+        let mut overrides = crate::scene::joint_overrides::JointOverrides::new(rig);
         for mesh in &self.meshes {
-            let Some(skin) = &mesh.skin else { continue };
-            if skin.alt_inverse_bind.len() != skin.joint_names.len() {
-                continue;
-            }
-            for (name, alt) in skin.joint_names.iter().zip(&skin.alt_inverse_bind) {
-                if name == "mPelvis" {
-                    continue;
-                }
-                if let Some(&index) = rig.names.get(name) {
-                    let pos = alt.w_axis.truncate();
-                    if pos.is_finite() && (pos - rig.local_pos[index]).length_squared() > 1e-8 {
-                        shape.local_pos[index] = pos;
-                        if skin.lock_scale_if_joint_position {
-                            shape.scale[index] = rig.scale[index];
-                        }
-                    }
-                }
+            if let Some(skin) = &mesh.skin {
+                overrides.add(rig, mesh.asset, skin);
             }
         }
+        overrides.apply(rig, &mut shape.local_pos, &mut shape.scale);
         for (pos, delta) in shape.local_pos.iter_mut().zip(&self.pose.1) {
             *pos += *delta;
         }
@@ -433,9 +420,9 @@ impl Snapshot {
                 .map(|rigid| {
                     // Same frame as anchors::attach_frame: the point follows
                     // the shaped bone, but rigid geometry keeps object scale.
-                    let delta = world.get(rigid.joint).copied().unwrap_or(Mat4::IDENTITY) * rig.default_world_inv[rigid.joint];
-                    let (_, rotation, _) = delta.to_scale_rotation_translation();
-                    Mat4::from_rotation_translation(rotation.normalize() * rigid.rotation, delta.transform_point3(rigid.point))
+                    let joint = world.get(rigid.joint).copied().unwrap_or(Mat4::IDENTITY);
+                    let (_, rotation, _) = joint.to_scale_rotation_translation();
+                    Mat4::from_rotation_translation(rotation.normalize() * rigid.rotation, joint.transform_point3(rigid.point))
                         * rigid.local
                 })
                 .unwrap_or(Mat4::IDENTITY);

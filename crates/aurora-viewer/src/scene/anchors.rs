@@ -85,6 +85,7 @@ pub struct Posed {
 /// (`pos`, `rot`): the matrix rigged meshes are drawn with, and the first
 /// anchor of the owner's palette. `scale`: HUD zoom of a rigged HUD.
 pub fn skeleton_model(world: &World, meshes: &MeshStreamer, owner_idx: usize, pos: Vec3, mut rot: Quat, scale: f32) -> Mat4 {
+    let mut pos = pos;
     // LLControlAvatar::matchVolumeTransform: ground animesh also follow
     // their root mesh's unscaled bind rotation.
     if let Some(root) = world.objects.get(owner_idx)
@@ -100,6 +101,9 @@ pub fn skeleton_model(world: &World, meshes: &MeshStreamer, owner_idx: usize, po
         if bind_rot.is_finite() {
             rot = (rot * bind_rot).normalize();
         }
+        // LLViewerObject::getRenderPosition: a ground control avatar's
+        // pelvis fixup is world vertical. Worn animesh follows its point.
+        pos.z += world.avatar_shape_dz.get(&root.full_id).copied().unwrap_or(0.0);
     }
     skeleton_at(&world.avatar_lib, pos, rot, scale)
 }
@@ -139,13 +143,17 @@ pub fn attach_frame(world: &World, wearer: &Object, point: u8) -> AttachFrame {
         pos.y *= world.hud_aspect;
         return AttachFrame { pos, rot, hud };
     }
-    // follow the animated bone (LLViewerJointAttachment under its joint)
-    if let Some((a, j)) = ap.and_then(|a| Some((a, a.joint?)))
-        && let Some(m) = world.avatar_poses.get(&wearer.full_id).and_then(|p| p.get(j))
-    {
-        let (_, jrot, _) = m.to_scale_rotation_translation();
-        pos = m.transform_point3(a.skel_position) - lib.pelvis;
-        rot = jrot.normalize() * rot;
+    if let Some(a) = ap {
+        let joint_world = a.joint.and_then(|j| {
+            world
+                .avatar_poses
+                .get(&wearer.full_id)
+                .and_then(|p| p.get(j))
+                .map(|delta| *delta * a.rest_joint)
+        });
+        let (position, rotation) = a.frame(joint_world);
+        pos = position - lib.pelvis;
+        rot = rotation;
     }
     AttachFrame { pos, rot, hud }
 }
