@@ -3969,7 +3969,7 @@ What the inventory must show with these scenarios:
   bounce, added to the diffuse light of every surface (`screen_indirect`,
   common.wgsl). `alt` switches it every second, both kept ready
   (`AURORA_DEMO_BOUNCE=1`). `g_ssao` includes it (crowd of 40,
-  2560 × 1369, High: about 0.9 to 1.0 ms with it, 0.4 to 0.5 without).
+  2560 × 1369, High: about 1.1 ms with it, 0.6 without).
   Its strength is Preferences › Graphics › Indirect light intensity (0 to
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at

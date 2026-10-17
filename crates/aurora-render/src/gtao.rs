@@ -49,7 +49,7 @@ const INDIRECT_RADIUS: f32 = 1.5;
 /// Blur passes of the bent normal alone, before the occlusion's last one.
 const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
-const INDIRECT_EXTRA_BLUR: u32 = 2;
+const INDIRECT_EXTRA_BLUR: u32 = 4;
 
 /// How much work one quality level does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -612,7 +612,7 @@ impl Gtao {
                 &self.main_bitmask.1,
                 &[(4, &all_mips), (5, &ao[0]), (6, &edges), (13, scene), (14, &light[0])],
             );
-            // two turns more than the occlusion's blur: one bounce from a few
+            // four turns more than the occlusion's blur: one bounce from a few
             // samples is grainy, and the light has no sharp detail to keep
             let il_passes = passes + INDIRECT_EXTRA_BLUR;
             let denoise = (0..il_passes)
