@@ -194,6 +194,12 @@ world-drop path with inventory rows and library swatches. A dedicated handle
 in each material preview supplies the same cargo without consuming the
 3D scene's orbit gesture.
 
+`ui/inventory/permissions.rs` renders the current owner's C/M/T suffix and,
+when the owning window's switch is on, appends the next owner's C/M/T after
+an arrow. Inventory/folder windows and build Contents keep independent session
+flags. Link rows resolve both masks from the original item; unavailable masks
+remain unknown. The shared visibility control never changes permissions.
+
 `ui/inventory/rows.rs` lists the plain inventory tree (Inventory tab and
 folder windows) as flat rows, rebuilt only when the inventory, the sort or an
 open folder changes, and lays out only the rows in sight; it keeps each

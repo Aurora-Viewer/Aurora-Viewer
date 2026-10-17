@@ -155,6 +155,7 @@ pub fn apply_tab(tool: &mut BuildTool) {
             "grid" => tool.ui.grid_options_open = true,
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
             "permissions" => tool.ui.bulk_perms_open = true,
+            "next-owner" => tool.ui.contents_show_next_owner = true,
             _ => {}
         }
     }

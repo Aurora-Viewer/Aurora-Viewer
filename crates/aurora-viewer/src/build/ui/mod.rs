@@ -149,6 +149,8 @@ pub struct FloaterState {
     /// "For sale" ticked / sale type / price not applied yet (Apply).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
+    /// Independent from every personal/folder inventory window.
+    pub contents_show_next_owner: bool,
     pub contents_selection: contents_selection::Selection,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,

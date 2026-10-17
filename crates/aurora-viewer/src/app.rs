@@ -12019,7 +12019,8 @@ impl ApplicationHandler for App {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let configured_view = matches!(
                     view.as_str(),
-                    "sort"
+                    "permissions"
+                        | "sort"
                         | "filters"
                         | "preferences"
                         | "recent"
@@ -12048,6 +12049,10 @@ impl ApplicationHandler for App {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
+                    if view == "permissions" {
+                        self.inventory_ui.show_next_owner = true;
+                        self.inventory_ui.expand_all = Some(true);
+                    }
                     if view == "sort" {
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8000));
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
