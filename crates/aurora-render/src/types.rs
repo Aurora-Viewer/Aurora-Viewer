@@ -612,6 +612,9 @@ pub struct RenderSettings {
     pub ssao: u8,
     /// How the occlusion `ssao` turns on is computed.
     pub ao_method: AoMethod,
+    /// With GTAO: its occlusion as a visibility bitmask and one bounce of
+    /// light from the surfaces around (gtao.rs, `main_bitmask`).
+    pub screen_indirect: bool,
     /// Planar water reflections: fraction of the screen resolution (0 = off).
     pub water_reflection_scale: f32,
     /// Mirrors (reflection probes flagged as mirror): fraction of the screen
@@ -638,6 +641,7 @@ impl Default for RenderSettings {
             shadow_resolution: 2048,
             ssao: 1,
             ao_method: AoMethod::Legacy,
+            screen_indirect: false,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,

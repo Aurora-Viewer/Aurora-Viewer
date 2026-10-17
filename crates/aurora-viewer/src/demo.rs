@@ -3452,6 +3452,39 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_BOUNCE=1: a white floor between a red wall and a green
+    // one, with a white box against them, left of the start position: with
+    // GTAO's indirect light the floor and the box take the walls' colours
+    // near them (AURORA_SSIL)
+    if std::env::var_os("AURORA_DEMO_BOUNCE").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let plain = |id: u32, pos: Vec3, scale: Vec3, color: [f32; 4]| {
+            let mut t = TextureEntry::default();
+            for f in t.faces.iter_mut() {
+                f.texture = BLANK_TEXTURE;
+                f.color = color;
+            }
+            prim(id, pos, Quat::IDENTITY, scale, boxp, Arc::new(t), ExtraParams::default(), "")
+        };
+        let white = [0.9, 0.9, 0.9, 1.0];
+        for (pos, scale, color) in [
+            (Vec3::new(135.0, 137.0, floor + 0.05), Vec3::new(3.0, 3.0, 0.1), white),
+            (
+                Vec3::new(135.0, 138.55, floor + 1.0),
+                Vec3::new(3.0, 0.1, 2.0),
+                [0.9, 0.1, 0.08, 1.0],
+            ),
+            (
+                Vec3::new(136.55, 137.0, floor + 1.0),
+                Vec3::new(0.1, 3.0, 2.0),
+                [0.1, 0.8, 0.15, 1.0],
+            ),
+            (Vec3::new(135.9, 137.9, floor + 0.4), Vec3::new(0.7, 0.7, 0.7), white),
+        ] {
+            add(plain(id, pos, scale, color));
+            id += 1;
+        }
+    }
     // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
     // of panels facing the start position, in place of the alpha panels
     if texanim {

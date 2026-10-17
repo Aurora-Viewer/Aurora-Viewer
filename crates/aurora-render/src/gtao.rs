@@ -15,6 +15,14 @@
 //! reflections fade in the creases and recesses GTAO finds. It comes with
 //! GTAO; `AURORA_GTAO_SPECULAR=0|1|alt` turns it off, on (the default) or
 //! on every other second, to compare.
+//!
+//! With the screen-space indirect light of Preferences on, the main pass is
+//! `main_bitmask` instead: the occlusion as a visibility bitmask with a
+//! thickness per sample (Therrien et al. 2023) and one bounce of the
+//! previous frame's lit colour (`scene_copy`, reprojected), blurred like
+//! the occlusion into `Targets::indirect`, which the shading adds to the
+//! diffuse light (`screen_indirect` in common.wgsl). `AURORA_SSIL=0|1|alt`
+//! overrides the setting (`alt`: on every other second).
 
 use crate::types::AoMethod;
 use bytemuck::{Pod, Zeroable};
@@ -33,6 +41,15 @@ const THIN_OCCLUDER_COMPENSATION: f32 = 0.0;
 const FINAL_VALUE_POWER: f32 = 2.2;
 const DEPTH_MIP_SAMPLING_OFFSET: f32 = 3.30;
 const DENOISE_BLUR_BETA: f32 = 1.2;
+/// The indirect light's samples: how thick a surface is taken to be behind
+/// its front (metres), how far the light comes from (metres, also the
+/// occlusion's radius on that path), and its strength (1 = one physical
+/// bounce of a Lambert surface).
+const INDIRECT_THICKNESS: f32 = 0.35;
+const INDIRECT_RADIUS: f32 = 1.5;
+const INDIRECT_STRENGTH: f32 = 1.0;
+/// Blur passes of the indirect light beyond the occlusion's.
+const INDIRECT_EXTRA_BLUR: u32 = 2;
 
 /// How much work one quality level does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +196,50 @@ impl SpecularOcclusion {
     }
 }
 
+/// `AURORA_SSIL`: the screen-space indirect light forced on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Indirect {
+    /// As the settings say.
+    Settings,
+    On,
+    Off,
+    /// On one second, off the next (its targets kept ready).
+    Alternate,
+}
+
+impl Indirect {
+    pub(crate) fn parse(v: Option<&str>) -> Self {
+        match v.map(str::trim) {
+            Some("1") | Some("on") => Indirect::On,
+            Some("0") | Some("off") => Indirect::Off,
+            Some("alt") => Indirect::Alternate,
+            _ => Indirect::Settings,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        static MODE: std::sync::OnceLock<Indirect> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| Indirect::parse(std::env::var("AURORA_SSIL").ok().as_deref()))
+    }
+
+    /// Whether its targets are needed with the setting `on`.
+    pub(crate) fn needed(self, on: bool) -> bool {
+        match self {
+            Indirect::Settings => on,
+            Indirect::On | Indirect::Alternate => true,
+            Indirect::Off => false,
+        }
+    }
+
+    /// Whether the frame drawn `secs` whole seconds into the session has it.
+    pub(crate) fn applied(self, on: bool, secs: u64) -> bool {
+        match self {
+            Indirect::Alternate => secs.is_multiple_of(2),
+            _ => self.needed(on),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GtaoU {
@@ -187,10 +248,14 @@ struct GtaoU {
     radius: [f32; 4],
     quality: [f32; 4],
     misc: [f32; 4],
+    reproj: [[f32; 4]; 4],
+    il: [f32; 4],
 }
 
-/// The constants of a frame drawn with `proj` into targets of `size`.
-fn uniforms(proj: Mat4, size: (u32, u32), q: Quality) -> GtaoU {
+/// The constants of a frame drawn with `proj` into targets of `size`;
+/// `reproj` takes its view space (z in front) to the clip space of the
+/// previous frame.
+fn uniforms(proj: Mat4, reproj: Mat4, size: (u32, u32), q: Quality) -> GtaoU {
     GtaoU {
         // scales and off-centre terms (a photo tile's projection has them)
         proj: [proj.x_axis.x, proj.y_axis.y, proj.z_axis.x, proj.z_axis.y],
@@ -199,7 +264,16 @@ fn uniforms(proj: Mat4, size: (u32, u32), q: Quality) -> GtaoU {
         radius: [EFFECT_RADIUS, FALLOFF_RANGE, SAMPLE_DISTRIBUTION_POWER, THIN_OCCLUDER_COMPENSATION],
         quality: [FINAL_VALUE_POWER, DEPTH_MIP_SAMPLING_OFFSET, q.slices as f32, q.steps as f32],
         misc: [DENOISE_BLUR_BETA, if q.half_res { 2.0 } else { 1.0 }, 0.0, 0.0],
+        reproj: reproj.to_cols_array_2d(),
+        il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, INDIRECT_STRENGTH, 0.0],
     }
+}
+
+/// The matrix from the view space of the GTAO pass (x right, y up, z the
+/// distance in front: glam's view space with z flipped) of a frame seen
+/// through `view` to the clip space of the previous frame (`prev_view_proj`).
+pub(crate) fn reprojection(view: Mat4, prev_view_proj: Mat4) -> Mat4 {
+    prev_view_proj * view.inverse() * Mat4::from_scale(glam::Vec3::new(1.0, 1.0, -1.0))
 }
 
 /// Size of the targets for a window of `w` x `h`.
@@ -223,7 +297,20 @@ pub(crate) struct Gtao {
     main: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    main_bitmask: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    denoise_il: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    denoise_il_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     buffer: wgpu::Buffer,
+}
+
+/// The screen-space indirect light's targets and bind groups.
+pub(crate) struct IndirectTargets {
+    main: wgpu::BindGroup,
+    /// In order; the last one writes `result`.
+    denoise: Vec<(wgpu::BindGroup, bool)>,
+    /// The light (linear rgb, the units of the lit colour), sampled by the
+    /// shading.
+    pub result: wgpu::TextureView,
 }
 
 /// The targets of one window size and quality, with their bind groups.
@@ -239,6 +326,8 @@ pub(crate) struct Targets {
     /// The visibility in `.r` and the view-space bent normal in `.gba`
     /// (0..1), sampled by the shading.
     pub result: wgpu::TextureView,
+    /// With the screen-space indirect light.
+    pub indirect: Option<IndirectTargets>,
 }
 
 fn uniform_entry() -> wgpu::BindGroupLayoutEntry {
@@ -286,6 +375,8 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const EDGES_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The indirect light while it is blurred, and its result.
+const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 impl Gtao {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
@@ -353,6 +444,35 @@ impl Gtao {
                     storage_entry(9, RESULT_FORMAT),
                 ],
             ),
+            main_bitmask: make(
+                "main_bitmask",
+                &[
+                    uniform_entry(),
+                    texture_entry(4, UNFILTERED),
+                    storage_entry(5, AO_FORMAT),
+                    storage_entry(6, EDGES_FORMAT),
+                    texture_entry(13, UNFILTERED),
+                    storage_entry(14, LIGHT_FORMAT),
+                ],
+            ),
+            denoise_il: make(
+                "denoise_il",
+                &[
+                    uniform_entry(),
+                    texture_entry(8, UNFILTERED),
+                    texture_entry(10, UNFILTERED),
+                    storage_entry(14, LIGHT_FORMAT),
+                ],
+            ),
+            denoise_il_final: make(
+                "denoise_il_final",
+                &[
+                    uniform_entry(),
+                    texture_entry(8, UNFILTERED),
+                    texture_entry(10, UNFILTERED),
+                    storage_entry(12, LIGHT_FORMAT),
+                ],
+            ),
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gtao params"),
                 size: std::mem::size_of::<GtaoU>() as u64,
@@ -363,8 +483,17 @@ impl Gtao {
     }
 
     /// Targets for a window of `width` x `height` reading `depth` (the
-    /// single-sample depth prepass).
-    pub(crate) fn targets(&self, device: &wgpu::Device, depth: &wgpu::TextureView, width: u32, height: u32, level: u8) -> Targets {
+    /// single-sample depth prepass), and with `scene` (the previous frame's
+    /// lit colour) those of the indirect light.
+    pub(crate) fn targets(
+        &self,
+        device: &wgpu::Device,
+        depth: &wgpu::TextureView,
+        scene: Option<&wgpu::TextureView>,
+        width: u32,
+        height: u32,
+        level: u8,
+    ) -> Targets {
         let q = quality(level);
         let (w, h) = target_size(width, height, q);
         let storage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -431,6 +560,31 @@ impl Gtao {
                 }
             })
             .collect();
+        let indirect = scene.map(|scene| {
+            let light = [
+                view(texture("gtao light a", LIGHT_FORMAT, 1)),
+                view(texture("gtao light b", LIGHT_FORMAT, 1)),
+            ];
+            let result = view(texture("gtao light", LIGHT_FORMAT, 1));
+            let main = group(
+                &self.main_bitmask.1,
+                &[(4, &all_mips), (5, &ao[0]), (6, &edges), (13, scene), (14, &light[0])],
+            );
+            // two turns more than the occlusion's blur: one bounce from a few
+            // samples is grainy, and the light has no sharp detail to keep
+            let il_passes = passes + INDIRECT_EXTRA_BLUR;
+            let denoise = (0..il_passes)
+                .map(|i| {
+                    let (src, dst) = (&light[i as usize % 2], &light[(i as usize + 1) % 2]);
+                    if i + 1 == il_passes {
+                        (group(&self.denoise_il_final.1, &[(8, &edges), (10, src), (12, &result)]), true)
+                    } else {
+                        (group(&self.denoise_il.1, &[(8, &edges), (10, src), (14, dst)]), false)
+                    }
+                })
+                .collect();
+            IndirectTargets { main, denoise, result }
+        });
         let mips = (0..mip_count).map(|l| ((w >> l).max(1), (h >> l).max(1))).collect();
         Targets {
             quality: q,
@@ -441,16 +595,19 @@ impl Gtao {
             main,
             denoise,
             result,
+            indirect,
         }
     }
 
-    /// The constants of this frame (before the encoder runs).
-    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, proj: Mat4) {
-        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&uniforms(proj, t.size, t.quality)));
+    /// The constants of this frame (before the encoder runs): `proj` its
+    /// projection, `reproj` from [`reprojection`].
+    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, proj: Mat4, reproj: Mat4) {
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&uniforms(proj, reproj, t.size, t.quality)));
     }
 
-    /// The passes, after the depth prepass.
-    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets) {
+    /// The passes, after the depth prepass; `indirect` with the indirect
+    /// light (when its targets exist).
+    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, indirect: bool) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("gtao"),
             timestamp_writes: None,
@@ -465,11 +622,25 @@ impl Gtao {
             pass.set_bind_group(0, bg, &[]);
             dispatch(&mut pass, groups(*size));
         }
-        pass.set_pipeline(&self.main.0);
-        pass.set_bind_group(0, &t.main, &[]);
+        let il = t.indirect.as_ref().filter(|_| indirect);
+        match il {
+            Some(il) => {
+                pass.set_pipeline(&self.main_bitmask.0);
+                pass.set_bind_group(0, &il.main, &[]);
+            }
+            None => {
+                pass.set_pipeline(&self.main.0);
+                pass.set_bind_group(0, &t.main, &[]);
+            }
+        }
         dispatch(&mut pass, groups(t.size));
         for (bg, last) in &t.denoise {
             pass.set_pipeline(if *last { &self.denoise_final.0 } else { &self.denoise.0 });
+            pass.set_bind_group(0, bg, &[]);
+            dispatch(&mut pass, groups(t.size));
+        }
+        for (bg, last) in il.iter().flat_map(|il| &il.denoise) {
+            pass.set_pipeline(if *last { &self.denoise_il_final.0 } else { &self.denoise_il.0 });
             pass.set_bind_group(0, bg, &[]);
             dispatch(&mut pass, groups(t.size));
         }
@@ -535,6 +706,83 @@ mod tests {
         let alt: Vec<bool> = (0..4).map(|s| SpecularOcclusion::Alternate.applied(s)).collect();
         assert_eq!(alt, [true, false, true, false]);
         assert!((0..4).all(|s| SpecularOcclusion::On.applied(s) && !SpecularOcclusion::Off.applied(s)));
+    }
+
+    #[test]
+    fn indirect_switch_follows_the_settings_unless_forced() {
+        assert_eq!(Indirect::parse(None), Indirect::Settings);
+        assert_eq!(Indirect::parse(Some(" 1")), Indirect::On);
+        assert_eq!(Indirect::parse(Some("0")), Indirect::Off);
+        assert_eq!(Indirect::parse(Some("alt")), Indirect::Alternate);
+        assert!(Indirect::Settings.needed(true) && !Indirect::Settings.needed(false));
+        assert!(Indirect::On.needed(false) && !Indirect::Off.needed(true));
+        // alternate keeps the targets and lights every other second
+        assert!(Indirect::Alternate.needed(false));
+        let alt: Vec<bool> = (0..4).map(|s| Indirect::Alternate.applied(false, s)).collect();
+        assert_eq!(alt, [true, false, true, false]);
+        assert!((0..4).all(|s| Indirect::Settings.applied(true, s) && !Indirect::Off.applied(true, s)));
+    }
+
+    /// The shader's `sector` and `sectors_between` (gtao.wgsl), line for line.
+    fn sector(angle: f32, nn: f32) -> f32 {
+        ((angle - nn).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2).sin() + 1.0) * 0.5
+    }
+
+    fn sectors_between(t0: f32, t1: f32) -> u32 {
+        let lo = (t0.min(t1) * 32.0).floor().clamp(0.0, 32.0) as u32;
+        let hi = (t0.max(t1) * 32.0).ceil().clamp(0.0, 32.0) as u32;
+        if hi <= lo {
+            return 0;
+        }
+        let count = hi - lo;
+        let ones = if count >= 32 { u32::MAX } else { (1 << count) - 1 };
+        ones << lo
+    }
+
+    /// The sectors are cosine-weighted: a wall standing beside the pixel
+    /// from its horizon up to 45° above it hides 1 - sin 45° of its side's
+    /// half, an object straight above hides the middle, and the order of
+    /// the front and the back does not matter.
+    #[test]
+    fn sectors_cover_the_cosine_weighted_half_disc() {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+        let all = sectors_between(sector(-FRAC_PI_2, 0.0), sector(FRAC_PI_2, 0.0));
+        assert_eq!(all, u32::MAX);
+        assert_eq!(sectors_between(0.5, 0.5), 0);
+        // from 45° to the horizon on the positive side: (1 - sin 45°) / 2 of
+        // the 32 sectors, rounded outwards
+        let wall = sectors_between(sector(FRAC_PI_4, 0.0), sector(FRAC_PI_2, 0.0));
+        let share = wall.count_ones() as f32 / 32.0;
+        assert!((share - (1.0 - FRAC_PI_4.sin()) / 2.0).abs() <= 1.0 / 32.0, "{share}");
+        assert_eq!(wall.leading_zeros(), 0, "the wall's sectors end at the horizon");
+        // a thin object right above: a few sectors in the middle
+        let above = sectors_between(sector(0.05, 0.0), sector(-0.05, 0.0));
+        assert!(above.count_ones() <= 3 && above & (1 << 16) != 0, "{above:032b}");
+        assert_eq!(sectors_between(0.2, 0.6), sectors_between(0.6, 0.2));
+        // the table of the sectors' centres is their angle
+        let centre = |k: f32| ((k + 0.5) / 16.0 - 1.0).asin();
+        assert!((sector(centre(7.0), 0.0) * 32.0 - 7.5).abs() < 1e-4);
+    }
+
+    /// A point of the GTAO pass's view space lands where the previous
+    /// frame's camera saw it: the same camera gives the same clip position,
+    /// a camera moved sideways shifts it.
+    #[test]
+    fn reprojection_finds_the_point_in_the_previous_frame() {
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+        let view = glam::camera::rh::view::look_at_mat4(glam::Vec3::new(10.0, 5.0, 2.0), glam::Vec3::new(14.0, 7.0, 2.5), glam::Vec3::Z);
+        let world = glam::Vec3::new(13.0, 8.0, 2.2);
+        let v = view.transform_point3(world);
+        // the pass's view space: z in front
+        let p = glam::Vec4::new(v.x, v.y, -v.z, 1.0);
+        let same = reprojection(view, proj * view) * p;
+        let expect = proj * view * world.extend(1.0);
+        assert!((same / same.w - expect / expect.w).length() < 1e-4, "{same} {expect}");
+        let moved = glam::camera::rh::view::look_at_mat4(glam::Vec3::new(10.5, 5.0, 2.0), glam::Vec3::new(14.5, 7.0, 2.5), glam::Vec3::Z);
+        let before = reprojection(view, proj * moved) * p;
+        let expect = proj * moved * world.extend(1.0);
+        assert!((before / before.w - expect / expect.w).length() < 1e-4);
+        assert!((before.x / before.w - same.x / same.w).abs() > 0.01);
     }
 
     /// The shader's `cone_specular_occlusion` (common.wgsl), line for line.
@@ -610,7 +858,7 @@ mod tests {
     #[test]
     fn uniforms_rebuild_view_positions() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-        let u = uniforms(proj, (1600, 1000), quality(2));
+        let u = uniforms(proj, Mat4::IDENTITY, (1600, 1000), quality(2));
         // a point 7 m in front, 1 m right and 0.5 m up (right-handed view: -z)
         let p = glam::Vec4::new(1.0, 0.5, -7.0, 1.0);
         let clip = proj * p;

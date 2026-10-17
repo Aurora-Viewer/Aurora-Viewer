@@ -1501,6 +1501,16 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-screen-indirect-light"),
+                    aurora_i18n::tr!("ui-options-screen-indirect-light-help"),
+                    |ui| {
+                        ui.add_enabled_ui(s.ssao > 0 && s.ao_method == 1, |ui| toggle(ui, p, &mut s.screen_indirect_light))
+                            .inner
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("common-time-of-day"),
                     aurora_i18n::tr!("ui-options-shared-environment-region-parcel-eep-day-cycle"),
                     |ui| {

@@ -37,6 +37,10 @@
 //    vector; along each, the highest horizon on both sides gives the
 //    cosine-weighted visible arc (the paper's lines 5 to 27), averaged over
 //    the slices; plus the depth edges with the four neighbours;
+//    With the screen-space indirect light on, `main_bitmask` replaces it:
+//    the occlusion as a visibility bitmask (Therrien et al. 2023) and one
+//    bounce of the previous frame's lit colour, into `il_out`, blurred by
+//    `denoise_il` (then `denoise_il_final`) with the same edges;
 // 4. `denoise` (then `denoise_final`): XeGTAO's edge-aware 3 x 3 blur, which
 //    replaces its temporal accumulation (we have none): the noise is a
 //    Hilbert curve driving the R2 sequence, the same for every frame, so the
@@ -68,6 +72,13 @@ struct GtaoParams {
     // denoise blur beta, full-resolution pixels per occlusion pixel (1 or
     // 2), unused, unused
     misc: vec4<f32>,
+    // screen-space indirect light (main_bitmask): this frame's view space
+    // (z in front) to the clip space of the previous frame, whose lit
+    // colour `scene_tex` holds
+    reproj: mat4x4<f32>,
+    // its thickness of a surface (metres), radius (metres), strength,
+    // unused
+    il: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: GtaoParams;
@@ -80,6 +91,10 @@ struct GtaoParams {
 @group(0) @binding(7) var ao_in: texture_2d<f32>;
 @group(0) @binding(8) var edges_in: texture_2d<f32>;
 @group(0) @binding(9) var final_out: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(10) var il_in: texture_2d<f32>;
+@group(0) @binding(12) var il_final: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(13) var scene_tex: texture_2d<f32>;
+@group(0) @binding(14) var il_out: texture_storage_2d<rgba16float, write>;
 
 const PI: f32 = 3.1415926535897932;
 const PI_HALF: f32 = 1.5707963267948966;
@@ -429,6 +444,195 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(ao_out, px, working(visibility, bent_n));
 }
 
+// ---- 3 bis: the occlusion as a visibility bitmask, with the indirect light
+
+// The sectors of a slice, 32 bits from one side of the hemisphere around
+// the normal to the other, each covering the same share of the cosine-
+// weighted half disc (uniform in sin of the angle from the normal): their
+// count is the slice's cosine-weighted visibility as is.
+fn sector(angle: f32, nn: f32) -> f32 {
+    return (sin(clamp(angle - nn, -PI_HALF, PI_HALF)) + 1.0) * 0.5;
+}
+
+// The angle from the normal of each sector's centre: asin((k + 0.5) / 16 - 1).
+const SECTOR_ANGLE = array<f32, 32>(
+    -1.3201407, -1.1343273, -1.0042320, -0.8966658, -0.8020028, -0.7158381, -0.6357113, -0.5600753,
+    -0.4878751, -0.4183464, -0.3509073, -0.2850964, -0.2205333, -0.1568929, -0.0938879, -0.0312551,
+    0.0312551, 0.0938879, 0.1568929, 0.2205333, 0.2850964, 0.3509073, 0.4183464, 0.4878751,
+    0.5600753, 0.6357113, 0.7158381, 0.8020028, 0.8966658, 1.0042320, 1.1343273, 1.3201407,
+);
+
+// The sectors between `t0` and `t1` (0..1, either order).
+fn sectors_between(t0: f32, t1: f32) -> u32 {
+    let lo = u32(clamp(floor(min(t0, t1) * 32.0), 0.0, 32.0));
+    let hi = u32(clamp(ceil(max(t0, t1) * 32.0), 0.0, 32.0));
+    if (hi <= lo) {
+        return 0u;
+    }
+    let count = hi - lo;
+    let ones = select((1u << count) - 1u, 0xffffffffu, count >= 32u);
+    return ones << lo;
+}
+
+// The lit colour of the previous frame where the view-space point `p` was.
+fn previous_radiance(p: vec3<f32>) -> vec4<f32> {
+    let clip = g.reproj * vec4<f32>(p, 1.0);
+    if (clip.w <= 1e-4) {
+        return vec4<f32>(0.0);
+    }
+    let ndc = clip.xy / clip.w;
+    if (any(abs(ndc) > vec2<f32>(1.0))) {
+        return vec4<f32>(0.0);
+    }
+    let size = vec2<f32>(textureDimensions(scene_tex));
+    let c = vec2<i32>(clamp((vec2<f32>(ndc.x, -ndc.y) * 0.5 + vec2<f32>(0.5)) * size, vec2<f32>(0.0), size - vec2<f32>(1.0)));
+    let l = textureLoad(scene_tex, c, 0).rgb;
+    // (no light from an unlit or broken texel)
+    return vec4<f32>(clamp(l, vec3<f32>(0.0), vec3<f32>(16.0)), 1.0);
+}
+
+// Therrien, Levesque and Gilet, "Screen Space Indirect Lighting with
+// Visibility Bitmask" (2023), on GTAO's slices: each sample is a surface of
+// some thickness (its front and its back, pushed away from the camera),
+// which covers the sectors between their two angles; the slice's
+// visibility is the share of sectors left open, and each sample lights the
+// pixel with the lit colour of the previous frame there, for the sectors it
+// is the first to cover (one bounce). Thin things (railings, hair, limbs)
+// occlude only what they cover instead of the whole horizon behind them.
+// The visibility, its bent normal (the mean direction of the open sectors)
+// and the light go where `main`'s do, plus `il_out`.
+@compute @workgroup_size(8, 8)
+fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
+    let size = target_size();
+    if (f32(id.x) >= size.x || f32(id.y) >= size.y) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    let pixel = vec2<f32>(1.0) / size;
+    let uv = (vec2<f32>(px) + vec2<f32>(0.5)) * pixel;
+
+    let zc = depth0(px);
+    let zl = depth0(px + vec2<i32>(-1, 0));
+    let zr = depth0(px + vec2<i32>(1, 0));
+    let zt = depth0(px + vec2<i32>(0, -1));
+    let zb = depth0(px + vec2<i32>(0, 1));
+    let edges = calculate_edges(zc, zl, zr, zt, zb);
+    textureStore(edges_out, px, edges);
+    if (zc >= FAR * 0.5) {
+        textureStore(ao_out, px, working(1.0, vec3<f32>(0.0, 0.0, -1.0)));
+        textureStore(il_out, px, vec4<f32>(0.0));
+        return;
+    }
+    let z = zc * 0.99999;
+    let centre = view_position(uv, z);
+    var n = calculate_normal(
+        edges,
+        centre,
+        view_position(uv + vec2<f32>(-pixel.x, 0.0), zl),
+        view_position(uv + vec2<f32>(pixel.x, 0.0), zr),
+        view_position(uv + vec2<f32>(0.0, -pixel.y), zt),
+        view_position(uv + vec2<f32>(0.0, pixel.y), zb),
+    );
+    let view_vec = normalize(-centre);
+    if (dot(n, view_vec) < 0.0) {
+        n = -n;
+    }
+
+    let thickness = g.il.x;
+    let radius = g.il.y;
+    let sample_distribution_power = g.radius.z;
+    let slice_count = g.quality.z;
+    let steps_per_slice = g.quality.w;
+    let noise = pixel_noise(id.xy);
+    let pixel_view_size = z * 2.0 / (g.proj.x * size.x);
+    let screen_radius = radius / pixel_view_size;
+    let min_s = 1.3 / screen_radius;
+    var visibility = 0.0;
+    var weight_sum = 0.0;
+    var bent = vec3<f32>(0.0);
+    var light = vec3<f32>(0.0);
+
+    for (var si = 0; si < i32(slice_count); si++) {
+        let slice_k = (f32(si) + noise.x) / slice_count;
+        let phi = slice_k * PI;
+        let cos_phi = cos(phi);
+        let sin_phi = sin(phi);
+        let omega = vec2<f32>(cos_phi, -sin_phi) * screen_radius;
+        let direction = vec3<f32>(cos_phi, sin_phi, 0.0);
+        let ortho_direction = direction - dot(direction, view_vec) * view_vec;
+        let axis = normalize(cross(ortho_direction, view_vec));
+        let projected_normal = n - axis * dot(n, axis);
+        let sign_norm = sign(dot(ortho_direction, projected_normal));
+        let projected_length = length(projected_normal);
+        let cos_norm = saturate(dot(projected_normal, view_vec) / max(projected_length, 1e-6));
+        let nn = sign_norm * fast_acos(cos_norm);
+        var occluded = 0u;
+        var slice_light = vec3<f32>(0.0);
+
+        for (var st = 0; st < i32(steps_per_slice); st++) {
+            let step_noise = fract(noise.y + f32(si + st * i32(steps_per_slice)) * 0.6180339887498948482);
+            var s = (f32(st) + step_noise) / steps_per_slice;
+            s = pow(s, sample_distribution_power) + min_s;
+            var offset = s * omega;
+            let mip = clamp(log2(length(offset)) - g.quality.y, 0.0, MIP_LEVELS);
+            offset = round(offset) * pixel;
+            // side 0 along the slice's direction (positive angles), side 1
+            // against it
+            for (var side = 0; side < 2; side++) {
+                let sgn = select(-1.0, 1.0, side == 0);
+                let suv = uv + offset * sgn;
+                let zs = depth_at(suv, mip);
+                if (zs >= FAR * 0.5) {
+                    continue;
+                }
+                let front = view_position(suv, zs);
+                if (distance(front, centre) > radius) {
+                    continue;
+                }
+                let back = front + normalize(front) * thickness;
+                let af = sgn * fast_acos(clamp(dot(normalize(front - centre), view_vec), -1.0, 1.0));
+                // a sample on the pixel's own plane (or below it) hides
+                // nothing: without this margin a flat floor occluded itself
+                // by a sector on each side
+                if (sgn * (af - nn) > PI_HALF - 0.1) {
+                    continue;
+                }
+                let ab = sgn * fast_acos(clamp(dot(normalize(back - centre), view_vec), -1.0, 1.0));
+                let mask = sectors_between(sector(af, nn), sector(ab, nn));
+                let fresh = mask & ~occluded;
+                if (fresh != 0u) {
+                    let l = previous_radiance(front);
+                    slice_light += l.rgb * f32(countOneBits(fresh)) / 32.0;
+                }
+                occluded |= mask;
+            }
+        }
+
+        let open = 32u - countOneBits(occluded);
+        visibility += projected_length * f32(open) / 32.0;
+        light += projected_length * slice_light;
+        weight_sum += projected_length;
+        // the mean angle (from the normal) of the open sectors
+        if (open > 0u) {
+            var mean = 0.0;
+            for (var k = 0u; k < 32u; k++) {
+                if ((occluded & (1u << k)) == 0u) {
+                    mean += SECTOR_ANGLE[k];
+                }
+            }
+            let a = nn + mean / f32(open);
+            let local_bent = vec3<f32>(direction.x * sin(a), direction.y * sin(a), -cos(a)) * (f32(open) / 32.0);
+            bent += rot_from_to(vec3<f32>(0.0, 0.0, -1.0), view_vec, local_bent) * projected_length;
+        }
+    }
+    visibility /= max(weight_sum, 1e-4);
+    light /= max(weight_sum, 1e-4);
+    visibility = max(0.03, pow(max(visibility, 0.0), g.quality.x));
+    let bent_n = select(n, normalize(bent), dot(bent, bent) > 1e-8);
+    textureStore(ao_out, px, working(visibility, bent_n));
+    textureStore(il_out, px, vec4<f32>(light * g.il.z, 1.0));
+}
+
 // ---- 4: the blur
 
 fn edges_at(p: vec2<i32>) -> vec4<f32> {
@@ -441,13 +645,24 @@ fn ao_at(p: vec2<i32>) -> vec4<f32> {
     return textureLoad(ao_in, clamp(p, vec2<i32>(0), size - vec2<i32>(1)), 0);
 }
 
-// XeGTAO_Denoise for one pixel: its own value and its eight neighbours,
-// each weighted by the edges between them; the last pass weights the
-// centre more (DenoiseBlurBeta) so the image stays sharp. The visibility
-// and the bent normal take the same weights.
-fn denoised(px: vec2<i32>, final_apply: bool) -> vec4<f32> {
+fn il_at(p: vec2<i32>) -> vec4<f32> {
+    let size = vec2<i32>(textureDimensions(il_in));
+    return textureLoad(il_in, clamp(p, vec2<i32>(0), size - vec2<i32>(1)), 0);
+}
+
+// XeGTAO_Denoise's weights for one pixel: its own (`centre`), its four
+// neighbours (left, right, top, bottom) and its four diagonals (top left,
+// top right, bottom left, bottom right), from the edges between them; the
+// last pass weights the centre more (DenoiseBlurBeta) so the image stays
+// sharp.
+struct BlurWeights {
+    centre: f32,
+    sides: vec4<f32>,
+    diagonals: vec4<f32>,
+};
+
+fn blur_weights(px: vec2<i32>, final_apply: bool) -> BlurWeights {
     let beta = g.misc.x;
-    let blur_amount = select(beta / 5.0, beta, final_apply);
     let diag = 0.85 * 0.5;
     let el = edges_at(px + vec2<i32>(-1, 0));
     let er = edges_at(px + vec2<i32>(1, 0));
@@ -460,22 +675,65 @@ fn denoised(px: vec2<i32>, final_apply: bool) -> vec4<f32> {
     let leak_strength = 0.5;
     let edginess = (saturate(4.0 - leak_threshold - dot(ec, vec4<f32>(1.0))) / (4.0 - leak_threshold)) * leak_strength;
     ec = saturate(ec + vec4<f32>(edginess));
-    let w_tl = diag * (ec.x * el.z + ec.z * et.x);
-    let w_tr = diag * (ec.z * et.y + ec.y * er.z);
-    let w_bl = diag * (ec.w * eb.x + ec.x * el.w);
-    let w_br = diag * (ec.y * er.w + ec.w * eb.y);
-    var sum_w = blur_amount;
-    var sum = ao_at(px) * sum_w;
-    sum += ao_at(px + vec2<i32>(-1, 0)) * ec.x;
-    sum += ao_at(px + vec2<i32>(1, 0)) * ec.y;
-    sum += ao_at(px + vec2<i32>(0, -1)) * ec.z;
-    sum += ao_at(px + vec2<i32>(0, 1)) * ec.w;
-    sum += ao_at(px + vec2<i32>(-1, -1)) * w_tl;
-    sum += ao_at(px + vec2<i32>(1, -1)) * w_tr;
-    sum += ao_at(px + vec2<i32>(-1, 1)) * w_bl;
-    sum += ao_at(px + vec2<i32>(1, 1)) * w_br;
-    sum_w += ec.x + ec.y + ec.z + ec.w + w_tl + w_tr + w_bl + w_br;
-    return sum / sum_w;
+    var w: BlurWeights;
+    w.centre = select(beta / 5.0, beta, final_apply);
+    w.sides = ec;
+    w.diagonals = diag * vec4<f32>(
+        ec.x * el.z + ec.z * et.x,
+        ec.z * et.y + ec.y * er.z,
+        ec.w * eb.x + ec.x * el.w,
+        ec.y * er.w + ec.w * eb.y,
+    );
+    return w;
+}
+
+// The light of the indirect pass blurred with the same weights as the
+// occlusion.
+fn denoised_il(px: vec2<i32>, final_apply: bool) -> vec4<f32> {
+    let w = blur_weights(px, final_apply);
+    var sum = il_at(px) * w.centre;
+    sum += il_at(px + vec2<i32>(-1, 0)) * w.sides.x;
+    sum += il_at(px + vec2<i32>(1, 0)) * w.sides.y;
+    sum += il_at(px + vec2<i32>(0, -1)) * w.sides.z;
+    sum += il_at(px + vec2<i32>(0, 1)) * w.sides.w;
+    sum += il_at(px + vec2<i32>(-1, -1)) * w.diagonals.x;
+    sum += il_at(px + vec2<i32>(1, -1)) * w.diagonals.y;
+    sum += il_at(px + vec2<i32>(-1, 1)) * w.diagonals.z;
+    sum += il_at(px + vec2<i32>(1, 1)) * w.diagonals.w;
+    return sum / (w.centre + dot(w.sides, vec4<f32>(1.0)) + dot(w.diagonals, vec4<f32>(1.0)));
+}
+
+@compute @workgroup_size(8, 8)
+fn denoise_il(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (any(id.xy >= textureDimensions(il_out))) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    textureStore(il_out, px, denoised_il(px, false));
+}
+
+@compute @workgroup_size(8, 8)
+fn denoise_il_final(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (any(id.xy >= textureDimensions(il_final))) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    textureStore(il_final, px, denoised_il(px, true));
+}
+
+// XeGTAO_Denoise for one pixel: the visibility and the bent normal.
+fn denoised(px: vec2<i32>, final_apply: bool) -> vec4<f32> {
+    let w = blur_weights(px, final_apply);
+    var sum = ao_at(px) * w.centre;
+    sum += ao_at(px + vec2<i32>(-1, 0)) * w.sides.x;
+    sum += ao_at(px + vec2<i32>(1, 0)) * w.sides.y;
+    sum += ao_at(px + vec2<i32>(0, -1)) * w.sides.z;
+    sum += ao_at(px + vec2<i32>(0, 1)) * w.sides.w;
+    sum += ao_at(px + vec2<i32>(-1, -1)) * w.diagonals.x;
+    sum += ao_at(px + vec2<i32>(1, -1)) * w.diagonals.y;
+    sum += ao_at(px + vec2<i32>(-1, 1)) * w.diagonals.z;
+    sum += ao_at(px + vec2<i32>(1, 1)) * w.diagonals.w;
+    return sum / (w.centre + dot(w.sides, vec4<f32>(1.0)) + dot(w.diagonals, vec4<f32>(1.0)));
 }
 
 @compute @workgroup_size(8, 8)

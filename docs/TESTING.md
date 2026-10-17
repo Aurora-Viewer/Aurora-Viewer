@@ -1339,6 +1339,7 @@ To check with these scenarios:
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
+| `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
@@ -1388,6 +1389,11 @@ To check with these scenarios:
   of the cube, an inside corner (floor, back and side) of the
   half-polished metal: with GTAO its reflections fade into the corner
   (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
+- **`AURORA_DEMO_BOUNCE=1`**: left of the start position, a white floor
+  between a red wall and a green one, with a white box against them
+  (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
+  (`AURORA_SSIL=alt`) the box's sides and the foot of the walls take the
+  light of the floor and of the walls near them.
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
@@ -3780,6 +3786,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
+| `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3893,6 +3900,18 @@ What the inventory must show with these scenarios:
   image does not change. `0` leaves it out, as before; `alt` leaves it out
   every other second (`AURORA_DEMO_PBR_METAL=1`: the inside corner left
   of the cube, and the folds of the avatars' clothes and skin).
+- **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
+  (GTAO) for this launch, without changing the saved setting; it needs the
+  GTAO method. The main pass is then the visibility bitmask (Therrien et
+  al. 2023, `main_bitmask` in gtao.wgsl): each sample is a surface 0.35 m
+  thick, which hides only the sectors between its front and its back, so
+  thin things no longer darken all that is behind them; and each lights
+  the pixel, for the sectors it is the first to hide, with the previous
+  frame's lit colour where it was (the scene copy, reprojected): one
+  bounce, added to the diffuse light of every surface (`screen_indirect`,
+  common.wgsl). `alt` switches it every second, both kept ready
+  (`AURORA_DEMO_BOUNCE=1`). `g_ssao` includes it (crowd of 40,
+  2560 × 1369, High: about 0.9 to 1.0 ms with it, 0.4 to 0.5 without).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,

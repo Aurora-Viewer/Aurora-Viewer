@@ -618,6 +618,10 @@ pub struct Settings {
     pub ao_method: u8,
     /// GTAO quality: 0 low, 1 medium, 2 high, 3 ultra.
     pub gtao_quality: u8,
+    /// With GTAO: screen-space indirect light (a visibility bitmask and one
+    /// bounce of light from the surfaces around). Aurora's own, off by
+    /// default.
+    pub screen_indirect_light: bool,
     /// Water reflections: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
     pub water_reflections: u8,
     /// Mirrors: 0 off, 1 low, 2 medium, 3 high, 4 ultra.
@@ -1127,6 +1131,7 @@ impl Default for Settings {
             ssao: 1,
             ao_method: 0,
             gtao_quality: 2,
+            screen_indirect_light: false,
             water_reflections: 1,
             reflection_probes: 3,
             probe_count: 32,
@@ -1708,6 +1713,7 @@ impl Settings {
             } else {
                 AoMethod::Legacy
             },
+            screen_indirect: self.ao_method == 1 && self.screen_indirect_light,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 64),

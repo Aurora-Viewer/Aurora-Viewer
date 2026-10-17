@@ -138,6 +138,8 @@ const SKELETON_ANCHOR: u32 = 160u;
 @group(0) @binding(6) var mirror_tex: texture_2d<f32>;
 @group(0) @binding(7) var scene_tex: texture_2d<f32>;
 @group(0) @binding(8) var depth_tex: texture_depth_2d;
+// GTAO's screen-space indirect light (gtao.rs), when SCREEN_INDIRECT
+@group(0) @binding(13) var il_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 struct Probe {
@@ -956,6 +958,8 @@ const SHADOW_FILTER_GAPS: u32 = 0x100u;
 // normal-mapped normal, as before (AURORA_SHADOW_FILTER=mapped; object.wgsl
 // shadow_normal).
 const SHADOW_OFFSET_MAPPED: u32 = 0x200u;
+// frame.light_mode.z: il_tex holds GTAO's indirect light of this frame
+const SCREEN_INDIRECT: u32 = 0x400u;
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
@@ -1142,6 +1146,17 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
     return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
 }
 
+// The light the surfaces around bounce onto the fragment at `frag`
+// (irradiance over pi, in the units of the lit colour: a Lambert surface
+// of albedo `c` sends back `c` times it), from GTAO's visibility bitmask
+// pass; none without it, in reflection passes and on the HUD.
+fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass()) {
+        return vec3<f32>(0.0);
+    }
+    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
+}
+
 // The solid angle two spherical caps share, divided by 2 pi: caps of
 // cosines `cos_a` and `cos_b` whose axes are `cos_d` apart. Oat and Sander,
 // "Ambient Aperture Lighting" (2007), with the smooth approximation of the
@@ -1299,6 +1314,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         }
     }
     col += diffuse_color * amb * ao * mat_ao;
+    col += diffuse_color * screen_indirect(frag) * mat_ao;
     let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
     if (mw > 0.0) {
         let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
@@ -1788,12 +1804,13 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
         let sunlit = a.sunlit * 1.35;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
         let sun_contrib = vec3<f32>(min(pow(nl_sun, 1.2), shadow));
-        return srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) * base;
+        // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
+        return (srgb_to_linear(irr * 0.9 + ll_linear_to_srgb(sun_contrib) * sunlit * 0.7) + screen_indirect(frag)) * base;
     }
     // linear mode: grey sky ambient, linear sunlight, plain lambert
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let irr = ll_ssao(vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722))), frag);
-    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit)) * base;
+    return (irr + min(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -1857,6 +1874,8 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         final_sun = clamp(sun_contrib * (diff + spec) * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
+    // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
+    col += diffuse_color * screen_indirect(frag) * mat_ao;
     // pbrBaseLight adds the image based specular (pbrIbl: radiance x
     // (F0 x brdf.x + brdf.y) x ao) on classic skies too. LL samples its
     // reflection probes; without them the radiance is the sky reflection,
