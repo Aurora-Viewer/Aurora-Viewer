@@ -90,6 +90,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             .hint_text(aurora_i18n::tr!("build-ui-contents-enter-filter-text"))
             .desired_width(ui.available_width()),
     );
+    crate::ui::inventory::permissions::next_owner_toggle(ui, p, &mut tool.ui.contents_show_next_owner);
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
@@ -209,7 +210,7 @@ fn item_row(
         if item.asset_type == AT_LSL_TEXT && running.is_some_and(|r| !r.0) {
             name.push_str(aurora_i18n::tr!("build-ui-contents-stopped"));
         }
-        let permissions = Permissions::new(item.owner_mask, item.next_owner_mask);
+        let permissions = Permissions::new(item.owner_mask, item.next_owner_mask).with_next_owner(tool.ui.contents_show_next_owner);
         let selected = tool.ui.contents_selection.object == Some(object_id) && tool.ui.contents_selection.items.contains(&item.item_id);
         let r = ui
             .push_id(("task_item", object_id, item.item_id), |ui| permissions.row(ui, p, &name, selected))

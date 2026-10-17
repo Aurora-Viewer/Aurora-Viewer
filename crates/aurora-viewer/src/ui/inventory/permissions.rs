@@ -1,6 +1,6 @@
 //! Compact presentation of the owner and next-owner masks, shared by the
 //! inventory and both object-contents windows. The same C/M/T bits drive
-//! Firestorm LLItemBridge::getLabelSuffix and LLTaskInvFVBridge::getDisplayName
+//! Legacy LLItemBridge::getLabelSuffix and LLTaskInvFVBridge::getDisplayName
 //! (indra/newview, originally LGPL 2.1). Aurora also shows granted rights.
 
 use crate::theme::Palette;
@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub struct Permissions {
     owner: Option<u32>,
     next: Option<u32>,
+    show_next: bool,
 }
 
 impl Permissions {
@@ -20,7 +21,15 @@ impl Permissions {
         Self {
             owner: Some(owner),
             next: Some(next),
+            show_next: false,
         }
+    }
+
+    /// Presentation only: retain the owner mask and optionally append the
+    /// original item's next-owner mask, including unknown link data.
+    pub fn with_next_owner(mut self, show: bool) -> Self {
+        self.show_next = show;
+        self
     }
 
     pub fn inventory(inv: &Inventory, id: Uuid) -> Option<Self> {
@@ -44,6 +53,14 @@ impl Permissions {
     }
 
     pub fn append_to(self, job: &mut LayoutJob, p: &Palette) {
+        Self::append_mask(job, p, self.owner);
+        if self.show_next {
+            job.append(" → ", 0.0, TextFormat::simple(FontId::proportional(12.0), p.violet_light));
+            Self::append_mask(job, p, self.next);
+        }
+    }
+
+    fn append_mask(job: &mut LayoutJob, p: &Palette, mask: Option<u32>) {
         let font = FontId::proportional(12.0);
         for (index, (bit, letter)) in [(perm::COPY, "C"), (perm::MODIFY, "M"), (perm::TRANSFER, "T")]
             .into_iter()
@@ -52,7 +69,7 @@ impl Permissions {
             if index != 0 {
                 job.append("·", 0.0, TextFormat::simple(font.clone(), p.muted_dim));
             }
-            let allowed = self.owner.map(|mask| mask & bit != 0);
+            let allowed = mask.map(|mask| mask & bit != 0);
             let color = match allowed {
                 Some(true) => p.success,
                 Some(false) => p.danger,
@@ -123,10 +140,69 @@ impl Permissions {
     }
 }
 
+/// Shared presentation control; each owning window supplies its own flag.
+pub fn next_owner_toggle(ui: &mut egui::Ui, p: &Palette, show: &mut bool) -> bool {
+    use crate::ui::widgets;
+    ui.push_id("next_owner_permissions", |ui| {
+        ui.horizontal(|ui| {
+            let tip = if *show {
+                aurora_i18n::tr!("inventory-permissions-hide-next")
+            } else {
+                aurora_i18n::tr!("inventory-permissions-show-next")
+            };
+            let width = (ui.available_width() - widgets::SWITCH_SIZE.x - ui.spacing().item_spacing.x).max(40.0);
+            let clicked = widgets::action_button(
+                ui,
+                p,
+                if *show { "eye-filled" } else { "eye-off" },
+                aurora_i18n::tr!("inventory-permissions-next-label"),
+                widgets::ActionKind::Flat,
+                egui::vec2(width, 26.0),
+            )
+            .on_hover_text(tip)
+            .clicked();
+            if clicked {
+                *show = !*show;
+            }
+            widgets::switch(ui, p, show).on_hover_text(tip).changed() || clicked
+        })
+        .inner
+    })
+    .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use aurora_net::inventory::InvItem;
+
+    #[test]
+    fn next_owner_suffix_keeps_both_masks_independent_for_every_combination() {
+        let p = crate::theme::Theme::default().palette();
+        let mask = |bits: u32| ((bits & 1) * perm::COPY) | (((bits >> 1) & 1) * perm::MODIFY) | (((bits >> 2) & 1) * perm::TRANSFER);
+        for owner in 0..8 {
+            for next in 0..8 {
+                let permissions = Permissions::new(mask(owner), mask(next));
+                let current = permissions.indicators(&p);
+                let both = permissions.with_next_owner(true).indicators(&p);
+                assert_eq!(current.text, "C·M·T");
+                assert_eq!(both.text, "C·M·T → C·M·T");
+                for index in 0..3 {
+                    assert_eq!(&both.sections[index * 2].format, &current.sections[index * 2].format);
+                    let next_section = &both.sections[6 + index * 2].format;
+                    assert_eq!(next_section.color, if next & (1 << index) != 0 { p.success } else { p.danger });
+                    assert_eq!(next_section.strikethrough == Stroke::NONE, next & (1 << index) != 0);
+                }
+                assert_eq!(
+                    permissions.with_next_owner(true).with_next_owner(false).indicators(&p).text,
+                    current.text
+                );
+            }
+        }
+        let unknown = Permissions::default().with_next_owner(true).indicators(&p);
+        assert_eq!(unknown.text, "C?·M?·T? → C?·M?·T?");
+        assert!(unknown.sections.iter().all(|section| section.format.strikethrough == Stroke::NONE));
+    }
 
     #[test]
     fn every_combination_marks_only_denied_owner_rights() {
@@ -173,6 +249,12 @@ mod tests {
         let rights = Permissions::inventory(&inv, link).expect("item link");
         assert_eq!(rights.owner, Some(perm::COPY));
         assert_eq!(rights.next, Some(perm::TRANSFER));
+        let p = crate::theme::Theme::default().palette();
+        let both = rights.with_next_owner(true).indicators(&p);
+        assert_eq!(both.text, "C·M·T → C·M·T");
+        assert_eq!(both.sections[0].format.color, p.success);
+        assert_eq!(both.sections[6].format.color, p.danger);
+        assert_eq!(both.sections[10].format.color, p.success);
         inv.items.remove(&original);
         assert!(Permissions::inventory(&inv, link).expect("broken link").owner.is_none());
         inv.items.get_mut(&link).expect("link").asset_id = link;

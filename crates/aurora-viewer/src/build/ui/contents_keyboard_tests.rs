@@ -116,6 +116,55 @@ fn assert_no_object_delete(inspector: &Inspector) {
 }
 
 #[test]
+fn next_owner_display_toggle_adds_rights_without_editing_or_sending_commands() {
+    let (mut inspector, object, _) = fixture();
+    let original = inspector.tool.contents.objects[&object].items.clone();
+    let before = inspector.show(vec![]).1;
+    assert!(
+        before
+            .iter()
+            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("C·M·T") && !text.contains('→'))
+    );
+    click_text(
+        &mut inspector,
+        aurora_i18n::tr!("inventory-permissions-next-label"),
+        egui::Modifiers::NONE,
+        egui::PointerButton::Primary,
+    );
+    assert!(inspector.tool.ui.contents_show_next_owner);
+    let shown = inspector.show(vec![]).1;
+    assert!(
+        shown
+            .iter()
+            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("C·M·T → C·M·T"))
+    );
+    assert!(
+        inspector.tool.out.is_empty(),
+        "Display must not emit task-inventory or permission commands"
+    );
+    for (before, after) in original.iter().zip(&inspector.tool.contents.objects[&object].items) {
+        assert_eq!(
+            (before.owner_mask, before.next_owner_mask),
+            (after.owner_mask, after.next_owner_mask)
+        );
+    }
+    click_text(
+        &mut inspector,
+        aurora_i18n::tr!("inventory-permissions-next-label"),
+        egui::Modifiers::NONE,
+        egui::PointerButton::Primary,
+    );
+    assert!(!inspector.tool.ui.contents_show_next_owner);
+    assert!(
+        inspector
+            .show(vec![])
+            .1
+            .iter()
+            .any(|(text, _)| text.starts_with("Entry 000") && !text.contains('→'))
+    );
+}
+
+#[test]
 fn contents_ctrl_shift_and_context_selection_follow_the_visible_order() {
     let (mut inspector, _, ids) = fixture();
     click(&mut inspector, 0, egui::Modifiers::NONE);
