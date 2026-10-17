@@ -4151,6 +4151,7 @@ ui-perf-render-thread = Render thread
 ui-place-details-title = Title:
 ui-contacts-titles = Titles
 ui-options-tone-mapping = Tone mapping
+ui-options-tone-mapping-classic-sky = No effect with a classic sky (reflection probe ambiance 0): it is not tone mapped
 common-torus = Torus
 ui-options-camera-press-m-or-zoom-into-your-avatar-s-head = Press M, or zoom into your avatar's head
 ui-options-practical-movement-key = Movement key
