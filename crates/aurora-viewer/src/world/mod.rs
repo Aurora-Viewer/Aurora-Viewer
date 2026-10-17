@@ -842,6 +842,19 @@ impl World {
         self.main_region.and_then(|h| self.regions.get(&h))
     }
 
+    /// Cached inventory can precede arrival and the login seed's services.
+    /// Match Session::EditInventory's metadata-write/readback preconditions.
+    pub fn inventory_writable(&self) -> bool {
+        self.movement_complete
+            && !self.teleporting
+            && self.inventory.held.is_none()
+            && self.main().is_some_and(|region| {
+                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
+                    .iter()
+                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
+            })
+    }
+
     pub fn main_water_height(&self) -> f32 {
         self.main().and_then(|r| r.info.as_ref()).map(|i| i.water_height).unwrap_or(20.0)
     }

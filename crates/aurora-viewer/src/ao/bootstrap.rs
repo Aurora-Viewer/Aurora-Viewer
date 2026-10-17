@@ -20,14 +20,7 @@ impl Bootstrap {
     /// services. Match Session's EditInventory preconditions before consuming
     /// the single startup attempt; no request has been sent while waiting.
     pub fn writable(world: &World) -> bool {
-        world.movement_complete
-            && !world.teleporting
-            && world.inventory.held.is_none()
-            && world.main().is_some_and(|region| {
-                ["InventoryAPIv3", "FetchInventoryDescendents2"] // gitleaks:allow -- public protocol capability names
-                    .iter()
-                    .all(|name| region.caps.get(*name).is_some_and(|url| !url.is_empty()))
-            })
+        world.inventory_writable()
     }
 
     pub fn loading(&self) -> bool {

@@ -555,6 +555,19 @@ impl Bridge {
         if self.phase == Phase::Failed {
             return;
         }
+        if matches!(
+            self.phase,
+            Phase::Inventory | Phase::Folder | Phase::Subfolder | Phase::Move | Phase::Copy
+        ) && self.mutation.is_none()
+            && !world.inventory_writable()
+        {
+            // A cache hit is not proof that AIS and its readback service are
+            // ready. Wait before sending anything, without spending the stage
+            // timeout or consuming a rename/create attempt. In-flight edits
+            // retain their own deadline and never get silently replayed.
+            self.since = Some(now);
+            return;
+        }
         if self.since.is_some_and(|since| now.duration_since(since) > TIMEOUT) {
             self.fail(self.timeout_message());
             return;

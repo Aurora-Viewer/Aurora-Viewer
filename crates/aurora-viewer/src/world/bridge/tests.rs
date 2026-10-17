@@ -10,6 +10,7 @@ struct Simulator {
     copies: usize,
     uploads: usize,
     attaches: usize,
+    unready_edits: usize,
 }
 impl Simulator {
     fn new() -> Self {
@@ -18,6 +19,8 @@ impl Simulator {
             world.apply(event);
         }
         demo::seed(&mut world);
+        world.movement_complete = true;
+        crate::ao::demo::inventory_services(&mut world, true);
         Self {
             world,
             bridge: Bridge::default(),
@@ -30,6 +33,7 @@ impl Simulator {
             copies: 0,
             uploads: 0,
             attaches: 0,
+            unready_edits: 0,
         }
     }
     fn event(&mut self, event: NetEvent) {
@@ -67,8 +71,12 @@ impl Simulator {
                 }
                 match &command {
                     NetCommand::EditInventory { request, change } => {
-                        let result =
-                            super::super::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone());
+                        let result = if self.world.inventory_writable() {
+                            super::super::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone())
+                        } else {
+                            self.unready_edits += 1;
+                            Err(aurora_i18n::tr!("session-the-inventory-server-is-not-available-yet").into())
+                        };
                         self.event(NetEvent::InventoryEdited { request: *request, result });
                     }
                     NetCommand::FinishInventoryCopies { request, reply } => {
@@ -682,6 +690,105 @@ fn bridge_factory_waits_for_copy_script_save_and_reattachment_without_duplicates
     sim.step();
     assert!(!sim.bridge.locked());
     assert!(!sim.bridge.ack.enabled);
+}
+
+#[test]
+fn cached_old_bridge_waits_for_late_inventory_services_then_renames_its_original_folder() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let (folder, item, object) = (sim.bridge.folder, sim.bridge.item, sim.bridge.object);
+    let counts = (sim.copies, sim.uploads, sim.attaches);
+    let hello = sim.demo.handshake(&sim.bridge, &sim.world).expect("existing script handshake");
+    sim.world.inventory.folders.get_mut(&folder).expect("folder").info.name = OLD_SUBFOLDER.into();
+    sim.bridge = Bridge::default();
+    sim.event(hello);
+    crate::ao::demo::inventory_services(&mut sim.world, false);
+    for _ in 0..360 {
+        sim.step();
+    }
+    assert_eq!(
+        sim.bridge.phase,
+        Phase::Inventory,
+        "waiting longer than TIMEOUT must not fail an unsent rename"
+    );
+    assert_eq!(sim.unready_edits, 0, "Session would reject an edit before its services arrive");
+    assert!(sim.bridge.mutation.is_none());
+    assert_eq!(sim.world.inventory.folders[&folder].info.name, OLD_SUBFOLDER);
+    assert!(sim.world.worn_attachment(&item).is_some());
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), counts);
+
+    crate::ao::demo::inventory_services(&mut sim.world, true);
+    sim.ready();
+    assert_eq!((sim.bridge.folder, sim.bridge.item, sim.bridge.object), (folder, item, object));
+    assert_eq!(sim.world.inventory.folders[&folder].info.name, SUBFOLDER);
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), counts);
+    assert_eq!(sim.unready_edits, 0);
+}
+
+#[test]
+fn new_bridge_waits_for_both_services_arrival_crossing_and_cache_release_before_creating() {
+    let mut sim = Simulator::new();
+    let generation = sim.world.inventory.generation;
+    let region = sim.world.main_region.expect("region");
+    for stage in 0..6 {
+        crate::ao::demo::inventory_services(&mut sim.world, true);
+        sim.world.movement_complete = true;
+        sim.world.teleporting = false;
+        sim.world.inventory.release_requests();
+        match stage {
+            0 => crate::ao::demo::inventory_services(&mut sim.world, false),
+            1 => {
+                Arc::make_mut(&mut sim.world.regions.get_mut(&region).expect("region").caps).remove("FetchInventoryDescendents2");
+            }
+            2 => {
+                Arc::make_mut(&mut sim.world.regions.get_mut(&region).expect("region").caps).remove("InventoryAPIv3");
+            }
+            3 => sim.world.movement_complete = false,
+            4 => sim.world.teleporting = true,
+            _ => sim.world.inventory.hold_requests(),
+        }
+        for _ in 0..260 {
+            sim.step();
+        }
+        assert_eq!(sim.bridge.phase, Phase::Inventory);
+        assert!(sim.bridge.mutation.is_none());
+        assert_eq!((sim.copies, sim.uploads, sim.attaches, sim.unready_edits), (0, 0, 0, 0));
+        assert_eq!(
+            sim.world.inventory.generation, generation,
+            "waiting must leave cached inventory untouched"
+        );
+    }
+    sim.world.inventory.release_requests();
+    sim.ready();
+    assert_eq!((sim.copies, sim.uploads, sim.attaches, sim.unready_edits), (1, 1, 2, 0));
+}
+
+#[test]
+fn an_inflight_inventory_edit_keeps_its_timeout_when_services_disappear() {
+    let mut sim = Simulator::new();
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert!(sim.bridge.mutation.is_some());
+    crate::ao::demo::inventory_services(&mut sim.world, false);
+    sim.now += TIMEOUT + Duration::from_secs(1);
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(
+        sim.bridge.phase,
+        Phase::Failed,
+        "only unsent operations may wait without spending their timeout"
+    );
+}
+
+#[test]
+fn inventory_services_disappearing_do_not_stop_a_ready_bridge_or_prevent_unlock() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let counts = (sim.copies, sim.uploads, sim.attaches);
+    crate::ao::demo::inventory_services(&mut sim.world, false);
+    sim.prefs.enabled = false;
+    sim.step();
+    assert!(sim.bridge.available());
+    assert!(!sim.bridge.locked());
+    assert_eq!((sim.copies, sim.uploads, sim.attaches), counts);
 }
 
 #[test]
