@@ -712,6 +712,7 @@ impl AgentState {
             far,
             state: 0,
             flags: 0,
+            alt_or_ctrl: false,
         }
     }
 }

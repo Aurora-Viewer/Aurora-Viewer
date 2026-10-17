@@ -568,6 +568,10 @@ pub enum NetEvent {
     RegionRestart(crate::region_restart::Notice),
     /// "Region restart cancelled." (region_restart.rs).
     RegionRestartCancelled,
+    /// ScriptControlChange: controls scripts take or release, each block
+    /// (take, controls, pass on to the avatar), for
+    /// `script_controls::ScriptControls::apply`.
+    ScriptControlChange(Vec<(bool, u32, bool)>),
     Disconnected {
         reason: String,
     },
@@ -1912,6 +1916,13 @@ pub mod control {
     pub const TURN_LEFT: u32 = 0x0200_0000;
     pub const TURN_RIGHT: u32 = 0x0400_0000;
     pub const AWAY: u32 = 0x0800_0000;
+    /// Left button outside mouselook, and in mouselook when no script took
+    /// its mouselook bit (LLViewerInput::scanMouse, LLToolGrabBase).
+    pub const LBUTTON_DOWN: u32 = 0x1000_0000;
+    pub const LBUTTON_UP: u32 = 0x2000_0000;
+    /// Left button in mouselook, taken by a script (LLToolCompGun).
+    pub const ML_LBUTTON_DOWN: u32 = 0x4000_0000;
+    pub const ML_LBUTTON_UP: u32 = 0x8000_0000;
 }
 
 /// Agent state the viewer writes each frame and the network layer sends by
@@ -1928,6 +1939,9 @@ pub struct AgentControls {
     pub far: f32,
     pub state: u8,
     pub flags: u8,
+    /// Alt or Ctrl held: the left-button bits go out as releases
+    /// (script_controls::mask_left_button).
+    pub alt_or_ctrl: bool,
 }
 
 impl Default for AgentControls {
@@ -1943,6 +1957,7 @@ impl Default for AgentControls {
             far: 128.0,
             state: 0,
             flags: 0,
+            alt_or_ctrl: false,
         }
     }
 }

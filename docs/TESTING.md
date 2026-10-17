@@ -553,7 +553,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
-| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks and other residents' scripted attachments |
+| `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
@@ -573,7 +573,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
@@ -584,7 +584,16 @@ Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
 `worn-prim` and `worn-mesh` put a scripted attachment on another resident,
 without move/modify rights; both must log `demo touch_start: prim=975` and
 `demo touch_end: prim=975`, with `held=false` in the final result. The mesh
-scenario installs the existing synthetic skinned mesh locally. All scenarios
+scenario installs the existing synthetic skinned mesh locally. `worn-own`
+wears a scripted prim on our own chest (issue #488): the press must touch it
+(`demo server: ObjectGrab 975`) instead of turning to our avatar.
+`mouselook-gun` makes a script take the mouselook button
+(ScriptControlChange) and enters mouselook: the press and release send only
+`demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
+enters mouselook with nothing taken and puts a touchable panel under the
+crosshair: `click bits 0x10000000`, `ObjectGrab 975`, `click bits
+0x20000000`. `ground` presses the floor beside the avatar: `click bits
+0x10000000` then `0x20000000` (a click nothing takes). All scenarios
 write `demo world click` / `demo world click result`; the camera's final
 focus can be compared with the visible cube/pane. Use the usual `blend-zero`,
 `mask-zero`, invisible build/menu and HUD scenarios for neighbouring behavior.
