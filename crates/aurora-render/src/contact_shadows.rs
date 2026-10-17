@@ -12,8 +12,15 @@
 //! bend_sss_cpu.h): each workgroup is a wavefront of [`WAVE_SIZE`] pixels
 //! along a ray towards that point, in up to eight dispatches.
 //!
-//! `AURORA_CONTACT_SHADOWS=0|1|alt` overrides the setting for a comparison;
-//! `alt` switches every second.
+//! What casts: the depth prepass (opaque and masked faces, terrain), and,
+//! drawn into a copy of it each frame, the blended faces opaque enough
+//! (half covered: the many mesh bodies, shoes and hair whose faces are
+//! blended though they look opaque) and the impostor cards; those blended
+//! faces then also receive them.
+//!
+//! `AURORA_CONTACT_SHADOWS=0|1|alt|prepass` overrides the setting for a
+//! comparison; `alt` switches every second, `prepass`: the prepass alone
+//! casts (before the blended faces and the cards were added).
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -191,6 +198,8 @@ pub(crate) enum Override {
     On,
     /// Off and on by turns, one second each (on in odd seconds).
     Alternate,
+    /// On, with the depth prepass alone as caster.
+    Prepass,
 }
 
 impl Override {
@@ -199,6 +208,7 @@ impl Override {
             Some("0" | "off") => Override::Off,
             Some("1" | "on") => Override::On,
             Some("alt") => Override::Alternate,
+            Some("prepass") => Override::Prepass,
             _ => Override::None,
         }
     }
@@ -213,8 +223,13 @@ impl Override {
         match self {
             Override::None => on,
             Override::Off => false,
-            Override::On | Override::Alternate => true,
+            Override::On | Override::Alternate | Override::Prepass => true,
         }
+    }
+
+    /// Whether the blended faces and the impostor cards cast too.
+    pub(crate) fn all_casters(self) -> bool {
+        self != Override::Prepass
     }
 
     /// Whether the frame drawn `secs` seconds into the session has them.
@@ -253,15 +268,32 @@ pub(crate) struct ContactShadows {
     list: DispatchList,
 }
 
-/// The mask of one window size and its bind group.
+/// The mask of one window size, the depth it may read instead of the
+/// prepass, and their bind groups.
 pub(crate) struct Targets {
     size: (u32, u32),
+    /// Reading the depth prepass.
     group: wgpu::BindGroup,
+    /// Reading `depth`: the prepass with the blended faces and the cards.
+    group_more: wgpu::BindGroup,
+    depth_texture: wgpu::Texture,
+    depth: wgpu::TextureView,
     /// The shadow in `.r`, 0 lit, 1 in contact shadow; read by the shading.
     pub result: wgpu::TextureView,
 }
 
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+impl Targets {
+    /// The copy of the prepass the other casters are drawn into.
+    pub(crate) fn depth_texture(&self) -> &wgpu::Texture {
+        &self.depth_texture
+    }
+
+    pub(crate) fn depth_view(&self) -> &wgpu::TextureView {
+        &self.depth
+    }
+}
 
 impl ContactShadows {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
@@ -339,7 +371,14 @@ impl ContactShadows {
 
     /// The mask for a window of `width` x `height` reading `depth` (the
     /// single-sample depth prepass).
-    pub(crate) fn targets(&self, device: &wgpu::Device, depth: &wgpu::TextureView, width: u32, height: u32) -> Targets {
+    pub(crate) fn targets(
+        &self,
+        device: &wgpu::Device,
+        depth: &wgpu::TextureView,
+        depth_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Targets {
         let size = (width.max(1), height.max(1));
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("contact shadows"),
@@ -356,29 +395,53 @@ impl ContactShadows {
             view_formats: &[],
         });
         let result = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("contact shadows"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(depth),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&result),
-                },
-            ],
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("contact shadows depth"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: depth_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
         });
-        Targets { size, group, result }
+        let own_depth = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = |depth: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("contact shadows"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.buffer,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&result),
+                    },
+                ],
+            })
+        };
+        Targets {
+            size,
+            group: group(depth),
+            group_more: group(&own_depth),
+            depth_texture,
+            depth: own_depth,
+            result,
+        }
     }
 
     /// The dispatches and their constants for a light at `light` (clip
@@ -401,21 +464,23 @@ impl ContactShadows {
         }
     }
 
-    /// The dispatches of `write`, after the depth prepass. No barrier is
+    /// The dispatches of `write`, after the depth prepass (`more`: after
+    /// the blended faces and the cards were drawn into `depth`). No barrier is
     /// needed between them: each writes its own pixels. The target is
     /// emptied first (0, lit): the pixel under the light's point, which no
     /// wavefront writes, and the sky stay lit.
-    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets) {
+    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
+        let group = if more { &t.group_more } else { &t.group };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("contact shadows"),
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.clear);
-        pass.set_bind_group(0, &t.group, &[0]);
+        pass.set_bind_group(0, group, &[0]);
         pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
         pass.set_pipeline(&self.pipeline);
         for (i, d) in self.list.dispatches().iter().enumerate() {
-            pass.set_bind_group(0, &t.group, &[(i as u64 * self.stride) as u32]);
+            pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
         }
     }
@@ -541,6 +606,9 @@ mod tests {
         assert_eq!(Override::parse(Some("0")), Override::Off);
         assert_eq!(Override::parse(Some("1")), Override::On);
         assert_eq!(Override::parse(Some("maybe")), Override::None);
+        assert_eq!(Override::parse(Some("prepass")), Override::Prepass);
+        assert!(Override::Prepass.needed(false) && !Override::Prepass.all_casters());
+        assert!(Override::None.all_casters() && Override::Alternate.all_casters());
         assert!(Override::None.needed(true) && !Override::None.needed(false));
         assert!(!Override::Off.needed(true) && Override::On.needed(false));
         assert!(Override::Alternate.needed(false));

@@ -672,6 +672,7 @@ struct Targets {
     /// Multisampled depth (MSAA only; otherwise `depth_ss` is the scene depth).
     depth_msaa: Option<wgpu::TextureView>,
     /// Single-sample depth from the prepass.
+    depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
     scene_copy_tex: wgpu::Texture,
     scene_copy: wgpu::TextureView,
@@ -728,6 +729,9 @@ struct Pipelines {
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_mask: wgpu::RenderPipeline,
     pre_mask_2s: wgpu::RenderPipeline,
+    /// Blended faces opaque enough to cast contact shadows, into their
+    /// depth (contact_shadows.rs).
+    pre_contact: wgpu::RenderPipeline,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): one-sided and two-sided opaque faces.
     pre_msaa: Option<[wgpu::RenderPipeline; 2]>,
@@ -1693,6 +1697,8 @@ struct Impostors {
     capture_opaque: wgpu::RenderPipeline,
     capture_blend: wgpu::RenderPipeline,
     sprite: wgpu::RenderPipeline,
+    /// The cards' depth alone, single sample (contact shadows).
+    sprite_depth: wgpu::RenderPipeline,
 }
 
 impl Impostors {
@@ -1795,7 +1801,7 @@ impl Impostors {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (capture_opaque, capture_blend, sprite) =
+        let (capture_opaque, capture_blend, sprite, sprite_depth) =
             Self::make_pipelines(device, &layout, frame_layout, records_layout, tex_layout, samples, ssr);
         Impostors {
             layout,
@@ -1808,6 +1814,7 @@ impl Impostors {
             capture_opaque,
             capture_blend,
             sprite,
+            sprite_depth,
         }
     }
 
@@ -1820,7 +1827,7 @@ impl Impostors {
         samples: u32,
         ssr: bool,
     ) {
-        (self.capture_opaque, self.capture_blend, self.sprite) =
+        (self.capture_opaque, self.capture_blend, self.sprite, self.sprite_depth) =
             Self::make_pipelines(device, &self.layout, frame_layout, records_layout, tex_layout, samples, ssr);
     }
 
@@ -1832,7 +1839,12 @@ impl Impostors {
         tex_layout: &wgpu::BindGroupLayout,
         samples: u32,
         ssr: bool,
-    ) -> (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    ) -> (
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+    ) {
         let src = format!(
             "{}\n{}\n{}",
             include_str!("shaders/common.wgsl"),
@@ -1904,7 +1916,18 @@ impl Impostors {
                 )
             },
         );
-        (capture_opaque, capture_blend, sprite)
+        // their depth alone for the contact shadows (single sample, no color)
+        let sprite_depth = make_pipeline(
+            device,
+            &module,
+            &pl,
+            PipeDesc {
+                format: None,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..desc("impostor cards depth", "vs_impostor", "fs_impostor_depth", Vb::Sprite, 1, false)
+            },
+        );
+        (capture_opaque, capture_blend, sprite, sprite_depth)
     }
 }
 
@@ -2782,6 +2805,9 @@ impl Backend {
         let pre_opaque_2s = pre("prepass 2s", "vs_depth", None, None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
+        // both sides: a double-sided blended face casts either way, the
+        // nearer one keeps the depth
+        let pre_contact = pre("prepass contact", "vs_main", Some("fs_depth_contact"), None);
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>| {
                 pipe(PipeDesc {
@@ -2919,6 +2945,7 @@ impl Backend {
             pre_opaque_2s,
             pre_mask,
             pre_mask_2s,
+            pre_contact,
             pre_msaa,
             refl_sky,
             refl_terrain,
@@ -3011,7 +3038,15 @@ impl Backend {
         let color_msaa = (samples > 1).then(|| make_view(device, "hdr msaa", w, h, HDR_FORMAT, samples, att).1);
         let depth_msaa = (samples > 1).then(|| make_view(device, "depth msaa", w, h, DEPTH_FORMAT, samples, att).1);
         // read by the cursor picks through a compute pass (pick.rs)
-        let depth_ss = make_view(device, "depth prepass", w, h, DEPTH_FORMAT, 1, sampled).1;
+        let (depth_ss_tex, depth_ss) = make_view(
+            device,
+            "depth prepass",
+            w,
+            h,
+            DEPTH_FORMAT,
+            1,
+            sampled | wgpu::TextureUsages::COPY_SRC,
+        );
         let (scene_copy_tex, scene_copy) = make_view(
             device,
             "scene copy",
@@ -3057,7 +3092,7 @@ impl Backend {
         let gtao_shown = gtao.is_some() && !legacy_ao;
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
-            .then(|| contact.targets(device, &depth_ss, w, h));
+            .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
         let water_refl = refl("water reflection", s.water_reflection_scale);
         let mirror = refl("mirror", s.mirror_scale);
         let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3096,6 +3131,7 @@ impl Backend {
             gtao,
             gtao_shown,
             contact,
+            depth_ss_tex,
             water_refl,
             mirror,
             post_bind_group,
@@ -4104,6 +4140,10 @@ impl Backend {
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         if self.contact_now {
             main.contact[0] = 1.0;
+            // the blended faces opaque enough are in the depth it read
+            if crate::contact_shadows::Override::from_env().all_casters() {
+                main.contact[1] = 1.0;
+            }
         }
         main.misc = [
             // 2: GTAO's occlusion, without the normal map part the Legacy
@@ -4979,9 +5019,43 @@ impl Backend {
 
         prof.mark("ssao");
         mark(&mut encoder, MARK_SSAO_END);
-        // ---- contact shadows
+        // ---- contact shadows: what casts them beyond the prepass (the
+        // blended faces opaque enough, the impostor cards) is drawn into a
+        // copy of its depth, which the pass then reads
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
-            self.contact.encode(&mut encoder, t);
+            let (_, n_blend) = rg.blend;
+            let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
+            if more {
+                encoder.copy_texture_to_texture(
+                    self.targets.depth_ss_tex.as_image_copy(),
+                    t.depth_texture().as_image_copy(),
+                    self.targets.depth_ss_tex.size(),
+                );
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("contact shadows depth"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: t.depth_view(),
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+                if n_sprites > 0 {
+                    pass.set_pipeline(&self.impostors.sprite_depth);
+                    pass.set_bind_group(3, &self.impostors.bind_group, &[]);
+                    pass.set_vertex_buffer(0, self.impostors.sprites.slice(..));
+                    pass.draw(0..6, 0..n_sprites as u32);
+                }
+            }
+            self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
         // ---- planar reflections

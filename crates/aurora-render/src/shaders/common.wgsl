@@ -91,7 +91,7 @@ struct Frame {
     spot_vp: array<mat4x4<f32>, 2>,
     spot_lights: vec4<i32>,
     spot_fade: vec4<f32>,
-    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view)
+    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
 };
 
 struct DrawRecord {

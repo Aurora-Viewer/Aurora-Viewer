@@ -1540,6 +1540,7 @@ To check with these scenarios:
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
+| `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
@@ -1596,6 +1597,16 @@ To check with these scenarios:
     (`AURORA_BLEND_EARLY_DISCARD`): it only pays off where empty
     areas are in one piece on screen. `32,24,90,256` (large empty
     stretches) shows it, `32,24,60,16` (fine strands) gains nothing.
+- **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
+  `AURORA_DEMO_CROWD` wear a box on each foot's attachment point, opaque or
+  blended (color alpha 0.95: the many mesh bodies and shoes whose faces
+  are blended though they look opaque), and two blocks stand on the ground
+  left of the view from `AURORA_DEMO_POS="129,134"`, an opaque one and,
+  further left, a blended one. For the contact shadows
+  (`AURORA_CONTACT_SHADOWS`): with `AURORA_DEBUG_SHADOWS=1`, the blended
+  block takes them as the opaque one does; with
+  `AURORA_CONTACT_SHADOWS=prepass` it does not (the blended faces were not
+  in the depth the pass reads).
 - **`AURORA_DEMO_LASHES=1`** (with `AURORA_DEMO_HAIR`, for example
   `1,48,20`): our avatar also wears a small red ball, a blended rigged
   mesh, inside the head shell on the side the default camera sees: the
@@ -3776,7 +3787,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
-| `AURORA_CONTACT_SHADOWS=0`, `1` or `alt` | Sun contact shadows off, on, or by turns for this launch |
+| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3878,19 +3889,23 @@ What the inventory must show with these scenarios:
   light. `g_ssao` of `perf summary` is its GPU time (demo crowd of 40,
   2560 × 1369, RTX 4090: Legacy low about 0.08 to 0.15 ms, GTAO low 0.10,
   medium 0.24, high 0.31, ultra 0.57 ms).
-- **`AURORA_CONTACT_SHADOWS=0|1|alt`**: the sun's contact shadows
+- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
   saved setting: `0` off, `1` on, `alt` off and on by turns, one second
-  each (on in odd seconds), the mask kept ready. They only draw with the
+  each (on in odd seconds), the mask kept ready; `prepass` on, but cast by
+  the depth prepass alone (opaque and masked faces, terrain), as before the
+  blended faces opaque enough and the impostor cards were drawn into a copy
+  of it for them (see `AURORA_DEMO_FEET`). They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear
   where things touch or overhang closely — arms against the body, the
   waist over the skirt, the base of the lamp posts, the crowd's hands —
   which the shadow map is too coarse to hold. `g_contact` of
-  `perf summary` is their GPU time (same crowd, 2560 × 1369, RTX 4090,
-  120 fps cap: about 0.19 to 0.26 ms).
+  `perf summary` is their GPU time, the copy of the depth and its extra
+  casters included (same crowd with `AURORA_DEMO_FEET=blend`,
+  2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
