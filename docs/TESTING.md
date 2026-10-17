@@ -266,6 +266,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CAMERA=<scenario>` | Camera scenario (see Details) |
 | `AURORA_DEMO_HOVER_HEIGHT=<scenario>` | Manual/automatic avatar grounding and camera toggle |
 | `AURORA_DEMO_TP=1` or `"x,y,z"` or `remote` | Teleport after loading |
+| `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
@@ -369,6 +370,13 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_TP`**: teleport after the fade of the initial loading
   (frame 240 at the earliest). `1` or `"x,y,z"`: immediate local arrival,
   without a loading screen; `remote` simulates the progress between regions.
+- **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
+  before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
+  2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting
+  with the first. The quick screen leaves once the terrain is there and
+  0.4 s have passed, its bar finishing in 0.15 s
+  (`app/teleport_screen.rs`). With `AURORA_PROFILE=1` the teleport
+  timeline ends `arrived (teleport screen hidden)`, or `…, old screen)`.
 - **`AURORA_DEMO_TP_AWAY=1`**: at frame 760, our avatar arrives in a region
   25 km from the demo one, as after a teleport; at frame 960, it comes back
   there, before the demo region's simulator has closed it. The objects of
@@ -4989,7 +4997,8 @@ their grid coordinates (`1000,1003`).
   arrival (and how far it was from where it was drawn), the previous region
   kept as a neighbour or its circuit closed, the appearance or outfit
   version asked, corrections of our avatar's position. It ends `arrived
-  (teleport screen hidden)`, `failed (TeleportFailed: <reason>)`, `failed (no
+  (teleport screen hidden)` (`…, old screen)` with `AURORA_TP_SCREEN`),
+  `failed (TeleportFailed: <reason>)`, `failed (no
   arrival 90 s after the teleport screen was shown)`, `arrived` 20 s after
   AgentMovementComplete without a screen, `timed out` after 90 s, or
   `interrupted by the next one`. A teleport inside the region ends 2 s after
