@@ -567,7 +567,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
 | `AURORA_DEMO_BUILD_EDGE=<edge>` | Move to the edge, hold then release |
-| `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window |
+| `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
@@ -579,6 +579,13 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 ### Details
+
+`AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
+`AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
+projector texture picker. Choose None, then OK: the light stays on with the
+same colour, intensity, range and falloff, and its projector controls become
+disabled. Cancel instead restores its texture and projector settings. Use
+`features` without the suffix to inspect the light before or after editing.
 
 `AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release

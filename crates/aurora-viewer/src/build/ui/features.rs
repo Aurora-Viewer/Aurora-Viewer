@@ -287,12 +287,24 @@ fn light_section(
             false,
             on,
         );
-        if r.clicked() {
-            tool.ui.picker.open(
+        let demo_picker = egui::Id::new("demo_light_texture_picker_opened");
+        let demo_open = env.demo
+            && on
+            && std::env::var("AURORA_DEMO_BUILD_TAB").is_ok_and(|v| v == "features:light-picker")
+            && !ui.ctx().data(|d| d.get_temp::<bool>(demo_picker).unwrap_or(false));
+        if r.clicked() || demo_open {
+            // LLPanelVolume's light texture control allows no texture:
+            // clearing it disables only PARAMS_LIGHT_IMAGE, keeping the light.
+            tool.ui.picker.open_with_defaults(
                 aurora_i18n::tr!("build-ui-features-choose-light-texture"),
                 img.map(|i| i.texture).unwrap_or_default(),
+                None,
+                true,
             );
             tool.ui.pick_target = Some(PickTarget::LightTexture);
+            if demo_open {
+                ui.ctx().data_mut(|d| d.insert_temp(demo_picker, true));
+            }
         }
     });
     let mut nl = l;
