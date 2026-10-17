@@ -217,6 +217,33 @@ impl JobResult {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: `execute` runs its work on the calling thread. The pool's
+    /// threads run below normal priority, and on a loaded CI runner a UI
+    /// test could wait more than 5 s for its preview job.
+    static EXECUTE_INLINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tests: run what `Jobs::execute` is given on this thread, synchronously,
+/// until the guard is dropped (a harness run with one test thread reuses it).
+#[cfg(test)]
+#[must_use]
+pub fn execute_inline_on_this_thread() -> ExecuteInline {
+    EXECUTE_INLINE.set(true);
+    ExecuteInline
+}
+
+#[cfg(test)]
+pub struct ExecuteInline;
+
+#[cfg(test)]
+impl Drop for ExecuteInline {
+    fn drop(&mut self) {
+        EXECUTE_INLINE.set(false);
+    }
+}
+
 #[derive(Clone)]
 pub struct Jobs {
     tx: Sender<JobResult>,
@@ -286,6 +313,11 @@ impl Jobs {
     /// UI file imports share the low-priority worker pool without feeding
     /// their results into the scene's geometry/texture result channel.
     pub fn execute(&self, work: impl FnOnce() + Send + 'static) {
+        #[cfg(test)]
+        if EXECUTE_INLINE.get() {
+            work();
+            return;
+        }
         self.pool.spawn(work);
     }
 

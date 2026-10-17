@@ -708,20 +708,19 @@ mod tests {
                 },
             );
         }
+        // the preview job runs on this thread: the model is there on the
+        // next poll, whatever the load of the machine
+        let _inline = crate::scene::jobs::execute_inline_on_this_thread();
         let mut picker = TexturePicker::default();
         picker.open_materials("Material", assets[0]);
         for (index, asset) in assets.into_iter().enumerate() {
             picker.wanted_images.clear();
             picker.select(asset, None, false);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            loop {
+            let ready = (0..3).any(|_| {
                 picker.prepare_material_preview(&ctx, &mut scene);
-                if picker.material_model.is_some() {
-                    break;
-                }
-                assert!(std::time::Instant::now() < deadline, "material preview worker did not finish");
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
+                picker.material_model.is_some()
+            });
+            assert!(ready, "material preview not built");
             let model = picker.material_model.as_ref().unwrap();
             assert_eq!(model.parts[0].material.metallic, index as f32);
             assert_eq!(picker.wanted_images, HashSet::from([maps[index]]));

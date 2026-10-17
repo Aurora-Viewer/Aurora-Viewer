@@ -782,6 +782,7 @@ mod tests {
 
     #[test]
     fn transparent_mesh_layers_never_hide_the_textured_skin_behind_them() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             return;
@@ -1179,6 +1180,7 @@ mod tests {
     /// far side (pbropaqueF.glsl negates the whole mapped normal there).
     #[test]
     fn normal_map_bumps_face_the_light() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");

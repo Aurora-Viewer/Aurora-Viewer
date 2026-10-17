@@ -687,6 +687,7 @@ mod tests {
     #[test]
     #[ignore]
     fn staging_round_trip_on_the_gpu() {
+        let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
             eprintln!("no GPU adapter: skipped");
