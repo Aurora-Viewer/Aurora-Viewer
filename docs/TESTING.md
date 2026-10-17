@@ -3776,6 +3776,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
+| `AURORA_CONTACT_SHADOWS=0`, `1` or `alt` | Sun contact shadows off, on, or by turns for this launch |
 | `AURORA_RIGGED_BLEND=sorted` or `alt` | Blended faces of rigged meshes sorted with the others, without depth, as before |
 
 ### Details
@@ -3877,6 +3878,19 @@ What the inventory must show with these scenarios:
   light. `g_ssao` of `perf summary` is its GPU time (demo crowd of 40,
   2560 × 1369, RTX 4090: Legacy low about 0.08 to 0.15 ms, GTAO low 0.10,
   medium 0.24, high 0.31, ultra 0.57 ms).
+- **`AURORA_CONTACT_SHADOWS=0|1|alt`**: the sun's contact shadows
+  (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
+  Bend Studio's screen space shadows) for this launch, without changing the
+  saved setting: `0` off, `1` on, `alt` off and on by turns, one second
+  each (on in odd seconds), the mask kept ready. They only draw with the
+  sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
+  takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
+  `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear
+  where things touch or overhang closely — arms against the body, the
+  waist over the skirt, the base of the lamp posts, the crowd's hands —
+  which the shadow map is too coarse to hold. `g_contact` of
+  `perf summary` is their GPU time (same crowd, 2560 × 1369, RTX 4090,
+  120 fps cap: about 0.19 to 0.26 ms).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
@@ -4413,6 +4427,8 @@ thread.
     which the scene pass starts (0 outside MSAA), also counted in
     `g_shadows_depth`;
   - `g_ssao`: the ambient occlusion alone, Legacy or GTAO (`AURORA_AO`),
+    also counted in `g_effects`;
+  - `g_contact`: the sun's contact shadows alone (`AURORA_CONTACT_SHADOWS`),
     also counted in `g_effects`;
   - the draws and draw commands, the objects synced / rebuilt (`synced`,
     `rebuilt`: averages **per frame**; `rebuilt=0.2` at 175 fps is 35

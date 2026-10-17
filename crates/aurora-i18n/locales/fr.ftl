@@ -3464,6 +3464,8 @@ ui-options-preset-custom = Personnalisé
 ui-options-shadow-quality = Qualité des ombres
 ui-options-projector-shadows = Ombres des projecteurs
 ui-options-projector-shadows-help = Les deux projecteurs les plus présents à l’écran projettent des ombres
+ui-options-contact-shadows = Ombres de contact
+ui-options-contact-shadows-help = Des ombres du soleil nettes là où les choses se touchent (pieds au sol, objets posés, plis), trop fines pour la carte d’ombre. Coûte un peu à la carte graphique
 ui-options-when-i-am-away = Quand je suis absent :
 ui-options-when-the-window-is-not-in-the-foreground-the = Quand la fenêtre n'est pas au premier plan, le viewer ralentit pour libérer la machine. Activé par défaut
 ui-options-glow-amount-instead-of-the-image-red-glow-10 = Quantité de glow à la place de l'image (rouge = glow × 10, vert = × 2)

@@ -91,6 +91,7 @@ struct Frame {
     spot_vp: array<mat4x4<f32>, 2>,
     spot_lights: vec4<i32>,
     spot_fade: vec4<f32>,
+    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view)
 };
 
 struct DrawRecord {
@@ -171,6 +172,8 @@ struct ProbeSet {
 @group(0) @binding(10) var probe_tex: texture_cube_array<f32>;
 @group(0) @binding(11) var probe_sampler: sampler;
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
+// the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
+@group(0) @binding(13) var contact_tex: texture_2d<f32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -1051,7 +1054,36 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
             w[k + 1u] = t;
         }
     }
-    return w * (0.12 + 0.88 * shadow_factor(world_pos, n, vertex_depth));
+    return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
+}
+
+// Whether the fragment being shaded is the surface of the depth prepass,
+// whose contact shadows the mask holds: not a blended face.
+var<private> contact_surface: bool = true;
+
+// The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
+// what the shadow map is too coarse to show, taken as the darker of the
+// two (sun_shadow). 1 elsewhere: other views, blended faces, off.
+fn contact_shadow(frag: vec2<f32>) -> f32 {
+    if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
+        return 1.0;
+    }
+    let p = vec2<i32>(frag);
+    let size = vec2<i32>(textureDimensions(contact_tex));
+    if (any(p < vec2<i32>(0)) || any(p >= size)) {
+        return 1.0;
+    }
+    return 1.0 - textureLoad(contact_tex, p, 0).r;
+}
+
+// The sun's shadow of an opaque surface of the main view: the shadow map,
+// and the contact shadows where they are on.
+fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
+    let s = shadow_factor(world_pos, n, vertex_depth);
+    if (frame.params.z < 0.5) {
+        return s;
+    }
+    return min(s, contact_shadow(frag));
 }
 
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {

@@ -1,0 +1,551 @@
+//! Screen-space contact shadows of the sun or the moon: Bend Studio's
+//! screen space shadows (Apache 2.0, see NOTICE.md) in one compute shader
+//! run over a few dispatches from the single-sample depth prepass
+//! (shaders/contact_shadows.wgsl). The sun's shadow map lacks the
+//! resolution for what touches: feet on the ground, objects resting on a
+//! surface, folds, jewellery; a short march towards the light on screen
+//! finds those occluders and the shading takes the darker of the two
+//! (`contact_shadow` in common.wgsl). Opaque faces of the main view only.
+//!
+//! The dispatches are laid out around the light's point on screen
+//! ([`build_dispatch_list`], a port of Bend's `BuildDispatchList`,
+//! bend_sss_cpu.h): each workgroup is a wavefront of [`WAVE_SIZE`] pixels
+//! along a ray towards that point, in up to eight dispatches.
+//!
+//! `AURORA_CONTACT_SHADOWS=0|1|alt` overrides the setting for a comparison;
+//! `alt` switches every second.
+
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3};
+
+/// Pixels per wavefront (one workgroup). Must match the shader's.
+pub(crate) const WAVE_SIZE: i32 = 64;
+
+/// Bend's starting values (DispatchParameters::SetDefaults): the surface
+/// thickness is a share of the depth left to the far plane (0.5 %: about
+/// 5 cm at 10 m with the reversed depth of an infinite projection), the
+/// edge threshold of the bilinear reads, the contrast of the shadow's
+/// border.
+const SURFACE_THICKNESS: f32 = 0.005;
+const BILINEAR_THRESHOLD: f32 = 0.02;
+const SHADOW_CONTRAST: f32 = 4.0;
+
+/// One compute dispatch: workgroup counts and its first wave relative to
+/// the light (`DispatchData`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Dispatch {
+    pub wave_count: [i32; 3],
+    pub wave_offset: [i32; 2],
+}
+
+/// The dispatches of one light (`DispatchList`): at most eight.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DispatchList {
+    /// The light on screen: x, y in pixels (y down), z its depth, w 1 in
+    /// front of the camera, -1 behind.
+    pub light: [f32; 4],
+    pub dispatch: [Dispatch; 8],
+    pub count: usize,
+}
+
+impl DispatchList {
+    pub(crate) fn dispatches(&self) -> &[Dispatch] {
+        &self.dispatch[..self.count]
+    }
+}
+
+/// Port of Bend's `BuildDispatchList` (bend_sss_cpu.h): the dispatches
+/// that cover `min_bounds..=max_bounds` of a viewport of `viewport` pixels
+/// for a light whose homogeneous clip position is `light` (a direction
+/// with w = 0 for the sun). Depth in [0, 1] (no expanded range).
+pub(crate) fn build_dispatch_list(
+    light: [f32; 4],
+    viewport: [i32; 2],
+    min_bounds: [i32; 2],
+    max_bounds: [i32; 2],
+    wave: i32,
+) -> DispatchList {
+    let mut out = DispatchList::default();
+    // the division loses precision when the light is very far off screen
+    let mut xy_light_w = light[3];
+    let fp_limit = 0.000002 * wave as f32;
+    if xy_light_w >= 0.0 && xy_light_w < fp_limit {
+        xy_light_w = fp_limit;
+    } else if xy_light_w < 0.0 && xy_light_w > -fp_limit {
+        xy_light_w = -fp_limit;
+    }
+    out.light[0] = ((light[0] / xy_light_w) * 0.5 + 0.5) * viewport[0] as f32;
+    out.light[1] = ((light[1] / xy_light_w) * -0.5 + 0.5) * viewport[1] as f32;
+    out.light[2] = if light[3] == 0.0 { 0.0 } else { light[2] / light[3] };
+    out.light[3] = if light[3] > 0.0 { 1.0 } else { -1.0 };
+
+    let light_xy = [(out.light[0] + 0.5) as i32, (out.light[1] + 0.5) as i32];
+    // the bounds, inclusive, relative to the light
+    let biased = [
+        min_bounds[0] - light_xy[0],
+        -(max_bounds[1] - light_xy[1]),
+        max_bounds[0] - light_xy[0],
+        -(min_bounds[1] - light_xy[1]),
+    ];
+    // four quadrants around the light, each split in two on its longer axis
+    // when it is not square
+    for q in 0..4 {
+        let vertical = q == 0 || q == 3;
+        let bounds = [
+            (if q & 1 != 0 { biased[0] } else { -biased[2] }).max(0) / wave,
+            (if q & 2 != 0 { biased[1] } else { -biased[3] }).max(0) / wave,
+            ((if q & 1 != 0 { biased[2] } else { -biased[0] }) + wave * if vertical { 1 } else { 2 } - 1).max(0) / wave,
+            ((if q & 2 != 0 { biased[3] } else { -biased[1] }) + wave * if vertical { 2 } else { 1 } - 1).max(0) / wave,
+        ];
+        if bounds[2] - bounds[0] <= 0 || bounds[3] - bounds[1] <= 0 {
+            continue;
+        }
+        let bias_x = i32::from(q == 2 || q == 3);
+        let bias_y = i32::from(q == 1 || q == 3);
+        let first = out.count;
+        out.dispatch[first] = Dispatch {
+            wave_count: [wave, bounds[2] - bounds[0], bounds[3] - bounds[1]],
+            wave_offset: [
+                (if q & 1 != 0 { bounds[0] } else { -bounds[2] }) + bias_x,
+                (if q & 2 != 0 { -bounds[3] } else { bounds[1] }) + bias_y,
+            ],
+        };
+        out.count += 1;
+        // where the diagonal from the light meets the far corner of the
+        // quadrant
+        let mut axis_delta = biased[0] - biased[1];
+        if q == 1 {
+            axis_delta = biased[2] + biased[1];
+        }
+        if q == 2 {
+            axis_delta = -biased[0] - biased[3];
+        }
+        if q == 3 {
+            axis_delta = -biased[2] + biased[3];
+        }
+        axis_delta = (axis_delta + wave - 1) / wave;
+        if axis_delta <= 0 {
+            continue;
+        }
+        let second = out.count;
+        let mut disp = out.dispatch[first];
+        let mut disp2 = disp;
+        match q {
+            0 => {
+                // split on y, the split one larger on x
+                disp2.wave_count[2] = disp.wave_count[2].min(axis_delta);
+                disp.wave_count[2] -= disp2.wave_count[2];
+                disp2.wave_offset[1] = disp.wave_offset[1] + disp.wave_count[2];
+                disp2.wave_offset[0] -= 1;
+                disp2.wave_count[1] += 1;
+            }
+            1 => {
+                // split on x, the split one larger on y
+                disp2.wave_count[1] = disp.wave_count[1].min(axis_delta);
+                disp.wave_count[1] -= disp2.wave_count[1];
+                disp2.wave_offset[0] = disp.wave_offset[0] + disp.wave_count[1];
+                disp2.wave_count[2] += 1;
+            }
+            2 => {
+                // split on x, the split one larger on y
+                disp2.wave_count[1] = disp.wave_count[1].min(axis_delta);
+                disp.wave_count[1] -= disp2.wave_count[1];
+                disp.wave_offset[0] += disp2.wave_count[1];
+                disp2.wave_count[2] += 1;
+                disp2.wave_offset[1] -= 1;
+            }
+            _ => {
+                // split on y, the split one larger on x
+                disp2.wave_count[2] = disp.wave_count[2].min(axis_delta);
+                disp.wave_count[2] -= disp2.wave_count[2];
+                disp.wave_offset[1] += disp2.wave_count[2];
+                disp2.wave_count[1] += 1;
+            }
+        }
+        out.dispatch[first] = disp;
+        out.dispatch[second] = disp2;
+        out.count += 1;
+        // drop the empty ones (the original's swap with the last entry)
+        if disp2.wave_count[1] <= 0 || disp2.wave_count[2] <= 0 {
+            out.count -= 1;
+            out.dispatch[second] = out.dispatch[out.count];
+        }
+        if disp.wave_count[1] <= 0 || disp.wave_count[2] <= 0 {
+            out.count -= 1;
+            out.dispatch[first] = out.dispatch[out.count];
+        }
+    }
+    // the shader takes the offsets in pixels
+    for d in &mut out.dispatch[..out.count] {
+        d.wave_offset[0] *= wave;
+        d.wave_offset[1] *= wave;
+    }
+    out
+}
+
+/// `AURORA_CONTACT_SHADOWS`: the setting forced for a comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Override {
+    None,
+    Off,
+    On,
+    /// Off and on by turns, one second each (on in odd seconds).
+    Alternate,
+}
+
+impl Override {
+    pub(crate) fn parse(v: Option<&str>) -> Self {
+        match v.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("0" | "off") => Override::Off,
+            Some("1" | "on") => Override::On,
+            Some("alt") => Override::Alternate,
+            _ => Override::None,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        static MODE: std::sync::OnceLock<Override> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| Override::parse(std::env::var("AURORA_CONTACT_SHADOWS").ok().as_deref()))
+    }
+
+    /// Whether the targets are kept for the setting `on`.
+    pub(crate) fn needed(self, on: bool) -> bool {
+        match self {
+            Override::None => on,
+            Override::Off => false,
+            Override::On | Override::Alternate => true,
+        }
+    }
+
+    /// Whether the frame drawn `secs` seconds into the session has them.
+    pub(crate) fn on_now(self, on: bool, secs: u64) -> bool {
+        match self {
+            Override::Alternate => secs % 2 == 1,
+            _ => self.needed(on),
+        }
+    }
+}
+
+/// Must match `Params` in contact_shadows.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ParamsU {
+    light: [f32; 4],
+    wave_offset: [i32; 4],
+    tuning: [f32; 4],
+}
+
+/// The light of the frame as Bend takes it: the direction towards it (w =
+/// 0) through the view-projection the depth prepass was drawn with.
+pub(crate) fn light_projection(view_proj: Mat4, towards_light: Vec3) -> [f32; 4] {
+    (view_proj * towards_light.normalize_or(Vec3::Z).extend(0.0)).to_array()
+}
+
+/// The pipeline and the constants of the dispatches, made once.
+pub(crate) struct ContactShadows {
+    pipeline: wgpu::ComputePipeline,
+    clear: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+    buffer: wgpu::Buffer,
+    /// Bytes between the constants of two dispatches.
+    stride: u64,
+    /// This frame's dispatches (`write`, then `encode`).
+    list: DispatchList,
+}
+
+/// The mask of one window size and its bind group.
+pub(crate) struct Targets {
+    size: (u32, u32),
+    group: wgpu::BindGroup,
+    /// The shadow in `.r`, 0 lit, 1 in contact shadow; read by the shading.
+    pub result: wgpu::TextureView,
+}
+
+const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+impl ContactShadows {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("contact shadows"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows.wgsl").into()),
+        });
+        let stride = std::mem::size_of::<ParamsU>().next_multiple_of(device.limits().min_uniform_buffer_offset_alignment as usize) as u64;
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("contact shadows"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: RESULT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("contact shadows"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let make = |entry: &'static str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("contact shadows"),
+                layout: Some(&pl),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let (pipeline, clear) = (make("main"), make("clear"));
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("contact shadows params"),
+            size: stride * 8,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        ContactShadows {
+            pipeline,
+            clear,
+            layout,
+            buffer,
+            stride,
+            list: DispatchList::default(),
+        }
+    }
+
+    /// The mask for a window of `width` x `height` reading `depth` (the
+    /// single-sample depth prepass).
+    pub(crate) fn targets(&self, device: &wgpu::Device, depth: &wgpu::TextureView, width: u32, height: u32) -> Targets {
+        let size = (width.max(1), height.max(1));
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("contact shadows"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: RESULT_FORMAT,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let result = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("contact shadows"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(std::mem::size_of::<ParamsU>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&result),
+                },
+            ],
+        });
+        Targets { size, group, result }
+    }
+
+    /// The dispatches and their constants for a light at `light` (clip
+    /// position, [`light_projection`]), before the encoder runs.
+    pub(crate) fn write(&mut self, queue: &wgpu::Queue, t: &Targets, light: [f32; 4]) {
+        let (w, h) = (t.size.0 as i32, t.size.1 as i32);
+        self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
+        let mut bytes = vec![0u8; (self.stride as usize) * self.list.count];
+        for (i, d) in self.list.dispatches().iter().enumerate() {
+            let u = ParamsU {
+                light: self.list.light,
+                wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
+                tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, 0.0],
+            };
+            let at = i * self.stride as usize;
+            bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.buffer, 0, &bytes);
+        }
+    }
+
+    /// The dispatches of `write`, after the depth prepass. No barrier is
+    /// needed between them: each writes its own pixels. The target is
+    /// emptied first (0, lit): the pixel under the light's point, which no
+    /// wavefront writes, and the sky stay lit.
+    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets) {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("contact shadows"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.clear);
+        pass.set_bind_group(0, &t.group, &[0]);
+        pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
+        pass.set_pipeline(&self.pipeline);
+        for (i, d) in self.list.dispatches().iter().enumerate() {
+            pass.set_bind_group(0, &t.group, &[(i as u64 * self.stride) as u32]);
+            pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pixel each thread of each wavefront writes, as the shader finds
+    /// it (`ComputeWavefrontExtents`, contact_shadows.wgsl): a CPU copy of
+    /// its first lines.
+    fn written_pixels(list: &DispatchList, wave: i32, mut each: impl FnMut(i32, i32)) {
+        let light = list.light;
+        let light_xy = [light[0].floor() + 0.5, light[1].floor() + 0.5];
+        let frac = [light[0] - light_xy[0], light[1] - light_xy[1]];
+        let reverse = light[3] > 0.0;
+        for d in list.dispatches() {
+            for gz in 0..d.wave_count[2] {
+                for gy in 0..d.wave_count[1] {
+                    for gx in 0..d.wave_count[0] {
+                        let mut xy = [gy * wave + d.wave_offset[0], gz * wave + d.wave_offset[1]];
+                        let sign = [xy[0].signum(), xy[1].signum()];
+                        let horizontal = (xy[0] + sign[1]).abs() < (xy[1] - sign[0]).abs();
+                        let axis = if horizontal { [sign[1], 0] } else { [0, -sign[0]] };
+                        xy = [axis[0] * gx + xy[0], axis[1] * gx + xy[1]];
+                        let f = [xy[0] as f32, xy[1] as f32];
+                        let x_major = f[0].abs() > f[1].abs();
+                        let major = if x_major { f[0] } else { f[1] };
+                        let (start_m, end_m) = (major.abs(), major.abs() - wave as f32);
+                        let mut ma = if x_major { frac[0] } else { frac[1] };
+                        if major > 0.0 {
+                            ma = -ma;
+                        }
+                        let start = [f[0] + light_xy[0], f[1] + light_xy[1]];
+                        let t = (end_m + ma) / (start_m + ma);
+                        let end = [light[0] + (start[0] - light[0]) * t, light[1] + (start[1] - light[1]) * t];
+                        for tid in 0..wave {
+                            let step = (tid ^ if reverse { 0 } else { wave - 1 }) as f32;
+                            let p = [
+                                start[0] + (end[0] - start[0]) * step / wave as f32,
+                                start[1] + (end[1] - start[1]) * step / wave as f32,
+                            ];
+                            each(p[0].floor() as i32, p[1].floor() as i32);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn coverage(light: [f32; 4], w: i32, h: i32) -> (usize, DispatchList) {
+        let list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
+        let mut seen = vec![false; (w * h) as usize];
+        written_pixels(&list, WAVE_SIZE, |x, y| {
+            if x >= 0 && y >= 0 && x < w && y < h {
+                seen[(y * w + x) as usize] = true;
+            }
+        });
+        // the pixel under the light's point is left out (it stays lit)
+        let at = (list.light[0].floor() as i32, list.light[1].floor() as i32);
+        let missed = (0..w * h).filter(|&i| !seen[i as usize] && (i % w, i / w) != at).count();
+        (missed, list)
+    }
+
+    /// Every pixel of the screen gets a value, wherever the light falls:
+    /// off screen on each side, on screen, behind the camera (but the one
+    /// under the light's point, cleared to lit).
+    #[test]
+    fn the_dispatches_cover_every_pixel() {
+        let (w, h) = (640, 360);
+        for light in [
+            // directional lights well off screen (w = 0 as for the sun)
+            [0.3, 0.8, 0.1, 0.0],
+            [-2.0, 0.1, 0.1, 0.0],
+            [0.0, -3.0, 0.1, 0.0],
+            // on screen, in front of the camera and behind it
+            [0.2, -0.3, 0.5, 1.0],
+            [-0.6, 0.4, 0.5, -1.0],
+            [0.0, 0.0, 0.5, 1.0],
+        ] {
+            let (missed, list) = coverage(light, w, h);
+            assert_eq!(missed, 0, "light {light:?}: {} dispatches", list.count);
+            assert!((1..=8).contains(&list.count), "{}", list.count);
+        }
+    }
+
+    /// The light's point on screen and its side of the camera, as Bend
+    /// computes them.
+    #[test]
+    fn the_light_lands_on_its_pixel() {
+        let list = build_dispatch_list([0.5, 0.5, 0.25, 1.0], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
+        assert_eq!(list.light, [600.0, 150.0, 0.25, 1.0]);
+        let behind = build_dispatch_list([0.5, 0.5, 0.25, -1.0], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
+        assert_eq!(behind.light[3], -1.0);
+        // a direction (w = 0): far off along its axis, depth 0
+        let sun = build_dispatch_list([1.0, 0.0, 0.0, 0.0], [800, 600], [0, 0], [800, 600], WAVE_SIZE);
+        assert!(sun.light[0] > 1e6 && sun.light[2] == 0.0 && sun.light[3] == -1.0);
+    }
+
+    /// The sun in front of the camera lands where a far point along it
+    /// projects; one behind the camera gives a negative w.
+    #[test]
+    fn light_projection_follows_the_view() {
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::X, Vec3::Z);
+        let vp = proj * view;
+        let dir = Vec3::new(1.0, 0.2, 0.3);
+        let ahead = light_projection(vp, dir);
+        assert!(ahead[3] > 0.0);
+        // a point far along the direction lands on the same spot of the screen
+        let far = vp * (dir.normalize() * 1e5).extend(1.0);
+        assert!((ahead[0] / ahead[3] - far.x / far.w).abs() < 1e-3);
+        assert!((ahead[1] / ahead[3] - far.y / far.w).abs() < 1e-3);
+        let behind = light_projection(vp, Vec3::new(-1.0, 0.0, 0.5));
+        assert!(behind[3] < 0.0);
+    }
+
+    #[test]
+    fn override_keeps_the_mask_and_alternates_every_second() {
+        assert_eq!(Override::parse(None), Override::None);
+        assert_eq!(Override::parse(Some(" ALT ")), Override::Alternate);
+        assert_eq!(Override::parse(Some("0")), Override::Off);
+        assert_eq!(Override::parse(Some("1")), Override::On);
+        assert_eq!(Override::parse(Some("maybe")), Override::None);
+        assert!(Override::None.needed(true) && !Override::None.needed(false));
+        assert!(!Override::Off.needed(true) && Override::On.needed(false));
+        assert!(Override::Alternate.needed(false));
+        let alt: Vec<bool> = (0..4).map(|s| Override::Alternate.on_now(false, s)).collect();
+        assert_eq!(alt, [false, true, false, true]);
+        assert!((0..4).all(|s| Override::None.on_now(true, s)));
+    }
+}

@@ -593,6 +593,10 @@ pub struct Settings {
     /// The two projectors that weigh most on screen cast shadows
     /// (Firestorm RenderShadowDetail 2, "Sun/Moon + Projectors", its default).
     pub projector_shadows: bool,
+    /// Screen-space contact shadows of the sun or the moon, beyond the
+    /// Legacy Viewer (contact_shadows.rs): what the shadow map is too coarse
+    /// to show, where things touch. Off by default; only with the shadows.
+    pub contact_shadows: bool,
     /// 0 none, 1 FXAA, 2 MSAA 2x, 3 MSAA 4x, 4 MSAA 8x, 5 TAA, 6 SMAA (the
     /// default, RenderFSAAType 2 of Firestorm's High to Ultra levels in
     /// featuretable.txt)
@@ -1116,6 +1120,7 @@ impl Default for Settings {
             former_look_at_range: None,
             shadow_quality: 3,
             projector_shadows: true,
+            contact_shadows: false,
             antialiasing: 6,
             tonemapper: 0,
             fps_cap: true,
@@ -1708,6 +1713,7 @@ impl Settings {
             } else {
                 AoMethod::Legacy
             },
+            contact_shadows: self.contact_shadows,
             water_reflection_scale: Self::reflection_scale(self.water_reflections),
             mirror_scale: Self::reflection_scale(self.mirrors),
             probe_slots: self.probe_count.clamp(8, 64),
