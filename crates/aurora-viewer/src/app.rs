@@ -5727,8 +5727,27 @@ impl App {
                 crate::ao::demo::signal(&mut self.world, self.frame_count, mode, now);
             }
             self.update_ao(now);
+            if self.demo && crate::demo::animation_edit_demo() {
+                match self.frame_count {
+                    420 | 750 => {
+                        let local = if self.frame_count == 420 { crate::demo::OWN_RIGGED } else { 9200 };
+                        let idx = self.world.objects.iter().find_map(|(i, o)| (o.key.local_id == local).then_some(i));
+                        self.build.open_build(crate::build::Tool::Edit);
+                        self.build.click_select(&mut self.world, &self.settings.build, idx, false);
+                        log::info!("demo animation edit: frame {}, selected local {local}", self.frame_count);
+                    }
+                    630 | 930 => {
+                        self.build.close(&mut self.world, &mut self.settings.build);
+                        log::info!("demo animation edit: frame {}, released selection", self.frame_count);
+                    }
+                    _ => {}
+                }
+            }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            if self.demo && crate::demo::animation_edit_demo() && matches!(self.frame_count, 420 | 630 | 750 | 930) {
+                log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
+            }
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
             self.scene.update_auto_hover(
@@ -6953,7 +6972,7 @@ impl App {
                 log::info!("demo animation sync: delayed asset ready at frame 300");
             }
             if crate::demo::animation_sync_demo()
-                && self.frame_count == 360
+                && (self.frame_count == 360 || (crate::demo::animation_edit_demo() && self.frame_count == 660))
                 && let Some(&joint) = self.scene.avatar_lib.rig.names.get("mElbowLeft")
             {
                 let (leader, _) = self.scene.preview_pose(&crate::demo::DEMO_AGENT);
@@ -6961,7 +6980,29 @@ impl App {
                     .scene
                     .preview_pose(&uuid::Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0002));
                 if let Some((a, b)) = leader.get(joint).zip(follower.get(joint)) {
-                    log::info!("demo animation sync: elbow phase error {:.6} rad", a.angle_between(*b));
+                    log::info!(
+                        "demo animation sync: frame {}, elbow phase error {:.6} rad",
+                        self.frame_count,
+                        a.angle_between(*b)
+                    );
+                }
+            }
+            if crate::demo::animation_edit_demo()
+                && self.frame_count == 960
+                && let Some(&joint) = self.scene.avatar_lib.rig.names.get("mHead")
+            {
+                let owners = [9200, 9201].map(|local| {
+                    self.world
+                        .objects
+                        .iter()
+                        .find_map(|(_, o)| (o.key.local_id == local).then_some(o.full_id))
+                });
+                if let [Some(edited), Some(reference)] = owners {
+                    let (a, _) = self.scene.preview_pose(&edited);
+                    let (b, _) = self.scene.preview_pose(&reference);
+                    if let Some((a, b)) = a.get(joint).zip(b.get(joint)) {
+                        log::info!("demo animation sync: animesh resume phase error {:.6} rad", a.angle_between(*b));
+                    }
                 }
             }
             for event in crate::demo::loop_animation_events(self.frame_count) {
@@ -12320,6 +12361,18 @@ impl ApplicationHandler for App {
                 }
                 for ev in crate::demo::animesh_events() {
                     self.world.apply(ev);
+                }
+                if crate::demo::animation_edit_demo()
+                    && let Some(wearer) = self
+                        .world
+                        .objects
+                        .index_of_uuid(&self.world.agent_id)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map(|o| o.key.local_id)
+                {
+                    for ev in crate::demo::own_rigged_events(wearer) {
+                        self.world.apply(ev);
+                    }
                 }
             }
             // AURORA_DEMO_CLASSIC: classic avatars, shaped and baked

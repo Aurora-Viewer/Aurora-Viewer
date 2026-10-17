@@ -97,12 +97,16 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 Animation playback uses the first locally known simulator signal as its origin
 (`world::PlayingAnimation`), independent of asset loading and first visibility.
-`scene/anim.rs` keeps pending origins through explicit edit pauses; late assets
-join the elapsed phase and expired one-shots report completion once. Animesh
+`scene/anim.rs` freezes only the displayed pose during editing; receipt origins
+remain unchanged, so releasing the selection rejoins the current phase. Changed
+signals and late assets cannot move the held edit pose. Late assets join the
+elapsed phase and expired one-shots report completion once. Animesh
 linkset merging preserves the receipt clocks of the contributing signals.
 Import previews retain their explicit seek clock. This intentionally improves
 on activation at asset arrival in LLMotionController::updateLoadingMotions;
 it cannot recover a simulator start that the viewer never received.
+Rejoining the receipt phase after editing intentionally differs from the
+suspended playback clock of LLMotionController::pauseAllMotions.
 
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these

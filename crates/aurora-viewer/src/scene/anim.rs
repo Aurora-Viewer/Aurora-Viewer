@@ -236,13 +236,6 @@ struct Motion {
     weight: f32,
 }
 
-/// Playback origins kept while an asset loads, including explicit edit pauses.
-struct PendingMotion {
-    signal: PlayingAnimation,
-    activation: Instant,
-    continuous_activation: Instant,
-}
-
 impl Motion {
     fn ease_in_weight(&self, now: Instant) -> f32 {
         let a = &self.anim.anim;
@@ -286,7 +279,6 @@ pub struct Controller {
     /// Signals already activated, including completed non-looping motions.
     /// A still-signaled one-shot must not restart automatically every frame.
     signals: HashMap<Uuid, PlayingAnimation>,
-    pending: HashMap<Uuid, PendingMotion>,
     preview_start: Option<(Option<Uuid>, Instant)>,
     /// Joint rotations of the last frame (None before the first one).
     rot: Vec<Quat>,
@@ -309,8 +301,8 @@ pub struct Controller {
     /// (skeleton space).
     posed: LookJoints<(Quat, Vec3)>,
     last_eval: Option<Instant>,
-    /// Animations paused since then (LLCharacter::requestPause): their
-    /// clock stands still, and they go on from the same point once resumed.
+    /// Pose frozen since then (LLCharacter::requestPause). Playback origins
+    /// keep running so releasing an edit rejoins the current animation phase.
     paused_at: Option<Instant>,
     /// Head and eye joint states of the last frame, held during a pause
     /// (LLMotionController::updateIdleActiveMotions does not run them).
@@ -554,34 +546,24 @@ impl Controller {
         }
     }
 
-    /// Pause or resume every motion (LLCharacter::requestPause, released with
-    /// the last LLPauseRequestHandle; LLMotionController::pauseAllMotions):
-    /// the pose stands still and, once resumed, each motion goes on from the
-    /// point it had reached, as the frozen animation time of the Legacy
-    /// Viewer does. An import preview drives its own clock and is never paused.
+    /// Freeze the displayed pose for editing (LLCharacter::requestPause).
+    /// Unlike pauseAllMotions, releasing the edit catches up to the receipt
+    /// clock instead of delaying every animation by the edit's duration.
+    /// An import preview drives its own clock and is never paused.
     pub fn set_paused(&mut self, paused: bool, now: Instant) {
         let paused = paused && self.preview_start.is_none();
         match (self.paused_at, paused) {
             (None, true) => self.paused_at = Some(now),
             (Some(at), false) => {
                 self.paused_at = None;
-                self.shift(now.saturating_duration_since(at));
+                self.resume_procedural(now.saturating_duration_since(at));
             }
             _ => {}
         }
     }
 
-    /// Move every time kept by the motions forward by the length of a pause.
-    fn shift(&mut self, d: Duration) {
-        for m in &mut self.motions {
-            m.activation += d;
-            m.continuous_activation += d;
-            m.stop = m.stop.map(|s| s + d);
-        }
-        for m in self.pending.values_mut() {
-            m.activation += d;
-            m.continuous_activation += d;
-        }
+    /// Head/eye interpolation resumes smoothly; scripted playback keeps its origin.
+    fn resume_procedural(&mut self, d: Duration) {
         let pr = &mut self.procedural;
         for fade in [&mut pr.head, &mut pr.eyes] {
             fade.change = fade.change.map(|c| c + d);
@@ -701,7 +683,6 @@ impl Controller {
         if let Some((target, _)) = clock {
             self.motions.retain(|m| target.is_some_and(|id| m.id != id));
             self.signals.retain(|id, _| target.is_some_and(|target| *id != target));
-            self.pending.retain(|id, _| target.is_some_and(|target| *id != target));
         }
         self.preview_start = clock;
     }
@@ -718,7 +699,7 @@ impl Controller {
         let activation = |id, start: Instant| {
             preview
                 .filter(|(target, _)| target.is_none_or(|target| target == id))
-                .map_or(start.min(now), |(_, start)| start)
+                .map_or(start, |(_, start)| start)
         };
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut() {
@@ -735,7 +716,6 @@ impl Controller {
             self.motions.retain(|m| m.stop != Some(now));
         }
         self.signals.retain(|id, _| playing.iter().any(|p| p.id == *id));
-        self.pending.retain(|id, _| playing.iter().any(|p| p.id == *id));
         // Unlike updateLoadingMotions, loading does not move the playback
         // origin: a late asset or off-camera skeleton joins the known phase.
         // A motion easing out is left to finish while a new instance starts.
@@ -754,26 +734,14 @@ impl Controller {
                 }
                 m.stop_at(now);
             }
-            let pending = self.pending.entry(signal.id).or_insert_with(|| PendingMotion {
-                signal: *signal,
-                activation: activation(signal.id, signal.sequence_start),
-                continuous_activation: activation(signal.id, signal.continuous_start),
-            });
-            if pending.signal != *signal {
-                pending.activation = activation(signal.id, signal.sequence_start);
-                if pending.signal.continuous_start != signal.continuous_start {
-                    pending.continuous_activation = activation(signal.id, signal.continuous_start);
-                }
-                pending.signal = *signal;
-            }
             if let Some(anim) = get(&signal.id) {
                 self.motions.insert(
                     0,
                     Motion {
                         id: signal.id,
                         anim,
-                        activation: pending.activation,
-                        continuous_activation: pending.continuous_activation,
+                        activation: activation(signal.id, signal.sequence_start),
+                        continuous_activation: activation(signal.id, signal.continuous_start),
                         signal: *signal,
                         stop: None,
                         residual: 0.0,
@@ -781,7 +749,6 @@ impl Controller {
                     },
                 );
                 self.signals.insert(signal.id, *signal);
-                self.pending.remove(&signal.id);
             }
         }
         // weights (LLMotionController::updateMotionsByType)
@@ -823,6 +790,9 @@ impl Controller {
     pub fn evaluate(&mut self, rig: &Rig, now: Instant, base: Option<&SkeletonBase>, out: &mut [[[f32; 4]; 4]]) {
         let now = self.paused_at.unwrap_or(now);
         let n = rig.len().min(out.len());
+        // Keep the displayed pose even if signals stop/change or a file arrives
+        // during editing. The first evaluation still initializes an unseen rig.
+        let hold_pose = self.paused_at.is_some() && self.rot.len() == rig.len();
         if self.rot.len() != rig.len() {
             self.rot = rig.local_rot.clone();
             self.pos_delta = vec![Vec3::ZERO; rig.len()];
@@ -837,7 +807,7 @@ impl Controller {
         // (LLJointStateBlender::addJointState)
         type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
-        for m in &self.motions {
+        for m in self.motions.iter().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
                 continue;
             }
@@ -869,7 +839,7 @@ impl Controller {
         }
         // head and eye motions, started with the avatar (startDefaultMotions)
         let lj = LookJoints::of(rig);
-        let procedural = if self.control {
+        let procedural = if self.control || hold_pose {
             Vec::new()
         } else if self.paused_at.is_some() {
             self.held_procedural.clone()
@@ -1268,58 +1238,78 @@ mod tests {
         Arc::new(BoundAnim::bind(anim, rig))
     }
 
-    /// LLCharacter::requestPause: the pose stands still for the whole pause,
-    /// then the motion goes on from where it was, without jumping ahead.
+    /// Editing freezes the pose, then both kinds of skeleton rejoin the
+    /// uninterrupted reference, including after a long second edit.
     #[test]
-    fn a_paused_avatar_holds_its_pose_and_resumes_where_it_stopped() {
+    fn edited_avatars_and_animesh_rejoin_the_reference_phase_on_release() {
         let rig = rig();
         let elbow = rig.names["mElbowLeft"];
         let a = swing(&rig);
         let id = Uuid::from_u128(7);
         let t0 = Instant::now();
-        let at = |s: f32| t0 + Duration::from_secs_f32(s);
-        let mut c = Controller::default();
-        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
-        let mut angle = |c: &mut Controller, t: Instant| {
-            c.sync(&[signal(id, 1, t0)], t, |_| Some(a.clone()));
-            c.evaluate(&rig, t, None, &mut out);
-            let (axis, angle) = c.rot[elbow].to_axis_angle();
-            angle * axis.z.signum()
-        };
-        assert!(angle(&mut c, at(0.0)).abs() < 1e-3);
-        assert!((angle(&mut c, at(0.5)) - 0.5).abs() < 1e-3);
-        c.set_paused(true, at(0.5));
-        assert!(c.paused_at.is_some());
-        for s in [0.75, 1.0, 2.5] {
-            let held = angle(&mut c, at(s));
-            assert!((held - 0.5).abs() < 1e-3, "{s}: {held}");
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        for control in [false, true] {
+            let mut c = Controller {
+                control,
+                ..Default::default()
+            };
+            let mut reference = Controller {
+                control,
+                ..Default::default()
+            };
+            let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+            let mut angle = |c: &mut Controller, t: Instant| {
+                c.sync(&[signal(id, 1, t0)], t, |_| Some(a.clone()));
+                c.evaluate(&rig, t, None, &mut out);
+                let (axis, angle) = c.rot[elbow].to_axis_angle();
+                angle * axis.z.signum()
+            };
+            assert!(angle(&mut c, at(0.0)).abs() < 1e-3);
+            assert!((angle(&mut c, at(0.5)) - 0.5).abs() < 1e-3);
+            c.set_paused(true, at(0.5));
+            for s in [0.75, 1.0, 2.5] {
+                let held = angle(&mut c, at(s));
+                assert!((held - 0.5).abs() < 1e-3, "{control}, {s}: {held}");
+            }
+            c.set_paused(false, at(3.0));
+            for s in [3.0, 3.25] {
+                assert!((angle(&mut c, at(s)) - angle(&mut reference, at(s))).abs() < 1e-6);
+            }
+            c.set_paused(true, at(3.25));
+            assert!((angle(&mut c, at(607.0)) - 0.75).abs() < 1e-3);
+            c.set_paused(false, at(607.9));
+            assert!((angle(&mut c, at(607.9)) - angle(&mut reference, at(607.9))).abs() < 1e-6);
+            assert_eq!(c.motions[0].continuous_activation, t0);
         }
-        // resumed 2.5 s later: from 0.5 rad on, not 2.5 s further in the loop
-        c.set_paused(false, at(3.0));
-        assert!(c.paused_at.is_none());
-        assert!((angle(&mut c, at(3.0)) - 0.5).abs() < 1e-3);
-        assert!((angle(&mut c, at(3.25)) - 0.75).abs() < 1e-3);
     }
 
-    /// LLMotionController::stopMotionLocally stops at once while paused; a
-    /// motion that starts during the pause waits for its end to play.
+    /// Changed signals and a newly loaded asset cannot move the edited pose.
+    /// Their playback origins still belong to when they were first known.
     #[test]
-    fn motions_stopped_during_a_pause_go_at_once_and_new_ones_wait() {
+    fn signals_changed_during_edit_keep_the_pose_frozen_and_rejoin_on_release() {
         let rig = rig();
         let a = swing(&rig);
         let (old, new) = (Uuid::from_u128(8), Uuid::from_u128(9));
         let t0 = Instant::now();
         let at = |s: f32| t0 + Duration::from_secs_f32(s);
         let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
         c.sync(&[signal(old, 1, t0)], at(0.0), |_| Some(a.clone()));
+        c.sync(&[signal(old, 1, t0)], at(0.5), |_| Some(a.clone()));
+        c.evaluate(&rig, at(0.5), None, &mut out);
+        let held = out.clone();
         c.set_paused(true, at(0.5));
-        c.sync(&[signal(new, 2, at(1.0))], at(1.0), |_| Some(a.clone()));
+        c.sync(&[signal(new, 2, at(1.0))], at(1.0), |_| None);
+        c.evaluate(&rig, at(1.0), None, &mut out);
+        assert_eq!(out, held);
+        c.sync(&[signal(new, 2, at(1.0))], at(2.0), |_| Some(a.clone()));
+        c.evaluate(&rig, at(2.0), None, &mut out);
+        assert_eq!(out, held);
         assert_eq!(c.motions.iter().map(|m| m.id).collect::<Vec<_>>(), [new]);
-        // the new motion starts where the pause froze the clock
         c.set_paused(false, at(4.0));
         let m = &c.motions[0];
-        assert_eq!(m.activation, at(4.0));
-        assert!((m.local_time(at(4.5)) - 0.5).abs() < 1e-6);
+        assert_eq!(m.activation, at(1.0));
+        assert!((m.local_time(at(4.5)) - 1.5).abs() < 1e-6);
     }
 
     #[test]
@@ -1763,7 +1753,7 @@ mod tests {
     }
 
     #[test]
-    fn loading_during_an_edit_pause_preserves_the_paused_playback_time() {
+    fn loading_during_an_edit_preserves_receipt_origins_on_release() {
         let rig = rig();
         let anim = swing(&rig);
         let t0 = Instant::now();
@@ -1774,13 +1764,34 @@ mod tests {
         c.sync(&[old], t0, |_| None);
         c.set_paused(true, at(0.5));
         c.sync(&[old, new], at(1.0), |_| None);
-        c.set_paused(false, at(3.0));
-        c.sync(&[old, new], at(3.25), |_| Some(anim.clone()));
+        c.set_paused(false, at(4.0));
+        c.sync(&[old, new], at(4.25), |_| Some(anim.clone()));
         let old = c.motions.iter().find(|m| m.id == old.id).expect("old motion");
         let new = c.motions.iter().find(|m| m.id == new.id).expect("new motion");
-        assert!((old.local_time(at(3.25)) - 0.75).abs() < 1e-12);
-        assert!((new.local_time(at(3.25)) - 0.25).abs() < 1e-12);
-        assert!(c.pending.is_empty());
+        assert_eq!(old.continuous_activation, t0);
+        assert_eq!(new.continuous_activation, at(1.0));
+        assert!((old.local_time(at(4.25)) - 0.25).abs() < 1e-12);
+        assert!((new.local_time(at(4.25)) - 1.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn an_expired_one_shot_completes_once_when_editing_is_released() {
+        let rig = rig();
+        let id = Uuid::from_u128(25);
+        let mut bound = BoundAnim::bind(swing(&rig).anim.clone(), &rig);
+        bound.anim.looping = false;
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let playing = [signal(id, 1, t0)];
+        let mut c = Controller::default();
+        c.sync(&playing, t0, |_| Some(anim.clone()));
+        c.set_paused(true, at(0.5));
+        assert!(c.sync(&playing, at(5.0), |_| Some(anim.clone())).is_empty());
+        c.set_paused(false, at(5.25));
+        assert_eq!(c.sync(&playing, at(5.25), |_| Some(anim.clone())), [id]);
+        assert!(c.motions.is_empty());
+        assert!(c.sync(&playing, at(6.0), |_| Some(anim.clone())).is_empty());
     }
 
     #[test]

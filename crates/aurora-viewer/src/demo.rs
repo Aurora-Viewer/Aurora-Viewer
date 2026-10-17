@@ -5641,7 +5641,11 @@ pub const SYNC_LEADER_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_00
 pub const SYNC_DELAYED_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0022);
 
 pub fn animation_sync_demo() -> bool {
-    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| v == "sync")
+    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| matches!(v.as_str(), "sync" | "sync-edit"))
+}
+
+pub fn animation_edit_demo() -> bool {
+    std::env::var("AURORA_DEMO_ANIM_LOOP").is_ok_and(|v| v == "sync-edit")
 }
 
 /// Sequence changes every 120 frames; a real stop/restart every 1200.

@@ -6,7 +6,8 @@
 //! selection is dropped — the avatar wearing it pauses its animations, and an
 //! animated object pauses its own skeleton (an animated attachment pauses
 //! both). The pause is local: nothing is sent, other viewers see the avatar
-//! move as before. HUD attachments do not pause anything
+//! move as before. Only the displayed pose freezes: releasing the edit catches
+//! up to the current receipt-clock phase. HUD attachments do not pause anything
 //! (LLSelectMgr::getSelectTypeForObject gives them SELECT_TYPE_HUD).
 use std::collections::HashSet;
 
