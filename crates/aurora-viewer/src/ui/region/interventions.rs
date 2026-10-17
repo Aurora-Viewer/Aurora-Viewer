@@ -370,7 +370,7 @@ fn can_ban(world: &World, v: &View, target: Uuid) -> bool {
 
 /// The dialog's header: icon, title and the closing cross (true when
 /// clicked).
-fn head(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, danger: bool) -> bool {
+pub(super) fn head(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, danger: bool) -> bool {
     let mut closed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
@@ -394,7 +394,7 @@ fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
 }
 
 /// Cancel and the main action; Some(true) for the main one.
-fn footer(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: ActionKind, enabled: bool) -> Option<bool> {
+pub(super) fn footer(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, kind: ActionKind, enabled: bool) -> Option<bool> {
     ui.add_space(14.0);
     let buttons = [
         DialogButton {

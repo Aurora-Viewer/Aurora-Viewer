@@ -169,6 +169,32 @@ impl Session<'_> {
                 let invoice = self.estate_invoice;
                 self.send_estate_owner_message(addr, "restart", invoice, &[seconds.to_string()], true);
             }
+            EstateCommand::ExperienceDelta { handle, flags, ids } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                // sendEstateExperienceDelta: who asks, "%u", the experience
+                let invoice = self.estate_invoice;
+                let agent = self.agent_id();
+                for (id, f) in ids.iter().zip(estate::access_delta_flags(flags, ids.len(), true)) {
+                    let strings = estate::access_delta_strings(agent, f, *id);
+                    self.send_estate_owner_message(addr, "estateexperiencedelta", invoice, &strings, true);
+                }
+            }
+            EstateCommand::RefreshExperiences { handle } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let url = self.sim_cap(addr, "RegionExperiences");
+                self.estate_get(handle, url, Get::Experiences);
+            }
+            EstateCommand::ChangeCovenant { handle, asset } => {
+                let Some(addr) = self.sim_for_handle(handle) else {
+                    return;
+                };
+                let invoice = self.estate_invoice;
+                self.send_estate_owner_message(addr, "estatechangecovenantid", invoice, &[asset.hyphenated().to_string()], true);
+            }
             EstateCommand::SetRegionDebug { handle, debug } => {
                 let Some(addr) = self.sim_for_handle(handle) else {
                     return;
@@ -384,6 +410,10 @@ impl Session<'_> {
             // its lists are not read: the window asks EstateAccess again
             let handle = self.handle_of(from);
             emit(self.sh, NetEvent::Estate(EstateEvent::AccessChanged { handle }));
+        } else if method == "setexperience" {
+            // the same: the window asks RegionExperiences again
+            let handle = self.handle_of(from);
+            emit(self.sh, NetEvent::Estate(EstateEvent::ExperiencesChanged { handle }));
         }
         Ok(true)
     }

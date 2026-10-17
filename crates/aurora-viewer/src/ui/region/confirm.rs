@@ -4,9 +4,13 @@
 //! Linden estate, ChangeObjectBonusFactor before a new object bonus (its
 //! "ignore" box), RegionMaturityChange once a new rating is sent,
 //! ConfirmTextureHeights for inverted elevation ranges (its "Don't ask"
-//! turns RegionCheckTextureHeights off) and ConfirmBakeTerrain.
+//! turns RegionCheckTextureHeights off), ConfirmBakeTerrain,
+//! SettingsConfirmReset before the region goes back to the default
+//! environment, EstateParcelEnvironmentOverride (ChangeLindenEstate on a
+//! Linden estate) for the parcels' own environments and
+//! EstateChangeCovenant before the covenant is replaced or cleared.
 
-use super::{RegionUi, View, manage};
+use super::{RegionUi, View, estate_wide, manage};
 use crate::theme::Palette;
 use crate::ui::sheet::semibold;
 use crate::ui::widgets::{self, ActionKind, DialogButton};
@@ -18,10 +22,20 @@ use egui::{RichText, Sense, Vec2};
 pub(crate) enum Ask {
     AccessOverride,
     LindenEstate,
-    ObjectBonus { dont_ask: bool },
+    ObjectBonus {
+        dont_ask: bool,
+    },
     MaturityChanged,
     TextureHeights,
     Bake,
+    ResetEnvironment,
+    EnvironmentOverride {
+        allow: bool,
+    },
+    /// A notecard's asset, or nil for "Reset".
+    Covenant {
+        asset: uuid::Uuid,
+    },
 }
 
 /// The answer's buttons, the last one the main action.
@@ -39,6 +53,15 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
     let ok = aurora_i18n::tr!("common-ok");
     let cancel = aurora_i18n::tr!("common-cancel");
     let dont_ask = aurora_i18n::tr!("region-ask-dont-ask");
+    let linden = world
+        .estate
+        .estate
+        .as_ref()
+        .is_some_and(|e| e.id <= aurora_net::estate::ESTATE_LAST_LINDEN);
+    let estate_text = aurora_i18n::tr!(
+        "region-ask-env-override",
+        estate = world.estate.estate.as_ref().map(|e| e.name.clone()).unwrap_or_default()
+    );
     let (icon, danger, title, text) = match ask {
         Ask::AccessOverride => (
             "alert-triangle-filled",
@@ -76,6 +99,34 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
             aurora_i18n::tr!("region-ask-bake-title"),
             aurora_i18n::tr!("region-ask-bake"),
         ),
+        Ask::ResetEnvironment => (
+            "sun-high-filled",
+            false,
+            aurora_i18n::tr!("region-ask-env-reset-title"),
+            aurora_i18n::tr!("region-ask-env-reset"),
+        ),
+        Ask::EnvironmentOverride { .. } if linden => (
+            "alert-triangle-filled",
+            true,
+            aurora_i18n::tr!("region-ask-linden-title"),
+            aurora_i18n::tr!("region-ask-linden"),
+        ),
+        Ask::EnvironmentOverride { .. } => (
+            "alert-triangle-filled",
+            false,
+            aurora_i18n::tr!("region-ask-env-override-title"),
+            &*estate_text,
+        ),
+        Ask::Covenant { asset } => (
+            "gavel",
+            asset.is_nil(),
+            aurora_i18n::tr!("region-ask-covenant-title"),
+            if asset.is_nil() {
+                aurora_i18n::tr!("region-ask-covenant-reset")
+            } else {
+                aurora_i18n::tr!("region-ask-covenant")
+            },
+        ),
     };
     // the main button says what happens, as the mockup's confirmations do
     let (main, main_kind) = match ask {
@@ -83,6 +134,11 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         Ask::ObjectBonus { .. } => (aurora_i18n::tr!("region-ask-bonus-ok"), ActionKind::Primary),
         Ask::TextureHeights => (aurora_i18n::tr!("region-ask-heights-ok"), ActionKind::Primary),
         Ask::Bake => (aurora_i18n::tr!("region-ask-bake-ok"), ActionKind::Primary),
+        Ask::ResetEnvironment => (aurora_i18n::tr!("region-ask-env-reset-ok"), ActionKind::Primary),
+        Ask::EnvironmentOverride { .. } if linden => (aurora_i18n::tr!("region-ask-linden-ok"), ActionKind::Danger),
+        Ask::EnvironmentOverride { .. } => (aurora_i18n::tr!("region-ask-env-override-ok"), ActionKind::Primary),
+        Ask::Covenant { asset } if asset.is_nil() => (aurora_i18n::tr!("region-ask-covenant-reset-ok"), ActionKind::Danger),
+        Ask::Covenant { .. } => (aurora_i18n::tr!("region-ask-covenant-ok"), ActionKind::Primary),
         Ask::AccessOverride | Ask::MaturityChanged => (ok, ActionKind::Primary),
     };
     // a notice has its OK only
@@ -165,6 +221,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         }
         (Ask::TextureHeights, Choice::Ok) => manage::send_terrain(s, v, world),
         (Ask::Bake, Choice::Ok) => world.estate.bake_terrain(v.handle),
+        (Ask::ResetEnvironment, Choice::Ok) => estate_wide::reset_environment(world),
+        (Ask::EnvironmentOverride { allow }, Choice::Ok) => estate_wide::set_override(v, world, allow),
+        (Ask::Covenant { asset }, Choice::Ok) => estate_wide::change_covenant(v, world, asset),
         _ => {}
     }
     prefs

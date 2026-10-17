@@ -2210,6 +2210,10 @@ impl World {
                 if let aurora_net::land::LandEvent::Environment { local_id, result } = &ev {
                     self.environment_answers
                         .push((*local_id, result.as_ref().map(|_| ()).map_err(Clone::clone)));
+                    // and Region / Estate shows the region's
+                    if *local_id == aurora_net::land::REGION_PARCEL_ID {
+                        self.estate.environment_answer(result.as_ref());
+                    }
                 }
                 self.land.apply(ev, &ctx);
                 None

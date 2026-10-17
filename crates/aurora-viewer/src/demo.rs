@@ -1675,7 +1675,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 sources: Vec::new(),
             }]
         }
-        aurora_net::NetCommand::Land(l) => land::reply(l),
+        // the region environment is Region / Estate's simulator's
+        aurora_net::NetCommand::Land(l) => region::environment_reply(l).unwrap_or_else(|| land::reply(l)),
         aurora_net::NetCommand::Estate(e) => region::reply(e),
         aurora_net::NetCommand::RequestNames(ids) => {
             let names = [

@@ -328,6 +328,15 @@ impl Session<'_> {
                 day_offset,
             } => self.parcel_environment(local_id, None, EnvVerb::Put(land::environment_update_body(day_length, day_offset))),
             LandCommand::EnvironmentReset { local_id } => self.parcel_environment(local_id, None, EnvVerb::Delete),
+            LandCommand::EnvironmentAltitudes {
+                local_id,
+                day_length,
+                day_offset,
+                altitudes,
+            } => {
+                let body = land::environment_altitudes_body(day_length, day_offset, altitudes);
+                self.parcel_environment(local_id, None, EnvVerb::Put(body));
+            }
             LandCommand::EnvironmentApply {
                 local_id,
                 track,

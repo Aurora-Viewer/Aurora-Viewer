@@ -9,6 +9,7 @@
 
 mod confirm;
 mod draft;
+mod estate_wide;
 mod interventions;
 mod manage;
 mod overview;
@@ -24,6 +25,7 @@ use crate::world::estate::{self, Role};
 use aurora_net::RegionHandle;
 pub(crate) use confirm::Ask;
 use egui::Vec2;
+pub(crate) use estate_wide::{Dialog as EstateWideDialog, XpList};
 pub(crate) use interventions::{Dialog as InterventionDialog, Home};
 pub use people::PeopleDemo;
 pub(crate) use people::{List as PeopleList, PeopleAsk};
@@ -113,6 +115,8 @@ impl View {
 pub enum RegionAction {
     AboutLand,
     WorldMap,
+    /// "Edit the day cycle…": the day editor on the region's day.
+    CustomizeEnvironment,
 }
 
 #[derive(Default)]
@@ -138,6 +142,8 @@ pub struct RegionUi {
     interventions: interventions::InterventionsState,
     /// The Top scripts / Top colliders window.
     top: top_objects::TopState,
+    /// Environment, Experiences and Covenant: their pickers and dialogs.
+    estate_wide: estate_wide::EstateWideState,
     /// The question or notice on screen.
     ask: Option<Ask>,
     /// The terrain textures' picker.
@@ -189,6 +195,12 @@ impl RegionUi {
         self.top.demo = Some(report);
     }
 
+    /// AURORA_DEMO_REGION on Manage › Environment, Experiences or
+    /// Covenant: the picker or question shown.
+    pub fn demo_estate_wide(&mut self, d: EstateWideDialog) {
+        self.estate_wide.demo = Some(d);
+    }
+
     /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
     pub fn demo_people(&mut self, people: PeopleDemo) {
         self.people.demo = Some(people);
@@ -218,6 +230,7 @@ impl RegionUi {
                 self.people.reset();
                 self.interventions.reset();
                 self.top.reset();
+                self.estate_wide.reset();
                 world.estate.close();
             }
             return false;
@@ -238,6 +251,7 @@ impl RegionUi {
             self.people.reset();
             self.interventions.reset();
             self.top.reset();
+            self.estate_wide.reset();
             self.manage_region = Some(handle);
             self.ask = None;
         }
@@ -336,6 +350,7 @@ impl RegionUi {
         people::dialogs(ctx, p, self, &view, world);
         top_objects::show(ctx, p, self, &view, world);
         interventions::dialogs(ctx, p, self, &view, world);
+        estate_wide::dialogs(ctx, p, self, &view, world);
         let changed = confirm::show(ctx, p, self, &view, world);
         if changed {
             settings.confirm_object_bonus = self.confirm_object_bonus;

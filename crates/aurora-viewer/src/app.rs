@@ -10336,7 +10336,13 @@ impl App {
                 match self.region_ui.action.take() {
                     Some(ui::region::RegionAction::AboutLand) => self.panels.about_land = true,
                     Some(ui::region::RegionAction::WorldMap) => ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map),
+                    Some(ui::region::RegionAction::CustomizeEnvironment) => self.open_region_day_editor(),
                     None => {}
+                }
+                // AURORA_DEMO_REGION: notecards for the covenant, once the
+                // inventory is there
+                if self.demo && open && !self.world.inventory.root.is_nil() && crate::demo::region::scenario().is_some() {
+                    crate::demo::region::seed_notecards(&mut self.world.inventory, self.world.agent_id);
                 }
                 if std::mem::take(&mut self.land_ui.custom_day) {
                     self.open_parcel_day_editor();
@@ -11436,6 +11442,9 @@ impl ApplicationHandler for App {
                 }
                 if let Some(report) = scenario.top {
                     self.region_ui.demo_top(report);
+                }
+                if let Some(d) = scenario.estate_wide.clone() {
+                    self.region_ui.demo_estate_wide(d);
                 }
                 if scenario.compact {
                     let pos = egui::pos2(560.0, 80.0);

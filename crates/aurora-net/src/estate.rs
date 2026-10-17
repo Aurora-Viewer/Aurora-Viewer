@@ -46,6 +46,20 @@ pub mod estate_access {
     pub const NO_REPLY: u32 = 1 << 10;
 }
 
+/// `ESTATE_EXPERIENCE_*` flags of `estateexperiencedelta` (llregionflags.h),
+/// with `estate_access`'s APPLY_TO_* and NO_REPLY.
+pub mod estate_experience {
+    pub const TRUSTED_ADD: u32 = 1 << 2;
+    pub const TRUSTED_REMOVE: u32 = 1 << 3;
+    pub const ALLOWED_ADD: u32 = 1 << 4;
+    pub const ALLOWED_REMOVE: u32 = 1 << 5;
+    pub const BLOCKED_ADD: u32 = 1 << 6;
+    pub const BLOCKED_REMOVE: u32 = 1 << 7;
+}
+
+/// ESTATE_MAX_EXPERIENCE_IDS: each of the region's experience lists.
+pub const ESTATE_MAX_EXPERIENCE_IDS: usize = 8;
+
 /// The estate lists' limits on Second Life (ESTATE_MAX_MANAGERS,
 /// ESTATE_MAX_ACCESS_IDS, ESTATE_MAX_GROUP_IDS, ESTATE_MAX_BANNED_IDS).
 pub const ESTATE_MAX_MANAGERS: usize = 20;
@@ -467,12 +481,14 @@ pub fn parse_estate_access(v: &Llsd) -> EstateAccess {
     }
 }
 
-/// The region's experiences (RegionExperiences: blocked, trusted, allowed).
+/// The region's experiences (RegionExperiences: blocked, trusted, allowed,
+/// and the grid's default experience, always trusted).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RegionExperiences {
     pub trusted: Vec<Uuid>,
     pub allowed: Vec<Uuid>,
     pub blocked: Vec<Uuid>,
+    pub default: Option<Uuid>,
 }
 
 pub fn parse_region_experiences(v: &Llsd) -> RegionExperiences {
@@ -484,6 +500,7 @@ pub fn parse_region_experiences(v: &Llsd) -> RegionExperiences {
         trusted: ids("trusted"),
         allowed: ids("allowed"),
         blocked: ids("blocked"),
+        default: Some(v["default"].as_uuid()).filter(|id| !id.is_nil()),
     }
 }
 
@@ -798,6 +815,15 @@ pub enum EstateCommand {
         flags: u32,
         filter: String,
     },
+    /// A change of the region's experience lists (experienceCoreConfirm):
+    /// one `estateexperiencedelta` per experience, NO_REPLY on all but the last.
+    ExperienceDelta { handle: RegionHandle, flags: u32, ids: Vec<Uuid> },
+    /// The experiences again (refreshFromRegion), once the simulator
+    /// answered a change with `setexperience`.
+    RefreshExperiences { handle: RegionHandle },
+    /// The covenant replaced by a notecard's asset, or cleared with nil
+    /// (LLPanelEstateCovenant::sendChangeCovenantID).
+    ChangeCovenant { handle: RegionHandle, asset: Uuid },
     /// "Return selected" / "Return all" (returnObjects): ParcelReturnObjects
     /// for the whole region (local id -1, RT_NONE) with the tasks.
     ReturnTopObjects { handle: RegionHandle, tasks: Vec<Uuid> },
@@ -835,6 +861,9 @@ pub enum EstateEvent {
     Stats { handle: RegionHandle, stats: Arc<SimStats> },
     /// AgentMovementComplete SimData ChannelVersion (gLastVersionChannel).
     SimVersion { handle: RegionHandle, version: String },
+    /// `setexperience` of the last invoice: the experience lists changed
+    /// (LLDispatchSetEstateExperience).
+    ExperiencesChanged { handle: RegionHandle },
     /// LandStatReply: the Top scripts / Top colliders report.
     TopObjects { handle: RegionHandle, report: Arc<TopObjects> },
 }
