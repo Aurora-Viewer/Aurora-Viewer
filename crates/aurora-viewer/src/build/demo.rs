@@ -18,6 +18,7 @@
 //!   take an item into inventory or show the move warning (ready stops).
 //!   contents-properties: open a task item in the shared properties panel.
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
+//!   shared | shared-denied: another resident's object with granted / denied editing.
 //! - x, y: click (physical pixels) at frame 220: selects the object there,
 //!   creates a prim, or presses the land brush (held until the capture)
 //! - part: handle grabbed at frame 250 (move: x y z xy yz xz; rotate: rx ry
@@ -48,6 +49,7 @@ use std::time::Instant;
 pub enum Step {
     Open(Tool, EditMode, u8),
     Select(usize),
+    SharedRights(usize, bool),
     Face(usize, u8, bool),
     TexturePicker(bool),
     CloseView,
@@ -240,6 +242,18 @@ pub fn target_index(spec: &str, world: &World) -> Option<usize> {
     world.objects.iter().find_map(|(i, o)| (o.key.local_id == id).then_some(i))
 }
 
+/// Another resident's linkset, with effective rights supplied by the demo simulator.
+pub fn shared_rights(world: &mut World, idx: usize, granted: bool) {
+    use crate::ui::context::flags::{OBJECT_ANY_OWNER, OBJECT_MODIFY, OBJECT_MOVE, OBJECT_YOU_OWNER};
+    for i in super::family(world, super::root_of(world, idx)) {
+        if let Some(object) = world.objects.get_mut(i) {
+            object.owner_id = crate::demo::DEMO_NOVA;
+            object.update_flags &= !(OBJECT_YOU_OWNER | OBJECT_MODIFY);
+            object.update_flags |= OBJECT_ANY_OWNER | OBJECT_MOVE | if granted { OBJECT_MODIFY } else { 0 };
+        }
+    }
+}
+
 /// What to do at this frame.
 pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildSettings) -> Vec<Step> {
     let parts: Vec<&str> = spec.split(',').map(|x| x.trim()).collect();
@@ -357,6 +371,18 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             227 => vec![Step::Focus(false)],
             240 if parts[0] == "linked-click" => vec![Step::Linked(true)],
             250 if parts[0] == "linked-click" => object.into_iter().map(Step::Select).collect(),
+            _ => Vec::new(),
+        };
+    }
+    if matches!(parts[0], "shared" | "shared-denied") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 1)],
+            219 => object
+                .into_iter()
+                .map(|idx| Step::SharedRights(idx, parts[0] == "shared"))
+                .collect(),
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(false)],
             _ => Vec::new(),
         };
     }

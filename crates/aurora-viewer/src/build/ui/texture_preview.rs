@@ -396,6 +396,7 @@ mod tests {
         for (n, &idx) in prims.iter().enumerate() {
             let o = world.objects.get_mut(idx).unwrap();
             o.owner_id = world.agent_id;
+            o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY;
             let mut te = o.te.as_deref().unwrap().clone();
             te.faces[0].texture = Uuid::from_u128(100 + n as u128);
             o.te = Some(Arc::new(te));
@@ -952,6 +953,7 @@ mod tests {
             assert_eq!(world.objects.get(idx).unwrap().te, original);
             assert!(tool.out.is_empty());
             world.objects.get_mut(idx).unwrap().owner_id = Uuid::from_u128(911);
+            world.objects.get_mut(idx).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
             tool.apply_inventory_surface(world, env, idx, &[0], Uuid::from_u128(910), true, false);
             assert_eq!(world.objects.get(idx).unwrap().te, original);
             assert!(tool.out.is_empty());
@@ -994,12 +996,60 @@ mod tests {
                 assert_eq!(tool.faces, faces);
             }
             world.objects.get_mut(prims[1]).unwrap().owner_id = Uuid::from_u128(922);
+            world.objects.get_mut(prims[1]).unwrap().update_flags &= !crate::ui::context::flags::OBJECT_MODIFY;
             assert_eq!(tool.inventory_surface_selection(world), vec![(prims[0], vec![1])]);
             tool.open = false;
             assert!(tool.inventory_surface_selection(world).is_empty());
             tool.open = true;
             tool.tool = crate::build::Tool::Create;
             assert!(tool.inventory_surface_selection(world).is_empty());
+        });
+    }
+
+    #[test]
+    fn shared_objects_accept_inventory_and_library_surfaces_and_recheck_revoked_rights() {
+        fixture(|world, tool, env, prims| {
+            use crate::ui::context::flags::OBJECT_MODIFY;
+            use aurora_net::build::{ObjectProps, perm};
+            tool.open = true;
+            tool.tool = crate::build::Tool::Edit;
+            for &idx in prims {
+                let object = world.objects.get_mut(idx).unwrap();
+                object.owner_id = Uuid::from_u128(940);
+                tool.props.insert(
+                    object.full_id,
+                    ObjectProps {
+                        owner_id: object.owner_id,
+                        owner_mask: perm::MODIFY,
+                        ..Default::default()
+                    },
+                );
+            }
+            assert_eq!(tool.inventory_surface_selection(world).len(), 2);
+            let idx = prims[0];
+            tool.out.clear();
+            tool.apply_inventory_surface(world, env, idx, &[0], Uuid::from_u128(941), false, false);
+            assert_eq!(texture(world, idx, 0), Uuid::from_u128(941));
+            tool.apply_inventory_surface(world, env, idx, &[0], Uuid::from_u128(942), true, false);
+            assert_eq!(BuildTool::gltf_asset(world, idx, 0), Some(Uuid::from_u128(942)));
+            assert!(
+                tool.out
+                    .iter()
+                    .any(|cmd| matches!(cmd, aurora_net::NetCommand::Build(BuildCmd::SetTextures { .. })))
+            );
+            assert!(
+                tool.out
+                    .iter()
+                    .any(|cmd| matches!(cmd, aurora_net::NetCommand::Build(BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams"))
+            );
+            world.objects.get_mut(idx).unwrap().update_flags &= !OBJECT_MODIFY;
+            tool.out.clear();
+            tool.apply_inventory_surface(world, env, idx, &[0], Uuid::from_u128(943), false, false);
+            tool.apply_inventory_surface(world, env, idx, &[0], Uuid::from_u128(944), true, false);
+            assert!(tool.out.is_empty());
+            assert_eq!(texture(world, idx, 0), Uuid::from_u128(941));
+            assert_eq!(BuildTool::gltf_asset(world, idx, 0), Some(Uuid::from_u128(942)));
+            assert_eq!(tool.inventory_surface_selection(world), vec![(prims[1], vec![0])]);
         });
     }
 
