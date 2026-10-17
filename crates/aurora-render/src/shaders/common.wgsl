@@ -966,6 +966,9 @@ const SCREEN_INDIRECT: u32 = 0x400u;
 // frame.light_mode.z: normal maps on a unit, orthogonal tangent frame as the
 // Legacy Viewer's per-vertex tangents (AURORA_TANGENTS, perturb_normal)
 const TANGENT_UNIT: u32 = 0x800u;
+// frame.light_mode.z: the receiver bias of before, a fixed 0.0005 of the
+// cascade's depth range (AURORA_SHADOW_BIAS=legacy; cascade_shadow)
+const SHADOW_BIAS_LEGACY: u32 = 0x1000u;
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
@@ -1009,6 +1012,23 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let step = span / f32(taps - 1u);
     let center = 0.5 * f32(taps - 1u);
     let tile = vec2<f32>(f32(cascade % 2u), f32(cascade / 2u));
+    // Receiver bias in metres along the light: two texels of the cascade.
+    // The depth range of a cascade is its square plus CASCADE_DEPTH_PAD on
+    // each side (about 810 m for the finest), so a fixed 0.0005 of it was
+    // about 0.4 m: a point only fell in shadow behind a caster more than
+    // 0.4 m nearer the sun, and where that distance crossed 0.4 m (a curved
+    // back under the shoulders, a skirt under the waist) the limit followed
+    // the stored depth texel by texel, as sharp stairs that no filter
+    // softens. The normal offset above and the slope-scaled bias of the
+    // shadow pipelines keep the acne away. The Legacy Viewer biases by a
+    // fixed 0.004 of a shadow range fitted to the scene (RenderShadowBias,
+    // shadowUtil.glsl pcfShadow). (frame.light_mode.z SHADOW_BIAS_LEGACY:
+    // the bias of before, AURORA_SHADOW_BIAS.)
+    let depth_per_metre = length(vec3<f32>(m[0].z, m[1].z, m[2].z));
+    var receiver_bias = 2.0 * texel * radius * 2.0 * depth_per_metre;
+    if ((frame.light_mode.z & SHADOW_BIAS_LEGACY) != 0u) {
+        receiver_bias = 0.0005;
+    }
     var sum = 0.0;
     for (var y = 0u; y < taps; y++) {
         for (var x = 0u; x < taps; x++) {
@@ -1017,7 +1037,7 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
             // result as the clamp-to-edge of a separate texture, never a
             // texel of the neighbouring tile
             let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - 0.0005);
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * 0.5, ndc.z - receiver_bias);
         }
     }
     return sum / f32(taps * taps);

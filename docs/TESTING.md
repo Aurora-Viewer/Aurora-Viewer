@@ -3933,6 +3933,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
 | `AURORA_TANGENTS=derivative\|alt` | Normal maps on the former tangent frame, or alternated each second, to compare |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
+| `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
@@ -4456,6 +4457,17 @@ What the inventory must show with these scenarios:
   `AURORA_DEBUG_SHADOWS=1`: the edge of the torus's shadow across the
   "Normal + specular" panel is a row of dots with `mapped`, and the shadow
   of our avatar on the plaza has several parallel edges with `gaps`.
+
+- **`AURORA_SHADOW_BIAS=legacy|new|alt`**: the receiver bias of the sun
+  shadow lookup (`cascade_shadow` in `common.wgsl`). `legacy`: a fixed 0.0005
+  of the cascade's depth range, about 0.4 m in the finest cascade (its range
+  is the square plus 400 m on each side), so a point only fell in shadow
+  behind a caster more than 0.4 m nearer the sun and the limit where that
+  distance crossed 0.4 m followed the stored depth texel by texel: sharp
+  stairs on an avatar's back and on a skirt under the waist. `new` (the
+  default): two texels of the cascade, in metres along the light. `alt`:
+  one second in two each. In the demo at noon (`AURORA_DEMO_TOD` unset),
+  camera behind our avatar: the stairs on the skirt under the waist.
 - **`AURORA_DEBUG_SHADOWS=1`**: instead of the image, objects and terrain
   show the cascade each pixel reads — red, green then blue from the finest,
   mixed where two cascades are blended, black beyond the shadow distance —
