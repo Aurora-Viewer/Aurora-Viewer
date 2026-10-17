@@ -3537,7 +3537,10 @@ relogin; only the human connects and performs these checks.
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
-- `outfits`: the list of outfits; `worn`: the worn items;
+- `outfits`: the list of outfits; `worn`: the worn items. A right click on
+  an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
+  (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
+  at frame 380;
 - `save`: the Save as dialog; `edit`: the outfit editor;
 - `menu`: an expanded outfit with an object that is not worn, for the right
   click menus;
