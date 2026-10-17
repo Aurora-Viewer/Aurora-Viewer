@@ -40,6 +40,7 @@ pub mod inventory;
 pub mod land;
 pub mod landmark_create;
 pub mod layout;
+pub mod link_health;
 pub mod loading;
 pub mod login;
 pub mod lookat_targets;
