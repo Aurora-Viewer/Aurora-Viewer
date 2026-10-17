@@ -4292,6 +4292,24 @@ impl Backend {
             Ok("before") => 0x300,
             _ => 0,
         });
+        // AURORA_TANGENTS=unit|derivative|alt (common.wgsl TANGENT_UNIT)
+        static TANGENTS: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let tangents = *TANGENTS.get_or_init(|| match std::env::var("AURORA_TANGENTS").as_deref().map(str::trim) {
+            Ok("derivative") => 0,
+            Ok("alt") => 2,
+            _ => 1,
+        });
+        let unit_now = match tangents {
+            1 => true,
+            2 => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+                .is_multiple_of(2),
+            _ => false,
+        };
+        if unit_now {
+            main.light_sets.mode[2] |= 0x800;
+        }
         // (common.wgsl SCREEN_INDIRECT)
         if indirect_now {
             main.light_sets.mode[2] |= 0x400;

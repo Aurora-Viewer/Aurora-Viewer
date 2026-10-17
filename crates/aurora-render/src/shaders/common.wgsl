@@ -963,6 +963,9 @@ const SHADOW_FILTER_GAPS: u32 = 0x100u;
 const SHADOW_OFFSET_MAPPED: u32 = 0x200u;
 // frame.light_mode.z: il_tex holds GTAO's indirect light of this frame
 const SCREEN_INDIRECT: u32 = 0x400u;
+// frame.light_mode.z: normal maps on a unit, orthogonal tangent frame as the
+// Legacy Viewer's per-vertex tangents (AURORA_TANGENTS, perturb_normal)
+const TANGENT_UNIT: u32 = 0x800u;
 
 // Taps per axis for a filter spanning `span` (tile coordinates), so that
 // two taps are never more than a texel apart: 4 when they already are not,
@@ -1387,7 +1390,27 @@ fn perturb_normal(n: vec3<f32>, p: vec3<f32>, uv: vec2<f32>, map: vec3<f32>) -> 
     let t = dp2perp * duv1.x + dp1perp * duv2.x;
     let b = dp2perp * duv1.y + dp1perp * duv2.y;
     let invmax = sign(dot(dp1, dp2perp)) * inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
-    let tbn = mat3x3<f32>(t * invmax, b * invmax, n);
+    var tbn = mat3x3<f32>(t * invmax, b * invmax, n);
+    if ((frame.light_mode.z & TANGENT_UNIT) != 0u) {
+        // The Legacy Viewer's frame (LLVolumeFace::createTangents, read by
+        // materialF.glsl getNormal): T along dP/du made orthogonal to N and of
+        // unit length, B = cross(N, T) times the handedness, whatever the
+        // stretch of the coordinates. The cotangent frame above keeps the
+        // ratio of the two gradients, so the axis along which the texture is
+        // denser had its relief divided by that density ratio (a cloth whose
+        // UVs are three times denser one way showed a third of its weave).
+        let det_uv = duv1.x * duv2.y - duv2.x * duv1.y;
+        if (abs(det_uv) > 1e-20) {
+            let dpdu = (dp1 * duv2.y - dp2 * duv1.y) / det_uv;
+            let dpdv = (dp2 * duv1.x - dp1 * duv2.x) / det_uv;
+            let tp = dpdu - n * dot(n, dpdu);
+            if (dot(tp, tp) > 1e-20) {
+                let tu = normalize(tp);
+                let hand = select(-1.0, 1.0, dot(cross(n, tu), dpdv) >= 0.0);
+                tbn = mat3x3<f32>(tu, cross(n, tu) * hand, n);
+            }
+        }
+    }
     let m = (map * 2.0 - vec3<f32>(1.0)) * vec3<f32>(1.0, -1.0, 1.0);
     let res = normalize(tbn * m);
     return select(n, res, dot(res, res) > 0.5);
