@@ -46,6 +46,30 @@ fn selection_copy_denied(item: &aurora_net::inventory::InvItem, agent: Uuid, obj
 }
 
 impl App {
+    pub(super) fn record_library_use(&mut self, id: Uuid) {
+        if !self.demo && ui::texture_library::catalogue::contains(&self.world.inventory, id) {
+            self.settings.texture_library.activate(self.world.agent_id);
+            self.settings.texture_library.record(id);
+            self.settings.save();
+        }
+    }
+    pub(super) fn record_library_asset(&mut self, asset: Uuid, kind: i32) {
+        let inv = &self.world.inventory;
+        let matches = |item: &&aurora_net::inventory::InvItem| {
+            item.asset_type == kind && item.asset_id == asset && ui::texture_library::catalogue::contains(inv, item.id)
+        };
+        let item = self
+            .inventory_ui
+            .preview
+            .and_then(|id| inv.items.get(&id))
+            .filter(matches)
+            .map(|it| it.id)
+            .or_else(|| inv.items.values().filter(matches).map(|it| it.id).min());
+        if let Some(id) = item {
+            self.record_library_use(id);
+        }
+    }
+
     pub(super) fn texture_library_demo_input(&self, raw: &mut egui::RawInput) {
         let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY") else {
             return;
@@ -56,6 +80,19 @@ impl App {
             pressed,
             modifiers: Default::default(),
         };
+        if mode.starts_with("types") {
+            if let Some(point) = self
+                .egui_ctx
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("library_type_selector")))
+            {
+                match self.frame_count {
+                    650 => raw.events.extend([egui::Event::PointerMoved(point), button(point, true)]),
+                    651 => raw.events.push(button(point, false)),
+                    _ => {}
+                }
+            }
+            return;
+        }
         if mode == "preview-sizes" {
             let (item, start, delta) = if self.frame_count < 690 {
                 (crate::demo::texture_library::preview_items()[0], 640, egui::vec2(-80.0, -130.0))
@@ -223,11 +260,12 @@ impl App {
                 }
             }
             self.library_demo_seeded = true;
-            self.settings.texture_library.presentation = if matches!(mode.as_str(), "horizontal" | "objects-horizontal") {
-                library::Presentation::Horizontal
-            } else {
-                library::Presentation::Vertical
-            };
+            self.settings.texture_library.presentation =
+                if matches!(mode.as_str(), "horizontal" | "objects-horizontal" | "types-horizontal") {
+                    library::Presentation::Horizontal
+                } else {
+                    library::Presentation::Vertical
+                };
             self.panels.texture_library =
                 !matches!(mode.as_str(), "baseline" | "preview" | "preview-drag" | "inventory-drag") && !mode.starts_with("cascade");
             self.panels.chat = false;
@@ -364,6 +402,16 @@ impl App {
                     self.send(NetCommand::EditInventory { request, change });
                 }
                 library::Action::Apply(id) => self.apply_texture_library_selection(id),
+                library::Action::Open(id) => {
+                    if let Some(item) = self.world.inventory.items.get(&id) {
+                        let action = if item.asset_type == 3 {
+                            ui::inventory::InvAction::AboutLandmark(id, item.asset_id)
+                        } else {
+                            ui::inventory::InvAction::Preview(id)
+                        };
+                        self.apply_inventory_action(action);
+                    }
+                }
                 library::Action::Reveal(id) => {
                     self.inventory_ui.show_folder(&self.world.inventory, id);
                     ui::widgets::open_floater(ctx, "inventory", &mut self.panels.inventory);
@@ -655,6 +703,7 @@ impl App {
     }
 
     fn texture_resource_applied(&mut self, id: Uuid) {
+        self.settings.texture_library.activate(self.world.agent_id);
         self.settings.texture_library.record(id);
         self.settings.save();
         self.world.system_message(aurora_i18n::tr!("texture-library-applied"));

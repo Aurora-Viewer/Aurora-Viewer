@@ -1,4 +1,4 @@
-//! A generation-cached view of actual texture/material/object items and folders in
+//! A generation-cached view of actual supported inventory items and folders in
 //! the library. Links never extend this subtree into other inventory contents.
 
 use crate::world::inventory::{FetchState, Inventory, actions};
@@ -7,28 +7,76 @@ use std::collections::{HashSet, VecDeque};
 use uuid::Uuid;
 
 pub const AURORA: &str = "#Aurora";
-pub const LIBRARY: &str = "Textures Library";
+pub const LIBRARY: &str = "Aurora Library";
+pub const LEGACY_TEXTURES: &str = "Textures Library";
 pub const OBJECTS_LIBRARY: &str = "Objects Library";
-pub const LIBRARIES: [&str; 2] = [LIBRARY, OBJECTS_LIBRARY];
+pub const DEFAULT_FOLDERS: [&str; 8] = [
+    "Textures",
+    "Materials",
+    "Objects",
+    "Animations",
+    "Sounds",
+    "Notecards",
+    "Landmarks",
+    "Scripts",
+];
 pub const BLANK_MATERIAL: Uuid = Uuid::from_u128(0x968cbad0_4dad_d64e_71b5_72bf13ad051a);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceKind {
     Texture,
     Material,
     Object,
     ObjectGroup,
+    Sound,
+    Notecard,
+    Landmark,
+    Animation,
+    Script,
 }
 impl ResourceKind {
     fn item(item: &InvItem) -> Option<Self> {
         match item.asset_type {
             0 => Some(Self::Texture),
             57 => Some(Self::Material),
+            1 => Some(Self::Sound),
+            7 => Some(Self::Notecard),
+            3 => Some(Self::Landmark),
+            20 => Some(Self::Animation),
+            10 => Some(Self::Script),
             // LLInventoryIcon::getIconName, using
             // II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS (Firestorm, LGPL 2.1).
             6 if item.flags & super::super::inventory::OBJECT_HAS_MULTIPLE_ITEMS != 0 => Some(Self::ObjectGroup),
             6 => Some(Self::Object),
             _ => None,
+        }
+    }
+    pub const TYPES: [Self; 8] = [
+        Self::Texture,
+        Self::Material,
+        Self::Object,
+        Self::Animation,
+        Self::Sound,
+        Self::Notecard,
+        Self::Landmark,
+        Self::Script,
+    ];
+    pub fn category(self) -> Self {
+        if self == Self::ObjectGroup { Self::Object } else { self }
+    }
+    pub fn surface(self) -> bool {
+        matches!(self, Self::Texture | Self::Material)
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Texture => aurora_i18n::tr!("texture-library-textures"),
+            Self::Material => aurora_i18n::tr!("texture-library-pbr"),
+            Self::Object | Self::ObjectGroup => aurora_i18n::tr!("texture-library-objects"),
+            Self::Animation => aurora_i18n::tr!("texture-library-animations"),
+            Self::Sound => aurora_i18n::tr!("texture-library-sounds"),
+            Self::Notecard => aurora_i18n::tr!("texture-library-notecards"),
+            Self::Landmark => aurora_i18n::tr!("texture-library-landmarks"),
+            Self::Script => aurora_i18n::tr!("texture-library-scripts"),
         }
     }
     pub fn object(self) -> bool {
@@ -40,6 +88,11 @@ impl ResourceKind {
             Self::Material => "Inv_Material",
             Self::Object => "Inv_Object",
             Self::ObjectGroup => "Inv_Object_Multi",
+            Self::Sound => "Inv_Sound",
+            Self::Notecard => "Inv_Notecard",
+            Self::Landmark => "Inv_Landmark",
+            Self::Animation => "Inv_Animation",
+            Self::Script => "Inv_Script",
         }
     }
 }
@@ -53,6 +106,21 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
 }
 pub fn root(inv: &Inventory) -> Option<Uuid> {
     child(inv, child(inv, inv.root, AURORA)?, LIBRARY)
+}
+/// Follow actual parent IDs; folder names inside the library have no type meaning.
+pub fn contains(inv: &Inventory, item: Uuid) -> bool {
+    let Some(root) = root(inv) else { return false };
+    let Some(mut parent) = inv.items.get(&item).map(|it| it.parent) else {
+        return false;
+    };
+    for _ in 0..64 {
+        if parent == root {
+            return true;
+        }
+        let Some(folder) = inv.folders.get(&parent) else { return false };
+        parent = folder.info.parent;
+    }
+    false
 }
 /// Surface resources only: object cargo must reach the inventory rez path.
 pub fn resource(inv: &Inventory, id: Uuid) -> Option<&InvItem> {
@@ -133,10 +201,10 @@ impl Catalogue {
             return;
         }
         self.key = Some((inv.root, inv.generation));
-        self.parent = child(inv, inv.root, AURORA);
+        self.parent = root(inv);
         self.roots.clear();
         if let Some(parent) = self.parent {
-            self.roots.extend(LIBRARIES.iter().filter_map(|name| child(inv, parent, name)));
+            self.roots.push(parent);
         }
         self.folders.clear();
         self.entries.clear();
@@ -182,7 +250,7 @@ impl Catalogue {
                 let asset = asset(item);
                 // Object asset UUIDs may be hidden by the simulator. Rez uses
                 // the inventory item, and its thumbnail is an independent asset.
-                if asset.is_nil() && !kind.object() {
+                if asset.is_nil() && kind == ResourceKind::Texture {
                     continue;
                 }
                 let name = item.name.clone();
@@ -282,12 +350,12 @@ mod tests {
         assert!(catalogue.entries.iter().any(|entry| entry.matches(&folded("BETON"), None)));
     }
     #[test]
-    fn both_library_roots_accept_every_resource_type_and_track_moves_between_them() {
-        let (mut inv, textures) = fixture();
-        let aurora = inv.folders[&textures].info.parent;
-        let objects = folder(&mut inv, 4, aurora, OBJECTS_LIBRARY);
-        for (n, parent) in [textures, objects].into_iter().enumerate() {
-            for (k, kind) in [0, 57, 6].into_iter().enumerate() {
+    fn every_type_is_indexed_by_metadata_in_arbitrary_folders() {
+        let (mut inv, root) = fixture();
+        let objects = folder(&mut inv, 4, root, "Objects");
+        let custom = folder(&mut inv, 5, objects, "Custom");
+        for (n, parent) in [root, custom].into_iter().enumerate() {
+            for (k, kind) in [0, 57, 6, 1, 7, 3, 20, 10].into_iter().enumerate() {
                 let number = 100 + n as u128 * 10 + k as u128;
                 item(
                     &mut inv,
@@ -301,43 +369,37 @@ mod tests {
         }
         let mut catalogue = Catalogue::default();
         catalogue.prepare(&mut inv);
-        assert_eq!(catalogue.parent, Some(aurora));
-        assert_eq!(catalogue.roots, vec![textures, objects]);
+        assert_eq!(catalogue.parent, Some(root));
+        assert_eq!(catalogue.roots, vec![root]);
+        assert_eq!(catalogue.entries.len(), 16);
         assert_eq!(
-            catalogue.entries.len(),
-            6,
-            "separate inventory items sharing an asset must remain separate"
+            catalogue
+                .entries
+                .iter()
+                .filter(|entry| entry.matches("resource", Some(objects)))
+                .count(),
+            8
         );
-        for root in [textures, objects] {
-            assert_eq!(
-                catalogue
-                    .entries
-                    .iter()
-                    .filter(|entry| entry.matches("resource", Some(root)))
-                    .count(),
-                3
-            );
-        }
+        assert!(catalogue.entries.iter().all(|entry| contains(&inv, entry.id)));
+        assert!(
+            catalogue
+                .entries
+                .iter()
+                .all(|entry| super::super::super::icons::embedded(entry.kind.icon()))
+        );
         let mut moved = inv.items[&Uuid::from_u128(100)].clone();
-        moved.parent = objects;
+        moved.parent = custom;
         inv.server_updated(Vec::new(), vec![moved]);
         catalogue.prepare(&mut inv);
-        assert_eq!(catalogue.entries.len(), 6);
+        assert_eq!(catalogue.entries.len(), 16);
         let entry = catalogue.entries.iter().find(|entry| entry.id == Uuid::from_u128(100)).unwrap();
-        assert!(entry.matches("objects library", Some(objects)));
-        assert!(!entry.matches("", Some(textures)));
-        // An existing Objects Library works even without a Textures Library.
-        let mut renamed = inv.folders[&textures].info.clone();
-        renamed.name = "Unrelated".into();
-        inv.server_updated(vec![renamed], Vec::new());
-        catalogue.prepare(&mut inv);
-        assert_eq!(catalogue.roots, vec![objects]);
-        assert_eq!(catalogue.entries.len(), 4);
-        inv.folders.get_mut(&objects).unwrap().state = FetchState::Unknown;
+        assert_eq!(entry.kind, ResourceKind::Texture);
+        assert!(entry.matches("objects", Some(objects)));
+        inv.folders.get_mut(&custom).unwrap().state = FetchState::Unknown;
         inv.generation += 1;
         catalogue.prepare(&mut inv);
         assert!(catalogue.loading);
-        assert!(inv.queue.iter().any(|(id, _)| *id == objects));
+        assert!(inv.queue.iter().any(|(id, _)| *id == custom));
     }
     #[test]
     fn actual_nested_folders_are_included_and_folder_links_are_ignored() {
@@ -362,7 +424,7 @@ mod tests {
         );
         assert!(catalogue.entries[0].matches("marble", Some(source)));
         assert!(catalogue.entries[0].matches("nested", Some(nested)));
-        assert_eq!(catalogue.entries[0].path, "Textures Library / Stone / Nested");
+        assert_eq!(catalogue.entries[0].path, "Aurora Library / Stone / Nested");
     }
     #[test]
     fn library_objects_use_thumbnails_and_distinct_single_and_group_fallbacks() {
