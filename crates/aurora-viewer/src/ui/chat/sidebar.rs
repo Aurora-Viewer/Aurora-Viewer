@@ -208,7 +208,8 @@ pub(super) enum ContactsSub {
     Lists,
 }
 
-/// The column (or rail). `height`: what the window gives it.
+/// The column (or rail). `height`: what the window gives it. Returns true
+/// when the docked Contacts entry was clicked, even if already selected.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ui: &mut egui::Ui,
@@ -226,8 +227,9 @@ pub(super) fn show(
     // RAIL or WIDTH, or on its way from one to the other
     width: f32,
     height: f32,
-) {
+) -> bool {
     let (column, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let mut contacts_clicked = false;
     // the mockup's `.side`: the bar's colour at 75 %, a hairline at its
     // right, its bottom left corner the window's
     let corner = ui.visuals().window_corner_radius;
@@ -292,6 +294,7 @@ pub(super) fn show(
                 };
                 if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
                     if docked {
+                        contacts_clicked = true;
                         st.contacts = true;
                         st.show_profile = false;
                     } else {
@@ -435,6 +438,7 @@ pub(super) fn show(
     if voice {
         voice_panel(ui, p, world, st, actions, rail);
     }
+    contacts_clicked
 }
 
 /// What the nearby chat's entry says: who can hear us, and its last line.

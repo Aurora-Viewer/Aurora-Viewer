@@ -3036,6 +3036,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the run; `hidden` disables it with Contacts initially selected, showing
   the fallback to nearby chat. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
+  In the Aurora and Compact conversation styles, test at full width,
+  700 points and 460 points: a double-click on a friend starts their IM.
+  A single click opens their sheet; when it replaces the list, clicking
+  Contacts returns to the list just like the sheet's cross, keeping the
+  filter and selection. Repeat a double-click after returning to the list.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

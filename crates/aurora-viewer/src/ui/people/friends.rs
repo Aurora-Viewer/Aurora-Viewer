@@ -53,6 +53,20 @@ const RECEIVED: [(i32, &str, &str); 2] = [
 
 /// The friends tab: the list, and the sheet of the friend clicked.
 pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi) {
+    let (now, held, secondary) = ui.input(|i| (i.time, i.pointer.primary_down(), i.pointer.secondary_down()));
+    if secondary {
+        st.pending_sheet = None;
+    }
+    if let Some((id, deadline)) = st.pending_sheet {
+        if !c.defer_sheet || (now >= deadline && !held) {
+            super::nearby::open_sheet(st, id);
+            // An inline sheet never widens the Conversations window.
+            st.sheet_grow = false;
+        } else {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64((deadline - now).max(0.01)));
+        }
+    }
     super::split(ui, c, data, st, "people-friends-list", list, super::person_sheet);
 }
 
@@ -361,10 +375,24 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     };
     let cut = rows::names(ui, p, rect, left, end.names_right, &line.name, color, &line.status, line.set, None);
     ui.set_opacity(opacity);
-    if !clicked_right && rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, f.id) {
-        super::nearby::open_sheet(st, f.id);
+    if resp.clicked() || resp.drag_started() {
+        st.pending_sheet = None;
     }
-    if resp.double_clicked() {
+    if !clicked_right && rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, f.id) {
+        if c.defer_sheet {
+            // FSFloaterContacts::onImButtonClicked remains the double-click
+            // action even when the inline sheet must replace this row.
+            let delay = ui.ctx().options(|o| o.input_options.max_double_click_delay);
+            st.pending_sheet = Some((f.id, ui.input(|i| i.time) + delay));
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(delay));
+        } else {
+            super::nearby::open_sheet(st, f.id);
+        }
+    }
+    // After a click on Contacts followed by two on this row, egui can
+    // count the latter as a triple click (its timer spans all widgets).
+    if resp.double_clicked() || resp.triple_clicked() {
+        st.pending_sheet = None;
         c.actions.push(super::PeopleAction::OpenIm(f.id));
     }
     rows::person_menu(&resp, p, c.world, &st.sel, f.id);
