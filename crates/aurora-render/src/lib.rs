@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod bc7;
 mod contact_shadows;
+mod bloom;
 mod dof;
 mod drawn_pick;
 pub mod frame_priority;
@@ -212,6 +213,11 @@ mod shader_tests {
     #[test]
     fn glow_shader_is_valid() {
         validate(include_str!("shaders/glow.wgsl"));
+    }
+
+    #[test]
+    fn bloom_shader_is_valid() {
+        validate(include_str!("shaders/bloom.wgsl"));
     }
 
     #[test]

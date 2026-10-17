@@ -153,6 +153,10 @@ struct PostU {
     glow: f32,
     debug_glow: f32,
     legacy_gamma: f32,
+    bloom: f32,
+    bloom_threshold: f32,
+    bloom_knee: f32,
+    bloom_norm: f32,
 }
 
 #[repr(C)]
@@ -198,7 +202,13 @@ struct SmaaTargets {
 impl Smaa {
     const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, post_layout: &wgpu::BindGroupLayout, surface_format: wgpu::TextureFormat) -> Smaa {
+    /// `post_layouts`: the post pass's groups (scene image, bloom).
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        post_layouts: [&wgpu::BindGroupLayout; 2],
+        surface_format: wgpu::TextureFormat,
+    ) -> Smaa {
         let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let (area_t, area) = make_view(device, "smaa area", 160, 560, wgpu::TextureFormat::Rg8Unorm, 1, usage);
         let (search_t, search) = make_view(device, "smaa search", 64, 16, wgpu::TextureFormat::R8Unorm, 1, usage);
@@ -296,7 +306,7 @@ impl Smaa {
         });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("post ldr"),
-            bind_group_layouts: &[Some(post_layout)],
+            bind_group_layouts: &[Some(post_layouts[0]), Some(post_layouts[1])],
             immediate_size: 0,
         });
         let post_ldr = make_pipeline(device, &post_module, &post_pl, desc("post ldr", "vs_post", "fs_post", Self::LDR));
@@ -778,6 +788,8 @@ struct GpuTimer {
     last_ssao: Option<f32>,
     /// Last time of the contact shadows (ms).
     last_contact: Option<f32>,
+    /// Last time of the bloom levels (ms).
+    last_bloom: Option<f32>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -840,7 +852,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 20;
+const GPU_MARKS: u32 = 22;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -889,13 +901,16 @@ const GPU_SHADOW_PARTS: [(u32, u32); 5] = [
 /// After the prepass of the multisampled depth, which opens the scene
 /// encoder (written right after `MARK_SCENE_BEGIN` without MSAA).
 const MARK_DEPTH_MSAA_END: u32 = 20;
+/// Around the bloom levels (bloom.rs), after the glow; part of the post.
+const MARK_BLOOM_BEGIN: u32 = 21;
+const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
 /// single-sample prepass with the occlusion culling, multisampled prepass.
 const GPU_DEPTH: [(u32, u32); 2] = [(MARK_SHADOWS_END, MARK_DEPTH_END), (MARK_SCENE_BEGIN, MARK_DEPTH_MSAA_END)];
 /// After the contact shadows, which follow the occlusion (written there
 /// when they are off): inside the effects' range from `MARK_SSAO_END` to
 /// `MARK_REFL_END`.
-const MARK_CONTACT_END: u32 = 21;
+const MARK_CONTACT_END: u32 = 23;
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
@@ -966,6 +981,7 @@ impl GpuTimer {
             last_depth: None,
             last_ssao: None,
             last_contact: None,
+            last_bloom: None,
             slot_prepass: Default::default(),
             compare: PrepassCompare::default(),
         }
@@ -994,6 +1010,7 @@ impl GpuTimer {
                             self.last_depth = Some(d);
                             self.last_ssao = Some(ms(MARK_DEPTH_END, MARK_SSAO_END));
                             self.last_contact = Some(ms(MARK_SSAO_END, MARK_CONTACT_END));
+                            self.last_bloom = Some(ms(MARK_BLOOM_BEGIN, MARK_BLOOM_END));
                             if msaa_prepass() == MsaaPrepass::Alternate {
                                 let mut times = [0.0; COMPARE_KEYS.len()];
                                 times[0] = ms(0, 1);
@@ -1215,6 +1232,7 @@ pub(crate) struct Backend {
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
+    bloom: crate::bloom::Bloom,
     frame_buffer: wgpu::Buffer,
     refl_buffers: [wgpu::Buffer; 7],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
@@ -2295,13 +2313,14 @@ impl Backend {
             .collect();
         let msaa_samples = if msaa_supported.contains(&4) { 4 } else { 1 };
         let settings = RenderSettings::default();
+        let bloom = crate::bloom::Bloom::new(&device, &post_layout);
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
             &records_layout,
             &tex_layout,
             &shadow_layout,
-            &post_layout,
+            [&post_layout, &bloom.post_layout],
             &gbuf_layout,
             msaa_samples,
             format,
@@ -2311,7 +2330,7 @@ impl Backend {
         let gtao = crate::gtao::Gtao::new(&device);
         let contact = crate::contact_shadows::ContactShadows::new(&device);
         let glow = Glow::new(&device, &post_layout);
-        let smaa = Smaa::new(&device, &queue, &post_layout, format);
+        let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
         let targets = Self::make_targets(
             &device,
             &post_layout,
@@ -2381,6 +2400,7 @@ impl Backend {
             gtao,
             contact,
             contact_now: false,
+            bloom,
             frame_buffer,
             refl_buffers,
             hud_depth: None,
@@ -2485,7 +2505,7 @@ impl Backend {
         records_layout: &wgpu::BindGroupLayout,
         tex_layout: &wgpu::BindGroupLayout,
         shadow_layout: &wgpu::BindGroupLayout,
-        post_layout: &wgpu::BindGroupLayout,
+        post_layouts: [&wgpu::BindGroupLayout; 2],
         gbuf_layout: &wgpu::BindGroupLayout,
         samples: u32,
         surface_format: wgpu::TextureFormat,
@@ -2890,7 +2910,7 @@ impl Backend {
         });
         let post_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("post"),
-            bind_group_layouts: &[Some(post_layout)],
+            bind_group_layouts: &[Some(post_layouts[0]), Some(post_layouts[1])],
             immediate_size: 0,
         });
         let post = make_pipeline(
@@ -3476,7 +3496,7 @@ impl Backend {
                 &self.records_layout,
                 &self.tex_layout,
                 &self.shadow_layout,
-                &self.post_layout,
+                [&self.post_layout, &self.bloom.post_layout],
                 &self.gbuf_layout,
                 samples,
                 self.config.format,
@@ -4338,6 +4358,20 @@ impl Backend {
         // (2 opaque, 4 alpha pool, 8 blended)
         static GLOW_SKIP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
         let glow_skip = *GLOW_SKIP.get_or_init(|| std::env::var("AURORA_GLOW_SKIP").ok().and_then(|v| v.parse().ok()).unwrap_or(0));
+        // Aurora's bloom: its levels kept while on (or alternated), none
+        // under a debug view, which replaces the image
+        let bloom = {
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+            let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
+            let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
+            if keep && !debug_view {
+                self.bloom.ensure(&self.device, (self.config.width, self.config.height));
+            } else {
+                self.bloom.release();
+            }
+            if self.bloom.norm() > 0.0 { strength.clamp(0.0, 1.0) } else { 0.0 }
+        };
         let post = PostU {
             exposure: f.exposure,
             // SMAA works on a gamma-encoded 8-bit image
@@ -4370,6 +4404,10 @@ impl Backend {
             } else {
                 1.0
             },
+            bloom,
+            bloom_threshold: crate::bloom::THRESHOLD,
+            bloom_knee: crate::bloom::KNEE,
+            bloom_norm: self.bloom.norm() * crate::bloom::GAIN,
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -5638,6 +5676,13 @@ impl Backend {
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
         }
+        // ---- bloom, from the image the post pass reads (after the glow,
+        // which it leaves as it is)
+        mark(&mut encoder, MARK_BLOOM_BEGIN);
+        if bloom > 0.0 {
+            self.bloom.encode(&mut encoder, post_bg);
+        }
+        mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
         // ---- post (tonemap) to the swapchain
@@ -5674,6 +5719,7 @@ impl Backend {
                 });
                 pass.set_pipeline(post_pipe);
                 pass.set_bind_group(0, post_bg, &[]);
+                pass.set_bind_group(1, self.bloom.post_bg(), &[]);
                 pass.draw(0..3, 0..1);
             }
             if let Some(st) = &self.smaa_targets {
@@ -6012,6 +6058,7 @@ impl Backend {
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
         stats.gpu_ssao = self.timer.as_ref().and_then(|t| t.last_ssao);
         stats.gpu_contact = self.timer.as_ref().and_then(|t| t.last_contact);
+        stats.gpu_bloom = self.timer.as_ref().and_then(|t| t.last_bloom);
         if profile_frames && let Some(e) = stats.gpu_elements {
             let mut out = String::new();
             for (el, ms) in GpuElement::ALL.iter().zip(e) {

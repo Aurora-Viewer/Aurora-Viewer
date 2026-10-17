@@ -1589,6 +1589,32 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-glow-around-glowing-faces-as-in-firestorm"),
                     |ui| toggle(ui, p, &mut s.glow),
                 );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-bloom"),
+                    aurora_i18n::tr!("ui-options-bloom-help"),
+                    |ui| toggle(ui, p, &mut s.bloom),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-bloom-strength"),
+                    aurora_i18n::tr!("ui-options-bloom-strength-help"),
+                    |ui| {
+                        ui.add_enabled_ui(s.bloom, |ui| {
+                            ui.spacing_mut().slider_width = SLIDER_W;
+                            ui.add(
+                                egui::Slider::new(&mut s.bloom_strength, 0.05..=1.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .step_by(0.05)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        })
+                        .inner
+                    },
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-reflections"), |ui| {
                 let levels = [

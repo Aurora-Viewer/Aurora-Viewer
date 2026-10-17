@@ -837,6 +837,9 @@ pub struct FrameParams {
     pub sharpen: f32,
     /// Screen-space glow of faces with a glow value (RenderGlow).
     pub glow: bool,
+    /// Aurora's bloom (bloom.rs): the share of the light over the
+    /// threshold spread around the bright parts, 0 = off.
+    pub bloom: f32,
     pub water_height: f32,
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
@@ -1047,6 +1050,9 @@ pub struct RenderStats {
     /// GPU time of the contact shadows alone (ms), part of
     /// [`GpuElement::Effects`].
     pub gpu_contact: Option<f32>,
+    /// GPU time of the bloom levels alone (ms), part of
+    /// [`GpuElement::Post`] (0 while off).
+    pub gpu_bloom: Option<f32>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
