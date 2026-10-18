@@ -9931,17 +9931,21 @@ impl App {
                         }
                     }
                 }
-                // AURORA_DEMO_CONV=aurora: someone types in the conversation
-                // shown, and the group's call rings without us
-                if let Some(scene) = crate::demo::aurora_scenario() {
-                    match scene.view {
-                        crate::demo::Bubbles::Local => {
-                            self.chat_ui.nearby_count = self.chat_ui.nearby_count.max(3);
-                            self.chat_ui.nearby_typing = vec![crate::demo::DEMO_NOVA];
-                        }
-                        crate::demo::Bubbles::Friend => self.world.social.set_typing(crate::demo::DEMO_FRIEND, true),
-                        _ => {}
+                // AURORA_DEMO_CONV=aurora / bubbles: someone types in the
+                // conversation shown (the friend's tab says so in the window
+                // of tabs)
+                match crate::demo::bubbles_scenario() {
+                    Some(crate::demo::Bubbles::Local) if crate::demo::aurora_scenario().is_some() => {
+                        self.chat_ui.nearby_count = self.chat_ui.nearby_count.max(3);
+                        self.chat_ui.nearby_typing = vec![crate::demo::DEMO_NOVA];
                     }
+                    Some(crate::demo::Bubbles::Friend | crate::demo::Bubbles::Legacy) => {
+                        self.world.social.set_typing(crate::demo::DEMO_FRIEND, true)
+                    }
+                    _ => {}
+                }
+                // AURORA_DEMO_CONV=aurora: the group's call rings without us
+                if let Some(scene) = crate::demo::aurora_scenario() {
                     // call-away: the call opened its conversation; once it
                     // is connected the nearby chat comes back
                     static AWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

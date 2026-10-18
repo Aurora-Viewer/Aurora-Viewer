@@ -2918,7 +2918,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each group, "Yesterday" above the first message and "Today" between the
   two days, the corner under the sender square on the last bubble of a
   group; round pictures; the head shows the picture, its dot, the display
-  name and the user name. `busy`: a resident in the
+  name and the user name. The friend is typing (also with `legacy`): their
+  tab reads "<name> is typing…". `busy`: a resident in the
   region playing the do not disturb animation, after their automatic
   response: red dot and "Do not disturb" pill in the head, red dot in the
   list. `group`: the demo group chat, the sender's name opening each group

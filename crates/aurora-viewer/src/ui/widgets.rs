@@ -219,6 +219,9 @@ pub struct Floater<'a> {
     /// The body reaches the window's edges under its title bar (the
     /// Conversations workspace: its column and panes are the window).
     pub flush_body: bool,
+    /// Once shown, only its edges resize it: its body is laid out in its
+    /// exact rect and cut at its edges (see `steady_size`).
+    pub steady_size: bool,
     cascade: Option<CascadeGroup>,
 }
 
@@ -242,6 +245,7 @@ impl<'a> Floater<'a> {
             attention: false,
             compact_minimized: None,
             flush_body: false,
+            steady_size: false,
             cascade: None,
         }
     }
@@ -308,6 +312,17 @@ impl<'a> Floater<'a> {
     /// The body edge to edge under the title bar (see `flush_body`).
     pub fn flush_body(mut self) -> Self {
         self.flush_body = true;
+        self
+    }
+
+    /// A resizable window whose content changes all the time (the
+    /// Conversations window): egui's frame follows what its content
+    /// measured, and its Resize keeps the widest it saw, so a long message
+    /// or a tab opened or closed that measured a fraction of a point too
+    /// wide made it grow a pixel or two at a time, for good. Once shown, its
+    /// body is laid out in its exact rect instead, cut at its edges.
+    pub fn steady_size(mut self) -> Self {
+        self.steady_size = true;
         self
     }
 
@@ -495,13 +510,8 @@ impl<'a> Floater<'a> {
         if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
             w = w.current_pos(pos);
         }
-        // Only its edges resize a resizable window once shown. egui's frame
-        // follows what the content measured, and its Resize keeps the
-        // widest it saw: a long message or a tab opened or closed that
-        // measured a fraction of a point too wide made the Conversations
-        // window grow a pixel or two at a time, for good. Its content is
-        // laid out in the window's exact rect instead, cut at its edges.
-        let held = resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
+        // `steady_size`: once shown, the body in the window's exact rect
+        let held = self.steady_size && resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
         let mut glass_slot = None;
         let response = w.show(ctx, |outer| {
             glass_slot = Some((outer.painter().clone(), outer.painter().add(egui::Shape::Noop)));
