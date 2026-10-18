@@ -130,9 +130,15 @@ steps match the manual buttons (1 cm, Alt 10 cm, Ctrl/Shift 1 mm).
 The scene compares an attachment/skeleton signature each frame, but mesh
 decoding and vertex scans run only after changes settle for 200 ms. HUD,
 animation and ordinary movement changes do not trigger ongoing recalculation.
-Body attachment, shape, physical-size and newly available asset changes can
-invalidate the estimate; an initial size-only estimate is upgraded once a
-usable contact plane arrives. Changing the offset reuses the cached result.
+Body attachment, shape and newly available asset changes can invalidate the
+estimate. Its virtual standing reference comes only from the shaped rest
+skeleton (pelvis-to-foot length, shape hover and mesh pelvis fixup), even in
+an empty world. Terrain, platforms, world position, simulator contact planes,
+streamed physical size, flight, seating and animated palettes never enter the
+measurement or trigger recalculation. A mesh with missing geometry or pending
+declared skin metadata retains the previous height, including failed assets.
+Changing the offset reuses the cached result. Numeric `auto hover estimate`
+logs expose the reference, lowest point and raw result before server limits.
 
 The frames-per-second limiter is enabled at **120 fps by default**. It can
 be disabled or adjusted in Preferences › Graphics › Smoothness; preferences
@@ -286,7 +292,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-cycle`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -303,29 +309,51 @@ when unfocused") is ignored during a screenshot.
   the committed adjustment, then teleport and reconnect to check persistence.
   `auto-static` adds two rigid soles with a linked heel at frame 620;
   the `auto-*` scenarios frame the feet at 600, after the login camera reset.
-  Their avatar reports a 1.68 m physics height, matching the offline
-  simulation's 0.84 m centre clearance; the generic fixture's 1.9 m size
-  does not match that simulation. Grounding uses the simulator-reported
-  contact distance when available, otherwise the physical height, not the
-  independently computed shaped skeleton height.
+  Their avatar deliberately reports a 1.68 m streamed size; the fixture places
+  its centre at half the shape-derived physical box height above the plaza,
+  replacing the general demo simulator's fixed 0.84 m clearance. Calibration reconstructs the standing physical
+  box from shape body height/hover, including SL bounds and physical padding,
+  then applies the neutral skeleton's rendered root offset. It never reads
+  streamed physical size, world geometry or contact distance.
   `auto-static-off` repeats it with automatic adjustment disabled for comparison;
   `auto-rigged` adds a rigged shoe mesh on the spine with an unrelated low
   triangle whose foot weights are zero (it must not lift the avatar).
-  `auto-contact` uses those shoes with a reported 1.48 m physical height and
-  a contact plane at the actual ground: the 0.84 m centre clearance includes
-  a 10 cm margin over half that size. It must give the same grounded result
-  as `auto-rigged`, not raise the shoes by those extra 10 cm. Enable
+  `auto-contact` uses those shoes with the same physical size while injecting
+  absent contact through frame 719, a plane 40 cm above the actual floor at
+  720, a cleared airborne plane at 840 and a plane 30 cm below the floor at
+  960. Every stage must retain the same height as `auto-rigged`. Enable
   `AURORA_TEST_NEUTRAL_POSE=1` to compare the exact neutral pose.
-  `auto-offset` uses that same contact-plane fixture: +0.05 m offset at 700
-  gives +0.316 m total height; -0.03 m at 860 gives +0.236 m. Removing the
-  shoes at 940 leaves the fixed -0.03 m offset. Capture 660, 840, 920 and 1100.
+  `auto-offset` uses that same contact-plane fixture: +0.05 m offset at 700,
+  then -0.03 m at 860, relative to the unchanged automatic baseline. Removing
+  the shoes at 940 leaves the fixed -0.03 m offset even with a cleared contact
+  plane. Capture 700, 820, 920 and 1100.
+  `auto-state` resets/disables auto at 700, starts flying with a deliberately
+  inconsistent 12 m physical size at 720 and enables auto at 740; it resets
+  again at 840, stops flying, enables auto at 880 and changes physical size
+  to 0.5 m at 960. Captures at 660, 820, 920 and 1100 must show the same
+  baseline, whether enabled standing or flying and after the size change.
+  `auto-pelvis` holds the animated pelvis at zero while moving the mesh rest
+  pelvis to +10.53 m at 720, -8 m at 840 and zero at 960. Captures at 660,
+  820, 920 and 1100 must retain the same rendered feet and raw hover result.
+  The numeric log's neutral pelvis, reference and lowest foot point move
+  together; their difference must stay unchanged and never saturate at +/-3 m.
+  `auto-stilt` first wears the rigged 18 cm soles, then attaches a single
+  60 cm box below the left foot at 720, resizes/repositions it to 1.2 m at
+  840 and removes it at 960. Capture 660, 820, 920 and 1100: the raw heights
+  must reflect the full 0.60 / 1.20 m stilt depths relative to the same neutral
+  foot, then return to the shoe baseline, keeping the lowest sole/stilt vertex
+  on the plaza. Numeric rigid-surface logs expose the measured box size,
+  neutral transform and lowest vertex for comparison with on-grid reports.
   `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
   580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
   Automatic adjustment is enabled by default in Hover Height. Manual edits
   last until the next body attachment change; HUD changes must leave the
-  height intact. Updates during sitting/flying wait until standing on the
-  ground. On the grid: add/remove rigged shoes/body, rigid foot linksets and
-  HUDs, including delayed mesh loading and attachments worn while seated.
+  height intact. Calibration and offset editing work while flying or seated.
+  On the grid: enable auto on the ground, in flight and seated with the same
+  outfit and offset; check the same result. Add/remove rigged shoes/body at
+  the hand, spine or nose, rigid foot/shin boots and linksets, and HUDs,
+  including delayed skin/mesh loading and
+  attachments worn while seated.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).

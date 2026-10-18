@@ -37,6 +37,17 @@ impl App {
                         _ => {}
                     }
                 }
+                if mode == "auto-state" {
+                    match self.frame_count {
+                        700 | 840 => {
+                            self.settings.auto_hover_height = false;
+                            self.world.hover_height.preview(0.0);
+                            self.world.hover_height.commit();
+                        }
+                        740 | 880 => self.settings.auto_hover_height = true,
+                        _ => {}
+                    }
+                }
                 if matches!(mode, "cycle" | "camera") {
                     match self.frame_count {
                         720 => self.world.hover_height.preview(0.4),

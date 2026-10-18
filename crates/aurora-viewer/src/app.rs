@@ -5778,6 +5778,10 @@ impl App {
             }
             // poses first: attachments follow their bone in the same frame
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
+            self.scene.set_auto_hover_second_life(matches!(
+                self.settings.grid,
+                crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta
+            ));
             self.scene.update_auto_hover(
                 &mut self.world,
                 self.settings.auto_hover_height,
