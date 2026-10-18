@@ -7,6 +7,7 @@ mod compose;
 mod console;
 mod conv_menu;
 mod find;
+mod flash;
 mod head;
 mod header;
 pub mod history;
@@ -134,6 +135,10 @@ pub struct ChatUi {
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
+    /// The entries of conversations with news flash (Preferences › Chat),
+    /// given every frame by the app; and where each flash stands.
+    pub flash_unread: bool,
+    flashes: flash::Flashes,
     /// The avatars in chat range and those of them who type, given every
     /// frame by the app (the radar) for the nearby chat.
     pub nearby_count: usize,
@@ -1837,6 +1842,8 @@ fn list_entry(
     sel: bool,
     unread: usize,
     close: Option<&str>,
+    // the violet wash of a conversation with news (`flash.rs`), 0 for none
+    flash: f32,
 ) -> ListEntry {
     // narrower beside the list's scroll bar, when it shows
     let width = ENTRY_W.min(ui.available_width());
@@ -1859,6 +1866,9 @@ fn list_entry(
     // square, like the rows of the Contacts tab next to it: the bar of the
     // selected entry runs flush along its left edge
     ui.painter().rect_filled(rect, 0.0, fill);
+    if flash > 0.0 && !sel {
+        ui.painter().rect_filled(rect, 0.0, p.violet.gamma_multiply(flash));
+    }
     if sel {
         ui.painter()
             .rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())), 0.0, p.violet);
@@ -2062,7 +2072,7 @@ pub fn show(
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
                 if show_contacts_tab
-                    && list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, None, st.contacts, 0, None)
+                    && list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, None, st.contacts, 0, None, 0.0)
                         .resp
                         .clicked()
                 {
@@ -2082,6 +2092,7 @@ pub fn show(
                     local_shown,
                     if local_shown { 0 } else { world.chat_unread },
                     None,
+                    0.0,
                 )
                 .resp;
                 conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
@@ -2097,16 +2108,25 @@ pub fn show(
                 // a frame before its first message lists it)
                 let reveal = st.reveal;
                 let left = h - (ui.cursor().top() - top);
+                let now = ui.input(|i| i.time);
+                st.flashes.begin(now);
                 scrolling_list(ui, left, |ui| {
                     for (other, unread) in sessions {
+                        let shown = st.selected == Some(other) && !st.contacts;
+                        let (flash, moving) = st.flashes.wash(other, if shown { 0 } else { unread }, now, st.flash_unread);
+                        if moving {
+                            ui.ctx().request_repaint();
+                        }
                         let name = world.session_title(&other);
                         if !world.is_group_session(&other) {
                             st.wanted_pics.insert(other);
                         }
                         // FSFloaterIM::addTypingIndicator: the tab of a
-                        // resident typing to us reads "Nova is typing…"
+                        // resident typing to us reads "Nova is typing…", by
+                        // their display name alone, so that it shows in a
+                        // narrow tab
                         let typing = (sidebar::kind(world, &other) == sidebar::Kind::Private && world.social.is_typing(&other))
-                            .then(|| typing::text(std::slice::from_ref(&name)))
+                            .then(|| typing::text(&[world.social.display_name_of(&other)]))
                             .flatten();
                         let entry = list_entry(
                             ui,
@@ -2114,9 +2134,10 @@ pub fn show(
                             typing.as_deref().unwrap_or(&name),
                             Some((pics.get(&other), &name)),
                             (!world.is_group_session(&other)).then(|| presence::of(world, &other)),
-                            st.selected == Some(other) && !st.contacts,
+                            shown,
                             unread,
                             Some(close_tip(world, &other)),
+                            flash,
                         );
                         if reveal == Some(other) {
                             entry.resp.scroll_to_me(None);
@@ -3626,7 +3647,7 @@ mod tests {
     fn entry(ui: &mut egui::Ui, label: &str, pic: bool, sel: bool, unread: usize, closable: bool) -> ListEntry {
         let p = crate::theme::Theme::default().palette();
         let close = closable.then_some(CLOSE_TIP);
-        list_entry(ui, &p, label, pic.then_some((None, label)), None, sel, unread, close)
+        list_entry(ui, &p, label, pic.then_some((None, label)), None, sel, unread, close, 0.0)
     }
 
     #[test]

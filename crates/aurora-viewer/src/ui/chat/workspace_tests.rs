@@ -534,7 +534,7 @@ fn a_tab_says_who_types() {
     for style in [ChatStyle::Bubbles, ChatStyle::Legacy] {
         let mut h = Harness::new(style);
         let name = h.world.session_title(&BOB);
-        let typing = super::super::typing::text(std::slice::from_ref(&name)).expect("one name");
+        let typing = super::super::typing::text(&[h.world.social.display_name_of(&BOB)]).expect("one name");
         h.world.social.set_typing(BOB, true);
         let texts = h.settle();
         assert!(texts.iter().any(|t| t.source == typing), "{style:?}: Bob's tab says he types");

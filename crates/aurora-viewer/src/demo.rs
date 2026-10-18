@@ -646,6 +646,33 @@ pub fn many_conversation_events(agent: Uuid) -> Vec<NetEvent> {
         .collect()
 }
 
+/// AURORA_DEMO_FLASH=1: Tess writes to us every 8 seconds from the 10th
+/// (`ui/chat/flash.rs`): with another conversation shown, her entry
+/// flashes. The message due at `secs` seconds of the session, once.
+pub fn flash_message(agent: Uuid, secs: f64) -> Option<NetEvent> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SENT: AtomicU64 = AtomicU64::new(0);
+    if std::env::var("AURORA_DEMO_FLASH").is_err() || secs < 10.0 {
+        return None;
+    }
+    let due = ((secs - 10.0) / 8.0) as u64 + 1;
+    if SENT.swap(due, Ordering::Relaxed) == due {
+        return None;
+    }
+    Some(NetEvent::InstantMessage(aurora_net::InstantMessage {
+        from_agent_id: DEMO_TESS,
+        from_name: "Tess Touch".into(),
+        to_agent_id: agent,
+        dialog: 0,
+        session_id: Uuid::from_u128(agent.as_u128() ^ DEMO_TESS.as_u128()),
+        message: aurora_i18n::tr!("demo-flash-message", n = due as i64),
+        offline: false,
+        from_group: false,
+        binary_bucket: Vec::new(),
+        timestamp: 0,
+    }))
+}
+
 /// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
 /// Conversations window as a messenger (ui/chat/bubbles.rs). Without a
 /// suffix the conversation with an online friend, over two days; `busy` the

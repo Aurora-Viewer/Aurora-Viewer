@@ -435,6 +435,11 @@ pub struct Settings {
     /// Tell the resident of a conversation that we are typing
     /// (FSSendTypingState, on by default; Preferences > Chat).
     pub send_typing_state: bool,
+    /// The entry of a conversation that receives a message while another
+    /// is shown flashes in violet, then stays tinted until read
+    /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
+    /// Preferences > Chat, on).
+    pub flash_unread_conversations: bool,
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
@@ -1097,6 +1102,7 @@ impl Default for Settings {
             chat_keep_focus: true,
             show_contacts_tab: true,
             send_typing_state: true,
+            flash_unread_conversations: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
             friends_online_in_chat: false,

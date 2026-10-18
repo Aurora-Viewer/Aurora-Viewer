@@ -9919,6 +9919,7 @@ impl App {
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
+                self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, their typing animation)
                 self.chat_ui.nearby_count = 0;
@@ -9943,6 +9944,12 @@ impl App {
                         self.world.social.set_typing(crate::demo::DEMO_FRIEND, true)
                     }
                     _ => {}
+                }
+                // AURORA_DEMO_FLASH: Tess writes now and then
+                if self.demo
+                    && let Some(ev) = crate::demo::flash_message(self.world.agent_id, self.radar_clock.elapsed().as_secs_f64())
+                {
+                    self.world.apply(ev);
                 }
                 // AURORA_DEMO_CONV=aurora: the group's call rings without us
                 if let Some(scene) = crate::demo::aurora_scenario() {

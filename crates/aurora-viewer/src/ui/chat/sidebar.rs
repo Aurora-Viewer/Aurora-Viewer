@@ -193,6 +193,8 @@ struct Entry<'a> {
     ringing: bool,
     /// A call is in progress there: the speaker at its right.
     in_call: bool,
+    /// The violet wash of a conversation with news (`flash.rs`), 0 for none.
+    flash: f32,
 }
 
 struct Picked {
@@ -291,6 +293,7 @@ pub(super) fn show(
                     close: None,
                     ringing: false,
                     in_call: false,
+                    flash: 0.0,
                 };
                 if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
                     if docked {
@@ -315,6 +318,7 @@ pub(super) fn show(
                     close: None,
                     ringing: false,
                     in_call: false,
+                    flash: 0.0,
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
@@ -324,6 +328,8 @@ pub(super) fn show(
                 }
             }
             let reveal = st.reveal;
+            let now = ui.input(|i| i.time);
+            st.flashes.begin(now);
             let sessions = st.reorder.sessions(world);
             for section in [Kind::Private, Kind::Group, Kind::Conference] {
                 let ids: Vec<(Uuid, usize)> = sessions.iter().copied().filter(|(id, _)| kind(world, id) == section).collect();
@@ -358,16 +364,22 @@ pub(super) fn show(
                         st.conversation_voice_indicator
                             || (world.call_of(&id).is_none() && world.call_launched(&id).is_none() && world.calls.invite_for(&id).is_none())
                     });
+                    let unread = if current { 0 } else { unread };
+                    let (flash, moving) = st.flashes.wash(id, unread, now, st.flash_unread);
+                    if moving {
+                        ui.ctx().request_repaint();
+                    }
                     let e = Entry {
                         icon,
                         name: &name,
                         sub: Some(sub),
                         sub_icon,
                         current,
-                        unread: if current { 0 } else { unread },
+                        unread,
                         close: Some(close_tip(world, &id)),
                         ringing: world.calls.invite_for(&id).is_some(),
                         in_call: st.conversation_voice_indicator && (world.call_of(&id).is_some() || world.call_launched(&id).is_some()),
+                        flash,
                     };
                     let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
                     if reveal == Some(id) {
@@ -412,6 +424,7 @@ pub(super) fn show(
                             close: None,
                             ringing: false,
                             in_call: false,
+                            flash: 0.0,
                         };
                         if entry(ui, p, &e, rail, egui::Id::new(("conversation_start", id))).resp.clicked() {
                             st.side_filter.clear();
@@ -429,6 +442,7 @@ pub(super) fn show(
                     close: None,
                     ringing: false,
                     in_call: false,
+                    flash: 0.0,
                 };
                 if entry(ui, p, &e, rail, egui::Id::new("conversation_find")).resp.clicked() {
                     st.start_picker(super::Start::Im);
@@ -585,6 +599,9 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.22));
     } else if over {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.45));
+    }
+    if e.flash > 0.0 && !e.current {
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(e.flash));
     }
     if e.unread > 0 && !e.current {
         // the mark of an unread conversation, against the column's edge

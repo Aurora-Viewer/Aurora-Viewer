@@ -2189,6 +2189,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2738,6 +2739,16 @@ failure. Grid validation and any paid upload are performed by the human.
   click. Check filtering, edge scrolling, close buttons, menus and switching
   chat styles. Order lasts while those conversations remain open; closing
   and reopening a conversation appends it again. No grid is needed.
+
+- **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
+  8 seconds ("Are you there? (n)"), while the Conversations window is
+  open. With another conversation shown, her entry (the column in
+  Aurora / Compact, the tab in Bubbles / Lines) takes a violet wash that
+  rises and falls softly eight times over four seconds, then stays faint
+  until her conversation is opened; each message starts it again.
+  Preferences › Chat › Flash unread conversations turned off: no wash, the
+  unread count only. Combine with `AURORA_DEMO_CONV=aurora:group` (or
+  `bubbles:group`) so that her conversation is not the one shown.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
