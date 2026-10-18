@@ -3711,23 +3711,23 @@ impl Session<'_> {
         } else if id == ImprovedInstantMessage::ID {
             let m: ImprovedInstantMessage = pkt.decode()?;
             let b = &m.message_block;
-            if b.dialog != 41 && b.dialog != 42 {
-                emit(
-                    self.sh,
-                    NetEvent::InstantMessage(InstantMessage {
-                        from_agent_id: m.agent_data.agent_id,
-                        from_name: field_str(&b.from_agent_name),
-                        to_agent_id: b.to_agent_id,
-                        dialog: b.dialog,
-                        session_id: b.id,
-                        message: field_str(&b.message),
-                        offline: b.offline != 0,
-                        from_group: b.from_group,
-                        binary_bucket: b.binary_bucket.clone(),
-                        timestamp: b.timestamp,
-                    }),
-                );
-            }
+            // every dialog, IM_TYPING_START / STOP included: the world turns
+            // those into "is typing", never into a line
+            emit(
+                self.sh,
+                NetEvent::InstantMessage(InstantMessage {
+                    from_agent_id: m.agent_data.agent_id,
+                    from_name: field_str(&b.from_agent_name),
+                    to_agent_id: b.to_agent_id,
+                    dialog: b.dialog,
+                    session_id: b.id,
+                    message: field_str(&b.message),
+                    offline: b.offline != 0,
+                    from_group: b.from_group,
+                    binary_bucket: b.binary_bucket.clone(),
+                    timestamp: b.timestamp,
+                }),
+            );
         } else if id == msgs::AvatarAppearance::ID {
             let m: msgs::AvatarAppearance = pkt.decode()?;
             emit(

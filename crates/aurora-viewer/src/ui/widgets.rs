@@ -240,6 +240,9 @@ pub struct Floater<'a> {
     /// The body reaches the window's edges under its title bar (the
     /// Conversations workspace: its column and panes are the window).
     pub flush_body: bool,
+    /// Once shown, only its edges resize it: its body is laid out in its
+    /// exact rect and cut at its edges (see `steady_size`).
+    pub steady_size: bool,
     cascade: Option<CascadeGroup>,
 }
 
@@ -263,6 +266,7 @@ impl<'a> Floater<'a> {
             attention: false,
             compact_minimized: None,
             flush_body: false,
+            steady_size: false,
             cascade: None,
         }
     }
@@ -329,6 +333,17 @@ impl<'a> Floater<'a> {
     /// The body edge to edge under the title bar (see `flush_body`).
     pub fn flush_body(mut self) -> Self {
         self.flush_body = true;
+        self
+    }
+
+    /// A resizable window whose content changes all the time (the
+    /// Conversations window): egui's frame follows what its content
+    /// measured, and its Resize keeps the widest it saw, so a long message
+    /// or a tab opened or closed that measured a fraction of a point too
+    /// wide made it grow a pixel or two at a time, for good. Once shown, its
+    /// body is laid out in its exact rect instead, cut at its edges.
+    pub fn steady_size(mut self) -> Self {
+        self.steady_size = true;
         self
     }
 
@@ -516,9 +531,21 @@ impl<'a> Floater<'a> {
         if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
             w = w.current_pos(pos);
         }
+        // `steady_size`: once shown, the body in the window's exact rect
+        let held = self.steady_size && resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
         let mut glass_slot = None;
-        let response = w.show(ctx, |ui| {
-            glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+        let response = w.show(ctx, |outer| {
+            glass_slot = Some((outer.painter().clone(), outer.painter().add(egui::Shape::Noop)));
+            let held = held.then(|| outer.available_rect_before_wrap());
+            let mut held_ui = held.map(|rect| {
+                let mut child = outer.new_child(egui::UiBuilder::new().max_rect(rect).layout(*outer.layout()));
+                child.set_clip_rect(rect.intersect(outer.clip_rect()));
+                child
+            });
+            let ui: &mut egui::Ui = match held_ui.as_mut() {
+                Some(child) => child,
+                None => &mut *outer,
+            };
             // Our custom resize handles replace egui's native resizability.
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
@@ -663,6 +690,9 @@ impl<'a> Floater<'a> {
                 } else {
                     out = Some(body(ui));
                 }
+            }
+            if let Some(rect) = held {
+                outer.advance_cursor_after_rect(rect);
             }
         });
         if let Some(response) = response {

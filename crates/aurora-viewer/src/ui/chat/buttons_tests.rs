@@ -477,8 +477,8 @@ fn the_rail_shows_conversations() {
 }
 
 /// The head (Aurora, Compact) of a resident's conversation, a role group's
-/// and a conference's: call, add people, profile, members, find, and the
-/// rows of its "…".
+/// and a conference's: call, add people, profile, teleport, close,
+/// members, find, and the rows of its "…".
 #[test]
 fn the_head_acts() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -498,6 +498,16 @@ fn the_head_acts() {
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Profile(id) if *id == BOB)),
             "{style:?}: profile"
+        );
+        h.press(control_id("head-send-filled"));
+        assert!(
+            has(&h.take(), |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
+            "{style:?}: teleport"
+        );
+        h.press(control_id("head-x"));
+        assert!(
+            has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
+            "{style:?}: close"
         );
         h.press(control_id("head-search-filled"));
         assert!(h.st.searches.get(&Some(BOB)).is_some_and(|s| s.find.is_some()), "{style:?}: find");
@@ -1131,6 +1141,11 @@ fn the_window_of_tabs_still_acts() {
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
             "{style:?}: teleport"
+        );
+        h.press(classic_id("x"));
+        assert!(
+            has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
+            "{style:?}: close"
         );
         h.press(classic_id("phone-filled"));
         assert!(

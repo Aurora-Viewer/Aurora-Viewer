@@ -85,10 +85,11 @@ pub(super) fn show(
     let status = who.avatar.map(|a| presence::of(world, &a));
     let group = st.selected.is_some_and(|s| world.is_group_session(&s));
     // buttons at the right: their count fixes the room the names keep
+    // (a conversation's own close button among them)
     let tools = match st.selected {
         None => 1,
-        Some(_) if group => 2,
-        Some(_) => 3,
+        Some(_) if group => 3,
+        Some(_) => 4,
     } + 1;
     egui::Frame::new()
         .fill(p.bar)
@@ -119,6 +120,13 @@ pub(super) fn show(
                 // ---- actions, from the right edge
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
+                    // at the right edge, the conversation's close button
+                    // (the X of its tab); the nearby chat cannot be closed
+                    if let Some(other) = st.selected
+                        && tool(ui, p, icons, "x", super::close_tip(world, &other), true, false)
+                    {
+                        actions.push(ConvAction::Close(other));
+                    }
                     more_menu(ui, p, world, st, actions, group, false);
                     match st.selected {
                         None => {

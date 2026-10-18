@@ -2189,6 +2189,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2739,6 +2740,16 @@ failure. Grid validation and any paid upload are performed by the human.
   chat styles. Order lasts while those conversations remain open; closing
   and reopening a conversation appends it again. No grid is needed.
 
+- **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
+  8 seconds ("Are you there? (n)"), while the Conversations window is
+  open. With another conversation shown, her entry (the column in
+  Aurora / Compact, the tab in Bubbles / Lines) takes a violet wash that
+  rises and falls softly eight times over four seconds, then stays faint
+  until her conversation is opened; each message starts it again.
+  Preferences › Chat › Flash unread conversations turned off: no wash, the
+  unread count only. Combine with `AURORA_DEMO_CONV=aurora:group` (or
+  `bubbles:group`) so that her conversation is not the one shown.
+
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
   at frame 701 on the first conversation of that kind in the list (the
@@ -2918,7 +2929,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   each group, "Yesterday" above the first message and "Today" between the
   two days, the corner under the sender square on the last bubble of a
   group; round pictures; the head shows the picture, its dot, the display
-  name and the user name. `busy`: a resident in the
+  name and the user name. The friend is typing (also with `legacy`): their
+  tab reads "<name> is typing…". `busy`: a resident in the
   region playing the do not disturb animation, after their automatic
   response: red dot and "Do not disturb" pill in the head, red dot in the
   list. `group`: the demo group chat, the sender's name opening each group

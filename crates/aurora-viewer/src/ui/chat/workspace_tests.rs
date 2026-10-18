@@ -527,6 +527,129 @@ fn an_entry_says_who_types() {
     assert!(texts.iter().all(|t| t.source != "hello from Bob"));
 }
 
+/// In the window of tabs, the tab of a resident typing to us says so, and
+/// says their name again once they stop.
+#[test]
+fn a_tab_says_who_types() {
+    for style in [ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        let name = h.world.session_title(&BOB);
+        let typing = super::super::typing::text(&[h.world.social.display_name_of(&BOB)]).expect("one name");
+        h.world.social.set_typing(BOB, true);
+        let texts = h.settle();
+        assert!(texts.iter().any(|t| t.source == typing), "{style:?}: Bob's tab says he types");
+        h.world.social.set_typing(BOB, false);
+        let texts = h.settle();
+        assert!(texts.iter().all(|t| t.source != typing), "{style:?}");
+        assert!(texts.iter().any(|t| t.source == name), "{style:?}: Bob's tab names him again");
+    }
+}
+
+/// The head of a resident's conversation offers them a teleport, and its ×
+/// at the right edge closes the conversation; in the window of tabs too.
+/// The nearby chat has no ×.
+#[test]
+fn the_head_offers_a_teleport_and_closes_the_conversation() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(100.0, 60.0), egui::vec2(800.0, 560.0));
+        h.settle();
+        let id = |icon: &str| {
+            if style.workspace() {
+                super::super::sidebar::control_id(&format!("head-{icon}"))
+            } else {
+                super::super::classic_id(icon)
+            }
+        };
+        assert!(h.frames.ctx.read_response(id("x")).is_none(), "{style:?}: no × for the nearby chat");
+        h.st.open(BOB);
+        h.settle();
+        let tp = h.rect(id("send-filled"));
+        h.click(tp.center());
+        assert!(
+            h.actions.iter().any(|a| matches!(a, ConvAction::OfferTeleport(id) if *id == BOB)),
+            "{style:?}: a teleport offered to Bob"
+        );
+        let close = h.rect(id("x"));
+        let window = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new("conversations")))
+            .expect("window");
+        assert!(close.right() > window.right() - 60.0, "{style:?}: the × at the right edge");
+        h.click(close.center());
+        assert!(
+            h.actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == BOB)),
+            "{style:?}: the × closes Bob's conversation"
+        );
+    }
+}
+
+/// The window keeps its size while conversations open and close and long
+/// messages come in, in every style, at the interface scales of the
+/// options (the Resize of egui widened it by what its content measured, a
+/// pixel or two at a time, and never gave it back).
+#[test]
+fn the_window_keeps_its_size_through_tabs_and_long_messages() {
+    const NEW: Uuid = Uuid::from_u128(0xD);
+    let styles = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
+    let cases = styles.into_iter().flat_map(|s| {
+        [1.0f32, 1.25, 1.5].into_iter().flat_map(move |z| {
+            [egui::vec2(700.0, 440.0), egui::vec2(523.3, 301.7)]
+                .into_iter()
+                .map(move |size| (s, z, size))
+        })
+    });
+    for (style, zoom, size) in cases {
+        let mut h = Harness::new(style);
+        crate::theme::Theme::default().apply(&h.frames.ctx, 1.0);
+        crate::ui::fonts::apply(&h.frames.ctx, crate::ui::fonts::DEFAULT);
+        h.frames.ctx.set_zoom_factor(zoom);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(100.0, 60.0), size);
+        h.settle();
+        let case = format!("{style:?} at {zoom}, {size:?}");
+        let win = |h: &Harness| {
+            h.frames
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::new("conversations")))
+                .expect("window")
+        };
+        let r0 = win(&h);
+        assert!((r0.width() - size.x).abs() < 1.0, "{case}: placed at {r0:?}");
+        let mut log = Vec::new();
+        let mut step = |h: &mut Harness, what: &str| {
+            for k in 0..6 {
+                h.frame(Vec::new());
+                let r = win(h);
+                if r != r0 {
+                    log.push(format!("{what}, frame {k}: {r:?}"));
+                }
+            }
+        };
+        h.st.open(JANE);
+        step(&mut h, "select Jane");
+        h.world.conversation_line(NEW, line("Newcomer", NEW, ChatKind::Im, "hi"));
+        h.st.open(NEW);
+        step(&mut h, "open new");
+        h.world
+            .conversation_line(NEW, line("Newcomer", NEW, ChatKind::Im, &"long words ".repeat(60)));
+        step(&mut h, "long line");
+        h.world
+            .conversation_line(NEW, line("Newcomer", NEW, ChatKind::Im, &"x".repeat(400)));
+        step(&mut h, "long word");
+        h.world.conversation_closed(&NEW);
+        h.world.leave_session(NEW);
+        h.st.forget(NEW);
+        h.st.selected = None;
+        step(&mut h, "close new");
+        h.world.conversation_closed(&JANE);
+        h.world.leave_session(JANE);
+        h.st.forget(JANE);
+        step(&mut h, "close Jane");
+        assert!(log.is_empty(), "{case}: placed at {r0:?}, then\n{}", log.join("\n"));
+    }
+}
+
 /// A conference's members' panel: its moderators, then its participants,
 /// opened and closed from the head.
 #[test]
