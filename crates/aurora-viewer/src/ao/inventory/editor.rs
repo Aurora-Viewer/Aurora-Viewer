@@ -17,7 +17,7 @@ fn missing() -> String {
 }
 
 fn config<'a>(inv: &Inventory, set: &'a Set, state: State) -> Result<&'a StateConfig, String> {
-    let c = set.states.get(&state).filter(|_| !state.swimming()).ok_or_else(missing)?;
+    let c = set.states.get(&state).ok_or_else(missing)?;
     if !inv
         .folders
         .get(&c.folder)
@@ -86,9 +86,6 @@ pub fn combine(
     track: bool,
     selected: &HashSet<Uuid>,
 ) -> Result<(Mutation, Uuid), String> {
-    if state.swimming() {
-        return Err(missing());
-    }
     let c = set.states.get(&state);
     if c.is_some() {
         config(inv, set, state)?;

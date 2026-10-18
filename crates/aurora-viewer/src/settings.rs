@@ -667,6 +667,8 @@ pub struct Settings {
     pub ao_method: u8,
     /// GTAO quality: 0 low, 1 medium, 2 high, 3 ultra.
     pub gtao_quality: u8,
+    /// Local visual water, independent of simulator physics.
+    pub water_effects: WaterEffectsSettings,
     /// With GTAO: screen-space indirect light (a visibility bitmask and one
     /// bounce of light from the surfaces around). Aurora's own, off by
     /// default.
@@ -1200,6 +1202,7 @@ impl Default for Settings {
             ssao: 1,
             ao_method: 0,
             gtao_quality: 2,
+            water_effects: WaterEffectsSettings::default(),
             screen_indirect_light: false,
             screen_indirect_intensity: SCREEN_INDIRECT_INTENSITY,
             water_reflections: 1,
@@ -1802,7 +1805,10 @@ impl Settings {
 
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, Tonemapper};
+        let mut water_effects = self.water_effects.render();
+        water_effects.particle_budget = self.max_particles;
         aurora_render::RenderSettings {
+            water_effects,
             aa: match self.antialiasing {
                 0 => AntiAliasing::None,
                 1 => AntiAliasing::Fxaa,
@@ -1935,8 +1941,90 @@ impl Default for MapSettings {
     }
 }
 
+/// Per-effect choices survive quality changes and the master switch.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct WaterEffectsSettings {
+    pub enabled: bool,
+    pub quality: u8,
+    pub waves: bool,
+    pub absorption: bool,
+    pub fresnel: bool,
+    pub wet_ground: bool,
+    pub shore_foam: bool,
+    pub contact_foam: bool,
+    pub crest_foam: bool,
+    pub interactions: bool,
+    pub caustics: bool,
+    pub splashes: bool,
+    pub bubbles: bool,
+}
+impl Default for WaterEffectsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            quality: 1,
+            waves: true,
+            absorption: true,
+            fresnel: true,
+            wet_ground: true,
+            shore_foam: true,
+            contact_foam: true,
+            crest_foam: true,
+            interactions: true,
+            caustics: true,
+            splashes: true,
+            bubbles: true,
+        }
+    }
+}
+impl WaterEffectsSettings {
+    pub fn render(&self) -> aurora_render::WaterEffects {
+        aurora_render::WaterEffects {
+            enabled: self.enabled,
+            quality: self.quality.min(3),
+            particle_budget: 4096,
+            waves: self.waves,
+            absorption: self.absorption,
+            fresnel: self.fresnel,
+            wet_ground: self.wet_ground,
+            shore_foam: self.shore_foam,
+            contact_foam: self.contact_foam,
+            crest_foam: self.crest_foam,
+            interactions: self.interactions,
+            caustics: self.caustics,
+            splashes: self.splashes,
+            bubbles: self.bubbles,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn water_choices_round_trip_and_quality_does_not_reset_effects() {
+        let mut settings = super::WaterEffectsSettings {
+            enabled: true,
+            quality: 255,
+            bubbles: false,
+            caustics: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let loaded: super::WaterEffectsSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(settings, loaded);
+        assert_eq!(loaded.render().quality, 3);
+        let flags = settings.render().flags();
+        settings.quality = 0;
+        assert_eq!(settings.render().flags(), flags);
+        settings.enabled = false;
+        assert_eq!(settings.render().flags(), 0);
+        settings.enabled = true;
+        assert_eq!(settings.render().flags(), flags);
+        let old: super::WaterEffectsSettings = serde_json::from_str("{\"enabled\":false}").unwrap();
+        assert!(!old.enabled);
+        assert!(old.bubbles);
+    }
     use super::*;
 
     /// The views that replace the image: the last one turned on stays.

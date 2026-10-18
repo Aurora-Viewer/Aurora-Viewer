@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub struct Bootstrap {
     source: Catalog,
     finished: bool,
+    consolidated: std::collections::HashSet<Uuid>,
 }
 
 impl Bootstrap {
@@ -38,6 +39,21 @@ impl Bootstrap {
         selected: Uuid,
         writable: bool,
     ) -> Option<Result<(Mutation, Option<Uuid>), String>> {
+        if !native.loading
+            && !native.failed
+            && native.missing.is_empty()
+            && let Some(set) = native.selected(selected)
+            && !self.consolidated.contains(&set.id)
+            && set.legacy_swimming_pending()
+        {
+            if !writable {
+                return None;
+            }
+            // One attempt per set/session; partial failures require a fresh
+            // acknowledged inventory refresh, never a blind automatic replay.
+            self.consolidated.insert(set.id);
+            return Some(inventory::consolidate_swimming(inv, set).map(|change| (change, None)));
+        }
         if self.finished || native.loading || native.failed {
             return None;
         }

@@ -26,6 +26,7 @@ use winit::window::{Window, WindowId};
 
 mod ao;
 mod bridge;
+mod movelock;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod buy_currency;
@@ -183,6 +184,10 @@ pub struct App {
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
+    native_anchor: crate::movement::movelock::Controller,
+    anchor_stands: crate::ao::anchor::StandCheck,
+    /// Keep the verified standing set through an asynchronous stand-up reply.
+    anchor_pose: Option<(u64, crate::ao::Set)>,
     bridge_services: crate::world::bridge::services::Services,
     bridge_demo: crate::world::bridge::demo::Demo,
     movelock_ui: ui::movelock::MoveLockUi,
@@ -807,6 +812,9 @@ impl App {
                 w
             },
             bridge_runtime: Default::default(),
+            native_anchor: Default::default(),
+            anchor_stands: Default::default(),
+            anchor_pose: None,
             bridge_services: Default::default(),
             bridge_demo: Default::default(),
             movelock_ui: Default::default(),
@@ -1105,10 +1113,17 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if let Some(flags) = self.native_anchor.observe(&cmd, self.world.agent.seated, Instant::now()) {
+            let release = self.native_anchor.command(flags);
+            self.send(release);
+        }
         if self.bridge_runtime.observe_command(&cmd, Instant::now()) {
-            self.settings.bridge.entry(self.world.agent_id).or_default().enabled = false;
-            if !self.demo {
-                self.settings.save();
+            let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
+            if prefs.mode == crate::world::bridge::LockMode::Bridge {
+                prefs.enabled = false;
+                if !self.demo {
+                    self.settings.save();
+                }
             }
         }
         if self.demo && self.bridge_demo_command(&cmd) {
@@ -1656,6 +1671,7 @@ impl App {
                 self.world.apply(NetEvent::Balance(balance - price));
             }
             for mut ev in crate::demo::demo_reply(&cmd) {
+                crate::ao::demo::preserve_custom_motions(&self.world, &cmd, &mut ev);
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
@@ -2285,6 +2301,9 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 self.bridge_runtime = Default::default();
+                self.native_anchor = Default::default();
+                self.anchor_stands = Default::default();
+                self.anchor_pose = None;
                 self.movement_runtime = Default::default();
                 self.scene.movement_preview = None;
                 self.movement_probe = (None, false, None);
@@ -4595,6 +4614,8 @@ impl App {
     /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
     /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
+        self.release_native_movelock();
+        self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
     }
 
@@ -4784,8 +4805,7 @@ impl App {
             self.world.agent.record_jump_input(now);
             let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
             if held > FLY_TIME
-                && !self.movement_runtime.state.swimming()
-                && self.movement_runtime.state != crate::movement::State::Leaving
+                && self.movement_runtime.native_fly_allowed()
                 && !self.world.agent.flying
                 && !self.world.agent.seated
                 && self.in_world()
@@ -5582,6 +5602,7 @@ impl App {
         if self.in_world() {
             self.world.auto_land(&self.input);
         }
+        self.update_native_movelock();
         self.update_movement();
         self.update_audio();
         let mut edit_camera_frame = None;
@@ -5689,6 +5710,19 @@ impl App {
         self.update_radar();
         self.update_bridge();
         self.update_region_restart();
+        if self.demo
+            && matches!(self.screen, Screen::World)
+            && crate::demo::water::update(
+                &mut self.camera,
+                &mut self.settings,
+                &mut self.world,
+                &mut self.panels,
+                self.frame_count,
+                self.start.elapsed().as_secs_f32(),
+            )
+        {
+            gfx.renderer.apply_settings(self.settings.render_settings());
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -6321,6 +6355,14 @@ impl App {
             None
         };
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
+        if in_world {
+            self.scene.update_water_effects(
+                &self.world,
+                self.camera.position,
+                self.start.elapsed().as_secs_f32(),
+                self.settings.water_effects.render(),
+            );
+        }
         // particles
         if in_world {
             let max_particles = self.settings.max_particles as usize;
@@ -6391,7 +6433,11 @@ impl App {
             near: self.camera.near,
             far: self.settings.draw_distance,
             fov_y: self.camera.fov_y,
-            time: self.start.elapsed().as_secs_f32(),
+            time: if self.demo {
+                crate::demo::water::inspection_time(self.start.elapsed().as_secs_f32())
+            } else {
+                self.start.elapsed().as_secs_f32()
+            },
             sun_dir: env.sun_dir,
             sun_visible: env.sun_visible,
             sun_color: env.sun_color,
@@ -8385,6 +8431,8 @@ impl App {
             }
             BarAction::CameraControls => self.panels.camera_controls = true,
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleWaterWalk => self.toggle_water_walk(),
+            BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
             BarAction::MovementEnhancer => self.open_movement(),
             BarAction::NetworkGraph => {
@@ -11419,6 +11467,12 @@ impl ApplicationHandler for App {
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
             );
+            if crate::demo::water::mode().is_some() {
+                self.scene.anims.insert(
+                    crate::demo::water::CONTACT_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::water::animation(), &rig)),
+                );
+            }
             if crate::demo::deform::mode().is_some() {
                 self.scene.anims.insert(
                     crate::demo::deform::DEFORM_ANIM,
@@ -12200,11 +12254,11 @@ impl ApplicationHandler for App {
                     crate::ao::demo::seed_firestorm(&mut self.world.inventory, self.world.agent_id)
                 } else if mode.starts_with("interface") {
                     crate::ao::demo::seed_interface(&mut self.world.inventory, self.world.agent_id, mode)
-                } else if mode == "swim-missing" {
+                } else if matches!(mode.as_str(), "swim-missing" | "quick-missing") {
                     crate::ao::demo::seed_swimming_incomplete(&mut self.world.inventory, self.world.agent_id)
-                } else if mode == "empty" {
+                } else if matches!(mode.as_str(), "empty" | "quick-empty") {
                     uuid::Uuid::nil()
-                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "swim") {
+                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "movement-rebound" | "swim" | "quick") {
                     crate::ao::demo::seed_movement_design(&mut self.world.inventory, self.world.agent_id)
                 } else {
                     crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id)

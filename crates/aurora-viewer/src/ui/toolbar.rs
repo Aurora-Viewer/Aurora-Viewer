@@ -201,10 +201,12 @@ enum Edit {
 #[derive(Default)]
 pub struct ToolbarUi {
     pub open: bool,
+    pub ao_quick: super::ao::quick::Quick,
     pub voice_options: bool,
     pub movelock_options: bool,
     pub movelock_active: bool,
     pub movement_active: bool,
+    pub water_walk_active: bool,
     pub movelock_status: String,
     /// Where the favourites live (given by the app), for the Favorites
     /// button's menu, and the choice made there (taken by the app).

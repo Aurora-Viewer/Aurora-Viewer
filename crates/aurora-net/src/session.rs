@@ -2313,6 +2313,7 @@ impl Session<'_> {
             | NetCommand::AnswerCallingCard { .. }
             | NetCommand::AgentAnimation { .. }
             | NetCommand::AgentAnimations { .. }
+            | NetCommand::AgentAnimationChanges { .. }
             | NetCommand::AnimationStateReset
             | NetCommand::RevokePermissions { .. }
             | NetCommand::ObjectGrab { .. }

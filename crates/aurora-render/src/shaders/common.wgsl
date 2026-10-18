@@ -43,11 +43,14 @@ struct Frame {
     misc: vec4<f32>,            // x ssao, y ssr, z water reflection texture, w reflection pass
     clip_plane: vec4<f32>,      // reflection passes: keep dot(n, p) + w >= 0
     cam_right: vec4<f32>,       // camera right axis, w = particle soft fade distance
-    cam_up: vec4<f32>,          // camera up axis
+    cam_up: vec4<f32>,          // camera up axis, camera-local macro waterline
     water_fog: vec4<f32>,       // linear fog color, w density (kd)
     water_params: vec4<f32>,    // x ks, y fresnel scale, z fresnel offset, w blur multiplier
     water_waves: vec4<f32>,     // wave1 dir xy, wave2 dir xy
     water_normal: vec4<f32>,    // normal scale xyz, w underwater fog density
+    water_air_vp: mat4x4<f32>,
+    water_air_inv_vp: mat4x4<f32>,
+    water_air: vec4<f32>,       // x: exterior capture available
     mirror_plane: vec4<f32>,    // n.xyz, d (0 normal = no mirror)
     mirror_box: mat4x4<f32>,    // world -> mirror probe box ([-0.5, 0.5]^3)
     // EEP sky (legacy haze model)
@@ -141,6 +144,9 @@ const SKELETON_ANCHOR: u32 = 160u;
 @group(0) @binding(6) var mirror_tex: texture_2d<f32>;
 @group(0) @binding(7) var scene_tex: texture_2d<f32>;
 @group(0) @binding(8) var depth_tex: texture_depth_2d;
+@group(0) @binding(20) var water_interface: texture_depth_2d;
+@group(0) @binding(21) var water_air_color: texture_2d<f32>;
+@group(0) @binding(22) var water_air_depth: texture_depth_2d;
 // GTAO's screen-space indirect light (gtao.rs), when SCREEN_INDIRECT
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
 
@@ -911,41 +917,121 @@ fn sky_clouds(dir: vec3<f32>) -> vec4<f32> {
 
 // ------------------------------------------------------------- water fog
 
-/// SL getWaterFogViewNoClip: in-scattered color (rgb) and transmittance (a)
-/// along the camera-relative segment to `pos_rel`.
-fn water_fog_view(pos_rel: vec3<f32>, kd: f32) -> vec4<f32> {
-    let view = normalize(pos_rel);
-    let w = frame.camera_pos.z - frame.params.y;
-    let es = max(-view.z, 1e-4);
-    let e0 = max(-w, 0.0);
-    var int_v = vec3<f32>(0.0);
-    if (w > 0.0) {
-        int_v = view * w / es;
+// The CPU inverts the shared Gerstner swell once per frame. Add the current
+// fine wake directly from its GPU field, without a readback or per-pixel swell.
+fn camera_water_level() -> f32 {
+    var level = frame.cam_up.w;
+    let separation = abs(level-frame.camera_pos.z);
+    // Only the waterline needs exact wake height. Fade its tiny fog-boundary
+    // adjustment outside that band, avoiding field fetches in the deep view.
+    if(separation<0.38 && !in_reflection_pass() && water_fx_on(16u)) {
+        let native_level = water_fx_bed(frame.camera_pos.xy).y;
+        level += clamp(water_wake_sample(frame.camera_pos.xy,native_level).z,-0.16,0.16)
+            *(1.0-smoothstep(0.16,0.38,separation));
     }
-    let l = max(length(pos_rel - int_v), 0.1);
-    let ks = frame.water_params.x;
-    let f = 0.98;
-    let t1 = -kd * pow(f, ks * e0);
-    let t2 = kd + ks * es;
-    let t3 = pow(f, t2 * l) - 1.0;
-    let lum = pow(max(min(t1 / t2 * t3, 1.0), 0.0), 1.0 / 1.7);
-    let dt = pow(0.98, l * kd);
-    return vec4<f32>(frame.water_fog.rgb * lum, dt);
+    return level;
+}
+
+// A submerged optical interval. Callers with an actual interface hit pass
+// that segment directly; only opaque source shading needs an air-plane clip.
+fn legacy_water_fog_segment(delta:vec3<f32>,kd:f32,depth:f32)->vec4<f32> {
+    if(kd<=0.0 || length(delta)<0.0001){return vec4<f32>(0.0,0.0,0.0,1.0);}
+    let view=normalize(delta);
+    let es=max(-view.z,0.0001);
+    let e0=max(depth,0.0);
+    let l=max(length(delta),0.1);
+    let ks=frame.water_params.x;
+    let t1=-kd*pow(0.98,ks*e0);
+    let t2=kd+ks*es;
+    let t3=pow(0.98,t2*l)-1.0;
+    let lum=pow(clamp(t1/t2*t3,0.0,1.0),1.0/1.7);
+    return vec4<f32>(frame.water_fog.rgb*lum,pow(0.98,l*kd));
+}
+
+fn legacy_water_fog_view(pos_rel:vec3<f32>,kd:f32)->vec4<f32> {
+    let depth=camera_water_level()-frame.camera_pos.z;
+    var end=pos_rel;
+    if(depth>0.0 && end.z>depth){end*=depth/max(end.z,0.0001);}
+    var entry=vec3<f32>(0.0);
+    if(depth<0.0 && length(end)>0.0001){
+        let view=normalize(end);entry=view*(-depth)/max(-view.z,0.0001);
+    }
+    return legacy_water_fog_segment(end-entry,kd,max(depth,0.0));
+}
+
+struct WaterFog {
+    color: vec3<f32>,
+    transmission: vec3<f32>,
+};
+
+fn water_fog_segment(delta:vec3<f32>,kd:f32,start_depth:f32,end_depth:f32)->WaterFog {
+    if(!water_fx_on(256u)) {
+        let legacy=legacy_water_fog_segment(delta,kd,start_depth);
+        return WaterFog(legacy.rgb,vec3<f32>(legacy.a));
+    }
+    let path=length(delta);
+    if(kd<=0.0 || path<0.0001){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
+    let tint=frame.water_fog.rgb/max(max(frame.water_fog.r,frame.water_fog.g),max(frame.water_fog.b,0.001));
+    let sigma=(vec3<f32>(0.14,0.055,0.032)+(vec3<f32>(1.0)-tint)*0.03)*kd;
+    let transmission=exp(-sigma*path);
+    let luma=vec3<f32>(0.2126,0.7152,0.0722);
+    let illumination=clamp(0.08+dot(frame.sky_zenith.rgb,luma)*0.7
+        +dot(frame.sun_color.rgb,luma)*max(frame.sun_dir.z,0.0)*0.14,0.04,1.2);
+    let mean_depth=(max(start_depth,0.0)+max(end_depth,0.0))*0.5;
+    let radiance=frame.water_fog.rgb*(2.5*illumination*exp(-mean_depth*0.035*kd));
+    return WaterFog(radiance*(vec3<f32>(1.0)-transmission),transmission);
+}
+
+fn water_fog_view(pos_rel:vec3<f32>,kd:f32)->WaterFog {
+    if(!water_fx_on(256u)) {
+        let legacy=legacy_water_fog_view(pos_rel,kd);
+        return WaterFog(legacy.rgb,vec3<f32>(legacy.a));
+    }
+    let depth=camera_water_level()-frame.camera_pos.z;
+    var start=vec3<f32>(0.0);
+    var end=pos_rel;
+    if(depth>0.0) {
+        if(end.z>depth){end*=depth/max(end.z,0.0001);}
+    } else {
+        if(end.z>=depth){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
+        start=end*clamp(depth/end.z,0.0,1.0);
+    }
+    // Attenuation follows metres of water, even with the eye a millimetre
+    // above/below the surface. An immersed endpoint still has a water path
+    // when a wave/mesh approximation classifies the eye just outside it.
+    return water_fog_segment(end-start,kd,max(depth-start.z,0.0),max(depth-end.z,0.0));
 }
 
 fn camera_underwater() -> bool {
-    return frame.camera_pos.z < frame.params.y && !in_reflection_pass();
+    if(in_reflection_pass()) { return false; }
+    let depth = frame.cam_up.w-frame.camera_pos.z;
+    // Outside the bounded wake height the side is already known. Ordinary
+    // above-water materials need no additional texture fetch for this test.
+    if(abs(depth)>0.16 || !water_fx_on(16u)) { return depth>0.0; }
+    return frame.camera_pos.z < camera_water_level();
 }
 
-fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    if (camera_underwater()) {
-        let wf = water_fog_view(world_pos - frame.camera_pos.xyz, frame.water_normal.w);
-        return col * wf.a + wf.rgb;
-    }
+fn water_scene_light(world_pos:vec3<f32>) -> vec3<f32> {
+    if(!water_fx_on(256u)) { return vec3<f32>(1.0); }
+    // Attenuate environmental lighting, leaving emissive/fullbright sources
+    // to lose their wavelengths along the view path only.
+    let depth = max(frame.params.y-world_pos.z,0.0);
+    return exp(-vec3<f32>(0.06,0.025,0.012)*depth*frame.water_normal.w);
+}
+
+fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     let dist = distance(world_pos, frame.camera_pos.xyz);
     let height_factor = exp(-max(world_pos.z - frame.params.y, 0.0) * 0.004);
     let f = 1.0 - exp(-dist * frame.fog.w * height_factor);
     return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
+}
+
+fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
+    if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
+        return col*wf.transmission+wf.color;
+    }
+    return apply_air_fog(col,world_pos);
 }
 
 // ------------------------------------------------------------- shadows
@@ -2110,4 +2196,141 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
         col += ll_pbr_light(projector_at(i, world_pos, n), n, v, f0, ra, nv, diffuse_color);
     }
     return col * ll_local_scale();
+}
+
+// Local water controls and history. Opaque GTAO depth is never overwritten.
+struct WaterFxControls { area: vec4<f32>, previous: vec4<f32>, clock: vec4<f32>, counts: vec4<u32> };
+struct WaterFxEvent { position: vec4<f32>, motion: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(15) var water_field: texture_2d<f32>;
+@group(0) @binding(16) var<storage, read> water_events: array<WaterFxEvent>;
+@group(0) @binding(17) var<uniform> water_fx: WaterFxControls;
+@group(0) @binding(18) var water_ground: texture_2d<f32>;
+@group(0) @binding(19) var water_light: texture_2d<f32>;
+fn water_fx_on(bit: u32) -> bool { return (water_fx.counts.z & bit) != 0u; }
+fn water_fx_uv(p: vec2<f32>) -> vec2<f32> { return (p - water_fx.area.xy) / max(water_fx.area.z,1.0); }
+fn water_fx_bed(p: vec2<f32>) -> vec2<f32> {
+    let uv = water_fx_uv(p);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return vec2<f32>(frame.params.y - 20.0, frame.params.y); }
+    let pos = clamp(uv * 64.0 - 0.5,vec2<f32>(0.0),vec2<f32>(63.0));
+    let i = vec2<i32>(floor(pos)); let j = min(i + vec2<i32>(1),vec2<i32>(63)); let f = fract(pos);
+    return mix(mix(textureLoad(water_ground,i,0).xy,textureLoad(water_ground,vec2<i32>(j.x,i.y),0).xy,f.x),
+        mix(textureLoad(water_ground,vec2<i32>(i.x,j.y),0).xy,textureLoad(water_ground,j,0).xy,f.x),f.y);
+}
+// Coarse height/velocity/foam above, fine slope/height/foam below. The
+// atlas keeps the existing scene bindings and sampler count unchanged.
+fn water_atlas_uv(uv:vec2<f32>)->vec2<f32> {
+    let pixel=0.5/f32(textureDimensions(water_field).x);
+    let clamped=clamp(uv,vec2<f32>(pixel),vec2<f32>(1.0-pixel));
+    return clamped*vec2<f32>(1.0,0.5);
+}
+fn water_wake_sample(p:vec2<f32>,level:f32)->vec4<f32> {
+    if(!water_fx_on(16u) || abs(level-water_fx_bed(p).y)>0.2){return vec4<f32>(0.0);}
+    let origin=water_fx.clock.zw;
+    let uv=(p-origin)/32.0;
+    if(any(uv<vec2<f32>(0.0)) || any(uv>vec2<f32>(1.0))){return vec4<f32>(0.0);}
+    let border=min(min(uv.x,uv.y),min(1.0-uv.x,1.0-uv.y));
+    return textureSampleLevel(water_field,lin_clamp,water_atlas_uv(uv)+vec2<f32>(0.0,0.5),0.0)*smoothstep(0.0,0.08,border);
+}
+fn water_fx_sample(p: vec2<f32>) -> vec4<f32> {
+    let uv = water_fx_uv(p);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return vec4<f32>(0.0); }
+    return textureSampleLevel(water_field,lin_clamp,water_atlas_uv(uv),0.0);
+}
+// Cubic B-spline reconstruction with four bilinear taps. Foam contours must
+// remain smooth when the interaction grid is much coarser than a screen pixel.
+fn water_fx_foam(p:vec2<f32>)->f32 {
+    let uv=water_fx_uv(p);
+    if(any(uv<vec2<f32>(0.0)) || any(uv>vec2<f32>(1.0))){return 0.0;}
+    let size=f32(textureDimensions(water_field).x);
+    let cell=uv*size-0.5;let base=floor(cell);let f=fract(cell);
+    let f2=f*f;let f3=f2*f;
+    let w0=(1.0-3.0*f+3.0*f2-f3)/6.0;
+    let w1=(4.0-6.0*f2+3.0*f3)/6.0;
+    let w2=(1.0+3.0*f+3.0*f2-3.0*f3)/6.0;
+    let w3=f3/6.0;let g0=w0+w1;let g1=w2+w3;
+    let a=(base-0.5+w1/g0)/size;let b=(base+1.5+w3/g1)/size;
+    return mix(mix(textureSampleLevel(water_field,lin_clamp,water_atlas_uv(a),0.0).z,
+        textureSampleLevel(water_field,lin_clamp,water_atlas_uv(vec2<f32>(b.x,a.y)),0.0).z,g1.x),
+        mix(textureSampleLevel(water_field,lin_clamp,water_atlas_uv(vec2<f32>(a.x,b.y)),0.0).z,
+        textureSampleLevel(water_field,lin_clamp,water_atlas_uv(b),0.0).z,g1.x),g1.y);
+}
+// Long wavelengths are resolved by the shared mesh; micro-waves stay in normals.
+fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
+    var offset=vec3<f32>(0.0);
+    if(water_fx_on(1u)) {
+        offset+=water_swell(p,frame.camera_pos.w,water_fx.counts.w).offset*smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+    }
+    offset.z+=clamp(water_wake_sample(p+offset.xy,level).z,-0.16,0.16);
+    return offset;
+}
+fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>)->vec3<f32> {
+    var gradient=vec2<f32>(0.0);
+    if(water_fx_on(1u)) {
+        gradient=water_swell(p,frame.camera_pos.w,water_fx.counts.w).gradient;
+        gradient*=smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+    }
+    if(water_fx_on(16u)) {
+        let texel=water_fx.area.z/f32(textureDimensions(water_field).x);
+        gradient+=vec2<f32>(water_fx_sample(p+vec2<f32>(texel,0.0)).x-water_fx_sample(p-vec2<f32>(texel,0.0)).x,
+            water_fx_sample(p+vec2<f32>(0.0,texel)).x-water_fx_sample(p-vec2<f32>(0.0,texel)).x)/max(2.0*texel,0.01);
+    }
+    return vec3<f32>(-gradient-wake,0.0);
+}
+fn water_hash_u32(value:u32)->f32 {
+    var h=value;
+    h=(h^(h>>16u))*0x7feb352du;
+    h=(h^(h>>15u))*0x846ca68bu;
+    return f32((h^(h>>16u))>>8u)/16777216.0;
+}
+fn water_fx_hash(p: vec2<f32>) -> vec2<f32> {
+    // Sine/multiply hashes lose their fractional precision at world-space
+    // foam frequencies and produce visible repeating blocks and dotted rows.
+    let bits=bitcast<vec2<u32>>(p);
+    return vec2<f32>(water_hash_u32(bits.x^(bits.y*0x9e3779b9u)),
+        water_hash_u32(bits.y^(bits.x*0x85ebca6bu)^0x68bc21ebu));
+}
+// A global constant avoids Naga re-emitting a local splat when specializing
+// masked/blended pipelines. The alpha specialization regression covers this.
+const WATER_CAUSTIC_FILTER:vec2<f32>=vec2<f32>(0.4/256.0,0.4/256.0);
+fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+    if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
+    let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
+    if(depth<0.03 || depth>18.0 || frame.sky_sun.z<0.05 || frame.sun_dir.w<0.01){return vec3<f32>(0.0);}
+    let light=normalize(frame.sun_dir.xyz);
+    let ray=refract(-light,vec3<f32>(0.0,0.0,1.0),0.7501875);
+    var project=pos.xy-ray.xy*depth/max(-ray.z,0.2);
+    project-=water_swell(project,frame.camera_pos.w,water_fx.counts.w).gradient*min(depth,7.0)*0.25;
+    let uv=fract(project/16.0);
+    var focus=textureSampleLevel(water_light,lin_clamp,uv,0.0).rgb;
+    if(water_fx.counts.w>0u){
+        focus=(textureSampleLevel(water_light,lin_clamp,fract(uv+WATER_CAUSTIC_FILTER),0.0).rgb+textureSampleLevel(water_light,lin_clamp,fract(uv-WATER_CAUSTIC_FILTER),0.0).rgb
+            +textureSampleLevel(water_light,lin_clamp,fract(uv+vec2<f32>(WATER_CAUSTIC_FILTER.x,-WATER_CAUSTIC_FILTER.y)),0.0).rgb+textureSampleLevel(water_light,lin_clamp,fract(uv+vec2<f32>(-WATER_CAUSTIC_FILTER.x,WATER_CAUSTIC_FILTER.y)),0.0).rgb)*0.25;
+    }
+    var intensity=mix(focus.r,focus.g,smoothstep(0.75,2.5,depth));
+    if(depth>2.5){intensity=mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
+    let energy=max(intensity-0.9,0.0)*0.42;
+    let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
+    let shadow=shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
+    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*shadow*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+}
+
+fn water_fx_noise(p: vec2<f32>) -> f32 {
+    let i=floor(p);let f=fract(p);let w=f*f*(3.0-2.0*f);
+    return mix(mix(water_fx_hash(i).x,water_fx_hash(i+vec2<f32>(1.0,0.0)).x,w.x),
+        mix(water_fx_hash(i+vec2<f32>(0.0,1.0)).x,water_fx_hash(i+vec2<f32>(1.0,1.0)).x,w.x),w.y);
+}
+
+// Continuous torn coverage and filtered fine grain, without a lattice of holes.
+fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
+    if(amount<0.08){return 0.0;}
+    let drift=p-vec2<f32>(frame.camera_pos.w*0.09,frame.camera_pos.w*0.035);
+    let warp=vec2<f32>(water_fx_noise(drift*1.3),water_fx_noise(drift*1.3+7.4));
+    let q=drift+(warp-0.5)*0.7;
+    let rotated=vec2<f32>(q.x*0.8-q.y*0.6,q.x*0.6+q.y*0.8);
+    let medium=mix(water_fx_noise(rotated*3.7),0.5,smoothstep(0.04,0.18,footprint));
+    let fine=mix(water_fx_noise(q*11.3),0.5,smoothstep(0.012,0.07,footprint));
+    let structure=water_fx_noise(q*0.9)*0.55+medium*0.3+fine*0.15;
+    let coverage=smoothstep(0.08,0.75,amount)*smoothstep(0.28,0.72,structure);
+    let grain=mix(0.84,0.5+0.5*water_fx_noise(rotated*38.0),1.0-smoothstep(0.004,0.025,footprint));
+    return coverage*grain;
 }

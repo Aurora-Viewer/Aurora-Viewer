@@ -1151,6 +1151,42 @@ fn swim_control_forwarding_requires_a_recent_confirmed_motor_and_ignores_chat_re
         !sim.bridge.captures_motion(sim.now),
         "the short exit climb is not a persistent capture"
     );
+    sim.bridge.motion = Motion::motor(13, 3.2, 1.7);
+    assert!(
+        sim.bridge.captures_motion(sim.now),
+        "a recent compatible capture still owns the controls"
+    );
+    sim.step();
+    assert!(sim.bridge.captures_motion(sim.now));
+}
+
+#[test]
+fn first_dive_edge_is_forwarded_while_its_http_command_is_pending() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.bridge.motion = Motion::motor(3, 5.0, 1.7);
+    sim.step();
+    // The edge may arrive while a periodic surface refresh is awaiting HTTP.
+    sim.now += Duration::from_millis(500);
+    sim.bridge.send_mode(&sim.prefs, sim.now);
+    let old_request = sim.bridge.pending.unwrap().0;
+    sim.bridge.motion = Motion::motor(7, 5.0, 1.7);
+    sim.bridge.motion.parameters[2] = -1.95;
+    assert!(sim.bridge.captures_motion(sim.now));
+    let flags = aurora_net::control::UP_NEG | aurora_net::control::FAST_UP;
+    assert_eq!(
+        crate::movement::controls(flags, crate::movement::State::Submerged, sim.bridge.captures_motion(sim.now)),
+        aurora_net::control::UP_NEG
+    );
+    sim.bridge.send_mode(&sim.prefs, sim.now);
+    assert!(sim.bridge.pending.is_some());
+    assert_ne!(sim.bridge.pending.unwrap().0, old_request);
+    assert!(sim.bridge.captures_motion(sim.now));
+    sim.now += Duration::from_millis(1100);
+    assert!(
+        !sim.bridge.captures_motion(sim.now),
+        "an unconfirmed transition cannot renew capture indefinitely"
+    );
 }
 
 #[test]
@@ -1210,6 +1246,24 @@ fn motion_release_supersedes_a_delayed_request_without_waiting_for_its_ack() {
 }
 
 #[test]
+fn cancelling_an_unconfirmed_motor_sends_release_even_if_the_last_ack_was_idle() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.bridge.motion = Motion::motor(3, 5.0, 1.7);
+    sim.bridge.send_mode(&sim.prefs, sim.now);
+    let old = sim.bridge.pending.unwrap();
+    sim.bridge.motion = Motion::default();
+    sim.bridge.send_mode(&sim.prefs, sim.now + Duration::from_millis(10));
+    let (request, sequence, mode) = sim.bridge.pending.unwrap();
+    assert_ne!(request, old.0);
+    assert!(sequence > old.1);
+    assert_eq!(
+        mode.2.mode, 0,
+        "the unacknowledged surface command may already have captured controls"
+    );
+}
+
+#[test]
 fn existing_root_bridge_is_moved_into_the_subfolder_and_reused() {
     let mut sim = Simulator::new();
     sim.ready();
@@ -1244,6 +1298,35 @@ fn account_preferences_roundtrip_and_old_settings_default_to_unlocked() {
     let old: crate::settings::Settings = serde_json::from_str("{}").expect("old settings");
     assert!(old.bridge.is_empty());
     assert!(!Preferences::default().enabled);
+    assert_eq!(Preferences::default().mode, LockMode::Bridge);
+    let old: Preferences = serde_json::from_str(r#"{"enabled":true,"indicator":false}"#).expect("old account");
+    assert!(old.enabled);
+    assert_eq!(old.mode, LockMode::Bridge);
+    let native = Preferences {
+        mode: LockMode::NativeSit,
+        ..prefs
+    };
+    assert_eq!(
+        serde_json::from_str::<Preferences>(&serde_json::to_string(&native).expect("save")).expect("load"),
+        native
+    );
+}
+
+#[test]
+fn native_movelock_disables_the_bridge_anchor_without_disabling_movement_services() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    assert!(sim.bridge.locked());
+    sim.prefs.mode = LockMode::NativeSit;
+    sim.bridge.motion = Motion::motor(2, 1.0, 1.7);
+    sim.step();
+    assert!(sim.prefs.enabled, "the user selection remains enabled");
+    assert!(!sim.bridge.ack.enabled);
+    assert!(!sim.bridge.locked());
+    assert_eq!(sim.bridge.sent.expect("sent mode").2.mode, 2);
+    sim.prefs.mode = LockMode::Bridge;
+    sim.step();
+    assert!(sim.bridge.ack.enabled);
 }
 
 #[test]

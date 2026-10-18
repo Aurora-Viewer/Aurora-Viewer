@@ -436,6 +436,16 @@ impl AgentState {
         }
     }
 
+    /// Motion left in visual smoothing after a simulator stop. The legacy
+    /// path's exponential convergence still moves us even with zero velocity.
+    pub fn settling_velocity(&self) -> Vec3 {
+        if self.predicting {
+            self.glide
+        } else {
+            (self.predicted_pos - self.position) * (std::f32::consts::LN_2 / OBJECT_DAMPING_TIME)
+        }
+    }
+
     /// Move from server velocity/acceleration, never from the keyboard. The
     /// simulator can omit avatar updates while its trajectory remains valid:
     /// only a silent circuit enables the 2 s / 3 s phase-out, as in Firestorm.

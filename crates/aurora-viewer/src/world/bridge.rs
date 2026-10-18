@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.21";
+const VERSION: &str = "1.27";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -34,16 +34,25 @@ pub mod demo;
 mod tests;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LockMode {
+    Bridge,
+    NativeSit,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Preferences {
     pub enabled: bool,
     pub indicator: bool,
+    pub mode: LockMode,
 }
 impl Default for Preferences {
     fn default() -> Self {
         Self {
             enabled: false,
             indicator: true,
+            mode: LockMode::Bridge,
         }
     }
 }
@@ -219,8 +228,10 @@ impl Bridge {
     pub fn captures_motion(&self, now: Instant) -> bool {
         self.available()
             && !self.ack.seated
-            && matches!(self.motion.mode, 3 | 6 | 7 | 8 | 9 | 10)
-            && self.sent.is_some_and(|mode| mode.2.mode == self.motion.mode)
+            && matches!(self.motion.mode, 3 | 6 | 7 | 8 | 9 | 10 | 13)
+            // A confirmed surface capture remains valid while its dive/return
+            // command is in flight. Masking that first edge added an HTTP RTT.
+            && self.sent.is_some_and(|mode| matches!(mode.2.mode, 3 | 6 | 7 | 8 | 9 | 10 | 13))
             && self.capture_sent.is_some_and(|at| now.duration_since(at) < Duration::from_secs(1))
     }
     fn enter(&mut self, phase: Phase, now: Instant) {
@@ -878,25 +889,28 @@ impl Bridge {
             return;
         }
         let motion = if self.motion.valid() { self.motion } else { Motion::default() };
-        let mode = (prefs.enabled, true, motion);
+        let enabled = prefs.enabled && prefs.mode == LockMode::Bridge;
+        let mode = (enabled, true, motion);
         // Release / lock transitions must not sit behind a slow HTTP reply.
         // A higher sequence supersedes the older command on the simulator;
         // its late acknowledgement is ignored by the receive path.
-        if let Some((_, _, pending)) = self.pending
-            && (pending.0 != mode.0 || pending.1 != mode.1 || pending.2.mode != motion.mode)
-        {
+        let supersedes = self
+            .pending
+            .is_some_and(|(_, _, pending)| pending.0 != mode.0 || pending.1 != mode.1 || pending.2.mode != motion.mode);
+        if supersedes {
             self.pending = None;
-            self.sent = None;
         }
         let interval = Duration::from_millis(500);
         if self.pending.is_some()
-            || (self
-                .last_send
-                .is_some_and(|last| now.duration_since(last) < Duration::from_millis(500))
-                && self
-                    .sent
-                    .is_some_and(|last| last.0 == mode.0 && last.1 == mode.1 && last.2.mode == mode.2.mode))
-            || (self.sent == Some(mode) && (motion.mode == 0 || self.last_send.is_some_and(|last| now.duration_since(last) < interval)))
+            || (!supersedes
+                && ((self
+                    .last_send
+                    .is_some_and(|last| now.duration_since(last) < Duration::from_millis(500))
+                    && self
+                        .sent
+                        .is_some_and(|last| last.0 == mode.0 && last.1 == mode.1 && last.2.mode == mode.2.mode))
+                    || (self.sent == Some(mode)
+                        && (motion.mode == 0 || self.last_send.is_some_and(|last| now.duration_since(last) < interval)))))
         {
             return;
         }
@@ -910,7 +924,7 @@ impl Bridge {
             command: Command {
                 endpoint,
                 sequence: self.sequence,
-                enabled: prefs.enabled,
+                enabled,
                 relock: true,
                 motion,
             },

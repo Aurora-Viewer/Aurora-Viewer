@@ -38,7 +38,6 @@ impl Dialog {
         inventory::valid_name(&self.name)?;
         let c = set.states.get(&self.state);
         if set.id != self.set
-            || self.state.swimming()
             || self
                 .rename
                 .is_some_and(|id| c.is_none_or(|c| inventory::editor::container_members(c, id).is_err()))

@@ -1001,22 +1001,18 @@ impl KeyBindings {
             })
     }
 
-    pub fn pass_wall_label(&self) -> String {
-        let explicit: Vec<_> = self.get(Action::PassWall).into_iter().flatten().collect();
-        let bindings = if explicit.is_empty() {
-            self.get(Action::Up)
-                .into_iter()
-                .flatten()
-                .filter(|b| !b.ctrl && !b.alt && !b.shift)
-                .map(|mut b| {
-                    b.ctrl = true;
-                    b
-                })
-                .collect()
-        } else {
-            explicit
-        };
-        bindings.iter().map(Binding::label).collect::<Vec<_>>().join(" / ")
+    /// Explicit passage bindings, or Ctrl plus unmodified jump bindings.
+    pub fn pass_wall_bindings(&self) -> [Option<Binding>; 2] {
+        let explicit = self.get(Action::PassWall);
+        if explicit.iter().any(Option::is_some) {
+            return explicit;
+        }
+        self.get(Action::Up).map(|binding| {
+            binding.filter(|b| !b.ctrl && !b.alt && !b.shift).map(|mut b| {
+                b.ctrl = true;
+                b
+            })
+        })
     }
 
     /// The held actions an input belongs to (double-tap running).
@@ -1629,6 +1625,27 @@ mod tests {
 #[cfg(test)]
 mod passage_tests {
     use super::*;
+    #[test]
+    fn passage_keycaps_keep_custom_secondary_mouse_and_unassigned_bindings() {
+        let mut keys = KeyBindings::default();
+        keys.set(Action::Up, 0, k(KeyCode::F10));
+        keys.set(Action::Up, 1, kalt(KeyCode::F11, false, false));
+        assert_eq!(keys.pass_wall_bindings(), [kmod(KeyCode::F10, true, false), None]);
+        let mouse = Binding::captured(
+            Input::Mouse("Other9".into()),
+            Mods {
+                shift: true,
+                ..Default::default()
+            },
+        );
+        keys.set(Action::PassWall, 0, None);
+        keys.set(Action::PassWall, 1, Some(mouse.clone()));
+        assert_eq!(keys.pass_wall_bindings(), [None, Some(mouse)]);
+        keys.set(Action::PassWall, 1, None);
+        keys.set(Action::Up, 0, None);
+        assert_eq!(keys.pass_wall_bindings(), [None, None]);
+    }
+
     #[test]
     fn passage_follows_jump_rebindings_without_overriding_another_shortcut() {
         let mut keys = KeyBindings::default();
