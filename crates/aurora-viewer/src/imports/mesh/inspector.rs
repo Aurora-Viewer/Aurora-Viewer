@@ -6,7 +6,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone, Default)]
 pub struct Avatar {
-    pub joints: BTreeMap<String, BTreeMap<String, Option<[f32; 3]>>>,
+    // Model names are display labels, not unique identifiers.
+    pub joints: BTreeMap<String, Vec<(String, Option<[f32; 3]>)>>,
     pub has_skin: bool,
     pub unknown: bool,
     pub too_many: bool,
@@ -27,16 +28,19 @@ impl Avatar {
                     (position.is_finite() && joint.is_some_and(|j| j.pos.distance_squared(position) > 0.0001f32.powi(2)))
                         .then_some(position.to_array())
                 });
-                result.joints.entry(name.clone()).or_default().insert(model.name.clone(), position);
+                result.joints.entry(name.clone()).or_default().push((model.name.clone(), position));
             }
+        }
+        for models in result.joints.values_mut() {
+            models.sort_by(|a, b| a.0.cmp(&b.0));
         }
         result
     }
     pub fn valid(&self) -> bool {
         self.has_skin && !self.unknown && !self.too_many
     }
-    pub fn conflicts(models: &BTreeMap<String, Option<[f32; 3]>>) -> bool {
-        let mut positions = models.values().flatten();
+    pub fn conflicts(models: &[(String, Option<[f32; 3]>)]) -> bool {
+        let mut positions = models.iter().filter_map(|(_, position)| position.as_ref());
         let Some(first) = positions.next() else { return false };
         positions.any(|position| glam::Vec3::from_array(*first).distance_squared(glam::Vec3::from_array(*position)) > 0.0001f32.powi(2))
     }
@@ -148,11 +152,45 @@ mod tests {
     }
     #[test]
     fn conflict_threshold_ignores_missing_and_matching_overrides() {
-        let mut models = BTreeMap::from([("a".into(), Some([0.0, 0.0, 0.02])), ("b".into(), None)]);
+        let mut models = vec![("a".into(), Some([0.0, 0.0, 0.02])), ("b".into(), None)];
         assert!(!Avatar::conflicts(&models));
-        models.insert("b".into(), Some([0.0, 0.0, 0.02001]));
+        models[1].1 = Some([0.0, 0.0, 0.02001]);
         assert!(!Avatar::conflicts(&models));
-        models.insert("b".into(), Some([0.0, 0.0, 0.04]));
+        models[1].1 = Some([0.0, 0.0, 0.04]);
         assert!(Avatar::conflicts(&models));
+    }
+
+    #[test]
+    fn repeated_model_names_keep_every_joint_position_and_conflict() {
+        use aurora_assets::import_mesh::{Model, Skin};
+        use glam::{Mat4, Vec3};
+        let scene = Scene {
+            models: [0.02, 0.04]
+                .into_iter()
+                .map(|z| Model {
+                    name: "Repeated".into(),
+                    submodel: 0,
+                    faces: Vec::new(),
+                    skin: Some(Skin {
+                        names: vec!["mPelvis".into()],
+                        inverse_bind: vec![Mat4::IDENTITY],
+                        alternate_bind: vec![Mat4::from_translation(Vec3::new(0.0, 0.0, z))],
+                        bind_shape: Mat4::IDENTITY,
+                        pelvis_offset: 0.0,
+                    }),
+                    center: Vec3::ZERO,
+                    size: Vec3::ONE,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let avatar = Avatar::new(&scene);
+        assert!(avatar.valid());
+        let models = &avatar.joints["mPelvis"];
+        assert_eq!(models.len(), 2);
+        assert!(models.iter().all(|(name, _)| name == "Repeated"));
+        assert_eq!(models[0].1, Some([0.0, 0.0, 0.02]));
+        assert_eq!(models[1].1, Some([0.0, 0.0, 0.04]));
+        assert!(Avatar::conflicts(models));
     }
 }
