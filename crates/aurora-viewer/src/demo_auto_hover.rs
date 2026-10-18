@@ -8,6 +8,7 @@ use glam::Mat4;
 pub const LEFT: u32 = 9350;
 pub const RIGHT: u32 = 9351;
 pub const HEEL: u32 = 9352;
+pub const STILT: u32 = 9353;
 pub const MESH: Uuid = Uuid::from_u128(0xd0d0_aaaa_0000_0000_0000_0000_0000_9350);
 
 pub fn rigid_objects() -> Vec<ObjectUpdate> {
@@ -29,6 +30,15 @@ pub fn rigid_objects() -> Vec<ObjectUpdate> {
     heel.position = Vec3::new(-0.07, 0.0, -0.10);
     heel.scale = Vec3::new(0.08, 0.08, 0.10);
     vec![left, right, heel]
+}
+
+pub fn stilt(length: f32) -> ObjectUpdate {
+    let mut object = rigid_objects().remove(0);
+    object.local_id = STILT;
+    object.full_id = u(STILT.into());
+    object.position = Vec3::new(0.0, 0.0, -0.5 * length);
+    object.scale = Vec3::new(0.1, 0.1, length);
+    object
 }
 
 /// Raw foot-space model, before normalization and asset quantization.
@@ -116,6 +126,54 @@ pub fn install_mesh(lib: &AvatarLibrary, scene: &mut Scene) -> Result<(), aurora
     Ok(())
 }
 
+/// Move the rest origin without changing the mesh or its inverse binds.
+pub fn shift_pelvis(lib: &AvatarLibrary, scene: &mut Scene, shift: Vec3) -> Option<()> {
+    let mesh = scene.meshes.view(&MESH)?;
+    let mut skin = mesh.skin.as_deref()?.clone();
+    skin.lock_scale_if_joint_position = false;
+    skin.alt_inverse_bind = skin
+        .joint_names
+        .iter()
+        .map(|name| {
+            Mat4::from_translation(if name == "mPelvis" {
+                shift
+            } else {
+                lib.rig.local_pos[lib.rig.names[name]]
+            })
+        })
+        .collect();
+    scene
+        .meshes
+        .insert_local(MESH, Arc::new(mesh.bytes.first()?.to_vec()), mesh.header, Some(Arc::new(skin)));
+    Some(())
+}
+
+/// Absolute pelvis tracks replace mesh root offsets during normal animation.
+pub fn hold_pelvis(world: &mut crate::world::World, scene: &mut Scene) {
+    const ANIM: Uuid = Uuid::from_u128(0x0585_aaaa);
+    let mut animation = super::idle_animation();
+    animation.base_priority = 4;
+    animation.ease_in = 0.0;
+    animation.joints = vec![aurora_assets::anim::JointMotion {
+        joint_name: "mPelvis".into(),
+        priority: 4,
+        rot_keys: Vec::new(),
+        pos_keys: vec![aurora_assets::anim::PosKey {
+            time: 0.0,
+            position: Vec3::ZERO,
+        }],
+    }];
+    scene.anims.insert(
+        ANIM,
+        Arc::new(crate::scene::anim::BoundAnim::bind(animation, &world.avatar_lib.rig)),
+    );
+    world.apply(NetEvent::AvatarAnimations {
+        avatar: world.agent_id,
+        sources: Vec::new(),
+        anims: vec![(ANIM, 1)],
+    });
+}
+
 pub fn rigged_object() -> ObjectUpdate {
     let mut o = worn::root();
     o.local_id = LEFT;
@@ -134,34 +192,66 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     if !mode.starts_with("auto-") {
         return;
     }
+    if frame >= 600
+        && let Some(height) = scene.automatic_hover_box_height(world)
+    {
+        // This fixture's local physics stands the SAME shape-derived box on
+        // the plaza. The general demo simulator's fixed 0.84 m centre height
+        // otherwise gives every hover capture an unrelated ~10 cm sink.
+        let position = world.agent.position;
+        world.agent.position.z = super::floor_at(position.x, position.y) + 0.5 * height;
+        if let Some(avatar) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get_mut(i)) {
+            avatar.position = world.agent.position;
+        }
+    }
     if frame == 600
         && let Some(avatar) = world
             .objects
             .index_of_uuid(&world.agent_id)
             .and_then(|index| world.objects.get_mut(index))
     {
-        // Match AgentState::simulate_locally's 0.84 m centre clearance.
-        // The generic avatar fixture reports 1.9 m despite this physics.
-        avatar.scale.z = if matches!(mode, "auto-contact" | "auto-offset") {
-            1.48
-        } else {
-            1.68
-        };
+        // Deliberately differ from the shape-derived physical box: auto hover
+        // must not use this streamed object's size as its standing reference.
+        avatar.scale.z = 1.68;
     }
     if frame >= 600 && matches!(mode, "auto-contact" | "auto-offset") {
-        // A 10 cm collision margin: physical half-height is 0.74 m while
-        // the simulated centre actually stands 0.84 m above the ground.
-        // The demo stands on its plaza platform, above the terrain below.
-        // Use the same floor as its local movement simulator.
+        // Deliberately delayed and inconsistent contacts must never change
+        // the avatar-only calibration or suppress automatic offset edits.
         let position = world.agent.position;
-        let plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, super::floor_at(position.x, position.y)));
+        let floor = super::floor_at(position.x, position.y);
+        let plane = match frame {
+            600..=719 => None,
+            720..=839 => Some(glam::Vec4::new(0.0, 0.0, 1.0, floor + 0.4)),
+            840..=959 => Some(glam::Vec4::ZERO),
+            _ => Some(glam::Vec4::new(0.0, 0.0, 1.0, floor - 0.3)),
+        };
         if let Some(avatar) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get_mut(i)) {
             avatar.foot_plane = plane;
             avatar.position = world.agent.position;
         }
     }
+    if mode == "auto-state" {
+        match frame {
+            720 => {
+                world.agent.flying = true;
+                if let Some(avatar) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get_mut(i)) {
+                    avatar.scale.z = 12.0;
+                }
+            }
+            840 => world.agent.flying = false,
+            960 => {
+                if let Some(avatar) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get_mut(i)) {
+                    avatar.scale.z = 0.5;
+                }
+            }
+            _ => {}
+        }
+    }
     if frame == 620 {
-        let objects = if matches!(mode, "auto-rigged" | "auto-contact" | "auto-offset") {
+        let objects = if matches!(
+            mode,
+            "auto-rigged" | "auto-contact" | "auto-offset" | "auto-state" | "auto-pelvis" | "auto-stilt"
+        ) {
             if let Err(error) = install_mesh(&world.avatar_lib, scene) {
                 log::warn!("demo auto hover: {error}");
                 return;
@@ -171,6 +261,32 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
             rigid_objects()
         };
         world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+        if matches!(mode, "auto-pelvis" | "auto-stilt") {
+            hold_pelvis(world, scene);
+        }
+    }
+    if mode == "auto-stilt" && matches!(frame, 720 | 840) {
+        let length = if frame == 720 { 0.6 } else { 1.2 };
+        world.apply(NetEvent::ObjectUpdates {
+            handle: HANDLE,
+            objects: vec![stilt(length)],
+        });
+    }
+    if mode == "auto-stilt" && frame == 960 {
+        world.apply(NetEvent::ObjectsKilled {
+            handle: HANDLE,
+            local_ids: vec![STILT],
+        });
+    }
+    if mode == "auto-pelvis" && matches!(frame, 720 | 840 | 960) {
+        let z = match frame {
+            720 => 10.53,
+            840 => -8.0,
+            _ => 0.0,
+        };
+        if shift_pelvis(&world.avatar_lib, scene, Vec3::Z * z).is_none() {
+            log::warn!("demo auto hover: pelvis fixture unavailable");
+        }
     }
     if frame == 940 && matches!(mode, "auto-cycle" | "auto-offset") {
         world.apply(NetEvent::ObjectsKilled {

@@ -4492,16 +4492,23 @@ impl Scene {
         } else {
             (rig.local_pos.clone(), rig.scale.clone(), 0.0)
         };
-        overrides.apply(&rig, &mut local_pos, &mut scale);
-        let shape_dz = if avatar {
-            if seated {
-                0.0
-            } else {
-                let (pelvis_to_foot, height) = shape::body_size(&rig, &local_pos, &scale);
-                hover + overrides.pelvis_fixup() - (0.5 * height - pelvis_to_foot)
-            }
+        // Server baking derives the standing agent size from the wearables,
+        // before local mesh joint overrides; it never sees those mesh assets.
+        let neutral_body_height = if avatar {
+            shape::body_size(&rig, &local_pos, &scale).1
         } else {
-            overrides.pelvis_fixup()
+            0.0
+        };
+        overrides.apply(&rig, &mut local_pos, &mut scale);
+        let (shape_dz, neutral_root_height) = if avatar {
+            let (pelvis_to_foot, height) = shape::body_size(&rig, &local_pos, &scale);
+            let standing = hover + overrides.pelvis_fixup() - (0.5 * height - pelvis_to_foot);
+            // Neutral geometry and the physical centre share one coordinate
+            // frame, including arbitrary mesh pelvis translations. Seating
+            // changes only the live rendered root, never this standing model.
+            (if seated { 0.0 } else { standing }, local_pos[rig.pelvis].z - standing)
+        } else {
+            (overrides.pelvis_fixup(), 0.0)
         };
         let base = Arc::new(anim::SkeletonBase { local_pos, scale });
         self.skeletons.insert(
@@ -4512,6 +4519,9 @@ impl Scene {
                 signature,
                 base: base.clone(),
                 shape_dz,
+                neutral_root_height,
+                neutral_body_height,
+                neutral_shape_hover: hover,
                 members,
             },
         );
@@ -4986,6 +4996,11 @@ struct AvatarSkeleton {
     appearance_gen: u64,
     base: Arc<anim::SkeletonBase>,
     shape_dz: f32,
+    /// Neutral pelvis minus the standing rendered root offset.
+    neutral_root_height: f32,
+    /// Shape-only body height, before mesh overrides, as used by server baking.
+    neutral_body_height: f32,
+    neutral_shape_hover: f32,
     /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
     members: Vec<usize>,
 }
