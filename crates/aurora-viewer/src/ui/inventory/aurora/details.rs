@@ -15,7 +15,7 @@ use egui::{Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
 
 /// The height of the card.
-pub const STRIP: f32 = 108.0;
+pub const STRIP: f32 = 118.0;
 const BUTTON: f32 = 26.0;
 
 /// The main action of an item: what its double-click does, by name.

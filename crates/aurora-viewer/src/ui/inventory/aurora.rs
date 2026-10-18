@@ -239,6 +239,31 @@ fn row_menu(
     }
 }
 
+/// Lay `body` out in exactly `height` of the room left: the list keeps the
+/// size it is given, whatever it shows (a list measuring a pixel more than
+/// its room made a resizable window grow at every frame).
+fn in_rect<R>(ui: &mut egui::Ui, rect: Rect, salt: &str, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .id_salt(salt)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    body(&mut child)
+}
+
+/// The room left, split into the list and a foot `foot` high under it,
+/// `GAP` apart: together exactly the room, whatever they draw.
+fn list_and_foot(ui: &egui::Ui, foot: f32) -> (Rect, Rect, Rect) {
+    const GAP: f32 = 6.0;
+    let room = ui.available_rect_before_wrap();
+    let split = (room.bottom() - foot).max(room.top() + 60.0);
+    let list = Rect::from_min_max(room.min, egui::pos2(room.right(), split - GAP));
+    let foot = Rect::from_min_max(egui::pos2(room.left(), split), room.max);
+    (room, list, foot)
+}
+
 /// The narrow window: tabs, search, the tree, the selection's card.
 #[allow(clippy::too_many_arguments)]
 fn compact(
@@ -258,17 +283,34 @@ fn compact(
     ui.add_space(4.0);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let message = toolbar::message(p, st);
-    let below = details::STRIP + 8.0 + if message.is_some() { toolbar::MESSAGE } else { 0.0 };
-    let list_h = (ui.available_height() - below).max(60.0);
-    let out = list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, false);
+    let foot_h = details::STRIP + if message.is_some() { toolbar::MESSAGE } else { 0.0 };
+    let (room, list_rect, foot) = list_and_foot(ui, foot_h);
+    let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+        list(
+            ui,
+            p,
+            icons,
+            inv,
+            st,
+            prefs,
+            facts,
+            actions,
+            list_rect.height(),
+            root,
+            filtered,
+            false,
+        )
+    });
     let zone = ui.interact(out.inner_rect, ui.id().with("aurora_list_zone"), Sense::hover());
     task_drop::target(ui, p, &zone, inv, root, prefs, actions);
     drag::target(ui, p, &zone, inv, root, st, prefs, facts, actions);
-    if let Some((text, color)) = message {
-        toolbar::message_line(ui, st, &text, color);
-    }
-    ui.add_space(6.0);
-    details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
+    in_rect(ui, foot, "aurora_inventory_foot", |ui| {
+        if let Some((text, color)) = message {
+            toolbar::message_line(ui, st, &text, color);
+        }
+        details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
+    });
+    ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
 }
 
@@ -348,11 +390,12 @@ fn explorer_list(
     ui.add_space(2.0);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let message = toolbar::message(p, st);
-    let below = match layout {
-        Layout::Medium => details::STRIP + 8.0 + if message.is_some() { toolbar::MESSAGE } else { 0.0 },
+    let foot_h = match layout {
+        Layout::Medium => details::STRIP + if message.is_some() { toolbar::MESSAGE } else { 0.0 },
         _ => toolbar::STATUS,
     };
-    let list_h = (ui.available_height() - below).max(60.0);
+    let (room, list_rect, foot) = list_and_foot(ui, foot_h);
+    let list_h = list_rect.height();
     let explore = !filtered && !root.is_nil();
     let target = if explore { st.browse } else { root };
     let out = if explore {
@@ -375,29 +418,33 @@ fn explorer_list(
         if let Some(frame) = &mut st.aurora {
             frame.explorer = true;
         }
-        let out = list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false);
+        let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+            list(ui, p, icons, inv, st, prefs, facts, actions, list_h, browse, false, false)
+        });
         if let Some(frame) = &mut st.aurora {
             frame.explorer = false;
         }
         std::mem::swap(&mut st.plain, &mut st.flat);
         out
     } else {
-        list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, false)
+        in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
+            list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, false)
+        })
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
     let zone = ui.interact(out.inner_rect, ui.id().with("aurora_list_zone"), Sense::hover());
     task_drop::target(ui, p, &zone, inv, target, prefs, actions);
     drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
-    match layout {
+    in_rect(ui, foot, "aurora_inventory_foot", |ui| match layout {
         Layout::Medium => {
             if let Some((text, color)) = message {
                 toolbar::message_line(ui, st, &text, color);
             }
-            ui.add_space(6.0);
             details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
         }
         _ => toolbar::status_bar(ui, p, st, explore, message),
-    }
+    });
+    ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
 }
 
@@ -559,6 +606,39 @@ mod tests {
             h.st.search.clear();
             h.st.hide_details = true;
             h.frames(2);
+        }
+    }
+
+    #[test]
+    fn no_tab_makes_the_window_grow() {
+        for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
+            for (tab, received) in [
+                (0, false),
+                (2, false),
+                (3, false),
+                (4, false),
+                (RECEIVED_TAB, false),
+                (RECEIVED_TAB, true),
+            ] {
+                let mut h = Harness::new(width);
+                if received {
+                    crate::world::inventory::demo::seed_received(&mut h.inv, Uuid::from_u128(2));
+                }
+                h.st.tab = tab;
+                h.frames(4);
+                let area = |h: &Harness| {
+                    h.ctx
+                        .memory(|m| m.area_rect(egui::Id::new("aurora_inventory_test")))
+                        .expect("window")
+                };
+                let before = area(&h).height();
+                h.frames(30);
+                let after = area(&h).height();
+                assert!(
+                    after <= before + 0.5,
+                    "{width} px, tab {tab}, received {received}: {before} → {after}"
+                );
+            }
         }
     }
 
