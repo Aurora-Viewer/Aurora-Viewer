@@ -78,6 +78,9 @@ pub struct AuroraState {
     drag: Option<Uuid>,
     /// Snapshots of the parcels seen in the preview, for the rows.
     snapshots: HashMap<Key, Uuid>,
+    /// AURORA_DEMO_PLACES=…:open: the first place selected (a narrow row
+    /// opened) once the list has one.
+    pub demo_open: bool,
 }
 
 impl AuroraState {
@@ -370,6 +373,17 @@ impl PlacesUi {
         }
         let lines = self.lines(&cat, history, env);
         let wide = ui.max_rect().width() >= WIDE;
+        // (a landmark: the history's places come before the folders are read)
+        if self.aurora.demo_open
+            && let Some(Line::Place(k, place)) = lines.iter().find(|l| match l {
+                Line::Place(Key::Landmark(_), _) => true,
+                Line::Place(Key::Visit(_), _) => self.aurora.source == Source::History,
+                Line::Title(_) => false,
+            })
+        {
+            self.aurora.demo_open = false;
+            self.select(*k, place, &world.inventory, history, actions);
+        }
         if wide && self.aurora.selected.is_none() && link.is_none() {
             // the preview always shows something: the first place
             if let Some(Line::Place(k, place)) = lines.iter().find(|l| matches!(l, Line::Place(..))) {
@@ -1235,6 +1249,8 @@ impl PlacesUi {
         ui.allocate_rect(full, Sense::hover());
         let footer = Rect::from_min_max(Pos2::new(full.left(), full.bottom() - FOOTER_H), full.max);
         let top = Rect::from_min_max(full.min, Pos2::new(full.right(), footer.top()));
+        // "Here" first, on the window's own Ui: the list's is cut above it
+        self.here_bar(ui, p, world, footer, false, actions);
         let mut ui = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(top.shrink2(Vec2::new(12.0, 10.0)))
@@ -1261,11 +1277,11 @@ impl PlacesUi {
                 .id_salt("places-link")
                 .auto_shrink([false, false])
                 .show(ui, |ui| self.preview(ui, c, cat, true, actions));
-            self.here_bar(ui, p, world, footer, false, actions);
             return;
         }
         let w = ui.available_width();
-        widgets::pills::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w);
+        // in a row: the field takes the height of its line only
+        ui.horizontal(|ui| widgets::pills::search_box(ui, p, &mut self.filter, aurora_i18n::tr!("ui-places-search-short"), w));
         ui.add_space(8.0);
         // the three tabs
         let favorites = model::favorites(cat, env.favorites).len();
@@ -1343,7 +1359,6 @@ impl PlacesUi {
             .id_salt(("places-narrow", self.aurora.source == Source::History))
             .auto_shrink([false, false])
             .show(ui, |ui| self.rows(ui, c, &shown, false, actions));
-        self.here_bar(ui, p, world, footer, false, actions);
     }
 
     /// A row opened in place: the description, the notes and the actions.

@@ -11613,17 +11613,18 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
-            // (":wide" after the tab: Aurora's window widened to its rail and
-            // preview)
+            // (after the tab, ":wide": Aurora's window widened to its rail and
+            // preview; ":open": its first place selected; both: ":wide,open")
             let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
-            let (demo_tab, demo_wide) = demo_places.split_once(':').map_or((demo_places.as_str(), false), |(t, w)| (t, w == "wide"));
+            let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
             if let Some(tab) = ui::places::tab_from_name(demo_tab) {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
                 self.panels.perf = false;
-                if demo_wide {
+                if demo_how.split(',').any(|w| w == "wide") {
                     ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(1040.0, 640.0));
                 }
+                self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
             }
             // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
             // page, open at start
