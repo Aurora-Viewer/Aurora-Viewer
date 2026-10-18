@@ -192,6 +192,7 @@ pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
 }
 
 const DEFINITIONS_ID: &str = "aurora-font-definitions";
+const SEMIBOLD_ID: &str = "aurora-font-has-semibold";
 const SCALE_ID: &str = "aurora-font-scale";
 
 /// Combined skin and preference scale, also used by inline emoji pictures.
@@ -216,7 +217,12 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new(DEFINITIONS_ID), Arc::new(definitions.clone())));
+    let heavier =
+        definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(&face.font));
+    ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::new(DEFINITIONS_ID), Arc::new(definitions.clone()));
+        data.insert_temp(egui::Id::new(SEMIBOLD_ID), heavier);
+    });
     let scale = scale(ctx);
     let mut scaled = definitions;
     for face in scaled.font_data.values_mut() {
@@ -265,6 +271,8 @@ fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontD
 
 /// Name of the semi-bold family and of its face.
 const SEMIBOLD: &str = "aurora-semibold";
+/// Name of the interface font's regular face.
+const MAIN: &str = "aurora-main";
 const ICON_FALLBACK: &str = "emoji-icon-font";
 
 fn semibold_family() -> egui::FontFamily {
@@ -288,6 +296,18 @@ pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color3
     format
 }
 
+/// Does `semibold_format` draw heavier than the regular text? Yes with an
+/// embedded font or a variable system font; a static system font draws its
+/// semi-bold texts with its regular face.
+pub fn has_semibold(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp(egui::Id::new(SEMIBOLD_ID))).unwrap_or(false)
+}
+
+fn has_weight_axis(font: &[u8]) -> bool {
+    let wght = ttf_parser::Tag::from_bytes(b"wght");
+    ttf_parser::Face::parse(font, 0).is_ok_and(|face| face.variation_axes().into_iter().any(|axis| axis.tag == wght))
+}
+
 /// `primary` first for proportional text and after egui's text fonts for
 /// monospace, then the system faces before egui's icon font. That icon
 /// font has fullwidth Latin glyphs with uneven feet; prefer text faces,
@@ -299,13 +319,13 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
         .ok()
         .and_then(|face| fallback::RowMetrics::of(&face));
     let mut defs = egui::FontDefinitions::default();
-    defs.font_data.insert("aurora-main".into(), Arc::new(primary));
+    defs.font_data.insert(MAIN.into(), Arc::new(primary));
     if let Some(f) = defs.families.get_mut(&egui::FontFamily::Proportional) {
-        f.insert(0, "aurora-main".into());
+        f.insert(0, MAIN.into());
     }
     if let Some(f) = defs.families.get_mut(&egui::FontFamily::Monospace) {
         let before_icons = f.iter().position(|name| name == ICON_FALLBACK).unwrap_or(f.len());
-        f.insert(before_icons, "aurora-main".into());
+        f.insert(before_icons, MAIN.into());
     }
     // the semi-bold family starts as the proportional one: `apply` puts
     // its own face first when it has one
@@ -386,6 +406,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn only_a_font_with_a_heavier_face_skips_the_faux_bold() {
+        let ctx = egui::Context::default();
+        assert!(!has_semibold(&ctx), "a context without the viewer's fonts");
+        for builtin in &BUILTINS {
+            install(&ctx, definitions_for(builtin.name, &[]));
+            assert!(has_semibold(&ctx), "{}", builtin.name);
+            set_scale(&ctx, 1.3);
+            assert!(has_semibold(&ctx), "{} rescaled", builtin.name);
+            set_scale(&ctx, 1.0);
+        }
+        // a static system font: its regular face only, no weight axis
+        install(&ctx, definitions(egui::FontData::from_static(INTER_TTF), &[]));
+        assert!(!has_semibold(&ctx));
     }
 
     #[test]

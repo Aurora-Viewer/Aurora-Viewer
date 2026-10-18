@@ -173,22 +173,24 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
             .layout_no_wrap(label.into(), egui::FontId::proportional(12.0), marker_color)
     });
     let marker_width = marker.as_ref().map_or(0.0, |g| g.size().x + 10.0);
-    let galley = egui::WidgetText::from(RichText::new(&text).size(12.0).color(p.ink)).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Truncate),
-        (rect.width() - 30.0 - marker_width).max(20.0),
-        egui::TextStyle::Body,
-    );
+    let font_id = egui::FontId::proportional(12.0);
+    let format = if worn.is_some() {
+        widgets::bold_format(ui, font_id, p.ink)
+    } else {
+        egui::TextFormat::simple(font_id, p.ink)
+    };
+    let mut job = egui::text::LayoutJob::single_section(text.clone(), format);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 30.0 - marker_width).max(20.0));
+    let galley = ui.painter().layout_job(job);
     let text_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + 25.0, rect.top()), rect.right_bottom());
     let painter = ui.painter().with_clip_rect(text_rect);
-    let paint = |pos, galley: std::sync::Arc<egui::Galley>| {
-        // LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
-        if worn.is_some() {
-            painter.galley(pos + widgets::bold_text_offset(ui), galley.clone(), p.ink);
-        }
-        painter.galley(pos, galley, p.ink);
-    };
-    paint(egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5), galley);
+    let pos = egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5);
+    if worn.is_some()
+        && let Some(offset) = widgets::faux_bold_offset(ui)
+    {
+        painter.galley(pos + offset, galley.clone(), p.ink);
+    }
+    painter.galley(pos, galley, p.ink);
     if let Some(marker) = marker {
         let at = crate::ui::widgets::row_text_origin(&painter, &marker, rect.right() - marker.size().x - 3.0, rect.center().y);
         painter.galley(at, marker, marker_color);
@@ -279,11 +281,14 @@ fn gallery(
                     let current = model::base(&world.inventory) == Some(*id);
                     let color = if current { p.violet_light } else { p.ink };
                     let font_id = egui::FontId::proportional(12.0);
-                    let label = outfit_label(&folder.info.name, current, font_id.clone(), color);
+                    let label = outfit_label(ui, &folder.info.name, current, font_id.clone(), color);
                     let galley =
                         egui::WidgetText::from(label).into_galley(ui, Some(egui::TextWrapMode::Truncate), width, egui::TextStyle::Body);
                     let response = ui.add(egui::Label::new(galley.clone()));
-                    if current && ui.is_rect_visible(response.rect) {
+                    if current
+                        && let Some(offset) = widgets::faux_bold_offset(ui)
+                        && ui.is_rect_visible(response.rect)
+                    {
                         let name = egui::WidgetText::from(RichText::new(&folder.info.name).font(font_id).color(color)).into_galley(
                             ui,
                             Some(egui::TextWrapMode::Truncate),
@@ -291,9 +296,7 @@ fn gallery(
                             egui::TextStyle::Body,
                         );
                         let clip = response.rect.intersect(ui.clip_rect());
-                        ui.painter()
-                            .with_clip_rect(clip)
-                            .galley(response.rect.min + widgets::bold_text_offset(ui), name, color);
+                        ui.painter().with_clip_rect(clip).galley(response.rect.min + offset, name, color);
                     }
                 });
             }
@@ -302,13 +305,16 @@ fn gallery(
     }
 }
 
-fn outfit_label(name: &str, current: bool, font_id: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
-    let suffix = if current {
-        aurora_i18n::tr!("ui-appearance-worn", value0 = "")
-    } else {
-        String::new()
-    };
-    widgets::name_with_suffix(name, &suffix, font_id, color)
+/// LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
+fn outfit_label(ui: &egui::Ui, name: &str, current: bool, font_id: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
+    if !current {
+        return widgets::name_with_suffix(name, "", font_id, color);
+    }
+    let mut job = widgets::name_with_suffix(name, &aurora_i18n::tr!("ui-appearance-worn", value0 = ""), font_id, color);
+    if let Some(section) = job.sections.first_mut() {
+        widgets::embolden(ui, &mut section.format);
+    }
+    job
 }
 
 fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
@@ -320,7 +326,7 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
         };
         let is_current = current == Some(*id);
         let font_id = egui::TextStyle::Button.resolve(ui.style());
-        let label = outfit_label(&f.info.name, is_current, font_id.clone(), p.ink);
+        let label = outfit_label(ui, &f.info.name, is_current, font_id.clone(), p.ink);
         let galley = egui::WidgetText::from(label).into_galley(
             ui,
             Some(egui::TextWrapMode::Extend),
@@ -386,13 +392,14 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             st.selected_outfit = Some(*id);
         }
         gallery::context_menu(&response.header, p, world, st, *id, actions, false);
-        if is_current && ui.is_rect_visible(response.header.rect) {
-            // LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
-            // Match the item rows' LLFontGL offset: egui's strong is only a color.
+        if is_current
+            && let Some(offset) = widgets::faux_bold_offset(ui)
+            && ui.is_rect_visible(response.header.rect)
+        {
             let rect = response.header.rect;
             let pos = egui::pos2(rect.left() + ui.spacing().indent, rect.center().y - galley.size().y * 0.5);
             let name = ui.painter().layout_no_wrap(f.info.name.clone(), font_id, p.ink);
-            ui.painter().galley(pos + widgets::bold_text_offset(ui), name, p.ink);
+            ui.painter().galley(pos + offset, name, p.ink);
         }
         if reveal && response.body.is_some() {
             response.header.scroll_to_me(Some(egui::Align::Min));

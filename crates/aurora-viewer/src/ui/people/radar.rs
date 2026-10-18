@@ -396,10 +396,16 @@ pub(super) fn icon(ui: &egui::Ui, name: &str, cell: Rect, size: f32, tint: Color
 
 /// Write `text` against the right edge of `cell`.
 fn text_right(ui: &egui::Ui, text: String, cell: Rect, size: f32, color: Color32, bold: bool) {
-    let galley = ui.painter().layout_no_wrap(text, egui::FontId::proportional(size), color);
+    let font_id = egui::FontId::proportional(size);
+    let format = if bold {
+        widgets::bold_format(ui, font_id, color)
+    } else {
+        egui::TextFormat::simple(font_id, color)
+    };
+    let galley = ui.painter().layout_job(egui::text::LayoutJob::single_section(text, format));
     let left = egui::pos2(cell.right() - 6.0 - galley.size().x, cell.center().y);
-    if bold {
-        widgets::paint_ink_left(ui.painter(), galley.clone(), left + widgets::bold_text_offset(ui), color);
+    if bold && let Some(offset) = widgets::faux_bold_offset(ui) {
+        widgets::paint_ink_left(ui.painter(), galley.clone(), left + offset, color);
     }
     widgets::paint_ink_left(ui.painter(), galley, left, color);
 }
@@ -502,23 +508,26 @@ fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect
                 widgets::avatar_picture(ui, p, picture, data.pics.get(&row.id), &row.name, row.muted);
                 let cell = cell.with_min_x(picture.right());
                 // friends in bold, blocked residents in italics
-                let mut job = egui::text::LayoutJob::single_section(
-                    row.name.clone(),
-                    egui::TextFormat {
-                        font_id: egui::FontId::proportional(13.0),
-                        color,
-                        italics: row.muted,
-                        ..Default::default()
-                    },
-                );
+                let mut format = egui::TextFormat {
+                    font_id: egui::FontId::proportional(13.0),
+                    color,
+                    italics: row.muted,
+                    ..Default::default()
+                };
+                if row.friend {
+                    widgets::embolden(ui, &mut format);
+                }
+                let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
                 job.wrap = egui::text::TextWrapping::truncate_at_width((cell.width() - 12.0).max(0.0));
                 let galley = ui.painter().layout_job(job);
                 if galley.elided {
                     say(row.name.clone());
                 }
                 let left = egui::pos2(cell.left() + 8.0, cell.center().y);
-                if row.friend {
-                    widgets::paint_ink_left(ui.painter(), galley.clone(), left + widgets::bold_text_offset(ui), color);
+                if row.friend
+                    && let Some(offset) = widgets::faux_bold_offset(ui)
+                {
+                    widgets::paint_ink_left(ui.painter(), galley.clone(), left + offset, color);
                 }
                 widgets::paint_ink_left(ui.painter(), galley, left, color);
             }

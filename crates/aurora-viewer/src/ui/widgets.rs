@@ -99,10 +99,31 @@ fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f3
         .into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body)
 }
 
-/// LLFontGL BOLD_OFFSET: egui's strong text changes color, not weight.
-pub(crate) fn bold_text_offset(ui: &egui::Ui) -> Vec2 {
+/// The bold names of LLFontGL's BOLD style (worn items, the current
+/// outfit, friends): the interface font's semi-bold face, egui's strong
+/// text only changing the color.
+pub(crate) fn embolden(ui: &egui::Ui, format: &mut egui::text::TextFormat) {
+    let semibold = super::fonts::semibold_format(&super::fonts::semibold(ui.ctx()), format.font_id.size, format.color);
+    format.font_id = semibold.font_id;
+    format.coords = semibold.coords;
+}
+
+/// The text format of a bold name.
+pub(crate) fn bold_format(ui: &egui::Ui, font_id: egui::FontId, color: Color32) -> egui::text::TextFormat {
+    let mut format = egui::text::TextFormat::simple(font_id, color);
+    embolden(ui, &mut format);
+    format
+}
+
+/// A static system font has no semi-bold face: its bold names are then
+/// painted a second time this far to the right, as LLFontGL's BOLD_OFFSET
+/// does. None when `embolden` gives a heavier face.
+pub(crate) fn faux_bold_offset(ui: &egui::Ui) -> Option<Vec2> {
+    if super::fonts::has_semibold(ui.ctx()) {
+        return None;
+    }
     let ppp = ui.ctx().pixels_per_point();
-    Vec2::new(ppp.round().max(1.0) / ppp, 0.0)
+    Some(Vec2::new(ppp.round().max(1.0) / ppp, 0.0))
 }
 
 /// What a floater has above and below its body besides its title: the
