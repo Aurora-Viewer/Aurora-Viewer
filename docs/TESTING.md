@@ -2591,6 +2591,9 @@ failure. Grid validation and any paid upload are performed by the human.
   700, 880, 1060 and 1240 to compare the preview, navigation, window titles,
   world labels and conversations, including inline emoji. Changes use the
   normal live preference path and only affect the demo profile.
+  The Preferences window must retain its height throughout the cycle,
+  including after a manual resize to a shorter height. Categories scroll
+  independently of the settings, and Reset everything remains at the bottom.
   `0:tonemap` opens Graphics scrolled to the Tone mapping row, `0:occlusion`
   to the Indirect light row (contact shadows and ambient occlusion around
   it) and `0:bloom` to the Bloom row, the rows the Deluxe level turns on

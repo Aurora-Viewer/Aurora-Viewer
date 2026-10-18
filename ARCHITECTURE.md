@@ -114,6 +114,10 @@ saved window state before the theme and fonts so the scale survives reopening.
 Inline emoji images follow the same scale; menus and name plates allow scaled
 row heights.
 
+Preferences measures its page header before allocating the remaining scroll
+viewport. The categories have their own bounded viewport above the fixed
+reset button, so larger fonts and shorter windows cannot drive height growth.
+
 Preferences › Aurora › Animations selects the playback clock for both avatars
 and animesh. Legacy is the persisted default, including older settings files:
 activate at asset loading and suspend playback during editing, following

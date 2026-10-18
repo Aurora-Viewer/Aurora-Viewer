@@ -791,45 +791,52 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         ui.horizontal_top(|ui| {
             // ---- categories
             ui.allocate_ui_with_layout(Vec2::new(168.0, h), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_min_height(h);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                for i in ORDER {
-                    let (label, icon) = categories()[i];
-                    let clicked = if i == TAB_AURORA {
-                        let clicked = aurora::nav_entry(ui, p, label, icon, st.tab == i).clicked();
-                        ui.add_space(6.0);
-                        clicked
-                    } else {
-                        category(ui, p, icons, label, icon, st.tab == i)
-                    };
-                    if clicked {
-                        st.capture = None;
-                        st.tab = i;
-                    }
-                }
+                let reset_height = 26.0;
+                let reset_gap = 4.0;
+                let categories_height = (h - reset_height - reset_gap - ui.spacing().item_spacing.y).max(0.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("preferences_categories")
+                    .auto_shrink([false, false])
+                    .max_height(categories_height)
+                    .min_scrolled_height(categories_height)
+                    .show(ui, |ui| {
+                        for i in ORDER {
+                            let (label, icon) = categories()[i];
+                            let clicked = if i == TAB_AURORA {
+                                let clicked = aurora::nav_entry(ui, p, label, icon, st.tab == i).clicked();
+                                ui.add_space(6.0);
+                                clicked
+                            } else {
+                                category(ui, p, icons, label, icon, st.tab == i)
+                            };
+                            if clicked {
+                                st.capture = None;
+                                st.tab = i;
+                            }
+                        }
+                    });
                 // reset everything, at the bottom of the column: a real button
                 // that turns red on hover, like the erasing of the chat logs;
                 // the confirmation below carries the red one (#291)
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    ui.add_space(4.0);
-                    let b = super::widgets::action_button(
-                        ui,
-                        p,
-                        "restore",
-                        aurora_i18n::tr!("ui-options-reset-everything-2"),
-                        super::widgets::ActionKind::FlatDanger,
-                        Vec2::new(ui.available_width(), 26.0),
-                    );
-                    if b.on_hover_text(aurora_i18n::tr!("ui-options-reset-all-settings")).clicked() {
-                        st.confirm_reset = true;
-                    }
-                });
+                ui.add_space(reset_gap);
+                let b = super::widgets::action_button(
+                    ui,
+                    p,
+                    "restore",
+                    aurora_i18n::tr!("ui-options-reset-everything-2"),
+                    super::widgets::ActionKind::FlatDanger,
+                    Vec2::new(ui.available_width(), reset_height),
+                );
+                if b.on_hover_text(aurora_i18n::tr!("ui-options-reset-all-settings")).clicked() {
+                    st.confirm_reset = true;
+                }
             });
             ui.add_space(6.0);
             // ---- content
             ui.vertical(|ui| {
+                let top = ui.cursor().top();
                 // the Aurora page carries its title in its own head
-                let mut scroll_height = h;
                 if st.tab != TAB_AURORA {
                     // the page's title, and the reset of this page alone at
                     // its right (the same button as "Reset everything…")
@@ -843,16 +850,17 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                         });
                     });
                     ui.add_space(6.0);
-                    scroll_height -= 34.0;
                 }
                 let mut scroll = egui::ScrollArea::vertical().stick_to_bottom(st.scroll_to_end);
                 if st.tab == 8 {
                     let search = shortcut_search(ui, p, st);
-                    scroll_height -= search.response.rect.height() + ui.spacing().item_spacing.y;
                     if search.inner {
                         scroll = scroll.vertical_scroll_offset(0.0);
                     }
                 }
+                // The header grows with its font. A fixed subtraction makes
+                // header + viewport exceed h, feeding growth back every frame.
+                let scroll_height = (h - (ui.cursor().top() - top)).max(0.0);
                 scroll
                     .auto_shrink([false, false])
                     .max_height(scroll_height)
@@ -3121,6 +3129,65 @@ mod tests {
     use super::*;
     use crate::keybinds::{Action, Input};
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn preferences_keep_their_height_when_text_size_changes() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        for small in [false, true] {
+            let ctx = egui::Context::default();
+            fonts::apply(&ctx, fonts::INTER);
+            theme.apply(&ctx, 1.0);
+            let mut settings = Settings::default();
+            let mut state = OptionsUi {
+                tab: 2,
+                system_fonts: Some(Vec::new()),
+                ..Default::default()
+            };
+            let mut open = true;
+            let mut frame = 0;
+            let mut draw = |ctx: &egui::Context, state: &mut OptionsUi, settings: &mut Settings| {
+                frame += 1;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                        time: Some(frame as f64 / 60.0),
+                        ..Default::default()
+                    },
+                    |_| {
+                        show(ctx, &p, &Icons::default(), settings, state, &mut open);
+                    },
+                );
+                output.textures_delta.clear();
+                ctx.memory(|memory| memory.area_rect(egui::Id::new("options")))
+                    .expect("preferences")
+            };
+            for _ in 0..12 {
+                draw(&ctx, &mut state, &mut settings);
+            }
+            if small {
+                super::super::widgets::size_floater(&ctx, "options", Vec2::new(780.0, 400.0));
+                for _ in 0..12 {
+                    draw(&ctx, &mut state, &mut settings);
+                }
+            }
+            let initial = draw(&ctx, &mut state, &mut settings);
+            for tab in [2, 8, TAB_AURORA] {
+                state.tab = tab;
+                for scale in [1.0, 1.2, 1.4, 0.8, 1.0] {
+                    settings.font_scale = scale;
+                    theme.apply(&ctx, scale);
+                    for _ in 0..24 {
+                        let rect = draw(&ctx, &mut state, &mut settings);
+                        assert!(
+                            (rect.height() - initial.height()).abs() < 0.5,
+                            "small={small} tab={tab} scale={scale}: {initial:?} -> {rect:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn interface_scale_uses_only_the_zoom_path_and_neighboring_settings_keep_the_general_path() {
