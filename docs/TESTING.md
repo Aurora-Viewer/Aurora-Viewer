@@ -2317,7 +2317,12 @@ header, vertical tools/settings popup, five tabs and fixed model/fee summary.
 All mesh-inspector text must use at least the normal checkbox-label size,
 including gesture help, LOD results/percentages, collision captions, Avatar
 counts and quote metrics. Check that LOD rows remain on one line in the wider
-mesh window and collision captions wrap without reducing their font size.
+mesh window and collision captions wrap without reducing their font size. Also
+open the mesh inspector in a short viewer window at 100% and fractional Windows
+DPI, then leave it untouched on each tab, including Collisions before/after a
+fee quote. The frame, preview and summary must settle without manually resizing;
+scrolling the tab content must leave the header and summary fixed, with no
+second outer details scroll bar.
 Avatar exposes dependent weights/positions/scale-lock controls, -3..3 m Z
 offset, selectable joints and read-only per-model positions/conflicts.
 Journal contains actual load/preparation/validation messages. Detailed mode

@@ -17,10 +17,18 @@ pub(super) fn show(
     height: f32,
     metadata: impl FnOnce(&mut egui::Ui, &mut Entry),
 ) {
-    let top = ui.cursor().top();
     let width = ui.available_width();
+    let (bounds, _) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
+    // Scroll contents must never become a minimum size for the parent
+    // window, including at fractional DPI. Allocate the inspector once.
+    let mut panel_ui = ui.new_child(egui::UiBuilder::new().id_salt(("mesh_panel", entry.id)).max_rect(bounds));
+    panel_ui.set_clip_rect(bounds.intersect(ui.clip_rect()));
+    let ui = &mut panel_ui;
     let metadata_width = (width - 278.0).max(240.0);
-    ui.horizontal_top(|ui| {
+    let (header_rect, _) = ui.allocate_exact_size(Vec2::new(width, 170.0), egui::Sense::hover());
+    let mut header_ui = ui.new_child(egui::UiBuilder::new().id_salt("mesh_header").max_rect(header_rect));
+    header_ui.set_clip_rect(header_rect.intersect(ui.clip_rect()));
+    header_ui.horizontal_top(|ui| {
         ui.allocate_ui_with_layout(Vec2::new(metadata_width, 170.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_min_width(metadata_width);
             metadata(ui, entry);
@@ -46,20 +54,34 @@ pub(super) fn show(
     let Some(Source::Mesh(draft)) = &mut entry.source else { return };
     let section = mesh_section(ui, p, entry.id, draft);
     let summary_height = if draft.quote.is_some() { 54.0 } else { 28.0 };
-    let content_height = (height - (ui.cursor().top() - top) - summary_height).max(90.0);
-    ui.ctx()
-        .data_mut(|d| d.insert_temp(egui::Id::new(("mesh_content_height", entry.id)), content_height));
+    let summary_rect = egui::Rect::from_min_size(
+        egui::pos2(bounds.left(), bounds.bottom() - summary_height),
+        Vec2::new(width, summary_height),
+    );
+    let content_height = (summary_rect.top() - ui.cursor().top() - ui.spacing().item_spacing.y).max(0.0);
+    let content_rect = egui::Rect::from_min_size(ui.next_widget_position(), Vec2::new(width, content_height));
+    let mut content_ui = ui.new_child(egui::UiBuilder::new().id_salt("mesh_content").max_rect(content_rect));
+    content_ui.set_clip_rect(content_rect.intersect(ui.clip_rect()));
     let before_lod = draft.preview_lod;
-    let changed = egui::ScrollArea::both()
+    let body = egui::ScrollArea::both()
         .id_salt(("mesh_data", entry.id))
+        .auto_shrink([false, false])
+        .min_scrolled_height(0.0)
         .max_height(content_height)
-        .show(ui, |ui| {
-            ui.set_min_width(width - 12.0);
+        .show(&mut content_ui, |ui| {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::new(("mesh_content_height", entry.id)), ui.available_height()));
+            // Keep full-width rows clear of the rounded viewport edge at fractional DPI.
+            ui.set_max_width((ui.available_width() - ui.spacing().item_spacing.x).max(0.0));
             mesh_controls(ui, p, entry.id, draft, prefs, actions, section)
-        })
-        .inner;
-    ui.add_space((top + height - summary_height - ui.cursor().top()).max(0.0));
-    mesh_summary(ui, p, draft);
+        });
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new(("mesh_viewport", entry.id)), (body.inner_rect, body.content_size)));
+    let changed = body.inner;
+    let mut summary_ui = ui.new_child(egui::UiBuilder::new().id_salt("mesh_summary").max_rect(summary_rect));
+    summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
+    mesh_summary(&mut summary_ui, p, draft);
     if changed || before_lod != draft.preview_lod {
         entry.invalidate_preview();
     }
@@ -484,7 +506,9 @@ fn mesh_controls(
             widgets::divider(ui, p);
             checkbox(ui, p, &mut draft.options.decompose, aurora_i18n::tr!("import-collision-step-hulls"));
             ui.add_enabled_ui(draft.options.decompose, |ui| {
-                let column_width = (ui.available_width() - 5.0 * ui.spacing().item_spacing.x) / 6.0;
+                // Leave one spacing unit free so rounding six columns at
+                // fractional DPI cannot create a horizontal scroll bar.
+                let column_width = (ui.available_width() - 6.0 * ui.spacing().item_spacing.x) / 6.0;
                 ui.horizontal_top(|ui| {
                     physics_column(ui, column_width, aurora_i18n::tr!("import-fill-mode"), |ui| {
                         let labels = [

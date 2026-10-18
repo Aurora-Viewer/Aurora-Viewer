@@ -143,10 +143,10 @@ pub(super) fn show(
                 Vec2::new((ui.available_width()).max(260.0), height),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    let mut details = egui::ScrollArea::vertical().id_salt("import_details").max_height(height);
-                    if imports.demo_mode == "mesh-options" {
-                        details = details.vertical_scroll_offset(0.0);
-                    }
+                    let mesh_inspector = imports
+                        .active
+                        .and_then(|id| imports.entries.iter().find(|e| e.id == id))
+                        .is_some_and(|entry| !entry.local && matches!(entry.source, Some(Source::Mesh(_))));
                     // the details stay in their column: while the scroll bar
                     // slides in, rows a frame behind its strip would otherwise
                     // widen the window a little each frame
@@ -157,7 +157,7 @@ pub(super) fn show(
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                     );
                     column_ui.set_clip_rect(column.intersect(ui.clip_rect()));
-                    details.show(&mut column_ui, |ui| {
+                    let mut show_details = |ui: &mut egui::Ui| {
                         let detail_top = ui.cursor().top();
                         if let Some(entry) = imports.active.and_then(|id| imports.entries.iter_mut().find(|e| e.id == id)) {
                             apply_preview_colors(&mut entry.view, p, prefs);
@@ -403,7 +403,17 @@ pub(super) fn show(
                                 ui.label(RichText::new(aurora_i18n::tr!("import-empty")).color(p.muted));
                             });
                         }
-                    });
+                    };
+                    if mesh_inspector {
+                        // Mesh owns a bounded viewport between its header and summary.
+                        // An outer scroll bar would feed its width back into that layout.
+                        show_details(&mut column_ui);
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .id_salt("import_details")
+                            .max_height(height)
+                            .show(&mut column_ui, show_details);
+                    }
                     ui.allocate_rect(column_ui.min_rect().intersect(column), egui::Sense::hover());
                 },
             );

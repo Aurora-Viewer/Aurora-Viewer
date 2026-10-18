@@ -627,6 +627,10 @@ type tab. Parsing, preview jobs and the confirmed upload queue stay shared.
 Collada skin controllers absent from visual-scene instances are decoded through
 that same scene path, once per controller, following LLDAELoader::OpenFile /
 processDomModel. Explicit instancing and nested transforms remain intact.
+The mesh inspector allocates its panel once and keeps its metadata/preview,
+tab viewport and bottom summary in independent bounded rectangles. Its section
+viewport owns scrolling; the shared outer details scroller is bypassed for
+upload meshes, so scroll bars cannot feed their dimensions back into the window.
 Mesh completion follows LLMeshUploadThread::onCompleted and
 on_new_single_inventory_upload_complete: a complete server acknowledgement
 creates the object inventory entry with the granted permissions and flags.
