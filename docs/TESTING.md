@@ -4131,7 +4131,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
-| `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, as before, not their avatar's |
+| `AURORA_WORN_RANK=avatar` | Meshes worn by other avatars downloaded in the rank of their avatar, not their own size (off by default) |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
 | `AURORA_SYNC_SLOW=<ms>` | The steps of each frame whose scene sync is slower than `ms` |
@@ -4544,11 +4544,13 @@ What the inventory must show with these scenarios:
   - In demo: `AURORA_DEMO_CROWD=52,200` with `AURORA_DEMO_ANIMESH=1` and
     `AURORA_DEMO_STREAM=6000,6000,leave` (19,500 objects, then 13,500),
     `AURORA_FPS_LIMIT=500`.
-- **`AURORA_WORN_RANK=own`**: a mesh worn by another avatar waits in the
-  download queue in the rank of its own prim scale until its header says
-  it is rigged, as before. By default anything worn ranks with the
-  avatar's radius (2.2 m) over its distance, as the Legacy Viewer's
-  `calculate_score` (llmeshrepository.cpp). To compare with
+- **`AURORA_WORN_RANK=avatar`**: anything worn by another avatar ranks in
+  the download queue with the avatar's radius (2.2 m) over its distance,
+  as the Legacy Viewer's `calculate_score` (llmeshrepository.cpp). By
+  default a worn mesh ranks by its own prim scale until its header says it
+  is rigged: with one request pool for every asset type, the avatar rank
+  let a crowd's worn meshes starve the scenery's textures in a cold-cache
+  arrival. To compare with
   `AURORA_DEMO_ARRIVAL=<folder>,avatars=30,worn=6` (`demo arrival: worn`
   line), or on the grid in a crowd with a cold cache (the `attachments of`
   blocks 40 s after the arrival: `without geometry`).
