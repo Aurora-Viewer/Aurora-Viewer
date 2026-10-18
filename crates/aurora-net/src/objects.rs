@@ -582,6 +582,54 @@ pub fn parse_gltf_override(payload: &[u8]) -> Option<(u32, Vec<(u8, aurora_llsd:
 mod tests {
     use super::*;
 
+    #[test]
+    fn zero_subtype_sculpt_survives_full_and_compressed_updates() {
+        use aurora_prim::params::*;
+        let texture = Uuid::from_u128(587);
+        for flags in [
+            0,
+            LL_SCULPT_FLAG_INVERT,
+            LL_SCULPT_FLAG_MIRROR,
+            LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR,
+        ] {
+            let sculpt = SculptParams {
+                texture,
+                sculpt_type: flags,
+            };
+            let payload = aurora_prim::extra::pack_sculpt(&sculpt);
+            let mut extra = vec![1];
+            extra.extend(aurora_prim::extra::PARAMS_SCULPT.to_le_bytes());
+            extra.extend((payload.len() as u32).to_le_bytes());
+            extra.extend(payload);
+            let full = msgs::object_update::ObjectData {
+                p_code: LL_PCODE_VOLUME,
+                path_curve: LL_PCODE_PATH_CIRCLE,
+                profile_curve: LL_PCODE_PROFILE_CIRCLE,
+                path_scale_x: 100,
+                path_scale_y: 175,
+                object_data: vec![0; 60],
+                extra_params: extra.clone(),
+                ..Default::default()
+            };
+            let mut compressed = vec![0; 84];
+            compressed[20] = LL_PCODE_VOLUME;
+            compressed.extend(extra);
+            let mut shape = [0; 23];
+            shape[0] = LL_PCODE_PATH_CIRCLE;
+            shape[5] = 100;
+            shape[6] = 175;
+            shape[16] = LL_PCODE_PROFILE_CIRCLE;
+            compressed.extend(shape);
+            compressed.extend(0u32.to_le_bytes());
+            for update in [parse_full(&full).unwrap(), parse_compressed(&compressed, 0).unwrap()] {
+                assert_eq!(update.extra.sculpt, Some(sculpt));
+                assert_eq!(update.volume.sculpt, Some(sculpt));
+                assert!(update.volume.is_sculpt());
+                assert!(!update.volume.is_mesh());
+            }
+        }
+    }
+
     fn compressed_particle_object(flags: u32, legacy: &[u8], extended: &[u8]) -> Vec<u8> {
         let mut d = vec![0; 84];
         d[16..20].copy_from_slice(&7u32.to_le_bytes());

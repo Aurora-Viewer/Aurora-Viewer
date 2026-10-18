@@ -584,9 +584,19 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending` | Movement options, local swimming poses and synthetic passage feedback |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
+| `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 ### Details
+
+`AURORA_DEMO_SCULPT_ZERO=1` places three objects east of the start position
+(x=134, y=123/125/127). The grey object has no sculpt block and stays a torus;
+the violet subtype-zero sculpt and the teal sphere sculpt both use a
+synthetic 64×64 lossless sphere map and must look spherical. All three share
+the same torus path/profile. The violet object becoming a torus reproduces
+the classification failure; subtype zero must also retain its unstitched
+edges rather than silently using sphere stitching. The map is generated
+offline in the demo cache; no grid asset is used.
 
 `AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
 `AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
@@ -4176,6 +4186,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
 | `AURORA_STILL_CHECK=1` | What changes when the image should be still |
+| `AURORA_SCULPT_WATCH=<avatar UUID>` | Logs changed attachment geometry and sculpt-map states for one avatar |
 | `AURORA_DEBUG_GLOW=1` | Glow diagnostics |
 | `AURORA_GLOW_SKIP=<mask>` | Removes a family of faces from the glow |
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
@@ -4872,6 +4883,16 @@ What the inventory must show with these scenarios:
   avatar). At most six examples follow each line: identifier, type, level
   of detail, size, distance, movement announced by the simulator
   (`scene/still_check.rs`). In demo as on the grid.
+
+**`AURORA_SCULPT_WATCH=<avatar UUID>`** samples only that avatar's attachment
+tree every 500 ms and emits `sculpt watch:` lines when its state changes.
+It records object/map identifiers, raw sculpt parameters, path/profile bytes,
+expected/requested/bound geometry, CPU map dimensions and texture streaming
+state. This distinguishes ordinary-prim classification, a null/missing map,
+and geometry left bound while a sculpt waits. It changes no object, rendering
+setting or asset request. No names, locations, texture pixels or service URLs
+are added to these lines. In normal mode the human connects and positions the
+camera; the diagnostic is disabled unless explicitly configured.
 
 ## Profiling
 

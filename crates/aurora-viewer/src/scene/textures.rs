@@ -304,6 +304,15 @@ impl Counts {
 }
 
 impl Entry {
+    fn needs_sculpt_pixels(&self) -> bool {
+        self.keep_pixels && self.sculpt.is_none()
+    }
+
+    /// GPU residency does not fulfill a late request for sculpt-map pixels.
+    fn needs_decode(&self, discard: u8) -> bool {
+        self.decoded.is_none_or(|decoded| discard < decoded) || self.needs_sculpt_pixels()
+    }
+
     /// Pixels it covers on screen as far as known now: what `want` was
     /// computed from, or what was noted since if that is more (a texture
     /// just arrived has only that). 0: not seen yet.
@@ -373,7 +382,7 @@ impl Entry {
         if self.busy() {
             return false;
         }
-        self.decoded.is_none_or(|d| self.want < d)
+        self.needs_decode(self.want)
     }
 
     /// A disk read, a decode or a download of it is under way.
@@ -1506,6 +1515,29 @@ impl TextureStreamer {
         self.entries.get(id).and_then(|e| e.sculpt.clone())
     }
 
+    /// State only, for the explicitly selected avatar's attachment diagnostic.
+    pub(super) fn sculpt_watch_status(&self, id: &Uuid) -> String {
+        let Some(e) = self.entries.get(id) else {
+            return format!("no-entry null={}", id.is_nil());
+        };
+        format!(
+            "refs={} keep_pixels={} complete={} bytes={} info={:?} decoded={:?} want={} cache={} fetching={} decoding={} failures={} gone={} queued={}",
+            e.refs,
+            e.keep_pixels,
+            e.complete,
+            e.data.len(),
+            e.info,
+            e.decoded,
+            e.want,
+            e.cache_state,
+            e.fetching,
+            e.decoding,
+            e.failures,
+            e.gone,
+            e.queued,
+        )
+    }
+
     /// Keep a texture resident and deliver a small RGBA copy for the UI.
     pub fn want_ui_image(&mut self, renderer: &mut Renderer, id: Uuid) {
         if id.is_nil() {
@@ -1817,10 +1849,7 @@ impl TextureStreamer {
                 }
                 // (before looking at the data, which is behind a pointer: most
                 // textures stop here, every frame)
-                let better = match e.decoded {
-                    None => true,
-                    Some(d) => e.want < d,
-                };
+                let better = e.needs_decode(e.want);
                 if !better {
                     return;
                 }
@@ -1870,7 +1899,7 @@ impl TextureStreamer {
                             Some(info) if !e.complete => level_held(info, e.data.len(), e.want),
                             _ => e.want,
                         };
-                        if e.decoded.is_some_and(|d| discard >= d) {
+                        if !e.needs_decode(discard) {
                             break 'decode;
                         }
                         // That level, or a finer one, is already decoded and waits
@@ -1878,7 +1907,7 @@ impl TextureStreamer {
                         // sent): decoding it again each time a decode slot frees up
                         // was half of the decodes of an arrival (AURORA_DEMO_STREAM
                         // with j2k=, 9000 textures: 9126 of 18129).
-                        if uploads.covers(&id, discard) {
+                        if !e.needs_sculpt_pixels() && uploads.covers(&id, discard) {
                             break 'decode;
                         }
                         // (given a slot below, once every texture was seen)
@@ -2961,6 +2990,77 @@ mod tests {
             refresh: false,
             epoch: 0,
         }
+    }
+
+    #[test]
+    fn late_sculpt_pixel_request_decodes_even_when_the_gpu_is_full_resolution() {
+        let id = Uuid::from_u128(587);
+        for cache_state in [2, 3] {
+            let mut s = pressed(
+                0,
+                vec![(
+                    587,
+                    Entry {
+                        cache_state,
+                        ..entry(Some(0), 64.0)
+                    },
+                )],
+            );
+            s.want_sculpt(&id);
+            let e = &s.entries[&id];
+            assert!(e.keep_pixels);
+            assert_eq!(e.want, 0);
+            assert!(s.sculpt_map(&id).is_none());
+            assert!(e.has_work(), "a GPU texture does not supply a CPU sculpt map");
+            assert!(e.needs_decode(0));
+        }
+    }
+
+    #[test]
+    fn color_decode_started_before_sculpt_request_schedules_the_missing_cpu_pixels() {
+        let id = Uuid::from_u128(587);
+        let mut s = pressed(
+            0,
+            vec![(
+                587,
+                Entry {
+                    decoding: true,
+                    ..entry(None, 64.0)
+                },
+            )],
+        );
+        s.want_sculpt(&id);
+        // The worker captured keep_pixels=false before want_sculpt was called.
+        s.on_job(texture_result(
+            id,
+            0,
+            vec![(1, 1, vec![255; 4])],
+            (AlphaKind::Opaque, false),
+            None,
+            None,
+        ));
+        // The next upload commits this level to Entry::decoded.
+        s.entries.get_mut(&id).unwrap().decoded = Some(0);
+        assert!(s.sculpt_map(&id).is_none());
+        assert!(s.entries[&id].has_work());
+        assert!(s.entries[&id].needs_decode(0));
+        let pixels = vec![128; 64 * 64 * 3];
+        let data = aurora_assets::j2k::encode_texture_j2k(64, 64, 3, &pixels, true).unwrap();
+        let result = decode_job(
+            DecodeJob {
+                id,
+                discard: 0,
+                keep_pixels: true,
+                bc7: false,
+                cache: None,
+            },
+            &data,
+            None,
+            &DecodeMeter::default(),
+        );
+        s.on_job(result);
+        assert_eq!(s.sculpt_map(&id).unwrap().width, 64);
+        assert!(!s.entries[&id].has_work(), "fulfilled CPU requests must stop decoding");
     }
 
     #[test]

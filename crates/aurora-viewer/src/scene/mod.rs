@@ -35,6 +35,7 @@ mod pick_accel;
 pub mod picking;
 pub mod probes;
 pub mod rez;
+mod sculpt_watch;
 mod selection_demo;
 pub mod settings;
 pub mod shape;
@@ -600,6 +601,7 @@ pub struct AvatarSample {
 
 pub struct Scene {
     auto_hover: auto_hover::AutoHover,
+    sculpt_watch: Option<sculpt_watch::SculptWatch>,
     /// Optional local-only diagnostic toggle, exposed in Hover Height by
     /// AURORA_TEST_NEUTRAL_POSE, initially off. Keep evaluating the real motion controller
     /// while displaying the exact shaped rest skeleton used by auto hover.
@@ -1087,6 +1089,7 @@ impl Scene {
         Scene {
             jobs,
             job_rx,
+            sculpt_watch: sculpt_watch::SculptWatch::from_env(),
             geoms: HashMap::new(),
             flexibles: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
@@ -2269,6 +2272,9 @@ impl Scene {
         }
         self.alpha_changes_tmp = changed;
         self.parts.lap(Part::SyncAlpha, t_part);
+        if let Some(watch) = &mut self.sculpt_watch {
+            watch.poll(world, &self.gpu, &self.textures, now);
+        }
         if let Some(mut s) = slow {
             s.step("alpha");
             let gpu = &self.gpu;
@@ -2702,13 +2708,14 @@ impl Scene {
                 // fall back to any other LOD already loaded
             }
         }
-        if let Some(st) = sculpt_wait
-            && !self.gpu[idx].tex_ids.contains(&st)
-        {
+        if let Some(st) = sculpt_wait {
             // sculpt textures are fetched at full resolution and kept on the CPU
-            let _ = self.textures.acquire(renderer, st, TexSource::Asset);
+            if !self.gpu[idx].tex_ids.contains(&st) {
+                let _ = self.textures.acquire(renderer, st, TexSource::Asset);
+                self.gpu[idx].tex_ids.push(st);
+            }
+            // A face can already hold this UUID as an ordinary colour map.
             self.textures.want_sculpt(&st);
-            self.gpu[idx].tex_ids.push(st);
         }
         // waits for its sculpt texture only until this sculpt is bound (a
         // wait left set kept the object synced every frame)
@@ -5054,6 +5061,56 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn zero_subtype_sculpt_selects_map_geometry_for_every_lod() {
+        use aurora_prim::params::*;
+        let mut update = crate::demo::action_avatar(false);
+        update.pcode = LL_PCODE_VOLUME;
+        update.volume.path.curve_type = LL_PCODE_PATH_CIRCLE;
+        update.volume.profile.curve_type = LL_PCODE_PROFILE_CIRCLE;
+        let map = Uuid::from_u128(587);
+        for flags in [
+            0,
+            LL_SCULPT_FLAG_INVERT,
+            LL_SCULPT_FLAG_MIRROR,
+            LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR,
+        ] {
+            update.volume.sculpt = Some(SculptParams {
+                texture: map,
+                sculpt_type: flags,
+            });
+            update.extra.sculpt = update.volume.sculpt;
+            let mut object = Object::from_update(1, update.clone());
+            for lod in 0..4 {
+                assert!(matches!(Scene::object_geom_key(&object, lod), Some(GeomKey::Sculpt { lod: level, .. }) if level == lod));
+            }
+            object.volume.path.curve_type = LL_PCODE_PATH_FLEXIBLE;
+            object.extra.flexible = Some(aurora_prim::extra::FlexibleParams {
+                softness: 1,
+                tension: 1.0,
+                air_friction: 1.0,
+                gravity: 0.0,
+                wind_sensitivity: 0.0,
+                user_force: Vec3::ZERO,
+            });
+            assert!(!object.is_flexible(), "stale flexible fields cannot override an active sculpt");
+            assert!(matches!(Scene::object_geom_key(&object, 3), Some(GeomKey::Sculpt { .. })));
+        }
+        update.volume.sculpt = None;
+        assert!(matches!(
+            Scene::object_geom_key(&Object::from_update(1, update.clone()), 3),
+            Some(GeomKey::Prim { .. })
+        ));
+        update.volume.sculpt = Some(SculptParams {
+            texture: map,
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        });
+        assert_eq!(
+            Scene::object_geom_key(&Object::from_update(1, update), 3),
+            Some(GeomKey::Mesh { id: map, lod: 3 })
+        );
+    }
 
     #[test]
     fn local_neutral_test_matches_auto_hover_rest_and_preserves_live_animations() {

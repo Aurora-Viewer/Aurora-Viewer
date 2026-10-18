@@ -10,7 +10,8 @@ use glam::Vec3;
 
 use crate::params::{
     LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE, LL_SCULPT_FLAG_INVERT, LL_SCULPT_FLAG_MIRROR, LL_SCULPT_TYPE_CYLINDER,
-    LL_SCULPT_TYPE_MASK, LL_SCULPT_TYPE_PLANE, LL_SCULPT_TYPE_SPHERE, LL_SCULPT_TYPE_TORUS, PathParams, ProfileParams, VolumeParams,
+    LL_SCULPT_TYPE_MASK, LL_SCULPT_TYPE_NONE, LL_SCULPT_TYPE_PLANE, LL_SCULPT_TYPE_SPHERE, LL_SCULPT_TYPE_TORUS, PathParams, ProfileParams,
+    VolumeParams,
 };
 use crate::volume::{Volume, VolumeMesh, sanitize_detail};
 
@@ -67,14 +68,15 @@ pub fn sculpt_calc_mesh_resolution(width: u32, height: u32, detail: f32) -> (i32
     (s, t)
 }
 
-/// The sculpt type byte LL would use: the params' type, with non-sculpt
-/// kinds mapped to sphere stitching.
+/// Preserve subtype zero: LLVolume::sculptGenerateMapVertices samples its
+/// map without pinching or wrapping, and createSide uses parametric normals.
+/// Treat only unsupported kinds as sphere stitching.
 fn effective_sculpt_type(params: &VolumeParams) -> u8 {
     let raw = params.sculpt.map_or(LL_SCULPT_TYPE_SPHERE, |s| s.sculpt_type);
     let kind = raw & LL_SCULPT_TYPE_MASK;
     let flags = raw & (LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR);
     match kind {
-        LL_SCULPT_TYPE_SPHERE | LL_SCULPT_TYPE_TORUS | LL_SCULPT_TYPE_PLANE | LL_SCULPT_TYPE_CYLINDER => raw,
+        LL_SCULPT_TYPE_NONE | LL_SCULPT_TYPE_SPHERE | LL_SCULPT_TYPE_TORUS | LL_SCULPT_TYPE_PLANE | LL_SCULPT_TYPE_CYLINDER => raw,
         _ => LL_SCULPT_TYPE_SPHERE | flags,
     }
 }

@@ -85,6 +85,8 @@ pub mod region;
 /// The rez effect of objects and avatars appearing (AURORA_DEMO_REZ_EFFECT).
 #[path = "demo_rez.rs"]
 pub mod rez;
+#[path = "demo_sculpt.rs"]
+pub mod sculpt;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
 #[path = "demo_search.rs"]
 pub mod search;
@@ -4195,6 +4197,7 @@ pub fn events() -> Vec<NetEvent> {
     if let Some(scene) = lure_scene() {
         ev.extend(lure_events(scene, agent));
     }
+    ev.extend(sculpt::events());
     ev
 }
 
