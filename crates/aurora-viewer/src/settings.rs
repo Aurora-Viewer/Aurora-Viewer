@@ -151,6 +151,16 @@ pub enum PhotoWindowStyle {
     Legacy,
 }
 
+/// The order of the landmarks in Aurora's "Places" (`ui/places/aurora.rs`):
+/// last visit first (the default), by name, or newest landmark first.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PlacesSort {
+    #[default]
+    Visit,
+    Name,
+    Created,
+}
+
 /// What a left click on another avatar's name plate does (Preferences ›
 /// Interface; the human's request of 2026-10-14). Each one is an entry of
 /// the avatar's menu; nothing, the default, leaves the click to the world.
@@ -583,6 +593,11 @@ pub struct Settings {
     /// footer instead of Aurora's window that widens from a compact tree to
     /// an explorer (`ui/inventory/aurora`).
     pub classic_inventory: bool,
+    /// "Places" as the Legacy Viewer's three tabs (`ui/places.rs`) instead
+    /// of Aurora's list and preview (`ui/places/aurora.rs`).
+    pub classic_places: bool,
+    /// The order of Aurora's "Places" lists.
+    pub places_sort: PlacesSort,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
@@ -1159,6 +1174,8 @@ impl Default for Settings {
             classic_about_land: false,
             classic_region_estate: false,
             classic_inventory: false,
+            classic_places: false,
+            places_sort: PlacesSort::Visit,
             invert_mouse: false,
             arrows_strafe: false,
             arrow_keys_always_move: false,

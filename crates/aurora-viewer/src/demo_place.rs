@@ -561,7 +561,16 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         .enumerate()
         .filter(|(_, l)| l.0 == n)
         .map(|(i, (_, name, _, _, created))| {
-            let (id, asset) = landmark_ids(i);
+            let (id, own) = landmark_ids(i);
+            // a favourite of a landmark is its copy: the same asset
+            let asset = if n == FAVORITES_FOLDER {
+                landmarks()
+                    .iter()
+                    .position(|l| l.0 != FAVORITES_FOLDER && l.1 == *name)
+                    .map_or(own, |j| landmark_ids(j).1)
+            } else {
+                own
+            };
             InvItem {
                 id,
                 parent: folder_id,
