@@ -745,6 +745,11 @@ impl App {
         let cache_root = cache.clone();
         let geometry_needs = crate::scene::geometry_need::GeometryNeeds::load(&cache);
         let egui_ctx = egui::Context::default();
+        // Restore window state before the theme and fonts: loading egui's
+        // memory drops pending font definitions and the transient text scale.
+        if std::env::var_os("AURORA_CAPTURE").is_none() || std::env::var_os("AURORA_CAPTURE_LAYOUT").is_some() {
+            ui::layout::load(&egui_ctx);
+        }
         ui::colors::set(&settings.colors);
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
@@ -757,13 +762,6 @@ impl App {
         if settings.loading_backdrop && std::env::var_os("AURORA_CAPTURE").is_none() {
             backdrop.load_saved();
         }
-        // floater positions / sizes from the last session (not for
-        // captures, unless AURORA_CAPTURE_LAYOUT asks for it: a capture of
-        // what a saved layout gives in this window; it is never written)
-        if std::env::var_os("AURORA_CAPTURE").is_none() || std::env::var_os("AURORA_CAPTURE_LAYOUT").is_some() {
-            ui::layout::load(&egui_ctx);
-        }
-        // after the layout: restoring it drops the fonts installed before
         let system_fonts_pending = !ui::fonts::apply(&egui_ctx, &ui_font(&settings));
 
         // Decode the 4096px logo off the main thread.
@@ -9109,6 +9107,15 @@ impl App {
             }
             if phase.is_multiple_of(300) {
                 log::info!("demo interface scale: frame={} scale={scale:.3}", self.frame_count);
+            }
+        }
+        if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "2:text-size") {
+            let phase = ((self.frame_count - 600) / 180) % 4;
+            let scale = [0.8, 1.0, 1.4, 1.0][phase as usize];
+            if self.settings.font_scale != scale {
+                self.settings.font_scale = scale;
+                res.changed = true;
+                log::info!("demo text size: frame={} scale={scale:.1}", self.frame_count);
             }
         }
         if let Some(maturity) = res.maturity {

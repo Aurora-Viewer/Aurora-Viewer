@@ -105,6 +105,15 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`ui/fonts.rs` retains unscaled font definitions and installs the combined skin
+and Preferences text scale on every face. egui's shaped advances and row
+metrics therefore scale explicit `RichText`, painter fonts, semi-bold,
+monospace and system fallbacks as well as standard text styles. Reinstalling
+fonts or changing size starts from the unscaled definitions. Startup restores
+saved window state before the theme and fonts so the scale survives reopening.
+Inline emoji images follow the same scale; menus and name plates allow scaled
+row heights.
+
 Preferences › Aurora › Animations selects the playback clock for both avatars
 and animesh. Legacy is the persisted default, including older settings files:
 activate at asset loading and suspend playback during editing, following

@@ -269,7 +269,7 @@ impl Emoji {
                 // a little larger than the letters, the picture keeps the
                 // height of a row of text: centered on it, it overflows the
                 // row instead of making a line with an emoji taller
-                let s = emoji_side(size);
+                let s = emoji_side(size) * super::fonts::scale(ui.ctx());
                 let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
                 let behind = super::chat::select::atom_begin(ui);
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(s, row), egui::Sense::hover());
@@ -307,6 +307,7 @@ impl Emoji {
         let line_height = ui.fonts_mut(|f| f.row_height(&font)) + ui.spacing().extra_text_line_spacing;
         // the size `inline` gives the emoji pictures
         let side = emoji_side(font.size);
+        let picture_side = side * super::fonts::scale(ui.ctx());
         let format = |blank: bool| {
             let mut f = if blank {
                 egui::TextFormat::simple(egui::FontId::new(side, font.family.clone()), egui::Color32::TRANSPARENT)
@@ -350,7 +351,7 @@ impl Emoji {
                 }
                 if let Some(t) = self.texture(ui.ctx(), g.chr) {
                     let mid_x = out.galley_pos.x + placed.pos.x + g.pos.x + g.advance_width / 2.0;
-                    let size = t.size_vec2() * (side / t.size_vec2().max_elem());
+                    let size = t.size_vec2() * (picture_side / t.size_vec2().max_elem());
                     painter.image(
                         t.id(),
                         egui::Rect::from_center_size(egui::pos2(mid_x, mid_y), size),

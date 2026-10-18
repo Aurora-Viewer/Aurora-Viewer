@@ -466,6 +466,44 @@ fn a_compact_pill_puts_its_badges_after_the_name() {
 }
 
 #[test]
+fn text_size_preference_keeps_nameplate_lines_apart_and_inside_the_plate() {
+    let ctx = egui::Context::default();
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
+    for scale in [0.8, 1.0, 1.4, 2.0] {
+        crate::theme::Theme::default().apply(&ctx, scale);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            for level in [Level::Full, Level::Compact, Level::Far] {
+                let m = Metrics::of(level, SCALE);
+                let measure = |size| {
+                    ui.painter()
+                        .layout_no_wrap("Readable text".into(), egui::FontId::proportional(size), ui.visuals().text_color())
+                        .size()
+                };
+                let text = TextSize {
+                    name: measure(m.name_pt),
+                    subs: if level == Level::Full {
+                        [Some(measure(m.sub_pt)); 2]
+                    } else {
+                        [None; 2]
+                    },
+                };
+                let layout = layout(level, &m, &text, 0);
+                let mut bottom = layout.name.y + text.name.y;
+                assert!(layout.name.y >= 0.0);
+                for (pos, size) in layout.subs.iter().zip(text.subs) {
+                    if let (Some(pos), Some(size)) = (pos, size) {
+                        assert!(pos.y >= bottom - 0.01, "scale={scale} level={level:?}");
+                        bottom = pos.y + size.y;
+                    }
+                }
+                assert!(bottom <= layout.size.y, "scale={scale} level={level:?}");
+            }
+        });
+        output.textures_delta.clear();
+    }
+}
+
+#[test]
 fn the_halo_follows_the_voice_level() {
     let mut e = VoiceEnvelope::default();
     assert_eq!(e.halo(), None, "no halo before anyone speaks");

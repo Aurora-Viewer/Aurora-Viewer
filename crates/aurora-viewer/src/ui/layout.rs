@@ -31,7 +31,8 @@ fn path() -> PathBuf {
 /// Restore the saved layout. The style and options set by the skin are
 /// kept (only positions, sizes and per-window state come from the file).
 ///
-/// Call it before `fonts::apply`: egui keeps the font definitions that wait
+/// Call it before the theme and `fonts::apply`: egui keeps the transient
+/// font scale and the font definitions that wait
 /// for the next pass in the memory this replaces, so fonts installed before
 /// it are dropped and the interface starts with egui's own.
 pub fn load(ctx: &egui::Context) {
@@ -888,8 +889,11 @@ mod tests {
         };
         let ctx = egui::Context::default();
         restore(&ctx, &saved).expect("restore");
+        crate::theme::Theme::default().apply(&ctx, 1.4);
         crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
         assert_eq!(first_font(&ctx), "aurora-main");
+        assert_eq!(crate::ui::fonts::scale(&ctx), 1.4);
+        ctx.fonts(|fonts| assert_eq!(fonts.definitions().font_data["aurora-main"].tweak.scale, 1.4));
 
         let ctx = egui::Context::default();
         crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);

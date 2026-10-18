@@ -78,6 +78,7 @@ pub struct TexturePicker {
     library_lookup: Option<(u64, Uuid, Option<Uuid>)>,
     uuid_error: bool,
     footer_height: f32,
+    footer_font_scale: f32,
     material_previews: super::texture_library::previews::Previews,
     material_model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     material_view: aurora_render::preview::View,
@@ -362,14 +363,19 @@ impl TexturePicker {
             };
             widgets::search_field(ui, &mut self.filter, hint, ui.available_width());
             ui.add_space(6.0);
-            let footer = if self.footer_height > 0.0 {
+            let font_scale = super::fonts::scale(ui.ctx());
+            let footer = if self.footer_height > 0.0 && self.footer_font_scale == font_scale {
                 self.footer_height
-            } else if self.extra_buttons {
-                // Keep the first frame within its saved height before the
-                // scaled controls' actual footer has been measured.
-                if self.materials { 200.0 } else { 240.0 }
             } else {
-                90.0
+                // Keep the first frame within its saved height before the
+                // scaled controls' actual footer has been measured, including
+                // reopening or a live text-size change.
+                let base = if self.extra_buttons {
+                    if self.materials { 200.0 } else { 240.0 }
+                } else {
+                    90.0
+                };
+                base * font_scale.max(1.0)
             };
             let (body, _) = ui.allocate_exact_size(
                 Vec2::new(ui.available_width(), (ui.available_height() - footer).max(48.0)),
@@ -628,6 +634,7 @@ impl TexturePicker {
                 },
             );
             self.footer_height = (ui.cursor().top() - body.bottom()).max(1.0);
+            self.footer_font_scale = font_scale;
         });
         if !open || chosen.is_some() {
             self.open = false;

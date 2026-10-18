@@ -130,10 +130,16 @@ pub(super) fn editor(
     }
     // Braille blank is invisible but is not whitespace: egui must neither
     // trim an attachment at the beginning of a row nor split its width.
+    let font_scale = super::super::fonts::scale(ui.ctx());
     let (blank, unit_width, line_height) = ui.fonts_mut(|fonts| {
         let blank = if fonts.has_glyph(&font, '\u{2800}') { '\u{2800}' } else { 'M' };
         let unit = egui::FontId::new(1.0, font.family.clone());
-        (blank, fonts.glyph_width(&unit, blank), fonts.row_height(&font).max(label_font.size))
+        // egui's glyph_width uses the nominal size, unlike shaped advances.
+        (
+            blank,
+            fonts.glyph_width(&unit, blank) * font_scale,
+            fonts.row_height(&font).max(fonts.row_height(&label_font)),
+        )
     });
     let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
         let normal = TextFormat {

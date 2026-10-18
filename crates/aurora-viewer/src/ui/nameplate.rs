@@ -387,7 +387,6 @@ pub struct Layout {
 /// right edge (full) or after the name (compact).
 pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layout {
     let s = m.scale;
-    let h = m.height;
     let text_left = if m.photo > 0.0 { m.pad_left + m.photo + m.gap } else { m.pad_left };
     let text_w = text.subs.iter().flatten().map(|v| v.x).fold(text.name.x, f32::max);
     let row = if badges > 0 {
@@ -404,9 +403,10 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
     let width = width.ceil();
 
     // the lines, each centered in its line box, the block in the height
-    let name_box = m.name_pt * LINE_HEIGHT;
-    let sub_box = m.sub_pt * LINE_HEIGHT;
+    let name_box = (m.name_pt * LINE_HEIGHT).max(text.name.y);
+    let sub_box = text.subs.iter().flatten().map(|size| size.y).fold(m.sub_pt * LINE_HEIGHT, f32::max);
     let lines = text.subs.iter().flatten().count() as f32;
+    let h = m.height.max(name_box + lines * sub_box + 6.0 * s);
     let mut y = (h - name_box - lines * sub_box) * 0.5;
     let name = Pos2::new(text_left, y + (name_box - text.name.y) * 0.5);
     y += name_box;

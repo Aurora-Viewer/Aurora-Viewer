@@ -2586,6 +2586,11 @@ failure. Grid validation and any paid upload are performed by the human.
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
+  `2:text-size` opens Fonts and cycles the text-size preference through
+  0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
+  700, 880, 1060 and 1240 to compare the preview, navigation, window titles,
+  world labels and conversations, including inline emoji. Changes use the
+  normal live preference path and only affect the demo profile.
   `0:tonemap` opens Graphics scrolled to the Tone mapping row, `0:occlusion`
   to the Indirect light row (contact shadows and ambient occlusion around
   it) and `0:bloom` to the Bloom row, the rows the Deluxe level turns on
