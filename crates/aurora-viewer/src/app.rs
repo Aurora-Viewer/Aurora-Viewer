@@ -5576,6 +5576,9 @@ impl App {
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
         self.update_autopilot(dt);
+        if self.in_world() {
+            self.world.auto_land(&self.input);
+        }
         self.update_movement();
         self.update_audio();
         let mut edit_camera_frame = None;
