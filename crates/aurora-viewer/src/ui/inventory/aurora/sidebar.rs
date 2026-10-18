@@ -30,9 +30,27 @@ pub struct Sidebar {
     revision: u64,
     key: Option<(u64, u64, bool)>,
     rows: Vec<Row>,
+    /// The explorer's folder last shown: a new one opens its ancestors and
+    /// scrolls into sight.
+    shown: Uuid,
 }
 
 impl Sidebar {
+    /// Open the ancestors of `folder` when it is new; whether it is.
+    fn follow(&mut self, inv: &Inventory, folder: Uuid) -> bool {
+        if self.shown == folder {
+            return false;
+        }
+        self.shown = folder;
+        let mut seen = HashSet::new();
+        let mut id = rules::parent(inv, folder);
+        while let Some(parent) = id.filter(|id| *id != inv.root && seen.insert(*id)) {
+            self.set_open(parent, true);
+            id = rules::parent(inv, parent);
+        }
+        true
+    }
+
     fn set_open(&mut self, id: Uuid, open: bool) {
         let changed = if open { self.open.insert(id) } else { self.open.remove(&id) };
         if changed {
@@ -76,7 +94,16 @@ impl Sidebar {
 
 /// A row of the column: highlighted while `selected` (where the explorer
 /// is), its `count` (or a badge of what waits) at its end.
-fn entry(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count: Option<usize>, waiting: usize, selected: bool, left: f32) -> egui::Response {
+fn entry(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    count: Option<usize>,
+    waiting: usize,
+    selected: bool,
+    left: f32,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     let hot = response.hovered() || response.dnd_hover_payload::<InvDrag>().is_some();
     if selected || hot {
@@ -88,23 +115,25 @@ fn entry(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count: Option<
     widgets::paint_glyph(ui.painter(), icon, icon_center, ICON, tint);
     let mut end = rect.right() - 8.0;
     if waiting > 0 {
-        let badge = widgets::unread_count(ui.painter(), p, Pos2::new(end, rect.center().y - 7.5), waiting, widgets::CountSize::List);
+        let badge = widgets::unread_count(
+            ui.painter(),
+            p,
+            Pos2::new(end, rect.center().y - 7.5),
+            waiting,
+            widgets::CountSize::List,
+        );
         end = badge.left() - 6.0;
     } else if let Some(count) = count {
-        let galley = ui.painter().layout_no_wrap(
-            aurora_i18n::integer(count as i64),
-            egui::FontId::proportional(11.5),
-            p.muted,
-        );
+        let galley = ui
+            .painter()
+            .layout_no_wrap(aurora_i18n::integer(count as i64), egui::FontId::proportional(11.5), p.muted);
         let left = end - galley.size().x;
         widgets::paint_row_text(ui.painter(), galley, left, rect.center().y, p.muted);
         end = left - 6.0;
     }
     let name_left = icon_center.x + ICON / 2.0 + 9.0;
-    let mut job = egui::text::LayoutJob::single_section(
-        label.to_owned(),
-        egui::TextFormat::simple(egui::FontId::proportional(13.0), p.ink),
-    );
+    let mut job =
+        egui::text::LayoutJob::single_section(label.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(13.0), p.ink));
     job.wrap = egui::text::TextWrapping::truncate_at_width((end - name_left).max(20.0));
     let galley = ui.painter().layout_job(job);
     widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
@@ -163,13 +192,36 @@ pub(super) fn show(
     ui.spacing_mut().item_spacing.y = 1.0;
     // The shortcuts.
     let everything = st.tab == 0 && st.browse == inv.root;
-    if entry(ui, p, "briefcase-filled", aurora_i18n::tr!("inventory-all"), None, 0, everything, 8.0).clicked() {
+    if entry(
+        ui,
+        p,
+        "briefcase-filled",
+        aurora_i18n::tr!("inventory-all"),
+        None,
+        0,
+        everything,
+        8.0,
+    )
+    .clicked()
+    {
         browse(st, prefs, inv.root);
     }
     let unseen = super::toolbar::unseen_received(inv, st);
     for (tab, icon, label, count, shown) in [
-        (2, "clock-filled", aurora_i18n::tr!("inventory-tab-recent"), st.counts.recent, prefs.show_recent),
-        (3, "hanger-2-filled", aurora_i18n::tr!("inventory-tab-worn"), facts.worn.len(), prefs.show_worn),
+        (
+            2,
+            "clock-filled",
+            aurora_i18n::tr!("inventory-tab-recent"),
+            st.counts.recent,
+            prefs.show_recent,
+        ),
+        (
+            3,
+            "hanger-2-filled",
+            aurora_i18n::tr!("inventory-tab-worn"),
+            facts.worn.len(),
+            prefs.show_worn,
+        ),
         (
             4,
             "star-filled",
@@ -177,7 +229,13 @@ pub(super) fn show(
             st.counts.favorites,
             prefs.show_favorites,
         ),
-        (RECEIVED_TAB, "inbox", aurora_i18n::tr!("inventory-tab-received"), st.counts.received, true),
+        (
+            RECEIVED_TAB,
+            "inbox",
+            aurora_i18n::tr!("inventory-tab-received"),
+            st.counts.received,
+            true,
+        ),
     ] {
         if !shown {
             continue;
@@ -192,67 +250,78 @@ pub(super) fn show(
     ui.add_space(2.0);
     // The folders.
     st.view.prepare(inv, prefs.sort);
+    let follow = st.side.follow(inv, st.browse);
     st.side.prepare(&st.view, inv, prefs.show_library);
     let trash = rules::system(inv, 14);
     let foot = if trash.is_some() { ROW + 8.0 } else { 0.0 };
     let height = (ui.available_height() - foot).max(ROW);
     let rows = st.side.rows.clone();
-    egui::ScrollArea::vertical()
+    let mut area = egui::ScrollArea::vertical()
         .id_salt("aurora_inventory_side_folders")
         .max_height(height)
-        .auto_shrink([false, false])
-        .show_rows(ui, ROW, rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for row in &rows[range] {
-                let Some(folder) = inv.folders.get(&row.id) else { continue };
-                let left = 4.0 + row.depth as f32 * INDENT + CARET + 4.0;
-                let selected = st.tab == 0 && st.browse == row.id;
-                let name = folder_name(inv, row.id);
-                let icon = match tree::folder_icon(folder.info.type_default, row.open) {
-                    "Inv_TrashClosed" => "trash-filled",
-                    "Inv_FolderOpen" => "folder-open-filled",
-                    _ => "folder-filled",
-                };
-                let response = entry(ui, p, icon, &name, None, 0, selected, left);
-                let caret_center = Pos2::new(response.rect.left() + 4.0 + row.depth as f32 * INDENT + CARET / 2.0, response.rect.center().y);
-                let mut open = row.open;
-                if row.branches {
-                    let caret = ui.interact(
-                        Rect::from_center_size(caret_center, Vec2::splat(CARET + 6.0)),
-                        ui.id().with(("aurora_side_caret", row.id)),
-                        Sense::click(),
-                    );
-                    widgets::paint_glyph(
-                        ui.painter(),
-                        widgets::disclosure_caret(row.open),
-                        caret_center,
-                        CARET,
-                        if caret.hovered() { p.ink } else { p.muted_dim },
-                    );
-                    if caret.clicked() {
-                        open = !open;
-                    }
-                }
-                if response.clicked() {
-                    browse(st, prefs, row.id);
-                }
-                if response.double_clicked() && row.branches {
+        .auto_shrink([false, false]);
+    if follow && let Some(index) = rows.iter().position(|row| row.id == st.browse) {
+        area = area.vertical_scroll_offset((index as f32 * ROW - height / 2.0).max(0.0));
+    }
+    area.show_rows(ui, ROW, rows.len(), |ui, range| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for row in &rows[range] {
+            let Some(folder) = inv.folders.get(&row.id) else { continue };
+            let left = 4.0 + row.depth as f32 * INDENT + CARET + 4.0;
+            let selected = st.tab == 0 && st.browse == row.id;
+            let name = folder_name(inv, row.id);
+            let icon = match tree::folder_icon(folder.info.type_default, row.open) {
+                "Inv_TrashClosed" => "trash-filled",
+                "Inv_FolderOpen" => "folder-open-filled",
+                _ => "folder-filled",
+            };
+            let response = entry(ui, p, icon, &name, None, 0, selected, left);
+            let caret_center = Pos2::new(
+                response.rect.left() + 4.0 + row.depth as f32 * INDENT + CARET / 2.0,
+                response.rect.center().y,
+            );
+            let mut open = row.open;
+            if row.branches {
+                let caret = ui.interact(
+                    Rect::from_center_size(caret_center, Vec2::splat(CARET + 6.0)),
+                    ui.id().with(("aurora_side_caret", row.id)),
+                    Sense::click(),
+                );
+                widgets::paint_glyph(
+                    ui.painter(),
+                    widgets::disclosure_caret(row.open),
+                    caret_center,
+                    CARET,
+                    if caret.hovered() { p.ink } else { p.muted_dim },
+                );
+                if caret.clicked() {
                     open = !open;
                 }
-                folder_target(ui, p, inv, row.id, &response, &mut open, st, prefs, facts, actions);
-                if open != row.open {
-                    st.side.set_open(row.id, open);
-                    if open && inv.folders.get(&row.id).is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed)) {
-                        inv.request(row.id);
-                    }
+            }
+            if response.clicked() {
+                browse(st, prefs, row.id);
+            }
+            if response.double_clicked() && row.branches {
+                open = !open;
+            }
+            folder_target(ui, p, inv, row.id, &response, &mut open, st, prefs, facts, actions);
+            if open != row.open {
+                st.side.set_open(row.id, open);
+                if open
+                    && inv
+                        .folders
+                        .get(&row.id)
+                        .is_some_and(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
+                {
+                    inv.request(row.id);
                 }
             }
-        });
+        }
+    });
     // The Trash, at the foot.
     if let Some(trash) = trash {
         let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 8.0), Sense::hover());
-        ui.painter()
-            .hline(line.x_range(), line.center().y, widgets::divider_stroke(p));
+        ui.painter().hline(line.x_range(), line.center().y, widgets::divider_stroke(p));
         let response = entry(
             ui,
             p,
@@ -321,7 +390,13 @@ mod tests {
             inv.folders.get_mut(&id(folder)).expect("folder").children.push(id(child));
         }
         let mut view = ViewCache::default();
-        view.prepare(&inv, view::Sort { by_date: false, ..Default::default() });
+        view.prepare(
+            &inv,
+            view::Sort {
+                by_date: false,
+                ..Default::default()
+            },
+        );
         let mut side = Sidebar::default();
         side.prepare(&view, &inv, true);
         let listed: Vec<_> = side.rows.iter().map(|r| (r.id.as_u128(), r.depth)).collect();

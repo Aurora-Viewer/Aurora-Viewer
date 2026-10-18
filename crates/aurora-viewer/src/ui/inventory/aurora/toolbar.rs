@@ -69,10 +69,8 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
         let ink = if selected { p.ink } else { p.muted };
         widgets::paint_glyph(ui.painter(), icon, Pos2::new(cell.center().x, cell.top() + 14.0), 16.0, ink);
         let galley = ui.painter().layout_job({
-            let mut job = egui::text::LayoutJob::single_section(
-                label.to_owned(),
-                egui::TextFormat::simple(egui::FontId::proportional(11.0), ink),
-            );
+            let mut job =
+                egui::text::LayoutJob::single_section(label.to_owned(), egui::TextFormat::simple(egui::FontId::proportional(11.0), ink));
             job.wrap = egui::text::TextWrapping::truncate_at_width(cell.width() - 6.0);
             job
         });
@@ -95,9 +93,9 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
 
 /// The purchases of Received Items not shown yet this session.
 pub(super) fn unseen_received(inv: &Inventory, st: &InventoryUi) -> usize {
-    rules::system(inv, 50)
-        .and_then(|id| inv.folders.get(&id))
-        .map_or(0, |f| f.children.iter().filter(|id| !st.received_seen.contains(id)).count() + f.items.len())
+    rules::system(inv, 50).and_then(|id| inv.folders.get(&id)).map_or(0, |f| {
+        f.children.iter().filter(|id| !st.received_seen.contains(id)).count() + f.items.len()
+    })
 }
 
 /// The hint of the search field: what it searches.
@@ -153,7 +151,15 @@ fn new_target(inv: &Inventory, st: &InventoryUi, layout: Layout) -> Uuid {
         .unwrap_or(inv.root)
 }
 
-fn new_menu(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &mut InventoryPreferences, layout: Layout, actions: &mut Vec<InvAction>) {
+fn new_menu(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    layout: Layout,
+    actions: &mut Vec<InvAction>,
+) {
     let to = new_target(inv, st, layout);
     let enabled = st.pending.is_none() && rules::destination(inv, to, &prefs.protected);
     context::new_menu(ui, p, to, enabled, st, prefs, actions);
@@ -163,10 +169,24 @@ fn new_menu(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryU
 /// search searches, and the inventory's preferences.
 fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences, layout: Layout) {
     menu::section(ui, p, aurora_i18n::tr!("inventory-sort-menu"));
-    if menu::check(ui, p, "clock-filled", aurora_i18n::tr!("ui-inventory-controls-newest-first"), prefs.sort.by_date, true) {
+    if menu::check(
+        ui,
+        p,
+        "clock-filled",
+        aurora_i18n::tr!("ui-inventory-controls-newest-first"),
+        prefs.sort.by_date,
+        true,
+    ) {
         prefs.sort.by_date = true;
     }
-    if menu::check(ui, p, "sort-ascending-letters", aurora_i18n::tr!("common-by-name"), !prefs.sort.by_date, true) {
+    if menu::check(
+        ui,
+        p,
+        "sort-ascending-letters",
+        aurora_i18n::tr!("common-by-name"),
+        !prefs.sort.by_date,
+        true,
+    ) {
         prefs.sort.by_date = false;
     }
     menu::toggle(
@@ -185,10 +205,20 @@ fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut I
     );
     menu::separator(ui, p);
     if layout == Layout::Compact || st.result_view() {
-        if menu::item(ui, p, "chevrons-up", aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders")) {
+        if menu::item(
+            ui,
+            p,
+            "chevrons-up",
+            aurora_i18n::tr!("ui-inventory-controls-collapse-displayed-folders"),
+        ) {
             st.expand_all = Some(false);
         }
-        if menu::item(ui, p, "chevrons-down", aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders")) {
+        if menu::item(
+            ui,
+            p,
+            "chevrons-down",
+            aurora_i18n::tr!("ui-inventory-controls-expand-displayed-folders"),
+        ) {
             st.expand_all = Some(true);
         }
         menu::separator(ui, p);
@@ -206,7 +236,12 @@ fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut I
             }
         }
     });
-    if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-inventory-controls-inventory-preferences")) {
+    if menu::item(
+        ui,
+        p,
+        "settings-filled",
+        aurora_i18n::tr!("ui-inventory-controls-inventory-preferences"),
+    ) {
         st.preferences_open = true;
     }
 }
@@ -240,7 +275,9 @@ pub(super) fn search_row(
         }
         rights::button(ui, p, &mut prefs.rights, BAR);
         let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
-        menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| sort_menu(ui, p, st, prefs, layout));
+        menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+            sort_menu(ui, p, st, prefs, layout)
+        });
         let new = tool_button(ui, p, "plus", aurora_i18n::tr!("inventory-new-menu"), false);
         menu::dropdown(&new, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             new_menu(ui, p, inv, st, prefs, layout, actions);
@@ -296,11 +333,9 @@ pub(super) fn explorer_row(
         let cmt = rights::button_width(ui);
         if layout == Layout::Wide {
             let crumbs = (ui.available_width() * 0.32).clamp(140.0, 380.0);
-            ui.allocate_ui_with_layout(
-                Vec2::new(crumbs, BAR),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| breadcrumb(ui, p, inv, st),
-            );
+            ui.allocate_ui_with_layout(Vec2::new(crumbs, BAR), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                breadcrumb(ui, p, inv, st)
+            });
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let filters_w = 150.0;
@@ -308,9 +343,16 @@ pub(super) fn explorer_row(
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
-            if counted_button(ui, p, "adjustments-horizontal-filled", aurora_i18n::tr!("ui-inventory-controls-filters"), count, lit)
-                .on_hover_text(filters_tip(st))
-                .clicked()
+            if counted_button(
+                ui,
+                p,
+                "adjustments-horizontal-filled",
+                aurora_i18n::tr!("ui-inventory-controls-filters"),
+                count,
+                lit,
+            )
+            .on_hover_text(filters_tip(st))
+            .clicked()
             {
                 st.filters_open = !st.filters_open;
             }
@@ -332,15 +374,24 @@ pub(super) fn explorer_row(
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
-            if counted_button(ui, p, "adjustments-horizontal-filled", aurora_i18n::tr!("ui-inventory-controls-filters"), count, lit)
-                .on_hover_text(filters_tip(st))
-                .clicked()
+            if counted_button(
+                ui,
+                p,
+                "adjustments-horizontal-filled",
+                aurora_i18n::tr!("ui-inventory-controls-filters"),
+                count,
+                lit,
+            )
+            .on_hover_text(filters_tip(st))
+            .clicked()
             {
                 st.filters_open = !st.filters_open;
             }
             rights::button(ui, p, &mut prefs.rights, BAR);
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
-            menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| sort_menu(ui, p, st, prefs, layout));
+            menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                sort_menu(ui, p, st, prefs, layout)
+            });
             let new = widgets::action_button(ui, p, "plus", "", widgets::ActionKind::Primary, Vec2::splat(BAR))
                 .on_hover_text(aurora_i18n::tr!("inventory-new-menu"));
             menu::dropdown(&new, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
@@ -427,9 +478,13 @@ pub(super) fn breadcrumb_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(count) = count {
                     ui.label(
-                        egui::RichText::new(aurora_i18n::tr!("inventory-items-count", count = count, number = aurora_i18n::integer(count as i64)))
-                            .size(12.0)
-                            .color(p.muted),
+                        egui::RichText::new(aurora_i18n::tr!(
+                            "inventory-items-count",
+                            count = count,
+                            number = aurora_i18n::integer(count as i64)
+                        ))
+                        .size(12.0)
+                        .color(p.muted),
                     );
                 }
             });
@@ -616,8 +671,12 @@ pub(super) fn chips(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs:
                     }
                     let add = ui
                         .add(
-                            egui::Label::new(egui::RichText::new(format!("+ {}", aurora_i18n::tr!("inventory-chip-add"))).size(12.0).color(p.violet_light))
-                                .sense(Sense::click()),
+                            egui::Label::new(
+                                egui::RichText::new(format!("+ {}", aurora_i18n::tr!("inventory-chip-add")))
+                                    .size(12.0)
+                                    .color(p.violet_light),
+                            )
+                            .sense(Sense::click()),
                         )
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     if add.clicked() {
@@ -632,7 +691,13 @@ pub(super) fn chips(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs:
                 let (rect, response) = ui.allocate_exact_size(Vec2::new(sort_w, 24.0), Sense::click());
                 let hot = response.hovered();
                 let ink = if hot { p.ink } else { p.muted };
-                widgets::paint_glyph(ui.painter(), "arrows-sort", Pos2::new(rect.left() + 7.0, rect.center().y), 13.0, ink);
+                widgets::paint_glyph(
+                    ui.painter(),
+                    "arrows-sort",
+                    Pos2::new(rect.left() + 7.0, rect.center().y),
+                    13.0,
+                    ink,
+                );
                 let galley = ui.painter().layout_no_wrap(sort, egui::FontId::proportional(12.0), ink);
                 widgets::paint_row_text(ui.painter(), galley, rect.left() + 18.0, rect.center().y, ink);
                 if hot {
@@ -743,13 +808,15 @@ mod tests {
 
     #[test]
     fn the_links_mode_is_one_chip_that_restores_the_filters() {
-        let mut st = InventoryUi::default();
-        st.saved_filters = Some(Filters {
-            coalesced: true,
-            ..Filters::default()
-        });
+        let mut st = InventoryUi {
+            saved_filters: Some(Filters {
+                coalesced: true,
+                ..Filters::default()
+            }),
+            links_filter: Some(Uuid::from_u128(5)),
+            ..Default::default()
+        };
         st.filters.links = Links::Only;
-        st.links_filter = Some(Uuid::from_u128(5));
         let chips = chip_list(&st);
         assert_eq!(chips.len(), 1);
         (chips[0].remove)(&mut st);

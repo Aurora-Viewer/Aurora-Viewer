@@ -175,7 +175,11 @@ impl Default for InventoryPreferences {
 /// Where "Recent" starts: the last logout, or a day ago (refreshed once a
 /// minute) before the first one.
 pub(super) fn recent_cutoff(prefs: &InventoryPreferences, time: i64) -> i64 {
-    if prefs.last_logout > 0 { prefs.last_logout } else { time / 60 * 60 - 86400 }
+    if prefs.last_logout > 0 {
+        prefs.last_logout
+    } else {
+        time / 60 * 60 - 86400
+    }
 }
 
 pub fn now() -> i64 {

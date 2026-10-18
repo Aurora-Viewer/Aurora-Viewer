@@ -19,7 +19,11 @@ pub const ROW_HEIGHT: f32 = 20.0;
 
 /// The height of the rows of this window: Aurora's are taller.
 pub fn row_height(st: &InventoryUi) -> f32 {
-    if st.aurora.is_some() { super::aurora::rows::HEIGHT } else { ROW_HEIGHT }
+    if st.aurora.is_some() {
+        super::aurora::rows::HEIGHT
+    } else {
+        ROW_HEIGHT
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

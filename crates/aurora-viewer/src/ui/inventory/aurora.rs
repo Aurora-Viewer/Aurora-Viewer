@@ -82,8 +82,12 @@ pub fn widen(ctx: &egui::Context, id: &str) {
 /// `AURORA_DEMO_INVENTORY=aurora|aurora-medium|aurora-wide|aurora-rights`.
 fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    MODE.get_or_init(|| std::env::var("AURORA_DEMO_INVENTORY").ok().filter(|mode| mode.starts_with("aurora")))
-        .as_deref()
+    MODE.get_or_init(|| {
+        std::env::var("AURORA_DEMO_INVENTORY")
+            .ok()
+            .filter(|mode| mode.starts_with("aurora"))
+    })
+    .as_deref()
 }
 
 /// Whether one of Aurora's inventory scenarios runs.
@@ -173,8 +177,7 @@ impl Counts {
                     && (prefs.search_library || !library.contains(&it.parent))
             })
             .count();
-        self.favorites = inv.items.values().filter(|it| it.favorite).count()
-            + inv.folders.values().filter(|f| f.info.favorite).count();
+        self.favorites = inv.items.values().filter(|it| it.favorite).count() + inv.folders.values().filter(|f| f.info.favorite).count();
         let held = |kind: i32| {
             rules::system(inv, kind)
                 .and_then(|id| inv.folders.get(&id))
@@ -228,14 +231,9 @@ fn row_menu(
 ) {
     let Some((id, pos)) = st.row_menu else { return };
     let mut open = true;
-    menu::popup_at(
-        ui.ctx(),
-        egui::Id::new(("inventory_row_menu", st.ui_id)),
-        pos,
-        &mut open,
-        p,
-        |ui| context::show(ui, p, inv, id, st, prefs, facts, actions),
-    );
+    menu::popup_at(ui.ctx(), egui::Id::new(("inventory_row_menu", st.ui_id)), pos, &mut open, p, |ui| {
+        context::show(ui, p, inv, id, st, prefs, facts, actions)
+    });
     if !open || !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) {
         st.row_menu = None;
     }
@@ -460,21 +458,30 @@ mod tests {
                 &mut self.actions,
                 self.width,
             );
-            drop(headless_output(self.ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
-                    time: Some(self.frame as f64 / 60.0),
-                    events: std::iter::once(egui::Event::ModifiersChanged(self.modifiers)).chain(events).collect(),
-                    ..Default::default()
-                },
-                |ui| {
-                    widgets::Floater::new("aurora_inventory_test", "Inventory", egui::pos2(20.0, 20.0), egui::vec2(width, 720.0))
+            drop(headless_output(
+                self.ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+                        time: Some(self.frame as f64 / 60.0),
+                        events: std::iter::once(egui::Event::ModifiersChanged(self.modifiers))
+                            .chain(events)
+                            .collect(),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        widgets::Floater::new(
+                            "aurora_inventory_test",
+                            "Inventory",
+                            egui::pos2(20.0, 20.0),
+                            egui::vec2(width, 720.0),
+                        )
                         .silent()
                         .show(ui.ctx(), &palette, &mut true, |ui| {
                             contents(ui, &palette, &Icons::default(), inv, st, prefs, facts, &Default::default(), actions);
                         });
-                },
-            )));
+                    },
+                ),
+            ));
         }
 
         fn frames(&mut self, n: usize) {
@@ -577,7 +584,9 @@ mod tests {
             h.actions.clear();
             h.double_click(note);
             assert!(
-                h.actions.iter().any(|a| matches!(a, InvAction::Preview(id) if *id == Uuid::from_u128(8103))),
+                h.actions
+                    .iter()
+                    .any(|a| matches!(a, InvAction::Preview(id) if *id == Uuid::from_u128(8103))),
                 "{width} px"
             );
             if width >= 800.0 {

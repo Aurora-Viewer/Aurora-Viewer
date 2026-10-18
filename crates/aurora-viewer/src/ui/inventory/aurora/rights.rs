@@ -47,11 +47,8 @@ fn letters(ui: &egui::Ui, p: &Palette, mask: Option<u32>, left: f32, center_y: f
         crate::ui::widgets::paint_ink_centered(ui.painter(), galley.clone(), center, color);
         if allowed == Some(false) {
             let half = galley.size().x / 2.0 + 1.0;
-            ui.painter().hline(
-                center.x - half..=center.x + half,
-                center.y,
-                Stroke::new(1.0, color),
-            );
+            ui.painter()
+                .hline(center.x - half..=center.x + half, center.y, Stroke::new(1.0, color));
         }
         x += SLOT;
     }
@@ -93,7 +90,12 @@ const CHEVRON: f32 = 12.0;
 
 /// The width of the "CMT" button.
 pub fn button_width(ui: &egui::Ui) -> f32 {
-    ui.painter().layout_job(sheet::semibold(ui, "CMT", SIZE, Color32::PLACEHOLDER)).size().x + CHEVRON + 18.0
+    ui.painter()
+        .layout_job(sheet::semibold(ui, "CMT", SIZE, Color32::PLACEHOLDER))
+        .size()
+        .x
+        + CHEVRON
+        + 18.0
 }
 
 /// The "CMT" button and its menu. Lit while the rows show rights.

@@ -63,12 +63,24 @@ impl Main {
         }
     }
 
-    fn run(self, inv: &Inventory, id: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts, actions: &mut Vec<InvAction>) {
+    fn run(
+        self,
+        inv: &Inventory,
+        id: Uuid,
+        st: &mut InventoryUi,
+        prefs: &InventoryPreferences,
+        facts: &Facts,
+        actions: &mut Vec<InvAction>,
+    ) {
         let original = rules::original(inv, id);
         match self {
             Self::Wear | Self::TakeOff => context::double_click(inv, id, st, prefs, facts, actions),
             Self::Play => {
-                if let Some(asset) = original.and_then(|id| inv.items.get(&id)).map(|it| it.asset_id).filter(|a| !a.is_nil()) {
+                if let Some(asset) = original
+                    .and_then(|id| inv.items.get(&id))
+                    .map(|it| it.asset_id)
+                    .filter(|a| !a.is_nil())
+                {
                     actions.push(InvAction::Sound(asset));
                 }
             }
@@ -84,17 +96,15 @@ impl Main {
 
 /// "Add": an object or clothing not worn, kept with what is worn.
 fn can_add(inv: &Inventory, id: Uuid, facts: &Facts, st: &InventoryUi) -> bool {
-    rules::original(inv, id)
-        .and_then(|id| inv.items.get(&id))
-        .is_some_and(|it| {
-            matches!(it.asset_type, 5 | 6)
-                && !(it.asset_type == 5 && it.flags & 0xff == 15)
-                && !facts.worn.contains(&it.id)
-                && !rules::library(inv, it.id)
-                && !rules::in_type(inv, it.id, 14)
-                && !facts.appearance_busy
-                && st.pending.is_none()
-        })
+    rules::original(inv, id).and_then(|id| inv.items.get(&id)).is_some_and(|it| {
+        matches!(it.asset_type, 5 | 6)
+            && !(it.asset_type == 5 && it.flags & 0xff == 15)
+            && !facts.worn.contains(&it.id)
+            && !rules::library(inv, it.id)
+            && !rules::in_type(inv, it.id, 14)
+            && !facts.appearance_busy
+            && st.pending.is_none()
+    })
 }
 
 fn add(inv: &Inventory, id: Uuid, actions: &mut Vec<InvAction>) {
@@ -111,7 +121,9 @@ fn add(inv: &Inventory, id: Uuid, actions: &mut Vec<InvAction>) {
 fn can_give(inv: &Inventory, ids: &[Uuid], st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> bool {
     st.pending.is_none()
         && !ids.is_empty()
-        && ids.iter().all(|id| rules::mutable(inv, *id, &prefs.protected) && rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok())
+        && ids
+            .iter()
+            .all(|id| rules::mutable(inv, *id, &prefs.protected) && rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok())
 }
 
 fn give(st: &mut InventoryUi, ids: Vec<Uuid>) {
@@ -254,7 +266,12 @@ pub(super) fn strip(
                 p.muted_dim,
             );
         }
-        body.label(sheet::semibold(&body, &aurora_i18n::tr!("inventory-details-many", count = ids.len()), 13.0, p.ink));
+        body.label(sheet::semibold(
+            &body,
+            &aurora_i18n::tr!("inventory-details-many", count = ids.len()),
+            13.0,
+            p.ink,
+        ));
         body.add_space(16.0);
         body.horizontal(|ui| {
             if widgets::action_button_if(
@@ -279,14 +296,25 @@ pub(super) fn strip(
         context::double_click(inv, id, st, prefs, facts, actions);
     }
     let name = rules::name(inv, id);
-    let name = if id == inv.root || id == inv.lib_root { folder_name(inv, id) } else { name };
+    let name = if id == inv.root || id == inv.lib_root {
+        folder_name(inv, id)
+    } else {
+        name
+    };
     body.add(egui::Label::new(sheet::semibold(&body, &name, 13.0, p.ink)).truncate());
     if let Some(folder) = inv.folders.get(&id) {
         body.label(egui::RichText::new(rows::kind_name(inv, id)).size(12.0).color(p.muted));
         body.add_space(8.0);
         body.horizontal(|ui| {
-            if widgets::action_button(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"), widgets::ActionKind::Primary, Vec2::new(0.0, BUTTON))
-                .clicked()
+            if widgets::action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                aurora_i18n::tr!("common-open"),
+                widgets::ActionKind::Primary,
+                Vec2::new(0.0, BUTTON),
+            )
+            .clicked()
             {
                 if st.aurora.is_some_and(|f| f.layout == Layout::Compact) {
                     st.plain.set_open(id, true);
@@ -310,10 +338,18 @@ pub(super) fn strip(
     if let Some(permissions) = Permissions::inventory(inv, id) {
         body.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(egui::RichText::new(aurora_i18n::tr!("inventory-rights-you")).size(12.0).color(p.muted));
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("inventory-rights-you"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
             rights::label(ui, p, permissions, Rights::Mine);
             ui.add_space(10.0);
-            ui.label(egui::RichText::new(aurora_i18n::tr!("inventory-rights-next")).size(12.0).color(p.muted));
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("inventory-rights-next"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
             rights::label(ui, p, permissions.with_next_owner(true), Rights::Next);
         });
     }
@@ -328,7 +364,15 @@ pub(super) fn strip(
             }
         }
         if can_add(inv, id, facts, st)
-            && widgets::action_button(ui, p, "plus", aurora_i18n::tr!("common-add"), widgets::ActionKind::Flat, Vec2::new(0.0, BUTTON)).clicked()
+            && widgets::action_button(
+                ui,
+                p,
+                "plus",
+                aurora_i18n::tr!("common-add"),
+                widgets::ActionKind::Flat,
+                Vec2::new(0.0, BUTTON),
+            )
+            .clicked()
         {
             add(inv, id, actions);
         }
@@ -429,7 +473,12 @@ pub(super) fn pane(
         if ids.is_empty() {
             nothing(ui, p, rect);
         } else {
-            ui.label(sheet::semibold(ui, &aurora_i18n::tr!("inventory-details-many", count = ids.len()), 15.0, p.ink));
+            ui.label(sheet::semibold(
+                ui,
+                &aurora_i18n::tr!("inventory-details-many", count = ids.len()),
+                15.0,
+                p.ink,
+            ));
             ui.horizontal(|ui| {
                 if widgets::action_button_if(
                     ui,
@@ -452,7 +501,9 @@ pub(super) fn pane(
     // The picture: a click changes it.
     let width = ui.available_width();
     let (picture_rect, _) = ui.allocate_exact_size(Vec2::new(width, 176.0), Sense::hover());
-    let writable = st.pending.is_none() && rules::mutable(inv, id, &prefs.protected) && !inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25));
+    let writable = st.pending.is_none()
+        && rules::mutable(inv, id, &prefs.protected)
+        && !inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25));
     let response = picture(ui, p, icons, inv, id, picture_rect, images, &mut st.wanted_images);
     if writable {
         let response = response
@@ -463,7 +514,11 @@ pub(super) fn pane(
         }
     }
     // The name, and its renaming.
-    let name = if id == inv.root || id == inv.lib_root { folder_name(inv, id) } else { rules::name(inv, id) };
+    let name = if id == inv.root || id == inv.lib_root {
+        folder_name(inv, id)
+    } else {
+        rules::name(inv, id)
+    };
     ui.horizontal(|ui| {
         let rename = st.pending.is_none() && rules::renameable(inv, id, &prefs.protected);
         let room = ui.available_width() - if rename { 30.0 } else { 0.0 };
@@ -482,8 +537,15 @@ pub(super) fn pane(
     ui.label(egui::RichText::new(line).size(12.5).color(p.muted));
     if let Some(folder) = inv.folders.get(&id) {
         ui.horizontal(|ui| {
-            if widgets::action_button(ui, p, "folder-open-filled", aurora_i18n::tr!("common-open"), widgets::ActionKind::Primary, Vec2::new(0.0, 28.0))
-                .clicked()
+            if widgets::action_button(
+                ui,
+                p,
+                "folder-open-filled",
+                aurora_i18n::tr!("common-open"),
+                widgets::ActionKind::Primary,
+                Vec2::new(0.0, 28.0),
+            )
+            .clicked()
             {
                 st.browse = folder.info.id;
                 set_tab(st, prefs, 0);
@@ -514,13 +576,21 @@ pub(super) fn pane(
         if let Some(main) = Main::of(inv, id, facts) {
             let (icon, label) = main.label();
             let enabled = st.pending.is_none() && !(matches!(main, Main::Wear | Main::TakeOff) && facts.appearance_busy);
-            let width = (ui.available_width() - 3.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0);
+            let width = (ui.available_width() - 2.0 * (28.0 + 6.0) - if can_add(inv, id, facts, st) { 80.0 } else { 0.0 }).max(90.0);
             if widgets::action_button_if(ui, p, icon, label, widgets::ActionKind::Primary, Vec2::new(width, 28.0), enabled).clicked() {
                 main.run(inv, id, st, prefs, facts, actions);
             }
         }
         if can_add(inv, id, facts, st)
-            && widgets::action_button(ui, p, "", aurora_i18n::tr!("common-add"), widgets::ActionKind::Flat, Vec2::new(74.0, 28.0)).clicked()
+            && widgets::action_button(
+                ui,
+                p,
+                "",
+                aurora_i18n::tr!("common-add"),
+                widgets::ActionKind::Flat,
+                Vec2::new(74.0, 28.0),
+            )
+            .clicked()
         {
             add(inv, id, actions);
         }
@@ -537,13 +607,6 @@ pub(super) fn pane(
         .clicked()
         {
             give(st, vec![id]);
-        }
-        if widgets::action_button(ui, p, "info-circle-filled", "", widgets::ActionKind::Flat, Vec2::splat(28.0))
-            .on_hover_text(aurora_i18n::tr!("common-properties"))
-            .clicked()
-        {
-            st.property_edit = None;
-            st.dialog = Some(EditDialog::Properties(id));
         }
         more(ui, p, st, id);
     });

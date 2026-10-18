@@ -132,7 +132,11 @@ enum Tone {
 const PILL_PAD: f32 = 6.0;
 
 fn pill_width(ui: &egui::Ui, text: &str) -> f32 {
-    ui.painter().layout_job(sheet::semibold(ui, text, 11.0, Color32::PLACEHOLDER)).size().x + PILL_PAD * 2.0
+    ui.painter()
+        .layout_job(sheet::semibold(ui, text, 11.0, Color32::PLACEHOLDER))
+        .size()
+        .x
+        + PILL_PAD * 2.0
 }
 
 fn paint_pill(ui: &egui::Ui, p: &Palette, text: &str, tone: Tone, left: f32, center_y: f32) -> f32 {
@@ -141,10 +145,7 @@ fn paint_pill(ui: &egui::Ui, p: &Palette, text: &str, tone: Tone, left: f32, cen
         Tone::Plain => (p.raised, p.muted),
     };
     let galley = ui.painter().layout_job(sheet::semibold(ui, text, 11.0, ink));
-    let rect = Rect::from_min_size(
-        Pos2::new(left, center_y - 9.0),
-        Vec2::new(galley.size().x + PILL_PAD * 2.0, 18.0),
-    );
+    let rect = Rect::from_min_size(Pos2::new(left, center_y - 9.0), Vec2::new(galley.size().x + PILL_PAD * 2.0, 18.0));
     ui.painter().rect_filled(rect, widgets::inner_radius(ui.visuals()), fill);
     widgets::paint_row_text(ui.painter(), galley, rect.left() + PILL_PAD, rect.center().y, ink);
     rect.width()
@@ -363,10 +364,7 @@ fn paint_columns(
         rights::paint(ui, p, permissions, frame.rights, range.min, center_y, selected);
     }
     if let Some(date) = cols.date {
-        let seconds = inv
-            .items
-            .get(&id)
-            .map_or_else(|| view.folder_date(id), |it| it.created_at);
+        let seconds = inv.items.get(&id).map_or_else(|| view.folder_date(id), |it| it.created_at);
         let text = short_date(seconds, super::super::view::now());
         if !text.is_empty() {
             let galley = cut(ui, &text, SMALL, ink, date.span(), false);
@@ -415,7 +413,11 @@ pub(in super::super) fn item(
     paint_icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), icon_center, tint);
     let permissions = Permissions::inventory(inv, id);
     let hovered = ui.rect_contains_pointer(full) && ui.ctx().dragged_id().is_none();
-    let quick = if hovered { quick_buttons(inv, id, facts, frame.layout) } else { Vec::new() };
+    let quick = if hovered {
+        quick_buttons(inv, id, facts, frame.layout)
+    } else {
+        Vec::new()
+    };
     let quick_w: f32 = quick.iter().map(|q| quick_width(ui, *q) + 4.0).sum();
     let trailing = if rights_in_name(frame) && permissions.is_some() {
         rights::width(frame.rights)
@@ -446,12 +448,26 @@ pub(in super::super) fn item(
         x += paint_pill(ui, p, text, *tone, x, rect.center().y);
     }
     if it.favorite {
-        widgets::paint_glyph(ui.painter(), "star-filled", Pos2::new(x + 6.0 + 7.0, rect.center().y), 14.0, p.amber);
+        widgets::paint_glyph(
+            ui.painter(),
+            "star-filled",
+            Pos2::new(x + 6.0 + 7.0, rect.center().y),
+            14.0,
+            p.amber,
+        );
     }
     if trailing > 0.0
         && let Some(permissions) = permissions
     {
-        rights::paint(ui, p, permissions, frame.rights, cols.name_end - trailing, rect.center().y, selected);
+        rights::paint(
+            ui,
+            p,
+            permissions,
+            frame.rights,
+            cols.name_end - trailing,
+            rect.center().y,
+            selected,
+        );
     }
     paint_columns(ui, p, inv, &st.view, id, cols, frame, permissions, rect.center().y, selected);
     item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
@@ -552,14 +568,28 @@ pub(in super::super) fn folder(
     let name_end = name_left + galley.size().x;
     widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
     if folder.info.favorite {
-        widgets::paint_glyph(ui.painter(), "star-filled", Pos2::new(name_end + 6.0 + 7.0, rect.center().y), 14.0, p.amber);
+        widgets::paint_glyph(
+            ui.painter(),
+            "star-filled",
+            Pos2::new(name_end + 6.0 + 7.0, rect.center().y),
+            14.0,
+            p.amber,
+        );
     }
     if let Some(count) = count {
-        let galley = ui
-            .painter()
-            .layout_no_wrap(count, egui::FontId::proportional(11.5), if selected { p.violet_pale } else { p.muted });
+        let galley = ui.painter().layout_no_wrap(
+            count,
+            egui::FontId::proportional(11.5),
+            if selected { p.violet_pale } else { p.muted },
+        );
         let left = cols.name_end - galley.size().x;
-        widgets::paint_row_text(ui.painter(), galley, left, rect.center().y, if selected { p.violet_pale } else { p.muted });
+        widgets::paint_row_text(
+            ui.painter(),
+            galley,
+            left,
+            rect.center().y,
+            if selected { p.violet_pale } else { p.muted },
+        );
     }
     paint_columns(ui, p, inv, &st.view, id, cols, frame, None, rect.center().y, selected);
     let lead = caret.as_ref().map(|caret| caret.rect);
@@ -600,8 +630,7 @@ pub fn header(ui: &mut egui::Ui, p: &Palette, frame: Frame, list: egui::Id) {
     if let Some(date) = cols.date {
         title(aurora_i18n::tr!("inventory-column-modified"), date.min);
     }
-    ui.painter()
-        .hline(rect.x_range(), rect.bottom() - 0.5, widgets::divider_stroke(p));
+    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, widgets::divider_stroke(p));
 }
 
 #[cfg(test)]
@@ -681,9 +710,15 @@ pub(super) mod tests {
         facts.worn.insert(Uuid::from_u128(1));
         facts.worn.insert(Uuid::from_u128(2));
         assert!(quick_buttons(&inv, Uuid::from_u128(1), &facts, Layout::Compact).is_empty());
-        assert_eq!(quick_buttons(&inv, Uuid::from_u128(2), &facts, Layout::Compact), [Quick::Wear(true)]);
+        assert_eq!(
+            quick_buttons(&inv, Uuid::from_u128(2), &facts, Layout::Compact),
+            [Quick::Wear(true)]
+        );
         assert_eq!(quick_buttons(&inv, Uuid::from_u128(3), &facts, Layout::Wide), [Quick::More]);
         facts.worn.clear();
-        assert_eq!(quick_buttons(&inv, Uuid::from_u128(1), &facts, Layout::Wide), [Quick::Wear(false), Quick::More]);
+        assert_eq!(
+            quick_buttons(&inv, Uuid::from_u128(1), &facts, Layout::Wide),
+            [Quick::Wear(false), Quick::More]
+        );
     }
 }

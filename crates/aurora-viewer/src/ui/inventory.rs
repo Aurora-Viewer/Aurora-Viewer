@@ -1456,7 +1456,7 @@ pub fn show(
         // The title bar follows the width the window had last frame.
         let layout = aurora::Layout::of_window(ctx, "inventory");
         floater = floater.title_note(aurora::item_count(inv, layout));
-        if layout == aurora::Layout::Wide {
+        if layout != aurora::Layout::Compact {
             let (dot, text) = aurora::sync_state(p, inv, st);
             floater = floater.title_state(dot, text);
         }

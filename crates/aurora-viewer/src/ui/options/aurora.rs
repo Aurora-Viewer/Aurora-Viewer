@@ -791,7 +791,10 @@ mod tests {
         assert_eq!(s.classic_about_land, fresh.classic_about_land);
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
         assert!(!s.classic_region_estate && !fresh.classic_region_estate);
-        assert!(!s.classic_inventory && !fresh.classic_inventory, "the Aurora inventory is the default");
+        assert!(
+            !s.classic_inventory && !fresh.classic_inventory,
+            "the Aurora inventory is the default"
+        );
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);
