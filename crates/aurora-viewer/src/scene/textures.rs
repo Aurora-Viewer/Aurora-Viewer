@@ -863,6 +863,9 @@ pub struct TextureStreamer {
     /// last took them: it classifies the faces using them again (their
     /// pass is cached, and the GPU lists read it).
     alpha_changes: Vec<u32>,
+    /// Slots whose texture showed its first pixels since the last
+    /// `take_first_texels` (the rez effect's objects waiting for them).
+    first_texels: Vec<u32>,
     max_decodes: usize,
     decodes: usize,
     /// Memory pressure step (texture_budget.rs), decided in `maintain`.
@@ -1051,6 +1054,7 @@ impl TextureStreamer {
             trash: Trash::default(),
             cache_writer: None,
             alpha_changes: Vec::new(),
+            first_texels: Vec::new(),
             meter: Arc::default(),
             load: LoadTotals::default(),
             watch: LoadWatch::default(),
@@ -1059,6 +1063,12 @@ impl TextureStreamer {
 
     /// The slots whose alpha class or alpha channel changed since the last
     /// call (a slot may be listed more than once).
+    /// The slots whose texture showed its first pixels since the last
+    /// call (appended to `out`).
+    pub fn take_first_texels(&mut self, out: &mut Vec<u32>) {
+        out.append(&mut self.first_texels);
+    }
+
     pub fn take_alpha_changes(&mut self, out: &mut Vec<u32>) {
         out.append(&mut self.alpha_changes);
     }
@@ -2388,6 +2398,9 @@ impl TextureStreamer {
                 && e.decoded.is_none()
             {
                 self.load.first_pixels(asked.elapsed(), e.px_now());
+            }
+            if e.decoded.is_none() {
+                self.first_texels.push(e.slot);
             }
             e.decoded = Some(u.discard);
             e.alpha = u.alpha;

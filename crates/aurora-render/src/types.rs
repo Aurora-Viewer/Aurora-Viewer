@@ -196,6 +196,8 @@ pub mod rez_mode {
     pub const SWEEP: u32 = 2;
     /// Leaving: the line comes down and leaves the grid.
     pub const DEREZ: u32 = 3;
+    /// Loaded with no line for it: from the grid to the textures.
+    pub const FADE: u32 = 4;
 }
 
 impl Default for DrawRecord {

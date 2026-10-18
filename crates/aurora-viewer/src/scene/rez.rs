@@ -1,37 +1,41 @@
-//! The rez effect (Preferences › Aurora, "Rez effect"): an object that
-//! appears while we watch does not pop in grey. Still loading, it is a
-//! glowing grid; once loaded, a bright line rises from its bottom to its
-//! top and reveals it (`rez_apply` in object.wgsl, from `DrawRecord::rez`),
-//! in the brand gradient of the theme (`Palette::aurora_gradient`). While
-//! it runs, its faces are drawn in the glow pass too (`FaceDraw::rez_glow`),
-//! which spreads the line's light.
+//! The rez effect (Preferences › Aurora, "Rez effect"): nothing shows grey
+//! while it loads. An object whose textures or geometry have not come is a
+//! glowing grid; once loaded, a bright line rises from its bottom to its top
+//! and reveals it (`rez_apply` in object.wgsl, from `DrawRecord::rez`), in
+//! the brand gradient of the theme (`Palette::aurora_gradient`). While a
+//! line runs, its faces are drawn in the glow pass too
+//! (`FaceDraw::rez_glow`), which spreads its light.
+//!
+//! The grid is for everything loading, near or far; the lines are few
+//! (`MAX_SWEEPS` at once, near and big enough on the screen). What gets no
+//! line (far, tiny, every line busy, or loaded within a moment from the
+//! caches) goes from the grid to its textures through a short fade, never
+//! through grey. Whether an object is loaded is looked at when one of its
+//! textures shows its first pixels or its geometry is built
+//! (`Rez::note_ready`), and in turn for the time limits.
 //!
 //! Avatars: the grid replaces the loading cloud (`loading.rs`) while an
 //! avatar's appearance and what it wears load, then one line goes over it
-//! and what it wears, from its feet. Ours gets it when the loading or
+//! and what it wears, from its feet. After `AVATAR_GRID_LIMIT` it shows
+//! anyway, never as a cloud again. Ours gets the line when the loading or
 //! teleport screen lifts and when its own appearance changes. Leaving
 //! (KillObject), an avatar or a deleted object gets the reverse, a derez:
 //! the line comes down and leaves the grid, then it goes; its last frame
 //! stays drawn that long (`Scene::collect_garbage` waits for it), never
 //! more, and a slot taken again ends it at once.
 //!
-//! What gets it: an object arriving in the scene (a first sync) that is
-//! still loading a moment later, near enough and big enough on the screen;
-//! an object just rezzed in the world, ours (FLAGS_CREATE_SELECTED, set by
-//! the simulator on the first update of what we create, as
+//! A line also marks a rez in the world: ours (FLAGS_CREATE_SELECTED, set
+//! by the simulator on the first update of what we create, as
 //! LLViewerObject::processUpdateMessage reads it) or someone else's (a new
 //! object near the camera in a region we have been watching for a while:
-//! the simulator sends no "just rezzed" mark for those); an avatar coming
-//! into view. A linkset or an avatar with what it wears is one effect,
-//! driven from its root.
+//! the simulator sends no "just rezzed" mark for those), ready at once or
+//! not. A linkset or an avatar with what it wears is one effect, driven
+//! from its root.
 //!
-//! What does not: objects that loaded behind the loading or teleport
-//! screen, or within a moment of arriving (cached), a second visit of the
-//! same object (LOD switches, texture reloads), far or tiny objects, worn
-//! objects attached later, temporary objects (bullets), what leaves with a
-//! region (our teleport) or in a burst. At most `MAX_SWEEPS` lines run at
-//! once; the rest show as before (avatars wait for one a little, in the
-//! grid).
+//! Nothing for: what loaded behind the loading or teleport screen, a
+//! second visit of the same object (LOD switches, texture reloads),
+//! temporary objects (bullets), what leaves with a region (our teleport) or
+//! in a burst.
 
 use super::Scene;
 use aurora_net::RegionHandle;
@@ -47,32 +51,33 @@ use uuid::Uuid;
 const SWEEP_MIN: Duration = Duration::from_millis(550);
 const SWEEP_MAX: Duration = Duration::from_millis(800);
 const SWEEP_TAIL: Duration = Duration::from_millis(60);
-/// Lines running at once; beyond, an object shows as before.
+/// Lines running at once; beyond, an object fades in from its grid.
 pub const MAX_SWEEPS: usize = 6;
-/// Loaded but no line free: waits this long for one.
+/// Loaded but no line free: waits this long for one, then fades in.
 const SLOT_WAIT: Duration = Duration::from_millis(400);
-/// Farther than this, or smaller on the screen than this many pixels:
-/// shown as before.
+const AVATAR_SLOT_WAIT: Duration = Duration::from_millis(400);
+/// From the grid to the textures without a line.
+pub const FADE: Duration = Duration::from_millis(150);
+/// Farther than this, or smaller on the screen than this many pixels: the
+/// grid, then a fade, no line.
 const MAX_DISTANCE: f32 = 48.0;
 const MIN_PIXELS: f32 = 24.0;
 /// The same for avatars (whose grid stands for the cloud farther away).
 const AVATAR_DISTANCE: f32 = 96.0;
 const AVATAR_PIXELS: f32 = 12.0;
-/// An avatar ready with every line busy waits this long in the grid.
-const AVATAR_SLOT_WAIT: Duration = Duration::from_millis(2500);
 /// Length of a derez, how long a killed object's last frame stays drawn.
 pub const DEREZ: Duration = Duration::from_millis(700);
 /// More objects than this killed at once: no derez (a burst, a cleanup).
 const MAX_KILLS: usize = 24;
-/// An arriving object still loading after this long turns into the grid
-/// (what loads sooner, from the caches, just shows).
+/// Loaded within this long of its grid (from the caches): a fade, never a
+/// line, so an arrival with thousands of cached objects is no firework.
 const HOLOGRAM_AFTER: Duration = Duration::from_millis(300);
 /// The grid of a rezzed object stays at least this long before the line:
 /// its lines trace in from the base in the first 0.2 s (`REZ_INTRO` in
 /// object.wgsl).
 const MIN_HOLOGRAM: Duration = Duration::from_millis(300);
-/// A rezzed object ready within `HOLOGRAM_AFTER` (from the caches, a copy
-/// in the build tools) gets a quick line instead.
+/// A rezzed object ready at once (from the caches, a copy in the build
+/// tools) gets a quick line instead.
 const QUICK_SWEEP: Duration = Duration::from_millis(300);
 /// What an avatar puts on or takes off once it has been there this long
 /// rezzes or derezzes on it; this many items within `OUTFIT_WINDOW` (or
@@ -80,20 +85,18 @@ const QUICK_SWEEP: Duration = Duration::from_millis(300);
 const WORN_AFTER: Duration = Duration::from_secs(4);
 const OUTFIT_ITEMS: usize = 3;
 const OUTFIT_WINDOW: Duration = Duration::from_millis(1500);
-/// Still loading after this long: revealed anyway (an object), forgotten
-/// (an avatar, whose loading has its own limit).
+/// Still loading after this long: revealed anyway. An avatar out of view
+/// that long is forgotten (its cloud stays, as before).
 const OBJECT_LIMIT: Duration = Duration::from_secs(8);
+const AVATAR_GRID_LIMIT: Duration = Duration::from_secs(20);
 const AVATAR_LIMIT: Duration = Duration::from_secs(30);
 /// A new object is taken for a rez once its region and our view have been
 /// there this long (what comes before is the region streaming in), and
 /// within this distance of the camera.
 const SETTLED: Duration = Duration::from_secs(8);
 const REZ_NEAR: f32 = 40.0;
-/// Objects followed while they load, apart from rezzed ones (an arrival in
-/// a busy region brings thousands).
-const MAX_UNITS: usize = 512;
-/// Prims looked at a frame for the objects loading (the lines are followed
-/// every frame).
+/// Prims looked at a frame in turn, for the time limits (what loads is
+/// looked at when it does: `Rez::note_ready`).
 const CHECKS_PER_FRAME: usize = 400;
 
 /// Update flags of an object (object_flags.h).
@@ -106,8 +109,10 @@ enum Phase {
     Waiting,
     /// The grid, since then.
     Hologram(Instant),
-    /// The line, started then (with the time it waited for a free line).
+    /// The line, started then.
     Sweep(Instant),
+    /// From the grid to the textures without a line, started then.
+    Fade(Instant),
     /// Killed: the line coming down, started then.
     Derez(Instant),
 }
@@ -119,13 +124,15 @@ struct Unit {
     rezzed: bool,
     /// Arrived, or came into view (the later).
     since: Instant,
-    /// Length of its line, once started.
+    /// Length of its line or fade, once started.
     sweep: Duration,
     phase: Phase,
     /// Its prims (the root first): a linkset, an avatar and what it wears.
     members: Vec<usize>,
-    /// What their records hold.
+    /// What their records hold, and whether their faces are in the glow
+    /// pass for it (the lines, and the grids near enough for one).
     value: [u32; 4],
+    glow: bool,
     waiting_line: Option<Instant>,
 }
 
@@ -135,13 +142,17 @@ struct Unit {
 pub struct RezStats {
     pub holograms: u32,
     pub sweeps: u32,
-    /// Loaded with every line busy: shown as before.
+    /// From the grid to the textures without a line.
+    pub fades: u32,
+    /// Loaded with every line busy: a fade instead.
     pub no_line: u32,
     pub rezzed: u32,
     pub derezzed: u32,
     /// Worn items rezzed or derezzed on their avatar, outfit changes.
     pub worn: u32,
     pub outfits: u32,
+    /// Units followed at the last update (the grids, lines and fades).
+    pub units: usize,
 }
 
 #[derive(Default)]
@@ -153,17 +164,25 @@ pub struct Rez {
     pub stats: RezStats,
     /// Objects synced for the first time since the last update.
     arrivals: Vec<usize>,
+    /// Units to look at now: one of their textures showed its first
+    /// pixels or their geometry was built.
+    ready: Vec<usize>,
     watching_since: Option<Instant>,
     units: HashMap<usize, Unit>,
     member_of: HashMap<usize, usize>,
-    /// Units loading, looked at in turn; units sweeping.
+    /// Units loading, looked at in turn; units sweeping (a line or a
+    /// derez); units fading.
     queue: VecDeque<usize>,
     sweeping: Vec<usize>,
+    fading: Vec<usize>,
     /// When each region's first object came.
     regions: HashMap<RegionHandle, Instant>,
     /// Avatars present, since when, and their appearance (their bakes) at
     /// the last look, to see it change.
     avatars_seen: HashMap<Uuid, (Instant, u64)>,
+    /// Avatars shown by the grid's time limit while still loading: never a
+    /// cloud again.
+    revealed: HashSet<usize>,
     /// Worn items that came lately, by avatar (an outfit change brings
     /// several at once).
     worn_lately: HashMap<usize, Vec<(Instant, usize)>>,
@@ -220,18 +239,19 @@ fn half_height(scale: Vec3, rot: Quat) -> f32 {
 }
 
 /// Faces take an effect's `value` (or lose it, at zero): their records,
-/// and their place in the glow pass, which only the effect gave them
-/// (`FaceDraw::rez_glow`). Whether one changed its glow.
-pub(super) fn rez_faces(renderer: &mut Renderer, faces: &mut [super::FaceDraw], value: [u32; 4]) -> bool {
-    let on = value[1] != rez_mode::NONE;
+/// and their place in the glow pass when `glow` asks for it, which only
+/// the effect gave them (`FaceDraw::rez_glow`). Whether one changed its
+/// glow.
+pub(super) fn rez_faces(renderer: &mut Renderer, faces: &mut [super::FaceDraw], value: [u32; 4], glow: bool) -> bool {
+    let want = glow && value[1] != rez_mode::NONE;
     let mut changed = false;
     for f in faces {
         renderer.records.set_rez(f.record, value);
-        if on && !f.glow {
+        if want && !f.glow {
             f.glow = true;
             f.rez_glow = true;
             changed = true;
-        } else if !on && f.rez_glow {
+        } else if !want && f.rez_glow {
             f.glow = false;
             f.rez_glow = false;
             changed = true;
@@ -240,7 +260,7 @@ pub(super) fn rez_faces(renderer: &mut Renderer, faces: &mut [super::FaceDraw], 
     changed
 }
 
-/// What a loading unit does next.
+/// What a unit does next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     Stay,
@@ -248,80 +268,73 @@ enum Step {
     Sweep,
     /// The short line of what was ready at once.
     Quick,
+    /// From the grid to the textures, no line.
+    Fade,
     /// Shown as before (and forgotten).
     Drop,
 }
 
-/// The decision for a unit not sweeping yet. `age`: since it arrived or we
-/// started watching; `in_phase`: since its grid showed.
+/// The decision for a unit not sweeping yet. `near`: in view, near and
+/// big enough for a line; `age`: since it arrived or we started watching;
+/// `in_phase`: since its grid showed.
 #[allow(clippy::too_many_arguments)]
 fn next_step(
     phase: Phase,
     avatar: bool,
     rezzed: bool,
     loaded: bool,
-    visible: bool,
+    near: bool,
     watching: bool,
     age: Duration,
     in_phase: Duration,
 ) -> Step {
     if !watching {
-        return Step::Stay;
+        // behind a loading screen: what is ready simply shows
+        return if loaded && !avatar { Step::Drop } else { Step::Stay };
     }
-    let limit = if avatar { AVATAR_LIMIT } else { OBJECT_LIMIT };
     match phase {
-        Phase::Waiting => {
-            if avatar {
-                // (out of view or far: the cloud, as before)
-                return if !visible {
-                    if age > limit { Step::Drop } else { Step::Stay }
-                } else if loaded {
-                    Step::Sweep
-                } else {
-                    Step::Hologram
-                };
-            }
-            if rezzed {
-                return if !visible {
-                    if age > Duration::from_secs(2) { Step::Drop } else { Step::Stay }
-                } else if loaded {
-                    Step::Quick
-                } else if age >= HOLOGRAM_AFTER {
-                    Step::Hologram
-                } else {
-                    Step::Stay
-                };
-            }
-            if loaded || age > limit {
-                Step::Drop
-            } else if age >= HOLOGRAM_AFTER && visible {
-                Step::Hologram
+        Phase::Waiting if avatar => {
+            // (out of view or far: the cloud, as before)
+            if !near {
+                if age > AVATAR_LIMIT { Step::Drop } else { Step::Stay }
+            } else if loaded {
+                Step::Sweep
             } else {
-                Step::Stay
+                Step::Hologram
+            }
+        }
+        Phase::Waiting => {
+            // a rezzed object ready at once (the others start in the grid)
+            if !loaded {
+                Step::Hologram
+            } else if near {
+                Step::Quick
+            } else {
+                Step::Drop
             }
         }
         Phase::Hologram(_) if avatar => {
             // an avatar's grid stays until it can really be drawn (the
-            // signal that ends its cloud: `loading.rs`, which shows it by
-            // its own time limit), so the line never ends on a cloud or a
-            // grey body
-            if !loaded {
-                Step::Stay
-            } else if visible {
-                Step::Sweep
+            // signal that ends its cloud: `loading.rs`), so the line never
+            // ends on a cloud or a grey body; past the limit it shows anyway
+            if loaded || in_phase >= AVATAR_GRID_LIMIT {
+                if near { Step::Sweep } else { Step::Fade }
             } else {
-                Step::Drop
+                Step::Stay
             }
         }
         Phase::Hologram(_) => {
-            let ready = loaded && (!rezzed || in_phase >= MIN_HOLOGRAM);
-            if ready || in_phase >= limit {
-                if visible { Step::Sweep } else { Step::Drop }
-            } else {
+            // (still loading, or the grid of a rezzed object shown a moment)
+            if !loaded && in_phase < OBJECT_LIMIT || rezzed && in_phase < MIN_HOLOGRAM {
                 Step::Stay
+            } else if !rezzed && loaded && in_phase < HOLOGRAM_AFTER || !near {
+                // from the caches, or no line for it
+                Step::Fade
+            } else {
+                Step::Sweep
             }
         }
-        Phase::Sweep(_) | Phase::Derez(_) => Step::Stay,
+        Phase::Sweep(_) | Phase::Fade(_) | Phase::Derez(_) => Step::Stay,
     }
 }
 
@@ -333,15 +346,25 @@ impl Rez {
         }
     }
 
-    /// What the records of prim `idx` hold, for faces built again.
-    pub fn value_of(&self, idx: usize) -> Option<[u32; 4]> {
+    /// Prim `idx` may have finished loading (a texture's first pixels, its
+    /// geometry built): its unit is looked at this frame.
+    pub fn note_ready(&mut self, idx: usize) {
+        if let Some(&root) = self.member_of.get(&idx) {
+            self.ready.push(root);
+        }
+    }
+
+    /// What the records of prim `idx` hold, and whether its faces glow for
+    /// it, for faces built again.
+    pub fn value_of(&self, idx: usize) -> Option<([u32; 4], bool)> {
         let root = self.member_of.get(&idx)?;
-        self.units.get(root).map(|u| u.value).filter(|v| v[1] != 0)
+        self.units.get(root).map(|u| (u.value, u.glow)).filter(|(v, _)| v[1] != 0)
     }
 
     /// Prim `idx` leaves the scene.
     pub fn forget(&mut self, idx: usize) {
         self.styled.remove(&idx);
+        self.revealed.remove(&idx);
         if let Some(root) = self.member_of.remove(&idx)
             && let Some(u) = self.units.get_mut(&root)
         {
@@ -362,12 +385,15 @@ impl Rez {
         self.sweeping.len()
     }
 
-    /// Avatar `idx` is drawn by the effect (its grid or its line): no
-    /// cloud for it, and not hidden while it loads.
+    /// Avatar `idx` is drawn by the effect (its grid, its line or its
+    /// fade), or was shown by the grid's time limit: no cloud for it, and
+    /// not hidden while it loads.
     pub fn shows_avatar(&self, idx: usize) -> bool {
-        self.units
-            .get(&idx)
-            .is_some_and(|u| u.avatar && matches!(u.phase, Phase::Hologram(_) | Phase::Sweep(_)))
+        self.revealed.contains(&idx)
+            || self
+                .units
+                .get(&idx)
+                .is_some_and(|u| u.avatar && matches!(u.phase, Phase::Hologram(_) | Phase::Sweep(_) | Phase::Fade(_)))
     }
 
     /// Slot `idx` of a killed object is still being derezzed: its GPU
@@ -397,17 +423,32 @@ impl Rez {
         }
         Some(u)
     }
+
+    fn style_of(&self, root: usize) -> u32 {
+        self.styled.get(&root).copied().unwrap_or(0)
+    }
+}
+
+/// What a frame's look at the units knows.
+struct Frame<'a> {
+    world: &'a crate::world::World,
+    view: &'a super::CullView,
+    now: Instant,
+    /// The animation clock (ms) now.
+    ms: u32,
+    watching: bool,
+    watching_since: Instant,
 }
 
 impl Scene {
-    /// The records of `members` hold `value`; their faces glow while it
-    /// is an effect.
-    fn write_rez(&mut self, renderer: &mut Renderer, members: &[usize], value: [u32; 4]) {
+    /// The records of `members` hold `value`; their faces glow for it when
+    /// `glow` says so.
+    fn write_rez(&mut self, renderer: &mut Renderer, members: &[usize], value: [u32; 4], glow: bool) {
         for &m in members {
             let Some(g) = self.gpu.get_mut(m) else {
                 continue;
             };
-            if rez_faces(renderer, &mut g.faces, value) {
+            if rez_faces(renderer, &mut g.faces, value, glow) {
                 g.special = super::is_special(&g.faces);
                 self.list_index.set(m, g);
             }
@@ -461,6 +502,17 @@ impl Scene {
         (lo <= hi).then_some((lo, (hi - lo).max(0.05)))
     }
 
+    /// Bottom and height of a unit: from its drawn spheres for a worn item
+    /// (whose prim sizes say little of a rigged mesh), else from its prims.
+    fn unit_bounds(&self, world: &crate::world::World, root: usize, members: &[usize], avatar: bool, now: Instant) -> Option<(f32, f32)> {
+        let worn = !avatar && self.gpu.get(root).is_some_and(|g| g.owner_avatar.is_some());
+        if worn {
+            self.gpu_bounds(members)
+        } else {
+            Self::rez_bounds(world, members, avatar, now)
+        }
+    }
+
     /// The prims of a unit rooted at `root`: an avatar with what it wears
     /// (no HUD), or a linkset.
     fn rez_members(world: &crate::world::World, root: usize) -> Vec<usize> {
@@ -484,7 +536,8 @@ impl Scene {
         out
     }
 
-    /// Where `root` is and whether it is worth an effect from there.
+    /// Whether `root` is in view, near and big enough for a line (and its
+    /// distance).
     fn rez_visible(&self, view: &super::CullView, root: usize) -> (bool, f32) {
         let Some(g) = self.gpu.get(root) else {
             return (false, f32::MAX);
@@ -506,16 +559,17 @@ impl Scene {
         let ids: Vec<Uuid> = self
             .rez
             .units
-            .iter()
-            .filter(|(_, u)| u.avatar && matches!(u.phase, Phase::Hologram(_) | Phase::Sweep(_)))
-            .filter_map(|(&i, _)| world.objects.get(i).map(|o| o.full_id))
+            .keys()
+            .chain(self.rez.revealed.iter())
+            .filter(|&&i| self.rez.shows_avatar(i))
+            .filter_map(|&i| world.objects.get(i).map(|o| o.full_id))
             .collect();
         if !ids.is_empty() {
             self.particles.drop_clouds(&mut self.textures, &ids);
         }
     }
 
-    /// Hash of our avatar's bakes, to see its appearance change.
+    /// Hash of an avatar's bakes, to see its appearance change.
     fn own_look(world: &crate::world::World, idx: usize) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -536,12 +590,13 @@ impl Scene {
             phase: Phase::Waiting,
             members: vec![idx],
             value: [0; 4],
+            glow: false,
             waiting_line: None,
         }
     }
 
     /// Bottom and height of what `members` cover, from their drawn
-    /// spheres (worn items, whose prim sizes say little of a rigged mesh).
+    /// spheres.
     fn gpu_bounds(&self, members: &[usize]) -> Option<(f32, f32)> {
         let (mut lo, mut hi) = (f32::MAX, f32::MIN);
         for &m in members {
@@ -622,7 +677,8 @@ impl Scene {
             if let Some(old) = self.rez.remove_unit(root) {
                 self.rez.queue.retain(|&r| r != root);
                 self.rez.sweeping.retain(|&r| r != root);
-                self.write_rez(renderer, &old.members, [0; 4]);
+                self.rez.fading.retain(|&r| r != root);
+                self.write_rez(renderer, &old.members, [0; 4], false);
             }
             let Some((mut lo, height)) = self.gpu_bounds(&members) else {
                 continue;
@@ -635,7 +691,7 @@ impl Scene {
                 lo = lo.max(c - 1.1);
                 hi = hi.min(c + 1.2);
             }
-            let style = self.rez.styled.get(&root).copied().unwrap_or(0);
+            let style = self.rez.style_of(root);
             let value = with_style(record_value(rez_mode::DEREZ, ms, DEREZ, lo, (hi - lo).max(0.05)), style);
             let unit = Unit {
                 id: Uuid::nil(),
@@ -646,6 +702,7 @@ impl Scene {
                 phase: Phase::Derez(now),
                 members: members.clone(),
                 value,
+                glow: true,
                 waiting_line: None,
             };
             for &m in &members {
@@ -671,7 +728,180 @@ impl Scene {
                 );
             }
             self.derez_blended(renderer, &members);
-            self.write_rez(renderer, &members, value);
+            self.write_rez(renderer, &members, value, true);
+        }
+    }
+
+    /// A unit's grid starts now: bounds for its gradient, the records, its
+    /// glow when it is near enough for a line.
+    fn start_hologram(&mut self, renderer: &mut Renderer, rez: &mut Rez, f: &Frame, root: usize) {
+        let near = self.rez_visible(f.view, root).0;
+        let Some(u) = rez.units.get_mut(&root) else {
+            return;
+        };
+        if u.avatar {
+            u.members = Self::rez_members(f.world, root);
+        }
+        let members = u.members.clone();
+        let avatar = u.avatar;
+        let (bottom, height) = self.unit_bounds(f.world, root, &members, avatar, f.now).unwrap_or((0.0, 1.0));
+        let style = rez.style_of(root);
+        let Some(u) = rez.units.get_mut(&root) else {
+            return;
+        };
+        u.phase = Phase::Hologram(f.now);
+        u.value = with_style(record_value(rez_mode::HOLOGRAM, f.ms, Duration::ZERO, bottom, height), style);
+        u.glow = near;
+        let (v, glow) = (u.value, u.glow);
+        for &m in &members {
+            rez.member_of.insert(m, root);
+        }
+        rez.stats.holograms += 1;
+        self.write_rez(renderer, &members, v, glow);
+    }
+
+    /// Look at a unit not sweeping yet and move it on. Whether it stays in
+    /// the queue.
+    fn rez_look_at(&mut self, renderer: &mut Renderer, rez: &mut Rez, f: &Frame, root: usize) -> bool {
+        let Some(u) = rez.units.get(&root) else {
+            return false;
+        };
+        if matches!(u.phase, Phase::Sweep(_) | Phase::Fade(_) | Phase::Derez(_)) {
+            return false;
+        }
+        if f.world.objects.get(root).is_none_or(|o| o.full_id != u.id) {
+            if let Some(u) = rez.remove_unit(root) {
+                self.write_rez(renderer, &u.members, [0; 4], false);
+            }
+            return false;
+        }
+        let loaded = if u.avatar {
+            let own = u.id == f.world.agent_id;
+            !self.loading.indices.contains(&root)
+                && self.gpu.get(root).is_some_and(|g| !g.faces.is_empty())
+                && (!own || self.avatar_complete(f.world, root))
+                && self.members_loaded(u.members.get(1..).unwrap_or_default())
+        } else {
+            self.members_loaded(&u.members)
+        };
+        let (near, _) = self.rez_visible(f.view, root);
+        let age = f.now.duration_since(u.since.max(f.watching_since));
+        let in_phase = match u.phase {
+            Phase::Hologram(t) => f.now.duration_since(t),
+            _ => Duration::ZERO,
+        };
+        let mut step = next_step(u.phase, u.avatar, u.rezzed, loaded, near, f.watching, age, in_phase);
+        let quick = step == Step::Quick;
+        if quick {
+            step = Step::Sweep;
+        }
+        if step == Step::Sweep && rez.sweeping.len() >= MAX_SWEEPS {
+            // every line busy: the grid waits a little for one, then fades
+            let Some(u) = rez.units.get_mut(&root) else {
+                return false;
+            };
+            let waited = *u.waiting_line.get_or_insert(f.now);
+            let wait = if u.avatar { AVATAR_SLOT_WAIT } else { SLOT_WAIT };
+            step = if u.phase == Phase::Waiting {
+                // (a quick line for what was ready at once, or nothing)
+                if u.avatar { Step::Hologram } else { Step::Drop }
+            } else if f.now.duration_since(waited) >= wait {
+                rez.stats.no_line += 1;
+                Step::Fade
+            } else {
+                Step::Stay
+            };
+        }
+        let avatar = u_avatar(rez, root);
+        if avatar && matches!(step, Step::Sweep | Step::Fade) && self.loading.indices.contains(&root) {
+            // shown by the grid's time limit while still loading
+            rez.revealed.insert(root);
+        }
+        match step {
+            Step::Stay => {
+                // an avatar in the grid: what it wears joins it as it comes
+                if let Some(u) = rez.units.get_mut(&root)
+                    && u.avatar
+                    && matches!(u.phase, Phase::Hologram(_))
+                {
+                    let members = Self::rez_members(f.world, root);
+                    let (v, glow) = (u.value, u.glow);
+                    let new: Vec<usize> = members.iter().copied().filter(|m| !u.members.contains(m)).collect();
+                    u.members = members;
+                    for &m in &new {
+                        rez.member_of.insert(m, root);
+                    }
+                    self.write_rez(renderer, &new, v, glow);
+                }
+                true
+            }
+            Step::Drop => {
+                if let Some(u) = rez.remove_unit(root) {
+                    self.write_rez(renderer, &u.members, [0; 4], false);
+                }
+                false
+            }
+            Step::Hologram => {
+                self.start_hologram(renderer, rez, f, root);
+                true
+            }
+            Step::Fade => {
+                let style = rez.style_of(root);
+                let Some(u) = rez.units.get_mut(&root) else {
+                    return false;
+                };
+                u.phase = Phase::Fade(f.now);
+                u.sweep = FADE;
+                // (the grid's bounds: its gradient fades as it was)
+                let (bottom, height) = (f32::from_bits(u.value[2]), f32::from_bits(u.value[3]));
+                u.value = with_style(record_value(rez_mode::FADE, f.ms, FADE, bottom, height), style);
+                u.glow = false;
+                let (members, v) = (u.members.clone(), u.value);
+                rez.stats.fades += 1;
+                self.write_rez(renderer, &members, v, false);
+                rez.fading.push(root);
+                false
+            }
+            Step::Quick | Step::Sweep => {
+                let Some(u) = rez.units.get_mut(&root) else {
+                    return false;
+                };
+                if u.avatar {
+                    // what it wears now
+                    u.members = Self::rez_members(f.world, root);
+                }
+                let (members, avatar) = (u.members.clone(), u.avatar);
+                let Some((bottom, height)) = self.unit_bounds(f.world, root, &members, avatar, f.now) else {
+                    if let Some(u) = rez.remove_unit(root) {
+                        self.write_rez(renderer, &u.members, [0; 4], false);
+                    }
+                    return false;
+                };
+                let style = rez.style_of(root);
+                let Some(u) = rez.units.get_mut(&root) else {
+                    return false;
+                };
+                u.phase = Phase::Sweep(f.now);
+                u.sweep = if quick { QUICK_SWEEP } else { sweep_for(height) };
+                u.value = with_style(record_value(rez_mode::SWEEP, f.ms, u.sweep, bottom, height), style);
+                u.glow = true;
+                rez.stats.sweeps += 1;
+                if rez.log {
+                    log::info!(
+                        "rez effect: line over {} ({} prims, {height:.2} m high{})",
+                        u.id,
+                        u.members.len(),
+                        if u.avatar { ", avatar" } else { "" }
+                    );
+                }
+                let v = u.value;
+                for &m in &members {
+                    rez.member_of.insert(m, root);
+                }
+                self.write_rez(renderer, &members, v, true);
+                rez.sweeping.push(root);
+                false
+            }
         }
     }
 
@@ -688,19 +918,23 @@ impl Scene {
     ) {
         let mut rez = std::mem::take(&mut self.rez);
         for m in rez.to_clear.drain(..) {
-            self.write_rez(renderer, &[m], [0; 4]);
+            self.write_rez(renderer, &[m], [0; 4], false);
         }
         if !rez.enabled {
             let roots: Vec<usize> = rez.units.keys().copied().collect();
             for root in roots {
                 if let Some(u) = rez.remove_unit(root) {
-                    self.write_rez(renderer, &u.members, [0; 4]);
+                    self.write_rez(renderer, &u.members, [0; 4], false);
                 }
             }
             rez.queue.clear();
             rez.sweeping.clear();
+            rez.fading.clear();
             rez.arrivals.clear();
+            rez.ready.clear();
+            rez.revealed.clear();
             rez.watching_since = None;
+            rez.stats.units = 0;
             self.rez = rez;
             return;
         }
@@ -712,7 +946,14 @@ impl Scene {
             now
         };
         let watched_for = watching.then(|| now.duration_since(watching_since));
-        let ms = renderer.anim_clock().ms(now);
+        let f = Frame {
+            world,
+            view,
+            now,
+            ms: renderer.anim_clock().ms(now),
+            watching,
+            watching_since,
+        };
 
         // avatars coming into view (behind a loading screen too: they get
         // the grid or the line once it lifts)
@@ -744,6 +985,13 @@ impl Scene {
             }
         }
         rez.avatars_seen.retain(|id, _| present.contains(id));
+        let revealed: Vec<usize> = rez.revealed.iter().copied().collect();
+        for idx in revealed {
+            // (back in the store's avatars, or gone: the slot is someone else's)
+            if world.objects.get(idx).is_none_or(|o| !o.is_avatar()) {
+                rez.revealed.remove(&idx);
+            }
+        }
         rez.worn_lately.retain(|_, l| {
             l.retain(|(t, _)| now.duration_since(*t) < OUTFIT_WINDOW);
             !l.is_empty()
@@ -766,9 +1014,9 @@ impl Scene {
                     && let Some(u) = rez.units.get_mut(&p)
                 {
                     u.members.push(idx);
-                    let v = u.value;
+                    let (v, glow) = (u.value, u.glow);
                     rez.member_of.insert(idx, p);
-                    self.write_rez(renderer, &[idx], v);
+                    self.write_rez(renderer, &[idx], v, glow);
                     continue;
                 }
                 // put on by an avatar there for a while: it rezzes on it,
@@ -790,11 +1038,19 @@ impl Scene {
                     let items: Vec<usize> = lately.iter().map(|&(_, i)| i).collect();
                     for item in items {
                         if let Some(u) = rez.remove_unit(item) {
-                            self.write_rez(renderer, &u.members, [0; 4]);
+                            self.write_rez(renderer, &u.members, [0; 4], false);
                         }
                     }
-                    rez.queue.retain(|r| rez.units.contains_key(r));
-                    rez.sweeping.retain(|r| rez.units.contains_key(r));
+                    let Rez {
+                        queue,
+                        sweeping,
+                        fading,
+                        units,
+                        ..
+                    } = &mut rez;
+                    queue.retain(|r| units.contains_key(r));
+                    sweeping.retain(|r| units.contains_key(r));
+                    fading.retain(|r| units.contains_key(r));
                     if let Some(a) = world.objects.get(avatar) {
                         rez.stats.outfits += 1;
                         rez.add_unit(avatar, Self::avatar_unit(a.full_id, avatar, now));
@@ -802,32 +1058,26 @@ impl Scene {
                     continue;
                 }
                 rez.stats.worn += 1;
-                rez.add_unit(
-                    idx,
-                    Unit {
-                        id: o.full_id,
-                        avatar: false,
-                        rezzed: true,
-                        since: now,
-                        sweep: Duration::ZERO,
-                        phase: Phase::Waiting,
-                        members: Self::rez_members(world, idx),
-                        value: [0; 4],
-                        waiting_line: None,
-                    },
-                );
+                rez.add_unit(idx, self.object_unit(world, idx, o.full_id, true, now));
+                if !self.members_loaded(&Self::rez_members(world, idx)) {
+                    self.start_hologram(renderer, &mut rez, &f, idx);
+                }
                 continue;
             }
             let Some((pos, _, hud)) = Self::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let distance = pos.distance(view.eye);
-            if hud || distance > MAX_DISTANCE {
+            if hud {
                 continue;
             }
+            let distance = pos.distance(view.eye);
             let settled_for = watched_for.map(|w| w.min(now.duration_since(region_since)));
             let rezzed = is_fresh_rez(o.update_flags, settled_for, distance, o.velocity.length());
-            if !rezzed && rez.units.len() >= MAX_UNITS {
+            let members = Self::rez_members(world, idx);
+            let loaded = self.members_loaded(&members);
+            // what is ready shows (a rezzed object gets its quick line);
+            // the rest is the grid at once, never grey
+            if loaded && !rezzed {
                 continue;
             }
             if rezzed {
@@ -836,44 +1086,47 @@ impl Scene {
                     log::info!("rez effect: object {} rezzed {distance:.1} m away", o.full_id);
                 }
             }
-            rez.add_unit(
-                idx,
-                Unit {
-                    id: o.full_id,
-                    avatar: false,
-                    rezzed,
-                    since: now,
-                    sweep: Duration::ZERO,
-                    phase: Phase::Waiting,
-                    members: Self::rez_members(world, idx),
-                    value: [0; 4],
-                    waiting_line: None,
-                },
-            );
-        }
-
-        // lines running
-        let mut i = 0;
-        while i < rez.sweeping.len() {
-            let root = rez.sweeping[i];
-            let done = rez
-                .units
-                .get(&root)
-                .is_none_or(|u| matches!(u.phase, Phase::Sweep(s) | Phase::Derez(s) if now.duration_since(s) >= u.sweep + SWEEP_TAIL));
-            if done {
-                rez.sweeping.swap_remove(i);
-                if let Some(u) = rez.remove_unit(root) {
-                    // (a derez leaves its slots to `collect_garbage`)
-                    if !matches!(u.phase, Phase::Derez(_)) {
-                        self.write_rez(renderer, &u.members, [0; 4]);
-                    }
-                }
-            } else {
-                i += 1;
+            rez.add_unit(idx, self.object_unit(world, idx, o.full_id, rezzed, now));
+            if !loaded {
+                self.start_hologram(renderer, &mut rez, &f, idx);
             }
         }
 
-        // units loading, in turn
+        // lines and fades running
+        for list in [false, true] {
+            let mut i = 0;
+            loop {
+                let roots = if list { &mut rez.fading } else { &mut rez.sweeping };
+                let Some(&root) = roots.get(i) else {
+                    break;
+                };
+                let done = rez.units.get(&root).is_none_or(|u| match u.phase {
+                    Phase::Sweep(s) | Phase::Derez(s) | Phase::Fade(s) => now.duration_since(s) >= u.sweep + SWEEP_TAIL,
+                    _ => true,
+                });
+                if done {
+                    let roots = if list { &mut rez.fading } else { &mut rez.sweeping };
+                    roots.swap_remove(i);
+                    if let Some(u) = rez.remove_unit(root) {
+                        // (a derez leaves its slots to `collect_garbage`)
+                        if !matches!(u.phase, Phase::Derez(_)) {
+                            self.write_rez(renderer, &u.members, [0; 4], false);
+                        }
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        // what may have finished loading, then the others in turn (for
+        // their time limits)
+        let mut ready = std::mem::take(&mut rez.ready);
+        ready.sort_unstable();
+        ready.dedup();
+        for root in ready {
+            self.rez_look_at(renderer, &mut rez, &f, root);
+        }
         let mut checks = 0;
         let mut looked = 0;
         let queued = rez.queue.len();
@@ -882,143 +1135,37 @@ impl Scene {
             let Some(root) = rez.queue.pop_front() else {
                 break;
             };
-            let Some(u) = rez.units.get(&root) else {
-                continue;
-            };
-            if world.objects.get(root).is_none_or(|o| o.full_id != u.id) {
-                if let Some(u) = rez.remove_unit(root) {
-                    self.write_rez(renderer, &u.members, [0; 4]);
-                }
-                continue;
-            }
-            checks += u.members.len();
-            let loaded = if u.avatar {
-                let own = u.id == world.agent_id;
-                !self.loading.indices.contains(&root)
-                    && self.gpu.get(root).is_some_and(|g| !g.faces.is_empty())
-                    && (!own || self.avatar_complete(world, root))
-                    && self.members_loaded(u.members.get(1..).unwrap_or_default())
-            } else {
-                self.members_loaded(&u.members)
-            };
-            let (visible, _) = self.rez_visible(view, root);
-            let age = now.duration_since(u.since.max(watching_since));
-            let in_phase = match u.phase {
-                Phase::Hologram(t) => now.duration_since(t),
-                _ => Duration::ZERO,
-            };
-            let mut step = next_step(u.phase, u.avatar, u.rezzed, loaded, visible, watching, age, in_phase);
-            let quick = step == Step::Quick;
-            if quick {
-                step = Step::Sweep;
-            }
-            if step == Step::Sweep && rez.sweeping.len() >= MAX_SWEEPS {
-                // every line busy: the grid waits a little for one (an
-                // avatar longer, its arrivals staggered)
-                let u = rez.units.get_mut(&root).expect("unit looked at");
-                let waited = *u.waiting_line.get_or_insert(now);
-                let wait = if u.avatar { AVATAR_SLOT_WAIT } else { SLOT_WAIT };
-                step = if u.avatar && u.phase == Phase::Waiting {
-                    Step::Hologram
-                } else if now.duration_since(waited) >= wait || u.phase == Phase::Waiting {
-                    rez.stats.no_line += 1;
-                    Step::Drop
-                } else {
-                    Step::Stay
-                };
-            }
-            match step {
-                Step::Stay => {
-                    // an avatar in the grid: what it wears joins it as it comes
-                    if let Some(u) = rez.units.get_mut(&root)
-                        && u.avatar
-                        && matches!(u.phase, Phase::Hologram(_))
-                    {
-                        let members = Self::rez_members(world, root);
-                        let v = u.value;
-                        let new: Vec<usize> = members.iter().copied().filter(|m| !u.members.contains(m)).collect();
-                        u.members = members;
-                        for &m in &new {
-                            rez.member_of.insert(m, root);
-                        }
-                        self.write_rez(renderer, &new, v);
-                    }
-                    rez.queue.push_back(root);
-                }
-                Step::Drop => {
-                    if let Some(u) = rez.remove_unit(root) {
-                        self.write_rez(renderer, &u.members, [0; 4]);
-                    }
-                }
-                Step::Hologram => {
-                    let u = rez.units.get_mut(&root).expect("unit looked at");
-                    if u.avatar {
-                        u.members = Self::rez_members(world, root);
-                        for &m in &u.members {
-                            rez.member_of.insert(m, root);
-                        }
-                    }
-                    // (bounds for the gradient, from the bottom up)
-                    let worn = !u.avatar && self.gpu.get(root).is_some_and(|g| g.owner_avatar.is_some());
-                    let bounds = if worn {
-                        self.gpu_bounds(&u.members)
-                    } else {
-                        Self::rez_bounds(world, &u.members, u.avatar, now)
-                    };
-                    let (bottom, height) = bounds.unwrap_or((0.0, 1.0));
-                    u.phase = Phase::Hologram(now);
-                    let style = rez.styled.get(&root).copied().unwrap_or(0);
-                    u.value = with_style(record_value(rez_mode::HOLOGRAM, ms, Duration::ZERO, bottom, height), style);
-                    rez.stats.holograms += 1;
-                    let (members, v) = (u.members.clone(), u.value);
-                    self.write_rez(renderer, &members, v);
-                    rez.queue.push_back(root);
-                }
-                Step::Quick => unreachable!("a quick line is a line"),
-                Step::Sweep => {
-                    let u = rez.units.get_mut(&root).expect("unit looked at");
-                    if u.avatar {
-                        // what it wears now
-                        u.members = Self::rez_members(world, root);
-                    }
-                    let worn = !u.avatar && self.gpu.get(root).is_some_and(|g| g.owner_avatar.is_some());
-                    let bounds = if worn {
-                        self.gpu_bounds(&u.members)
-                    } else {
-                        Self::rez_bounds(world, &u.members, u.avatar, now)
-                    };
-                    let Some((bottom, height)) = bounds else {
-                        if let Some(u) = rez.remove_unit(root) {
-                            self.write_rez(renderer, &u.members, [0; 4]);
-                        }
-                        continue;
-                    };
-                    u.phase = Phase::Sweep(now);
-                    u.sweep = if quick { QUICK_SWEEP } else { sweep_for(height) };
-                    let style = rez.styled.get(&root).copied().unwrap_or(0);
-                    u.value = with_style(record_value(rez_mode::SWEEP, ms, u.sweep, bottom, height), style);
-                    rez.stats.sweeps += 1;
-                    if rez.log {
-                        log::info!(
-                            "rez effect: line over {} ({} prims, {height:.2} m high{})",
-                            u.id,
-                            u.members.len(),
-                            if u.avatar { ", avatar" } else { "" }
-                        );
-                    }
-                    let (members, v) = (u.members.clone(), u.value);
-                    for &m in &members {
-                        rez.member_of.insert(m, root);
-                    }
-                    self.write_rez(renderer, &members, v);
-                    rez.sweeping.push(root);
-                }
+            checks += rez.units.get(&root).map_or(0, |u| u.members.len().max(1));
+            if self.rez_look_at(renderer, &mut rez, &f, root) {
+                rez.queue.push_back(root);
             }
         }
+        rez.stats.units = rez.units.len();
         // what the effect draws is neither a cloud nor hidden
         self.loading.indices.retain(|&i| !rez.shows_avatar(i));
         self.rez = rez;
     }
+
+    /// A unit for an object (a root) arriving or put on.
+    fn object_unit(&self, world: &crate::world::World, idx: usize, id: Uuid, rezzed: bool, now: Instant) -> Unit {
+        Unit {
+            id,
+            avatar: false,
+            rezzed,
+            since: now,
+            sweep: Duration::ZERO,
+            phase: Phase::Waiting,
+            members: Self::rez_members(world, idx),
+            value: [0; 4],
+            glow: false,
+            waiting_line: None,
+        }
+    }
+}
+
+/// Whether unit `root` is an avatar's.
+fn u_avatar(rez: &Rez, root: usize) -> bool {
+    rez.units.get(&root).is_some_and(|u| u.avatar)
 }
 
 #[cfg(test)]
@@ -1026,6 +1173,7 @@ mod tests {
     use super::*;
 
     const S: Duration = Duration::from_secs(1);
+    const MS100: Duration = Duration::from_millis(100);
 
     #[test]
     fn the_record_value_packs_mode_and_bounds() {
@@ -1058,58 +1206,53 @@ mod tests {
     }
 
     #[test]
-    fn what_loads_from_the_caches_or_behind_the_screen_just_shows() {
-        let w = Phase::Waiting;
-        // behind a loading screen nothing moves on
-        assert_eq!(next_step(w, false, false, false, true, false, 5 * S, Duration::ZERO), Step::Stay);
-        // loaded within the first moments: no effect
-        assert_eq!(
-            next_step(w, false, false, true, true, true, Duration::from_millis(100), Duration::ZERO),
-            Step::Drop
-        );
-        assert_eq!(next_step(w, false, false, true, true, true, 3 * S, Duration::ZERO), Step::Drop);
-        // still loading a moment later: the grid
-        assert_eq!(
-            next_step(w, false, false, false, true, true, Duration::from_millis(100), Duration::ZERO),
-            Step::Stay
-        );
-        assert_eq!(
-            next_step(w, false, false, false, true, true, HOLOGRAM_AFTER, Duration::ZERO),
-            Step::Hologram
-        );
-        // out of view: waits, grey as before
-        assert_eq!(next_step(w, false, false, false, false, true, S, Duration::ZERO), Step::Stay);
+    fn behind_the_loading_screen_what_is_ready_just_shows() {
+        let h = Phase::Hologram(Instant::now());
+        assert_eq!(next_step(h, false, false, true, true, false, S, S), Step::Drop);
+        assert_eq!(next_step(h, false, false, false, true, false, S, S), Step::Stay);
+        // (an avatar waits for the screen to lift)
+        assert_eq!(next_step(Phase::Waiting, true, false, true, true, false, S, S), Step::Stay);
     }
 
     #[test]
-    fn the_grid_turns_into_the_line_once_loaded_or_after_the_limit() {
+    fn the_grid_fades_or_gets_the_line_once_loaded() {
         let h = Phase::Hologram(Instant::now());
+        // still loading: the grid stays, far or near
         assert_eq!(next_step(h, false, false, false, true, true, S, S), Step::Stay);
+        assert_eq!(next_step(h, false, false, false, false, true, S, S), Step::Stay);
+        // from the caches, within a moment: a fade, no line
+        assert_eq!(next_step(h, false, false, true, true, true, MS100, MS100), Step::Fade);
+        // loaded later: the line when near, else a fade
         assert_eq!(next_step(h, false, false, true, true, true, S, S), Step::Sweep);
+        assert_eq!(next_step(h, false, false, true, false, true, S, S), Step::Fade);
+        // still loading at the limit: shown anyway
         assert_eq!(
             next_step(h, false, false, false, true, true, OBJECT_LIMIT, OBJECT_LIMIT),
             Step::Sweep
         );
-        // gone out of view meanwhile: shown as before
-        assert_eq!(next_step(h, false, false, true, false, true, S, S), Step::Drop);
-        // a rezzed object shows its grid a moment even when loaded at once
         assert_eq!(
-            next_step(h, false, true, true, true, true, S, Duration::from_millis(100)),
-            Step::Stay
+            next_step(h, false, false, false, false, true, OBJECT_LIMIT, OBJECT_LIMIT),
+            Step::Fade
         );
+        // a rezzed object shows its grid a moment, then its line
+        assert_eq!(next_step(h, false, true, true, true, true, S, MS100), Step::Stay);
         assert_eq!(next_step(h, false, true, true, true, true, S, MIN_HOLOGRAM), Step::Sweep);
-        // rezzed and ready at once (caches, a copy): a quick line, no grid
+    }
+
+    #[test]
+    fn a_rezzed_object_ready_at_once_gets_a_quick_line() {
+        let w = Phase::Waiting;
         assert_eq!(
-            next_step(Phase::Waiting, false, true, true, true, true, Duration::ZERO, Duration::ZERO),
+            next_step(w, false, true, true, true, true, Duration::ZERO, Duration::ZERO),
             Step::Quick
         );
-        // rezzed and still loading a moment later: the grid
+        // far: nothing (it is ready: no grey to hide)
         assert_eq!(
-            next_step(Phase::Waiting, false, true, false, true, true, Duration::ZERO, Duration::ZERO),
-            Step::Stay
+            next_step(w, false, true, true, false, true, Duration::ZERO, Duration::ZERO),
+            Step::Drop
         );
         assert_eq!(
-            next_step(Phase::Waiting, false, true, false, true, true, HOLOGRAM_AFTER, Duration::ZERO),
+            next_step(w, false, true, false, true, true, Duration::ZERO, Duration::ZERO),
             Step::Hologram
         );
     }
@@ -1129,14 +1272,13 @@ mod tests {
             next_step(w, true, false, false, false, true, AVATAR_LIMIT + S, Duration::ZERO),
             Step::Drop
         );
-        // behind the loading screen: nothing yet
-        assert_eq!(next_step(w, true, false, true, true, false, S, Duration::ZERO), Step::Stay);
         let h = Phase::Hologram(Instant::now());
         assert_eq!(next_step(h, true, false, false, true, true, S, S), Step::Stay);
         assert_eq!(next_step(h, true, false, true, true, true, S, S), Step::Sweep);
-        // never revealed while still loading, however long it takes
-        let long = AVATAR_LIMIT + S;
-        assert_eq!(next_step(h, true, false, false, true, true, long, long), Step::Stay);
+        assert_eq!(next_step(h, true, false, true, false, true, S, S), Step::Fade);
+        // still loading at the grid's limit: shown anyway
+        let long = AVATAR_GRID_LIMIT;
+        assert_eq!(next_step(h, true, false, false, true, true, long, long), Step::Sweep);
     }
 
     #[test]
@@ -1172,10 +1314,14 @@ mod tests {
                 phase: Phase::Waiting,
                 members: vec![1, 2, 3],
                 value: record_value(rez_mode::HOLOGRAM, 0, Duration::ZERO, 0.0, 1.0),
+                glow: false,
                 waiting_line: None,
             },
         );
         assert!(rez.value_of(3).is_some());
+        // a texture of prim 2 showed: its root is looked at
+        rez.note_ready(2);
+        assert_eq!(rez.ready, [1]);
         rez.forget(3);
         assert!(rez.value_of(3).is_none(), "a prim gone");
         assert!(rez.value_of(2).is_some());

@@ -29,6 +29,15 @@
 //! burst: no derez) and it starts again from frame 300, for watching it in
 //! one window. With `AURORA_DEMO_TOD=4`, the same at midnight.
 //!
+//! `cold`: a cold arrival, again and again: from frame 300 and every
+//! 10 s, 400 objects of all sizes arrive in front of the camera, near and
+//! far (up to 60 m), in four waves; their textures come from 0.1 s to 4 s
+//! later, one in eight at once (from the caches). With the effect on no
+//! face is ever grey: the grid, then a line (a few near ones) or a fade;
+//! with Grey (Legacy) they are grey until their textures come, as before.
+//! Each round's objects go at once when the next one starts (a burst: no
+//! derez).
+//!
 //! `styles`: the three looks side by side, each with a look of its own
 //! (`Rez::styles`) whatever the setting: a cube and, behind it, an avatar
 //! wearing two items, under a label, in three columns. From frame 300 and
@@ -96,9 +105,27 @@ const STYLES_TEXTURES: u64 = 180;
 const STYLES_LEAVE: u64 = 420;
 const STYLES_FIRST_ID: u32 = 145_000;
 
+/// `cold`: objects of a round, its length, its waves and when their
+/// textures come.
+const COLD_OBJECTS: u32 = 400;
+const COLD_ROUND: u64 = 600;
+const COLD_WAVE: u32 = 100;
+const COLD_WAVE_EVERY: u64 = 8;
+const COLD_FIRST_ID: u32 = 150_000;
+
+/// `cold`: frames after its object's arrival that texture `i` comes: one in
+/// eight at once (from the caches), the others within 4 s.
+fn cold_delay(i: u32) -> u64 {
+    if i.is_multiple_of(8) { 2 } else { 6 + (i as u64 * 53) % 234 }
+}
+
 pub struct RezDemo {
     /// `styles`: the three looks side by side, again and again.
     styles: bool,
+    /// `cold`: a cold arrival, again and again.
+    cold: bool,
+    /// `cold`: textures to decode, at their frame.
+    due: Vec<(u64, u32)>,
     looping: bool,
     /// Round of the scenario (`loop`), for fresh ids.
     round: u32,
@@ -110,6 +137,8 @@ impl RezDemo {
         log::info!("demo rez: scenario armed");
         Some(RezDemo {
             styles: value.trim() == "styles",
+            cold: value.trim() == "cold",
+            due: Vec::new(),
             looping: value.trim() == "loop",
             round: 0,
         })
@@ -279,7 +308,78 @@ impl RezDemo {
         }
     }
 
+    /// `cold`: a round of objects arriving with slow textures.
+    fn tick_cold(&mut self, frame: u64, world: &mut crate::world::World, scene: &mut Scene, renderer: &mut Renderer) {
+        if frame < LOADING {
+            return;
+        }
+        let t = (frame - LOADING) % COLD_ROUND;
+        let round = ((frame - LOADING) / COLD_ROUND) as u32;
+        let id = |r: u32, i: u32| COLD_FIRST_ID + (r % 2) * COLD_OBJECTS + i;
+        // (fresh textures each round, `texture` spacing rounds by 2,000
+        // ids: they load again)
+        self.round = round * 10;
+        if t == 0 && round > 0 {
+            let local_ids = (0..COLD_OBJECTS).map(|i| id(round - 1, i)).collect();
+            world.apply(NetEvent::ObjectsKilled { handle: HANDLE, local_ids });
+        }
+        if t.is_multiple_of(COLD_WAVE_EVERY) && t / COLD_WAVE_EVERY < (COLD_OBJECTS / COLD_WAVE) as u64 {
+            let first = (t / COLD_WAVE_EVERY) as u32 * COLD_WAVE;
+            let shapes = [
+                shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+                shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0),
+                shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0),
+            ];
+            let mut objects = Vec::new();
+            for i in first..first + COLD_WAVE {
+                // a field ahead of the camera, 4 to 60 m away, of all sizes
+                let (row, col) = (i / 20, i % 20);
+                let (x, y) = (133.0 + row as f32 * 2.9, 112.0 + col as f32 * 2.4 + (row % 2) as f32 * 1.2);
+                let size = 0.5 + ((i * 37) % 10) as f32 * 0.28;
+                let tex = 200 + i;
+                let _ = scene.textures.acquire(renderer, self.texture(tex), TexSource::Asset);
+                self.due.push((frame + cold_delay(i), tex));
+                let mut o = self.textured(
+                    0,
+                    Vec3::new(x, y, floor_at(x, y) + size * 0.5),
+                    Quat::from_rotation_z(i as f32),
+                    Vec3::splat(size),
+                    shapes[i as usize % 3],
+                    tex,
+                );
+                o.local_id = id(round, i);
+                o.full_id = Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | o.local_id as u128);
+                objects.push(o);
+            }
+            world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+            if first == 0 {
+                log::info!("demo rez: cold arrival, round {}", round + 1);
+            }
+        }
+        let now: Vec<u32> = self.due.iter().filter(|(at, _)| *at <= frame).map(|&(_, t)| t).collect();
+        if !now.is_empty() {
+            self.due.retain(|(at, _)| *at > frame);
+            self.decode(&scene.textures, &scene.jobs, now);
+        }
+        if t == COLD_ROUND - 1 {
+            let s = scene.rez.stats;
+            log::info!(
+                "demo rez: round {} done: {} grids, {} lines, {} fades ({} with every line busy), {} followed now",
+                round + 1,
+                s.holograms,
+                s.sweeps,
+                s.fades,
+                s.no_line,
+                s.units
+            );
+        }
+    }
+
     pub fn tick(&mut self, frame: u64, world: &mut crate::world::World, scene: &mut Scene, renderer: &mut Renderer) {
+        if self.cold {
+            self.tick_cold(frame, world, scene, renderer);
+            return;
+        }
         if self.styles {
             self.tick_styles(frame, world, scene, renderer);
             return;

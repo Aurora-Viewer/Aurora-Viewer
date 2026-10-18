@@ -2257,6 +2257,15 @@ impl Scene {
         // faces using their slots are classified again (new faces are
         // classified when built).
         let mut changed = std::mem::take(&mut self.alpha_changes_tmp);
+        // Textures showing their first pixels: the rez effect looks at
+        // the objects using them (rez.rs) instead of walking them all.
+        self.textures.take_first_texels(&mut changed);
+        for &slot in &changed {
+            for &(_, idx) in self.slot_users.range((slot, 0)..=(slot, u32::MAX)) {
+                self.rez.note_ready(idx as usize);
+            }
+        }
+        changed.clear();
         self.textures.take_alpha_changes(&mut changed);
         if !changed.is_empty() {
             self.reclassify_slots(renderer, &changed);
@@ -2339,8 +2348,10 @@ impl Scene {
         let channel = &self.textures.alpha_channel_by_slot;
         let mut last_slot = None;
         // (an object appearing keeps its rez effect through a rebuild)
-        if let Some(v) = self.rez.value_of(idx) {
-            rez::rez_faces(renderer, &mut g.faces, v);
+        // (and its geometry may have been what it waited for)
+        if let Some((v, glow)) = self.rez.value_of(idx) {
+            rez::rez_faces(renderer, &mut g.faces, v, glow);
+            self.rez.note_ready(idx);
         }
         for (fi, f) in g.faces.iter_mut().enumerate() {
             // (faces of an object mostly share their texture: one entry)

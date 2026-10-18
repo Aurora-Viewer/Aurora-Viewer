@@ -1661,7 +1661,7 @@ To check with these scenarios:
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
-| `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side |
+| `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles\|cold` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side; `cold`: a cold arrival with slow textures |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
 | `AURORA_REZ_STYLE=1\|2\|3` | The rez effect's look: grid, scanlines, wireframe (3, the one chosen, by default) |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
@@ -1837,7 +1837,7 @@ To check with these scenarios:
   it. This is the worst case of overdraw, to measure
   what a prepass saves (`AURORA_MSAA_PREPASS`); a real region has
   less.
-- **`AURORA_DEMO_REZ_EFFECT=1|loop|styles`**: the rez effect (`scene/rez.rs`, Preferences ›
+- **`AURORA_DEMO_REZ_EFFECT=1|loop|styles|cold`**: the rez effect (`scene/rez.rs`, Preferences ›
   Aurora › Rez effect), with `AURORA_DEMO_POS=129,134`,
   `AURORA_DEMO_CLOUD=1` (the avatars' loading state, which the grid
   replaces) and `AURORA_FPS_LIMIT=60` for frame-numbered captures
@@ -1865,6 +1865,14 @@ To check with these scenarios:
   items under a label per look, arriving together every 9 s from frame
   300 (the grid traces in, waits 3 s, the line around frames 480–530),
   leaving at 720 (the derez) and back at 840.
+  `cold`: a cold arrival, again and again (every 10 s from frame 300):
+  400 objects of all sizes, 4 to 60 m away, arrive in four waves, their
+  textures 0.1 to 4 s later (one in eight at once). With the effect on no
+  face is ever grey: each is the grid at once, then a line (a few near
+  ones) or a 0.15 s fade; with `AURORA_REZ_EFFECT=0` (or Grey (Legacy))
+  they are grey until their textures come, as before. Capture frames
+  312, 340, 380 and 450 with each. The log tells each round's grids,
+  lines and fades (`demo rez: round`).
 - **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per
