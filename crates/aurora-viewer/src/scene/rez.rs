@@ -1,18 +1,16 @@
 //! The rez effect (Preferences › Aurora, "Rez effect"): nothing shows grey
-//! while it loads. An object whose textures or geometry have not come is a
-//! glowing grid; once loaded, a bright line rises from its bottom to its top
-//! and reveals it (`rez_apply` in object.wgsl, from `DrawRecord::rez`), in
-//! the brand gradient of the theme (`Palette::aurora_gradient`). While a
-//! line runs, its faces are drawn in the glow pass too
-//! (`FaceDraw::rez_glow`), which spreads its light.
+//! while it loads. A face whose texture has not come (its slot still points
+//! at the grey placeholder) is drawn as a glowing grid by the shader itself
+//! (`rez_still_grey` in object.wgsl), near or far, from its first frame, and
+//! fades into its texture the moment that texture shows its first pixels
+//! (`Scene::rez_first_texels`): no face waits for another, nothing is ever
+//! grey, and nothing is followed on the CPU for it. The colors run along
+//! the brand gradient of the theme (`Palette::aurora_gradient`).
 //!
-//! The grid is for everything loading, near or far; the lines are few
-//! (`MAX_SWEEPS` at once, near and big enough on the screen). What gets no
-//! line (far, tiny, every line busy, or loaded within a moment from the
-//! caches) goes from the grid to its textures through a short fade, never
-//! through grey. Whether an object is loaded is looked at when one of its
-//! textures shows its first pixels or its geometry is built
-//! (`Rez::note_ready`), and in turn for the time limits.
+//! On top, the events get a whole-object effect (`DrawRecord::rez`, from
+//! the units below): a bright line rising from the bottom to the top
+//! (`MAX_SWEEPS` at once, near and big enough on the screen), its faces in
+//! the glow pass too (`FaceDraw::rez_glow`), which spreads its light.
 //!
 //! Avatars: the grid replaces the loading cloud (`loading.rs`) while an
 //! avatar's appearance and what it wears load, then one line goes over it
@@ -24,13 +22,15 @@
 //! stays drawn that long (`Scene::collect_garbage` waits for it), never
 //! more, and a slot taken again ends it at once.
 //!
-//! A line also marks a rez in the world: ours (FLAGS_CREATE_SELECTED, set
-//! by the simulator on the first update of what we create, as
+//! A rez in the world gets the whole object in the grid until it has
+//! loaded, then the line: ours (FLAGS_CREATE_SELECTED, set by the simulator
+//! on the first update of what we create, as
 //! LLViewerObject::processUpdateMessage reads it) or someone else's (a new
 //! object near the camera in a region we have been watching for a while:
-//! the simulator sends no "just rezzed" mark for those), ready at once or
-//! not. A linkset or an avatar with what it wears is one effect, driven
-//! from its root.
+//! the simulator sends no "just rezzed" mark for those); a quick line when
+//! it is ready at once. A linkset or an avatar with what it wears is one
+//! effect, driven from its root; whatever path syncs a new object
+//! (`Scene::after_full_sync`) tells it.
 //!
 //! Nothing for: what loaded behind the loading or teleport screen, a
 //! second visit of the same object (LOD switches, texture reloads),
@@ -151,6 +151,9 @@ pub struct RezStats {
     /// Worn items rezzed or derezzed on their avatar, outfit changes.
     pub worn: u32,
     pub outfits: u32,
+    /// Faces that left the grid the shader drew for them, as their
+    /// texture came.
+    pub face_fades: u32,
     /// Units followed at the last update (the grids, lines and fades).
     pub units: usize,
 }
@@ -188,6 +191,11 @@ pub struct Rez {
     worn_lately: HashMap<usize, Vec<(Instant, usize)>>,
     /// Prims whose records must lose the effect (their unit is gone).
     to_clear: Vec<usize>,
+    /// Faces fading from the grid into their texture: record, the value
+    /// written, until when.
+    face_fades: Vec<(u32, [u32; 4], Instant)>,
+    /// When the counts last went to the log.
+    logged_at: Option<Instant>,
     /// A look for some objects or avatars by id, whatever the frame's
     /// (the demo's side-by-side comparison, `AURORA_DEMO_REZ_EFFECT=styles`).
     pub styles: HashMap<Uuid, u32>,
@@ -732,6 +740,42 @@ impl Scene {
         }
     }
 
+    /// Textures that showed their first pixels
+    /// (`TextureStreamer::take_first_texels`), by slot: an object followed
+    /// by a unit is looked at; any other face using one leaves the grid the
+    /// shader drew for it through a short fade into its texture.
+    pub(super) fn rez_first_texels(&mut self, renderer: &mut Renderer, slots: &[u32]) {
+        if !self.rez.enabled || slots.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        // (no bounds: the shader takes the face's own, `rez_height`)
+        let fade = record_value(rez_mode::FADE, renderer.anim_clock().ms(now), FADE, 0.0, 0.0);
+        let watching = self.rez.watching_since.is_some();
+        let mut users = Vec::new();
+        for &slot in slots {
+            users.clear();
+            users.extend(self.slot_users.range((slot, 0)..=(slot, u32::MAX)).map(|&(_, i)| i as usize));
+            for &idx in &users {
+                if self.rez.member_of.contains_key(&idx) {
+                    self.rez.note_ready(idx);
+                    continue;
+                }
+                // (behind a loading screen it simply shows)
+                let Some(g) = self.gpu.get(idx).filter(|_| watching) else {
+                    continue;
+                };
+                for f in g.faces.iter().filter(|f| f.base_slot == slot) {
+                    if renderer.records.get(f.record).is_some_and(|r| r.rez[1] == rez_mode::NONE) {
+                        renderer.records.set_rez(f.record, fade);
+                        self.rez.face_fades.push((f.record, fade, now + FADE + SWEEP_TAIL));
+                        self.rez.stats.face_fades += 1;
+                    }
+                }
+            }
+        }
+    }
+
     /// A unit's grid starts now: bounds for its gradient, the records, its
     /// glow when it is near enough for a line.
     fn start_hologram(&mut self, renderer: &mut Renderer, rez: &mut Rez, f: &Frame, root: usize) {
@@ -920,6 +964,17 @@ impl Scene {
         for m in rez.to_clear.drain(..) {
             self.write_rez(renderer, &[m], [0; 4], false);
         }
+        // faces done fading into their texture (a record built again or
+        // taken by another face since holds something else: left alone)
+        rez.face_fades.retain(|&(record, value, until)| {
+            if now < until && rez.enabled {
+                return true;
+            }
+            if renderer.records.get(record).is_some_and(|r| r.rez == value) {
+                renderer.records.set_rez(record, [0; 4]);
+            }
+            false
+        });
         if !rez.enabled {
             let roots: Vec<usize> = rez.units.keys().copied().collect();
             for root in roots {
@@ -1010,12 +1065,21 @@ impl Scene {
                 // a prim of a linkset followed already (or worn: its
                 // avatar's effect takes it while it runs)
                 let parent = world.objects.parent_of(o);
-                if let Some(p) = parent
-                    && let Some(u) = rez.units.get_mut(&p)
+                // (the parent may be a prim of the unit, as the root of
+                // something worn by an avatar followed)
+                let unit_root = parent.and_then(|p| {
+                    if rez.units.contains_key(&p) {
+                        Some(p)
+                    } else {
+                        rez.member_of.get(&p).copied()
+                    }
+                });
+                if let Some(r) = unit_root
+                    && let Some(u) = rez.units.get_mut(&r)
                 {
                     u.members.push(idx);
                     let (v, glow) = (u.value, u.glow);
-                    rez.member_of.insert(idx, p);
+                    rez.member_of.insert(idx, r);
                     self.write_rez(renderer, &[idx], v, glow);
                     continue;
                 }
@@ -1064,22 +1128,18 @@ impl Scene {
                 }
                 continue;
             }
-            let Some((pos, _, hud)) = Self::object_transform(world, idx, now, 0) else {
-                continue;
-            };
-            if hud {
-                continue;
-            }
-            let distance = pos.distance(view.eye);
+            // (not placed yet, as a prim waiting for its parent: no rez near
+            // us, its own flag aside)
+            let distance = Self::object_transform(world, idx, now, 0).map_or(f32::MAX, |(pos, _, _)| pos.distance(view.eye));
             let settled_for = watched_for.map(|w| w.min(now.duration_since(region_since)));
             let rezzed = is_fresh_rez(o.update_flags, settled_for, distance, o.velocity.length());
-            let members = Self::rez_members(world, idx);
-            let loaded = self.members_loaded(&members);
-            // what is ready shows (a rezzed object gets its quick line);
-            // the rest is the grid at once, never grey
-            if loaded && !rezzed {
+            // (an object streaming in needs nothing here: its faces still
+            // grey are the grid on their own)
+            if !rezzed {
                 continue;
             }
+            let members = Self::rez_members(world, idx);
+            let loaded = self.members_loaded(&members);
             if rezzed {
                 rez.stats.rezzed += 1;
                 if rez.log {
@@ -1141,6 +1201,24 @@ impl Scene {
             }
         }
         rez.stats.units = rez.units.len();
+        // (what it did, every half minute, for the grid tests)
+        if rez.logged_at.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(30)) {
+            rez.logged_at = Some(now);
+            let s = rez.stats;
+            log::info!(
+                "rez effect: {} faces out of the grid, {} grids, {} lines, {} fades ({} with every line busy), {} derez, {} worn, {} outfits, {} followed now, {} avatars shown by the time limit",
+                s.face_fades,
+                s.holograms,
+                s.sweeps,
+                s.fades,
+                s.no_line,
+                s.derezzed,
+                s.worn,
+                s.outfits,
+                s.units,
+                rez.revealed.len()
+            );
+        }
         // what the effect draws is neither a cloud nor hidden
         self.loading.indices.retain(|&i| !rez.shows_avatar(i));
         self.rez = rez;

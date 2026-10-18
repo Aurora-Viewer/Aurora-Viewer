@@ -883,18 +883,49 @@ fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
     return 1.0 - smoothstep(front - 0.08, front, h);
 }
 
+// Whether a face still shows the grey texel of a texture loading: its
+// base texture's slot points at the shared placeholder layer
+// (`textures::PLACEHOLDER`, slot 4) until its first texels arrive.
+fn rez_still_grey(rec: DrawRecord) -> bool {
+    return tex_loc[rec.tex.x] == tex_loc[4u];
+}
+
+// Height of the fragment within its object (0 bottom, 1 top), for the
+// gradient: the record's own bounds, or (none given) from its placement,
+// the prim's height in its model matrix (a worn or rigged face, placed by
+// the GPU, takes the middle).
+fn rez_height(rec: DrawRecord, in: VsOut) -> f32 {
+    let height = bitcast<f32>(rec.rez.w);
+    if (height > 0.0) {
+        return clamp((in.world_pos.z - bitcast<f32>(rec.rez.z)) / height, 0.0, 1.0);
+    }
+    if ((rec.flags.x & (FLAG_ANCHORED | FLAG_SKINNED)) != 0u) {
+        return 0.5;
+    }
+    let half = max(0.5 * length(rec.model[2].xyz), 0.025);
+    return clamp((in.world_pos.z - rec.model[3].z + half) / (2.0 * half), 0.0, 1.0);
+}
+
 fn rez_apply(rec: DrawRecord, in: VsOut, n: vec3<f32>, col: vec3<f32>) -> vec3<f32> {
-    let mode = rec.rez.y & 0xffu;
+    var mode = rec.rez.y & 0xffu;
     if (mode == 0u) {
-        return col;
+        // with the effect on (frame.rez_gradient[1].w), a face still
+        // showing the grey of a texture loading is the grid instead, until
+        // its own texture comes (no grey, and no face waits for another)
+        if (frame.rez_gradient[1].w < 0.5 || !rez_still_grey(rec)) {
+            return col;
+        }
+        mode = REZ_HOLOGRAM;
     }
     // (a look of its own above the line's length, else the frame's)
     let own_style = rec.rez.y >> 20u;
     let style = select(u32(frame.rez_gradient[0].w), own_style, own_style != 0u);
-    let elapsed = f32(bitcast<i32>(frame.anim_clock.x - rec.rez.x)) * 0.001;
+    // (the grid of a face with no effect of its own runs on the clock, its
+    // lines already traced)
+    let elapsed = select(f32(frame.anim_clock.x) * 0.001, f32(bitcast<i32>(frame.anim_clock.x - rec.rez.x)) * 0.001, rec.rez.y != 0u);
     let bottom = bitcast<f32>(rec.rez.z);
     let height = max(bitcast<f32>(rec.rez.w), 0.05);
-    let h = clamp((in.world_pos.z - bottom) / height, 0.0, 1.0);
+    let h = rez_height(rec, in);
     let level = rez_level(n);
     if (mode == REZ_HOLOGRAM) {
         // the gradient from the bottom up; its lines trace in from the

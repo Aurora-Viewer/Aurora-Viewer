@@ -2260,11 +2260,7 @@ impl Scene {
         // Textures showing their first pixels: the rez effect looks at
         // the objects using them (rez.rs) instead of walking them all.
         self.textures.take_first_texels(&mut changed);
-        for &slot in &changed {
-            for &(_, idx) in self.slot_users.range((slot, 0)..=(slot, u32::MAX)) {
-                self.rez.note_ready(idx as usize);
-            }
-        }
+        self.rez_first_texels(renderer, &changed);
         changed.clear();
         self.textures.take_alpha_changes(&mut changed);
         if !changed.is_empty() {
@@ -2553,7 +2549,6 @@ impl Scene {
                 };
                 self.sync_object(renderer, world, idx, now, view, None);
                 self.after_full_sync(world, idx, mat_gen);
-                self.rez.arrived(idx);
                 synced.push(idx);
             }
             budget.spend(started.elapsed());
@@ -2583,6 +2578,11 @@ impl Scene {
     /// frame, geometry still pending is watched, material users noted, and
     /// a mesh found rigged starts moving. A new object is no longer one.
     fn after_full_sync(&mut self, world: &mut World, idx: usize, mat_gen: u64) {
+        // (whichever path synced a new object first: the arrivals, the
+        // objects listed, the backlog)
+        if world.objects.is_arrival(idx) {
+            self.rez.arrived(idx);
+        }
         world.objects.settle(idx);
         let Some(g) = self.gpu.get(idx) else {
             return;

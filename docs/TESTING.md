@@ -1843,8 +1843,8 @@ To check with these scenarios:
   replaces) and `AURORA_FPS_LIMIT=60` for frame-numbered captures
   (`demo_rez.rs`). Our avatar loads in the grid, then the line rises from
   its feet (frames 60–150). Four prims arrive at 300 whose textures come 150
-  frames later: the grid traces in from their base (about 318–330), waits,
-  then the line (455–480). Someone rezzes a four-prim table at 840, its
+  frames later: each face is the grid until its own texture comes,
+  then fades into it (455–480). Someone rezzes a four-prim table at 840, its
   texture a second later: the grid, then one line for the linkset. We rez a
   cube at 960 (FLAGS_CREATE_SELECTED) and copy it at 1020, both ready at
   once: a quick line, no grid. An avatar comes into view at 1080: the grid
@@ -1868,11 +1868,12 @@ To check with these scenarios:
   `cold`: a cold arrival, again and again (every 10 s from frame 300):
   400 objects of all sizes, 4 to 60 m away, arrive in four waves, their
   textures 0.1 to 4 s later (one in eight at once). With the effect on no
-  face is ever grey: each is the grid at once, then a line (a few near
-  ones) or a 0.15 s fade; with `AURORA_REZ_EFFECT=0` (or Grey (Legacy))
+  face is ever grey: each face is the grid at once and fades into its
+  texture (0.15 s) when it comes, at the same moment as without the
+  effect; with `AURORA_REZ_EFFECT=0` (or Grey (Legacy))
   they are grey until their textures come, as before. Capture frames
   312, 340, 380 and 450 with each. The log tells each round's grids,
-  lines and fades (`demo rez: round`).
+  faces out of the grid (`demo rez: round`).
 - **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per

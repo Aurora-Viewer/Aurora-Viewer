@@ -4,7 +4,8 @@
 //!
 //! - when the loading screen lifts: our avatar, the line from its feet;
 //! - frame 300: four prims arrive whose textures take 2.5 s to come, as on
-//!   a slow link: the grid traces in, waits, then the line;
+//!   a slow link: each face is the grid until its texture comes, then
+//!   fades into it;
 //! - frame 840: someone else rezzes a four-prim table whose textures take
 //!   a second: the grid, then one line for the linkset;
 //! - frame 960: we rez a cube (FLAGS_CREATE_SELECTED, as from the build
@@ -33,7 +34,8 @@
 //! 10 s, 400 objects of all sizes arrive in front of the camera, near and
 //! far (up to 60 m), in four waves; their textures come from 0.1 s to 4 s
 //! later, one in eight at once (from the caches). With the effect on no
-//! face is ever grey: the grid, then a line (a few near ones) or a fade;
+//! face is ever grey: each is the grid, then fades into its texture when
+//! it comes, as soon as without the effect;
 //! with Grey (Legacy) they are grey until their textures come, as before.
 //! Each round's objects go at once when the next one starts (a burst: no
 //! derez).
@@ -364,8 +366,9 @@ impl RezDemo {
         if t == COLD_ROUND - 1 {
             let s = scene.rez.stats;
             log::info!(
-                "demo rez: round {} done: {} grids, {} lines, {} fades ({} with every line busy), {} followed now",
+                "demo rez: round {} done: {} faces out of the grid, {} grids, {} lines, {} fades ({} with every line busy), {} followed now",
                 round + 1,
+                s.face_fades,
                 s.holograms,
                 s.sweeps,
                 s.fades,
