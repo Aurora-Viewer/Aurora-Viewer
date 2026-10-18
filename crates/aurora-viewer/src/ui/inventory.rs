@@ -557,7 +557,14 @@ fn item_row(
         let suffix = worn.map_or_else(String::new, |label| format!(" ({label})"));
         let font_id = egui::FontId::proportional(13.0);
         let mut label = super::widgets::name_with_suffix(&it.name, &suffix, font_id.clone(), p.ink);
-        let name = worn.map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
+        if worn.is_some()
+            && let Some(section) = label.sections.first_mut()
+        {
+            super::widgets::embolden(ui, &mut section.format);
+        }
+        let name = worn
+            .filter(|_| super::widgets::faux_bold_offset(ui).is_some())
+            .map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
         let permissions = permissions::Permissions::inventory(inv, *id).map(|permissions| permissions.with_next_owner(st.show_next_owner));
         if let Some(permissions) = permissions {
             // Keep each item's rights next to its name: a very long sibling

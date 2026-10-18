@@ -25,10 +25,14 @@ pub(crate) fn inventory_item_label(
             .wrap_mode(egui::TextWrapMode::Extend)
             .sense(sense)
             .atom_ui(ui);
-        // LLItemBridge::getLabelStyle: only the worn name is bold.
-        if let Some((name, rect)) = bold_name.zip(response.rect(text_id)) {
+        // LLItemBridge::getLabelStyle: only the worn name is bold; `label`
+        // has it in semi-bold, and `bold_name` is its faux bold second pass
+        // when the font has no semi-bold face
+        if let Some((name, rect)) = bold_name.zip(response.rect(text_id))
+            && let Some(offset) = faux_bold_offset(ui)
+        {
             let color = ui.visuals().text_color();
-            ui.painter().galley(rect.min + bold_text_offset(ui), name, color);
+            ui.painter().galley(rect.min + offset, name, color);
         }
         response.response
     })

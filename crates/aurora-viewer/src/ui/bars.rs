@@ -1622,12 +1622,14 @@ fn tool_button(
         // centered on the letters' ink like the icons beside it: the line box
         // of a font sits lower than its capitals
         let size = if look.dock { 13.0 } else { 12.0 };
-        let galley = painter.layout_no_wrap("AO".to_owned(), egui::FontId::proportional(size), tint);
-        // bold like the worn names (LLFontGL BOLD_OFFSET): the letters weigh
-        // as much as the filled icons of the other buttons
-        let bold = super::widgets::bold_text_offset(ui);
-        super::widgets::paint_ink_centered(painter, galley.clone(), ir.center(), tint);
-        super::widgets::paint_ink_centered(painter, galley, ir.center() + bold, tint);
+        // bold like the worn names: the letters weigh as much as the filled
+        // icons of the other buttons
+        let format = super::widgets::bold_format(ui, egui::FontId::proportional(size), tint);
+        let galley = painter.layout_job(egui::text::LayoutJob::single_section("AO".to_owned(), format));
+        if let Some(offset) = super::widgets::faux_bold_offset(ui) {
+            super::widgets::paint_ink_centered(painter, galley.clone(), ir.center() + offset, tint);
+        }
+        super::widgets::paint_ink_centered(painter, galley, ir.center(), tint);
     }
     if let Some((left, width)) = text {
         super::widgets::paint_elided(
