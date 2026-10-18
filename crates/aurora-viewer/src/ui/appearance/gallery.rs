@@ -5,11 +5,11 @@ use super::{Action, AppearanceUi, model};
 use crate::{
     theme::Palette,
     ui::{menu, texture_picker::TexturePicker, widgets},
-    world::World,
+    world::{World, inventory::Inventory},
 };
 use aurora_net::outfits::categories::Update;
 use egui::RichText;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -21,6 +21,50 @@ pub(super) struct State {
     image_for: Option<Uuid>,
 }
 
+/// What LLOutfitContextMenu::onEnable / onVisible allow on an outfit folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct MenuRules {
+    pub replace: bool,
+    pub add: bool,
+    pub remove: bool,
+    /// Image, favorites and rename: the folder is the user's own outfit.
+    pub folder: bool,
+    pub favorite: bool,
+    /// "Edit outfit" shows on the current outfit only.
+    pub current: bool,
+    pub save: bool,
+    /// `None` hides "Delete outfit" and its separator (getCanRemoveOutfit).
+    pub delete: Option<bool>,
+}
+
+pub(super) fn menu_rules(inv: &Inventory, worn: &HashSet<Uuid>, busy: bool, id: Uuid) -> Option<MenuRules> {
+    let folder = inv.folders.get(&id)?;
+    let owned = !folder.library && folder.info.type_default == model::FT_OUTFIT;
+    let idle = !busy && owned;
+    let current = model::base(inv) == Some(id);
+    let ready = idle && model::complete(inv, id) && model::cof(inv).is_some_and(|cof| model::complete(inv, cof));
+    let links = model::folder_links(inv, id);
+    let nonempty = links.iter().any(|l| !l.folder);
+    // LLFindWearablesEx skips body parts: they are swapped, never taken off
+    let can_add = links.iter().any(|l| !l.folder && !worn.contains(&l.target));
+    let can_remove = links
+        .iter()
+        .any(|l| worn.contains(&l.target) && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13));
+    let removable = owned && !current && model::system_folder(inv, 14).is_some();
+    Some(MenuRules {
+        replace: ready && nonempty && (!current || model::dirty(inv)),
+        add: ready && can_add,
+        remove: ready && can_remove,
+        folder: idle,
+        favorite: folder.info.favorite,
+        current,
+        save: ready,
+        delete: removable.then_some(ready),
+    })
+}
+
+/// The outfit menu of the gallery tiles and of the list headers; only the
+/// gallery adds the New clothing / New body part submenus.
 pub(super) fn context_menu(
     response: &egui::Response,
     p: &Palette,
@@ -28,50 +72,38 @@ pub(super) fn context_menu(
     st: &mut AppearanceUi,
     id: Uuid,
     actions: &mut Vec<Action>,
+    new_parts: bool,
 ) {
     menu::context_menu(response, p, |ui| {
         let inv = &world.inventory;
         let Some(folder) = inv.folders.get(&id) else { return };
-        let owned = !folder.library && folder.info.type_default == model::FT_OUTFIT;
-        let idle = st.pending.is_none() && owned;
-        let current = model::base(inv) == Some(id);
-        let ready = model::complete(inv, id) && model::cof(inv).is_some_and(|cof| model::complete(inv, cof));
         let worn = super::items::worn_items(world);
-        let links = model::folder_links(inv, id);
-        let nonempty = links.iter().any(|l| !l.folder);
+        let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id) else {
+            return;
+        };
         if menu::item_if(
             ui,
             p,
             "shirt-filled",
             aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
-            idle && ready && nonempty && (!current || model::dirty(inv)),
+            rules.replace,
         ) {
             actions.push(Action::Wear(id, false));
         }
-        let can_add = links.iter().any(|l| !l.folder && !worn.contains(&l.target));
         if menu::item_if(
             ui,
             p,
             "plus",
             aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
-            idle && ready && can_add,
+            rules.add,
         ) {
             actions.push(Action::Wear(id, true));
         }
-        let can_remove = links
-            .iter()
-            .any(|l| worn.contains(&l.target) && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13));
-        if menu::item_if(
-            ui,
-            p,
-            "minus",
-            aurora_i18n::tr!("ui-appearance-gallery-take-off"),
-            idle && ready && can_remove,
-        ) {
+        if menu::item_if(ui, p, "minus", aurora_i18n::tr!("ui-appearance-gallery-take-off"), rules.remove) {
             actions.push(Action::RemoveOutfit(id));
         }
         menu::separator(ui, p);
-        if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), idle) {
+        if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), rules.folder) {
             st.gallery.picker.open_with_defaults(
                 aurora_i18n::tr!("ui-appearance-gallery-outfit-picture"),
                 folder.info.thumbnail,
@@ -84,22 +116,22 @@ pub(super) fn context_menu(
             ui,
             p,
             "star-filled",
-            if folder.info.favorite {
+            if rules.favorite {
                 aurora_i18n::tr!("ui-appearance-gallery-remove-from-favorites")
             } else {
                 aurora_i18n::tr!("common-add-to-favorites")
             },
-            idle,
+            rules.folder,
         ) {
-            actions.push(Action::Category(id, Update::Favorite(!folder.info.favorite)));
+            actions.push(Action::Category(id, Update::Favorite(!rules.favorite)));
         }
-        if current
+        if rules.current
             && menu::item_if(
                 ui,
                 p,
                 "edit-filled",
                 aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit"),
-                idle,
+                rules.folder,
             )
         {
             st.open(0, true);
@@ -109,7 +141,7 @@ pub(super) fn context_menu(
             p,
             "pencil-filled",
             aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
-            idle,
+            rules.folder,
         ) {
             st.gallery.rename = Some((id, folder.info.name.clone()));
             st.gallery.focus = true;
@@ -119,19 +151,24 @@ pub(super) fn context_menu(
             p,
             "device-floppy-filled",
             aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
-            idle && ready,
+            rules.save,
         ) {
             st.gallery.confirm = Some((id, false));
         }
-        menu::separator(ui, p);
-        if menu::item_if(
-            ui,
-            p,
-            "trash-filled",
-            aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
-            idle && ready && !current && model::system_folder(inv, 14).is_some(),
-        ) {
-            st.gallery.confirm = Some((id, true));
+        if let Some(enabled) = rules.delete {
+            menu::separator(ui, p);
+            if menu::item_if(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("ui-appearance-gallery-delete-outfit"),
+                enabled,
+            ) {
+                st.gallery.confirm = Some((id, true));
+            }
+        }
+        if !new_parts {
+            return;
         }
         menu::separator(ui, p);
         menu::submenu(
@@ -435,6 +472,111 @@ mod tests {
             );
             assert!(actions.is_empty());
             assert!(st.gallery.confirm.is_none());
+        }
+    }
+
+    fn demo_inventory() -> (Inventory, HashSet<Uuid>) {
+        let mut inv = Inventory::default();
+        model::seed_demo(&mut inv, Uuid::from_u128(1));
+        let cof = model::cof(&inv).expect("current outfit");
+        let worn = model::folder_links(&inv, cof)
+            .into_iter()
+            .filter(|l| !l.folder)
+            .map(|l| l.target)
+            .collect();
+        (inv, worn)
+    }
+
+    #[test]
+    fn outfit_menu_follows_the_legacy_enable_and_visible_rules() {
+        let (mut inv, mut worn) = demo_inventory();
+        let rules = |inv: &Inventory, worn: &HashSet<Uuid>, busy, id| menu_rules(inv, worn, busy, Uuid::from_u128(id)).expect("outfit");
+        // an empty outfit: nothing to wear or take off, but it can be deleted
+        let empty = rules(&inv, &worn, false, 702);
+        assert!(!empty.replace && !empty.add && !empty.remove);
+        assert!(empty.folder && empty.save && !empty.current);
+        assert_eq!(empty.delete, Some(true));
+        // everything of it is worn: no add, take off allowed
+        let worn_outfit = rules(&inv, &worn, false, 703);
+        assert!(worn_outfit.replace && !worn_outfit.add && worn_outfit.remove);
+        // an object of it is not worn
+        assert!(rules(&inv, &worn, false, 704).add);
+        // the current outfit: Edit shows, Delete and its separator are hidden
+        let current = rules(&inv, &worn, false, 705);
+        assert!(current.current);
+        assert_eq!(current.delete, None);
+        assert!(current.replace, "the worn items differ from the saved outfit");
+        // only body parts of it worn: they cannot be taken off
+        worn.retain(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 13));
+        let parts = rules(&inv, &worn, false, 703);
+        assert!(!parts.remove && parts.add);
+        // an outfit change in progress greys everything out, Delete stays visible
+        let busy = rules(&inv, &worn, true, 703);
+        assert!(!busy.replace && !busy.add && !busy.remove && !busy.folder && !busy.save);
+        assert_eq!(busy.delete, Some(false));
+        // the favorite entry names the folder's state
+        inv.folders.get_mut(&Uuid::from_u128(703)).expect("outfit").info.favorite = true;
+        assert!(rules(&inv, &worn, false, 703).favorite);
+        // a Library outfit is not ours: no rename, image, favorite or delete
+        inv.folders.get_mut(&Uuid::from_u128(703)).expect("outfit").library = true;
+        let library = rules(&inv, &worn, false, 703);
+        assert!(!library.folder && !library.replace && !library.save);
+        assert_eq!(library.delete, None);
+        assert!(menu_rules(&inv, &worn, false, Uuid::from_u128(9999)).is_none());
+    }
+
+    #[test]
+    fn list_header_menu_has_the_outfit_entries_without_new_parts() {
+        for (id, current) in [(704, false), (705, true)] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = crate::ui::icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            let mut st = AppearanceUi::default();
+            st.open(1, false);
+            for _ in 0..4 {
+                frame(&ctx, &mut world, &mut st, vec![]);
+            }
+            let label = world.inventory.folders[&Uuid::from_u128(id)].info.name.clone();
+            let shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
+            // the current outfit's name also heads the window: the header is the last one
+            let pos = shapes
+                .iter()
+                .rev()
+                .find_map(|s| text_position(&s.shape, &label))
+                .expect("outfit header");
+            assert!(click(&ctx, &mut world, &mut st, pos, PointerButton::Secondary).is_empty());
+            assert_eq!(st.selected_outfit, Some(Uuid::from_u128(id)));
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
+            }
+            let shown = |label: &str| shapes.iter().any(|s| text_position(&s.shape, label).is_some());
+            for label in [
+                aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
+                aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
+                aurora_i18n::tr!("ui-appearance-gallery-take-off"),
+                "Image…",
+                aurora_i18n::tr!("common-add-to-favorites"),
+                aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
+                aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
+            ] {
+                assert!(shown(label), "missing {label}");
+            }
+            assert_eq!(shown(aurora_i18n::tr!("ui-appearance-gallery-delete-outfit")), !current);
+            assert_eq!(shown(aurora_i18n::tr!("ui-appearance-gallery-edit-your-outfit")), current);
+            assert!(!shown(aurora_i18n::tr!("ui-appearance-gallery-new-clothing")));
+            assert!(!shown(aurora_i18n::tr!("ui-appearance-gallery-new-body-part")));
+            let pos = shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, aurora_i18n::tr!("ui-appearance-gallery-take-off")))
+                .expect("take off");
+            let actions = click(&ctx, &mut world, &mut st, pos, PointerButton::Primary);
+            assert!(
+                matches!(&actions[..], [Action::RemoveOutfit(o)] if *o == Uuid::from_u128(id)),
+                "{actions:?}"
+            );
         }
     }
 }

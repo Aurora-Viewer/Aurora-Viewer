@@ -15,6 +15,28 @@ use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
 
+/// Radius of an avatar for the detail level of its rigged meshes and the
+/// rank of whatever it wears: the diagonal of its animated extents
+/// (LLVOAvatar::getLastAnimExtents), about 2.2 m standing.
+pub(super) const AVATAR_LOD_RADIUS: f32 = 2.2;
+
+/// Radius a mesh is ranked by in the download queue, from its LOD radius.
+/// Anything worn by an avatar ranks as the whole avatar (calculate_score,
+/// llmeshrepository.cpp: rigged or attachment, the avatar's extents),
+/// already before its header tells it is rigged: ranked by its own scale
+/// (a fraction of a metre for a head or its parts), a nearby avatar's
+/// head waited behind the scenery. `AURORA_WORN_RANK=own` ranks them by
+/// their own scale as before, to compare.
+pub(super) fn mesh_rank_radius(lod_radius: f32, worn: bool) -> f32 {
+    static OWN_SCALE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let own_scale = *OWN_SCALE.get_or_init(|| std::env::var("AURORA_WORN_RANK").is_ok_and(|v| v == "own"));
+    rank_radius(lod_radius, worn && !own_scale)
+}
+
+fn rank_radius(lod_radius: f32, worn: bool) -> f32 {
+    if worn { lod_radius.max(AVATAR_LOD_RADIUS) } else { lod_radius }
+}
+
 /// What the sync does with an object this frame.
 pub(super) enum Plan {
     /// Only its placement changed: applied from the parallel planning.
@@ -82,6 +104,7 @@ pub(super) struct FrameState<'a> {
     pub(super) geoms: &'a HashMap<GeomKey, GeomEntry>,
     pub(super) textures: &'a TextureStreamer,
     pub(super) mat_gen: u64,
+    pub(super) mat_changes: &'a super::mat_changes::MatChanges,
     /// HUD attachments are placed when they change, not with their wearer
     /// at each frame (false with AURORA_SYNC_SLICE).
     pub(super) still_huds: bool,
@@ -107,7 +130,7 @@ impl SyncState for FrameState<'_> {
             || self
                 .gpu
                 .get(idx)
-                .is_some_and(|g| !g.material_ids.is_empty() && g.mat_generation != self.mat_gen)
+                .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen))
     }
 
     fn pending_due(&self, idx: usize) -> Option<bool> {
@@ -184,6 +207,7 @@ pub(super) struct SyncCtx<'a> {
     fov_y: f32,
     mesh_lod_overrides: &'a HashMap<crate::world::objects::ObjKey, u8>,
     mat_gen: u64,
+    mat_changes: &'a super::mat_changes::MatChanges,
 }
 
 impl SyncCtx<'_> {
@@ -209,10 +233,10 @@ impl SyncCtx<'_> {
                 && let Some((_, owner)) = Scene::skeleton_owner(world, idx)
                 && let (Some(ow), Some((op, _, _))) = (world.objects.get(owner), self.transform(owner))
             {
-                // avatars: diagonal of the animated extents (~2.2 m);
+                // avatars: diagonal of the animated extents;
                 // animesh: half of it (LL uses the dynamic box)
                 let radius = if ow.is_avatar() {
-                    2.2
+                    AVATAR_LOD_RADIUS
                 } else {
                     (ow.visual_scale().length() * 0.5).max(0.5)
                 };
@@ -409,7 +433,7 @@ impl SyncCtx<'_> {
         if o.shape_dirty || o.material_dirty {
             return full();
         }
-        if g.sculpt_wait.is_some() || (!g.material_ids.is_empty() && g.mat_generation != self.mat_gen) {
+        if g.sculpt_wait.is_some() || self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen) {
             return full();
         }
         let (pos, _, hud) = xf;
@@ -528,6 +552,7 @@ impl Scene {
             fov_y: self.fov_y,
             mesh_lod_overrides: &self.mesh_lod_overrides,
             mat_gen: self.materials.generation,
+            mat_changes: &self.mat_changes,
         }
     }
 
@@ -587,5 +612,14 @@ mod tests {
         let radius = (Vec3::splat(0.6) * Vec3::ONE).length();
         assert_eq!(lod_for(radius, 10.0, 2.0, 60f32.to_radians()), 3);
         assert_eq!(lod_for((Vec3::splat(0.5) * Vec3::ONE).length(), 10.0, 2.0, 60f32.to_radians()), 2);
+    }
+
+    /// calculate_score: what an avatar wears ranks as the avatar, header
+    /// known or not; a larger attachment keeps its own size.
+    #[test]
+    fn worn_meshes_rank_as_their_avatar() {
+        assert_eq!(rank_radius(0.12, true), AVATAR_LOD_RADIUS);
+        assert_eq!(rank_radius(4.0, true), 4.0);
+        assert_eq!(rank_radius(0.12, false), 0.12);
     }
 }

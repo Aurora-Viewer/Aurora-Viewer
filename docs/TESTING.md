@@ -1657,6 +1657,8 @@ To check with these scenarios:
 | `AURORA_DEMO_TEXTURES=<n>` | Texture load test: n cubes |
 | `AURORA_DEMO_TEXTURES_CHURN=1` | With `AURORA_DEMO_TEXTURES`: textures renewed |
 | `AURORA_DEMO_CROWD=<n>[,busy]` or `<n>,<worn>[,<triangles>]` | Sync load test: n avatars; with `busy` what the sync still places itself, with `<worn>` avatars dressed in rigged meshes |
+| `AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>` | The crowd's worn prims and meshes use a legacy material, and a material nobody uses arrives every `seconds` |
+| `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side |
@@ -1708,6 +1710,20 @@ To check with these scenarios:
   `AURORA_DEMO_STREAM=12000,400` for the motionless objects;
   `AURORA_SYNC_CHECK=1` gives what the sync visits, `AURORA_SYNC_SLICE=alt`
   compares with the old path.
+- **`AURORA_DEMO_MATERIAL_ARRIVALS=<seconds>`** (2 if not a number): with
+  `AURORA_DEMO_CROWD`, the linksets and the rigged meshes the crowd wears use a
+  legacy material, and from 5 s on a new legacy material that no object uses
+  arrives every `seconds`, as the materials of the avatars coming in arrive in
+  a busy place. Combine with `AURORA_MATERIAL_REBUILD=alt`, `AURORA_PROFILE=1`,
+  `AURORA_DEMO_ANIMESH=1` and `AURORA_DEMO_CROWD=52,100`: the old seconds rebuild
+  every worn object (`rebuilt` about 50 a frame, `max: sync` about 7 ms), the
+  new ones none.
+- **`AURORA_DEMO_IMPOSTOR_FLIP=<seconds>`** (2 if not a number): the
+  avatar limit alternates between its setting and one every `seconds`, so
+  that the crowd's avatars go from impostor to drawn in full and back. With
+  `AURORA_DEMO_CROWD=52,100`, `AURORA_DEMO_HAIR=3` and `AURORA_SYNC_CHECK=1`,
+  the `impostor pictures` line must count no stale picture, centre or anchor
+  (`AURORA_IMPOSTOR_POSES`).
 - **`AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]`**: our
   avatar and each avatar of `AURORA_DEMO_CROWD` wear `layers` rigged
   meshes (8 by default, 32 at most), each a shell around the head and
@@ -3568,7 +3584,10 @@ relogin; only the human connects and performs these checks.
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
-- `outfits`: the list of outfits; `worn`: the worn items;
+- `outfits`: the list of outfits; `worn`: the worn items. A right click on
+  an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
+  (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
+  at frame 380;
 - `save`: the Save as dialog; `edit`: the outfit editor;
 - `menu`: an expanded outfit with an object that is not worn, for the right
   click menus;
@@ -4079,8 +4098,13 @@ What the inventory must show with these scenarios:
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
+| `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, as before, not their avatar's |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
+| `AURORA_SYNC_SLOW=<ms>` | The steps of each frame whose scene sync is slower than `ms` |
+| `AURORA_MATERIAL_REBUILD=all` or `alt` | Every object using materials rebuilt at each material change, as before |
+| `AURORA_IMPOSTOR_POSES=every` or `alt` | Impostors posed at every frame, as before |
+| `AURORA_ANCHOR_CENTRES=every` | The centre of every worn object recomputed at every frame, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
@@ -4487,6 +4511,14 @@ What the inventory must show with these scenarios:
   - In demo: `AURORA_DEMO_CROWD=52,200` with `AURORA_DEMO_ANIMESH=1` and
     `AURORA_DEMO_STREAM=6000,6000,leave` (19,500 objects, then 13,500),
     `AURORA_FPS_LIMIT=500`.
+- **`AURORA_WORN_RANK=own`**: a mesh worn by another avatar waits in the
+  download queue in the rank of its own prim scale until its header says
+  it is rigged, as before. By default anything worn ranks with the
+  avatar's radius (2.2 m) over its distance, as the Legacy Viewer's
+  `calculate_score` (llmeshrepository.cpp). To compare with
+  `AURORA_DEMO_ARRIVAL=<folder>,avatars=30,worn=6` (`demo arrival: worn`
+  line), or on the grid in a crowd with a cold cache (the `attachments of`
+  blocks 40 s after the arrival: `without geometry`).
 - **`AURORA_CPU_ATTACH=1`**: places again each frame, on the main thread,
   everything the avatars wear and all the rigged meshes, as before the
   anchors (`scene/anchors.rs`), to compare the image and the measurements.
@@ -4502,6 +4534,12 @@ What the inventory must show with these scenarios:
   transparent faces of the rigged meshes, which the CPU lists, are tested
   with the extent of their skeleton and no longer with their own bounds
   (`blend` slightly higher).
+- **`AURORA_MATERIAL_REBUILD=all`**: each material that arrives (or is given
+  up) rebuilds every object using materials, as before, instead of the users
+  of that material only (`scene/mat_changes.rs`). `alt`: the old way one second
+  in three, `xmode=old` / `xmode=new` at the end of the `perf summary` line.
+  With `AURORA_DEMO_MATERIAL_ARRIVALS`, the old seconds show the bursts of full
+  syncs (`rebuilt`, `max: sync`).
 - **`AURORA_SYNC_SLICE=1`**: the scene sync comes back to each object every
   24 frames (LOD slice), places the worn HUDs again each frame and sends
   the records in whole blocks of 64, as before, to compare the image and
@@ -4533,13 +4571,44 @@ What the inventory must show with these scenarios:
   moves —, `still`) what came out of it: placement verified without writing
   anything / records rewritten / full sync / full sync postponed
   (`scene/sync_check.rs`). Tells which objects keep the sync busy in a
-  place at rest. The line ends with a check of all the objects, made once
-  per second: `detail level behind: a of b at rest, c of d placed by the
-  GPU` counts those whose requested level of detail is not, at that
-  instant, the one their distance gives (a check the sync has not made
-  yet); to be read with the camera moving, with and without
-  `AURORA_SYNC_SLICE=1`. This check costs one walk over all the objects per
-  second. In demo as on the grid.
+  place at rest. The line ends with a check of all the objects, a slice
+  per frame (a whole pass in at most 120 frames), the last full pass:
+  `detail level behind: a of b at rest, c of d placed by the GPU` counts
+  those whose requested level of detail is not, at that instant, the one
+  their distance gives (a check the sync has not made yet); to be read with
+  the camera moving, with and without `AURORA_SYNC_SLICE=1`. Made at once,
+  that pass cost 5 ms in one frame of each second at KB: do not read the
+  frame times of a run with this variable. Every 10 s, an `impostor
+  pictures` line counts the pictures taken with the pose of an earlier
+  frame and the centres of worn objects left as they were that are not
+  where their anchor puts them (both must stay 0; a picture or two in the
+  first seconds, before the palette exists, is the same in both ways of
+  `AURORA_IMPOSTOR_POSES`). In demo as on the grid.
+- **`AURORA_SYNC_SLOW=<ms>`** (8 if not a number): one `slow sync` line for
+  each frame whose scene sync took longer than `ms`: the time of each step
+  (`garbage`, `list`, `plan`, `apply`, `arrivals`, `backlog`, `check`,
+  `anchors`, `flexibles`, `tables`, `geom_gc`, `alpha`…), the moves, the
+  full syncs by kind with their time (`avatars`, `listed` for new
+  geometry or faces, `arrivals`, `backlog`) and the slowest object of the
+  frame (`scene/sync_slow.rs`). The `perf summary` gives the slowest frame
+  of each second by part; this line names the step and the object. Cheap
+  enough for a grid reading.
+- **`AURORA_IMPOSTOR_POSES=every`**: poses the avatars drawn as impostors
+  at every frame, as before. By default an impostor keeps its last pose
+  until its picture is nearly due (`scene/impostors.rs`), as the Legacy
+  Viewer animates an impostor only on the frames that may refresh it; its
+  animations still start and stop on time, and the anchors of what it
+  wears are not written again while it stands. `alt`: the old way one
+  second in three, the same seconds as `AURORA_MATERIAL_REBUILD=alt`
+  (`xmode=old` / `xmode=new`); read `posed`, `poses` and `s_sync_anchors`.
+  Its old seconds also write every anchor and every centre again, as
+  `AURORA_ANCHOR_CENTRES=every`: with `AURORA_MATERIAL_REBUILD=alt` too,
+  they are the sync of before this work, to tell whether a fault on the
+  grid comes from it (it then shows one second in three only).
+- **`AURORA_ANCHOR_CENTRES=every`**: recomputes the centre of every object
+  placed from an anchor at every frame, as before, instead of those whose
+  anchor changed, and writes again the anchors of every wearer
+  (`scene/anchors.rs`).
 - **`AURORA_RENDER_THREAD=0`**: draws the frames on the main thread, as
   before the render thread, to compare and debug. By default, the main
   thread hands each frame to the render thread as a self-contained packet
