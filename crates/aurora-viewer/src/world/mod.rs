@@ -927,6 +927,51 @@ impl World {
         Some(self.ground_height(off + local)? + 0.5 * o.scale.z)
     }
 
+    /// LLAgent::propagate (indra/newview/llagent.cpp): holding descend near
+    /// the floor ends flight below 4 m/s horizontally. Resolve terrain and
+    /// the simulator's object contact plane as LLWorld::resolveStepHeightGlobal
+    /// does (llworld.cpp), with LLVOAvatar's 0.25 m foot tolerance.
+    pub fn auto_land(&mut self, input: &crate::agent::MoveInput) {
+        if !self.agent.flying
+            || !input.down
+            || input.up
+            || self.agent.is_sitting()
+            || !self.movement_complete
+            || self.teleporting
+            || self.crossing
+            || !self.agent.velocity.is_finite()
+            || self.agent.velocity.truncate().length_squared() >= 16.0
+        {
+            return;
+        }
+        let Some(avatar) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return;
+        };
+        // Use physical reports, never the prediction's lead, visual hover or
+        // animated feet: these must not end a flight ahead of its support.
+        let position = self.agent.server_pos;
+        let height = avatar.scale.z;
+        if Some(avatar.key.region) != self.main_region || !position.is_finite() || !height.is_finite() || height <= 0.0 {
+            return;
+        }
+        let terrain = self.ground_height(position).filter(|z| z.is_finite());
+        let contact = avatar
+            .foot_plane
+            .filter(|p| p.is_finite() && p.z > 0.1)
+            // The plane is n.p = w, in main-region coordinates. The 5 cm
+            // allowance follows resolveStepHeightGlobal's Havok correction.
+            .map(|p| (p.w - p.x * position.x - p.y * position.y - 0.05) / p.z)
+            .filter(|z| z.is_finite());
+        let floor = match (terrain, contact) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        if floor.is_some_and(|floor| position.z - height * 0.5 - floor <= 0.25) {
+            // Clearing FLY is sufficient; STOP would brake the remaining momentum.
+            self.agent.flying = false;
+        }
+    }
+
     /// Let the clocks of the regions run up to `now` (motion.rs): each at
     /// the time dilation of its simulator, slowing to a stop when its
     /// circuit goes silent. A region without a simulator in `sims` (the
@@ -3967,6 +4012,128 @@ mod motion_tests {
         });
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn auto_land_clears_only_fly_after_a_grounded_descending_report() {
+        use aurora_net::control;
+        let (mut world, mut avatar, handle) = arrived_fixture();
+        let ground = world.ground_height(avatar.position).unwrap();
+        avatar.position.z = ground + avatar.scale.z * 0.5 + 0.1;
+        avatar.velocity = Vec3::new(2.0, 1.0, -4.0);
+        let input = crate::agent::MoveInput {
+            down: true,
+            forward: true,
+            ..Default::default()
+        };
+        for predicting in [false, true] {
+            world.agent.set_predicting(predicting);
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![avatar.clone()],
+            });
+            world.agent.flying = true;
+            let position = world.agent.server_pos;
+            let velocity = world.agent.velocity;
+            // Rendering and prediction cannot decide whether physics has landed.
+            world.agent.position.z += 10.0;
+            let before = world.agent.control_flags(&input, false);
+            world.auto_land(&input);
+            assert!(!world.agent.flying, "prediction {predicting}");
+            assert_eq!(world.agent.control_flags(&input, false), before & !control::FLY);
+            assert_eq!(before & control::STOP, 0);
+            assert_ne!(before & control::UP_NEG, 0);
+            assert_eq!(world.agent.server_pos, position);
+            assert_eq!(world.agent.velocity, velocity);
+        }
+    }
+
+    #[test]
+    fn auto_land_resolves_platform_and_sloped_contact_from_terse_reports() {
+        let (mut world, avatar, handle) = arrived_fixture();
+        let ground = world.ground_height(avatar.position).unwrap();
+        let input = crate::agent::MoveInput {
+            down: true,
+            ..Default::default()
+        };
+        for (floor, normal, lands) in [
+            (ground + 100.0, Vec3::Z, true),
+            (ground + 100.0, Vec3::new(0.0, 0.6, 0.8), true),
+            (ground + 100.0, Vec3::ZERO, false),
+            (ground + 100.0, Vec3::X, false),
+            (ground + 100.0, -Vec3::Z, false),
+            (ground + 100.0, Vec3::splat(f32::NAN), false),
+            // An old platform far below us cannot end a later flight.
+            (ground, Vec3::Z, false),
+        ] {
+            let position = avatar.position.with_z(ground + 100.0 + avatar.scale.z * 0.5 + 0.1);
+            let point = position.with_z(floor);
+            world.apply(NetEvent::TerseUpdates {
+                handle,
+                updates: vec![TerseUpdate {
+                    local_id: avatar.local_id,
+                    state: 0,
+                    is_avatar: true,
+                    foot_plane: Some(normal.extend(normal.dot(point))),
+                    position,
+                    velocity: Vec3::NEG_Z * 3.0,
+                    acceleration: Vec3::ZERO,
+                    rotation: glam::Quat::IDENTITY,
+                    angular_velocity: Vec3::ZERO,
+                    texture_entry: None,
+                }],
+            });
+            world.agent.flying = true;
+            world.auto_land(&input);
+            assert_eq!(!world.agent.flying, lands, "normal {normal:?}, floor {floor}");
+        }
+        // A cleared contact plane still permits landing on terrain.
+        let idx = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        world.objects.get_mut(idx).unwrap().foot_plane = Some(glam::Vec4::ZERO);
+        world.agent.server_pos.z = ground + avatar.scale.z * 0.5;
+        world.auto_land(&input);
+        assert!(!world.agent.flying);
+    }
+
+    #[test]
+    fn auto_land_requires_descend_ground_contact_and_slow_horizontal_motion() {
+        let (mut world, mut avatar, handle) = arrived_fixture();
+        let ground = world.ground_height(avatar.position).unwrap();
+        for (clearance, velocity, down, up, seated, teleporting, crossing, arrived) in [
+            (0.3, Vec3::ZERO, true, false, false, false, false, true),
+            (0.0, Vec3::X * 4.0, true, false, false, false, false, true),
+            (0.0, Vec3::new(3.0, 3.0, 0.0), true, false, false, false, false, true),
+            (0.0, Vec3::splat(f32::NAN), true, false, false, false, false, true),
+            (0.0, Vec3::ZERO, false, false, false, false, false, true),
+            (0.0, Vec3::ZERO, true, true, false, false, false, true),
+            (0.0, Vec3::ZERO, true, false, true, false, false, true),
+            (0.0, Vec3::ZERO, true, false, false, true, false, true),
+            (0.0, Vec3::ZERO, true, false, false, false, true, true),
+            (0.0, Vec3::ZERO, true, false, false, false, false, false),
+        ] {
+            avatar.position.z = ground + avatar.scale.z * 0.5 + clearance;
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![avatar.clone()],
+            });
+            world.agent.flying = true;
+            world.agent.velocity = velocity;
+            world.agent.seated = seated;
+            world.teleporting = teleporting;
+            world.crossing = crossing;
+            world.movement_complete = arrived;
+            // A drawn avatar already at floor level cannot land an airborne report.
+            world.agent.position.z = ground;
+            world.auto_land(&crate::agent::MoveInput {
+                down,
+                up,
+                ..Default::default()
+            });
+            assert!(
+                world.agent.flying,
+                "clearance {clearance}, velocity {velocity:?}, input {down}/{up}"
+            );
+        }
     }
 
     #[test]
