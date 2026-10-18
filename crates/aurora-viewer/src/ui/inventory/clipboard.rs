@@ -417,6 +417,7 @@ mod tests {
                         false,
                         &Default::default(),
                         &Default::default(),
+                        true,
                     );
                 },
             ));

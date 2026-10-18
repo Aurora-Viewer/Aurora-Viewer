@@ -334,6 +334,7 @@ mod tests {
             agent: id(2),
             worn: HashSet::new(),
             worn_labels: Default::default(),
+            worn_at: Default::default(),
             points: Vec::new(),
             appearance_busy: false,
             active_gestures: Default::default(),
@@ -677,6 +678,7 @@ mod tests {
                             false,
                             &Default::default(),
                             &Default::default(),
+                            true,
                         )
                         .is_empty()
                     );

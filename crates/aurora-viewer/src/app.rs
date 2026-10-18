@@ -6567,6 +6567,7 @@ impl App {
                 .extend(ui::inventory::clipboard_demo_events(&ctx, self.frame_count, &mut self.inventory_ui));
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
+            ui::inventory::aurora_demo(&ctx, self.frame_count);
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -10247,6 +10248,13 @@ impl App {
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
                     &self.settings.script_editor,
+                    // the inventory scenarios were written for the Legacy window,
+                    // but for Aurora's own
+                    if self.demo && ui::inventory::aurora_demo_active() {
+                        false
+                    } else {
+                        self.settings.classic_inventory || (self.demo && ui::inventory::legacy_demo())
+                    },
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
@@ -12290,6 +12298,10 @@ impl ApplicationHandler for App {
                         | "received-big-open"
                         | "received-filtered"
                         | "received-missing"
+                        | "aurora"
+                        | "aurora-medium"
+                        | "aurora-wide"
+                        | "aurora-rights"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -12308,6 +12320,17 @@ impl ApplicationHandler for App {
                     if view == "sort" {
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8000));
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                    }
+                    if view.starts_with("aurora") {
+                        // Aurora's window at each width, on the demo object
+                        // of the right-click tests, a favourite beside it.
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                        if let Some(shirt) = self.world.inventory.items.get_mut(&uuid::Uuid::from_u128(8111)) {
+                            shirt.favorite = true;
+                        }
+                        if view == "aurora-rights" {
+                            self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
+                        }
                     }
                     if view == "recent" {
                         self.inventory_ui.tab = 2;
