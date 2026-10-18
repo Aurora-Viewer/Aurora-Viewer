@@ -248,9 +248,7 @@ impl Theme {
         if let Some(h) = style.text_styles.get_mut(&egui::TextStyle::Heading) {
             h.size = 15.0;
         }
-        for font in style.text_styles.values_mut() {
-            font.size *= self.font_scale.clamp(0.6, 2.0) * extra_font_scale.clamp(0.5, 2.0);
-        }
+        crate::ui::fonts::set_scale(ctx, self.font_scale.clamp(0.6, 2.0) * extra_font_scale.clamp(0.5, 2.0));
         ctx.set_theme(egui::ThemePreference::Dark);
         ctx.all_styles_mut(|s| *s = style.clone());
     }

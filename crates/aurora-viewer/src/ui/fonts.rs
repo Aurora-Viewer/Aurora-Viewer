@@ -187,8 +187,44 @@ fn optical_center_offset(font: &[u8]) -> f32 {
 /// `fallback::ready()` (the viewer does it at the start of a frame).
 pub fn apply(ctx: &egui::Context, choice: &str) -> bool {
     let system = fallback::ready();
-    ctx.set_fonts(definitions_for(choice, system.unwrap_or_default()));
+    install(ctx, definitions_for(choice, system.unwrap_or_default()));
     system.is_some()
+}
+
+const DEFINITIONS_ID: &str = "aurora-font-definitions";
+const SCALE_ID: &str = "aurora-font-scale";
+
+/// Combined skin and preference scale, also used by inline emoji pictures.
+pub fn scale(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp(egui::Id::new(SCALE_ID))).unwrap_or(1.0)
+}
+
+/// Scale the font faces, including explicit FontIds and rich text sizes.
+/// In egui 0.36 these metrics drive shaping, wrapping and row height as well
+/// as rasterization. Scaling text styles alone misses custom-painted text.
+pub fn set_scale(ctx: &egui::Context, scale: f32) {
+    if self::scale(ctx) == scale {
+        return;
+    }
+    let definitions = ctx.data_mut(|data| {
+        data.insert_temp(egui::Id::new(SCALE_ID), scale);
+        data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::new(DEFINITIONS_ID))
+    });
+    install(ctx, definitions.as_deref().cloned().unwrap_or_default());
+}
+
+/// Keep the unscaled faces so live changes never compound their scale and
+/// late system fallbacks or a font change inherit the current preference.
+fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new(DEFINITIONS_ID), Arc::new(definitions.clone())));
+    let scale = scale(ctx);
+    let mut scaled = definitions;
+    for face in scaled.font_data.values_mut() {
+        let face = Arc::make_mut(face);
+        face.tweak.scale *= scale;
+        face.tweak.y_offset *= scale;
+    }
+    ctx.set_fonts(scaled);
 }
 
 /// The fonts of `choice`: an embedded font with its own semi-bold face,
@@ -295,6 +331,113 @@ fn embedded_has(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn measure(ctx: &egui::Context, family: egui::FontFamily, size: f32, width: f32) -> (egui::Vec2, usize) {
+        let mut measured = Default::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            let galley = ui.fonts_mut(|fonts| {
+                fonts.layout(
+                    "Preferences and conversations with readable text".into(),
+                    egui::FontId::new(size, family.clone()),
+                    egui::Color32::PLACEHOLDER,
+                    width,
+                )
+            });
+            measured = (galley.size(), galley.rows.len());
+        });
+        output.textures_delta.clear();
+        measured
+    }
+
+    #[test]
+    fn text_scale_covers_explicit_fonts_and_wrapping() {
+        for builtin in &BUILTINS {
+            let ctx = egui::Context::default();
+            install(&ctx, definitions_for(builtin.name, &[]));
+            for family in [egui::FontFamily::Proportional, semibold_family(), egui::FontFamily::Monospace] {
+                set_scale(&ctx, 1.0);
+                let (base, _) = measure(&ctx, family.clone(), 13.0, f32::INFINITY);
+                let widths = [100.0, 130.0, 160.0, 200.0];
+                let base_rows = widths.map(|width| measure(&ctx, family.clone(), 13.0, width).1);
+                for scale in [0.8, 1.4] {
+                    set_scale(&ctx, scale);
+                    let (scaled, _) = measure(&ctx, family.clone(), 13.0, f32::INFINITY);
+                    assert!(
+                        (scaled.x / base.x - scale).abs() < 0.03,
+                        "{} {family}: {base:?} -> {scaled:?}",
+                        builtin.name
+                    );
+                    assert!(
+                        (scaled.y / base.y - scale).abs() < 0.06,
+                        "{} {family}: {base:?} -> {scaled:?}",
+                        builtin.name
+                    );
+                }
+                let scaled_rows = widths.map(|width| measure(&ctx, family.clone(), 13.0, width).1);
+                assert!(
+                    scaled_rows.iter().zip(base_rows).all(|(scaled, base)| *scaled >= base)
+                        && scaled_rows.iter().zip(base_rows).any(|(scaled, base)| *scaled > base),
+                    "{} {family}: larger text must wrap sooner: {base_rows:?} -> {scaled_rows:?}",
+                    builtin.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn text_scale_is_live_idempotent_and_survives_font_installation() {
+        let ctx = egui::Context::default();
+        set_scale(&ctx, 1.4); // theme is loaded before the chosen font
+        install(&ctx, definitions_for(INTER, &[]));
+        let family = egui::FontFamily::Proportional;
+        let (large, _) = measure(&ctx, family.clone(), 13.0, f32::INFINITY);
+        set_scale(&ctx, 1.4);
+        let (again, _) = measure(&ctx, family.clone(), 13.0, f32::INFINITY);
+        assert_eq!(large, again);
+        set_scale(&ctx, 0.8);
+        let (small, _) = measure(&ctx, family.clone(), 13.0, f32::INFINITY);
+        assert!(small.x < large.x);
+        set_scale(&ctx, 1.0);
+        let (reset, _) = measure(&ctx, family.clone(), 13.0, f32::INFINITY);
+        install(&ctx, definitions_for(INTER, &[])); // late fallbacks or font switch
+        let (fresh, _) = measure(&ctx, family, 13.0, f32::INFINITY);
+        assert_eq!(reset, fresh);
+        assert!((large.x / reset.x - 1.4).abs() < 0.03);
+    }
+
+    #[test]
+    fn text_scale_combines_theme_and_preference_once_for_all_text() {
+        let ctx = egui::Context::default();
+        let mut theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        install(&ctx, definitions_for(INTER, &[]));
+        let size = egui::TextStyle::Body.resolve(&ctx.style_of(ctx.theme())).size;
+        let family = egui::FontFamily::Proportional;
+        let (base, _) = measure(&ctx, family.clone(), size, f32::INFINITY);
+        theme.font_scale = 1.2;
+        theme.apply(&ctx, 1.1);
+        assert_eq!(egui::TextStyle::Body.resolve(&ctx.style_of(ctx.theme())).size, size);
+        let (scaled, _) = measure(&ctx, family, size, f32::INFINITY);
+        assert!((scaled.x / base.x - 1.32).abs() < 0.03);
+    }
+
+    #[test]
+    fn text_scale_preserves_fallback_corrections() {
+        let ctx = egui::Context::default();
+        let original = definitions_for(INTER, fallback::wait());
+        install(&ctx, original.clone());
+        set_scale(&ctx, 1.4);
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            ui.fonts(|fonts| {
+                for (name, face) in &original.font_data {
+                    let scaled = &fonts.definitions().font_data[name];
+                    assert_eq!(scaled.tweak.scale, face.tweak.scale * 1.4, "{name}");
+                    assert_eq!(scaled.tweak.y_offset_factor, face.tweak.y_offset_factor, "{name}");
+                }
+            });
+        });
+        output.textures_delta.clear();
+    }
 
     /// Noto Sans with these system faces: the default font when the
     /// baseline and right-to-left tests below were written.

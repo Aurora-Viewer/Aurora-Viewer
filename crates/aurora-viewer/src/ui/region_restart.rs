@@ -660,7 +660,7 @@ fn card(
             egui::TextFormat {
                 font_id: FontId::proportional(12.5),
                 color: p.muted,
-                line_height: Some(12.5 * 1.45),
+                line_height: Some(12.5 * 1.45 * super::fonts::scale(ui.ctx())),
                 ..Default::default()
             },
         );

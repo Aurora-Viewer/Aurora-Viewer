@@ -299,7 +299,8 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
         ui.available_width().max(natural)
     };
     let sense = if enabled { Sense::click() } else { Sense::hover() };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H), sense);
+    let text_height = galley.size().y.max(keys.as_ref().map_or(0.0, |keys| keys.size().y));
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max(text_height + 6.0)), sense);
     let hot = enabled && (resp.hovered() || open);
     track(ui, hot && resp.hovered());
     if !ui.is_rect_visible(rect) {
@@ -353,9 +354,10 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
         }
         End::Tag(_) => {
             if let Some(tag) = keys {
+                let height = 16.0_f32.max(tag.size().y + 2.0);
                 let pill = egui::Rect::from_min_size(
-                    egui::pos2(rect.right() - PAD - tag.size().x - TAG_PAD * 2.0, rect.center().y - 8.0),
-                    Vec2::new(tag.size().x + TAG_PAD * 2.0, 16.0),
+                    egui::pos2(rect.right() - PAD - tag.size().x - TAG_PAD * 2.0, rect.center().y - height / 2.0),
+                    Vec2::new(tag.size().x + TAG_PAD * 2.0, height),
                 );
                 painter.rect_filled(pill, ui.visuals().window_corner_radius, p.teal.gamma_multiply(0.12));
                 super::widgets::paint_ink_centered(painter, tag, pill.center(), p.teal);
@@ -400,7 +402,7 @@ pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
     } else {
         ui.available_width()
     };
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 18.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 18.0_f32.max(galley.size().y + 2.0)), Sense::hover());
     ui.painter().galley(
         egui::pos2(rect.left() + PAD - 1.0, rect.bottom() - galley.size().y - 1.0),
         galley,
@@ -717,7 +719,7 @@ fn info_line(
     } else {
         ui.available_width().max(natural)
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, h.max(galley.size().y + 6.0)), Sense::hover());
     let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(icon_size));
     paint_icon(ui.painter(), icon, icon_rect, icon_color);
     super::widgets::paint_row_text(ui.painter(), galley, rect.left() + PAD + ICON + PAD, rect.center().y, color);
@@ -735,7 +737,7 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
     } else {
         ui.available_width().max(natural)
     };
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 21.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 21.0_f32.max(galley.size().y + 4.0)), Sense::hover());
     ui.painter().galley(
         egui::pos2(rect.left() + PAD, rect.bottom() - 3.0 - galley.size().y),
         galley,

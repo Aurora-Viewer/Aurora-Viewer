@@ -250,6 +250,10 @@ dragging a handle switch to `violet_light`, like any selection.
   (display names and messages in Georgian, Japanese, Arabic, mathematical
   letters…) are drawn with the system fonts, which are never chosen for a
   text of the interface itself.
+- **Text size.** Preferences › Fonts and the skin's font scale apply to all
+  font faces, including explicit rich text, painter fonts and monospace.
+  Keep font sizes in unscaled points; shaping supplies the scaled advances
+  and row heights. Size custom text containers from their laid-out text.
 - **Regular spacing.** Reuse the existing widgets (`ui/widgets.rs`: flat
   buttons, switches, help badges, warning triangle…) rather than recreating
   them.
