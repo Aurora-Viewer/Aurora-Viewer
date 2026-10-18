@@ -346,9 +346,11 @@ when unfocused") is ignored during a screenshot.
   neutral transform and lowest vertex for comparison with on-grid reports.
   `auto-cycle` adds the rigid shoes at 620 and removes them at 940; capture
   580, 840 and 1100 to compare barefoot / soles on the ground / barefoot.
-  Automatic adjustment is enabled by default in Hover Height. Manual edits
-  last until the next body attachment change; HUD changes must leave the
-  height intact. Calibration and offset editing work while flying or seated.
+  Automatic adjustment is off by default in Hover Height; saved choices are
+  preserved. The `auto-*` scenarios enable it explicitly except
+  `auto-static-off`. Manual height edits disable automatic adjustment;
+  automatic offset edits keep it active. HUD changes must leave the height
+  intact. Calibration and offset editing work while flying or seated.
   On the grid: enable auto on the ground, in flight and seated with the same
   outfit and offset; check the same result. Add/remove rigged shoes/body at
   the hand, spine or nose, rigid foot/shin boots and linksets, and HUDs,

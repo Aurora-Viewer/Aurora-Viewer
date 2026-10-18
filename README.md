@@ -384,8 +384,8 @@ a modifiable no-copy shape can be saved in place.
 ### Hover height
 
 Open **Appearance › Hover Height** to adjust your height from -3 to +3 m.
-Automatic adjustment is enabled by default: it estimates ground contact
-from your foot attachments and applies your saved offset. A manual height
+Automatic adjustment is off by default. Enable it to estimate ground contact
+from your foot attachments and apply your saved offset. A manual height
 change disables automatic adjustment; the automatic offset controls keep
 it enabled. **Affect camera view** decides whether the camera follows the
 height change. Your hover height is remembered per avatar.
