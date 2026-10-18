@@ -1465,15 +1465,22 @@ mod tests {
     }
 
     #[test]
-    fn persisted_auto_option_defaults_on_and_can_be_disabled() {
+    fn persisted_auto_option_defaults_off_and_preserves_saved_choices() {
+        assert!(!crate::settings::Settings::default().auto_hover_height);
         let settings: crate::settings::Settings = serde_json::from_str("{}").unwrap();
-        assert!(settings.auto_hover_height);
+        assert!(!settings.auto_hover_height);
         assert_eq!(settings.auto_hover_offset, 0.0);
-        let disabled: crate::settings::Settings =
-            serde_json::from_str("{\"auto_hover_height\":false,\"auto_hover_offset\":-0.05}").unwrap();
-        assert!(!disabled.auto_hover_height);
-        assert_eq!(disabled.auto_hover_offset, -0.05);
-        let reloaded: crate::settings::Settings = serde_json::from_str(&serde_json::to_string(&disabled).unwrap()).unwrap();
-        assert_eq!(reloaded.auto_hover_offset, -0.05);
+        for enabled in [false, true] {
+            let saved: crate::settings::Settings = serde_json::from_value(serde_json::json!({
+                "auto_hover_height": enabled,
+                "auto_hover_offset": -0.05,
+            }))
+            .unwrap();
+            assert_eq!(saved.auto_hover_height, enabled);
+            assert_eq!(saved.auto_hover_offset, -0.05);
+            let reloaded: crate::settings::Settings = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+            assert_eq!(reloaded.auto_hover_height, enabled);
+            assert_eq!(reloaded.auto_hover_offset, -0.05);
+        }
     }
 }

@@ -1008,7 +1008,7 @@ impl Default for Settings {
             debug: DebugView::default(),
             build: Default::default(),
             camera: Default::default(),
-            auto_hover_height: true,
+            auto_hover_height: false,
             auto_hover_offset: 0.0,
             contacts: Default::default(),
             radar: Default::default(),
