@@ -839,7 +839,7 @@ fn rez_hologram(col: vec3<f32>, in: VsOut, n: vec3<f32>, g: f32, h: f32, t: f32,
 // The effect's progress, 0 to 1, over the time held above the mode's byte
 // (ms).
 fn rez_progress(rec: DrawRecord, elapsed: f32) -> f32 {
-    return clamp(elapsed * 1000.0 / max(f32(rec.rez.y >> 8u), 1.0), 0.0, 1.0);
+    return clamp(elapsed * 1000.0 / max(f32((rec.rez.y >> 8u) & 0xfffu), 1.0), 0.0, 1.0);
 }
 
 // Where the line is (world height) and its half width. A derez brings it
@@ -887,7 +887,9 @@ fn rez_apply(rec: DrawRecord, in: VsOut, n: vec3<f32>, col: vec3<f32>) -> vec3<f
     if (mode == 0u) {
         return col;
     }
-    let style = u32(frame.rez_gradient[0].w);
+    // (a look of its own above the line's length, else the frame's)
+    let own_style = rec.rez.y >> 20u;
+    let style = select(u32(frame.rez_gradient[0].w), own_style, own_style != 0u);
     let elapsed = f32(bitcast<i32>(frame.anim_clock.x - rec.rez.x)) * 0.001;
     let bottom = bitcast<f32>(rec.rez.z);
     let height = max(bitcast<f32>(rec.rez.w), 0.05);

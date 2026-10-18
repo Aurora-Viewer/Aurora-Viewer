@@ -180,7 +180,8 @@ pub struct DrawRecord {
     pub anim_xf: [f32; 4],
     /// The rez effect of an object appearing (the viewer's `scene/rez.rs`):
     /// x the `AnimClock` ms it started at, y its mode (`rez_mode`) in the
-    /// low byte and the line's length in ms above it, z and w the world
+    /// low byte, the line's length in ms above it (12 bits) and a look of
+    /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
 }

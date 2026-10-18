@@ -1,4 +1,4 @@
-//! AURORA_DEMO_REZ=1|loop: the rez effect (scene/rez.rs) in front of the
+//! AURORA_DEMO_REZ_EFFECT=1|loop|styles: the rez effect (scene/rez.rs) in front of the
 //! camera (with AURORA_DEMO_POS=129,134, looking east). Frame-numbered
 //! steps, for captures at AURORA_FPS_LIMIT=60:
 //!
@@ -28,6 +28,13 @@
 //! `loop`: at frame 2160 everything the scenario put there goes at once (a
 //! burst: no derez) and it starts again from frame 300, for watching it in
 //! one window. With `AURORA_DEMO_TOD=4`, the same at midnight.
+//!
+//! `styles`: the three looks side by side, each with a look of its own
+//! (`Rez::styles`) whatever the setting: a cube and, behind it, an avatar
+//! wearing two items, under a label, in three columns. From frame 300 and
+//! every 9 s, in step: they arrive (the grid traces in and waits while
+//! their textures take 3 s, as the avatars' loading does), the line
+//! reveals them, they stay, they leave (the derez) and stay away 2 s.
 //!
 //! The textures are the checkers of AURORA_DEMO_STREAM under ids of their
 //! own (new ones at each round), decoded on the background pool when the
@@ -81,7 +88,17 @@ fn attach_state(point: u8) -> u8 {
     point.rotate_left(4)
 }
 
+/// `styles`: the columns' looks (`AURORA_REZ_STYLE`'s numbers).
+const STYLES: [u32; 3] = [1, 2, 3];
+/// `styles`: one round's length, when its textures come and when it leaves.
+const STYLES_ROUND: u64 = 540;
+const STYLES_TEXTURES: u64 = 180;
+const STYLES_LEAVE: u64 = 420;
+const STYLES_FIRST_ID: u32 = 145_000;
+
 pub struct RezDemo {
+    /// `styles`: the three looks side by side, again and again.
+    styles: bool,
     looping: bool,
     /// Round of the scenario (`loop`), for fresh ids.
     round: u32,
@@ -89,9 +106,10 @@ pub struct RezDemo {
 
 impl RezDemo {
     pub fn from_env() -> Option<Self> {
-        let value = std::env::var("AURORA_DEMO_REZ").ok()?;
+        let value = std::env::var("AURORA_DEMO_REZ_EFFECT").ok()?;
         log::info!("demo rez: scenario armed");
         Some(RezDemo {
+            styles: value.trim() == "styles",
             looping: value.trim() == "loop",
             round: 0,
         })
@@ -152,7 +170,120 @@ impl RezDemo {
         o
     }
 
+    /// `styles`: column `k`'s cube, the avatar behind it as the camera
+    /// sees it and the label above (region coordinates; the camera stands
+    /// near `EYE`, behind our avatar at 129, 134, looking east). Left to
+    /// right on the screen, between our avatar and the left edge.
+    fn styles_places(k: usize) -> (Vec3, Vec3, Vec3) {
+        const EYE: Vec3 = Vec3::new(126.3, 132.7, 0.0);
+        let (x, y) = (132.0, 141.7 - 1.9 * k as f32);
+        let cube = Vec3::new(x, y, floor_at(x, y) + 0.5);
+        let a = Vec3::new(x, y, 0.0) + (Vec3::new(x, y, 0.0) - EYE).normalize() * 3.6;
+        let avatar = Vec3::new(a.x, a.y, floor_at(a.x, a.y) + 0.95);
+        (cube, avatar, cube + Vec3::Z * 0.95)
+    }
+
+    fn tick_styles(&mut self, frame: u64, world: &mut crate::world::World, scene: &mut Scene, renderer: &mut Renderer) {
+        if frame < LOADING {
+            return;
+        }
+        let t = (frame - LOADING) % STYLES_ROUND;
+        let round = ((frame - LOADING) / STYLES_ROUND) as u32;
+        let id = |i: u32| STYLES_FIRST_ID + i;
+        let avatar_uuid = |k: usize| Uuid::from_u128(0xA0E0_4E2E_0000_0000_0000_0000_0001_0000 + k as u128);
+        // (fresh textures each round: they load again, as on arriving)
+        let tex = |k: u32| round * 16 + k;
+        let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+        let cylinder = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0);
+        let mut objects = Vec::new();
+        if frame == LOADING {
+            // the labels, which stay: hover text over an invisible prim
+            for k in 0..STYLES.len() {
+                let (_, _, label) = Self::styles_places(k);
+                let mut o = prim(
+                    id(100 + k as u32),
+                    label,
+                    Quat::IDENTITY,
+                    Vec3::splat(0.05),
+                    boxp,
+                    super::te([1.0, 1.0, 1.0, 0.0], 0, false, 0.0),
+                    ExtraParams::default(),
+                    match k {
+                        0 => aurora_i18n::tr!("demo-rez-style-grid"),
+                        1 => aurora_i18n::tr!("demo-rez-style-scan"),
+                        _ => aurora_i18n::tr!("demo-rez-style-wire"),
+                    },
+                );
+                o.update_flags = 0;
+                objects.push(o);
+            }
+            log::info!("demo rez: the three looks side by side, a round every {} frames", STYLES_ROUND);
+        }
+        match t {
+            0 => {
+                for (k, style) in STYLES.iter().enumerate() {
+                    let k32 = k as u32;
+                    let (cube_at, avatar_at, _) = Self::styles_places(k);
+                    for i in 0..3 {
+                        self.texture_now(&mut scene.textures, renderer, &scene.jobs, tex(k32 * 3 + i), true);
+                    }
+                    let mut cube = self.textured(0, cube_at, Quat::from_rotation_z(0.5), Vec3::splat(1.0), boxp, tex(k32 * 3));
+                    cube.local_id = id(k32 * 10);
+                    cube.full_id = Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | cube.local_id as u128);
+                    cube.update_flags = crate::build::FLAGS_CREATE_SELECTED;
+                    scene.rez.styles.insert(cube.full_id, *style);
+                    objects.push(cube);
+                    let mut a = prim(
+                        id(k32 * 10 + 1),
+                        avatar_at,
+                        Quat::from_rotation_z(std::f32::consts::PI + 0.45),
+                        Vec3::new(0.45, 0.6, 1.9),
+                        boxp,
+                        super::te([0.2, 0.2, 0.25, 1.0], 0, false, 0.0),
+                        ExtraParams::default(),
+                        "",
+                    );
+                    a.pcode = LL_PCODE_LEGACY_AVATAR;
+                    a.full_id = avatar_uuid(k);
+                    a.name_values = format!("FirstName STRING RW SV Style\nLastName STRING RW SV {style}");
+                    scene.rez.styles.insert(a.full_id, *style);
+                    objects.push(a);
+                    // what it wears: a hat and a box on its chest
+                    for (j, (point, at, size, volume)) in [
+                        (2u8, Vec3::new(0.0, 0.0, 0.14), Vec3::new(0.32, 0.32, 0.18), cylinder),
+                        (1, Vec3::new(0.12, 0.0, 0.0), Vec3::new(0.12, 0.42, 0.5), boxp),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let mut w = self.textured(0, at, Quat::IDENTITY, size, volume, tex(k32 * 3 + 1 + j as u32));
+                        w.local_id = id(k32 * 10 + 2 + j as u32);
+                        w.full_id = Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | w.local_id as u128);
+                        w.parent_id = id(k32 * 10 + 1);
+                        w.state = attach_state(point);
+                        objects.push(w);
+                    }
+                }
+            }
+            STYLES_TEXTURES => {
+                self.decode(&scene.textures, &scene.jobs, (0..9).map(tex).collect());
+            }
+            STYLES_LEAVE => {
+                let local_ids = (0..STYLES.len() as u32).flat_map(|k| [id(k * 10), id(k * 10 + 1)]).collect();
+                world.apply(NetEvent::ObjectsKilled { handle: HANDLE, local_ids });
+            }
+            _ => {}
+        }
+        if !objects.is_empty() {
+            world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+        }
+    }
+
     pub fn tick(&mut self, frame: u64, world: &mut crate::world::World, scene: &mut Scene, renderer: &mut Renderer) {
+        if self.styles {
+            self.tick_styles(frame, world, scene, renderer);
+            return;
+        }
         // (`loop`: frames past the first round count from its start again)
         let step = if self.looping && frame >= ROUND_END {
             LOADING + (frame - ROUND_END) % (ROUND_END - LOADING)

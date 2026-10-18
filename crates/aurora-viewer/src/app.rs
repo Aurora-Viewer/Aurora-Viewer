@@ -536,7 +536,7 @@ pub struct App {
     demo_place: Option<crate::world::place_details::Source>,
     /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
     stream_demo: Option<crate::demo::stream::StreamDemo>,
-    /// AURORA_DEMO_REZ: objects and an avatar appearing with the rez effect.
+    /// AURORA_DEMO_REZ_EFFECT: objects and an avatar appearing with the rez effect.
     rez_demo: Option<crate::demo::rez::RezDemo>,
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.

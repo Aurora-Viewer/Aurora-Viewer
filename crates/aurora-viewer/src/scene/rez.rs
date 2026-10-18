@@ -169,14 +169,26 @@ pub struct Rez {
     worn_lately: HashMap<usize, Vec<(Instant, usize)>>,
     /// Prims whose records must lose the effect (their unit is gone).
     to_clear: Vec<usize>,
+    /// A look for some objects or avatars by id, whatever the frame's
+    /// (the demo's side-by-side comparison, `AURORA_DEMO_REZ_EFFECT=styles`).
+    pub styles: HashMap<Uuid, u32>,
+    /// Those of them followed, by slot (a derez finds its look there).
+    styled: HashMap<usize, u32>,
 }
 
 /// The records' value of a phase: x its start on the animation clock, y
-/// its mode and, above its low byte, the line's length in ms, z and w
-/// bottom and height (f32 bits).
+/// its mode (bits 0–7), the line's length in ms (8–19) and a look of its
+/// own (20–23, 0: the frame's), z and w bottom and height (f32 bits).
 pub fn record_value(mode: u32, start_ms: u32, sweep: Duration, bottom: f32, height: f32) -> [u32; 4] {
-    let ms = (sweep.as_millis() as u32).min(0xFF_FFFF);
+    let ms = (sweep.as_millis() as u32).min(0xFFF);
     [start_ms, mode | ms << 8, bottom.to_bits(), height.to_bits()]
+}
+
+/// `value` with a look of its own (`AURORA_REZ_STYLE`'s numbers; 0 keeps
+/// the frame's).
+fn with_style(mut value: [u32; 4], style: u32) -> [u32; 4] {
+    value[1] = value[1] & !(0xF << 20) | (style & 0xF) << 20;
+    value
 }
 
 /// How long the line takes to rise over `height` metres: a little longer
@@ -316,6 +328,7 @@ impl Rez {
 
     /// Prim `idx` leaves the scene.
     pub fn forget(&mut self, idx: usize) {
+        self.styled.remove(&idx);
         if let Some(root) = self.member_of.remove(&idx)
             && let Some(u) = self.units.get_mut(&root)
         {
@@ -354,6 +367,9 @@ impl Rez {
     }
 
     fn add_unit(&mut self, root: usize, unit: Unit) {
+        if let Some(&style) = self.styles.get(&unit.id) {
+            self.styled.insert(root, style);
+        }
         for &m in &unit.members {
             self.member_of.insert(m, root);
         }
@@ -590,7 +606,8 @@ impl Scene {
                 lo = lo.max(c - 1.1);
                 hi = hi.min(c + 1.2);
             }
-            let value = record_value(rez_mode::DEREZ, ms, DEREZ, lo, (hi - lo).max(0.05));
+            let style = self.rez.styled.get(&root).copied().unwrap_or(0);
+            let value = with_style(record_value(rez_mode::DEREZ, ms, DEREZ, lo, (hi - lo).max(0.05)), style);
             let unit = Unit {
                 id: Uuid::nil(),
                 avatar,
@@ -921,7 +938,8 @@ impl Scene {
                     };
                     let (bottom, height) = bounds.unwrap_or((0.0, 1.0));
                     u.phase = Phase::Hologram(now);
-                    u.value = record_value(rez_mode::HOLOGRAM, ms, Duration::ZERO, bottom, height);
+                    let style = rez.styled.get(&root).copied().unwrap_or(0);
+                    u.value = with_style(record_value(rez_mode::HOLOGRAM, ms, Duration::ZERO, bottom, height), style);
                     rez.stats.holograms += 1;
                     let (members, v) = (u.members.clone(), u.value);
                     self.write_rez(renderer, &members, v);
@@ -948,7 +966,8 @@ impl Scene {
                     };
                     u.phase = Phase::Sweep(now);
                     u.sweep = if quick { QUICK_SWEEP } else { sweep_for(height) };
-                    u.value = record_value(rez_mode::SWEEP, ms, u.sweep, bottom, height);
+                    let style = rez.styled.get(&root).copied().unwrap_or(0);
+                    u.value = with_style(record_value(rez_mode::SWEEP, ms, u.sweep, bottom, height), style);
                     rez.stats.sweeps += 1;
                     if rez.log {
                         log::info!(
@@ -985,6 +1004,10 @@ mod tests {
         assert_eq!(v[0], 1234);
         assert_eq!(v[1] & 0xFF, rez_mode::SWEEP);
         assert_eq!(v[1] >> 8, 640);
+        let styled = with_style(v, 3);
+        assert_eq!(styled[1] & 0xFF, rez_mode::SWEEP);
+        assert_eq!(styled[1] >> 8 & 0xFFF, 640);
+        assert_eq!(styled[1] >> 20, 3);
         assert_eq!(f32::from_bits(v[2]), 21.5);
         assert_eq!(f32::from_bits(v[3]), 1.8);
     }
