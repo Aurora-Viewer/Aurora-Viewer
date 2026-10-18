@@ -212,6 +212,12 @@ pub struct Floater<'a> {
     pub title: String,
     /// Optional compact state row within the title bar: glyph, label, theme role.
     pub header_status: Vec<(&'static str, String, Color32)>,
+    /// A short muted text right after the title (a count of what the
+    /// window holds).
+    pub title_note: Option<String>,
+    /// A state at the right end of the title bar, before its buttons: a
+    /// dot of its colour and its text in muted.
+    pub title_state: Option<(Color32, String)>,
     pub default_pos: egui::Pos2,
     pub default_size: Vec2,
     pub min_size: Vec2,
@@ -252,6 +258,8 @@ impl<'a> Floater<'a> {
             id,
             title: title.into(),
             header_status: Vec::new(),
+            title_note: None,
+            title_state: None,
             default_pos: pos,
             default_size: size,
             min_size: Vec2::new(220.0, 120.0),
@@ -294,6 +302,18 @@ impl<'a> Floater<'a> {
 
     pub fn help(mut self, text: &'a str) -> Self {
         self.help = Some(text);
+        self
+    }
+
+    /// A muted text after the title (see `title_note`).
+    pub fn title_note(mut self, note: impl Into<String>) -> Self {
+        self.title_note = Some(note.into());
+        self
+    }
+
+    /// A state before the title buttons (see `title_state`).
+    pub fn title_state(mut self, dot: Color32, text: impl Into<String>) -> Self {
+        self.title_state = Some((dot, text.into()));
         self
     }
 
@@ -597,6 +617,13 @@ impl<'a> Floater<'a> {
                         if let Some(h) = self.help {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);
                         }
+                        if let Some((dot, text)) = &self.title_state {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(text).size(12.0).color(p.muted));
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            status_dot(ui, *dot);
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                        }
                         buttons_left = ui.cursor().right();
                         if truncate {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -613,6 +640,9 @@ impl<'a> Floater<'a> {
                                     }
                                 }
                                 ui.add(egui::Label::new(title).truncate());
+                                if let Some(note) = &self.title_note {
+                                    ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                }
                             });
                         }
                     });

@@ -75,6 +75,7 @@ impl Fixture {
                 worn: Default::default(),
                 active_gestures: Default::default(),
                 worn_labels: Default::default(),
+                worn_at: Default::default(),
                 points: Vec::new(),
                 appearance_busy: false,
                 touchable: Default::default(),

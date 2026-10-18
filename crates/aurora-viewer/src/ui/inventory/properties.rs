@@ -361,7 +361,7 @@ fn mask_text(mask: u32) -> String {
         .filter_map(|(bit, c)| (mask & bit != 0).then_some(c))
         .collect()
 }
-fn acquired(timestamp: i64) -> String {
+pub(super) fn acquired(timestamp: i64) -> String {
     if timestamp <= 0 {
         return aurora_i18n::tr!("ui-inventory-properties-unknown").into();
     }

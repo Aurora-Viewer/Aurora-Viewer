@@ -9,6 +9,28 @@ use aurora_net::build::perm;
 use egui::{FontId, Stroke, TextFormat, text::LayoutJob};
 use uuid::Uuid;
 
+/// Which rights the rows of Aurora's inventory show (its "CMT" menu): yours
+/// by default, the next owner's (what a resident you give the item to gets),
+/// both, or none. Kept with the inventory preferences.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Rights {
+    Hidden,
+    #[default]
+    Mine,
+    Next,
+    Both,
+}
+
+impl Rights {
+    pub fn shows_mine(self) -> bool {
+        matches!(self, Self::Mine | Self::Both)
+    }
+
+    pub fn shows_next(self) -> bool {
+        matches!(self, Self::Next | Self::Both)
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Permissions {
     owner: Option<u32>,
@@ -17,6 +39,16 @@ pub struct Permissions {
 }
 
 impl Permissions {
+    /// The owner's mask, unknown for a broken link.
+    pub fn owner(self) -> Option<u32> {
+        self.owner
+    }
+
+    /// The next owner's mask, unknown for a broken link.
+    pub fn next(self) -> Option<u32> {
+        self.next
+    }
+
     pub fn new(owner: u32, next: u32) -> Self {
         Self {
             owner: Some(owner),

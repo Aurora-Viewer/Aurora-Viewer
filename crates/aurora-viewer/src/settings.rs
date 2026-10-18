@@ -579,6 +579,10 @@ pub struct Settings {
     /// Region / Estate as Firestorm's eight tabs (not ported yet: the
     /// Aurora window opens meanwhile) instead of Aurora's (`ui/region`).
     pub classic_region_estate: bool,
+    /// The inventory as the Legacy Viewer's single tree with its tabs and
+    /// footer instead of Aurora's window that widens from a compact tree to
+    /// an explorer (`ui/inventory/aurora`).
+    pub classic_inventory: bool,
     pub invert_mouse: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
@@ -1154,6 +1158,7 @@ impl Default for Settings {
             photo_held: None,
             classic_about_land: false,
             classic_region_estate: false,
+            classic_inventory: false,
             invert_mouse: false,
             arrows_strafe: false,
             arrow_keys_always_move: false,

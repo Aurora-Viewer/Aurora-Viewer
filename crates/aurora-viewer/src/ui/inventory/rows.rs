@@ -17,6 +17,11 @@ pub const MAX_DEPTH: usize = 24;
 /// The height of a row, without the spacing between rows.
 pub const ROW_HEIGHT: f32 = 20.0;
 
+/// The height of the rows of this window: Aurora's are taller.
+pub fn row_height(st: &InventoryUi) -> f32 {
+    if st.aurora.is_some() { super::aurora::rows::HEIGHT } else { ROW_HEIGHT }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Folder {
@@ -229,7 +234,8 @@ pub(super) fn scroll(
     show_root: bool,
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     tree_spacing(ui);
-    if st.ui_id.is_nil() {
+    // The explorer's list opens no folder: nothing of it to keep.
+    if st.ui_id.is_nil() && !st.aurora.is_some_and(|frame| frame.explorer) {
         st.plain.persist(ui.ctx(), egui::Id::new("inventory_open_folders"));
     }
     st.view.prepare(inv, prefs.sort);
@@ -255,7 +261,8 @@ pub(super) fn scroll(
             inv.request(*id);
         }
     }
-    let pitch = ROW_HEIGHT + ui.spacing().item_spacing.y;
+    let height_of_row = row_height(st);
+    let pitch = height_of_row + ui.spacing().item_spacing.y;
     if let Some(index) = st.reveal.and_then(|id| st.plain.position(id)) {
         // Bring it in sight; the row centres itself once drawn.
         offset = Some((index as f32 * pitch - height / 2.0).max(0.0));
@@ -295,7 +302,7 @@ pub(super) fn scroll(
                 rows(ui, p, icons, inv, st, prefs, facts, actions, one);
             });
         }
-        guides(ui, &st.plain, range, origin, pitch);
+        guides(ui, &st.plain, range, origin, pitch, height_of_row);
         ui.set_min_width(st.plain.width);
     });
     st.plain_scroll = out.state.offset.y;
@@ -316,9 +323,11 @@ fn rows(
     range: std::ops::Range<usize>,
 ) {
     tree_spacing(ui);
+    let height = row_height(st);
     for index in range {
         let Some(row) = st.plain.rows.get(index).copied() else { break };
-        if row.kind != Kind::Empty {
+        // Aurora's rows fit the list's width: they cut long names short.
+        if row.kind != Kind::Empty && st.aurora.is_none() {
             let width = row_width(
                 ui,
                 p,
@@ -332,7 +341,7 @@ fn rows(
             st.plain.width = st.plain.width.max(width);
         }
         ui.horizontal(|ui| {
-            ui.set_min_height(ROW_HEIGHT);
+            ui.set_min_height(height);
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(row.level as f32 * ui.spacing().indent);
             match row.kind {
@@ -350,6 +359,9 @@ fn rows(
                     } else {
                         aurora_i18n::tr!("ui-inventory-loading-folder")
                     };
+                    if st.aurora.is_some() {
+                        ui.add_space(super::aurora::rows::LEAD);
+                    }
                     ui.label(RichText::new(text).size(12.0).color(p.muted_dim));
                 }
             }
@@ -359,7 +371,7 @@ fn rows(
 
 /// The faint line along an open folder's contents (`egui::Ui::indent` draws
 /// it, the tree used to be built with it).
-fn guides(ui: &egui::Ui, tree: &PlainTree, range: std::ops::Range<usize>, origin: egui::Pos2, pitch: f32) {
+fn guides(ui: &egui::Ui, tree: &PlainTree, range: std::ops::Range<usize>, origin: egui::Pos2, pitch: f32, row_height: f32) {
     if !ui.visuals().indent_has_left_vline {
         return;
     }
@@ -369,7 +381,7 @@ fn guides(ui: &egui::Ui, tree: &PlainTree, range: std::ops::Range<usize>, origin
         let row = tree.rows[index];
         let x = origin.x + (row.level as f32 + 0.5) * indent;
         let top = origin.y + (index + 1) as f32 * pitch;
-        let bottom = origin.y + row.end as f32 * pitch + ROW_HEIGHT - 2.0;
+        let bottom = origin.y + row.end as f32 * pitch + row_height - 2.0;
         ui.painter().line_segment([egui::pos2(x, top), egui::pos2(x, bottom)], stroke);
     }
 }
