@@ -687,6 +687,17 @@ impl RecordStore {
         }
     }
 
+    /// The rez effect of a record (`DrawRecord::rez`), uploaded only when
+    /// it changes.
+    pub fn set_rez(&mut self, id: u32, rez: [u32; 4]) {
+        if let Some(slot) = self.mirror.get_mut(id as usize)
+            && slot.rez != rez
+        {
+            slot.rez = rez;
+            self.mark(id as usize);
+        }
+    }
+
     /// The face drawn with record `id` (GPU draw lists).
     pub fn set_face(&mut self, id: u32, face: CullFace) {
         if (id as usize) < self.mirror.len() {

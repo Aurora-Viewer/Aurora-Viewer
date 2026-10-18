@@ -523,6 +523,9 @@ pub struct Settings {
     /// instead of the cards grouped by sender, with their picture
     /// (`ui/chat/console.rs`).
     pub classic_chat_lines: bool,
+    /// The Legacy Viewer's grey objects while they load instead of the rez
+    /// effect (`scene/rez.rs`): a glowing grid, then a line revealing them.
+    pub classic_rez_effect: bool,
     /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
     /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
     /// fade slowly. Off, the default until it has been tried on the grid:
@@ -1124,6 +1127,7 @@ impl Default for Settings {
             classic_people: false,
             classic_restart_alert: false,
             classic_chat_lines: false,
+            classic_rez_effect: false,
             predict_own_motion: false,
             synchronize_animations: false,
             region_restart: Default::default(),

@@ -34,6 +34,7 @@ pub mod particles;
 mod pick_accel;
 pub mod picking;
 pub mod probes;
+pub mod rez;
 mod selection_demo;
 pub mod settings;
 pub mod shape;
@@ -255,6 +256,8 @@ pub struct FaceDraw {
     pub pass: Pass,
     /// Glowing face drawn in LL's alpha pool (`glow_alpha`).
     pub glow_pool: bool,
+    /// `glow` was set by the rez effect alone (rez.rs), for its line.
+    pub rez_glow: bool,
     /// Part of a system avatar body: its pass follows the avatar pool.
     pub system: Option<SystemPart>,
 }
@@ -724,6 +727,8 @@ pub struct Scene {
     picture_check: (u64, u64, Option<Instant>),
     /// Avatars still loading (clouds).
     loading: loading::Loading,
+    /// The rez effect of objects and avatars appearing (rez.rs).
+    pub rez: rez::Rez,
     /// Hide loading avatars (shown as clouds) until they are complete.
     pub hide_loading: bool,
     /// Progress bars under the names of loading avatars.
@@ -1143,6 +1148,7 @@ impl Scene {
             posed_now: HashSet::new(),
             picture_check: (0, 0, None),
             loading: Default::default(),
+            rez: Default::default(),
             hide_loading: true,
             loading_bars: true,
             attached_lights: true,
@@ -1568,6 +1574,7 @@ impl Scene {
 
     fn release_obj(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
         self.flexibles.remove(&idx);
+        self.rez.forget(idx);
         self.drop_faces(renderer, idx, g);
         for t in g.tex_ids.drain(..) {
             self.textures.release(&t);
@@ -1591,6 +1598,11 @@ impl Scene {
     /// before that object is synced (`release_slot`).
     pub fn collect_garbage(&mut self, renderer: &mut Renderer, store: &mut ObjectStore, budget: std::time::Duration) {
         store.graveyard.clear();
+        let now = Instant::now();
+        let kills = std::mem::take(&mut store.killed);
+        if !kills.is_empty() {
+            self.note_kills(renderer, kills, now);
+        }
         for i in std::mem::take(&mut store.removed_slots) {
             if self.removal_pending.len() <= i {
                 self.removal_pending.resize(i + 1, false);
@@ -1605,7 +1617,13 @@ impl Scene {
         }
         let deadline = Instant::now() + budget;
         let mut done = 0u32;
+        // (what a derez still draws waits for its end: rez.rs)
+        let mut held = Vec::new();
         while let Some(i) = self.removals.pop_front() {
+            if self.rez.holds(i, now) {
+                held.push(i);
+                continue;
+            }
             self.release_slot(renderer, i);
             done += 1;
             // (the clock read every few objects: each costs under a microsecond)
@@ -1613,6 +1631,7 @@ impl Scene {
                 break;
             }
         }
+        self.removals.extend(held);
     }
 
     /// Release the GPU state left in slot `i` by a removed object, if it
@@ -2319,6 +2338,10 @@ impl Scene {
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
         let mut last_slot = None;
+        // (an object appearing keeps its rez effect through a rebuild)
+        if let Some(v) = self.rez.value_of(idx) {
+            rez::rez_faces(renderer, &mut g.faces, v);
+        }
         for (fi, f) in g.faces.iter_mut().enumerate() {
             // (faces of an object mostly share their texture: one entry)
             if last_slot != Some(f.base_slot) {
@@ -2519,6 +2542,7 @@ impl Scene {
                 };
                 self.sync_object(renderer, world, idx, now, view, None);
                 self.after_full_sync(world, idx, mat_gen);
+                self.rez.arrived(idx);
                 synced.push(idx);
             }
             budget.spend(started.elapsed());
@@ -3058,6 +3082,7 @@ impl Scene {
                 glow: rec.emissive[3] > 0.0,
                 pass: Pass::Hidden,
                 glow_pool: false,
+                rez_glow: false,
                 system: None,
             });
         }
@@ -3249,6 +3274,7 @@ impl Scene {
                     glow: false,
                     pass: Pass::Hidden,
                     glow_pool: false,
+                    rez_glow: false,
                     system: Some(SystemPart::of(part.name)),
                 });
             }
@@ -5447,6 +5473,7 @@ mod tests {
             glow,
             pass: p,
             glow_pool: false,
+            rez_glow: false,
             system: None,
         }
     }

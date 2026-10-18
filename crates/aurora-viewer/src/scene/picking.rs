@@ -1427,6 +1427,7 @@ pub(super) mod tests {
             glow: false,
             pass: super::Pass::Opaque,
             glow_pool: false,
+            rez_glow: false,
             system: None,
         };
         for idx in [front, back] {

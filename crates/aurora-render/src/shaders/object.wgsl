@@ -536,6 +536,7 @@ fn shadow_normal(m: Material) -> vec3<f32> {
 }
 
 fn eval_material(in: VsOut, front: bool) -> Material {
+    rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     var m: Material;
     let base_s = sample_tex(rec.tex.x, in.uv);
@@ -756,6 +757,202 @@ struct Shaded {
     metallic: f32,
 };
 
+// The rez effect (the viewer's scene/rez.rs, `DrawRecord::rez`): an
+// object still loading is a glowing grid, then a line rising from its
+// bottom reveals it; leaving, the line comes down (a derez) and leaves the
+// grid behind. Its colors run along the brand gradient of the theme
+// (`frame.rez_gradient`: the leading edge, the middle, the trail); x of
+// the first entry's w picks the look (`REZ_STYLE_*`). World-space lines a
+// pixel wide, anti-aliased with the derivatives `rez_fw` keeps.
+const REZ_HOLOGRAM: u32 = 1u;
+const REZ_SWEEP: u32 = 2u;
+const REZ_DEREZ: u32 = 3u;
+// the grid's lines trace in over this long (s); a derez's line comes down
+// in this part of its time, its grid fades out in the rest
+const REZ_INTRO: f32 = 0.2;
+const REZ_DEREZ_LINE: f32 = 0.5;
+// grid and scanlines; scanlines only; a fine wireframe
+const REZ_STYLE_GRID: u32 = 1u;
+const REZ_STYLE_SCAN: u32 = 2u;
+const REZ_STYLE_WIRE: u32 = 3u;
+
+// fwidth(world position) of the fragment, taken where the control flow is
+// still uniform (`eval_material`, `fs_glow`): `shade_material` may run
+// after a discard.
+var<private> rez_fw: vec3<f32> = vec3<f32>(0.0);
+
+// The brand gradient at `t` (0 the leading edge, 1 the trail), linear.
+fn rez_gradient(t: f32) -> vec3<f32> {
+    let u = clamp(t, 0.0, 1.0) * 2.0;
+    let a = frame.rez_gradient[0].rgb;
+    let b = frame.rez_gradient[1].rgb;
+    let c = frame.rez_gradient[2].rgb;
+    return select(mix(b, c, u - 1.0), mix(a, b, u), u < 1.0);
+}
+
+fn rez_hash(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(12.9898, 78.233, 37.719))) * 43758.5453);
+}
+
+// 1 on the lines of a grid `step` metres apart, a pixel wide, none along
+// the axis a face is square to (it would light the whole face); faded out
+// where the lines get closer than a few pixels.
+fn rez_lines(p: vec3<f32>, n: vec3<f32>, step: f32) -> f32 {
+    let fw = max(rez_fw / step, vec3<f32>(1e-5));
+    let q = abs(fract(p / step - 0.5) - 0.5);
+    let l = vec3<f32>(1.0) - smoothstep(fw * 0.5, fw * 1.5, q);
+    let along = vec3<f32>(1.0) - smoothstep(vec3<f32>(0.75), vec3<f32>(0.95), abs(n));
+    let dense = vec3<f32>(1.0) - smoothstep(vec3<f32>(0.12), vec3<f32>(0.35), fw);
+    let w = l * along * dense;
+    return max(w.x, max(w.y, w.z));
+}
+
+// Horizontal scanlines `step` apart, a pixel wide.
+fn rez_scan(z: f32, step: f32) -> f32 {
+    let fw = max(rez_fw.z / step, 1e-5);
+    let q = abs(fract(z / step - 0.5) - 0.5);
+    return (1.0 - smoothstep(fw * 0.5, fw * 1.5, q)) * (1.0 - smoothstep(0.12, 0.35, fw));
+}
+
+// The look of what is still to come: a dark tint of the surface, lines in
+// the gradient (`g`: where on it), a glowing rim, a soft band of light
+// climbing it and a faint shimmer of its cells.
+fn rez_hologram(col: vec3<f32>, in: VsOut, n: vec3<f32>, g: f32, h: f32, t: f32, style: u32) -> vec3<f32> {
+    let tint = rez_gradient(g);
+    let v = normalize(frame.camera_pos.xyz - in.world_pos);
+    let rim = pow(1.0 - abs(dot(n, v)), 3.0);
+    var lines: f32;
+    if (style == REZ_STYLE_SCAN) {
+        lines = rez_scan(in.world_pos.z, 0.05);
+    } else if (style == REZ_STYLE_WIRE) {
+        lines = max(rez_lines(in.world_pos, n, 0.125), 0.35 * rez_lines(in.world_pos, n, 0.03125));
+    } else {
+        lines = max(rez_lines(in.world_pos, n, 0.25), 0.4 * rez_scan(in.world_pos.z, 0.0625));
+    }
+    let cell = floor(in.world_pos / 0.25);
+    let shimmer = 0.8 + 0.2 * sin(t * 5.0 + rez_hash(cell) * 6.2831853);
+    let climb = exp(-pow((fract(h - t * 0.45) - 0.5) * 7.0, 2.0));
+    let body = col * 0.08 + tint * (0.035 + 0.05 * climb);
+    return body + tint * (lines * (1.0 + 1.6 * climb) * shimmer + rim * 0.6);
+}
+
+// The effect's progress, 0 to 1, over the time held above the mode's byte
+// (ms).
+fn rez_progress(rec: DrawRecord, elapsed: f32) -> f32 {
+    return clamp(elapsed * 1000.0 / max(f32((rec.rez.y >> 8u) & 0xfffu), 1.0), 0.0, 1.0);
+}
+
+// Where the line is (world height) and its half width. A derez brings it
+// down in the first part of its time (`REZ_DEREZ_LINE`), then the grid it
+// left fades out from the top (`rez_alpha`).
+fn rez_line(rec: DrawRecord, elapsed: f32) -> vec2<f32> {
+    let bottom = bitcast<f32>(rec.rez.z);
+    let height = max(bitcast<f32>(rec.rez.w), 0.05);
+    var t = rez_progress(rec, elapsed);
+    let derez = (rec.rez.y & 0xffu) == REZ_DEREZ;
+    if (derez) {
+        t = clamp(t / REZ_DEREZ_LINE, 0.0, 1.0);
+    }
+    // eased: it starts and lands softly; a derez runs it backwards
+    var e = t * t * (3.0 - 2.0 * t);
+    if (derez) {
+        e = 1.0 - e;
+    }
+    let band = max(height * 0.02, 0.015);
+    return vec2<f32>(bottom - 3.0 * band + e * (height + 6.0 * band), band);
+}
+
+// A derez's fading front, in heights from the bottom (above 1: none yet).
+fn rez_fade_front(rec: DrawRecord, elapsed: f32) -> f32 {
+    let t = clamp((rez_progress(rec, elapsed) - REZ_DEREZ_LINE) / (1.0 - REZ_DEREZ_LINE), 0.0, 1.0);
+    return 1.08 - 1.16 * t;
+}
+
+// Opacity of a derezzing face (drawn blended while it lasts: rez.rs): the
+// grid goes from the top down. 1 for every other face.
+fn rez_alpha(rec: DrawRecord, in: VsOut) -> f32 {
+    if ((rec.rez.y & 0xffu) != REZ_DEREZ) {
+        return 1.0;
+    }
+    let elapsed = f32(bitcast<i32>(frame.anim_clock.x - rec.rez.x)) * 0.001;
+    let bottom = bitcast<f32>(rec.rez.z);
+    let height = max(bitcast<f32>(rec.rez.w), 0.05);
+    let h = (in.world_pos.z - bottom) / height;
+    let front = rez_fade_front(rec, elapsed);
+    return 1.0 - smoothstep(front - 0.08, front, h);
+}
+
+fn rez_apply(rec: DrawRecord, in: VsOut, n: vec3<f32>, col: vec3<f32>) -> vec3<f32> {
+    let mode = rec.rez.y & 0xffu;
+    if (mode == 0u) {
+        return col;
+    }
+    // (a look of its own above the line's length, else the frame's)
+    let own_style = rec.rez.y >> 20u;
+    let style = select(u32(frame.rez_gradient[0].w), own_style, own_style != 0u);
+    let elapsed = f32(bitcast<i32>(frame.anim_clock.x - rec.rez.x)) * 0.001;
+    let bottom = bitcast<f32>(rec.rez.z);
+    let height = max(bitcast<f32>(rec.rez.w), 0.05);
+    let h = clamp((in.world_pos.z - bottom) / height, 0.0, 1.0);
+    let level = rez_level(n);
+    if (mode == REZ_HOLOGRAM) {
+        // the gradient from the bottom up; its lines trace in from the
+        // base first, behind a bright edge
+        let holo = rez_hologram(col, in, n, h, h, elapsed, style);
+        let front = elapsed / REZ_INTRO;
+        let shown = 1.0 - smoothstep(front - 0.05, front, h);
+        let edge = exp(-pow((h - front) / 0.03, 2.0)) * (1.0 - smoothstep(1.0, 1.15, front)) * level;
+        return mix(col, holo, shown) + mix(rez_gradient(0.0), vec3<f32>(1.0), 0.5) * edge * 3.0;
+    }
+    let lb = rez_line(rec, elapsed);
+    let above = in.world_pos.z - lb.x;
+    let band = lb.y;
+    // above: still the grid, its color running from the edge's to the
+    // trail's with the distance to the line, brighter near it
+    let ahead = clamp(above / (height * 0.7), 0.0, 1.0);
+    let holo = rez_hologram(col, in, n, ahead, h, elapsed, style) + rez_gradient(0.0) * exp(-max(above, 0.0) / (band * 5.0)) * 0.9;
+    // below: the surface, with a short trail in the gradient's end
+    let trail = rez_gradient(1.0) * exp(min(above, 0.0) / (band * 8.0)) * 0.7;
+    let revealed = col + trail;
+    var c = mix(revealed, holo, smoothstep(-band * 0.5, band * 0.5, above));
+    // the line itself: white at its core, the leading color around it
+    // (softer on a level surface, which it crosses all at once)
+    let core = exp(-pow(above / (band * 0.45), 2.0)) * level;
+    let halo = exp(-pow(above / (band * 1.6), 2.0)) * level;
+    c = c + mix(rez_gradient(0.0), vec3<f32>(1.0), 0.65) * core * 5.0 + rez_gradient(0.15) * halo * 1.6;
+    if (mode == REZ_DEREZ) {
+        // the fading front, in the gradient's deep end
+        let hf = (in.world_pos.z - bottom) / height - rez_fade_front(rec, elapsed);
+        c = c + rez_gradient(1.0) * exp(-pow(hf / 0.03, 2.0)) * 2.0 * level;
+    }
+    return c;
+}
+
+// How much of the line a surface of normal `n` shows: a level one (a
+// floor, a table top) is crossed in one frame and would flash.
+fn rez_level(n: vec3<f32>) -> f32 {
+    return mix(1.0, 0.2, smoothstep(0.55, 0.95, abs(n.z)));
+}
+
+// What the effect adds to the glow pass (fs_glow): the line and, softly,
+// the lines of the grid.
+fn rez_glow(rec: DrawRecord, in: VsOut) -> f32 {
+    let mode = rec.rez.y & 0xffu;
+    if (mode == 0u) {
+        return 0.0;
+    }
+    let elapsed = f32(bitcast<i32>(frame.anim_clock.x - rec.rez.x)) * 0.001;
+    let n = normalize(in.normal);
+    let grid = rez_lines(in.world_pos, n, 0.25) * 0.25;
+    if (mode == REZ_HOLOGRAM) {
+        return grid * clamp(elapsed / REZ_INTRO, 0.0, 1.0);
+    }
+    let lb = rez_line(rec, elapsed);
+    let above = in.world_pos.z - lb.x;
+    let line = exp(-pow(above / (lb.y * 1.2), 2.0)) * rez_level(n);
+    return max(line * 0.9, select(0.0, grid, above > 0.0));
+}
+
 fn shade(in: VsOut, front: bool) -> Shaded {
     return shade_material(in, eval_material(in, front));
 }
@@ -810,6 +1007,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
     }
+    col = rez_apply(rec, in, m.n, col);
     if (!hazed) {
         col = apply_fog(col, in.world_pos);
     }
@@ -921,7 +1119,8 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && m.color.a < rec.params.w) {
         discard;
     }
-    let c = shade_material(in, m).color;
+    var c = shade_material(in, m).color;
+    c.a = c.a * rez_alpha(rec, in);
     if (c.a < 0.004) {
         discard;
     }
@@ -938,6 +1137,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 // without being dimmed by it.
 @fragment
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
@@ -953,6 +1153,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     } else {
         a = base.a * rec.emissive.w;
     }
+    a = max(a, rez_glow(rec, in));
     if (a <= 0.0) {
         discard;
     }

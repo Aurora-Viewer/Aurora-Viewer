@@ -537,6 +537,10 @@ pub struct ObjectStore {
     pub graveyard: Vec<Object>,
     /// Their slot indices, in removal order (a slot may be reused since).
     pub removed_slots: Vec<usize>,
+    /// What the simulator killed (KillObject) since the scene last took
+    /// them, not what left with a region: each an object and what hung
+    /// from it, its slots before the removal (the rez effect's derez).
+    pub killed: Vec<Vec<usize>>,
     /// Keys changed without the object being removed (`take_rekeyed`).
     rekeyed: Vec<(ObjKey, ObjKey)>,
     /// Objects changed since the scene last took them, each once.

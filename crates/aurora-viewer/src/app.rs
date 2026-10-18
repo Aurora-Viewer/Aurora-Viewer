@@ -536,6 +536,8 @@ pub struct App {
     demo_place: Option<crate::world::place_details::Source>,
     /// AURORA_DEMO_STREAM: objects and textures arriving in waves.
     stream_demo: Option<crate::demo::stream::StreamDemo>,
+    /// AURORA_DEMO_REZ_EFFECT: objects and an avatar appearing with the rez effect.
+    rez_demo: Option<crate::demo::rez::RezDemo>,
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
@@ -1022,6 +1024,7 @@ impl App {
             place_images: Default::default(),
             demo_place: None,
             stream_demo: None,
+            rez_demo: None,
             arrival_demo: None,
             tex_refresh_demo: None,
             experience_demo: None,
@@ -5998,6 +6001,16 @@ impl App {
             self.frame_profile.lap(Lap::Media);
             // avatars still loading: clouds (Firestorm) and progress bars
             self.scene.update_loading(&self.world, Instant::now());
+            // the rez effect of what appears (Preferences › Aurora;
+            // AURORA_REZ_EFFECT=0|1 overrides it): its grid stands for the
+            // clouds of the avatars it draws
+            static REZ_ENV: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+            let rez_env = *REZ_ENV.get_or_init(|| std::env::var("AURORA_REZ_EFFECT").ok().map(|v| v.trim() != "0"));
+            self.scene.rez.enabled = rez_env.unwrap_or(!self.settings.classic_rez_effect && !self.settings.reduce_motion);
+            self.scene.rez.log = self.demo;
+            let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
+            self.scene
+                .update_rez(&mut gfx.renderer, &self.world, &cull, covered, Instant::now());
             // the demo avatars have no real bakes: no clouds offline unless
             // AURORA_DEMO_CLOUD is set
             static DEMO_CLOUD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -6009,11 +6022,19 @@ impl App {
             self.scene.hide_loading = mode == 0;
             self.scene.loading_bars = mode < 2;
             let clouds: Vec<uuid::Uuid> = if mode == 0 {
-                self.scene.loading_avatars().keys().copied().collect()
+                let objects = &self.world.objects;
+                let rez = &self.scene.rez;
+                self.scene
+                    .loading_avatars()
+                    .keys()
+                    .copied()
+                    .filter(|id| objects.index_of_uuid(id).is_none_or(|i| !rez.shows_avatar(i)))
+                    .collect()
             } else {
                 Vec::new()
             };
             self.scene.particles.sync_clouds(&clouds);
+            self.scene.drop_rez_clouds(&self.world);
             self.scene
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
@@ -6337,6 +6358,21 @@ impl App {
         };
         let fp = FrameParams {
             selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
+            rez_gradient: {
+                // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
+                // wireframe, the one chosen), to compare them
+                static STYLE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+                let style = *STYLE.get_or_init(|| {
+                    std::env::var("AURORA_REZ_STYLE")
+                        .ok()
+                        .and_then(|v| v.trim().parse::<u8>().ok())
+                        .filter(|s| (1..=3).contains(s))
+                        .unwrap_or(3) as f32
+                });
+                let mut g = self.palette.aurora_gradient().map(|c| egui::Rgba::from(c).to_array());
+                g[0][3] = style;
+                g
+            },
             selection_pulse: self.scene.selection_pulse(Instant::now()),
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
@@ -7428,6 +7464,9 @@ impl App {
         }
         if let Some(demo) = &mut self.arrival_demo {
             demo.tick(self.frame_count, &mut self.world, &self.scene);
+        }
+        if let (Some(demo), Some(g)) = (&mut self.rez_demo, &mut self.gfx) {
+            demo.tick(self.frame_count, &mut self.world, &mut self.scene, &mut g.renderer);
         }
         // AURORA_DEMO_TEXREFRESH: a panel with a stale cached texture
         if let Some(demo) = &mut self.tex_refresh_demo
@@ -12444,6 +12483,7 @@ impl ApplicationHandler for App {
                 }
             }
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
+            self.rez_demo = crate::demo::rez::RezDemo::from_env();
             self.arrival_demo = crate::demo::arrival::ArrivalDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();

@@ -1661,6 +1661,9 @@ To check with these scenarios:
 | `AURORA_DEMO_IMPOSTOR_FLIP=<seconds>` | The avatar limit alternates between its setting and one every `seconds` |
 | `AURORA_DEMO_OVERDRAW=<n>` | Overdraw test: n rows of opaque walls |
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
+| `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side |
+| `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
+| `AURORA_REZ_STYLE=1\|2\|3` | The rez effect's look: grid, scanlines, wireframe (3, the one chosen, by default) |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
@@ -1834,6 +1837,34 @@ To check with these scenarios:
   it. This is the worst case of overdraw, to measure
   what a prepass saves (`AURORA_MSAA_PREPASS`); a real region has
   less.
+- **`AURORA_DEMO_REZ_EFFECT=1|loop|styles`**: the rez effect (`scene/rez.rs`, Preferences ›
+  Aurora › Rez effect), with `AURORA_DEMO_POS=129,134`,
+  `AURORA_DEMO_CLOUD=1` (the avatars' loading state, which the grid
+  replaces) and `AURORA_FPS_LIMIT=60` for frame-numbered captures
+  (`demo_rez.rs`). Our avatar loads in the grid, then the line rises from
+  its feet (frames 60–150). Four prims arrive at 300 whose textures come 150
+  frames later: the grid traces in from their base (about 318–330), waits,
+  then the line (455–480). Someone rezzes a four-prim table at 840, its
+  texture a second later: the grid, then one line for the linkset. We rez a
+  cube at 960 (FLAGS_CREATE_SELECTED) and copy it at 1020, both ready at
+  once: a quick line, no grid. An avatar comes into view at 1080: the grid
+  instead of the cloud while it loads, the line around 1265. Thirty boxes
+  rezzed at once at 1380: six lines, the others show at once. A building at
+  1560, its textures 1.5 s later: the grid, then a slower line. The avatar
+  puts on a hat at 1640 (it rezzes on its head) and takes it off at 1760
+  (its derez); the table is deleted at 1700 (the derez: the line comes down,
+  then the grid fades out from the top, 1700–1742). The avatar changes
+  outfit at 1820 (three items at once): the grid over it, then one line. It
+  leaves at 1960 (its derez). The counts in the log at 2060 (`demo rez:`).
+  `loop`: everything goes at once at 2160 (a burst: no derez) and the
+  scenario starts again from 300, to watch it in one window.
+  `AURORA_REZ_EFFECT=0` shows the Legacy look (grey, clouds, instant
+  removal) for comparison, `AURORA_REZ_STYLE=2|3` the other looks,
+  `AURORA_DEMO_TOD=4` the same at midnight. `styles`: the three looks side
+  by side whatever the setting, a cube and behind it an avatar wearing two
+  items under a label per look, arriving together every 9 s from frame
+  300 (the grid traces in, waits 3 s, the line around frames 480–530),
+  leaving at 720 (the derez) and back at 840.
 - **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per

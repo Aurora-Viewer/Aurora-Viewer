@@ -37,6 +37,15 @@ const FIRST_MIN_DELAY: f32 = 3.0;
 const MAX_WAIT: f32 = 60.0;
 /// Still a cloud after this long: what is missing goes to the log, once.
 const REPORT_AFTER: f32 = 20.0;
+/// Weights of the progress bar under a loading avatar's name
+/// (`Scene::avatar_load_progress`): a bake, the geometry of a worn prim
+/// (or a worn object the simulator lists that has not come), a texture on
+/// what it wears.
+const BAR_BAKE: f32 = 3.0;
+const BAR_GEOMETRY: f32 = 2.0;
+const BAR_TEXTURE: f32 = 1.0;
+/// Share of the bar the parts fill; the delay before showing fills the rest.
+const BAR_PARTS: f32 = 0.9;
 
 /// What a bake slot asks of an avatar before it shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,6 +297,74 @@ impl Scene {
         (done, total.max(1), missing)
     }
 
+    /// What the progress bar under a loading avatar's name shows (0..1),
+    /// weighted (`BAR_*`): its bakes downloaded, the geometry of what it
+    /// wears built, the textures on what it wears (not waited for, as in
+    /// the Legacy Viewer, but they are part of what shows) and the worn
+    /// objects the simulator lists (`announced`) that have not come yet.
+    /// Every part counts, so the bar moves as they come instead of
+    /// waiting at its last step for a part it did not count.
+    fn avatar_load_progress(&self, world: &World, idx: usize, announced: usize) -> f32 {
+        let Some(av) = world.objects.get(idx) else {
+            return 0.0;
+        };
+        let (mut done, mut total) = (0.0f32, 0.0f32);
+        for (te, name, _) in avatar::BAKES {
+            let main = matches!(name, "head" | "upper" | "lower");
+            match bake_need(world.bake_texture(idx, te), main) {
+                BakeNeed::Texture(t) if self.textures.is_wanted(&t) => {
+                    total += BAR_BAKE;
+                    if self.textures.is_loaded(&t) {
+                        done += BAR_BAKE;
+                    }
+                }
+                BakeNeed::Undefined => total += BAR_BAKE,
+                _ => {}
+            }
+        }
+        let mut textures = std::collections::HashSet::new();
+        let mut worn = 0;
+        for &att in world.objects.children_of(&av.key) {
+            let Some(root) = world.objects.get(att) else {
+                continue;
+            };
+            if (31..=38).contains(&root.attachment_point()) {
+                continue; // HUD
+            }
+            worn += 1;
+            let prims = std::iter::once(att).chain(world.objects.children_of(&root.key).iter().copied());
+            for p in prims {
+                let Some(g) = self.gpu.get(p) else {
+                    continue;
+                };
+                total += BAR_GEOMETRY;
+                let pending = g.wanted_geom.is_some_and(|k| Some(k) != g.geom) || g.sculpt_wait.is_some();
+                let given_up = g
+                    .wanted_geom
+                    .is_some_and(|k| self.geom_failed(&k) || matches!(k, GeomKey::Mesh { id, .. } if self.meshes.failed(&id)));
+                if !pending || given_up {
+                    done += BAR_GEOMETRY;
+                }
+                textures.extend(g.faces.iter().map(|f| f.tex_id).filter(|t| !t.is_nil()));
+            }
+        }
+        for t in &textures {
+            total += BAR_TEXTURE;
+            if self.textures.is_loaded(t) || self.textures.is_unavailable(t) {
+                done += BAR_TEXTURE;
+            }
+        }
+        total += BAR_GEOMETRY * announced.saturating_sub(worn) as f32;
+        if total <= 0.0 { 1.0 } else { done / total }
+    }
+
+    /// Whether nothing of an avatar is missing (its bakes downloaded, what
+    /// it wears built): the rez effect's line over our own avatar waits
+    /// for it after an appearance change.
+    pub(super) fn avatar_complete(&self, world: &World, idx: usize) -> bool {
+        self.avatar_load_parts(world, idx, None).2.is_empty()
+    }
+
     /// Diagnostic: the first missing parts with the state of what they wait
     /// for (asset ids and fetch states, never a URL).
     fn describe_missing(&self, world: &World, missing: &[Missing]) -> String {
@@ -375,10 +452,12 @@ impl Scene {
                 log::info!("avatar {id}{own} shown after {:.1} s, worn objects {worn}{}", t.waited, listed());
             }
             if !t.loaded && !s.shown_once {
-                // parts ready over parts known; the last bit is the delay
-                // before showing (it fills as the avatar is about to show)
-                let parts = done as f32 / total as f32;
-                let p = if t.still { parts * 0.9 } else { 0.9 + 0.1 * t.delay };
+                // what has come of its parts, weighted; the last bit is the
+                // delay before showing (it fills as the avatar is about to
+                // show)
+                let parts = self.avatar_load_progress(world, idx, announced);
+                let delay = if t.still { 0.0 } else { t.delay };
+                let p = parts * BAR_PARTS + (1.0 - BAR_PARTS) * delay;
                 s.shown = s.shown.max(p.min(0.99));
                 loading.progress.insert(id, s.shown);
                 loading.indices.insert(idx);

@@ -97,6 +97,18 @@ impl ParticleManager {
         }
     }
 
+    /// The clouds of `avatars` go at once, their particles too (the rez
+    /// effect draws those avatars instead).
+    pub fn drop_clouds(&mut self, textures: &mut TextureStreamer, avatars: &[Uuid]) {
+        for id in avatars {
+            if self.sources.get(id).is_some_and(|s| s.cloud)
+                && let Some(s) = self.sources.remove(id)
+            {
+                textures.release(&s.texture);
+            }
+        }
+    }
+
     /// Particle system of an object (render cost).
     pub fn source_data(&self, id: &Uuid) -> Option<&aurora_prim::particles::PartSysData> {
         self.sources.get(id).map(|s| s.ps.data())

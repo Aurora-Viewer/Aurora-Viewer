@@ -1675,11 +1675,15 @@ impl World {
                             .is_some_and(|o| !o.is_avatar());
                     if let Some(i) = self.objects.index_of(&key) {
                         self.unregister_attachment(i);
-                        for child in self.objects.subtree(i) {
+                        let subtree = self.objects.subtree(i);
+                        for &child in &subtree {
                             if let Some(o) = self.objects.get(child) {
                                 self.scripted_camera.clear(o.full_id);
                             }
                         }
+                        // (an avatar leaving, an object deleted or taken, a
+                        // worn item taken off)
+                        self.objects.killed.push(subtree);
                     }
                     self.objects.remove(&key);
                     // a cache hit replays the cached ones, a full update comes with them

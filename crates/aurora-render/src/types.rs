@@ -178,6 +178,24 @@ pub struct DrawRecord {
     /// Texture animation: the texture entry's transform parts the animation
     /// leaves alone (`tex_anim::RecordAnim::constants`).
     pub anim_xf: [f32; 4],
+    /// The rez effect of an object appearing (the viewer's `scene/rez.rs`):
+    /// x the `AnimClock` ms it started at, y its mode (`rez_mode`) in the
+    /// low byte, the line's length in ms above it (12 bits) and a look of
+    /// its own in the 4 bits above (0: the frame's), z and w the world
+    /// height of the object's bottom and its height (f32 bits).
+    pub rez: [u32; 4],
+}
+
+/// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
+pub mod rez_mode {
+    /// Drawn as usual.
+    pub const NONE: u32 = 0;
+    /// Still loading: a glowing grid in the accent color.
+    pub const HOLOGRAM: u32 = 1;
+    /// Loaded: a line rising from its bottom reveals it.
+    pub const SWEEP: u32 = 2;
+    /// Leaving: the line comes down and leaves the grid.
+    pub const DEREZ: u32 = 3;
 }
 
 impl Default for DrawRecord {
@@ -201,6 +219,7 @@ impl Default for DrawRecord {
             spec_color: [1.0, 1.0, 1.0, 0.0],
             anim: [0; 4],
             anim_xf: [0.0; 4],
+            rez: [0; 4],
         }
     }
 }
@@ -889,6 +908,11 @@ pub struct MirrorParams {
 pub struct FrameParams {
     /// Linear RGBA from the UI palette for selected-face overlays.
     pub selection_color: [f32; 4],
+    /// The rez effect's colors (`rez_apply` in object.wgsl): the brand
+    /// gradient of the UI palette, linear, from the line's leading edge to
+    /// its trail; the first entry's w is the look (1 grid, 2 scanlines,
+    /// 3 wireframe).
+    pub rez_gradient: [[f32; 4]; 3],
     /// Brief coverage highlight, zero once the material can be read unaltered.
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
@@ -1408,9 +1432,10 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 12 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 13 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -1435,7 +1460,8 @@ mod tests {
                 "legacy",
                 "spec_color",
                 "anim",
-                "anim_xf"
+                "anim_xf",
+                "rez"
             ]
         );
     }

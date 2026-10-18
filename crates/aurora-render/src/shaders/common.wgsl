@@ -70,6 +70,7 @@ struct Frame {
     sky_optics_tex: vec4<u32>,  // x rainbow texture slot, y halo texture slot (0: none)
     anim_clock: vec4<u32>,      // texture animation clock: x ms (wrapping), y sub-ms fraction (f32 bits)
     selection_color: vec4<f32>, // selected-face overlay, from the UI palette
+    rez_gradient: array<vec4<f32>, 3>, // rez effect: the brand gradient (linear rgb), edge to trail; [0].w its look
     cascade_vp: array<mat4x4<f32>, 3>,
     lights: array<Light, 64>,
     // which of `lights` a fragment walks (light_tiles.rs, LightSets)
@@ -108,6 +109,7 @@ struct DrawRecord {
     spec_color: vec4<f32>,    // legacy specular light color (PBR: emissive map scale s, t, offset s, t)
     anim: vec4<u32>,          // texture animation: time origin (ms), start, length, rate (f32 bits)
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
+    rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
