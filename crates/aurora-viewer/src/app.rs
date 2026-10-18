@@ -6053,18 +6053,7 @@ impl App {
             if (self.attachments_logged == 0 && since_arrival >= 40) || (self.attachments_logged == 1 && since_arrival >= 120) {
                 self.attachments_logged += 1;
                 self.scene.log_attachments(&self.world, self.world.agent_id, &gfx.renderer.textures);
-                // and the avatars within 10 m
-                let me = self.world.agent.position;
-                let near: Vec<uuid::Uuid> = self
-                    .world
-                    .objects
-                    .iter()
-                    .filter(|(_, o)| o.is_avatar() && o.full_id != self.world.agent_id && o.position.distance(me) < 10.0)
-                    .map(|(_, o)| o.full_id)
-                    .collect();
-                for id in near {
-                    self.scene.log_attachments(&self.world, id, &gfx.renderer.textures);
-                }
+                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer.textures);
             }
             if std::mem::take(&mut self.options_ui.describe_nearby) {
                 // scene space: the agent avatar's drawn center
@@ -6072,6 +6061,8 @@ impl App {
                 if let Some(me) = me {
                     self.scene.log_nearby(&self.world, me, 12.0);
                 }
+                // what the avatars around wear: a missing part shows there
+                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer.textures);
             }
             let texture_budget = self
                 .settings

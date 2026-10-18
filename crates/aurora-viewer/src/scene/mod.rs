@@ -2618,11 +2618,12 @@ impl Scene {
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
         // what its mesh is asked for at: its size on screen, and ours first
+        let rank_radius = sync_plan::mesh_rank_radius(lod_radius, wearer.is_some());
         let need = MeshNeed {
             px: if hud {
                 f32::MAX
             } else {
-                lod_radius / lod_dist.max(0.1) * view.screen_height / view.tan_half_fov.max(1e-6)
+                rank_radius / lod_dist.max(0.1) * view.screen_height / view.tan_half_fov.max(1e-6)
             },
             own: hud || wearer.is_some_and(|(id, _)| id == world.agent_id),
         };
@@ -4536,6 +4537,23 @@ impl Scene {
 }
 
 impl Scene {
+    /// Diagnostic: [`Self::log_attachments`] of the other avatars within
+    /// `radius` m of ours, the nearest first.
+    pub fn log_attachments_near(&self, world: &World, radius: f32, table: &aurora_render::textures::TextureTable) {
+        let me = world.agent.position;
+        let mut near: Vec<(f32, Uuid)> = world
+            .objects
+            .iter()
+            .filter(|(_, o)| o.is_avatar() && o.full_id != world.agent_id)
+            .map(|(_, o)| (o.position.distance(me), o.full_id))
+            .filter(|(d, _)| *d < radius)
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, id) in near {
+            self.log_attachments(world, id, table);
+        }
+    }
+
     /// Diagnostic: one log line per attachment of an avatar (inventory name,
     /// mesh / rigged, faces drawn, position relative to the avatar), then
     /// the faces whose base texture does not show (not loaded, slot not the
@@ -4551,8 +4569,9 @@ impl Scene {
             .map(|t| t.0)
             .unwrap_or(Vec3::ZERO);
         log::info!(
-            "attachments of {}: root offset {:.3} m, appearance params {}",
+            "attachments of {} ({:.1} m away): root offset {:.3} m, appearance params {}",
             av.display_name().unwrap_or_default(),
+            av.position.distance(world.agent.position),
             world.avatar_shape_dz.get(&avatar).copied().unwrap_or(0.0) + world.appearance_hover(&avatar),
             world.visual_params(&avatar).map(|v| v.len()).unwrap_or(0)
         );
@@ -4665,7 +4684,25 @@ impl Scene {
                         ));
                     }
                     if g.faces.is_empty() {
-                        line = format!(" no faces (geometry {:?}, mesh {})", g.geom, o.visual_volume().is_mesh());
+                        // why rebuild_faces drew none: fully transparent
+                        // texture entries (LL's PASS_ALPHA_INVISIBLE) or
+                        // faces without triangles at this detail level
+                        let (mut built, mut transparent) = (0, 0);
+                        if let Some(GeomState::Ready(geom)) = g.geom.and_then(|k| self.geoms.get(&k)).map(|e| &e.state) {
+                            for (fi, face) in geom.faces.iter().enumerate() {
+                                if face.is_some() {
+                                    built += 1;
+                                    if o.visual_texture_face(fi).color[3] < 0.004 {
+                                        transparent += 1;
+                                    }
+                                }
+                            }
+                        }
+                        line = format!(
+                            " no faces (geometry {:?}, mesh {}: {built} faces with triangles, {transparent} of them fully transparent)",
+                            g.geom,
+                            o.visual_volume().is_mesh()
+                        );
                     }
                     log::info!("  head prim {}:{line}", o.full_id);
                 }
