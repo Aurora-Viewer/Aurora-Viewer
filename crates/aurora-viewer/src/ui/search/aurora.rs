@@ -578,7 +578,11 @@ impl SearchUi {
                 }
                 match kind {
                     Kind::People => {
-                        ui.label(RichText::new(aurora_i18n::tr!("search-aurora-people-hint")).size(12.0).color(p.muted));
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("search-aurora-people-hint"))
+                                .size(12.0)
+                                .color(p.muted),
+                        );
                     }
                     Kind::Groups => {
                         let levels = [
@@ -593,18 +597,36 @@ impl SearchUi {
                     }
                     Kind::Places => {
                         ui.add_space(6.0);
-                        find |= combo(ui, "aurora-search-place-category", &mut self.places_category, &place_categories(), 180.0);
+                        find |= combo(
+                            ui,
+                            "aurora-search-place-category",
+                            &mut self.places_category,
+                            &place_categories(),
+                            180.0,
+                        );
                     }
                     Kind::Classifieds => {
                         ui.add_space(6.0);
                         let cats = world.classified_categories();
                         let mut items = vec![(0, aurora_i18n::tr!("search-all-categories"))];
                         items.extend(cats.iter().map(|(id, name)| (*id, name.as_str())));
-                        find |= combo(ui, "aurora-search-classified-category", &mut self.classifieds_category, &items, 180.0);
+                        find |= combo(
+                            ui,
+                            "aurora-search-classified-category",
+                            &mut self.classifieds_category,
+                            &items,
+                            180.0,
+                        );
                     }
                     Kind::Events => {
                         ui.add_space(6.0);
-                        find |= combo(ui, "aurora-search-event-category", &mut self.events_category, &event_categories(), 180.0);
+                        find |= combo(
+                            ui,
+                            "aurora-search-event-category",
+                            &mut self.events_category,
+                            &event_categories(),
+                            180.0,
+                        );
                         let mut mode = usize::from(self.events_by_day);
                         let options = [
                             (aurora_i18n::tr!("search-events-current"), false),
@@ -908,14 +930,11 @@ impl SearchUi {
                 let tex = snapshot.and_then(|s| c.images.get(&s));
                 let subtitle = info.map_or_else(
                     || aurora_i18n::tr!("common-loading-2").to_owned(),
-                    |i| {
-                        aurora_i18n::tr!(
-                            "search-aurora-published",
-                            date = crate::world::profiles::slt_date(i.creation_date)
-                        )
-                    },
+                    |i| aurora_i18n::tr!("search-aurora-published", date = crate::world::profiles::slt_date(i.creation_date)),
                 );
-                let mature = info.map(|i| i.flags & (aurora_net::profile::classified_flags::MATURE | aurora_net::profile::classified_flags::QUERY_INC_MATURE) != 0);
+                let mature = info.map(|i| {
+                    i.flags & (aurora_net::profile::classified_flags::MATURE | aurora_net::profile::classified_flags::QUERY_INC_MATURE) != 0
+                });
                 let card = place_card::Row {
                     thumb: Thumb::Picture(tex),
                     title: &row.name,
@@ -1058,7 +1077,10 @@ fn land_subtitle(row: &Row) -> String {
     if row.icon != RowIcon::Auction
         && let Some(Value::Real(per_meter)) = row.values.get(3)
     {
-        parts.push(aurora_i18n::tr!("search-aurora-per-meter", value = aurora_i18n::number(*per_meter, 2)));
+        parts.push(aurora_i18n::tr!(
+            "search-aurora-per-meter",
+            value = aurora_i18n::number(*per_meter, 2)
+        ));
     }
     parts.join(" · ")
 }
@@ -1084,8 +1106,12 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, kind: Kind, count: &str, more: b
                 ui.add_space(8.0);
                 let see = ui
                     .add(
-                        egui::Label::new(RichText::new(aurora_i18n::tr!("search-aurora-see-all")).size(12.0).color(p.violet_light))
-                            .sense(Sense::click()),
+                        egui::Label::new(
+                            RichText::new(aurora_i18n::tr!("search-aurora-see-all"))
+                                .size(12.0)
+                                .color(p.violet_light),
+                        )
+                        .sense(Sense::click()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 clicked = see.clicked();
@@ -1116,9 +1142,14 @@ mod tests {
             category: PLACE_CATEGORY_ANY,
         }));
         assert!(
-            requests
-                .iter()
-                .any(|r| matches!(r, Request::Events { mode: EventsMode::Current, category: 0, .. })),
+            requests.iter().any(|r| matches!(
+                r,
+                Request::Events {
+                    mode: EventsMode::Current,
+                    category: 0,
+                    ..
+                }
+            )),
             "All shows the current and upcoming events"
         );
         // a chip shows its list without searching again, until a filter of
@@ -1163,7 +1194,12 @@ mod tests {
             key: Key::Id(Uuid::nil()),
             icon: RowIcon::ForSale,
             name: "Rivage".into(),
-            values: vec![Value::Text("Estate".into()), Value::Int(12500), Value::Int(4096), Value::Real(3.0517)],
+            values: vec![
+                Value::Text("Estate".into()),
+                Value::Int(12500),
+                Value::Int(4096),
+                Value::Real(3.0517),
+            ],
         };
         let sub = land_subtitle(&land);
         assert!(sub.starts_with("Estate · ") && sub.contains("3"), "{sub}");

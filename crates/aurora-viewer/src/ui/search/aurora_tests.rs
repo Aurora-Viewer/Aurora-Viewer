@@ -183,7 +183,11 @@ fn all_then_a_chip_rows_toggles_and_the_web() {
     // a click on the second row selects it and shows its details
     let second = list.sorted()[1].clone();
     let actions = w.click(&mut world, &second.name);
-    assert!(actions.iter().any(|a| matches!(a, SearchAction::Select(Tab::Places, k) if *k == second.key)));
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, SearchAction::Select(Tab::Places, k) if *k == second.key))
+    );
     assert_eq!(world.search.list(Tab::Places).and_then(|l| l.selected), Some(second.key));
     let texts = w.settle(&mut world);
     assert!(has(&texts, aurora_i18n::tr!("common-teleport-3")), "the place's actions");

@@ -10774,17 +10774,15 @@ impl App {
                     anonymous: search_anonymous,
                 };
                 let mut open = self.panels.search;
-                let search_acts = self
-                    .search_ui
-                    .show(
-                        &ctx,
-                        &mut c,
-                        &self.avatar_pics,
-                        &mut self.settings.search,
-                        &search_web,
-                        self.settings.classic_search,
-                        &mut open,
-                    );
+                let search_acts = self.search_ui.show(
+                    &ctx,
+                    &mut c,
+                    &self.avatar_pics,
+                    &mut self.settings.search,
+                    &search_web,
+                    self.settings.classic_search,
+                    &mut open,
+                );
                 // the profile of a group, whose name was clicked anywhere
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
@@ -11647,7 +11645,9 @@ impl ApplicationHandler for App {
                     self.panels.search = true;
                     self.panels.perf = false;
                     let requests = if self.settings.classic_search {
-                        tab.and_then(|t| self.search_ui.request(t, &self.settings.search)).into_iter().collect()
+                        tab.and_then(|t| self.search_ui.request(t, &self.settings.search))
+                            .into_iter()
+                            .collect()
                     } else {
                         self.search_ui.aurora_requests(&self.settings.search)
                     };

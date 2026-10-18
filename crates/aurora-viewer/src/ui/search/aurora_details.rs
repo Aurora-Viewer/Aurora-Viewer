@@ -126,7 +126,14 @@ fn content_field(ui: &mut egui::Ui, p: &Palette, name: &str) {
     field(ui, p, aurora_i18n::tr!("search-content"), |ui| rating(ui, p, name));
 }
 
-fn person(ui: &mut egui::Ui, c: &mut Ctx, pics: &HashMap<Uuid, egui::TextureHandle>, wanted_pics: &mut HashSet<Uuid>, id: Uuid, row_name: &str) {
+fn person(
+    ui: &mut egui::Ui,
+    c: &mut Ctx,
+    pics: &HashMap<Uuid, egui::TextureHandle>,
+    wanted_pics: &mut HashSet<Uuid>,
+    id: Uuid,
+    row_name: &str,
+) {
     let (p, world) = (c.p, c.world);
     let own = id == world.agent_id;
     let profile = world.profiles.get(&id);
@@ -157,14 +164,7 @@ fn person(ui: &mut egui::Ui, c: &mut Ctx, pics: &HashMap<Uuid, egui::TextureHand
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
-            widgets::picture(
-                ui,
-                p,
-                pics.get(&id),
-                Vec2::splat(72.0),
-                "user-filled",
-                "",
-            );
+            widgets::picture(ui, p, pics.get(&id), Vec2::splat(72.0), "user-filled", "");
             ui.vertical(|ui| {
                 ui.add_space(14.0);
                 head(ui, p, &name, Some(color), None, text);
@@ -357,7 +357,10 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, land: Option<&Row>, actio
             p,
             &[
                 ("walk", aurora_i18n::integer(d.dwell as i64)),
-                ("dimensions", aurora_i18n::tr!("search-aurora-area", area = aurora_i18n::integer(d.actual_area as i64))),
+                (
+                    "dimensions",
+                    aurora_i18n::tr!("search-aurora-area", area = aurora_i18n::integer(d.actual_area as i64)),
+                ),
             ],
         );
         ui.add_space(4.0);
@@ -368,18 +371,18 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, land: Option<&Row>, actio
             };
             text_field(ui, p, aurora_i18n::tr!("search-aurora-price"), &price);
             if let Some(Value::Real(per_meter)) = row.values.get(3).filter(|_| !auction) {
-                text_field(ui, p, aurora_i18n::tr!("search-aurora-price-per-meter"), &aurora_i18n::number(*per_meter, 2));
+                text_field(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("search-aurora-price-per-meter"),
+                    &aurora_i18n::number(*per_meter, 2),
+                );
             }
             if let Some(Value::Text(kind)) = row.values.first() {
                 text_field(ui, p, aurora_i18n::tr!("common-type-2"), kind);
             }
         } else if d.sale_price > 0 {
-            text_field(
-                ui,
-                p,
-                aurora_i18n::tr!("search-aurora-price"),
-                &linden(d.sale_price as i64),
-            );
+            text_field(ui, p, aurora_i18n::tr!("search-aurora-price"), &linden(d.sale_price as i64));
         }
         content_field(ui, p, maturity);
         caps(ui, p, aurora_i18n::tr!("search-aurora-description"));
@@ -426,7 +429,9 @@ fn classified(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions:
             aurora_i18n::tr!("ui-profile-location-2"),
             &aurora_net::profile::location_text(&[&info.parcel_name, &info.sim_name], info.pos_global),
         );
-        field(ui, p, aurora_i18n::tr!("search-classified-creator"), |ui| agent_link(ui, c, info.creator));
+        field(ui, p, aurora_i18n::tr!("search-classified-creator"), |ui| {
+            agent_link(ui, c, info.creator)
+        });
         text_field(
             ui,
             p,
@@ -457,10 +462,13 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         // onBtnEventReminder: LLEventNotifier is not ported
         Btn::new("bell-filled", aurora_i18n::tr!("search-aurora-remind")).not_yet(),
     ];
-    let start = info.map(|e| e.date_utc as i64).filter(|t| *t > 0).or_else(|| match row.and_then(|r| r.values.first()) {
-        Some(Value::Dated { unix, .. }) => Some(*unix as i64),
-        _ => None,
-    });
+    let start = info
+        .map(|e| e.date_utc as i64)
+        .filter(|t| *t > 0)
+        .or_else(|| match row.and_then(|r| r.values.first()) {
+            Some(Value::Dated { unix, .. }) => Some(*unix as i64),
+            _ => None,
+        });
     let clicked = pane(ui, p, ("aurora-search-event", Key::Event(id)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 5.0;
         if let Some(t) = start {
@@ -479,7 +487,12 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, row: Option<&R
         head(ui, p, &e.name, None, Some(content), &e.category);
         ui.add_space(4.0);
         text_field(ui, p, aurora_i18n::tr!("search-event-date"), &e.date);
-        text_field(ui, p, aurora_i18n::tr!("search-event-duration"), &search::event_duration(e.duration));
+        text_field(
+            ui,
+            p,
+            aurora_i18n::tr!("search-event-duration"),
+            &search::event_duration(e.duration),
+        );
         field(ui, p, aurora_i18n::tr!("search-event-organizer"), |ui| agent_link(ui, c, e.creator));
         // "%s (%d, %d, %d)": the region and the position in it
         let pos = glam::Vec3::new(

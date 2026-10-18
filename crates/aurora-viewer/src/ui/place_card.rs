@@ -61,10 +61,7 @@ pub fn row(ui: &mut egui::Ui, p: &Palette, size: RowSize, row: &Row, trailing: i
     } else if resp.hovered() {
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.6));
     }
-    let thumb = Rect::from_min_size(
-        Pos2::new(rect.left() + PAD, rect.center().y - size.thumb.y / 2.0),
-        size.thumb,
-    );
+    let thumb = Rect::from_min_size(Pos2::new(rect.left() + PAD, rect.center().y - size.thumb.y / 2.0), size.thumb);
     match &row.thumb {
         Thumb::Picture(tex) => picture(ui, p, *tex, thumb, (size.thumb.y * 0.45).min(20.0)),
         Thumb::Paint(paint) => {
