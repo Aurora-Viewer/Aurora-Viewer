@@ -6369,6 +6369,8 @@ impl App {
                 });
                 let mut g = self.palette.aurora_gradient().map(|c| egui::Rgba::from(c).to_array());
                 g[0][3] = style;
+                // (faces still grey are drawn as the grid only with it on)
+                g[1][3] = if self.scene.rez.enabled { 1.0 } else { 0.0 };
                 g
             },
             selection_pulse: self.scene.selection_pulse(Instant::now()),

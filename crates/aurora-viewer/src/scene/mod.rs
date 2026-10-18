@@ -2257,6 +2257,11 @@ impl Scene {
         // faces using their slots are classified again (new faces are
         // classified when built).
         let mut changed = std::mem::take(&mut self.alpha_changes_tmp);
+        // Textures showing their first pixels: the rez effect looks at
+        // the objects using them (rez.rs) instead of walking them all.
+        self.textures.take_first_texels(&mut changed);
+        self.rez_first_texels(renderer, &changed);
+        changed.clear();
         self.textures.take_alpha_changes(&mut changed);
         if !changed.is_empty() {
             self.reclassify_slots(renderer, &changed);
@@ -2339,8 +2344,10 @@ impl Scene {
         let channel = &self.textures.alpha_channel_by_slot;
         let mut last_slot = None;
         // (an object appearing keeps its rez effect through a rebuild)
-        if let Some(v) = self.rez.value_of(idx) {
-            rez::rez_faces(renderer, &mut g.faces, v);
+        // (and its geometry may have been what it waited for)
+        if let Some((v, glow)) = self.rez.value_of(idx) {
+            rez::rez_faces(renderer, &mut g.faces, v, glow);
+            self.rez.note_ready(idx);
         }
         for (fi, f) in g.faces.iter_mut().enumerate() {
             // (faces of an object mostly share their texture: one entry)
@@ -2542,7 +2549,6 @@ impl Scene {
                 };
                 self.sync_object(renderer, world, idx, now, view, None);
                 self.after_full_sync(world, idx, mat_gen);
-                self.rez.arrived(idx);
                 synced.push(idx);
             }
             budget.spend(started.elapsed());
@@ -2572,6 +2578,11 @@ impl Scene {
     /// frame, geometry still pending is watched, material users noted, and
     /// a mesh found rigged starts moving. A new object is no longer one.
     fn after_full_sync(&mut self, world: &mut World, idx: usize, mat_gen: u64) {
+        // (whichever path synced a new object first: the arrivals, the
+        // objects listed, the backlog)
+        if world.objects.is_arrival(idx) {
+            self.rez.arrived(idx);
+        }
         world.objects.settle(idx);
         let Some(g) = self.gpu.get(idx) else {
             return;
