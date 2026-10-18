@@ -535,14 +535,16 @@ pub fn mesh_to_faces(
                 }
             }
             let skin: Option<Vec<SkinVertex>> = match joint_map {
-                Some(map) if f.joints.len() == f.positions.len() && f.weights.len() == f.positions.len() => Some(
+                Some(map) if !map.is_empty() && f.joints.len() == f.positions.len() && f.weights.len() == f.positions.len() => Some(
                     f.joints
                         .iter()
                         .zip(f.weights.iter())
                         .map(|(j, w)| {
                             let mut sv = SkinVertex::default();
                             for k in 0..4 {
-                                sv.joints[k] = map.get(j[k] as usize).copied().unwrap_or(0);
+                                // LLSkinningUtil::getPerVertexSkinMatrix:
+                                // clamp in the mesh's palette before remapping.
+                                sv.joints[k] = map[(j[k] as usize).min(map.len() - 1)];
                                 sv.weights[k] = (w[k].clamp(0.0, 1.0) * 255.0).round() as u8;
                             }
                             sv
@@ -572,6 +574,29 @@ pub fn mesh_to_faces(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rigged_skin_parity_bounds_indices_before_mapping_and_keeps_weights() {
+        let face = aurora_assets::MeshFace {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            indices: vec![0, 1, 2],
+            joints: vec![[0, 1, 2, 0], [3, 254, 255, 1], [2, 0, 1, 255]],
+            weights: vec![[0.25; 4], [0.5, 0.25, 0.25, 0.0], [1.0, 0.0, 0.0, 0.0]],
+            ..Default::default()
+        };
+        let (faces, _, _) = mesh_to_faces(std::slice::from_ref(&face), None, Some(&[7, 3, 9]));
+        let vertices = faces[0].as_ref().unwrap().skin.as_ref().unwrap();
+        assert_eq!(vertices[0].joints, [7, 3, 9, 7], "valid indices retain their mapping");
+        assert_eq!(
+            vertices[1].joints,
+            [9, 9, 9, 3],
+            "invalid indices clamp to the last mesh joint before mapping"
+        );
+        assert_eq!(vertices[1].weights, [128, 64, 64, 0]);
+        assert_eq!(vertices[2].joints, [9, 7, 3, 9]);
+        let (faces, _, _) = mesh_to_faces(&[face], None, Some(&[]));
+        assert!(faces[0].as_ref().unwrap().skin.is_none(), "an empty palette cannot skin vertices");
+    }
 
     #[test]
     fn alpha_classes() {

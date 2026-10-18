@@ -98,8 +98,8 @@ impl SkinBinds {
     }
 
     /// Skin bindings of a rigged mesh: its inverse bind matrices and the rig
-    /// joints its joint names refer to. Unknown joints keep the inverse bind
-    /// alone (identity joint), as LLSkinningUtil does.
+    /// joints its joint names refer to. Unknown names resolve to the pelvis
+    /// as LLSkinningUtil::initJointNums does, retaining the inverse bind.
     pub(super) fn mesh(&mut self, mesh: Uuid, skin: &aurora_assets::SkinInfo, rig: &Rig) -> u32 {
         self.system(rig);
         if let Some(&(base, _)) = self.ranges.get(&mesh) {
@@ -107,11 +107,10 @@ impl SkinBinds {
         }
         let len = skin.joint_names.len().min(skin.inverse_bind.len());
         let base = self.alloc(len as u32);
-        let identity = rig.len() as u32;
         for (i, (name, ib)) in skin.joint_names.iter().zip(&skin.inverse_bind).enumerate() {
             self.list[base as usize + i] = SkinBind {
                 inverse_bind: ib.to_cols_array_2d(),
-                joint: [rig.names.get(name).map(|&j| j as u32).unwrap_or(identity), 0, 0, 0],
+                joint: [rig.skin_joint(name) as u32, 0, 0, 0],
             };
         }
         self.ranges.insert(mesh, (base, len as u32));
@@ -179,16 +178,44 @@ mod tests {
         assert_eq!(b.system(&rig), 0);
         assert_eq!(joints(&b, 0, 5), [0, 1, 2, 3, 4]);
         let a = Uuid::from_u128(1);
-        // an unknown joint gets the identity slot
+        // An unknown joint follows the pelvis, retaining its inverse bind.
         let base = b.mesh(a, &skin(&["j2", "nope", "j0"]), &rig);
         assert_eq!(base, 5);
-        assert_eq!(joints(&b, base, 3), [2, 4, 0]);
+        assert_eq!(joints(&b, base, 3), [2, 0, 0]);
         assert_eq!(b.base_of(&a), Some(5));
         // asked again: the same range, nothing new to send
         assert_eq!(sent(&mut b), [(0, 8)]);
         assert_eq!(b.mesh(a, &skin(&["j2", "nope", "j0"]), &rig), 5);
         assert!(sent(&mut b).is_empty());
         assert_eq!(b.counts(), (8, 8));
+    }
+
+    #[test]
+    fn rigged_skin_parity_unknown_joint_follows_the_posed_pelvis() {
+        use glam::{Quat, Vec3};
+        let mut rig = rig(3);
+        // The fallback is the pelvis, independently of its Aurora index.
+        rig.pelvis = 2;
+        let mut binds = SkinBinds::default();
+        let skin = skin(&["j1", "obsolete_joint"]);
+        let base = binds.mesh(Uuid::from_u128(1), &skin, &rig) as usize;
+        let pelvis = Mat4::from_rotation_translation(Quat::from_rotation_y(0.3), Vec3::new(0.2, -0.4, 1.1));
+        let palette = [Mat4::IDENTITY, Mat4::IDENTITY, pelvis, Mat4::IDENTITY];
+        let point = Vec3::new(0.1, 0.2, 1.8);
+        let binding = &binds.list()[base + 1];
+        let actual = (palette[binding.joint[0] as usize] * Mat4::from_cols_array_2d(&binding.inverse_bind)).transform_point3(point);
+        let expected = (pelvis * skin.inverse_bind[1]).transform_point3(point);
+        assert!(
+            actual.distance(expected) < 1e-6,
+            "unknown joint left the pelvis: {actual:?} != {expected:?}"
+        );
+        assert_eq!(binds.list()[base].joint[0], 1, "known joint is unchanged");
+        assert_eq!(binding.inverse_bind, skin.inverse_bind[1].to_cols_array_2d());
+        assert_eq!(
+            binds.list()[rig.len()].joint[0],
+            rig.len() as u32,
+            "system identity slot is unchanged"
+        );
     }
 
     #[test]

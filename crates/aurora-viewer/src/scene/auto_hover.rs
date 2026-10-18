@@ -438,14 +438,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
         .joint_names
         .iter()
         .zip(&skin.inverse_bind)
-        .map(|(name, inv)| {
-            rig.names
-                .get(name)
-                .and_then(|&j| matrices.get(j))
-                .copied()
-                .unwrap_or(Mat4::IDENTITY)
-                * *inv
-        })
+        .map(|(name, inv)| matrices.get(rig.skin_joint(name)).copied().unwrap_or(Mat4::IDENTITY) * *inv)
         .collect();
     // Same packing as jobs::mesh_to_faces, without rebuilding normals, UVs
     // and GPU buffers for an already loaded mesh just to measure its feet.
@@ -462,11 +455,7 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
             let Some(position) = face.positions.get(i) else { continue };
             let mut vertex = SkinVertex::default();
             for k in 0..4 {
-                vertex.joints[k] = if (face.joints[i][k] as usize) < skin.joint_names.len() {
-                    face.joints[i][k]
-                } else {
-                    0
-                };
+                vertex.joints[k] = (face.joints[i][k] as usize).min(skin.joint_names.len() - 1) as u8;
                 vertex.weights[k] = (face.weights[i][k].clamp(0.0, 1.0) * 255.0).round() as u8;
             }
             if let Some(point) = skinned_point(
@@ -673,6 +662,41 @@ mod tests {
         skin.inverse_bind[0] = Mat4::from_translation(Vec3::Z * 0.1);
         // (-.1 - .2 + .1) * 2 + .4 = 0
         assert!(mesh_min(&[face()], Some(&skin), None, &lib.rig, &matrices).unwrap().abs() < 1e-5);
+    }
+
+    #[test]
+    fn rigged_skin_parity_foot_measurement_blends_unknown_joints_as_the_pelvis() {
+        let lib = library();
+        let mut matrices = vec![Mat4::IDENTITY; lib.rig.len()];
+        matrices[lib.rig.pelvis] = Mat4::from_translation(Vec3::Z);
+        let mut skin = skin();
+        skin.joint_names[1] = "obsolete_joint".into();
+        let mut geometry = face();
+        geometry.positions[1][2] = 0.0;
+        geometry.weights.fill([0.5, 0.5, 0.0, 0.0]);
+        let actual = mesh_min(&[geometry], Some(&skin), None, &lib.rig, &matrices).unwrap();
+        // The drawn minimum is -.1 -.2 + .5 * pelvis height (1 m).
+        assert!(
+            (actual - 0.2).abs() < 1e-5,
+            "foot measurement disagrees with pelvis skinning: {actual}"
+        );
+    }
+
+    #[test]
+    fn rigged_skin_parity_foot_measurement_bounds_indices_to_the_last_joint() {
+        let lib = library();
+        let matrices = vec![Mat4::IDENTITY; lib.rig.len()];
+        let mut skin = skin();
+        skin.joint_names.swap(0, 1);
+        let mut geometry = face();
+        geometry.positions[1][2] = 0.0;
+        geometry.joints.fill([254, 0, 0, 0]);
+        geometry.weights.fill([1.0, 0.0, 0.0, 0.0]);
+        let actual = mesh_min(&[geometry], Some(&skin), None, &lib.rig, &matrices);
+        assert!(
+            actual.is_some_and(|height| (height + 0.3).abs() < 1e-5),
+            "invalid index must reach the final foot joint: {actual:?}"
+        );
     }
 
     #[test]
