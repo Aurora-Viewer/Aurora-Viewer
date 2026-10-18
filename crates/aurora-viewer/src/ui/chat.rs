@@ -2102,10 +2102,15 @@ pub fn show(
                         if !world.is_group_session(&other) {
                             st.wanted_pics.insert(other);
                         }
+                        // FSFloaterIM::addTypingIndicator: the tab of a
+                        // resident typing to us reads "Nova is typing…"
+                        let typing = (sidebar::kind(world, &other) == sidebar::Kind::Private && world.social.is_typing(&other))
+                            .then(|| typing::text(std::slice::from_ref(&name)))
+                            .flatten();
                         let entry = list_entry(
                             ui,
                             p,
-                            &name,
+                            typing.as_deref().unwrap_or(&name),
                             Some((pics.get(&other), &name)),
                             (!world.is_group_session(&other)).then(|| presence::of(world, &other)),
                             st.selected == Some(other) && !st.contacts,

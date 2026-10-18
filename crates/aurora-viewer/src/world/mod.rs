@@ -4377,6 +4377,34 @@ mod motion_tests {
         assert!(!world.agent.is_sitting());
     }
 
+    /// IM_TYPING_START / STOP from a resident: "is typing" in their
+    /// conversation, neither a line nor a conversation opened.
+    #[test]
+    fn typing_notices_mark_the_resident_typing_without_a_line() {
+        let (mut world, _, _) = fixture();
+        let from = Uuid::from_u128(77);
+        let notice = |world: &World, dialog| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Typer Resident".into(),
+                to_agent_id: world.agent_id,
+                dialog,
+                session_id: Uuid::from_u128(world.agent_id.as_u128() ^ from.as_u128()),
+                message: "typing".into(),
+                offline: false,
+                from_group: false,
+                binary_bucket: vec![0],
+                timestamp: 0,
+            })
+        };
+        world.apply(notice(&world, IM_TYPING_START));
+        assert!(world.social.is_typing(&from));
+        assert!(!world.social.has_session(&from), "no conversation opened");
+        assert!(world.im_messages.is_empty(), "no message");
+        world.apply(notice(&world, IM_TYPING_STOP));
+        assert!(!world.social.is_typing(&from));
+    }
+
     fn inventory_offer(world: &World, dialog: u8, bucket: Vec<u8>) -> NetEvent {
         NetEvent::InstantMessage(aurora_net::InstantMessage {
             from_agent_id: Uuid::from_u128(77),

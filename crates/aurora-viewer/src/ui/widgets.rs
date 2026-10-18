@@ -495,9 +495,26 @@ impl<'a> Floater<'a> {
         if let Some(pos) = title_in_reach(ctx, window_id, room, asked, resized.map(|r| r.size())) {
             w = w.current_pos(pos);
         }
+        // Only its edges resize a resizable window once shown. egui's frame
+        // follows what the content measured, and its Resize keeps the
+        // widest it saw: a long message or a tab opened or closed that
+        // measured a fraction of a point too wide made the Conversations
+        // window grow a pixel or two at a time, for good. Its content is
+        // laid out in the window's exact rect instead, cut at its edges.
+        let held = resizable && egui::AreaState::load(ctx, window_id).is_some_and(|s| s.size.is_some());
         let mut glass_slot = None;
-        let response = w.show(ctx, |ui| {
-            glass_slot = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
+        let response = w.show(ctx, |outer| {
+            glass_slot = Some((outer.painter().clone(), outer.painter().add(egui::Shape::Noop)));
+            let held = held.then(|| outer.available_rect_before_wrap());
+            let mut held_ui = held.map(|rect| {
+                let mut child = outer.new_child(egui::UiBuilder::new().max_rect(rect).layout(*outer.layout()));
+                child.set_clip_rect(rect.intersect(outer.clip_rect()));
+                child
+            });
+            let ui: &mut egui::Ui = match held_ui.as_mut() {
+                Some(child) => child,
+                None => &mut *outer,
+            };
             // Our custom resize handles replace egui's native resizability.
             // Reserve the requested content area as a resizable Window would:
             // height-filling scroll areas otherwise shave a few pixels off
@@ -642,6 +659,9 @@ impl<'a> Floater<'a> {
                 } else {
                     out = Some(body(ui));
                 }
+            }
+            if let Some(rect) = held {
+                outer.advance_cursor_after_rect(rect);
             }
         });
         if let Some(response) = response {

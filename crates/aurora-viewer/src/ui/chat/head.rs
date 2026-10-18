@@ -152,6 +152,13 @@ pub(super) fn show(
     };
     let selected = st.selected;
     let group = who.kind.is_some_and(|k| k != sidebar::Kind::Private);
+    // at the right edge, the close button of the conversation (the X of
+    // its tab); the nearby chat cannot be closed
+    if let Some(other) = selected
+        && tool(ui, p, slot(), "x", super::close_tip(world, &other), Tone::Plain).clicked()
+    {
+        actions.push(ConvAction::Close(other));
+    }
     // the menu of the others
     let more = tool(ui, p, slot(), "dots-filled", aurora_i18n::tr!("ui-chat-more"), Tone::Plain);
     crate::ui::menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
@@ -195,10 +202,14 @@ pub(super) fn show(
                 st.members_open = !st.members_open;
             }
         }
-        // a resident: their profile
+        // a resident: their profile, and a teleport offer to join us (the
+        // teleport button of FSFloaterIM's toolbar)
         (Some(other), _) => {
             if tool(ui, p, slot(), "user-filled", aurora_i18n::tr!("common-profile"), Tone::Plain).clicked() {
                 actions.push(ConvAction::Profile(other));
+            }
+            if tool(ui, p, slot(), "send-filled", aurora_i18n::tr!("common-offer-teleport"), Tone::Plain).clicked() {
+                actions.push(ConvAction::OfferTeleport(other));
             }
         }
     }
