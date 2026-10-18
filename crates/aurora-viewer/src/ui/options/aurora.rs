@@ -44,6 +44,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_about_land = !aurora;
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
+    s.classic_places = !aurora;
     s.classic_pay_window = !aurora;
     s.classic_controls = !aurora;
     s.classic_restart_alert = !aurora;
@@ -482,6 +483,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
         c |= look_choice(
             ui,
             p,
+            aurora_i18n::tr!("ui-options-aurora-places"),
+            aurora_i18n::tr!("ui-options-aurora-places-help"),
+            aurora_i18n::tr!("ui-options-aurora-places-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-places-classic"),
+            &mut s.classic_places,
+        );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-aurora-people"),
             aurora_i18n::tr!("ui-options-aurora-people-help"),
             aurora_i18n::tr!("ui-options-aurora-people-rows"),
@@ -763,6 +774,7 @@ mod tests {
         assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
+        assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
         assert!(s.classic_pay_window);
         assert!(s.classic_controls, "Firestorm's two control windows");
         assert!(s.classic_restart_alert, "Firestorm's yellow restart box");
@@ -792,6 +804,7 @@ mod tests {
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
         assert!(!s.classic_search && !fresh.classic_search, "the Aurora Search is the default");
         assert!(!s.classic_region_estate && !fresh.classic_region_estate);
+        assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);

@@ -12,6 +12,13 @@
 //! a history entry or a landmark replaces the tabs, with a back arrow
 //! (`place_details.rs` draws it). Double-click teleports, after the
 //! TeleportFromLandmark / TeleportToHistoryEntry confirmations.
+//!
+//! Aurora's own look of the window (the default) is `places/aurora.rs`, on
+//! the data of `places/model.rs`; Preferences › Aurora › Places brings these
+//! tabs back.
+
+pub mod aurora;
+pub mod model;
 
 use super::place_details::{self, Ctx};
 use super::widgets::{self, Floater};
@@ -86,6 +93,17 @@ pub enum PlacesAction {
     /// "Add landmark" (LLLandmarksPanel::onAddAction "add_landmark"): the
     /// Create Landmark window, saving in the selected folder if any.
     CreateLandmark(Option<Uuid>),
+    /// Aurora's look: an inventory change (a star, a folder, notes, a name,
+    /// a deletion), sent as the inventory window sends its own.
+    Edit(aurora_net::inventory::operations::Mutation),
+    /// A favourite was starred: its row is marked as just added.
+    ExpectFavorite,
+    /// A favourite dropped before the one at that rank of the bar.
+    MoveFavorite(Uuid, usize),
+    /// "Place profile": the standalone window of FSFloaterPlaceDetails.
+    OpenWindow(Source),
+    /// The order of Aurora's lists.
+    Sort(model::PlacesSort),
 }
 
 /// One line of a landmarks tab.
@@ -257,6 +275,12 @@ pub struct PlacesUi {
     pub want_landmarks: HashSet<Uuid>,
     /// Inventory folders to fetch.
     pub want_folders: HashSet<Uuid>,
+    /// Map cells (region grid x, y) whose region names Aurora's rows wait for.
+    pub want_cells: Vec<(i64, i64)>,
+    /// Aurora's look.
+    pub aurora: aurora::AuroraState,
+    /// Inventory changes asked from a menu, sent with the window's actions.
+    pending_edits: Vec<aurora_net::inventory::operations::Mutation>,
     raise: bool,
 }
 
@@ -265,6 +289,7 @@ impl PlacesUi {
     pub fn open_tab(&mut self, tab: usize) {
         self.tab = tab.min(TAB_HISTORY);
         self.selected = None;
+        self.aurora.open_tab(self.tab);
         self.raise = true;
     }
 
@@ -280,7 +305,17 @@ impl PlacesUi {
 
     /// `confirm_teleports`: `Settings::confirm_teleports`, off once the box
     /// "Do not show again" of a teleport confirmation was ticked.
-    pub fn show(&mut self, ctx: &egui::Context, c: &mut Ctx, open: &mut bool, by_date: bool, confirm_teleports: bool) -> Vec<PlacesAction> {
+    /// `aurora`: Aurora's look and what it needs, None for the Legacy
+    /// Viewer's tabs.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        c: &mut Ctx,
+        open: &mut bool,
+        by_date: bool,
+        confirm_teleports: bool,
+        aurora: Option<&aurora::Env>,
+    ) -> Vec<PlacesAction> {
         let mut actions = Vec::new();
         self.show_confirm(ctx, c.p, confirm_teleports, &mut actions);
         if !*open {
@@ -295,6 +330,23 @@ impl PlacesUi {
         let pos = screen.center() - size * 0.5 + Vec2::new(120.0, 0.0);
         let mut floater = Floater::new("places", aurora_i18n::tr!("common-places"), pos, size);
         floater.min_size = Vec2::new(260.0, 300.0);
+        if let Some(env) = aurora {
+            // the mockup's panes reach the window's edges
+            floater.flush_body = true;
+            floater.min_size = Vec2::new(320.0, 360.0);
+            floater.show(ctx, c.p, open, |ui| {
+                let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(body)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                child.set_clip_rect(body.intersect(ui.clip_rect()));
+                self.aurora_body(&mut child, c, env, &mut actions);
+                ui.allocate_rect(body, Sense::hover());
+            });
+            return actions;
+        }
         floater.show(ctx, c.p, open, |ui| {
             let body = egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
             ui.allocate_rect(body, Sense::hover());

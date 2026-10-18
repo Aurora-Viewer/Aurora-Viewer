@@ -5199,6 +5199,9 @@ impl App {
         for folder in self.places_ui.want_folders.drain().chain(self.worldmap_ui.want_folders.drain()) {
             self.world.inventory.request(folder);
         }
+        for (x, y) in std::mem::take(&mut self.places_ui.want_cells) {
+            self.world.map.want_regions(x, y, x, y);
+        }
         for g in self.place_groups.drain() {
             self.world.land.group_name(&g, &self.world.groups.groups);
         }
@@ -10687,6 +10690,11 @@ impl App {
                 if self.panels.places {
                     self.places_ui.landmark_here = self.parcel_landmark().is_some();
                 }
+                let favorites_order = if self.panels.places && !self.settings.classic_places {
+                    self.world.favorites.list(&self.world.inventory).to_vec()
+                } else {
+                    Vec::new()
+                };
                 let mut c = ui::place_details::Ctx {
                     p: &p,
                     world: &self.world,
@@ -10698,12 +10706,18 @@ impl App {
                 };
                 let window_acts = self.place_ui.show(&ctx, &mut c);
                 let mut open = self.panels.places;
+                // Aurora's look orders the favourites as the bar does
+                let places_env = (!self.settings.classic_places).then(|| ui::places::aurora::Env {
+                    sort: self.settings.places_sort,
+                    favorites: &favorites_order,
+                });
                 let places_acts = self.places_ui.show(
                     &ctx,
                     &mut c,
                     &mut open,
                     self.settings.landmarks_by_date,
                     self.settings.confirm_teleports,
+                    places_env.as_ref(),
                 );
                 self.panels.places = open;
                 for pa in window_acts {
@@ -10747,6 +10761,18 @@ impl App {
                             self.settings.save();
                         }
                         PlacesAction::StopConfirmingTeleports => self.stop_confirming_teleports(),
+                        PlacesAction::Edit(change) => self.apply_inventory_action(ui::inventory::InvAction::Edit(change)),
+                        PlacesAction::ExpectFavorite => self.world.favorites.expect_added(),
+                        PlacesAction::MoveFavorite(item, rank) => self.world.favorites.rearrange(&self.world.inventory, item, rank),
+                        PlacesAction::OpenWindow(source) => {
+                            let w = &mut self.world;
+                            let serial = w.place_details.open_window(source, &w.map, &mut w.landmarks, Instant::now());
+                            self.place_ui.raise(serial);
+                        }
+                        PlacesAction::Sort(by) => {
+                            self.settings.places_sort = by;
+                            self.settings.save();
+                        }
                     }
                 }
                 // "Search"
@@ -11596,10 +11622,18 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
             }
             // AURORA_DEMO_PLACES=favorites|landmarks|history: "Places" on a tab
-            if let Some(tab) = std::env::var("AURORA_DEMO_PLACES").ok().and_then(|v| ui::places::tab_from_name(&v)) {
+            // (after the tab, ":wide": Aurora's window widened to its rail and
+            // preview; ":open": its first place selected; both: ":wide,open")
+            let demo_places = std::env::var("AURORA_DEMO_PLACES").unwrap_or_default();
+            let (demo_tab, demo_how) = demo_places.split_once(':').unwrap_or((demo_places.as_str(), ""));
+            if let Some(tab) = ui::places::tab_from_name(demo_tab) {
                 self.places_ui.open_tab(tab);
                 self.panels.places = true;
                 self.panels.perf = false;
+                if demo_how.split(',').any(|w| w == "wide") {
+                    ui::widgets::size_floater(&self.egui_ctx, "places", egui::vec2(1040.0, 640.0));
+                }
+                self.places_ui.aurora.demo_open = demo_how.split(',').any(|w| w == "open");
             }
             // AURORA_DEMO_MARKETPLACE=<page>: World › SL Marketplace on that
             // page, open at start
