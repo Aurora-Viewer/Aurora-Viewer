@@ -46,6 +46,10 @@ const FOLDER_TRASH: i32 = 14;
 /// DB_INV_ITEM_DESC_STR_LEN - 1: the longest notes a landmark keeps.
 const NOTE_MAX: usize = 127;
 
+/// Inventory generation, landmark assets version, history length and last
+/// date, regions known to the map.
+type CatalogKey = (u64, u64, usize, u64, usize);
+
 /// What the list shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Source {
@@ -78,6 +82,8 @@ pub struct AuroraState {
     drag: Option<Uuid>,
     /// Snapshots of the parcels seen in the preview, for the rows.
     snapshots: HashMap<Key, Uuid>,
+    /// The places, and what they were built from.
+    catalog: Option<(CatalogKey, Arc<Catalog>)>,
     /// AURORA_DEMO_PLACES=…:open: the first place selected (a narrow row
     /// opened) once the list has one.
     pub demo_open: bool,
@@ -336,7 +342,25 @@ impl PlacesUi {
     pub(super) fn aurora_body(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, actions: &mut Vec<PlacesAction>) {
         let world = c.world;
         let history = &world.tp_storage.items;
-        let cat = model::catalog(&world.inventory, &world.landmarks, &world.map, history, true);
+        // rebuilt only when the inventory, a landmark asset, the history or
+        // the map's regions change: a long history against many landmarks
+        // is not matched again every frame
+        let key = (
+            world.inventory.generation,
+            world.landmarks.version,
+            history.len(),
+            history.last().map_or(0, |h| h.date.to_bits()),
+            world.map.sims.len(),
+        );
+        let cat = match &self.aurora.catalog {
+            Some((k, cat)) if *k == key => Arc::clone(cat),
+            _ => {
+                let cat = Arc::new(model::catalog(&world.inventory, &world.landmarks, &world.map, history, true));
+                self.aurora.catalog = Some((key, Arc::clone(&cat)));
+                cat
+            }
+        };
+        let cat = &*cat;
         self.want_landmarks.extend(cat.wanted_assets.iter().copied());
         self.want_cells.extend(cat.wanted_cells.iter().copied());
         // both folders are read whole, as the Legacy Viewer has them after
@@ -371,7 +395,7 @@ impl PlacesUi {
         {
             self.aurora.source = Source::All;
         }
-        let lines = self.lines(&cat, history, env);
+        let lines = self.lines(cat, history, env);
         let wide = ui.max_rect().width() >= WIDE;
         // (a landmark: the history's places come before the folders are read)
         if self.aurora.demo_open
@@ -390,11 +414,11 @@ impl PlacesUi {
                 self.select(*k, place, &world.inventory, history, actions);
             }
         }
-        self.remember_snapshot(world, &cat, history);
+        self.remember_snapshot(world, cat, history);
         if wide {
-            self.wide(ui, c, env, &cat, &lines, link.is_some(), actions);
+            self.wide(ui, c, env, cat, &lines, link.is_some(), actions);
         } else {
-            self.narrow(ui, c, env, &cat, &lines, link.is_some(), actions);
+            self.narrow(ui, c, env, cat, &lines, link.is_some(), actions);
         }
         self.folder_dialogs(ui.ctx(), c.p, &world.inventory, actions);
     }
@@ -492,7 +516,16 @@ impl PlacesUi {
     // ---------------------------------------------------------------- wide
 
     #[allow(clippy::too_many_arguments)]
-    fn wide(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, cat: &Catalog, lines: &[Line], link: bool, actions: &mut Vec<PlacesAction>) {
+    fn wide(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &mut Ctx,
+        env: &Env,
+        cat: &Catalog,
+        lines: &[Line],
+        link: bool,
+        actions: &mut Vec<PlacesAction>,
+    ) {
         let p = c.p;
         let full = ui.max_rect();
         ui.allocate_rect(full, Sense::hover());
@@ -587,8 +620,20 @@ impl PlacesUi {
         ui.spacing_mut().item_spacing.y = 1.0;
         let favorites = model::favorites(cat, env.favorites).len();
         let sources = [
-            (Source::All, "map-pin-filled", p.muted, aurora_i18n::tr!("ui-places-all"), cat.landmarks.len() + cat.visits.len()),
-            (Source::Favorites, "star-filled", p.amber, aurora_i18n::tr!("common-favorites"), favorites),
+            (
+                Source::All,
+                "map-pin-filled",
+                p.muted,
+                aurora_i18n::tr!("ui-places-all"),
+                cat.landmarks.len() + cat.visits.len(),
+            ),
+            (
+                Source::Favorites,
+                "star-filled",
+                p.amber,
+                aurora_i18n::tr!("common-favorites"),
+                favorites,
+            ),
             (
                 Source::History,
                 "history",
@@ -645,7 +690,18 @@ impl PlacesUi {
                 }
             });
         }
-        if rail_row(ui, p, "plus", p.violet_light, aurora_i18n::tr!("ui-places-new-folder"), None, false, 0).clicked() {
+        if rail_row(
+            ui,
+            p,
+            "plus",
+            p.violet_light,
+            aurora_i18n::tr!("ui-places-new-folder"),
+            None,
+            false,
+            0,
+        )
+        .clicked()
+        {
             self.aurora.new_folder = Some(String::new());
         }
     }
@@ -665,8 +721,14 @@ impl PlacesUi {
         let full = ui.max_rect();
         let (title, hint) = match self.aurora.source {
             Source::All => (aurora_i18n::tr!("ui-places-all").to_owned(), aurora_i18n::tr!("ui-places-all-hint")),
-            Source::Favorites => (aurora_i18n::tr!("common-favorites").to_owned(), aurora_i18n::tr!("ui-places-favorites-hint")),
-            Source::History => (aurora_i18n::tr!("ui-places-history").to_owned(), aurora_i18n::tr!("ui-places-history-hint")),
+            Source::Favorites => (
+                aurora_i18n::tr!("common-favorites").to_owned(),
+                aurora_i18n::tr!("ui-places-favorites-hint"),
+            ),
+            Source::History => (
+                aurora_i18n::tr!("ui-places-history").to_owned(),
+                aurora_i18n::tr!("ui-places-history-hint"),
+            ),
             Source::Folder(f) => (actions::name(&world.inventory, f), aurora_i18n::tr!("ui-places-folder-hint")),
         };
         let head = Rect::from_min_size(full.min + Vec2::new(16.0, 12.0), Vec2::new(full.width() - 32.0, 20.0));
@@ -677,7 +739,10 @@ impl PlacesUi {
         widgets::paint_row_text(ui.painter(), h, head.left() + tw + 10.0, head.center().y, p.muted);
 
         let footer = Rect::from_min_max(Pos2::new(full.left(), full.bottom() - FOOTER_H), full.max);
-        let rows = Rect::from_min_max(Pos2::new(full.left() + 8.0, head.bottom() + 6.0), Pos2::new(full.right() - 8.0, footer.top()));
+        let rows = Rect::from_min_max(
+            Pos2::new(full.left() + 8.0, head.bottom() + 6.0),
+            Pos2::new(full.right() - 8.0, footer.top()),
+        );
         let mut list = ui.new_child(egui::UiBuilder::new().max_rect(rows));
         list.set_clip_rect(rows);
         egui::ScrollArea::vertical()
@@ -725,7 +790,10 @@ impl PlacesUi {
                 rects.push((ui.min_rect().intersect(Rect::EVERYTHING), fav));
                 if let Some(last) = rects.last_mut() {
                     last.0 = Rect::from_min_max(
-                        Pos2::new(ui.max_rect().left(), ui.cursor().top() - if wide { WIDE_ROW_H } else { NARROW_ROW_H } - 1.0),
+                        Pos2::new(
+                            ui.max_rect().left(),
+                            ui.cursor().top() - if wide { WIDE_ROW_H } else { NARROW_ROW_H } - 1.0,
+                        ),
                         Pos2::new(ui.max_rect().right(), ui.cursor().top() - 1.0),
                     );
                 }
@@ -894,10 +962,7 @@ impl PlacesUi {
             aurora_i18n::tr!("ui-places-create-here-short")
         };
         let bw = widgets::action_button_fit(ui, "plus", label);
-        let button = Rect::from_min_size(
-            Pos2::new(rect.right() - 12.0 - bw, rect.center().y - 13.0),
-            Vec2::new(bw, 26.0),
-        );
+        let button = Rect::from_min_size(Pos2::new(rect.right() - 12.0 - bw, rect.center().y - 13.0), Vec2::new(bw, 26.0));
         let mut b = ui.new_child(egui::UiBuilder::new().max_rect(button));
         let enabled = !self.landmark_here && world.parcel.is_some();
         let resp = b.add_enabled_ui(enabled, |ui| {
@@ -914,7 +979,12 @@ impl PlacesUi {
         // the parcel we stand on
         let mut x = rect.left() + if wide { 16.0 } else { 12.0 };
         let cy = rect.center().y;
-        paint_icon(ui.painter(), "map-pin-filled", Rect::from_center_size(Pos2::new(x + 7.0, cy), Vec2::splat(14.0)), p.teal);
+        paint_icon(
+            ui.painter(),
+            "map-pin-filled",
+            Rect::from_center_size(Pos2::new(x + 7.0, cy), Vec2::splat(14.0)),
+            p.teal,
+        );
         x += 22.0;
         let room = (button.left() - 10.0 - x).max(10.0);
         let here = aurora_i18n::tr!("ui-places-here");
@@ -929,7 +999,13 @@ impl PlacesUi {
         job.append(&parcel, 0.0, fmt(p.ink));
         let pos = world.agent.position;
         let rest = if wide {
-            format!(", {} ({}, {}, {})", world.region_name(), pos.x.round(), pos.y.round(), pos.z.round())
+            format!(
+                ", {} ({}, {}, {})",
+                world.region_name(),
+                pos.x.round(),
+                pos.y.round(),
+                pos.z.round()
+            )
         } else {
             format!(", {}", world.region_name())
         };
@@ -1034,7 +1110,14 @@ impl PlacesUi {
             }
             if ui
                 .add_enabled_ui(place.global.is_some(), |ui| {
-                    widgets::action_button(ui, p, "map", aurora_i18n::tr!("common-map"), widgets::ActionKind::Flat, Vec2::new(map_w, small))
+                    widgets::action_button(
+                        ui,
+                        p,
+                        "map",
+                        aurora_i18n::tr!("common-map"),
+                        widgets::ActionKind::Flat,
+                        Vec2::new(map_w, small),
+                    )
                 })
                 .inner
                 .clicked()
@@ -1073,25 +1156,25 @@ impl PlacesUi {
             _ => None,
         };
         if let Some(text) = desc {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(text)
-                        .size(12.5)
-                        .color(p.ink.gamma_multiply(0.86)),
-                )
-                .wrap(),
-            );
+            ui.add(egui::Label::new(egui::RichText::new(text).size(12.5).color(p.ink.gamma_multiply(0.86))).wrap());
             ui.add_space(10.0);
         }
         widgets::divider(ui, p);
         ui.add_space(4.0);
         let none = || place_details::loading().to_owned();
-        kv(ui, p, aurora_i18n::tr!("ui-places-traffic"), &parcel.map_or_else(none, |d| format!("{}", d.dwell as i32)));
+        kv(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-places-traffic"),
+            &parcel.map_or_else(none, |d| format!("{}", d.dwell as i32)),
+        );
         kv(
             ui,
             p,
             aurora_i18n::tr!("ui-places-area"),
-            &parcel.map_or_else(none, |d| aurora_i18n::tr!("ui-places-area-value", area = d.actual_area.to_string()).to_owned()),
+            &parcel.map_or_else(none, |d| {
+                aurora_i18n::tr!("ui-places-area-value", area = d.actual_area.to_string()).to_owned()
+            }),
         );
         if !link {
             let visit = place.last_visit.map_or_else(
@@ -1114,11 +1197,26 @@ impl PlacesUi {
 
     /// The name of the preview, or its edit after "Rename".
     #[allow(clippy::too_many_arguments)]
-    fn title(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, key: Key, place: &Place, width: f32, actions: &mut Vec<PlacesAction>) {
+    fn title(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        world: &World,
+        key: Key,
+        place: &Place,
+        width: f32,
+        actions: &mut Vec<PlacesAction>,
+    ) {
         match self.aurora.rename.as_mut().filter(|(k, _)| *k == key) {
             Some((_, name)) => {
                 let r = ui.add(egui::TextEdit::singleline(name).char_limit(63).desired_width(width));
-                r.request_focus();
+                // the field takes the keyboard when it appears, and a click
+                // elsewhere then ends the edit
+                let fresh = egui::Id::new(("places-rename", key));
+                if ui.data_mut(|d| d.get_temp::<bool>(fresh).is_none()) {
+                    ui.data_mut(|d| d.insert_temp(fresh, true));
+                    r.request_focus();
+                }
                 let (enter, escape) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
                 if escape {
                     self.aurora.rename = None;
@@ -1131,12 +1229,17 @@ impl PlacesUi {
                     }
                     self.aurora.rename = None;
                 }
+                if self.aurora.rename.is_none() {
+                    ui.data_mut(|d| d.remove::<bool>(fresh));
+                }
             }
             None => {
                 let g = line(ui, &place.name, 15.0, p.ink, true, width);
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, g.size().y), Sense::click());
                 ui.painter().galley(rect.min, g, p.ink);
-                let renameable = place.item.is_some_and(|i| actions::renameable(&world.inventory, i, &no_protection()));
+                let renameable = place
+                    .item
+                    .is_some_and(|i| actions::renameable(&world.inventory, i, &no_protection()));
                 if renameable && resp.double_clicked() {
                     self.aurora.rename = Some((key, place.name.clone()));
                 }
@@ -1146,7 +1249,16 @@ impl PlacesUi {
 
     /// "Your landmark": its folder, its notes and its date.
     #[allow(clippy::too_many_arguments)]
-    fn landmark_section(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, key: Key, place: &Place, width: f32, actions: &mut Vec<PlacesAction>) {
+    fn landmark_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        world: &World,
+        key: Key,
+        place: &Place,
+        width: f32,
+        actions: &mut Vec<PlacesAction>,
+    ) {
         let inv = &world.inventory;
         ui.horizontal(|ui| {
             let at = ui.cursor().min + Vec2::new(0.0, 6.0);
@@ -1242,7 +1354,16 @@ impl PlacesUi {
     // -------------------------------------------------------------- narrow
 
     #[allow(clippy::too_many_arguments)]
-    fn narrow(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, cat: &Catalog, lines: &[Line], link: bool, actions: &mut Vec<PlacesAction>) {
+    fn narrow(
+        &mut self,
+        ui: &mut egui::Ui,
+        c: &mut Ctx,
+        env: &Env,
+        cat: &Catalog,
+        lines: &[Line],
+        link: bool,
+        actions: &mut Vec<PlacesAction>,
+    ) {
         let p = c.p;
         let world = c.world;
         let full = ui.max_rect();
@@ -1380,7 +1501,11 @@ impl PlacesUi {
         let left = ui.max_rect().left() + 68.0;
         let width = (ui.max_rect().right() - 10.0 - left).max(60.0);
         let rect = Rect::from_min_size(Pos2::new(left, ui.cursor().top() + 2.0), Vec2::new(width, 400.0));
-        let mut d = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        let mut d = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
         d.spacing_mut().item_spacing.y = 8.0;
         let text = match (parcel, failed) {
             (Some(d), _) if !d.desc.trim().is_empty() => d.desc.clone(),
@@ -1408,7 +1533,14 @@ impl PlacesUi {
             let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
             if ui
                 .add_enabled_ui(place.global.is_some(), |ui| {
-                    widgets::action_button(ui, p, "map", aurora_i18n::tr!("common-map"), widgets::ActionKind::Flat, Vec2::new(mw, 26.0))
+                    widgets::action_button(
+                        ui,
+                        p,
+                        "map",
+                        aurora_i18n::tr!("common-map"),
+                        widgets::ActionKind::Flat,
+                        Vec2::new(mw, 26.0),
+                    )
                 })
                 .inner
                 .clicked()
@@ -1512,7 +1644,16 @@ fn kv(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
 
 /// A row of the rail: icon, name, count; `depth` indents a sub-folder.
 #[allow(clippy::too_many_arguments)]
-fn rail_row(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: Color32, label: &str, count: Option<usize>, on: bool, depth: usize) -> egui::Response {
+fn rail_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
     let radius = ui.visuals().window_corner_radius;
     if on {
@@ -1541,13 +1682,23 @@ fn rail_row(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: Color32, label: &s
 
 /// The face of a row and its star; the row's own response.
 #[allow(clippy::too_many_arguments)]
-fn row_base(ui: &mut egui::Ui, p: &Palette, place: &Place, key: Key, selected: bool, height: f32, draggable: bool) -> (Rect, egui::Response, Rect, RowOut) {
+fn row_base(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    place: &Place,
+    key: Key,
+    selected: bool,
+    height: f32,
+    draggable: bool,
+) -> (Rect, egui::Response, Rect, RowOut) {
     let w = ui.available_width();
     let sense = if draggable { Sense::click_and_drag() } else { Sense::click() };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), sense);
     let radius = ui.visuals().window_corner_radius;
     let star_rect = Rect::from_center_size(Pos2::new(rect.right() - 16.0, rect.center().y), Vec2::splat(28.0));
-    let star = place.is_landmark().then(|| ui.interact(star_rect, egui::Id::new(("places-star", key)), Sense::click()));
+    let star = place
+        .is_landmark()
+        .then(|| ui.interact(star_rect, egui::Id::new(("places-star", key)), Sense::click()));
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
     } else if resp.hovered() || star.as_ref().is_some_and(|s| s.hovered()) {
@@ -1563,14 +1714,20 @@ fn row_base(ui: &mut egui::Ui, p: &Palette, place: &Place, key: Key, selected: b
         let fav = place.favorite.is_some();
         let hot = s.hovered();
         if hot {
-            ui.painter().rect_filled(star_rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+            ui.painter()
+                .rect_filled(star_rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
         }
         let (icon, tint) = if fav {
             ("star-filled", p.amber)
         } else {
             ("star", if hot { p.ink } else { p.muted_dim })
         };
-        paint_icon(ui.painter(), icon, Rect::from_center_size(star_rect.center(), Vec2::splat(16.0)), tint);
+        paint_icon(
+            ui.painter(),
+            icon,
+            Rect::from_center_size(star_rect.center(), Vec2::splat(16.0)),
+            tint,
+        );
         let tip = if fav {
             aurora_i18n::tr!("ui-places-remove-favorite")
         } else {
@@ -1591,7 +1748,16 @@ fn row_base(ui: &mut egui::Ui, p: &Palette, place: &Place, key: Key, selected: b
 
 /// A row of the wide list: picture, name, region, badge, last visit, star.
 #[allow(clippy::too_many_arguments)]
-fn wide_row(ui: &mut egui::Ui, p: &Palette, c: &mut Ctx, place: &Place, key: Key, selected: bool, picture_id: Uuid, draggable: bool) -> RowOut {
+fn wide_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    c: &mut Ctx,
+    place: &Place,
+    key: Key,
+    selected: bool,
+    picture_id: Uuid,
+    draggable: bool,
+) -> RowOut {
     let (rect, resp, star, mut out) = row_base(ui, p, place, key, selected, WIDE_ROW_H, draggable);
     let mut x = rect.left() + 6.0;
     if draggable {
@@ -1603,7 +1769,14 @@ fn wide_row(ui: &mut egui::Ui, p: &Palette, c: &mut Ctx, place: &Place, key: Key
         );
         x += 16.0;
     }
-    picture(ui, p, c, picture_id, Rect::from_min_size(Pos2::new(x, rect.center().y - 21.0), Vec2::new(72.0, 42.0)), 16.0);
+    picture(
+        ui,
+        p,
+        c,
+        picture_id,
+        Rect::from_min_size(Pos2::new(x, rect.center().y - 21.0), Vec2::new(72.0, 42.0)),
+        16.0,
+    );
     x += 72.0 + 12.0;
     let visit_w = 112.0;
     let right = star.left() - 4.0;
@@ -1633,7 +1806,16 @@ fn wide_row(ui: &mut egui::Ui, p: &Palette, c: &mut Ctx, place: &Place, key: Key
 /// A row of the narrow list: picture, name, region and last visit, badge,
 /// star.
 #[allow(clippy::too_many_arguments)]
-fn narrow_row(ui: &mut egui::Ui, p: &Palette, c: &mut Ctx, place: &Place, key: Key, selected: bool, picture_id: Uuid, draggable: bool) -> RowOut {
+fn narrow_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    c: &mut Ctx,
+    place: &Place,
+    key: Key,
+    selected: bool,
+    picture_id: Uuid,
+    draggable: bool,
+) -> RowOut {
     let (rect, _, star, mut out) = row_base(ui, p, place, key, selected, NARROW_ROW_H, draggable);
     let mut x = rect.left() + 6.0;
     if draggable {
@@ -1645,9 +1827,20 @@ fn narrow_row(ui: &mut egui::Ui, p: &Palette, c: &mut Ctx, place: &Place, key: K
         );
         x += 14.0;
     }
-    picture(ui, p, c, picture_id, Rect::from_min_size(Pos2::new(x, rect.center().y - 16.0), Vec2::new(52.0, 32.0)), 14.0);
+    picture(
+        ui,
+        p,
+        c,
+        picture_id,
+        Rect::from_min_size(Pos2::new(x, rect.center().y - 16.0), Vec2::new(52.0, 32.0)),
+        14.0,
+    );
     x += 52.0 + 10.0;
-    let right = if place.is_landmark() { star.left() - 4.0 } else { rect.right() - 8.0 };
+    let right = if place.is_landmark() {
+        star.left() - 4.0
+    } else {
+        rect.right() - 8.0
+    };
     let badge_rect = Rect::from_min_size(Pos2::new(right - 16.0, rect.center().y - 8.0), Vec2::splat(16.0));
     let names_w = (badge_rect.left() - 10.0 - x).max(20.0);
     let name = line(ui, &place.name, 13.0, p.ink, true, names_w);
@@ -1725,7 +1918,11 @@ mod tests {
             vec![landmark(100, 10, 1000, true), landmark(101, 10, 1001, false)],
         )]);
         inv.apply(vec![contents(sub, Vec::new(), Vec::new())]);
-        inv.apply(vec![contents(fav, Vec::new(), vec![landmark(200, 20, 1000, true), landmark(201, 20, 1002, true)])]);
+        inv.apply(vec![contents(
+            fav,
+            Vec::new(),
+            vec![landmark(200, 20, 1000, true), landmark(201, 20, 1002, true)],
+        )]);
         inv.apply(vec![contents(trash, Vec::new(), Vec::new())]);
         inv
     }

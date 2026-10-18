@@ -253,7 +253,8 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
     }
     // newest first, one per title (the history keeps one entry per title
     // within 5 m; farther ones are other spots of a big parcel)
-    cat.visits.sort_by(|a, b| b.1.last_visit.unwrap_or(0.0).total_cmp(&a.1.last_visit.unwrap_or(0.0)));
+    cat.visits
+        .sort_by(|a, b| b.1.last_visit.unwrap_or(0.0).total_cmp(&a.1.last_visit.unwrap_or(0.0)));
     let mut titles = HashSet::new();
     cat.visits.retain(|(i, _)| titles.insert(history[*i].title.clone()));
     for (_, v) in &mut cat.visits {
