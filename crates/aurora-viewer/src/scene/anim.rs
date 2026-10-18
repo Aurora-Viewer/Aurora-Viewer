@@ -112,6 +112,13 @@ impl Rig {
         self.parent.len()
     }
 
+    /// LLSkinningUtil::initJointNums (indra/newview/llskinningutil.cpp):
+    /// older meshes may name missing joints; keep their inverse bind and
+    /// resolve them to the pelvis rather than an unposed identity matrix.
+    pub(crate) fn skin_joint(&self, name: &str) -> usize {
+        self.names.get(name).copied().unwrap_or(self.pelvis)
+    }
+
     fn name_tag_height(&self, pos: &[Vec3], scale: &[Vec3], delta: &[f32], pelvis_offset: f32) -> Option<f32> {
         if self.tag_chain.is_empty() {
             return None;

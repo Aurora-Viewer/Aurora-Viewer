@@ -1419,6 +1419,14 @@ To check with these scenarios:
   gives avatars as heavy as those of the grid (3.6 million
   triangles on screen for 16 avatars drawn in full), which is what is needed
   to measure the passes that redraw the avatars (shadows, prepass).
+
+Rigged mesh compatibility (#586): the `rigged_skin_parity` regression tests
+exercise unknown-joint pelvis fallback, preservation of inverse binds and
+bounded vertex indices. Check ordinary worn meshes and ground/worn animesh
+with `AURORA_DEMO_ANIMESH=1`. Human grid validation must compare the reported
+Solarian Feline with the Legacy Viewer: the face at rest and in motion,
+near/far LOD changes, detach/reattach and the appearance previews. Synthetic
+tests do not establish that this report uses an invalid joint or index.
 - **`AURORA_DEMO_CLOUD=1|self`**: `1` enables offline the clouds and the
   loading bars. `self` also dresses our avatar like those that
   stayed a cloud for the 60 s of the limit (issue #121): invisible head

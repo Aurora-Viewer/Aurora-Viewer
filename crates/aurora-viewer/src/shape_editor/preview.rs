@@ -407,11 +407,7 @@ impl Snapshot {
         for mesh in &self.meshes {
             let faces = &mesh.faces;
             let binding = mesh.skin.as_ref().filter(|skin| !skin.joint_names.is_empty()).map(|skin| {
-                let joints: Vec<_> = skin
-                    .joint_names
-                    .iter()
-                    .map(|n| rig.names.get(n).copied().unwrap_or(rig.len()))
-                    .collect();
+                let joints: Vec<_> = skin.joint_names.iter().map(|n| rig.skin_joint(n)).collect();
                 let inverse: Vec<_> = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect();
                 let rest = joints
                     .iter()
@@ -557,6 +553,43 @@ mod tests {
             meshes: Vec::new(),
             pose: Default::default(),
         }
+    }
+
+    #[test]
+    fn rigged_skin_parity_appearance_hint_uses_the_same_pelvis_fallback() {
+        let library = AvatarLibrary::load();
+        let mut snapshot = empty();
+        snapshot.meshes.push(Mesh {
+            asset: Uuid::from_u128(1),
+            faces: Arc::new(vec![aurora_assets::MeshFace {
+                positions: vec![[0.0, 0.0, 1.8], [0.1, 0.0, 1.8], [0.0, 0.1, 1.8]],
+                indices: vec![0, 1, 2],
+                joints: vec![[0; 4]; 3],
+                weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
+                ..Default::default()
+            }]),
+            geometry: Arc::new(Vec::new()),
+            skin: Some(Arc::new(aurora_assets::SkinInfo {
+                joint_names: vec!["obsolete_joint".into()],
+                inverse_bind: vec![Mat4::from_translation(Vec3::new(0.1, 0.2, -0.3))],
+                bind_shape: Mat4::from_translation(Vec3::Z * 0.2),
+                ..Default::default()
+            })),
+            rigid: None,
+            appearance: vec![Face {
+                textures: [Uuid::nil(); 4],
+                material: Material::default(),
+                alpha_explicit: false,
+            }],
+        });
+        let unknown = snapshot.model(&library, &[], &BTreeMap::new(), 1, 0.0);
+        Arc::make_mut(snapshot.meshes[0].skin.as_mut().unwrap()).joint_names[0] = "mPelvis".into();
+        let canonical = snapshot.model(&library, &[], &BTreeMap::new(), 1, 0.0);
+        let binding = unknown.parts.last().unwrap().skin.as_ref().unwrap();
+        let expected = canonical.parts.last().unwrap().skin.as_ref().unwrap();
+        assert_eq!(binding.joints, expected.joints);
+        assert_eq!(binding.inverse_bind, expected.inverse_bind);
+        assert_eq!(binding.rest, expected.rest);
     }
     fn scene(library: Arc<AvatarLibrary>) -> Scene {
         Scene::new(std::env::temp_dir().join(format!("aurora-shape-hints-{}", Uuid::new_v4())), library)
