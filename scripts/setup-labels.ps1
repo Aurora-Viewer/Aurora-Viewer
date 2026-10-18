@@ -1,9 +1,10 @@
 ﻿<#
 .SYNOPSIS
-    Creates (or updates) the PR and issue labels on GitHub: types, areas,
-    tracking and priority. Keeps the other labels and their history. A label
-    still under its former French name (Was) is renamed, so the PRs and
-    issues that carry it keep it. Run again when the list changes.
+    Creates (or updates) the PR labels on GitHub: types and areas. Issues
+    carry no labels: their nature is their issue type (Bug, Feature, Task,
+    Epic; AGENTS.md section 15). Keeps the other labels and their history. A
+    label still under its former French name (Was) is renamed, so the PRs
+    that carry it keep it. Run again when the list changes.
 
 .EXAMPLE
     ./scripts/setup-labels.ps1 -DryRun    # show the changes without making them
@@ -20,11 +21,6 @@ $repo = gh repo view $origin.Trim() --json nameWithOwner --jq .nameWithOwner
 if ($LASTEXITCODE -ne 0 -or -not $repo) { throw 'Could not determine the GitHub repository: no label changed.' }
 
 $labels = @(
-    # reports from testers (public issues)
-    @{ Name = 'bug'; Color = 'F87171'; Desc = 'Problem reported by a user' },
-    @{ Name = 'alpha'; Color = '8B5CF6'; Desc = 'Report from the Aurora alpha test' },
-    @{ Name = 'question'; Color = '38BDF8'; Desc = 'Question about how the viewer works or is used' },
-    @{ Name = 'feature-request'; Color = 'E879F9'; Desc = 'Feature or improvement asked for by a user' },
     # type of change (release notes, .github/release.yml)
     @{ Name = 'feature'; Was = 'nouveauté'; Color = '8B5CF6'; Desc = 'New feature' },
     @{ Name = 'fix'; Was = 'correctif'; Color = 'F87171'; Desc = 'Bug fix' },
@@ -40,21 +36,7 @@ $labels = @(
     @{ Name = 'audio-voice'; Was = 'audio-voix'; Color = 'F472B6'; Desc = 'Sound, music, voice' },
     @{ Name = 'ui'; Was = 'interface'; Color = 'C4B5FD'; Desc = 'Windows, options, usability' },
     @{ Name = 'build-tools'; Was = 'construction'; Color = 'FCD34D'; Desc = 'In-world building and editing tools' },
-    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' },
-    # tracking of an open issue: one state at a time
-    @{ Name = 'needs-triage'; Was = 'à-trier'; Color = 'CBD5E1'; Desc = 'Report to analyse and classify' },
-    @{ Name = 'needs-info'; Was = 'besoin-infos'; Color = 'FCD34D'; Desc = 'Information or attachment needed to go on' },
-    @{ Name = 'needs-repro'; Was = 'à-reproduire'; Color = 'FDBA74'; Desc = 'Analysed, the problem still has to be reproduced' },
-    @{ Name = 'confirmed'; Was = 'confirmé'; Color = 'F87171'; Desc = 'Problem reproduced or cause established by evidence' },
-    @{ Name = 'in-progress'; Was = 'en-cours'; Color = '8B5CF6'; Desc = 'Ownership announced with a linked task or PR' },
-    @{ Name = 'needs-validation'; Was = 'à-valider'; Color = '5EEAD4'; Desc = 'Solution proposed, validation or merge still pending' },
-    # priority of an issue: observed impact, not a promised date
-    @{ Name = 'priority:high'; Was = 'priorité:haute'; Color = 'DC2626'; Desc = 'Major blocker, frequent crash or risk of data loss' },
-    @{ Name = 'priority:normal'; Was = 'priorité:normale'; Color = 'FB923C'; Desc = 'Useful problem or request without a major blocker' },
-    @{ Name = 'priority:low'; Was = 'priorité:basse'; Color = '94A3B8'; Desc = 'Minor annoyance, cosmetic or comfort improvement' },
-    # reasons for closing without a fix
-    @{ Name = 'duplicate'; Was = 'doublon'; Color = 'A1A1AA'; Desc = 'Same problem as another issue linked in the comment' },
-    @{ Name = 'out-of-scope'; Was = 'hors-périmètre'; Color = '64748B'; Desc = 'Request outside the documented scope of the project' }
+    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' }
 )
 
 $existing = @(gh label list --repo $repo --limit 500 --json name --jq '.[].name')
