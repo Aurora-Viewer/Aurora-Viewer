@@ -9,8 +9,10 @@ the standalone window opens the same page; "Copy trace" and "Open report
 folder" give the technical details to paste or attach, after reviewing them
 (the full trace may contain personal paths).
 
-Create the `bug` and `alpha` labels with `scripts/setup-labels.ps1` when
-setting up the repository. The issue templates are in `.github/ISSUE_TEMPLATE/`.
+The issue templates are in `.github/ISSUE_TEMPLATE/`; they set the issue
+type (Bug or Feature), and issues carry no labels. The disabled form below
+still sends the former `bug` and `alpha` labels (`bug_report/github.rs`):
+switch it to the Bug type when it is brought back.
 
 ## The built-in form (disabled)
 

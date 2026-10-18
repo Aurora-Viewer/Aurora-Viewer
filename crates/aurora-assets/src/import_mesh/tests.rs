@@ -73,6 +73,91 @@ fn gltf_cycles_missing_accessor_data_and_singular_transform_are_rejected() {
     assert!(gltf::attribute::<3>(&document, 0).is_err());
 }
 
+fn collada_objects(visual: &str, rigged: bool) -> String {
+    let mut geometries = String::new();
+    let mut controllers = String::new();
+    for id in ["a", "b"] {
+        geometries.push_str(&format!(r##"<geometry id="{id}" name="{id}"><mesh>
+<source id="{id}-pos"><float_array count="9">0 0 0 1 0 0 0 1 0</float_array><technique_common><accessor count="3" stride="3"/></technique_common></source>
+<vertices id="{id}-verts"><input semantic="POSITION" source="#{id}-pos"/></vertices>
+<triangles count="1"><input semantic="VERTEX" source="#{id}-verts"/><p>0 1 2</p></triangles></mesh></geometry>"##));
+        if rigged {
+            controllers.push_str(&format!(r##"<controller id="{id}-skin"><skin source="#{id}">
+<source id="{id}-joints"><Name_array count="1">mPelvis</Name_array></source>
+<source id="{id}-bind"><float_array count="16">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array><technique_common><accessor count="1" stride="16"/></technique_common></source>
+<source id="{id}-weights"><float_array count="1">1</float_array><technique_common><accessor count="1" stride="1"/></technique_common></source>
+<joints><input semantic="JOINT" source="#{id}-joints"/><input semantic="INV_BIND_MATRIX" source="#{id}-bind"/></joints>
+<vertex_weights count="3"><input semantic="JOINT" source="#{id}-joints" offset="0"/><input semantic="WEIGHT" source="#{id}-weights" offset="1"/><vcount>1 1 1</vcount><v>0 0 0 0 0 0</v></vertex_weights>
+</skin></controller>"##));
+        }
+    }
+    format!(
+        r##"<COLLADA><asset><unit meter="1"/><up_axis>Z_UP</up_axis></asset>
+<library_geometries>{geometries}</library_geometries><library_controllers>{controllers}</library_controllers>
+<library_visual_scenes><visual_scene id="scene">{visual}</visual_scene></library_visual_scenes><scene><instance_visual_scene url="#scene"/></scene></COLLADA>"##
+    )
+}
+
+#[test]
+fn collada_multiple_objects_keep_geometry_instances_and_nested_transforms() {
+    let document = collada_objects(
+        r##"<node name="parent"><translate>2 3 4</translate>
+<node name="first"><instance_geometry url="#a"/></node>
+<node name="second"><translate>5 0 0</translate><instance_geometry url="#b"/></node>
+<node name="repeated"><translate>0 6 0</translate><instance_geometry url="#a"/></node></node>"##,
+        false,
+    );
+    let scene = collada::parse(document.as_bytes(), &crate::Skeleton::default()).expect("multi-object scene");
+    assert_eq!(scene.models.len(), 2);
+    assert_eq!(scene.instances.len(), 3);
+    assert_eq!(scene.instances.iter().map(|i| i.model).collect::<Vec<_>>(), [0, 1, 0]);
+    for (instance, expected) in scene.instances.iter().zip([[2.0, 3.0, 4.0], [7.0, 3.0, 4.0], [2.0, 9.0, 4.0]]) {
+        let model = &scene.models[instance.model];
+        let position = instance
+            .transform
+            .transform_point3(Vec3::from_array(model.faces[0].vertices[0].position));
+        assert!((position - Vec3::from_array(expected)).length() < 0.00001);
+    }
+}
+
+#[test]
+fn collada_skin_libraries_load_without_scene_instances_and_do_not_duplicate_explicit_controllers() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    for visual in [
+        "<node id=\"mPelvis\" type=\"JOINT\"/>",
+        r##"<node id="mPelvis" type="JOINT"/><node><translate>2 3 4</translate><instance_controller url="#a-skin"/></node>"##,
+    ] {
+        let document = collada_objects(visual, true);
+        let scene = collada::parse(document.as_bytes(), &skeleton).expect("library-only skin controllers");
+        assert_eq!(scene.models.len(), 2);
+        assert_eq!(scene.instances.len(), 2);
+        assert!(scene.models.iter().all(|m| m.skin.as_ref().is_some_and(|s| s.names == ["mPelvis"])));
+        assert!(
+            scene
+                .models
+                .iter()
+                .flat_map(|m| &m.faces)
+                .flat_map(|f| &f.vertices)
+                .all(|v| v.weights == [1.0, 0.0, 0.0, 0.0])
+        );
+        assert!(scene.warnings.is_empty());
+        let first = &scene.models[scene.instances[0].model];
+        let point = scene.instances[0]
+            .transform
+            .transform_point3(Vec3::from_array(first.faces[0].vertices[0].position));
+        assert!(
+            (point
+                - if visual.contains("instance_controller") {
+                    Vec3::new(2.0, 3.0, 4.0)
+                } else {
+                    Vec3::ZERO
+                })
+            .length()
+                < 0.00001
+        );
+    }
+}
+
 fn cube() -> Model {
     let vertices = [-0.5f32, 0.5]
         .into_iter()

@@ -209,6 +209,7 @@ fn metadata_controls(
     picker: &mut destination::Picker,
     demo: bool,
 ) {
+    let mesh = matches!(entry.source, Some(Source::Mesh(_)));
     egui::Grid::new("import_metadata")
         .num_columns(2)
         .spacing(Vec2::new(12.0, 8.0))
@@ -216,7 +217,7 @@ fn metadata_controls(
             ui.label(aurora_i18n::tr!("common-name"));
             ui.add(
                 egui::TextEdit::singleline(&mut entry.name)
-                    .desired_width((ui.available_width() - 100.0).clamp(120.0, 360.0))
+                    .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
                     .char_limit(63),
             );
             ui.end_row();
@@ -224,7 +225,7 @@ fn metadata_controls(
                 ui.label(aurora_i18n::tr!("common-description"));
                 ui.add(
                     egui::TextEdit::singleline(&mut entry.description)
-                        .desired_width((ui.available_width() - 100.0).clamp(120.0, 360.0))
+                        .desired_width((ui.available_width() - if mesh { 0.0 } else { 100.0 }).clamp(120.0, 360.0))
                         .char_limit(127),
                 );
                 ui.end_row();
@@ -775,7 +776,7 @@ fn map_label(slot: usize) -> &'static str {
     }
 }
 fn camera_hint(ui: &mut egui::Ui, p: &Palette) {
-    ui.label(RichText::new(aurora_i18n::tr!("import-preview-gestures")).small().color(p.muted));
+    ui.label(RichText::new(aurora_i18n::tr!("import-preview-gestures")).color(p.muted));
 }
 fn preview_camera_controls(ui: &mut egui::Ui, p: &Palette, view: &mut aurora_render::preview::View) -> egui::Response {
     let response = action_button(

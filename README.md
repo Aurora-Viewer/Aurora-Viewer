@@ -91,12 +91,33 @@ are planned or in progress: they are not in the viewer yet.
 - **A graphics card that finally does the work.** It decides by itself what
   is visible and draws thousands of objects in a handful of calls, while a
   dedicated render thread keeps the frames coming.
+- **Faster arrivals**: what you are looking at downloads first, and after a
+  teleport the region shows about a second sooner.
+- **Fewer hitches in a crowd**: avatars, their outfits and changing
+  materials are updated without the little stutters of a busy place.
+- **It holds on**: a network blip no longer logs you out (Aurora reconnects
+  you right where you were), and a full video memory no longer freezes the
+  viewer.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
   graphics card.
-- **Graphics presets matched to your machine**, chosen at first launch,
-  with per-section resets when you want to start over.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Even faster arrivals**: what you are looking at loads first, with fewer
-  round trips to the first pixels.
+
+### A sharper, richer picture
+
+- **Modern ambient occlusion (GTAO)**: soft, accurate shading in corners,
+  under furniture and around avatars, which also keeps reflections out of
+  the places light cannot reach.
+- **Sun contact shadows**: the small shadows that ground feet, objects and
+  folds, where shadow maps are too coarse.
+- **Clean sun shadows**: no hatching, no stair steps along curved surfaces.
+- **Highlights that hold still**: specular anti-aliasing stops shiny
+  surfaces from shimmering as you move.
+- **Details that stay**: normal maps keep their full strength, foliage,
+  fences and hair stay solid in the distance, and textures load as finely as
+  you expect close to the camera.
+- **Graphics levels matched to your machine**, chosen at first launch: GTAO
+  from Medium up, contact shadows from High, screen-space indirect light
+  (experimental) in Deluxe with a 192 m draw distance; per-section resets
+  when you want to start over.
 
 ### The Second Life you know
 
@@ -106,7 +127,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Nothing to relearn.** The rules, options and defaults you are used to,
   down to the chat commands of the built-in Animation Overrider.
 - **Voice, IMs, groups and offline messages**, with a conversation history
-  you can search, kept on your disk only.
+  you can search, kept on your disk only. Voice comes with noise
+  suppression, echo cancellation and gain control, a speaking glow that
+  follows each voice, and a resident's volume at the top of their menu.
 - **A well-behaved client.** Aurora speaks to the servers the way they
   expect: same messages, same request rates.
 - **Shape editing**, with 82 body and face controls, textured mesh previews
@@ -119,21 +142,45 @@ are planned or in progress: they are not in the viewer yet.
   personal previews and parcel or region environment settings.
 - **Smoother avatars**: movement of the people around you extrapolated and
   smoothed between two server updates.
+- **Mouselook that plays right**: hold the right button to zoom, and
+  scripted weapons and HUDs hear your clicks.
+- **Little comforts**: walk backward without turning around, log back in
+  still flying, and animations pause while you edit an attachment.
+- **Run your land**: a complete Region / Estate window (people and bans,
+  interventions, scripts and physics with Top scripts / Top colliders,
+  environment, experiences, covenant, telehub and terrain), in the Aurora
+  layout or the classic eight tabs.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **RLVa and the clothing editors.**
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **A full pass on water**, and PBR terrain.
 
 ### An interface made for today
 
 - **Flat, calm and readable**: glass island bars, a notification center with
-  history, messenger-style conversations and a redesigned performance window.
+  history, the Inter font throughout and a redesigned performance window.
+- **Conversations made for today**: a Contacts tab, conversations you can
+  reorder, group pictures, and nearby chat as cards with the speaker's
+  picture.
+- **Emoji at your fingertips**: a keyboard-friendly picker with shortcodes
+  like `:heart:`, and Windows Alt codes in every text field. Ctrl+Up brings
+  back what you sent, per conversation.
+- **Your choice, window by window**: every redesigned window keeps its
+  Legacy layout one click away in Preferences › Aurora (bars, people,
+  chat lines, About Land, Region / Estate, photos, controls and more).
 - **Arrange it your way**: customizable bottom, left and right toolbars,
-  favourites in a menu, row or dock, and classic Legacy layouts available
-  in Preferences › Aurora.
+  favourites in a menu, row or dock, and windows that move over the whole
+  screen.
+- **Right-click menus that do it all**: Inspect an avatar, Derender and the
+  asset blacklist, invite to a group, add to a contact set, block particles,
+  give a calling card, and the object menus' entries working as you expect.
 - **A quick library** (`Ctrl+Space`): textures, PBR materials, objects, animations,
   sounds, notecards, landmarks and scripts from `#Aurora/Aurora Library`, with
   search, folders, favourites and recent use. Check several actual item types
   at once; folder names are only conventions. Objects can be dragged into the
   world to rez, while documents and media use their native editors and players.
+- **Notecards in Markdown**: read them formatted, or edit the source beside a
+  live preview, with LSL colouring for the code you share.
+- **Outfits at hand**: the outfit menu on the outfit folders, and a
+  double-click in the inventory to put something on or take it off.
 - **People and places at a glance**: redesigned resident and group profiles,
   a People window for friends, groups, contact sets, recent and blocked
   residents, and a world map with floating controls.
@@ -203,14 +250,17 @@ The texture memory budget is set automatically from the detected VRAM.
 ## What works today
 
 - **Rendering** — wgpu / Vulkan, bindless textures, multi-draw-indirect,
-  PBR and legacy materials, shadows, reflection probes, water, glow,
-  particles, rainbows, 22° halos and depth of field; GPU occlusion
-  (experimental), graphics presets and per-section resets.
+  PBR and legacy materials, shadows, GTAO ambient occlusion with specular
+  occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
+  water, glow, particles, rainbows, 22° halos and depth of field;
+  screen-space indirect light and GPU occlusion (both experimental),
+  graphics presets and per-section resets.
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
   a shape editor with textured mesh previews, manual and automatic hover
   height, rebake, skeleton reset and animation controls; gestures with
-  playback, editing, chat triggers and shortcuts.
+  playback, editing, chat triggers and shortcuts; mouselook zoom on the
+  right button and script controls for weapons and HUDs.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack.
@@ -218,21 +268,24 @@ The texture memory budget is set automatically from the detected VRAM.
   the profile feed; depth of field, a maximum-quality photo mode with 8× MSAA,
   temporary lighting controls, keyboard free camera and a combined camera /
   movement Controls window.
-- **Social** — local chat, messenger-style IMs and group conversations,
-  resident profiles, the People window, contact sets, blocking, notifications
+- **Social** — local chat as cards or classic lines, messenger-style IMs and
+  group conversations with a Contacts tab, resident profiles, the People
+  window, contact sets, blocking, notifications
   with history and friend/IM alerts; searchable conversation history kept on
   disk per account and grid in the Legacy Viewer's text format, and offline messages.
 - **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
-  invitations, adding participants and per-participant call volume.
+  invitations, adding participants and per-participant call volume; echo
+  cancellation, automatic gain and noise suppression on the microphone.
 - **Groups** — creation, invitations, notices, roles, abilities, member
   moderation, bans, land contributions, L$ accounts and experiences.
 - **Land and regions** — redesigned About Land, land purchasing, landmarks,
-  Region / Estate overview and management controls, parcel / region
+  the complete Region / Estate window (Aurora or classic eight tabs) with
+  Top scripts / Top colliders, parcel script information, parcel / region
   environments, experience permission prompts and region restart alerts.
 - **Inventory and commerce** — inventory tools, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — flat Aurora theme, Tabler icons, glass island bars,
+- **Interface** — flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, mini-map,
   world map, preferences and debug overlays; double-click walk / run /
   teleport and content-rating controls for places and teleport offers.
@@ -303,9 +356,10 @@ while keeping their saved local sizes.
 
 ### Animation Overrider (AO)
 
-The **AO** button of the bottom bar opens the built-in Animation Overrider.
-Sets are kept under `#Firestorm/#AO`; import a ZHAO notecard from the same
-folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /
+The **AO** button of the bottom bar opens the built-in Animation Overrider,
+with its movement editor. Sets are kept under `#Aurora/Aurora AO`; at first
+start, the sets of a Legacy Viewer `#Firestorm/#AO` folder are brought over.
+Import a ZHAO notecard from the same folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /
 `cao off` turn it on or off; `cao sit` toggles the sit, `cao sit off` replaces
 the sit and `cao sit on` keeps the standard sit, like the Legacy Viewer. The demo
 scenario is described in
@@ -452,6 +506,10 @@ files never leave the machine and are never attached to a bug report.
 - Same look as the Legacy Viewer: PBR and legacy materials, EEP sky, shadows,
   reflection probes, mirrors, water, glow and particles, checked side by
   side on the main grid.
+- Then modern screen-space techniques on top: GTAO ambient occlusion
+  (XeGTAO) with bent-normal specular occlusion, contact shadows, specular
+  anti-aliasing, coverage-preserving mips for cut-out textures and
+  per-vertex MikkTSpace tangents.
 
 ## Build
 

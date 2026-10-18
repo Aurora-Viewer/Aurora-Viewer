@@ -18,7 +18,7 @@ done with [the Aurora tools](#the-aurora-tools-aurora-toolscmd).
 | Launch the viewer for you to test | **Log in and test on the AGNI grid** (they never do) |
 | Open the PR, review it, fix, comment, **merge it** | Decide when the agent asks you to (verdict ⚠️ or ❌) |
 | Keep TASKS.md up to date, publish the releases | **Ask** for a release when you want one ("release 0.4.0") |
-| Read the issues and their screenshots / files, analyse them, label them, reply and close them once resolved | Give the details and validations needed, decide the product choices |
+| Read the issues and their screenshots / files, analyse them, set their type, reply and close them once resolved | Give the details and validations needed, decide the product choices |
 | Answer your questions on what is left to do, the issues and the PRs from fresh data (`origin/main`, GitHub), never from memory | Ask whenever you want a status |
 
 You have **nothing to do on GitHub**: your only job is to test what the agent
@@ -79,14 +79,15 @@ a review or that left the queue.
   one's way around.
 - **Screenshots**: the images of the PRs are stored on the `captures` branch
   (it contains nothing else).
-- **Issues**: the agents also read the screenshots and attached files, sort
-  the reports by nature, area, tracking and priority, then reply directly on
-  GitHub. `bug` designates the report, `fix` the PR. An issue stays open if
-  information or a validation is missing; it is closed after a verified
-  resolution and merge, or with an explanation for a duplicate / an
-  out-of-scope request. The rules and labels are detailed in
-  [AGENTS.md](AGENTS.md#15-github-issues-read-analyse-label-reply-and-close)
-  and created by `scripts/setup-labels.ps1`, which keeps the other labels.
+- **Issues**: the agents also read the screenshots and attached files, set
+  each report's type (Bug, Feature, Task or Epic; issues carry no labels),
+  then reply directly on GitHub. A Bug is the report, `fix` the PR. An issue
+  stays open if information or a validation is missing; it is closed after a
+  verified resolution and merge, or with an explanation for a duplicate / an
+  out-of-scope request. The rules are detailed in
+  [AGENTS.md](AGENTS.md#15-github-issues-read-analyse-type-reply-and-close);
+  the PR labels are created by `scripts/setup-labels.ps1`, which keeps the
+  other labels.
 - **Dependabot** opens dependency update PRs every week; an agent can check
   them for you, and merges them if you agree.
 - **The wiki** is generated: after each merge that touches a guide, a

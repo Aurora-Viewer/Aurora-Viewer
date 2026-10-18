@@ -143,10 +143,10 @@ pub(super) fn show(
                 Vec2::new((ui.available_width()).max(260.0), height),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
-                    let mut details = egui::ScrollArea::vertical().id_salt("import_details").max_height(height);
-                    if imports.demo_mode == "mesh-options" {
-                        details = details.vertical_scroll_offset(0.0);
-                    }
+                    let mesh_inspector = imports
+                        .active
+                        .and_then(|id| imports.entries.iter().find(|e| e.id == id))
+                        .is_some_and(|entry| !entry.local && matches!(entry.source, Some(Source::Mesh(_))));
                     // the details stay in their column: while the scroll bar
                     // slides in, rows a frame behind its strip would otherwise
                     // widen the window a little each frame
@@ -157,7 +157,7 @@ pub(super) fn show(
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                     );
                     column_ui.set_clip_rect(column.intersect(ui.clip_rect()));
-                    details.show(&mut column_ui, |ui| {
+                    let mut show_details = |ui: &mut egui::Ui| {
                         let detail_top = ui.cursor().top();
                         if let Some(entry) = imports.active.and_then(|id| imports.entries.iter_mut().find(|e| e.id == id)) {
                             apply_preview_colors(&mut entry.view, p, prefs);
@@ -179,19 +179,31 @@ pub(super) fn show(
                                 actions.push(Action::RestoreDraft(entry.id));
                             }
                             ui.add_enabled_ui(!busy && matches!(entry.status, Status::Ready), |ui| {
-                                metadata_controls(
-                                    ui,
-                                    p,
-                                    entry,
-                                    &world.inventory,
-                                    &inventory_prefs.protected,
-                                    &mut imports.destination,
-                                    imports.demo_mode == "destination",
-                                );
-                                ui.add_space(12.0);
+                                if !matches!(entry.source, Some(Source::Mesh(_))) {
+                                    metadata_controls(
+                                        ui,
+                                        p,
+                                        entry,
+                                        &world.inventory,
+                                        &inventory_prefs.protected,
+                                        &mut imports.destination,
+                                        imports.demo_mode == "destination",
+                                    );
+                                    ui.add_space(12.0);
+                                }
                                 if matches!(entry.source, Some(Source::Mesh(_))) {
                                     let remaining_height = (height - (ui.cursor().top() - detail_top)).max(100.0);
-                                    mesh_panel::show(ui, p, entry, prefs, actions, remaining_height);
+                                    mesh_panel::show(ui, p, entry, prefs, actions, remaining_height, |ui, entry| {
+                                        metadata_controls(
+                                            ui,
+                                            p,
+                                            entry,
+                                            &world.inventory,
+                                            &inventory_prefs.protected,
+                                            &mut imports.destination,
+                                            false,
+                                        );
+                                    });
                                 } else if let Some(source) = &mut entry.source {
                                     match source {
                                         Source::Texture(image) => texture(
@@ -391,7 +403,17 @@ pub(super) fn show(
                                 ui.label(RichText::new(aurora_i18n::tr!("import-empty")).color(p.muted));
                             });
                         }
-                    });
+                    };
+                    if mesh_inspector {
+                        // Mesh owns a bounded viewport between its header and summary.
+                        // An outer scroll bar would feed its width back into that layout.
+                        show_details(&mut column_ui);
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .id_salt("import_details")
+                            .max_height(height)
+                            .show(&mut column_ui, show_details);
+                    }
                     ui.allocate_rect(column_ui.min_rect().intersect(column), egui::Sense::hover());
                 },
             );
@@ -496,7 +518,8 @@ pub(super) fn dimensions(choice: Choice) -> (Vec2, Vec2) {
         Choice::Texture => (Vec2::new(820.0, 630.0), Vec2::new(740.0, 560.0)),
         Choice::Animation => (Vec2::new(780.0, 700.0), Vec2::new(760.0, 620.0)),
         Choice::Material => (Vec2::new(580.0, 790.0), Vec2::new(560.0, 720.0)),
-        Choice::Mesh | Choice::Local => (Vec2::new(900.0, 720.0), Vec2::new(880.0, 580.0)),
+        Choice::Mesh => (Vec2::new(1040.0, 720.0), Vec2::new(1020.0, 580.0)),
+        Choice::Local => (Vec2::new(900.0, 720.0), Vec2::new(880.0, 580.0)),
         Choice::Bulk => (Vec2::new(900.0, 760.0), Vec2::new(880.0, 580.0)),
     }
 }

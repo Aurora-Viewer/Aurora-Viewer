@@ -1,7 +1,6 @@
 name: Feature Request
 description: Suggest a feature or an improvement for Aurora Viewer
-title: "[Feature]: "
-labels: ["FEATURE REQUEST"]
+type: Feature
 body:
   - type: textarea
     id: what-you-would-like

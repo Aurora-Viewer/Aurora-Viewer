@@ -2227,7 +2227,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Check each dedicated window and its filtered file list, then Multiple's
   complete tabs. Permissions belong only to Settings. First-opened windows
   have the same top-left position; moved windows retain their placement.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
@@ -2344,6 +2344,39 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   avatar. The slider and the pose must stay fixed until Resume.
   `AURORA_DEMO_IMPORT_FILE` replaces the fixtures with an existing file,
   read without modification; choose the mode matching its type.
+
+
+### Import inspector layout
+
+`AURORA_DEMO_IMPORTS=mesh-avatar|mesh-avatar-rigged|mesh-journal` opens the
+complete Avatar or Journal tab of the native import window. The rigged mode
+uses a synthetic weighted cube and the ordinary geometry/preview worker.
+`mesh`, `mesh-options` and `mesh-physics` exercise the compact LOD rows,
+Options and the two-step collision workflow. Check the metadata/preview
+header, vertical tools/settings popup, five tabs and fixed model/fee summary.
+All mesh-inspector text must use at least the normal checkbox-label size,
+including gesture help, LOD results/percentages, collision captions, Avatar
+counts and quote metrics. Check that LOD rows remain on one line in the wider
+mesh window and collision captions wrap without reducing their font size. Also
+open the mesh inspector in a short viewer window at 100% and fractional Windows
+DPI, then leave it untouched on each tab, including Collisions before/after a
+fee quote. The frame, preview and summary must settle without manually resizing;
+scrolling the tab content must leave the header and summary fixed, with no
+second outer details scroll bar.
+Avatar exposes dependent weights/positions/scale-lock controls, -3..3 m Z
+offset, selectable joints and read-only per-model positions/conflicts.
+Journal contains actual load/preparation/validation messages. Detailed mode
+affects subsequent diagnostics, never filters existing history; calculation
+starts a fresh log and warnings mark its tab. No grid connection is needed
+for these automated captures.
+`AURORA_DEMO_IMPORTS=mesh-multiple` loads three separated objects from one
+Collada file through the ordinary loader. All three must appear in the preview
+and in the instance count; fee calculation and the final transfer retain the
+same instance list. With `AURORA_DEMO_IMPORT_FILE`, also check a rigged Collada
+whose skin controller has no scene instance: the model must load rather than
+show a file error. On the grid, upload a single mesh and a multi-object file;
+the completed object must appear in inventory with no false verification
+failure. Grid validation and any paid upload are performed by the human.
 
 - **Local import fixtures**: the ignored test
   `local_asset_directory_loads_and_prepares_supported_files` reads the folder
@@ -4107,7 +4140,7 @@ What the inventory must show with these scenarios:
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
-| `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, as before, not their avatar's |
+| `AURORA_WORN_RANK=avatar` | Meshes worn by other avatars downloaded in the rank of their avatar, not their own size (off by default) |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
 | `AURORA_SYNC_SLOW=<ms>` | The steps of each frame whose scene sync is slower than `ms` |
@@ -4520,11 +4553,13 @@ What the inventory must show with these scenarios:
   - In demo: `AURORA_DEMO_CROWD=52,200` with `AURORA_DEMO_ANIMESH=1` and
     `AURORA_DEMO_STREAM=6000,6000,leave` (19,500 objects, then 13,500),
     `AURORA_FPS_LIMIT=500`.
-- **`AURORA_WORN_RANK=own`**: a mesh worn by another avatar waits in the
-  download queue in the rank of its own prim scale until its header says
-  it is rigged, as before. By default anything worn ranks with the
-  avatar's radius (2.2 m) over its distance, as the Legacy Viewer's
-  `calculate_score` (llmeshrepository.cpp). To compare with
+- **`AURORA_WORN_RANK=avatar`**: anything worn by another avatar ranks in
+  the download queue with the avatar's radius (2.2 m) over its distance,
+  as the Legacy Viewer's `calculate_score` (llmeshrepository.cpp). By
+  default a worn mesh ranks by its own prim scale until its header says it
+  is rigged: with one request pool for every asset type, the avatar rank
+  let a crowd's worn meshes starve the scenery's textures in a cold-cache
+  arrival. To compare with
   `AURORA_DEMO_ARRIVAL=<folder>,avatars=30,worn=6` (`demo arrival: worn`
   line), or on the grid in a crowd with a cold cache (the `attachments of`
   blocks 40 s after the arrival: `without geometry`).

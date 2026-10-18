@@ -21,16 +21,19 @@ use uuid::Uuid;
 pub(super) const AVATAR_LOD_RADIUS: f32 = 2.2;
 
 /// Radius a mesh is ranked by in the download queue, from its LOD radius.
-/// Anything worn by an avatar ranks as the whole avatar (calculate_score,
-/// llmeshrepository.cpp: rigged or attachment, the avatar's extents),
-/// already before its header tells it is rigged: ranked by its own scale
-/// (a fraction of a metre for a head or its parts), a nearby avatar's
-/// head waited behind the scenery. `AURORA_WORN_RANK=own` ranks them by
-/// their own scale as before, to compare.
+/// `AURORA_WORN_RANK=avatar` ranks anything worn by an avatar as the whole
+/// avatar (calculate_score, llmeshrepository.cpp: rigged or attachment,
+/// the avatar's extents), already before its header tells it is rigged:
+/// ranked by its own scale (a fraction of a metre for a head or its parts),
+/// a nearby avatar's head waits behind the scenery. Off by default: with
+/// one request pool shared by every asset type, a crowd's worn meshes
+/// starved the scenery's textures in a cold-cache arrival at KB (173
+/// textures shown 20 s in instead of 967); it comes back with a pool per
+/// asset type.
 pub(super) fn mesh_rank_radius(lod_radius: f32, worn: bool) -> f32 {
-    static OWN_SCALE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let own_scale = *OWN_SCALE.get_or_init(|| std::env::var("AURORA_WORN_RANK").is_ok_and(|v| v == "own"));
-    rank_radius(lod_radius, worn && !own_scale)
+    static AVATAR_SCALE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let avatar_scale = *AVATAR_SCALE.get_or_init(|| std::env::var("AURORA_WORN_RANK").is_ok_and(|v| v == "avatar"));
+    rank_radius(lod_radius, worn && avatar_scale)
 }
 
 fn rank_radius(lod_radius: f32, worn: bool) -> f32 {

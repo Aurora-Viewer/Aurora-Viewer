@@ -69,6 +69,8 @@ fn mesh_request() -> crate::inventory::mesh_upload::Request {
     crate::inventory::mesh_upload::Request {
         folder: Uuid::from_u128(1),
         texture_folder: Uuid::from_u128(5),
+        name: "Mesh fixture".into(),
+        description: "Test object".into(),
         query: std::sync::Arc::new(vec![1]),
         resources: std::sync::Arc::new(vec![1]),
     }
@@ -104,7 +106,7 @@ async fn mesh_fee_errors_keep_http_and_validation_reasons_without_private_respon
 #[tokio::test]
 async fn failed_mesh_transfer_preserves_the_reason_and_an_uncertain_outcome_without_retrying() {
     let (base, task) = server(|_| vec![(500, llsd_map! {"error"=>llsd_map! {"message"=>"Mesh processing unavailable"}})]).await;
-    let error = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base.clone(), &base, Uuid::nil(), 10, mesh_request())
+    let error = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base.clone(), Uuid::nil(), 10, mesh_request())
         .await
         .expect_err("uncertain outcome");
     let Error::Uncertain(reason) = error else {
@@ -257,31 +259,35 @@ async fn mesh_permission_quote_and_llsd_transfer_create_an_object() {
     let upload = mesh::Request {
         folder: Uuid::from_u128(1),
         texture_folder: Uuid::from_u128(5),
+        name: "Mesh fixture".into(),
+        description: "Test object".into(),
         query: std::sync::Arc::new(aurora_llsd::to_xml(&llsd_map! {"asset_type"=>"mesh"})),
         resources: std::sync::Arc::new(aurora_llsd::to_xml(&resources)),
     };
     let (base,task) = server(|base|vec![(200,llsd_map! {"mesh_upload_status"=>"valid"}),
         (200,llsd_map! {"state"=>"upload","uploader"=>format!("{base}/mesh"),"upload_price"=>17,"data"=>llsd_map! {"resource_cost"=>2.0}}),
-        (200,llsd_map! {"state"=>"complete","new_inventory_item"=>Uuid::from_u128(2),"new_asset"=>asset}), (200,item(6,6,asset))]).await;
+        (200,llsd_map! {"state"=>"complete","new_inventory_item"=>Uuid::from_u128(2),"new_asset"=>asset, "new_next_owner_mask"=>123, "new_group_mask"=>32, "new_everyone_mask"=>16, "inventory_flags"=>256})]).await;
     let client = reqwest::Client::new();
     let offer = mesh::quote(&client, &base, &format!("{base}/permission"), &upload)
         .await
         .expect("quote");
     assert_eq!(offer.cost, 17);
     assert_eq!(offer.data["resource_cost"].as_f64(), 2.0);
-    let receipt = mesh::upload(
-        &client,
-        offer.uploader,
-        &format!("{base}/fetch"),
-        Uuid::from_u128(4),
-        offer.cost,
-        upload,
-    )
-    .await
-    .expect("mesh");
+    let receipt = mesh::upload(&client, offer.uploader, Uuid::from_u128(4), offer.cost, upload)
+        .await
+        .expect("mesh");
     assert_eq!(receipt.item.asset_type, 6);
+    assert_eq!(receipt.item.inv_type, 6);
+    assert_eq!(receipt.item.name, "Mesh fixture");
+    assert_eq!(receipt.item.desc, "Test object");
+    assert_eq!(receipt.item.owner, Uuid::from_u128(4));
+    assert_eq!(receipt.item.next_owner_mask, 123);
+    assert_eq!(receipt.item.group_mask, 32);
+    assert_eq!(receipt.item.everyone_mask, 16);
+    assert_eq!(receipt.item.flags, 256);
     assert_eq!(receipt.cost, 17);
     let requests = task.await.expect("server");
+    assert_eq!(requests.len(), 3, "a completed mesh upload requires no inventory re-read");
     assert!(requests[0].0.starts_with("GET /permission "));
     assert_eq!(aurora_llsd::from_xml(&requests[2].1).expect("resources"), resources);
 }
@@ -292,6 +298,8 @@ async fn mesh_refuses_unqualified_accounts_without_a_fee_query() {
     let upload = mesh::Request {
         folder: Uuid::from_u128(1),
         texture_folder: Uuid::from_u128(5),
+        name: "Mesh fixture".into(),
+        description: "Test object".into(),
         query: std::sync::Arc::new(vec![1]),
         resources: std::sync::Arc::new(vec![1]),
     };
@@ -300,4 +308,45 @@ async fn mesh_refuses_unqualified_accounts_without_a_fee_query() {
         Some(Error::MeshPermission)
     );
     assert_eq!(task.await.expect("server").len(), 1);
+}
+
+#[tokio::test]
+async fn completed_mesh_uses_legacy_creation_defaults_and_never_fetches_or_reuploads() {
+    let asset = Uuid::from_u128(3);
+    let owner = Uuid::from_u128(4);
+    let (base, task) = server(|_| {
+        vec![(
+            200,
+            llsd_map! {"state"=>"complete", "new_inventory_item"=>Uuid::from_u128(2), "new_asset"=>asset},
+        )]
+    })
+    .await;
+    let receipt = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base, owner, 11, mesh_request())
+        .await
+        .expect("confirmed creation");
+    assert_eq!(receipt.item.asset_id, asset);
+    assert_eq!(receipt.item.owner, owner);
+    assert_eq!(receipt.item.creator, owner);
+    assert_eq!(receipt.item.parent, Uuid::from_u128(1));
+    assert_eq!(receipt.item.base_mask, 0x7fff_ffff);
+    assert_eq!(receipt.item.owner_mask, 0x7fff_ffff);
+    assert_eq!(receipt.item.next_owner_mask, Permissions::default().next_owner);
+    assert_eq!((receipt.item.group_mask, receipt.item.everyone_mask), (0, 0));
+    assert_eq!(receipt.cost, 11);
+    assert_eq!(task.await.expect("server").len(), 1);
+}
+
+#[tokio::test]
+async fn incomplete_mesh_acknowledgements_stay_uncertain_without_reuploading() {
+    for ack in [
+        llsd_map! {"state"=>"complete", "new_inventory_item"=>Uuid::from_u128(2)},
+        llsd_map! {"state"=>"upload", "new_inventory_item"=>Uuid::from_u128(2), "new_asset"=>Uuid::from_u128(3)},
+    ] {
+        let (base, task) = server(|_| vec![(200, ack)]).await;
+        let error = crate::inventory::mesh_upload::upload(&reqwest::Client::new(), base, Uuid::from_u128(4), 11, mesh_request())
+            .await
+            .expect_err("unconfirmed creation");
+        assert!(matches!(error, Error::Uncertain(_)));
+        assert_eq!(task.await.expect("server").len(), 1);
+    }
 }

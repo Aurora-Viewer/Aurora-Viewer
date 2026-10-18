@@ -1309,6 +1309,15 @@ pub fn switch_labeled(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: impl
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false)
+}
+
+/// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
+pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, true)
+}
+
+fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
@@ -1322,8 +1331,13 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
         let total: f32 = text_w.iter().sum::<f32>() + gaps;
         let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
         let extra = ((ui.available_width() - total) / n).max(0.0);
+        let even_width = ((ui.available_width() - gaps) / n).max(0.0);
         for (i, (label, enabled)) in labels.iter().enumerate() {
-            let w = text_w[i] * compact + extra.min(40.0);
+            let w = if stretched {
+                even_width
+            } else {
+                text_w[i] * compact + extra.min(40.0)
+            };
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 30.0), if *enabled { Sense::click() } else { Sense::hover() });
             let sel = *selected == i;
             if sel || (resp.hovered() && *enabled) {
