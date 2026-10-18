@@ -265,6 +265,7 @@ fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontD
 
 /// Name of the semi-bold family and of its face.
 const SEMIBOLD: &str = "aurora-semibold";
+const ICON_FALLBACK: &str = "emoji-icon-font";
 
 fn semibold_family() -> egui::FontFamily {
     egui::FontFamily::Name(SEMIBOLD.into())
@@ -287,9 +288,10 @@ pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color3
     format
 }
 
-/// `primary` first for proportional text and after egui's own fonts for
-/// monospace, then the system faces, last in both families: what the
-/// embedded fonts draw keeps its look, only the squares are replaced.
+/// `primary` first for proportional text and after egui's text fonts for
+/// monospace, then the system faces before egui's icon font. That icon
+/// font has fullwidth Latin glyphs with uneven feet; prefer text faces,
+/// as LLFontRegistry::createFont does (indra/newview/fonts/fonts.xml).
 fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> egui::FontDefinitions {
     primary.tweak.y_offset_factor = optical_center_offset(&primary.font);
     let shift = primary.tweak.y_offset_factor;
@@ -302,7 +304,8 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
         f.insert(0, "aurora-main".into());
     }
     if let Some(f) = defs.families.get_mut(&egui::FontFamily::Monospace) {
-        f.push("aurora-main".into());
+        let before_icons = f.iter().position(|name| name == ICON_FALLBACK).unwrap_or(f.len());
+        f.insert(before_icons, "aurora-main".into());
     }
     // the semi-bold family starts as the proportional one: `apply` puts
     // its own face first when it has one
@@ -311,7 +314,8 @@ fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> 
     for face in system {
         defs.font_data.insert(face.key.clone(), Arc::new(face.font_data(row, shift)));
         for family in defs.families.values_mut() {
-            family.push(face.key.clone());
+            let before_icons = family.iter().position(|name| name == ICON_FALLBACK).unwrap_or(family.len());
+            family.insert(before_icons, face.key.clone());
         }
     }
     defs
@@ -520,23 +524,63 @@ mod tests {
     }
 
     #[test]
-    fn system_faces_come_after_the_embedded_fonts_in_both_families() {
+    fn system_text_faces_precede_the_icon_font_in_every_family() {
         let system = fallback::wait();
         let (without, with) = (noto(&[]), noto(system));
         for (family, fonts) in &with.families {
-            // the embedded part of the family is what it was without them
             let embedded = &without.families[family];
-            assert_eq!(&fonts[..embedded.len()], &embedded[..], "{family}");
+            let text_len = embedded.len() - 1;
+            assert_eq!(embedded.last().map(String::as_str), Some(ICON_FALLBACK));
+            assert_eq!(&fonts[..text_len], &embedded[..text_len], "{family}");
             assert!(
-                fonts[embedded.len()..].iter().all(|f| f.starts_with("system:")),
+                fonts[text_len..fonts.len() - 1].iter().all(|f| f.starts_with("system:")),
                 "{family}: {fonts:?}"
             );
+            assert_eq!(fonts.last().map(String::as_str), Some(ICON_FALLBACK));
             assert_eq!(fonts.len() - embedded.len(), system.len(), "{family}");
         }
         assert_eq!(with.families[&egui::FontFamily::Proportional][0], "aurora-main");
         // egui panics on a family that names an unknown font
         for name in with.families.values().flatten() {
             assert!(with.font_data.contains_key(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn fullwidth_latin_uses_text_faces_with_even_feet() {
+        // These flat-footed glyphs sat at different heights in the icon
+        // font, even though the layout gave them one baseline.
+        const LETTERS: &str = "ＡＫａｎｈ";
+        let system = fallback::wait();
+        if !LETTERS.chars().all(|c| system.iter().any(|face| face.has(c))) {
+            eprintln!("no system face for fullwidth Latin: not checked");
+            return;
+        }
+        for builtin in &BUILTINS {
+            for family in [egui::FontFamily::Proportional, semibold_family(), egui::FontFamily::Monospace] {
+                let defs = definitions_for(builtin.name, system);
+                for (c, face) in faces_drawing(defs.clone(), family.clone(), LETTERS) {
+                    assert!(
+                        face.as_deref().is_some_and(|name| name.starts_with("system:")),
+                        "{} {family} {c}: {face:?}",
+                        builtin.name
+                    );
+                }
+                let mut fonts = egui::epaint::Fonts::new(Default::default(), defs);
+                let galley = fonts.with_pixels_per_point(1.0).layout_no_wrap(
+                    LETTERS.into(),
+                    egui::FontId::new(64.0, family.clone()),
+                    egui::Color32::WHITE,
+                );
+                let mut low = f32::INFINITY;
+                let mut high = f32::NEG_INFINITY;
+                for glyph in &galley.rows[0].glyphs {
+                    let foot = glyph.pos.y + glyph.uv_rect.offset.y + glyph.uv_rect.size.y;
+                    low = low.min(foot);
+                    high = high.max(foot);
+                }
+                assert!(high - low <= 64.0 * 0.04, "{} {family}: feet {low}..{high}", builtin.name);
+            }
         }
     }
 
