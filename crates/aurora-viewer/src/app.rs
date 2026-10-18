@@ -6027,6 +6027,7 @@ impl App {
                 Vec::new()
             };
             self.scene.particles.sync_clouds(&clouds);
+            self.scene.drop_rez_clouds(&self.world);
             self.scene
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);

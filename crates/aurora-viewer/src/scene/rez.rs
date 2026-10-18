@@ -300,6 +300,19 @@ fn next_step(
                 Step::Stay
             }
         }
+        Phase::Hologram(_) if avatar => {
+            // an avatar's grid stays until it can really be drawn (the
+            // signal that ends its cloud: `loading.rs`, which shows it by
+            // its own time limit), so the line never ends on a cloud or a
+            // grey body
+            if !loaded {
+                Step::Stay
+            } else if visible {
+                Step::Sweep
+            } else {
+                Step::Drop
+            }
+        }
         Phase::Hologram(_) => {
             let ready = loaded && (!rezzed || in_phase >= MIN_HOLOGRAM);
             if ready || in_phase >= limit {
@@ -484,6 +497,22 @@ impl Scene {
         let distance = g.center.distance(view.eye);
         let visible = !g.hud && distance <= far && view.sphere_visible(g.center, g.radius) && view.pixel_size(g.center, g.radius) >= px;
         (visible, distance)
+    }
+
+    /// The loading clouds of the avatars the effect draws go at once: a
+    /// stopped cloud's particles lived on for seconds over the grid and
+    /// past the line.
+    pub fn drop_rez_clouds(&mut self, world: &crate::world::World) {
+        let ids: Vec<Uuid> = self
+            .rez
+            .units
+            .iter()
+            .filter(|(_, u)| u.avatar && matches!(u.phase, Phase::Hologram(_) | Phase::Sweep(_)))
+            .filter_map(|(&i, _)| world.objects.get(i).map(|o| o.full_id))
+            .collect();
+        if !ids.is_empty() {
+            self.particles.drop_clouds(&mut self.textures, &ids);
+        }
     }
 
     /// Hash of our avatar's bakes, to see its appearance change.
@@ -1105,6 +1134,9 @@ mod tests {
         let h = Phase::Hologram(Instant::now());
         assert_eq!(next_step(h, true, false, false, true, true, S, S), Step::Stay);
         assert_eq!(next_step(h, true, false, true, true, true, S, S), Step::Sweep);
+        // never revealed while still loading, however long it takes
+        let long = AVATAR_LIMIT + S;
+        assert_eq!(next_step(h, true, false, false, true, true, long, long), Step::Stay);
     }
 
     #[test]
