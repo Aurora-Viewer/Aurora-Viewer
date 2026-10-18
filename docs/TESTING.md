@@ -1661,7 +1661,7 @@ To check with these scenarios:
 | `AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]` | Streaming stutter test; with `net=`, textures downloaded from a local server |
 | `AURORA_DEMO_REZ_EFFECT=1\|loop\|styles` | The rez effect: objects and an avatar appearing, dressing and leaving in front of the camera; `styles`: its three looks side by side |
 | `AURORA_REZ_EFFECT=0\|1` | The rez effect off or on, whatever the setting (Preferences › Aurora) |
-| `AURORA_REZ_STYLE=1\|2\|3` | The rez effect's look: grid, scanlines, wireframe (1 by default) |
+| `AURORA_REZ_STYLE=1\|2\|3` | The rez effect's look: grid, scanlines, wireframe (3, the one chosen, by default) |
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |

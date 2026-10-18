@@ -6361,14 +6361,14 @@ impl App {
             selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
             rez_gradient: {
                 // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
-                // wireframe), to compare them
+                // wireframe, the one chosen), to compare them
                 static STYLE: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
                 let style = *STYLE.get_or_init(|| {
                     std::env::var("AURORA_REZ_STYLE")
                         .ok()
                         .and_then(|v| v.trim().parse::<u8>().ok())
                         .filter(|s| (1..=3).contains(s))
-                        .unwrap_or(1) as f32
+                        .unwrap_or(3) as f32
                 });
                 let mut g = self.palette.aurora_gradient().map(|c| egui::Rgba::from(c).to_array());
                 g[0][3] = style;
