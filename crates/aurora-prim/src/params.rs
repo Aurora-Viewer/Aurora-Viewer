@@ -237,7 +237,9 @@ impl VolumeParams {
     }
 
     pub fn is_sculpt(&self) -> bool {
-        self.sculpt.is_some_and(|s| s.kind() != LL_SCULPT_TYPE_NONE && !s.is_mesh())
+        // LLVOVolume::isSculpted / isMesh (indra/newview/llvovolume.cpp):
+        // the active parameter block identifies a sculpt, including subtype 0.
+        self.sculpt.is_some_and(|s| !s.is_mesh())
     }
 
     pub fn is_mesh(&self) -> bool {
@@ -283,6 +285,42 @@ impl VolumeParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sculpt_classification_uses_the_active_block_including_zero_subtype() {
+        let mut volume = VolumeParams::default();
+        assert!(!volume.is_sculpt());
+        assert!(!volume.is_mesh());
+        for texture in [uuid::Uuid::nil(), uuid::Uuid::from_u128(587)] {
+            for flags in [
+                0,
+                LL_SCULPT_FLAG_INVERT,
+                LL_SCULPT_FLAG_MIRROR,
+                LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR,
+            ] {
+                for kind in [
+                    LL_SCULPT_TYPE_NONE,
+                    LL_SCULPT_TYPE_SPHERE,
+                    LL_SCULPT_TYPE_TORUS,
+                    LL_SCULPT_TYPE_PLANE,
+                    LL_SCULPT_TYPE_CYLINDER,
+                ] {
+                    volume.sculpt = Some(SculptParams {
+                        texture,
+                        sculpt_type: kind | flags,
+                    });
+                    assert!(volume.is_sculpt(), "type {}", kind | flags);
+                    assert!(!volume.is_mesh());
+                }
+                volume.sculpt = Some(SculptParams {
+                    texture,
+                    sculpt_type: LL_SCULPT_TYPE_MESH | flags,
+                });
+                assert!(volume.is_mesh());
+                assert!(!volume.is_sculpt());
+            }
+        }
+    }
 
     #[test]
     fn default_box_dequantizes() {

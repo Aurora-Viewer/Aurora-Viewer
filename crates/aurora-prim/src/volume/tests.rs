@@ -400,6 +400,59 @@ fn sculpt_resolution_matches_ll() {
 }
 
 #[test]
+fn sculpt_zero_subtype_samples_distinct_edges_without_sphere_stitching() {
+    for (width, height) in [(64u32, 64u32), (64, 32), (32, 64)] {
+        for components in [3, 4] {
+            let mut pixels = Vec::new();
+            for y in 0..height {
+                for x in 0..width {
+                    pixels.extend_from_slice(&[(x * 255 / (width - 1)) as u8, ((height - 1 - y) * 255 / (height - 1)) as u8, 128]);
+                    if components == 4 {
+                        pixels.push(255);
+                    }
+                }
+            }
+            for flags in [
+                0,
+                LL_SCULPT_FLAG_INVERT,
+                LL_SCULPT_FLAG_MIRROR,
+                LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR,
+            ] {
+                let mut params = torus_params();
+                params.sculpt = Some(SculptParams {
+                    texture: uuid::Uuid::from_u128(587),
+                    sculpt_type: flags,
+                });
+                for &detail in &DETAIL_SCALES {
+                    let mesh = generate_sculpt(&params, detail, width, height, components, &pixels);
+                    check_mesh(&mesh);
+                    assert_eq!(mesh.faces.len(), 1);
+                    let face = &mesh.faces[0];
+                    let reverse = (flags & LL_SCULPT_FLAG_INVERT != 0) != (flags & LL_SCULPT_FLAG_MIRROR != 0);
+                    let mirror = flags & LL_SCULPT_FLAG_MIRROR != 0;
+                    let first_x = if reverse { 0.5 } else { -0.5 } * if mirror { -1.0 } else { 1.0 };
+                    let z = 128.0 / 255.0 - 0.5;
+                    assert!(Vec3::from(face.positions[0]).abs_diff_eq(Vec3::new(first_x, -0.5, z), 1e-6));
+                    assert!(Vec3::from(*face.positions.last().unwrap()).abs_diff_eq(Vec3::new(-first_x, 0.5, z), 1e-6));
+                    let pole_width = face
+                        .positions
+                        .iter()
+                        .filter(|p| (p[1] + 0.5).abs() < 1e-6)
+                        .map(|p| p[0])
+                        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| (lo.min(x), hi.max(x)));
+                    assert!(
+                        (pole_width.1 - pole_width.0 - 1.0).abs() < 1e-6,
+                        "zero subtype must not pinch the pole"
+                    );
+                    assert!(mesh.surface_area > 0.9);
+                    assert!(winding_agreement(face) > 0.99);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn sculpt_top_down_sphere_faces_outward_unless_inverted() {
     let mut p = sphere_params();
     for flags in [
