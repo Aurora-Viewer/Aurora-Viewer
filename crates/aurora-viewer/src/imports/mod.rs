@@ -992,6 +992,9 @@ impl Imports {
                         if let Some(Source::Mesh(draft)) = &mut entry.source
                             && draft.prepared.is_none()
                         {
+                            if let Some(prepared) = &prepared {
+                                draft.inspector.prepared(prepared);
+                            }
                             draft.prepared = prepared;
                         }
                     }
@@ -1000,6 +1003,9 @@ impl Imports {
                     if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.preview_generation == generation) {
                         entry.preview_pending = false;
                         entry.preview_not_before = None;
+                        if let Some(Source::Mesh(draft)) = &mut entry.source {
+                            draft.inspector.push(&error, true);
+                        }
                         entry.preview_error = Some(error.clone());
                         self.message = error;
                     }
@@ -1064,12 +1070,14 @@ impl Imports {
                     {
                         match result {
                             Ok((prepared, upload)) => {
+                                draft.inspector.prepared(&prepared);
                                 draft.prepared = Some(prepared);
                                 entry.model = None;
                                 commands.push(aurora_net::NetCommand::QuoteMesh { request, upload });
                             }
                             Err(error) => {
                                 draft.pending = None;
+                                draft.inspector.push(&error, true);
                                 self.message = error;
                             }
                         }
@@ -1095,10 +1103,15 @@ impl Imports {
                                     draft.lods[3].file = None;
                                     draft.lods[3].path = Some(path.clone());
                                     draft.lods[3].source = mesh::LodSource::File;
+                                    draft.inspector.avatar = Arc::new(mesh::inspector::Avatar::new(&scene));
                                     draft.scene = scene;
                                     draft.images = images;
                                     entry.path = path;
                                 } else if level < 4 {
+                                    draft
+                                        .inspector
+                                        .lod_avatars
+                                        .insert(level, Arc::new(mesh::inspector::Avatar::new(&scene)));
                                     draft.lods[level].file = Some(scene);
                                     draft.lods[level].path = Some(path);
                                     draft.lods[level].source = mesh::LodSource::File;

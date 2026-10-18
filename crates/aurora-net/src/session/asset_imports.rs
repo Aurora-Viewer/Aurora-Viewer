@@ -235,16 +235,15 @@ impl Session<'_> {
     pub(super) fn upload_mesh(&mut self, request: Uuid, token: Uuid) {
         // Consume before spawning. Repeating the command cannot spend twice.
         let pending = self.asset_imports.meshes.lock().remove(&token);
-        let caps = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         let owner = self.agent_id();
         tokio::spawn(async move {
-            let result = if let (Some(pending), Some(fetch)) = (pending, caps) {
+            let result = if let Some(pending) = pending {
                 if pending.started.elapsed() > Duration::from_secs(300) {
                     Err(Error::PriceChanged(None))
                 } else if let Some(offer) = pending.offer {
-                    crate::inventory::mesh_upload::upload(&http, offer.uploader, &fetch, owner, offer.cost, pending.upload).await
+                    crate::inventory::mesh_upload::upload(&http, offer.uploader, owner, offer.cost, pending.upload).await
                 } else {
                     Err(Error::Invalid)
                 }

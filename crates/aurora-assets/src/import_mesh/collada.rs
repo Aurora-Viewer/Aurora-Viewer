@@ -1,5 +1,5 @@
 //! Collada geometry, sources, transforms, skin controllers and material
-//! bindings. Follows LLDAELoader (Firestorm, originally LGPL 2.1).
+//! bindings. Follows LLDAELoader (Legacy Viewer, originally LGPL 2.1).
 
 use super::*;
 use aurora_llsd::xml::{self, Element};
@@ -426,6 +426,47 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
             &mut HashSet::new(),
             0,
         )?;
+    }
+    // LLDAELoader::OpenFile / processDomModel also adds skinned geometry
+    // directly from library_controllers. Some exporters write only the joint
+    // hierarchy in visual_scene, with no instance_controller at all. Route
+    // these implicit instances through the same decoder and normalization;
+    // controllers already instanced by the scene must not be added twice.
+    if let Some(controllers) = child(&root, "library_controllers") {
+        for controller in controllers
+            .elements()
+            .filter(|e| tag(e) == "controller" && child(e, "skin").is_some())
+        {
+            let id = controller.attr("id").ok_or_else(|| AssetError::invalid("Collada controller ID"))?;
+            let uri = format!("#{id}");
+            if geometries.contains_key(&uri) {
+                continue;
+            }
+            let node = Element {
+                name: "node".into(),
+                children: vec![xml::Node::Element(Element {
+                    name: "instance_controller".into(),
+                    attrs: vec![("url".into(), uri)],
+                    ..Default::default()
+                })],
+                ..Default::default()
+            };
+            visit(
+                &node,
+                Mat4::IDENTITY,
+                basis,
+                &ids,
+                &mut floats,
+                &mut geometries,
+                &mut symbols,
+                &materials,
+                default,
+                skeleton,
+                &mut scene,
+                &mut HashSet::new(),
+                0,
+            )?;
+        }
     }
     if scene.models.is_empty() {
         return Err(AssetError::invalid("Collada scene has no mesh geometry"));

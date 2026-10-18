@@ -151,7 +151,7 @@ import-crease-angle = Angle de lissage
 import-convex-only = Enveloppe convexe seule
 import-bounding-box = Boîte englobante
 import-decompose = Analyser en enveloppes convexes
-import-retain = Triangles à conserver
+import-retain = Triangles de collision à conserver
 import-fill-surface = Surface seule
 import-fill-flood = Remplissage par propagation
 import-fill-raycast = Remplissage par rayons
@@ -180,7 +180,7 @@ import-rigging = Déformation par squelette
 import-include-weights = Inclure les poids de skinning
 import-include-joints = Inclure les positions des joints
 import-lock-scale = Verrouiller l’échelle des joints repositionnés
-import-pelvis-offset = Décalage du bassin
+import-pelvis-offset = Décalage Z (élever/abaisser l’avatar)
 import-calculate-fee = Calculer les frais
 import-land-impact = Impact sur le terrain
 import-streaming-cost = Téléchargement
@@ -216,9 +216,9 @@ import-base-flying = Vol
 import-animation-base = Animation de base de l’aperçu
 import-animation-base-help = Animation jouée sur le mannequin en complément du fichier prévisualisé. Ce choix ne modifie pas le fichier importé.
 import-mesh-choose-high = Charger les modèles HIGH…
-import-mesh-section-lods = 1. LOD
-import-mesh-section-physics = 2. Collisions
-import-mesh-section-upload = 3. Import
+import-mesh-section-lods = LOD
+import-mesh-section-physics = Collisions
+import-mesh-section-upload = Options
 import-lods-help = Les LOD réduisent le détail avec la distance : Haut pour les vues proches, Très bas pour les vues lointaines. Utilisez vos fichiers ou générez les niveaux.
 import-lod-preview-help = Afficher ce niveau dans l’aperçu.
 import-lod-count = { $count } triangles
@@ -229,7 +229,7 @@ import-physics-source = Forme de collision
 import-physics-help = Définit les surfaces solides du modèle. Utilisez un fichier simplifié, un LOD ou une forme prédéfinie.
 import-choose-physics = Choisir le fichier de collision…
 import-no-source-file = Aucun fichier choisi
-import-upload-options-help = Réglez les dimensions, les textures et le squelette avant l’import.
+import-upload-options-help = Réglez les dimensions et les textures avant l’import.
 import-physics-preview = Collisions
 import-physics-preview-help = Afficher la forme de collision dans l’aperçu.
 import-preview-camera-help = Glisser : tourner · Maj + glisser ou bouton du milieu : déplacer · Molette : zoomer · Double-clic : réinitialiser
@@ -8285,3 +8285,36 @@ texture-library-types-all = Tous les types
 texture-library-types-none = Désélectionner les types
 texture-library-types-count = { $count } types
 texture-library-open-hint = Double-clic pour ouvrir. Glisser dans le contenu d’un objet, ou Ctrl-glisser sur un objet.
+
+# Import inspector layout and actual model diagnostics.
+import-preview-settings = Options de l’aperçu
+import-section-avatar = Avatar
+import-section-journal = Journal
+import-collision-step-source = Étape 1 : Niveau de détail
+import-collision-step-hulls = Étape 2 : Convertir en enveloppes convexes (facultatif)
+import-collision-results = Résultats — Triangles : { $triangles } · Sommets : { $vertices } · Enveloppes : { $hulls }
+import-collision-results-pending = Résultats — Triangles : N/A · Sommets : N/A · Enveloppes : N/A
+import-avatar-joints = Articulations :
+import-avatar-model = Modèle
+import-avatar-positions = Positions importées pour l’articulation « { $joint } » :
+import-avatar-conflicts = { $count ->
+    [one] { $count } conflit dans
+   *[other] { $count } conflits dans
+    } { $joints ->
+    [one] { $joints } articulation
+   *[other] { $joints } articulations
+    }
+import-avatar-too-many = Trop d’articulations pour le skinning.
+import-avatar-unknown = Le modèle contient des articulations inconnues.
+import-journal-verbose = Afficher le journal détaillé
+import-log-loaded = { $models ->
+    [one] { $models } modèle chargé.
+   *[other] { $models } modèles chargés.
+    }
+import-log-calculating = Calcul des données du modèle.
+import-log-lod-ready = LOD{ $level } : { $triangles } triangles préparés.
+import-log-model-detail = Modèle { $model }, LOD{ $level } : { $vertices } sommets, { $faces } faces.
+
+import-collision-analyze = Analyser
+
+import-fill-mode = Mode de remplissage

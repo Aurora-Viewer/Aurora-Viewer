@@ -151,7 +151,7 @@ import-crease-angle = Crease angle
 import-convex-only = Convex hull only
 import-bounding-box = Bounding box
 import-decompose = Analyze convex hulls
-import-retain = Retained proportion
+import-retain = Collision triangles to retain
 import-fill-surface = Surface only
 import-fill-flood = Flood fill
 import-fill-raycast = Raycast fill
@@ -180,7 +180,7 @@ import-rigging = Rigging
 import-include-weights = Include skin weights
 import-include-joints = Include joint positions
 import-lock-scale = Lock scale for repositioned joints
-import-pelvis-offset = Pelvis offset
+import-pelvis-offset = Z offset (raise/lower the avatar)
 import-calculate-fee = Calculate fees
 import-land-impact = Land impact
 import-streaming-cost = Download
@@ -216,9 +216,9 @@ import-base-flying = Flying
 import-animation-base = Preview base animation
 import-animation-base-help = Animation played on the preview mannequin alongside the selected file. This choice does not modify the imported file.
 import-mesh-choose-high = Load HIGH models…
-import-mesh-section-lods = 1. LOD
-import-mesh-section-physics = 2. Collisions
-import-mesh-section-upload = 3. Upload
+import-mesh-section-lods = LOD
+import-mesh-section-physics = Collisions
+import-mesh-section-upload = Options
 import-lods-help = LODs reduce detail with distance: High for close views, Lowest for distant views. Use your files or generate the levels.
 import-lod-preview-help = Display this level in the preview.
 import-lod-count = { $count } triangles
@@ -229,7 +229,7 @@ import-physics-source = Collision shape
 import-physics-help = Defines the model’s solid surfaces. Use a simplified file, a LOD or a preset shape.
 import-choose-physics = Choose collision file…
 import-no-source-file = No file selected
-import-upload-options-help = Set the dimensions, textures and skeleton before uploading.
+import-upload-options-help = Set the dimensions and textures before uploading.
 import-physics-preview = Collisions
 import-physics-preview-help = Display the collision shape in the preview.
 import-preview-camera-help = Drag: orbit · Shift + drag or middle button: pan · Wheel: zoom · Double-click: reset
@@ -8280,3 +8280,36 @@ texture-library-types-all = All types
 texture-library-types-none = Clear types
 texture-library-types-count = { $count } types
 texture-library-open-hint = Double-click to open. Drag into object contents, or Ctrl-drag onto an object.
+
+# Import inspector layout and actual model diagnostics.
+import-preview-settings = Preview options
+import-section-avatar = Avatar
+import-section-journal = Journal
+import-collision-step-source = Step 1: Level of detail
+import-collision-step-hulls = Step 2: Convert to convex hulls (optional)
+import-collision-results = Results — Triangles: { $triangles } · Vertices: { $vertices } · Hulls: { $hulls }
+import-collision-results-pending = Results — Triangles: N/A · Vertices: N/A · Hulls: N/A
+import-avatar-joints = Joints:
+import-avatar-model = Model
+import-avatar-positions = Position overrides for joint “{ $joint }”:
+import-avatar-conflicts = { $count ->
+    [one] { $count } conflict in
+   *[other] { $count } conflicts in
+    } { $joints ->
+    [one] { $joints } joint
+   *[other] { $joints } joints
+    }
+import-avatar-too-many = Too many joints for skinning.
+import-avatar-unknown = The model contains unknown joints.
+import-journal-verbose = Show detailed logging
+import-log-loaded = { $models ->
+    [one] { $models } model loaded.
+   *[other] { $models } models loaded.
+    }
+import-log-calculating = Calculating model data.
+import-log-lod-ready = LOD{ $level }: { $triangles } triangles prepared.
+import-log-model-detail = Model { $model }, LOD{ $level }: { $vertices } vertices, { $faces } faces.
+
+import-collision-analyze = Analyze
+
+import-fill-mode = Fill mode
