@@ -858,7 +858,7 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
 pub(crate) fn plain_text(text: &str, name: impl Fn(&uuid::Uuid) -> Option<String>) -> String {
     fn piece(seg: &Seg<'_>, name: &dyn Fn(&uuid::Uuid) -> Option<String>, out: &mut String) {
         match seg {
-            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(t),
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) | Seg::App(t, _) => out.push_str(t),
             Seg::Place(_, place) => out.push_str(&place.label),
             Seg::Mention(id) => {
                 out.push('@');
