@@ -258,7 +258,7 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         if(camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){color=apply_fog(color,in.world_pos);}
         return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
     }
-    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy) + wet_light + albedo*water_caustics(in.world_pos,n);
+    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy, true) + wet_light + albedo*water_caustics(in.world_pos,n);
     return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
@@ -620,7 +620,10 @@ fn water_pixel(in: WaterOut) -> vec4<f32> {
     let nl = max(dot(n, l), 0.0);
     let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(n, vv), 1e-3), nl, rough * rough) * nl;
     let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
-    let punctual = clamp(spec * frame.sun_color.rgb * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
+    // a sky with a probe ambiance: waterF.glsl's sunlit_linear (env.rs keeps
+    // it x 3 for the surfaces)
+    let sun_light = select(frame.sun_color.rgb, frame.sun_color.rgb / 3.0, frame.sky_ll.x < 0.5);
+    let punctual = clamp(spec * sun_light * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
 
     var reflectance = min(1.0,df2.x);
     var glint = punctual;
