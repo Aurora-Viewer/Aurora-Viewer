@@ -1113,6 +1113,21 @@ standing selections override every constrained-sit channel at a higher joint
 priority; incomplete, downloading or lower-priority sets leave it waiting.
 No animation is imported/uploaded, and no seat object is rezzed.
 
+**Native rearming (#632):** `AURORA_DEMO_MOVELOCK=native-rearm` repeats the
+native walk/stop cycle with a stale Falling signal at rest from initial
+activation onward. Capture at 550/900/1300: all three stops must be anchored.
+On the grid, enable native sitting at rest, then repeat short
+walk/run taps, jumps/landings, and water-to-land transitions. Include a dry
+platform near the waterline with swimming enabled. A stale falling/finished
+landing signal must not prevent anchoring on physical support. Once the
+simulator confirms sitting, its height change or old airborne signals must
+not release it. Deliberate movement, active swimming/water walking, manual seats
+and region arrival still have priority. The options distinguish waiting for
+region arrival, water movement, airborne motion and another movement controller;
+`native movelock:` log lines record each status change without identifiers.
+Compare push resistance and observer standing cycles on the grid; offline
+controller tests do not simulate Havok.
+
 **Native observer transitions:** `AURORA_DEMO_MOVELOCK=native-cycle` uses
 the same options and complete standing fixture, walks during frames 600–799
 and 1000–1199, and stops otherwise. Capture at 700/1100 while moving and
