@@ -75,8 +75,13 @@ pub(super) fn draw(
     if look.new {
         new_separator(ui, p);
     }
+    let indent = if th.compact { TIME_W + 8.0 } else { GUTTER };
     if let ChatKind::Invite(invite) = line.kind {
-        super::invite_card::draw_card(ui, env, line, invite, if th.compact { TIME_W + 8.0 } else { GUTTER });
+        super::invite_card::draw_card(ui, env, line, invite, indent);
+        return;
+    }
+    if let ChatKind::InventoryOffer(offer) = line.kind {
+        super::offer_card::draw_card(ui, env, line, offer, indent);
         return;
     }
     if line.kind == ChatKind::System {
@@ -506,7 +511,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, li
 /// The message names us: an explicit mention, or our display or user name
 /// as a word of its text.
 fn mentions(env: &LineEnv, me: &[String], line: &ChatLine) -> bool {
-    if matches!(line.kind, ChatKind::Own | ChatKind::System | ChatKind::Invite(_)) || line.origin != Origin::Live {
+    if matches!(line.kind, ChatKind::Own | ChatKind::System) || line.kind.is_card() || line.origin != Origin::Live {
         return false;
     }
     let agent = env.world.agent_id;

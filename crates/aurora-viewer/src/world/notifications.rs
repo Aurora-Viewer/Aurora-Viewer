@@ -656,7 +656,7 @@ impl Notifications {
 }
 
 /// What an answer did, for the history.
-fn outcome_of(n: &Notification, r: &Response) -> Outcome {
+pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
     match r {
         Response::Accept if matches!(n.data, Data::Inventory { .. }) => Outcome::Kept,
         Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,

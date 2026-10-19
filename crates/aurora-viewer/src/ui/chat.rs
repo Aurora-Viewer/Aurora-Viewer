@@ -15,6 +15,7 @@ mod input_history;
 mod invite_card;
 mod line_menu;
 mod members;
+mod offer_card;
 mod reorder;
 pub(crate) mod select;
 mod sidebar;
@@ -273,7 +274,7 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
         ChatKind::Own => p.violet_pale,
         ChatKind::Local(_) => p.ink,
         ChatKind::Object(_) | ChatKind::ObjectIm => p.teal.gamma_multiply(0.85),
-        ChatKind::System | ChatKind::Invite(_) => p.muted,
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => p.muted,
         ChatKind::Im => p.violet_light,
     }
 }
@@ -561,7 +562,7 @@ fn line_job(
     };
     // (before the name, after it, body)
     let (before, after, body) = match line.kind {
-        ChatKind::System | ChatKind::Invite(_) => ("", "", &line.text[..]),
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
         _ if body_only => ("", "", &line.text[..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
@@ -1274,7 +1275,7 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
 /// places, names and mentions as shown.
 fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
     let body = match line.kind {
-        ChatKind::System | ChatKind::Invite(_) => line.text.clone(),
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => line.text.clone(),
         _ => line_body(line, name).0,
     };
     segments(&body)
@@ -1585,7 +1586,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     Rows::Classic(_) => draw_line(ui, &mut env, line, row.look, mark),
                     Rows::Thread(th) => thread::draw(ui, &mut env, th, line, row.look, mark, painted),
                 };
-                if matches!(line.kind, ChatKind::Invite(_)) {
+                if line.kind.is_card() {
                     // a card: its own labels and buttons
                     draw(ui);
                 } else {
@@ -1676,6 +1677,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     find::note_message(ui, ui.cursor().top(), None);
     if let ChatKind::Invite(invite) = line.kind {
         invite_card::draw_line(ui, env, line, invite);
+        return;
+    }
+    if let ChatKind::InventoryOffer(offer) = line.kind {
+        offer_card::draw_line(ui, env, line, offer);
         return;
     }
     if line.kind == ChatKind::System {
