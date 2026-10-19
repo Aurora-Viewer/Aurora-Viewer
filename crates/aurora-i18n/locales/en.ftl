@@ -4524,6 +4524,11 @@ world-appearance-leather-jacket-2 = Leather jacket
 ui-object-actions-via-object = Via object:
 common-empty-trash = Empty Trash
 ui-options-clear-cache = Clear cache
+ui-options-cache-folder = Location
+ui-options-cache-folder-help = The folder of the cache. A new folder applies at the next start; the cache in the old one is then removed, and downloaded again as needed.
+ui-options-cache-folder-next-start = At the next start: { $path } (the current cache will be removed)
+ui-options-change-folder = Change folder
+ui-options-default-folder = Default folder
 ui-profile-real-life = Real life
 ui-profile-second-life = Second Life
 demo-come-see-the-lagoon-at-sunset = Come see the lagoon at sunset!
@@ -6686,6 +6691,12 @@ ui-options-chat-logs-dated = Dated files
 ui-options-chat-logs-dated-help = One file per month for each conversation (name-2026-10) and one per day for the nearby chat (chat-2026-10-12), instead of a single growing file.
 ui-options-chat-logs-note = These files are plain text, readable by anyone who can use this computer. They stay on this machine, apart for each account and each grid, and are never attached to a bug report.
 ui-options-chat-logs-open = Open folder
+ui-options-chat-logs-folder-help = This account's files are moved to the new folder.
+ui-options-chat-logs-moved = { $count ->
+    [one] { $count } file moved.
+   *[other] { $count } files moved.
+    }
+ui-options-chat-logs-move-failed = Unable to move the files: the previous folder is kept.
 ui-options-chat-logs-erase = Erase this account's history…
 ui-options-chat-logs-erase-title = Erase this account's history?
 ui-options-chat-logs-erase-text = Every conversation file of this account on this grid is removed from the disk: instant messages, groups, conferences and nearby chat. This cannot be undone. Other accounts are not touched.

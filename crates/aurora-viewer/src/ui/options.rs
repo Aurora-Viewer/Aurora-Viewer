@@ -74,6 +74,8 @@ pub struct OptionsUi {
     pub chat_log_dir: Option<std::path::PathBuf>,
     /// What the last erasing of the transcripts did (set by the app).
     pub chat_log_status: String,
+    /// The transcripts are in a folder the user chose (set by the app).
+    pub chat_log_custom: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// The page opens scrolled to its end (`AURORA_DEMO_OPTIONS=<n>:end`).
@@ -151,12 +153,43 @@ pub struct OptionsResult {
     pub reset_camera: bool,
     /// Show the folder of the conversation transcripts.
     pub open_chat_logs: bool,
+    /// Choose another folder for the cache or the transcripts, or go back
+    /// to the default one (the app asks for the folder and moves the files).
+    pub folder: Option<(Folder, FolderChoice)>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
     pub account: Option<crate::world::user_info::Change>,
+}
+
+/// A folder the user can choose (Preferences › Network and cache, Chat).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Folder {
+    Cache,
+    ChatLogs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderChoice {
+    /// Ask for a folder.
+    Pick,
+    /// Back to the default folder.
+    Default,
+}
+
+/// A path as shown in the preferences: elided to the width, whole on hover.
+fn path_label(ui: &mut egui::Ui, p: &Palette, dir: &std::path::Path) {
+    // without the verbatim prefix Windows gives a canonical path
+    let path = dir.display().to_string();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
+    ui.add(super::widgets::elided_label(
+        ui,
+        RichText::new(&path).size(11.5).color(p.muted_dim),
+        ui.available_width(),
+    ))
+    .on_hover_text(&path);
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
@@ -1078,15 +1111,7 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
         );
         match &st.chat_log_dir {
             Some(dir) => {
-                // without the verbatim prefix Windows gives a canonical path
-                let path = dir.display().to_string();
-                let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
-                ui.add(super::widgets::elided_label(
-                    ui,
-                    RichText::new(&path).size(11.5).color(p.muted_dim),
-                    ui.available_width(),
-                ))
-                .on_hover_text(&path);
+                path_label(ui, p, dir);
                 ui.horizontal(|ui| {
                     use super::widgets::{ActionKind, action_button};
                     let size = Vec2::new(0.0, 24.0);
@@ -1101,6 +1126,34 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
                     .clicked()
                     {
                         r.open_chat_logs = true;
+                    }
+                    // Legacy Viewer › Network & Files (InstantMessageLogPath):
+                    // the files move with the folder
+                    if action_button(
+                        ui,
+                        p,
+                        "folder-filled",
+                        aurora_i18n::tr!("ui-options-change-folder"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                    .on_hover_text(aurora_i18n::tr!("ui-options-chat-logs-folder-help"))
+                    .clicked()
+                    {
+                        r.folder = Some((Folder::ChatLogs, FolderChoice::Pick));
+                    }
+                    if st.chat_log_custom
+                        && action_button(
+                            ui,
+                            p,
+                            "restore",
+                            aurora_i18n::tr!("ui-options-default-folder"),
+                            ActionKind::Flat,
+                            size,
+                        )
+                        .clicked()
+                    {
+                        r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                     }
                     if action_button(
                         ui,
@@ -2854,6 +2907,64 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let text = format!("{} / {}", format_bytes(used), format_bytes(limit));
                         super::widgets::progress(ui, p, "cache_usage", frac, SLIDER_W, &text, None);
                         false
+                    },
+                );
+                // Legacy Viewer › Network & Files: CacheLocation, applied at
+                // the next start (cache_location.rs)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-cache-folder"),
+                    aurora_i18n::tr!("ui-options-cache-folder-help"),
+                    |ui| {
+                        use super::widgets::{ActionKind, action_button};
+                        let mut changed = false;
+                        ui.vertical(|ui| {
+                            ui.set_max_width(SLIDER_W + 60.0);
+                            let next = crate::cache_location::root_for(&s.cache_location);
+                            path_label(ui, p, &crate::settings::cache_dir());
+                            ui.horizontal(|ui| {
+                                let size = Vec2::new(0.0, 24.0);
+                                if action_button(
+                                    ui,
+                                    p,
+                                    "folder-filled",
+                                    aurora_i18n::tr!("ui-options-change-folder"),
+                                    ActionKind::Flat,
+                                    size,
+                                )
+                                .clicked()
+                                {
+                                    r.folder = Some((Folder::Cache, FolderChoice::Pick));
+                                }
+                                if !s.cache_location.is_empty()
+                                    && action_button(
+                                        ui,
+                                        p,
+                                        "restore",
+                                        aurora_i18n::tr!("ui-options-default-folder"),
+                                        ActionKind::Flat,
+                                        size,
+                                    )
+                                    .clicked()
+                                {
+                                    s.cache_location.clear();
+                                    changed = true;
+                                }
+                            });
+                            if next.as_deref() != crate::cache_location::chosen() {
+                                let shown = next.unwrap_or_else(crate::settings::default_cache_root);
+                                ui.label(
+                                    RichText::new(aurora_i18n::tr!(
+                                        "ui-options-cache-folder-next-start",
+                                        path = shown.display().to_string()
+                                    ))
+                                    .size(11.5)
+                                    .color(p.muted),
+                                );
+                            }
+                        });
+                        changed
                     },
                 );
                 row(

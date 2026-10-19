@@ -88,8 +88,11 @@ pub struct ChatLog {
     /// when this run keeps no transcripts.
     grid: String,
     /// Folder holding one folder per account, when it is not the one of the
-    /// settings (tests).
+    /// settings: chosen in the preferences (InstantMessageLogPath), tests.
     accounts: Option<PathBuf>,
+    /// A move to another folder asked for, until its answer comes, with the
+    /// folder to go back to if it fails.
+    moving: Option<(crossbeam_channel::Receiver<std::io::Result<usize>>, Option<PathBuf>)>,
     open: Option<Open>,
     /// Counts the logins and logouts: what was read for another one is
     /// thrown away.
@@ -226,6 +229,59 @@ impl ChatLog {
         };
         self.erasing = self.worker().map(|w| w.erase(dir));
         self.erasing.is_some()
+    }
+
+    /// The folder chosen in the preferences (None: the default one), for the
+    /// next login.
+    pub fn set_folder(&mut self, accounts: Option<PathBuf>) {
+        if self.moving.is_none() {
+            self.accounts = accounts;
+        }
+    }
+
+    /// Another folder for the transcripts while logged in: the account's
+    /// files follow, after the lines already queued, and the next lines go
+    /// to the new folder (moveTranscriptsAndLog). False when nothing moves.
+    /// The answer comes through `take_relocated`.
+    pub fn relocate(&mut self, accounts: Option<PathBuf>) -> bool {
+        if self.moving.is_some() {
+            return false;
+        }
+        let Some(open) = &self.open else {
+            self.accounts = accounts;
+            return false;
+        };
+        let root = accounts.clone().unwrap_or_else(crate::settings::accounts_dir);
+        let to = store::folder(&root, &open.identity);
+        if to == open.dir {
+            self.accounts = accounts;
+            return false;
+        }
+        let from = open.dir.clone();
+        let Some(done) = self.worker().map(|w| w.relocate(from, to.clone())) else {
+            return false;
+        };
+        let previous = std::mem::replace(&mut self.accounts, accounts);
+        if let Some(open) = &mut self.open {
+            open.dir = to;
+        }
+        self.moving = Some((done, previous));
+        true
+    }
+
+    /// The answer of the last move, once: the number of files moved. On a
+    /// failure the transcripts stay in (and go back to) the previous folder.
+    pub fn take_relocated(&mut self) -> Option<std::io::Result<usize>> {
+        let done = self.moving.as_ref()?.0.try_recv().ok()?;
+        let (_, previous) = self.moving.take()?;
+        if done.is_err() {
+            let root = previous.clone().unwrap_or_else(crate::settings::accounts_dir);
+            if let Some(open) = &mut self.open {
+                open.dir = store::folder(&root, &open.identity);
+            }
+            self.accounts = previous;
+        }
+        Some(done)
     }
 
     /// The answer of the last erasing, once: the number of files removed.

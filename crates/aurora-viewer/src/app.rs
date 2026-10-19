@@ -38,6 +38,8 @@ mod context_menu;
 mod controls;
 mod cursor_hold;
 mod derender;
+mod folders;
+use folders::chat_log_root;
 mod dof;
 mod double_click;
 mod env_apply;
@@ -640,6 +642,8 @@ pub struct App {
     auto_away: bool,
     /// What the network was last told about the neighbouring regions.
     neighbours_refused: bool,
+    /// The cache and transcript folders being chosen (app/folders.rs).
+    folders: folders::Folders,
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
@@ -1102,6 +1106,7 @@ impl App {
             last_input: Instant::now(),
             auto_away: false,
             neighbours_refused: false,
+            folders: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
@@ -1776,6 +1781,11 @@ impl App {
         } else {
             crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo)
         });
+        // the chosen folder (InstantMessageLogPath); once logged in it only
+        // changes with its files (`relocate`)
+        if log.identity().is_none() {
+            log.set_folder(chat_log_root(&s.chat_log_location));
+        }
     }
 
     // ------------------------------------------------------------------ login
@@ -9328,6 +9338,19 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
+        self.poll_folder_pick();
+        if let Some(done) = self.world.chat_log.take_relocated() {
+            self.options_ui.chat_log_status = match done {
+                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-moved", count = count),
+                Err(e) => {
+                    log::warn!("conversation transcripts: moving failed ({e})");
+                    self.settings.chat_log_location = self.folders.chat_log_previous.take().unwrap_or_default();
+                    self.folders.settings_changed = true;
+                    aurora_i18n::tr!("ui-options-chat-logs-move-failed").to_owned()
+                }
+            };
+        }
         if let Some(done) = self.world.chat_log.take_erased() {
             self.options_ui.chat_log_status = match done {
                 Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
@@ -9398,7 +9421,10 @@ impl App {
             self.options_ui.chat_log_status.clear();
             self.world.chat_log.erase();
         }
-        a.settings_changed = res.changed;
+        if let Some((folder, choice)) = res.folder {
+            self.choose_folder(folder, choice);
+        }
+        a.settings_changed = res.changed || std::mem::take(&mut self.folders.settings_changed);
         a.ui_scale_changed = res.ui_scale_changed;
         a.font_changed = res.font_changed;
         if res.refresh_devices {

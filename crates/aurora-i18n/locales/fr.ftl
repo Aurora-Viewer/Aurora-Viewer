@@ -4529,6 +4529,11 @@ world-appearance-leather-jacket-2 = Veste en cuir
 ui-object-actions-via-object = Via l'objet :
 common-empty-trash = Vider la corbeille
 ui-options-clear-cache = Vider le cache
+ui-options-cache-folder = Emplacement
+ui-options-cache-folder-help = Le dossier du cache. Un nouveau dossier s'applique au prochain démarrage ; le cache de l'ancien est alors supprimé, puis retéléchargé au besoin.
+ui-options-cache-folder-next-start = Au prochain démarrage : { $path } (le cache actuel sera supprimé)
+ui-options-change-folder = Changer de dossier
+ui-options-default-folder = Dossier par défaut
 ui-profile-real-life = Vie RL
 ui-profile-second-life = Vie SL
 demo-come-see-the-lagoon-at-sunset = Viens voir le lagon au coucher du soleil !
@@ -6679,6 +6684,12 @@ ui-options-chat-logs-dated = Fichiers datés
 ui-options-chat-logs-dated-help = Un fichier par mois pour chaque conversation (nom-2026-10) et un par jour pour le chat local (chat-2026-10-12), au lieu d'un seul fichier qui grandit.
 ui-options-chat-logs-note = Ces fichiers sont du texte lisible par toute personne qui a accès à cet ordinateur. Ils restent sur cette machine, séparés pour chaque compte et chaque grille, et ne sont jamais joints à un rapport de bug.
 ui-options-chat-logs-open = Ouvrir le dossier
+ui-options-chat-logs-folder-help = Les fichiers de ce compte sont déplacés dans le nouveau dossier.
+ui-options-chat-logs-moved = { $count ->
+    [one] { $count } fichier déplacé.
+   *[other] { $count } fichiers déplacés.
+    }
+ui-options-chat-logs-move-failed = Impossible de déplacer les fichiers : l'ancien dossier est conservé.
 ui-options-chat-logs-erase = Effacer les historiques de ce compte…
 ui-options-chat-logs-erase-title = Effacer les historiques de ce compte ?
 ui-options-chat-logs-erase-text = Tous les fichiers de conversations de ce compte sur cette grille sont supprimés du disque : messages privés, groupes, conférences et chat local. Cette action est définitive. Les autres comptes ne sont pas touchés.

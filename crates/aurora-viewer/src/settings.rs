@@ -742,6 +742,12 @@ pub struct Settings {
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
     pub cache_size_mb: u32,
+    /// The folder the cache goes in, "" for the default one (the Legacy
+    /// Viewer's CacheLocation): read at startup (cache_location.rs).
+    pub cache_location: String,
+    /// The folder holding the conversation transcripts, one folder per
+    /// account inside, "" for the default one (InstantMessageLogPath).
+    pub chat_log_location: String,
     /// The most the simulators may send, all channels together, in kb/s
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
@@ -1260,6 +1266,8 @@ impl Default for Settings {
             ssr: false,
             anisotropy: 8,
             cache_size_mb: 20480,
+            cache_location: String::new(),
+            chat_log_location: String::new(),
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
             no_neighbour_regions: false,
             chat_bar_width: 0.0,
@@ -1354,11 +1362,23 @@ pub fn cache_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("cache");
     }
-    for_mode(
-        directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
-            .map(|d| d.cache_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("cache")),
-    )
+    // the folder chosen in the preferences, read at startup (cache_location.rs)
+    if let Some(chosen) = crate::cache_location::chosen() {
+        return for_mode(chosen.to_path_buf());
+    }
+    for_mode(default_cache_root())
+}
+
+pub(crate) fn default_cache_root() -> PathBuf {
+    directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
+        .map(|d| d.cache_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("cache"))
+}
+
+/// The cache folders the viewer uses when none is chosen (before the demo's
+/// subfolder): the ones a change of folder may remove.
+pub fn default_cache_dirs() -> Vec<PathBuf> {
+    vec![default_cache_root()]
 }
 
 /// Where Aurora's media plugins pack is installed: next to the logs, outside
@@ -1419,7 +1439,7 @@ impl Settings {
             .collect()
     }
 
-    fn path() -> PathBuf {
+    pub(crate) fn path() -> PathBuf {
         config_dir().join("settings.json")
     }
 
