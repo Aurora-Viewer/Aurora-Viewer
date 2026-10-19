@@ -908,10 +908,9 @@ mod tests {
         assert!(!s.classic_controls && !fresh.classic_controls);
         assert!(!s.classic_restart_alert && !fresh.classic_restart_alert);
         assert!(!s.classic_chat_lines && !fresh.classic_chat_lines, "the cards are the default");
-        assert!(!s.classic_rez_effect, "the Aurora bulk choice enables the rez effect");
         assert!(
-            fresh.classic_rez_effect,
-            "grey objects while they load until the effect is finished"
+            !s.classic_rez_effect && !fresh.classic_rez_effect,
+            "the rez effect is the default"
         );
         assert!(s.predict_own_motion, "Aurora's movement");
         assert!(!fresh.predict_own_motion, "Firestorm's movement until tried on the grid");

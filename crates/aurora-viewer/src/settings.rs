@@ -548,8 +548,8 @@ pub struct Settings {
     pub classic_chat_lines: bool,
     /// The Legacy Viewer's grey objects while they load instead of the rez
     /// effect (`scene/rez.rs`): a glowing grid, then a line revealing them.
-    /// Grey by default until the effect covers every loading path (on the
-    /// grid some objects still showed grey with it).
+    /// The effect by default since it covers every loading path (no face
+    /// stays grey: `rez_still_grey` in object.wgsl).
     pub classic_rez_effect: bool,
     /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
     /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
@@ -783,7 +783,7 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 22;
+const SETTINGS_VERSION: u32 = 23;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1174,7 +1174,7 @@ impl Default for Settings {
             classic_people: false,
             classic_restart_alert: false,
             classic_chat_lines: false,
-            classic_rez_effect: true,
+            classic_rez_effect: false,
             predict_own_motion: false,
             synchronize_animations: false,
             region_restart: Default::default(),
@@ -1623,6 +1623,11 @@ impl Settings {
             // avatar instead of moving the cursor. Every earlier file holds
             // that default, so it goes off once
             self.arrow_keys_always_move = false;
+        }
+        if self.settings_version < 23 {
+            // new default: the rez effect instead of grey objects (every
+            // earlier file wrote the old grey default)
+            self.classic_rez_effect = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -2305,6 +2310,24 @@ mod tests {
             ..Settings::default()
         };
         assert!(chosen.sanitized().arrow_keys_always_move);
+    }
+
+    /// The rez effect is the default; earlier files all held the former
+    /// grey default, a later choice of grey stays.
+    #[test]
+    fn rez_effect_is_the_default_and_once_for_earlier_files() {
+        assert!(!Settings::default().sanitized().classic_rez_effect);
+        let old = Settings {
+            settings_version: 22,
+            classic_rez_effect: true,
+            ..Settings::default()
+        };
+        assert!(!old.sanitized().classic_rez_effect);
+        let chosen = Settings {
+            classic_rez_effect: true,
+            ..Settings::default()
+        };
+        assert!(chosen.sanitized().classic_rez_effect);
     }
 
     #[test]
