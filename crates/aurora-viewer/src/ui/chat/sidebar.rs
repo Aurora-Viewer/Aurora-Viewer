@@ -515,7 +515,7 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
         .ims
         .iter()
         .find(|s| s.other == id)
-        .and_then(|s| s.lines.iter().rev().find(|l| !matches!(l.kind, crate::world::ChatKind::Invite(_))));
+        .and_then(|s| s.lines.iter().rev().find(|l| !l.kind.is_card()));
     let last = last.map(|l| preview(world, l, kind != Kind::Private)).unwrap_or_default();
     if kind == Kind::Private && matches!(status, presence::Status::Away | presence::Status::Busy | presence::Status::Offline) {
         let label = status.label();

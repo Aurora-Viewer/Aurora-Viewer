@@ -27,6 +27,7 @@ pub mod groups;
 pub mod hover_height;
 pub mod hud_scale;
 pub mod inventory;
+pub mod inventory_offers;
 pub mod land;
 pub mod land_buy;
 pub mod landmarks;
@@ -107,13 +108,21 @@ pub enum ChatKind {
     /// The card of a teleport offer or request (`teleport_invites.rs`),
     /// by its invitation: never written to the transcript.
     Invite(u64),
+    /// The card of a resident's inventory offer (`inventory_offers.rs`), by
+    /// its offer: never written to the transcript either.
+    InventoryOffer(u64),
 }
 
 impl ChatKind {
     /// A notice of the viewer rather than someone's message: it stands
     /// apart from the groups of messages.
     pub fn is_notice(self) -> bool {
-        matches!(self, ChatKind::System | ChatKind::Invite(_))
+        matches!(self, ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_))
+    }
+
+    /// A card with its own buttons (an invitation, an offer).
+    pub fn is_card(self) -> bool {
+        matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_))
     }
 }
 
@@ -336,6 +345,8 @@ pub struct World {
     pub notifications: notifications::Notifications,
     /// Teleport offers and requests from other residents, and their answers.
     pub teleport_invites: teleport_invites::TeleportInvites,
+    /// Residents' inventory offers, as cards in their conversations.
+    pub inventory_offers: inventory_offers::InventoryOffers,
     /// The content rating chosen during the session and its sync with the
     /// server.
     pub maturity: maturity::MaturityPreference,
@@ -530,6 +541,7 @@ impl World {
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
+            inventory_offers: inventory_offers::InventoryOffers::default(),
             maturity: maturity::MaturityPreference::default(),
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
@@ -2788,12 +2800,8 @@ impl World {
                         }
                     });
                 }
-                let what = if im.message.is_empty() {
-                    aurora_i18n::tr!("world-mod-an-object").to_owned()
-                } else {
-                    format!("« {} »", im.message)
-                };
-                n.push(
+                let what = inventory_offers::item_label(&im.message);
+                let entry = n.push(
                     Kind::Inventory,
                     aurora_i18n::tr!("world-mod-gives-you", from = from.to_string(), what = what.to_string()),
                     String::new(),
@@ -2805,6 +2813,10 @@ impl World {
                         task,
                     },
                 );
+                // UserGiveItem logs to IM, an object's offer does not
+                if !task {
+                    self.on_inventory_offer_card(im, &from, asset_type, entry);
+                }
             }
             d::GROUP_INVITATION => {
                 self.ui_sounds.push(UiSound::GroupInvitation);
@@ -3065,6 +3077,13 @@ impl World {
             }
             _ => None,
         };
+        // a resident's offer: its card in the conversation takes the answer
+        let offer_outcome = self
+            .notifications
+            .list
+            .iter()
+            .find(|n| n.id == id && matches!(n.data, notifications::Data::Inventory { task: false, .. }))
+            .map(|n| notifications::outcome_of(n, &r));
         let out = self.notifications.respond(
             id,
             r,
@@ -3073,6 +3092,9 @@ impl World {
         );
         if let Some((asset_type, object)) = discard {
             self.discard_offer(asset_type, object);
+        }
+        if let Some(outcome) = offer_outcome {
+            self.inventory_offer_answered(id, outcome);
         }
         out
     }
@@ -3220,6 +3242,7 @@ impl World {
     /// notification list since.
     pub fn record_notification_history(&mut self) {
         self.notification_history.poll();
+        self.close_orphan_inventory_offers();
         for e in self.notifications.take_departures() {
             self.notification_history.add(e);
         }

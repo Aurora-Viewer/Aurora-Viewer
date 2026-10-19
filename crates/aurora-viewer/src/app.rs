@@ -7279,11 +7279,20 @@ impl App {
         self.demo_hud_drag_steps();
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
         // shown in the folder it reaches; the second rejects it at frame 700
+        // (offer-card…: answered from its card or its notification, the
+        // conversation in sight)
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY")
             && mode.starts_with("offer")
         {
-            if self.frame_count == 700 && mode == "offer-reject" {
+            let card = crate::demo::offer_card_scene();
+            if self.frame_count == 700
+                && card.is_some_and(|s| s.keep)
+                && let Some(offer) = self.world.inventory_offers.list.first().map(|v| v.id)
+            {
+                self.on_ctx_action(ui::context::CtxAction::AnswerInventoryOffer { offer, keep: true });
+            }
+            if self.frame_count == 700 && (mode == "offer-reject" || card.is_some_and(|s| s.reject)) {
                 let offer = self
                     .world
                     .notifications
@@ -7301,7 +7310,7 @@ impl App {
                 }
             }
             let folder = self.world.inventory.items.get(&crate::demo::DEMO_OFFER).map(|it| it.parent);
-            if folder.is_some() && folder != self.demo_offer_shown {
+            if card.is_none() && folder.is_some() && folder != self.demo_offer_shown {
                 self.demo_offer_shown = folder;
                 self.inventory_ui.show_original(&self.world.inventory, crate::demo::DEMO_OFFER);
             }
@@ -10395,8 +10404,9 @@ impl App {
                 if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
-                // a teleport invitation whose card is in sight needs no toast
-                // (LLOfferHandler: a toast only when the IM floater is closed)
+                // a teleport invitation or an inventory offer whose card is in
+                // sight needs no toast (LLOfferHandler: a toast only when the
+                // IM floater is closed)
                 if self.panels.chat
                     && let Some(open) = self.chat_ui.selected
                 {
@@ -10404,6 +10414,7 @@ impl App {
                         .world
                         .teleport_invites
                         .pending_notifications()
+                        .chain(self.world.inventory_offers.pending_notifications())
                         .filter(|(_, from)| *from == open)
                         .map(|(n, _)| n)
                         .collect();
@@ -11958,6 +11969,17 @@ impl ApplicationHandler for App {
                     self.notif_ui.open = false;
                 }
                 if scene == LureScene::Legacy {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
+                }
+            }
+            // AURORA_DEMO_INVENTORY=offer-card…: the giver's conversation in
+            // sight, the card alone
+            if let Some(scene) = crate::demo::offer_card_scene() {
+                self.panels.perf = false;
+                self.panels.chat = true;
+                self.chat_ui.open(crate::demo::DEMO_GIVER);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                if scene.legacy {
                     self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
             }

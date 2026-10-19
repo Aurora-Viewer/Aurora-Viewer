@@ -487,6 +487,11 @@ impl App {
                     self.send(c);
                 }
             }
+            CtxAction::AnswerInventoryOffer { offer, keep } => {
+                for c in self.world.answer_inventory_offer(offer, keep) {
+                    self.send(c);
+                }
+            }
             CtxAction::OfferTeleport(id) => self.contacts_ui.ask_teleport_offer(vec![id], &self.world.region_name()),
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;

@@ -243,6 +243,11 @@ pub enum CtxAction {
         invite: u64,
         accept: bool,
     },
+    /// A button of a resident's inventory offer card (keep or reject).
+    AnswerInventoryOffer {
+        offer: u64,
+        keep: bool,
+    },
     Profile(Uuid),
     /// Rendering exception of an avatar (LLRenderMuteList).
     SetRender(Uuid, u8),

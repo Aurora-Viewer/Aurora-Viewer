@@ -178,7 +178,7 @@ pub fn rating_note(rating: Rating) -> Option<String> {
 }
 
 /// `secondlife:///app/agent/<id>/completename`: the chat shows the name.
-fn agent_link(id: Uuid) -> String {
+pub(super) fn agent_link(id: Uuid) -> String {
     format!("secondlife:///app/agent/{id}/completename")
 }
 
@@ -237,7 +237,7 @@ impl World {
             Some(note) => format!("{message}\n\n{note}"),
             None => message.clone(),
         };
-        self.add_invite_card(im, invite, format!("{title}\n{body}"));
+        self.add_card(im, ChatKind::Invite(invite), format!("{title}\n{body}"));
         let data = match rating {
             // TeleportOffered_MaturityBlocked: a notice, nothing to answer
             Rating::Blocked(_) => Data::None,
@@ -272,7 +272,7 @@ impl World {
             }
         }
         self.refresh_teleport_places();
-        let line = self.invite_line(aurora_i18n::tr!(
+        let line = self.notice_line(aurora_i18n::tr!(
             "world-teleport-invites-offer-received",
             name = agent_link(im.from_agent_id),
             message = body
@@ -295,7 +295,7 @@ impl World {
             format!("{message}\n\n{}", aurora_i18n::tr!("world-teleport-invites-offer-a-teleport"))
         };
         let title = aurora_i18n::tr!("world-teleport-invites-requests-a-teleport", from = from.to_string());
-        self.add_invite_card(im, invite, format!("{title}\n{message}"));
+        self.add_card(im, ChatKind::Invite(invite), format!("{title}\n{message}"));
         let id = self.notifications.push(
             Kind::Teleport,
             title,
@@ -306,7 +306,7 @@ impl World {
             },
         );
         self.set_invite_notification(invite, id);
-        let line = self.invite_line(aurora_i18n::tr!(
+        let line = self.notice_line(aurora_i18n::tr!(
             "world-teleport-invites-request-received",
             name = agent_link(im.from_agent_id),
             message = message
@@ -434,10 +434,10 @@ impl World {
         }
     }
 
-    /// The card of an invitation in the conversation with its sender, which
-    /// opens if needed (spawnIMSession) and counts it as unread
-    /// (addNotifPanelToIM). `text`: what the find bar looks in.
-    fn add_invite_card(&mut self, im: &InstantMessage, invite: u64, text: String) {
+    /// The card of an invitation or an inventory offer in the conversation
+    /// with its sender, which opens if needed (spawnIMSession) and counts it
+    /// as unread (addNotifPanelToIM). `text`: what the find bar looks in.
+    pub(super) fn add_card(&mut self, im: &InstantMessage, kind: ChatKind, text: String) {
         let from = im.from_agent_id;
         if !im.from_name.is_empty() {
             self.social.names.entry(from).or_insert_with(|| im.from_name.clone());
@@ -447,7 +447,7 @@ impl World {
             time: SystemTime::now(),
             from: im.from_name.clone(),
             text,
-            kind: ChatKind::Invite(invite),
+            kind,
             source: from,
             origin: Origin::Live,
         };
@@ -460,7 +460,7 @@ impl World {
         }
     }
 
-    fn invite_line(&self, text: impl Into<String>) -> ChatLine {
+    pub(super) fn notice_line(&self, text: impl Into<String>) -> ChatLine {
         ChatLine {
             time: SystemTime::now(),
             from: String::new(),
@@ -475,7 +475,7 @@ impl World {
     /// without counting as unread, else only in their transcript
     /// (LLHandlerUtil::logToIMP2P).
     pub(super) fn note_with(&mut self, other: Uuid, text: impl Into<String>) {
-        let line = self.invite_line(text);
+        let line = self.notice_line(text);
         if self.social.has_session(&other) {
             self.conversation_push(other, line, false);
         } else {

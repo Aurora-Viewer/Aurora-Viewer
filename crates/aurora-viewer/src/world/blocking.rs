@@ -151,6 +151,7 @@ impl World {
                 Data::Permissions { task, .. } => *task != id,
                 _ => true,
             });
+            self.close_orphan_inventory_offers();
         }
         if self.groups.report_blocks {
             self.system_message(aurora_i18n::tr!(

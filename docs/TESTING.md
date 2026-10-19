@@ -94,7 +94,7 @@ viewer's process closes. For a test with human intervention, keep the title
 The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
-`AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+`AURORA_DEMO_INVENTORY=offer|offer-reject|offer-card…` adds only the received item.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal
@@ -2535,7 +2535,16 @@ failure. Grid validation and any paid upload are performed by the human.
   there; "Reject" sends it to the Trash. With `AURORA_DEMO_INVENTORY=offer`,
   the inventory opens on the received object and the offer is still to be
   answered; `offer-reject` rejects it at frame 700, then shows the object in
-  the Trash. Take the screenshot after frame 900.
+  the Trash. Take the screenshot after frame 900. With
+  `AURORA_DEMO_INVENTORY=offer-card`, the offer's card shows in the giver's
+  conversation, opened in sight (Orion Example in the demo's names, Violet
+  Wolf in the offer's entry): "gives you « Aurora lantern »", "Object",
+  Keep / Reject, and no toast. `offer-card-keep` keeps it from the card at
+  frame 700: the card greys with "Kept" and the entry leaves the list.
+  `offer-card-legacy` shows the card as one line of the legacy lines;
+  `offer-card-legacy-reject` rejects it from its notification at frame 700:
+  the line ends with "· Rejected". Capture at frame 900, with
+  `--language fr` and `--language en`.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
@@ -3835,7 +3844,9 @@ offline; the files and snapshots uploaded in demo stay offline.
   from an inventory limited to a folder. Select a folder then
   Move; Cancel must leave the selection in its initial location.
 - `offer`, `offer-reject`: object offered by a resident, kept or rejected
-  (see `AURORA_DEMO_NOTIF` above).
+  (see `AURORA_DEMO_NOTIF` above). `offer-card`, `offer-card-keep`,
+  `offer-card-legacy`, `offer-card-legacy-reject`: its card in the giver's
+  conversation, kept from the card or rejected from the notification.
 - `folder`, `object`, `animation`, `script`, `note`, `properties`, `nocopy`,
   `notransfer`, `link`: the menu of the chosen item, or its properties.
   `clothes`, `body`, `settings`, `uploads` are aliases of `folder`, to be
