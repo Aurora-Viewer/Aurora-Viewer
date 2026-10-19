@@ -293,10 +293,10 @@ impl AvatarLibrary {
             }
         }
 
-        let rig = std::sync::Arc::new(match &skeleton {
+        let mut rig = match &skeleton {
             Some(sk) => super::anim::Rig::new(sk),
             None => super::anim::Rig::new(&Skeleton { joints: Vec::new() }),
-        });
+        };
         for (id, name) in &joint_names {
             if let Some(ap) = attach_points.get_mut(id) {
                 ap.joint = rig.names.get(name).copied();
@@ -304,9 +304,14 @@ impl AvatarLibrary {
                     ap.rest_joint = rig.default_world_inv[joint].inverse();
                     ap.skel_position = ap.rest_joint.transform_point3(ap.local_position);
                     ap.position = ap.skel_position - pelvis;
+                    if let Some(point) = attach_names.get(id).filter(|_| !ap.hud) {
+                        let local = Mat4::from_rotation_translation(ap.rotation, ap.local_position);
+                        rig.skin_points.entry(point.clone()).or_insert((joint, local));
+                    }
                 }
             }
         }
+        let rig = std::sync::Arc::new(rig);
         // one anchor per body point, in id order, after the root's
         let mut anchor_points: Vec<u8> = attach_points.iter().filter(|(_, ap)| !ap.hud).map(|(id, _)| *id).collect();
         anchor_points.sort_unstable();
@@ -402,6 +407,53 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Issue 586: a head rigged to the "Nose" and "Mouth" attachment points
+    /// (LLVOAvatar::getJoint finds them) had its snout follow the pelvis,
+    /// stretched to the ground.
+    #[test]
+    fn skin_joints_named_after_attachment_points_follow_the_point() {
+        let lib = AvatarLibrary::load();
+        let rig = &lib.rig;
+        let point = |name: &str| {
+            let id = lib
+                .attach_names
+                .iter()
+                .find(|(_, n)| n.as_str() == name)
+                .map(|(id, _)| *id)
+                .unwrap();
+            lib.attach_points[&id]
+        };
+        let nose = point("Nose");
+        let head = rig.names["mHead"];
+        assert_eq!(nose.joint, Some(head));
+        // Bound at the point's rest frame, as an uploader does.
+        let rest = nose.rest_joint * Mat4::from_rotation_translation(nose.rotation, nose.local_position);
+        let (joint, inverse_bind) = rig.skin_bind("Nose", rest.inverse());
+        assert_eq!(joint, head);
+        let at_rest = rig.default_world_inv[head].inverse() * inverse_bind;
+        assert!(at_rest.abs_diff_eq(Mat4::IDENTITY, 1e-5), "moved at rest: {at_rest:?}");
+        // Posed: a vertex on the point goes where the point goes.
+        let mut rot = rig.local_rot.clone();
+        rot[head] = (rot[head] * Quat::from_rotation_z(0.6) * Quat::from_rotation_y(-0.3)).normalize();
+        let world = rig.world_with(&rot, Vec3::new(0.0, 0.0, 0.1), &rig.local_pos, &rig.scale);
+        let skinned = (world[head] * inverse_bind).transform_point3(nose.skel_position);
+        let expected = nose.frame(Some(world[head])).0;
+        assert!(skinned.distance(expected) < 1e-5, "{skinned:?} != {expected:?}");
+
+        // Names stay case-sensitive: "PELVIS" is the collision volume,
+        // "Pelvis" the attachment point below the pelvis.
+        let volume = rig.names["PELVIS"];
+        assert_eq!(rig.skin_bind("PELVIS", Mat4::IDENTITY), (volume, Mat4::IDENTITY));
+        let (joint, below) = rig.skin_bind("Pelvis", Mat4::IDENTITY);
+        assert_eq!(joint, rig.pelvis);
+        assert!(below.w_axis.truncate().abs_diff_eq(point("Pelvis").local_position, 1e-6));
+        // Bones and other names are unchanged; HUD points are not joints.
+        let ib = Mat4::from_translation(Vec3::new(0.1, 0.2, 0.3));
+        assert_eq!(rig.skin_bind("mHead", ib), (head, ib));
+        assert_eq!(rig.skin_bind("obsolete_joint", ib), (rig.pelvis, ib));
+        assert_eq!(rig.skin_bind("Center", ib), (rig.pelvis, ib));
     }
 
     #[test]

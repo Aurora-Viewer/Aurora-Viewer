@@ -31,6 +31,12 @@ pub const CAPTURE_RES: u32 = PROBE_RES * 2;
 const CAPTURE_MIPS: u32 = PROBE_MIPS + 1;
 /// LL_IRRADIANCE_MAP_RESOLUTION.
 pub const IRRADIANCE_RES: u32 = 16;
+/// The irradiance capture of a sky with a probe ambiance (its own pass, as
+/// LLReflectionMapManager's irradiance pass): irradianceGenF only reads
+/// the smallest mips of a capture (its level is clamped at 2 x 2), so it is
+/// drawn at an eighth of the radiance capture, mips 32 .. 2.
+pub const IRR_CAPTURE_RES: u32 = CAPTURE_RES >> 3;
+const IRR_CAPTURE_MIPS: u32 = CAPTURE_MIPS - 3;
 /// `@workgroup_size` of the filter shader, in x and y.
 const WORKGROUP: u32 = 8;
 
@@ -172,6 +178,9 @@ pub(crate) struct Probes {
     /// Faces of the scratch cube the capture passes render into (mip 0).
     capture_targets: Vec<wgpu::TextureView>,
     pub depth: wgpu::TextureView,
+    /// Faces of the irradiance capture's cube (mip 0), and its depth.
+    irr_capture_targets: Vec<wgpu::TextureView>,
+    pub irr_depth: wgpu::TextureView,
     pub buffer: wgpu::Buffer,
     /// Trilinear sampler of the probe array (scene shaders, binding 11).
     pub sampler: wgpu::Sampler,
@@ -184,6 +193,11 @@ pub(crate) struct Probes {
     radiance_bgs: Vec<Vec<wgpu::BindGroup>>,
     /// The scratch cube into a slot's irradiance: [slot].
     irradiance_bgs: Vec<wgpu::BindGroup>,
+    /// Irradiance capture mip `i` into mip `i + 1`.
+    irr_mip_bgs: Vec<wgpu::BindGroup>,
+    irr_source_pipeline: wgpu::ComputePipeline,
+    /// The irradiance capture into a slot's irradiance: [slot].
+    irr_source_bgs: Vec<wgpu::BindGroup>,
     /// Read back by the GPU test.
     #[cfg(test)]
     array: wgpu::Texture,
@@ -234,29 +248,44 @@ impl Probes {
             CAPTURE_MIPS,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
-        let capture_targets = (0..6)
-            .map(|face| {
-                scratch.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("probe capture face"),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: 0,
-                    mip_level_count: Some(1),
-                    base_array_layer: face,
-                    array_layer_count: Some(1),
-                    ..Default::default()
+        let irr_scratch = mk_cubes(
+            "reflection probe irradiance capture",
+            6,
+            IRR_CAPTURE_RES,
+            IRR_CAPTURE_MIPS,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let face_targets = |texture: &wgpu::Texture| -> Vec<wgpu::TextureView> {
+            (0..6)
+                .map(|face| {
+                    texture.create_view(&wgpu::TextureViewDescriptor {
+                        label: Some("probe capture face"),
+                        dimension: Some(wgpu::TextureViewDimension::D2),
+                        base_mip_level: 0,
+                        mip_level_count: Some(1),
+                        base_array_layer: face,
+                        array_layer_count: Some(1),
+                        ..Default::default()
+                    })
                 })
-            })
-            .collect();
-        let depth = make_view(
-            device,
-            "probe capture depth",
-            CAPTURE_RES,
-            CAPTURE_RES,
-            wgpu::TextureFormat::Depth32Float,
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
-        )
-        .1;
+                .collect()
+        };
+        let capture_targets = face_targets(&scratch);
+        let irr_capture_targets = face_targets(&irr_scratch);
+        let depth_of = |label: &str, res: u32| {
+            make_view(
+                device,
+                label,
+                res,
+                res,
+                wgpu::TextureFormat::Depth32Float,
+                1,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            )
+            .1
+        };
+        let depth = depth_of("probe capture depth", CAPTURE_RES);
+        let irr_depth = depth_of("probe irradiance capture depth", IRR_CAPTURE_RES);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("reflection probe list"),
             size: (std::mem::size_of::<ProbeHeader>() + MAX_PROBES * std::mem::size_of::<ProbeGpu>()) as u64,
@@ -326,6 +355,7 @@ impl Probes {
         let mip_pipeline = pipeline(&mip_layout, "cs_mip");
         let radiance_pipeline = pipeline(&radiance_layout, "cs_radiance");
         let irradiance_pipeline = pipeline(&radiance_layout, "cs_irradiance");
+        let irr_source_pipeline = pipeline(&radiance_layout, "cs_irradiance_capture");
         // the six faces of one mip of a cube, `first` being its first layer
         let faces = |texture: &wgpu::Texture, label: &str, mip: u32, first: u32| {
             texture.create_view(&wgpu::TextureViewDescriptor {
@@ -358,18 +388,26 @@ impl Probes {
                 ],
             })
         };
-        let mip_bgs = (1..CAPTURE_MIPS)
-            .map(|mip| {
-                let source = faces(&scratch, "probe mip source", mip - 1, 0);
-                let target = faces(&scratch, "probe mip target", mip, 0);
-                group(&mip_layout, "probe mip", (0, &source), &target)
+        let mip_chain = |texture: &wgpu::Texture, mips: u32| -> Vec<wgpu::BindGroup> {
+            (1..mips)
+                .map(|mip| {
+                    let source = faces(texture, "probe mip source", mip - 1, 0);
+                    let target = faces(texture, "probe mip target", mip, 0);
+                    group(&mip_layout, "probe mip", (0, &source), &target)
+                })
+                .collect()
+        };
+        let mip_bgs = mip_chain(&scratch, CAPTURE_MIPS);
+        let irr_mip_bgs = mip_chain(&irr_scratch, IRR_CAPTURE_MIPS);
+        let cube_of = |texture: &wgpu::Texture| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("probe capture cube"),
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
             })
-            .collect();
-        let cube = scratch.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("probe capture cube"),
-            dimension: Some(wgpu::TextureViewDimension::Cube),
-            ..Default::default()
-        });
+        };
+        let cube = cube_of(&scratch);
+        let irr_cube = cube_of(&irr_scratch);
         let radiance_bgs = (0..slots)
             .map(|slot| {
                 (0..PROBE_MIPS)
@@ -380,18 +418,24 @@ impl Probes {
                     .collect()
             })
             .collect();
-        let irradiance_bgs = (0..slots)
-            .map(|slot| {
-                let target = faces(&irradiance, "probe irradiance target", 0, slot * 6);
-                group(&radiance_layout, "probe irradiance", (1, &cube), &target)
-            })
-            .collect();
+        let irradiance_from = |source: &wgpu::TextureView| -> Vec<wgpu::BindGroup> {
+            (0..slots)
+                .map(|slot| {
+                    let target = faces(&irradiance, "probe irradiance target", 0, slot * 6);
+                    group(&radiance_layout, "probe irradiance", (1, source), &target)
+                })
+                .collect()
+        };
+        let irradiance_bgs = irradiance_from(&cube);
+        let irr_source_bgs = irradiance_from(&irr_cube);
         Probes {
             slots,
             array_view,
             irradiance_view,
             capture_targets,
             depth,
+            irr_capture_targets,
+            irr_depth,
             buffer,
             sampler,
             mip_pipeline,
@@ -400,6 +444,9 @@ impl Probes {
             mip_bgs,
             radiance_bgs,
             irradiance_bgs,
+            irr_mip_bgs,
+            irr_source_pipeline,
+            irr_source_bgs,
             #[cfg(test)]
             array,
             #[cfg(test)]
@@ -410,6 +457,11 @@ impl Probes {
     /// Render target of a captured face (mip 0 of the scratch cube).
     pub fn capture_target(&self, face: u32) -> &wgpu::TextureView {
         &self.capture_targets[(face % 6) as usize]
+    }
+
+    /// Render target of a face of the irradiance capture.
+    pub fn irr_capture_target(&self, face: u32) -> &wgpu::TextureView {
+        &self.irr_capture_targets[(face % 6) as usize]
     }
 
     /// Upload the probe list (index 0 = default probe) and the sets the
@@ -437,13 +489,14 @@ impl Probes {
 
     /// After the six faces are captured: mip chain of the scratch cube
     /// (reflectionmipF), then the GGX prefiltered radiance and the
-    /// irradiance into `slot`.
+    /// irradiance into `slot`; with `irr_capture` (its six faces were drawn
+    /// too), the irradiance comes from the irradiance capture.
     ///
     /// One compute pass, a dispatch per mip for its six faces. As render
     /// passes, one per face and mip, there were 90 of them, and wgpu pays
     /// for each when the encoder is finished: the frame of a sixth face
     /// spent 1 ms there instead of 0.25.
-    pub fn filter(&self, encoder: &mut wgpu::CommandEncoder, slot: u32) {
+    pub fn filter(&self, encoder: &mut wgpu::CommandEncoder, slot: u32, irr_capture: bool) {
         let slot = slot.min(self.slots - 1) as usize;
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("probe filter"),
@@ -462,8 +515,17 @@ impl Probes {
         for (mip, bg) in (0..PROBE_MIPS).zip(&self.radiance_bgs[slot]) {
             dispatch(&mut pass, bg, PROBE_RES >> mip);
         }
-        pass.set_pipeline(&self.irradiance_pipeline);
-        dispatch(&mut pass, &self.irradiance_bgs[slot], IRRADIANCE_RES);
+        if irr_capture {
+            pass.set_pipeline(&self.mip_pipeline);
+            for (mip, bg) in (1..IRR_CAPTURE_MIPS).zip(&self.irr_mip_bgs) {
+                dispatch(&mut pass, bg, IRR_CAPTURE_RES >> mip);
+            }
+            pass.set_pipeline(&self.irr_source_pipeline);
+            dispatch(&mut pass, &self.irr_source_bgs[slot], IRRADIANCE_RES);
+        } else {
+            pass.set_pipeline(&self.irradiance_pipeline);
+            dispatch(&mut pass, &self.irradiance_bgs[slot], IRRADIANCE_RES);
+        }
     }
 }
 
@@ -730,7 +792,9 @@ mod tests {
         assert!(src.contains(&format!("const MAX_PROBE_LOD: f32 = {}.0;", PROBE_MIPS - 1)));
         // CAPTURE_LOD_OFFSET: mip 1 of the capture is mip 0 of the probe
         assert_eq!(CAPTURE_RES, PROBE_RES * 2);
-        assert_eq!(src.matches(&format!("@workgroup_size({WORKGROUP}, {WORKGROUP}, 1)")).count(), 3);
+        // IRR_CAPTURE_LOD_OFFSET: mip m of the irradiance capture is mip m + 3 of the capture
+        assert_eq!(IRR_CAPTURE_RES, CAPTURE_RES >> 3);
+        assert_eq!(src.matches(&format!("@workgroup_size({WORKGROUP}, {WORKGROUP}, 1)")).count(), 4);
     }
 
     /// Value of a half float.
@@ -808,11 +872,16 @@ mod tests {
 
     /// The six faces of the capture cube, each of one color.
     fn capture(probes: &Probes, encoder: &mut wgpu::CommandEncoder, colors: [[f64; 3]; 6]) {
+        capture_into(encoder, colors, |face| probes.capture_target(face));
+    }
+
+    /// The same into the faces `target` gives.
+    fn capture_into<'a>(encoder: &mut wgpu::CommandEncoder, colors: [[f64; 3]; 6], target: impl Fn(u32) -> &'a wgpu::TextureView) {
         for (face, c) in colors.into_iter().enumerate() {
             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: probes.capture_target(face as u32),
+                    view: target(face as u32),
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -858,7 +927,7 @@ mod tests {
         let plain = [0.5, 2.0, 0.125];
         let mut encoder = device.create_command_encoder(&Default::default());
         capture(&probes, &mut encoder, [plain; 6]);
-        probes.filter(&mut encoder, 3);
+        probes.filter(&mut encoder, 3, false);
         queue.submit([encoder.finish()]);
         for face in 0..6 {
             for mip in 0..PROBE_MIPS {
@@ -887,7 +956,7 @@ mod tests {
         // mirror-like mip: each face shows its own color, the rough ones mix them
         let mut encoder = device.create_command_encoder(&Default::default());
         capture(&probes, &mut encoder, FACES);
-        probes.filter(&mut encoder, 1);
+        probes.filter(&mut encoder, 1, false);
         queue.submit([encoder.finish()]);
         for (face, color) in FACES.into_iter().enumerate() {
             let sharp = read(&device, &queue, &probes.array, 0, 6 + face as u32);
@@ -895,6 +964,21 @@ mod tests {
             assert!(close(center, color), "face {face}: {center:?}");
             let rough = read(&device, &queue, &probes.array, PROBE_MIPS - 1, 6 + face as u32)[0];
             assert!(!close(rough, color), "face {face} at full roughness: {rough:?}");
+        }
+        // with its irradiance capture, a probe's irradiance comes from it and
+        // its radiance from the radiance capture
+        let grey = [0.75, 0.75, 0.75];
+        let mut encoder = device.create_command_encoder(&Default::default());
+        capture(&probes, &mut encoder, [plain; 6]);
+        capture_into(&mut encoder, [grey; 6], |face| probes.irr_capture_target(face));
+        probes.filter(&mut encoder, 5, true);
+        queue.submit([encoder.finish()]);
+        for face in 0..6 {
+            let radiance = read(&device, &queue, &probes.array, 0, 5 * 6 + face);
+            assert!(radiance.iter().all(|t| close(*t, plain)), "radiance face {face}");
+            let irradiance = read(&device, &queue, &probes.irradiance, 0, 5 * 6 + face);
+            let off = irradiance.iter().position(|t| !close(*t, grey));
+            assert_eq!(off, None, "irradiance face {face}: {:?}", off.map(|i| irradiance[i]));
         }
     }
 }

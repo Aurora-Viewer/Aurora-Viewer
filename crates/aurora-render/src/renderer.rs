@@ -1282,8 +1282,9 @@ struct FrameGroups {
     /// Scene pass B: everything.
     b: wgpu::BindGroup,
     /// Own uniforms: [0] water reflection, [1] mirror, [2] probe,
-    /// [3]/[4] impostor pictures, [5] HUD, [6] drawn pick, [7] water exterior.
-    refl: [wgpu::BindGroup; 8],
+    /// [3]/[4] impostor pictures, [5] HUD, [6] drawn pick, [7] water exterior,
+    /// [8] probe irradiance capture.
+    refl: [wgpu::BindGroup; 9],
 }
 
 /// What a frame draws into: the swapchain image, presented, or a photo's
@@ -1339,9 +1340,12 @@ pub(crate) struct Backend {
     /// The glow was drawn last frame: its image is there for the exposure.
     glow_drawn: bool,
     frame_buffer: wgpu::Buffer,
-    refl_buffers: [wgpu::Buffer; 8],
+    refl_buffers: [wgpu::Buffer; 9],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
     probes: crate::probes::Probes,
+    /// Faces (bit per face) of the probe being captured that have their
+    /// irradiance capture: all six, its irradiance comes from it.
+    probe_irr_faces: u8,
     groups: FrameGroups,
     gbuf_group: Option<wgpu::BindGroup>,
     ssao_groups: Option<(wgpu::BindGroup, wgpu::BindGroup)>,
@@ -2389,6 +2393,7 @@ impl Backend {
             mk_frame_buffer("HUD uniforms"),
             mk_frame_buffer("drawn pick uniforms"),
             mk_frame_buffer("water exterior uniforms"),
+            mk_frame_buffer("probe irradiance capture uniforms"),
         ];
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
@@ -2602,6 +2607,7 @@ impl Backend {
             refl_buffers,
             hud_depth: None,
             probes,
+            probe_irr_faces: 0,
             groups,
             gbuf_group: None,
             ssao_groups: None,
@@ -3443,7 +3449,7 @@ impl Backend {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         frame_buffer: &wgpu::Buffer,
-        refl_buffers: &[wgpu::Buffer; 8],
+        refl_buffers: &[wgpu::Buffer; 9],
         shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
@@ -3697,6 +3703,18 @@ impl Backend {
                 mk(
                     "frame water exterior",
                     &refl_buffers[7],
+                    &dummies.white,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.depth,
+                    &dummies.black,
+                    &dummies.black,
+                    false,
+                ),
+                mk(
+                    "frame probe irradiance capture",
+                    &refl_buffers[8],
                     &dummies.white,
                     &dummies.black,
                     &dummies.black,
@@ -4796,6 +4814,9 @@ impl Backend {
         // ---- reflection probes: list for the shaders, face capture uniforms
         self.probes.upload(&self.queue, f.probes.enabled, &f.probes.probes, &probe_sets);
         let capture = f.probes.capture;
+        // skies with a probe ambiance light with the probes' irradiance
+        // (shade_pbr), which gets a capture of its own
+        let irr_capture = capture.is_some() && !f.sky.classic && !f.sky.no_post;
         let mut probe_vp = Mat4::IDENTITY;
         if let Some(c) = &capture {
             let mut cf = f.clone();
@@ -4809,6 +4830,29 @@ impl Backend {
             let r = crate::probes::CAPTURE_RES as f32;
             u.screen = [r, r, 1.0 / r, 1.0 / r];
             self.queue.write_buffer(&self.refl_buffers[2], 0, bytemuck::bytes_of(&u));
+            if c.face == 0 {
+                self.probe_irr_faces = 0;
+            }
+            if irr_capture {
+                // the irradiance pass of LLReflectionMapManager: no ambient
+                // (LLSettingsVOSky::applySpecial), no clouds
+                // (LLDrawPoolWLSky::renderDeferred) and, RenderDesaturateIrradiance,
+                // the sky's blue_horizon and blue_density at their HSL
+                // lightness (draw_color), so that the sky does not tint the
+                // world's ambient blue
+                let lightness = |c: [f32; 4]| {
+                    let l = (c[0].max(c[1]).max(c[2]) + c[0].min(c[1]).min(c[2])) * 0.5;
+                    [l, l, l, c[3]]
+                };
+                u.sky_blue_horizon = lightness(u.sky_blue_horizon);
+                u.sky_blue_density = lightness(u.sky_blue_density);
+                u.sky_ambient = [0.0, 0.0, 0.0, u.sky_ambient[3]];
+                u.sky_cloud_color[3] = 0.0;
+                let r = crate::probes::IRR_CAPTURE_RES as f32;
+                u.screen = [r, r, 1.0 / r, 1.0 / r];
+                self.queue.write_buffer(&self.refl_buffers[8], 0, bytemuck::bytes_of(&u));
+                self.probe_irr_faces |= 1 << c.face;
+            }
         }
         // impostor pictures: lit like the scene, seen from the camera
         let imp_caps: Vec<&ImpostorCapture> = lists.impostor_captures.iter().take(IMPOSTOR_CAPTURES).collect();
@@ -5728,11 +5772,25 @@ impl Backend {
         // ---- reflection probe: one cube face (LLReflectionMap::update ->
         // cubeSnapshot), then the radiance filtering after the sixth
         if let Some(c) = &capture {
-            {
+            // the radiance face, then (a sky with a probe ambiance) the same
+            // face of the irradiance capture
+            let radiance = (
+                self.probes.capture_target(c.face),
+                &self.probes.depth,
+                &self.groups.refl[2],
+                "probe capture",
+            );
+            let irradiance = (
+                self.probes.irr_capture_target(c.face),
+                &self.probes.irr_depth,
+                &self.groups.refl[8],
+                "probe irradiance capture",
+            );
+            for (target, depth, group, label) in std::iter::once(radiance).chain(irr_capture.then_some(irradiance)) {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("probe capture"),
+                    label: Some(label),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: self.probes.capture_target(c.face),
+                        view: target,
                         depth_slice: None,
                         resolve_target: None,
                         ops: wgpu::Operations {
@@ -5741,7 +5799,7 @@ impl Backend {
                         },
                     })],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.probes.depth,
+                        view: depth,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(0.0),
                             store: wgpu::StoreOp::Discard,
@@ -5752,7 +5810,7 @@ impl Backend {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                bind_mesh(&mut pass, &self.groups.refl[2]);
+                bind_mesh(&mut pass, group);
                 pass.set_pipeline(&self.pipelines.refl_sky);
                 pass.draw(0..3, 0..1);
                 // the default probe sees sky, terrain and water only
@@ -5763,7 +5821,7 @@ impl Backend {
                 }
             }
             if c.finish {
-                self.probes.filter(&mut encoder, c.slot);
+                self.probes.filter(&mut encoder, c.slot, self.probe_irr_faces == 0x3f);
             }
         }
 

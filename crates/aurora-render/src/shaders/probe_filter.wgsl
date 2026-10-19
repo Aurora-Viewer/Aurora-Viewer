@@ -121,7 +121,12 @@ const IRR_SAMPLES: u32 = 32u;
 const IRR_WIDTH: f32 = 64.0;
 const IRR_LOD_BIAS: f32 = 2.0;
 
-fn irradiance_texel(face: u32, uv: vec2<f32>) -> vec4<f32> {
+// The irradiance capture of skies with a probe ambiance is drawn at an
+// eighth of the radiance capture (IRR_CAPTURE_RES of probes.rs): its mip
+// `m` is the radiance capture's `m + 3`.
+const IRR_CAPTURE_LOD_OFFSET: f32 = CAPTURE_LOD_OFFSET - 3.0;
+
+fn irradiance_texel(face: u32, uv: vec2<f32>, lod_offset: f32) -> vec4<f32> {
     let n = face_dir(face, uv);
     // generateTBN (with the robust bitangent near +-Y LL leaves commented out)
     let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.y) > 0.999);
@@ -137,7 +142,7 @@ fn irradiance_texel(face: u32, uv: vec2<f32>) -> vec4<f32> {
         let dir = normalize(t * (sin_t * cos(phi)) + b * (sin_t * sin(phi)) + n * cos_t);
         var lod = 0.5 * log2(6.0 * IRR_WIDTH * IRR_WIDTH / (f32(IRR_SAMPLES) * pdf)) + IRR_LOD_BIAS;
         lod = clamp(lod, 0.0, MAX_PROBE_LOD);
-        color += textureSampleLevel(src_cube, lin, dir, lod + CAPTURE_LOD_OFFSET).rgb;
+        color += textureSampleLevel(src_cube, lin, dir, max(lod + lod_offset, 0.0)).rgb;
     }
     return vec4<f32>(max(color / f32(IRR_SAMPLES), vec3<f32>(0.0)), 1.0);
 }
@@ -172,5 +177,15 @@ fn cs_irradiance(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= dims.x || id.y >= dims.y) {
         return;
     }
-    textureStore(dst, vec2<i32>(id.xy), i32(id.z), irradiance_texel(id.z, texel_uv(id, dims)));
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), irradiance_texel(id.z, texel_uv(id, dims), CAPTURE_LOD_OFFSET));
+}
+
+// The same from the irradiance capture.
+@compute @workgroup_size(8, 8, 1)
+fn cs_irradiance_capture(@builtin(global_invocation_id) id: vec3<u32>) {
+    let dims = textureDimensions(dst);
+    if (id.x >= dims.x || id.y >= dims.y) {
+        return;
+    }
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), irradiance_texel(id.z, texel_uv(id, dims), IRR_CAPTURE_LOD_OFFSET));
 }

@@ -1063,10 +1063,15 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
         let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
-        col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy) + m.emissive;
+        // a sky with a probe ambiance: softenLightF's non-classic branch, a
+        // face without a PBR material lit as a legacy one
+        let legacy = (rec.flags.x & FLAG_PBR) == 0u;
+        col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, legacy) + m.emissive;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
+            // its highlights in the sunlight (sunlit_linear) and its
+            // environment at the probes' radiance
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
-                               frame.sun_color.rgb / PI, 1.0 / PI)
+                               frame.sun_color.rgb / 3.0, 1.0)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
         col += m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);

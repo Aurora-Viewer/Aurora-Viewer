@@ -25,6 +25,16 @@ const ARC_HOT: f32 = 16.0;
 /// (they are fully lit while dragged).
 const LIT_HOVER: f32 = 0.7;
 
+/// An edge/corner owns the current drag, even before its window is drawn.
+/// Inspect all visible windows so menus close independently of their owner
+/// and drawing order; hovering a grip or dragging content is not a resize.
+pub(super) fn active(ctx: &Context) -> bool {
+    let Some(dragged) = ctx.dragged_id() else { return false };
+    ctx.memory(|memory| memory.areas().visible_layer_ids())
+        .into_iter()
+        .any(|layer| Edge::ALL.into_iter().any(|edge| edge.id(layer.id) == dragged))
+}
+
 /// Test the painted handles at the event's position, including their grip
 /// outside the area. egui's area hit test and pointer still describe the last
 /// frame when winit delivers a move followed by a press before the next frame.

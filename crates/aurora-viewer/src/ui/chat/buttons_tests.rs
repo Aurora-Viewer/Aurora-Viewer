@@ -864,6 +864,76 @@ fn dragging_the_conversation_closes_its_context_menu() {
     }
 }
 
+/// A resize is a drag, so egui's outside-click dismissal does not run until
+/// release. Every edge/corner must dismiss the transcript menu immediately (#589).
+#[test]
+fn resizing_the_conversation_closes_its_context_menu() {
+    type Grab = fn(egui::Rect) -> egui::Pos2;
+    let cases: [(&str, Grab, egui::Vec2); 8] = [
+        ("left", |r| r.left_center(), egui::vec2(45.0, 0.0)),
+        ("right", |r| r.right_center(), egui::vec2(-45.0, 0.0)),
+        ("top", |r| r.center_top(), egui::vec2(0.0, 35.0)),
+        ("bottom", |r| egui::pos2(r.right() - 40.0, r.bottom()), egui::vec2(0.0, -35.0)),
+        ("top-left", |r| r.left_top(), egui::vec2(45.0, 35.0)),
+        ("bottom-left", |r| r.left_bottom(), egui::vec2(45.0, -35.0)),
+        ("top-right", |r| r.right_top(), egui::vec2(-45.0, 35.0)),
+        ("bottom-right", |r| r.right_bottom(), egui::vec2(-45.0, -35.0)),
+    ];
+    for style in ALL {
+        for sender in [false, true] {
+            if !style.workspace() && !sender {
+                continue;
+            }
+            for (edge, grab_of, delta) in cases {
+                let mut h = H::new(style);
+                h.world.groups.sessions.entry(GROUP).or_default().group = true;
+                crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(150.0, 100.0), egui::vec2(960.0, 580.0));
+                h.open(Some(GROUP));
+                let at = h.text_rect(if sender { "Jane" } else { "hi builders" }).center();
+                h.right_click(at);
+                let menu_label = aurora_i18n::tr!("common-ignore");
+                assert!(h.painted(menu_label), "{style:?}, sender={sender}, {edge}: menu opened");
+                let window = || {
+                    h.frames
+                        .ctx
+                        .memory(|m| m.area_rect(egui::Id::new("conversations")).expect("window"))
+                };
+                let before = window();
+                let grab = grab_of(before);
+                h.frame(vec![egui::Event::PointerMoved(grab)]);
+                assert!(h.painted(menu_label), "{style:?}, sender={sender}, {edge}: hovering keeps the menu");
+                let button = |pos, pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![button(grab, true)]);
+                h.frame(vec![egui::Event::PointerMoved(grab + delta)]);
+                let resized = h
+                    .frames
+                    .ctx
+                    .memory(|m| m.area_rect(egui::Id::new("conversations")).expect("window"));
+                assert!(
+                    (resized.size() - before.size()).length() > 10.0,
+                    "{style:?}, sender={sender}, {edge}: the real window resized: {before:?} -> {resized:?}"
+                );
+                assert!(h.frames.ctx.input(|i| i.pointer.primary_down()), "the button is still held");
+                assert!(
+                    !egui::Popup::is_any_open(&h.frames.ctx),
+                    "{style:?}, sender={sender}, {edge}: resizing dismisses the menu before release"
+                );
+                assert!(!h.painted(menu_label), "{style:?}, sender={sender}, {edge}: no menu is left behind");
+                h.frame(vec![button(grab + delta, false)]);
+                h.settle();
+                let at = h.text_rect(if sender { "Jane" } else { "hi builders" }).center();
+                h.right_click(at);
+                assert!(h.painted(menu_label), "{style:?}, sender={sender}, {edge}: the menu can reopen");
+            }
+        }
+    }
+}
+
 /// Copy and Quote use the original message even when incoming traffic has
 /// removed it from both the viewport and the bounded live transcript.
 #[test]
