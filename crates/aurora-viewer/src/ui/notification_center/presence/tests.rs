@@ -154,6 +154,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         double_click: Default::default(),
         marketplace: false,
         parcel_landmark: None,
+        can_set_home: false,
         classic_bars: classic,
         islands: IslandsLook {
             stretch: true,
