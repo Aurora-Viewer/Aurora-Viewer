@@ -1,7 +1,7 @@
 //! Preferences › Privacy: "Only friends and groups can call or IM me"
 //! (panel_preferences_privacy.xml) and the objects' messages from elsewhere
-//! (`world/object_im_filter.rs`), then Firestorm's "Privacy › LookAt" tab
-//! (tab-lookat): the crosshairs of where the avatars look, and what we send
+//! (`world/object_im_filter.rs`), then the Legacy Viewer's "Privacy ›
+//! LookAt" tab (tab-lookat): the crosshairs of where the avatars look, and what we send
 //! of where we look.
 
 use super::{group, row, slider_whole, toggle};
