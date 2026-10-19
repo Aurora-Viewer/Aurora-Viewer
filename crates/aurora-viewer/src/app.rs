@@ -7160,10 +7160,8 @@ impl App {
                 self.world.apply(event);
             }
         }
-        if self.demo
-            && let Some(mode) = crate::demo::physics::mode()
-        {
-            for event in crate::demo::physics::animation_events(self.frame_count, mode) {
+        if self.demo && crate::demo::physics::mode().is_some() {
+            for event in crate::demo::physics::animation_events(self.frame_count) {
                 self.world.apply(event);
             }
             // the volumes' offsets, to read the bounce and its rest in the log

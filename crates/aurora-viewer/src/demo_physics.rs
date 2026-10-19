@@ -16,7 +16,6 @@ use aurora_net::NetEvent;
 use aurora_prim::params::LL_SCULPT_TYPE_MESH;
 use aurora_prim::{ExtraParams, SculptParams};
 use glam::{Quat, Vec3};
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// The hops.
@@ -208,7 +207,7 @@ pub fn events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent> {
 }
 
 /// The animation lists at `frame`: the hops join the idle motion.
-pub fn animation_events(frame: u64, mode: Mode) -> Vec<NetEvent> {
+pub fn animation_events(frame: u64) -> Vec<NetEvent> {
     if frame != HOP_FRAME {
         return Vec::new();
     }
@@ -239,7 +238,7 @@ mod tests {
         for (name, _, _) in BALLS {
             assert!(lib.rig.names.contains_key(name), "{name}");
         }
-        assert_eq!(animation_events(HOP_FRAME, Mode::Hop).len(), 2);
-        assert!(animation_events(HOP_FRAME - 1, Mode::Still).is_empty());
+        assert_eq!(animation_events(HOP_FRAME).len(), 2);
+        assert!(animation_events(HOP_FRAME - 1).is_empty());
     }
 }
