@@ -4291,17 +4291,24 @@ pub fn events() -> Vec<NetEvent> {
     // what is a few tens of metres away is hazed. With an ambient level (0.25
     // by default, above 1 in the brightest skies), what only dims the ambient
     // light shows: the ambient occlusion. With a reflection probe ambiance
-    // (4th value, above 0) the sky is no longer classic: it is tone mapped
+    // (4th value, above 0) the sky is no longer classic: it is tone mapped.
+    // AURORA_DEMO_SKY=midday: the library Midday's values instead (World ›
+    // Environment), a non-classic sky with dense haze and half the sky clouded
     let sky = std::env::var("AURORA_DEMO_SKY").ok().and_then(|v| {
+        if v.trim().eq_ignore_ascii_case("midday") {
+            return Some(demo_day(midday_sky()));
+        }
         let mut values = v.split(',').map(|s| s.trim().parse::<f64>().ok());
-        Some((
-            values.next()??,
+        let gamma = values.next()??;
+        Some(demo_sky(
+            Vec3::new(0.55, 0.35, 0.6).normalize(),
+            gamma,
             values.next().flatten(),
             values.next().flatten(),
             values.next().flatten(),
         ))
     });
-    if let Some((gamma, haze_distance, ambient, probe_ambiance)) = sky {
+    if let Some(environment) = sky {
         // an EEP region: without the ExtEnvironment capability its day is
         // not shown (the simulator sun is)
         ev.push(NetEvent::Capabilities {
@@ -4318,13 +4325,7 @@ pub fn events() -> Vec<NetEvent> {
         ev.push(NetEvent::Environment {
             handle: HANDLE,
             parcel_id: -1,
-            environment: demo_sky(
-                Vec3::new(0.55, 0.35, 0.6).normalize(),
-                gamma,
-                haze_distance,
-                ambient,
-                probe_ambiance,
-            ),
+            environment,
         });
     }
     ev.push(NetEvent::FriendsOnline {
@@ -6708,6 +6709,46 @@ fn demo_sky(sun: Vec3, gamma: f64, haze_distance: Option<f64>, ambient: Option<f
     if let (Some(a), Llsd::Map(m)) = (probe_ambiance, &mut sky) {
         m.insert("reflection_probe_ambiance".into(), Llsd::Real(a));
     }
+    demo_day(sky)
+}
+
+/// The library Midday sky (AURORA_DEMO_SKY=midday): what the World ›
+/// Environment menu applies, a non-classic sky (probe ambiance 1) without
+/// ambient, with a strong haze, half the sky in clouds and a bluish sun.
+fn midday_sky() -> Llsd {
+    use aurora_llsd::llsd_map;
+    let arr = |v: &[f64]| Llsd::Array(v.iter().map(|x| Llsd::Real(*x)).collect());
+    llsd_map! {
+        "type" => "sky",
+        "sun_rotation" => arr(&[0.171733, -0.481749, 0.288542, 0.809425]),
+        "sunlight_color" => arr(&[1.74118, 1.74118, 1.92941]),
+        "gamma" => 1.0,
+        "reflection_probe_ambiance" => 1.0,
+        "max_y" => 2272.7,
+        "glow" => arr(&[5.0, 0.001, -0.48]),
+        "cloud_color" => arr(&[0.541176, 0.541176, 0.541176]),
+        "cloud_pos_density1" => arr(&[0.73, 0.71, 0.26]),
+        "cloud_pos_density2" => arr(&[0.62, 0.49, 0.89]),
+        "cloud_scale" => 0.75,
+        "cloud_scroll_rate" => arr(&[0.0, 0.0]),
+        "cloud_shadow" => 0.54,
+        "cloud_variance" => 0.0,
+        "star_brightness" => 0.0,
+        "legacy_haze" => llsd_map! {
+            "ambient" => arr(&[0.0, 0.0, 0.0]),
+            "blue_density" => arr(&[0.1792, 0.3696, 0.9408]),
+            "blue_horizon" => arr(&[0.345098, 0.345098, 0.345098]),
+            "density_multiplier" => 0.0001126,
+            "distance_multiplier" => 6.54,
+            "haze_density" => 0.78,
+            "haze_horizon" => 0.25,
+        },
+    }
+}
+
+/// Day cycle with a single sky frame (and the default water).
+fn demo_day(sky: Llsd) -> Llsd {
+    use aurora_llsd::llsd_map;
     let mut frames = aurora_llsd::Map::new();
     frames.insert("sky".into(), sky);
     // a valid day needs a water track too (Firestorm recordEnvironment)

@@ -1020,6 +1020,11 @@ fn water_scene_light(world_pos:vec3<f32>) -> vec3<f32> {
 }
 
 fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
+    if (frame.sky_ll.x < 0.5) {
+        // a sky with a reflection probe ambiance: hazeF.glsl, as its surfaces
+        // are lit by softenLightF's non-classic branch (env.rs)
+        return ll_haze(col, ll_atmos(world_pos - frame.camera_pos.xyz));
+    }
     let dist = distance(world_pos, frame.camera_pos.xyz);
     let height_factor = exp(-max(world_pos.z - frame.params.y, 0.0) * 0.004);
     let f = 1.0 - exp(-dist * frame.fog.w * height_factor);
@@ -1471,8 +1476,12 @@ fn mirror_weight(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
 
 // `mat_ao`: the material's own occlusion (ORM red), which pbrIbl applies to
 // the image based diffuse and specular alike (deferredUtil.glsl).
+// `legacy`: a face without a PBR material, lit as softenLightF's legacy
+// branch of a sky with a probe ambiance: the sunlight (frame.sun_color / 3,
+// env.rs) times n.l on its albedo, no specular nor reflection of its own
+// (legacy_light adds those of its shininess or material)
 fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: vec3<f32>, v: vec3<f32>,
-             world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>) -> vec3<f32> {
+             world_pos: vec3<f32>, shadow: f32, frag: vec2<f32>, legacy: bool) -> vec3<f32> {
     let roughness = clamp(roughness_in, 0.04, 1.0);
     let a = roughness * roughness;
     let f0 = mix(vec3<f32>(0.04), base, metallic);
@@ -1484,7 +1493,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     // sun / moon
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
-    if (nl > 0.0) {
+    if (legacy) {
+        col += diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+    } else if (nl > 0.0) {
         let h = normalize(l + v);
         let nh = max(dot(n, h), 0.0);
         let vh = max(dot(v, h), 0.0);
@@ -1534,7 +1545,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         // normal, each probe mixed with the sky ambient by its ambiance
         // (sampleProbeAmbient), and pbrIbl radiance from the probes (ambient
         // occlusion only), in one walk of the probes
-        let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), true, true, hemi);
+        let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
         if (s.a.w > 0.0) {
             amb = s.a.rgb;
         }
@@ -1545,6 +1556,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     }
     col += diffuse_color * amb * ao * mat_ao;
     col += diffuse_color * screen_indirect(frag) * mat_ao;
+    if (legacy) {
+        return col;
+    }
     let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
     if (mw > 0.0) {
         let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;

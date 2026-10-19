@@ -157,22 +157,47 @@ impl Environment {
         let moon_diffuse = sky.sunlight * exp3(-light_atten * lighty) * transmittance * moon_brightness;
 
         let day = ((sun.z + 0.08) / 0.3).clamp(0.0, 1.0);
-        // Absolute scale of the classic (sRGB-like) light colors: SL compensates
-        // with auto-exposure; we use a fixed exposure, so normalise the default
-        // noon sun to a radiance of ~3.
-        let sun_scale = 15.0;
+        // objects: the moon shares the sun's color (getMoonlightColor), with
+        // no 0.7 (atmosphericsFuncs.glsl); black with neither up
+        let object_sunlight = if sun_up || moon_up {
+            normalized_light(sky.sunlight)
+        } else {
+            Vec3::ZERO
+        };
+        let (sun_color, zenith, horizon, ground) = if tone_mapped(sky.probe_ambiance) {
+            // A sky with a reflection probe ambiance lights surfaces as
+            // softenLightF's non-classic branch (calcAtmosphericVarsLinear,
+            // RenderHDRSkySunlightScale and RenderSkyAmbientScale 1): the
+            // objects' light attenuated along the light, made linear, x 3 of
+            // pbrBaseLight (shade_pbr divides the diffuse by PI as pbrPunctual
+            // does); the sky ambient is amblit's grey luminance, what the
+            // probes mix with by their ambiance. The automatic exposure makes
+            // up for the absolute level, as in the Legacy Viewer.
+            let sunlit = srgb_to_linear(object_sunlight * exp3(-light_atten / light_norm.z.max(1e-6)));
+            let amblit = srgb_to_linear(tmp_ambient.max(Vec3::ZERO).powf(0.9) * 0.57);
+            let grey = Vec3::splat(amblit.dot(Vec3::new(0.2126, 0.7152, 0.0722)));
+            (sunlit * 3.0, grey, grey, grey)
+        } else {
+            // Absolute scale of the classic (sRGB-like) light colors without
+            // tone mapping: the default noon sun normalised to a radiance of ~3.
+            let sun_scale = 15.0;
+            let diffuse = if sun_up { sun_diffuse } else { moon_diffuse * 0.6 };
+            let sun_color = srgb_to_linear(diffuse.min(Vec3::splat(3.0))) * sun_scale * (1.0 - sky.cloud_shadow * 0.35);
+            let amb = srgb_to_linear(tmp_ambient.min(Vec3::splat(3.0))) * 3.2;
+            // tint the upper hemisphere with the sky's blue
+            let tint = srgb_to_linear((sky.blue_horizon * sky.blue_density * 1.6).min(Vec3::splat(2.0)));
+            // desaturated: the ambient comes from the whole sky, not just its blue
+            let grey = (tint.x + tint.y + tint.z) / 3.0;
+            let sky_tint = Vec3::splat(grey).lerp(tint, 0.45);
+            let night_amb = Vec3::new(0.66, 0.66, 1.2) * 0.0125 * (1.0 - day);
+            (
+                sun_color,
+                amb * 1.1 + sky_tint * 0.6 * day + night_amb,
+                amb + sky_tint * 0.3 * day + night_amb,
+                amb * 0.45 + night_amb * 0.5,
+            )
+        };
         let diffuse = if sun_up { sun_diffuse } else { moon_diffuse * 0.6 };
-        let sun_color = srgb_to_linear(diffuse.min(Vec3::splat(3.0))) * sun_scale * (1.0 - sky.cloud_shadow * 0.35);
-        let amb = srgb_to_linear(tmp_ambient.min(Vec3::splat(3.0))) * 3.2;
-        // tint the upper hemisphere with the sky's blue
-        let tint = srgb_to_linear((sky.blue_horizon * sky.blue_density * 1.6).min(Vec3::splat(2.0)));
-        // desaturated: the ambient comes from the whole sky, not just its blue
-        let grey = (tint.x + tint.y + tint.z) / 3.0;
-        let sky_tint = Vec3::splat(grey).lerp(tint, 0.45);
-        let night_amb = Vec3::new(0.66, 0.66, 1.2) * 0.0125 * (1.0 - day);
-        let zenith = amb * 1.1 + sky_tint * 0.6 * day + night_amb;
-        let horizon = amb + sky_tint * 0.3 * day + night_amb;
-        let ground = amb * 0.45 + night_amb * 0.5;
 
         // haze color and density (calcAtmosphericVars)
         let mut haze = sky.blue_horizon * sky.blue_density * (diffuse * (1.0 - sky.cloud_shadow) + tmp_ambient)
@@ -192,13 +217,7 @@ impl Environment {
             light_norm,
             // skyV.glsl: "magic 0.7 to match legacy color" for the moon
             sunlight: if sun_up { sky.sunlight } else { sky.sunlight * 0.7 },
-            // objects: the moon shares the sun's color (getMoonlightColor),
-            // with no 0.7 (atmosphericsFuncs.glsl); black with neither up
-            object_sunlight: if sun_up || moon_up {
-                normalized_light(sky.sunlight)
-            } else {
-                Vec3::ZERO
-            },
+            object_sunlight,
             gamma: sky.gamma,
             ambient: sky.ambient,
             blue_horizon: sky.blue_horizon,
@@ -360,6 +379,42 @@ mod tests {
         };
         let hdr = Environment::from_eep(&hdr, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
         assert!(!hdr.sky.no_post);
+    }
+
+    /// A sky with a probe ambiance lights surfaces as softenLightF's
+    /// non-classic branch: the normalized sunlight attenuated along the light
+    /// (calcAtmosphericVars), linear, x 3, and a grey ambient; a classic sky
+    /// keeps its own scale.
+    #[test]
+    fn probe_ambiance_skies_light_as_the_legacy_linear_branch() {
+        let sun = Vec3::new(0.3, 0.2, 0.88).normalize();
+        let sky = SkyFrame {
+            probe_ambiance: 1.0,
+            can_auto_adjust: false,
+            sunlight: Vec3::new(1.741, 1.741, 1.929),
+            ambient: Vec3::ZERO,
+            cloud_shadow: 0.54,
+            ..SkyFrame::with_sun(sun)
+        };
+        let env = Environment::from_eep(&sky, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+        let atten = (sky.blue_density + Vec3::splat(sky.haze_density * 0.25)) * sky.density_multiplier * sky.max_y;
+        let sunlit = normalized_light(sky.sunlight) * exp3(-atten / env.sky.light_norm.z);
+        let expected = srgb_to_linear(sunlit) * 3.0;
+        assert!((env.sun_color - expected).length() < 1e-5, "{:?} vs {expected:?}", env.sun_color);
+        // amblit: pow(ambient + cloud shadow / 2, 0.9) x 0.57, its luminance
+        let amblit = srgb_to_linear(Vec3::splat(0.27f32.powf(0.9) * 0.57)).x;
+        for c in [env.zenith, env.horizon, env.ground] {
+            assert!((c - Vec3::splat(amblit)).abs().max_element() < 1e-5, "{c:?}");
+        }
+        // the same sky without probe ambiance
+        let classic = SkyFrame {
+            probe_ambiance: 0.0,
+            can_auto_adjust: true,
+            ..sky
+        };
+        let classic = Environment::from_eep(&classic, &WaterFrame::default(), glam::Vec2::ZERO, 96.0);
+        assert!(classic.sun_color.max_element() > 2.0 * env.sun_color.max_element());
+        assert!(classic.zenith.z > classic.zenith.x, "{:?}", classic.zenith);
     }
 
     #[test]

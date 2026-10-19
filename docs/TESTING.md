@@ -1635,7 +1635,7 @@ tests do not establish that this report uses an invalid joint or index.
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
 | `AURORA_DEMO_PROJECTOR=1` or `point` | Projectors (lights with a projected texture) |
-| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]` | EEP sky with this gamma, classic unless it has a probe ambiance |
+| `AURORA_DEMO_SKY=<gamma>[,<haze>[,<ambient>[,<probe ambiance>]]]\|midday` | EEP sky with this gamma, classic unless it has a probe ambiance; or the library Midday |
 | `AURORA_DEMO_SKY_OPTICS=rainbow\|halo\|clear` | Rainbow or 22° halo in the sky |
 | `AURORA_DEMO_OCCLUSION=1` | Wall with hidden objects (occlusion test) |
 | `AURORA_DEMO_DEBUG="<overlays>"` | Debug overlays |
@@ -1762,6 +1762,13 @@ tests do not establish that this report uses an invalid joint or index.
   mapping choice is enabled;
   World › Environment › Midday (a classic sky in the demo) greys it, with its
   tooltip, and "Use shared environment" enables it again.
+  `midday`: the values of the library Midday instead (probe ambiance 1, no
+  ambient, haze 0.25 / 0.78 with a distance multiplier of 6.54, half the sky
+  in clouds, a bluish sunlight of 1.74 / 1.93), lit as the Legacy Viewer
+  lights a sky with a probe ambiance: the white avatar and the white boxes in
+  the sun neutral grey (warm beige before), their shaded faces slightly
+  blue, the sky above the hill pale; the scene is dim, so the automatic
+  exposure stays near its highest, 2.
 - **`AURORA_DEMO_SKY_OPTICS=rainbow|halo|clear`**: the region's sky carries a
   moisture level of 1 (`rainbow`, sun 12° up in the west) or an ice level of
   1 (`halo`, sun 14° up in the east), and the camera looks east from behind
@@ -4838,10 +4845,10 @@ What the inventory must show with these scenarios:
   and `sqrt(gamma) x 2` of the sky, eased towards over about two seconds:
   a dark scene opens up, a bright one closes down; a classic sky keeps 1.
   The log gives the value every 30 s and 4 s after a change of sky:
-  `auto exposure: 1.538 (target 1.546, average luminance 0.275, range 0.500
+  `auto exposure: 1.805 (target 1.809, average luminance 0.178, range 0.500
   to 2.000)`. Demo: `AURORA_DEMO_SKY=1,0.8,0,1` (a non-classic sky of gamma
   1, like the library Midday) gives that line; `AURORA_DEMO_SKY=1,0.8,1,1`
-  (ambient 1) a brighter scene and an exposure under 1.
+  (ambient 1) a brighter scene and a lower exposure (about 1.6).
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,
