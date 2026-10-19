@@ -326,6 +326,10 @@ impl App {
                         self.open_shape_editor(it.id);
                         return;
                     }
+                    if Some(it.id) == crate::physics_editor::worn_physics(&self.world) {
+                        self.open_physics_editor(it.id);
+                        return;
+                    }
                     if matches!(it.asset_type, 7 | 10) && it.owner_mask & rules::COPY != 0 {
                         self.record_library_use(id);
                     }
