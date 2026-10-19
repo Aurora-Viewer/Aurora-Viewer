@@ -16,12 +16,49 @@ pub(super) struct Pending {
     pub started: Instant,
 }
 
+/// The wearables the viewer edits: a shape (body part 0) or a physics layer
+/// (clothing 15).
+fn editable(asset_type: i32, flags: u32) -> bool {
+    matches!((asset_type, flags & 0xff), (13, 0) | (5, 15))
+}
+
+/// Why a save failed, worded for the kind of wearable saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Failure {
+    Denied,
+    Rejected,
+    Interrupted,
+    Unconfirmed,
+    Unavailable,
+}
+
+pub(super) fn failure(item: &InvItem, why: Failure) -> String {
+    let physics = item.asset_type == 5;
+    match (why, physics) {
+        (Failure::Denied, false) => aurora_i18n::tr!("shape-save-denied"),
+        (Failure::Denied, true) => aurora_i18n::tr!("physics-save-denied"),
+        (Failure::Rejected, false) => aurora_i18n::tr!("shape-save-rejected"),
+        (Failure::Rejected, true) => aurora_i18n::tr!("physics-save-rejected"),
+        (Failure::Interrupted, false) => aurora_i18n::tr!("shape-save-interrupted"),
+        (Failure::Interrupted, true) => aurora_i18n::tr!("physics-save-interrupted"),
+        (Failure::Unconfirmed, false) => aurora_i18n::tr!("shape-save-unconfirmed"),
+        (Failure::Unconfirmed, true) => aurora_i18n::tr!("physics-save-unconfirmed"),
+        (Failure::Unavailable, false) => aurora_i18n::tr!("shape-save-unavailable"),
+        (Failure::Unavailable, true) => aurora_i18n::tr!("physics-save-unavailable"),
+    }
+    .into()
+}
+
 fn eligible(item: &InvItem, owner: Uuid, copy: bool) -> bool {
     !item.id.is_nil()
         && item.owner == owner
-        && item.asset_type == 13
-        && item.flags & 0xff == 0
+        && editable(item.asset_type, item.flags)
         && item.owner_mask & if copy { 0x8000 } else { 0x4000 } != 0
+}
+
+/// The item read back is the saved one: same kind of wearable as before.
+fn same_kind(a: &InvItem, b: &InvItem) -> bool {
+    a.asset_type == b.asset_type && a.flags & 0xff == b.flags & 0xff
 }
 
 async fn commit_asset(http: &reqwest::Client, cap: &str, fetch: &str, owner: Uuid, pending: &Pending) -> Result<InvItem, String> {
@@ -31,17 +68,11 @@ async fn commit_asset(http: &reqwest::Client, cap: &str, fetch: &str, owner: Uui
     let body = crate::inventory::fetch_items_body(&[pending.item.id], owner);
     let reply = caps::post_llsd(http, fetch, &body)
         .await
-        .map_err(|_| aurora_i18n::tr!("shape-save-unconfirmed").to_owned())?;
+        .map_err(|_| failure(&pending.item, Failure::Unconfirmed))?;
     crate::inventory::parse_items_response(&reply)
         .into_iter()
-        .find(|item| {
-            item.id == pending.item.id
-                && item.owner == owner
-                && item.asset_id == pending.asset
-                && item.asset_type == 13
-                && item.flags & 0xff == 0
-        })
-        .ok_or_else(|| aurora_i18n::tr!("shape-save-unconfirmed").to_owned())
+        .find(|item| item.id == pending.item.id && item.owner == owner && item.asset_id == pending.asset && same_kind(item, &pending.item))
+        .ok_or_else(|| failure(&pending.item, Failure::Unconfirmed))
 }
 
 impl Session<'_> {
@@ -59,7 +90,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::WearableSaved {
                     request,
-                    result: Err(aurora_i18n::tr!("shape-save-denied").into()),
+                    result: Err(failure(&item, Failure::Denied)),
                 },
             );
             return;
@@ -72,7 +103,7 @@ impl Session<'_> {
             transaction: Uuid::nil(),
             started: Instant::now(),
         };
-        // A non-modifiable shape can be copied, but its contents stay original.
+        // A non-modifiable wearable can be copied, but its contents stay original.
         if pending.item.owner_mask & 0x4000 == 0 {
             self.wearable_asset_ready(pending, Uuid::nil(), Uuid::nil());
         } else {
@@ -113,8 +144,7 @@ impl Session<'_> {
         if item.id.is_nil()
             || item.id == pending.item.id
             || item.owner != self.agent_id()
-            || item.asset_type != 13
-            || item.flags & 0xff != 0
+            || !same_kind(item, &pending.item)
             || item.asset_id != pending.item.asset_id
             || item.parent != pending.item.parent
         {
@@ -122,7 +152,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::WearableSaved {
                     request: pending.request,
-                    result: Err(aurora_i18n::tr!("shape-save-unconfirmed").into()),
+                    result: Err(failure(&pending.item, Failure::Unconfirmed)),
                 },
             );
         } else if pending.transaction.is_nil() {
@@ -146,7 +176,7 @@ impl Session<'_> {
                 self.sh,
                 NetEvent::WearableSaved {
                     request: pending.request,
-                    result: Err(aurora_i18n::tr!("shape-save-unavailable").into()),
+                    result: Err(failure(&pending.item, Failure::Unavailable)),
                 },
             );
             return;
@@ -157,7 +187,7 @@ impl Session<'_> {
         tokio::spawn(async move {
             let result = tokio::time::timeout(Duration::from_secs(30), commit_asset(&http, &cap, &fetch, owner, &pending))
                 .await
-                .unwrap_or_else(|_| Err(aurora_i18n::tr!("shape-save-interrupted").into()));
+                .unwrap_or_else(|_| Err(failure(&pending.item, Failure::Interrupted)));
             let _ = events.send(NetEvent::WearableSaved {
                 request: pending.request,
                 result,
@@ -314,5 +344,26 @@ mod tests {
         assert!(!eligible(&item, Uuid::nil(), true));
         item.flags = 1;
         assert!(!eligible(&item, item.owner, true));
+    }
+    #[test]
+    fn a_physics_layer_saves_like_a_shape_and_other_clothing_does_not() {
+        let mut item = InvItem {
+            id: Uuid::from_u128(1),
+            owner: Uuid::from_u128(2),
+            asset_type: 5,
+            flags: 15,
+            owner_mask: 0xC000,
+            ..Default::default()
+        };
+        assert!(eligible(&item, item.owner, false) && eligible(&item, item.owner, true));
+        assert_eq!(failure(&item, Failure::Denied), aurora_i18n::tr!("physics-save-denied"));
+        let mut read_back = item.clone();
+        assert!(same_kind(&read_back, &item));
+        read_back.flags = 4;
+        assert!(!same_kind(&read_back, &item), "a shirt is not the saved physics");
+        item.flags = 4;
+        assert!(!eligible(&item, item.owner, false), "a shirt has no editor");
+        item.flags = 0x0100_000F;
+        assert!(eligible(&item, item.owner, false), "only the low byte is the wearable type");
     }
 }

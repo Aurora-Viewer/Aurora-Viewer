@@ -172,6 +172,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         camera_preset: Default::default(),
         interface_hidden: false,
         interface_keys: String::new(),
+        health: Default::default(),
     }
 }
 

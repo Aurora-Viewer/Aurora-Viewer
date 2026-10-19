@@ -142,6 +142,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "square",
     "star",
     "stack-2",
+    "stretching",
 
     "swimming",
     "terminal-2",
@@ -294,6 +295,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "lock",
     "man",
     "map-pin",
+    "medical-cross",
     "menu-2",
     "message",
     "message-chatbot",

@@ -714,7 +714,10 @@ pub(super) fn show(
                     );
                 }
                 if single
-                    && original.is_some_and(|it| it.asset_type == 13 && it.flags & 0xff == 0 && facts.worn.contains(&it.id))
+                    && original.is_some_and(|it| {
+                        ((it.asset_type == 13 && it.flags & 0xff == 0) || crate::physics_editor::is_physics(it))
+                            && facts.worn.contains(&it.id)
+                    })
                     && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"))
                 {
                     crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(target.unwrap_or(id)));
