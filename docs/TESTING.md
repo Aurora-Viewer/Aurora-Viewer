@@ -1466,8 +1466,14 @@ instead of leaving both knees compressed; compare `steps-rise-front-off`.
 Append `-transition` to interrupt a fade-out after 100 ms, then fully disable
 and re-enable placement (frames 660/666 and 720/750 at the 60 fps cap). Both
 returns should continue from the visible pose. Terrain offsets settle toward
-lower support in about 250 ms, while source foot lifts remain immediate and
-collision correction always keeps the sole above solid support.
+lower support in about 500 ms, while source foot lifts remain immediate.
+Collision correction takes priority over smoothing within the configured
+correction-height limit.
+`steps-range-reach-front` uses a 0.9 m upper support: the saved correction
+limit starts at 0.4 m, then changes to 1 m at frame 900. Compare frames 850
+and 950, and inspect the live slider in Preferences › Aurora › Animations
+(`AURORA_DEMO_OPTIONS=13:animations`). Feet and body must respect the limit;
+supports beyond it may remain out of reach. Ordinary modes use 0.4 m.
 `steps-rise-front-lift` must retain this height while either foot lifts and
 replants. An intentional crouch (normal downward control) must retain its
 authored flexion. Inspect

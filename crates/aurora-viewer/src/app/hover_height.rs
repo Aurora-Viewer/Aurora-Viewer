@@ -14,11 +14,15 @@ impl App {
                 }
                 if self.frame_count == 600 {
                     self.settings.ground_avatar_feet = !mode.ends_with("-off");
+                    self.settings.ground_feet_max_height = crate::settings::DEFAULT_GROUND_FEET_HEIGHT;
                     self.panels.chat = false;
                     self.panels.people = false;
                     self.panels.perf = false;
                     let yaw = if mode.contains("-front") { std::f32::consts::PI } else { 1.0 };
                     self.camera.demo_orbit(yaw, 0.45, Some(5.0), &self.settings.camera);
+                }
+                if mode.contains("-range") && self.frame_count == 900 {
+                    self.settings.ground_feet_max_height = 1.0;
                 }
             }
             let mode = std::env::var("AURORA_DEMO_HOVER_HEIGHT").ok();

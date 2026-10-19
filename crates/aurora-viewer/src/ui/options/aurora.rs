@@ -4,7 +4,7 @@
 //! the one exception to the theme here (docs/BRANDING.md); the settings
 //! below keep the cards and controls of the other pages.
 
-use super::{group, toggle};
+use super::{SLIDER_W, group, slider, toggle};
 use crate::settings::{ChatStyle, NotificationsStyle, PhotoWindowStyle, PlateClick, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::ui::widgets::{self, ActionKind};
@@ -658,6 +658,24 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             widgets::SWITCH_SIZE,
             |ui| toggle(ui, p, &mut s.ground_avatar_feet),
         );
+        between(ui, p);
+        ui.add_enabled_ui(s.ground_avatar_feet, |ui| {
+            c |= item(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-options-aurora-ground-feet-height"),
+                aurora_i18n::tr!("ui-options-aurora-ground-feet-height-help"),
+                Vec2::new(SLIDER_W + 70.0, 26.0),
+                |ui| {
+                    slider(
+                        ui,
+                        &mut s.ground_feet_max_height,
+                        0.0..=crate::settings::MAX_GROUND_FEET_HEIGHT,
+                        " m",
+                    )
+                },
+            );
+        });
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-avatar-plates"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -810,15 +828,19 @@ mod tests {
     fn grounding_defaults_on_is_saved_and_resets_with_its_section() {
         let old: Settings = serde_json::from_str("{}").expect("older settings");
         assert!(old.ground_avatar_feet);
+        assert_eq!(old.ground_feet_max_height, 0.4);
         for enabled in [false, true] {
             let settings = Settings {
                 ground_avatar_feet: enabled,
+                ground_feet_max_height: 1.0,
                 ..Settings::default()
             };
             let mut back: Settings = serde_json::from_str(&serde_json::to_string(&settings).expect("save")).expect("load");
             assert_eq!(back.ground_avatar_feet, enabled);
+            assert_eq!(back.ground_feet_max_height, 1.0);
             super::super::sections::reset(super::super::TAB_AURORA, &mut back);
             assert!(back.ground_avatar_feet);
+            assert_eq!(back.ground_feet_max_height, 0.4);
         }
     }
 

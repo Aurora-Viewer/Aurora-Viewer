@@ -257,7 +257,8 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
             }
             vec![base, sides[0].clone(), sides[1].clone()]
         } else if mode.starts_with("steps") {
-            vec![top(9380, -0.75, 0.18, Quat::IDENTITY), top(9381, 0.75, 0.4, Quat::IDENTITY)]
+            let high = if mode.contains("-range") { 0.9 } else { 0.4 };
+            vec![top(9380, -0.75, 0.18, Quat::IDENTITY), top(9381, 0.75, high, Quat::IDENTITY)]
         } else {
             let mut slope = top(9380, 0.0, 0.3, Quat::from_rotation_x(0.3));
             slope.scale.y = 3.0;
@@ -315,7 +316,8 @@ pub fn surface_height(mode: &str, position: Vec3) -> f32 {
     if mode.starts_with("steps") {
         if d.y.abs() <= 1.5 {
             let low = if mode.contains("-rise") { d.y.abs() < 0.02 } else { d.y < 0.0 };
-            terrain.max(origin.z + if low { 0.18 } else { 0.4 })
+            let high = if mode.contains("-range") { 0.9 } else { 0.4 };
+            terrain.max(origin.z + if low { 0.18 } else { high })
         } else {
             terrain
         }

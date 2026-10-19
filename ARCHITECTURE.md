@@ -157,6 +157,12 @@ separates authored foot clearance, terrain elevation and world-space body
 elevation, following independently implemented concepts from
 [ozz-animation Foot IK](https://guillaumeblanc.github.io/ozz-animation/samples/foot_ik/)
 and [Daniel Holden's foot IK](https://www.theorangeduck.com/page/inverse-kinematics-foot-locking).
+`Settings::ground_feet_max_height` is a saved 0–1 m slider beside that switch,
+defaulting to 0.4 m. It bounds each foot's vertical terrain offset relative
+to animation and the accompanying body offset, including retained smoothing
+state when reduced live. Support traces cover the full one-metre range.
+For large corrections, the body constraint keeps an upright source hip above
+its planted ankle so that the knee hinge cannot turn backward.
 
 Four shaped sole probes use the existing neutral shoe calibration. Source
 clearance with hysteresis distinguishes contact and flight, measured before
@@ -170,19 +176,22 @@ prevents penetration during that transition. There are no horizontal anchors: au
 trajectories remain unchanged. Support tilt preserves authored heel/toe roll.
 
 A single height filter follows absolute world elevation, absorbing physical
-root-height changes before they reach the rendered body. Initial placement
+root-height changes before they reach the rendered body. Without any known
+support, source body motion passes through unchanged. Initial placement
 starts at the valid support height. The common support
 height raises a body compressed over two higher supports; both contact-leg
-reach intervals bound its displacement to 45 cm. Down-step anticipation acts
+reach intervals bound its displacement within the configured height. Down-step anticipation acts
 on body elevation using the whole future footprint, limited to stair-size
 drops (25 cm); a ledge must not provoke a crouch before support is lost.
 Analytic two-bone IK uses
 the knee's rig-defined local Y hinge and retains the source lateral knee offset
 in metres while changing forward flexion. Segment lengths and authored bends
-survive small contact corrections; near-straight joints cannot amplify their
-inward taper. Priority 5/6 legs or pelvis, control avatars, seating, flight and import
+survive small contact corrections; precise rotation arcs retain submillimetre
+adjustments without a near-parallel identity dead zone. Near-straight joints
+cannot amplify their inward taper. Priority 5/6 legs or pelvis, control avatars, seating, flight and import
 previews keep control. Editing pauses the placement clock; teleports and shape
-changes reset it. Disabling fades only this pass's pose deltas in 200 ms;
+changes reset it. Foot/body elevation and support normals settle over about
+500 ms; disabling fades only this pass's pose deltas in 500 ms;
 enabling seeds terrain offsets and body height from the uncorrected pose or
 the visible fade pose, including after a completed fade, instead of jumping
 to the full correction.

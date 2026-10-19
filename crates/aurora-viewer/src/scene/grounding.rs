@@ -8,6 +8,7 @@ impl Scene {
     pub(super) fn grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
         let object = world.objects.get(idx)?;
         if !self.ground_avatar_feet
+            || crate::settings::foot_height_limit(self.ground_feet_max_height) == 0.0
             || !object.is_avatar()
             || object.parent_id != 0
             || (object.full_id == world.agent_id
@@ -32,11 +33,13 @@ impl Scene {
             contact,
             velocity_z,
             sole_height: self.grounding_sole_height(world, object.full_id),
+            max_height: crate::settings::foot_height_limit(self.ground_feet_max_height),
         })
     }
 
     pub(super) fn ground_surface(&self, world: &World, frame: Frame, ankle: Vec3, now: Instant) -> Option<Surface> {
-        let ray = (ankle + Vec3::Z, -Vec3::Z);
+        let reach = crate::settings::MAX_GROUND_FEET_HEIGHT + 0.002;
+        let ray = (ankle + Vec3::Z * reach, -Vec3::Z);
         let mut candidates = Vec::new();
         self.pick.ray_candidates(ray, &mut candidates);
         let hit = candidates
@@ -53,12 +56,12 @@ impl Scene {
                     return None;
                 }
                 self.face_hit(world, idx, ray, now, true)
-                    .filter(|hit| hit.t.is_finite() && (0.0..=2.0).contains(&hit.t) && hit.normal.is_finite() && hit.normal.z > 0.1)
+                    .filter(|hit| hit.t.is_finite() && (0.0..=reach * 2.0).contains(&hit.t) && hit.normal.is_finite() && hit.normal.z > 0.1)
             })
             .min_by(|a, b| a.t.total_cmp(&b.t));
         let terrain = world
             .ground_height(ankle)
-            .filter(|z| z.is_finite() && (ankle.z - z).abs() <= 1.0)
+            .filter(|z| z.is_finite() && (ankle.z - z).abs() <= reach)
             .map(|z| Surface {
                 position: ankle.with_z(z),
                 normal: terrain_normal(world, ankle),
@@ -78,7 +81,7 @@ impl Scene {
         }
         let contact = frame.contact.and_then(|p| {
             let z = (p.w - p.x * ankle.x - p.y * ankle.y - 0.05) / p.z;
-            (z.is_finite() && (ankle.z - z).abs() <= 1.0).then_some(Surface {
+            (z.is_finite() && (ankle.z - z).abs() <= reach).then_some(Surface {
                 position: ankle.with_z(z),
                 normal: p.truncate().normalize_or(Vec3::Z),
             })
@@ -120,6 +123,7 @@ mod tests {
             contact: Some(Vec4::new(0.0, 0.0, 1.0, 50.9)),
             velocity_z: 0.0,
             sole_height: None,
+            max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
         };
         let ankle = Vec3::new(3.0, 0.0, 50.7);
         let now = Instant::now();
@@ -146,6 +150,11 @@ mod tests {
         let now = Instant::now();
         world.agent.flying = false;
         assert!(scene.grounding_frame(&world, idx, now).is_some());
+        scene.ground_feet_max_height = 1.0;
+        assert_eq!(scene.grounding_frame(&world, idx, now).expect("enabled").max_height, 1.0);
+        scene.ground_feet_max_height = 0.0;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        scene.ground_feet_max_height = 0.4;
         scene.ground_avatar_feet = false;
         assert!(scene.grounding_frame(&world, idx, now).is_none());
         scene.ground_avatar_feet = true;

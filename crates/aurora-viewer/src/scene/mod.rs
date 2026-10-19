@@ -662,6 +662,7 @@ pub struct Scene {
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
+    pub ground_feet_max_height: f32,
     /// Avatar rendering complexity by avatar id (complexity.rs).
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
@@ -1155,6 +1156,7 @@ impl Scene {
             paused_skeletons: HashSet::new(),
             synchronize_animations: false,
             ground_avatar_feet: true,
+            ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             sets: SyncSets::default(),
