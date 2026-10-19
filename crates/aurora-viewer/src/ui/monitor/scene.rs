@@ -79,13 +79,13 @@ fn object_figures() -> Vec<Figure<ObjectRow>> {
             title: "TMem",
             nearest_first: false,
             value: |o| o.tmem as f64,
-            text: |o| fmt::bytes(o.tmem as f64),
+            text: |o| if o.tmem > 0 { fmt::bytes(o.tmem as f64) } else { "–".into() },
         },
         Figure {
             title: tr!("monitor-col-vram"),
             nearest_first: false,
             value: |o| o.vram as f64,
-            text: |o| fmt::bytes(o.vram as f64),
+            text: |o| if o.vram > 0 { fmt::bytes(o.vram as f64) } else { "–".into() },
         },
     ]
 }
@@ -118,12 +118,7 @@ fn features(f: &[Feature]) -> String {
 pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, out: &mut Vec<Action>) {
     super::heading(ui, p, tr!("monitor-tab-scene"), tr!("monitor-scene-sub"), |ui| {
         let mut sel = usize::from(m.scene_objects);
-        if widgets::segmented(
-            ui,
-            p,
-            &mut sel,
-            &[(tr!("monitor-avatars"), true), (tr!("common-objects"), true)],
-        ) {
+        if widgets::segmented(ui, p, &mut sel, &[(tr!("monitor-avatars"), true), (tr!("common-objects"), true)]) {
             m.scene_objects = sel == 1;
             m.scene_sort = 1;
         }
@@ -150,18 +145,25 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
             ),
             (fmt::count(sc.sounds), tr!("monitor-chip-sounds")),
             (
-                match sc.reflections {
-                    (true, true) => tr!("monitor-water-and-mirror"),
-                    (true, false) => tr!("common-water"),
-                    (false, true) => tr!("monitor-mirror"),
-                    _ => tr!("extra-none"),
-                }
-                .to_owned(),
-                tr!("monitor-chip-reflections"),
+                tr!(
+                    "monitor-chip-reflections",
+                    what = match sc.reflections {
+                        (true, true) => tr!("monitor-water-and-mirror"),
+                        (true, false) => tr!("common-water"),
+                        (false, true) => tr!("monitor-mirror"),
+                        _ => tr!("extra-none"),
+                    }
+                ),
+                "",
             ),
             (
-                if sc.gpu_cull { tr!("ui-perf-graphics-card-2") } else { tr!("monitor-cpu-lower") }.to_owned(),
-                tr!("monitor-chip-culling"),
+                if sc.gpu_cull {
+                    tr!("monitor-culling-gpu")
+                } else {
+                    tr!("monitor-culling-cpu")
+                }
+                .to_owned(),
+                "",
             ),
         ]
     } else {
@@ -181,23 +183,28 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
             ),
         ]
     };
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-        for (v, k) in &chips {
-            egui::Frame::new()
-                .fill(p.bar)
-                .stroke(egui::Stroke::new(1.0, p.raised))
-                .corner_radius(ui.visuals().window_corner_radius)
-                .inner_margin(egui::Margin::symmetric(10, 5))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        ui.label(egui::RichText::new(v).size(14.0).strong().color(p.ink));
-                        draw::text(ui, *k, draw::BODY, p.muted);
+    // (two rows at most: egui does not wrap framed items by itself)
+    for row in chips.chunks(chips.len().div_ceil(2).max(1)) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+            for (v, k) in row {
+                egui::Frame::new()
+                    .fill(p.bar)
+                    .stroke(egui::Stroke::new(1.0, p.raised))
+                    .corner_radius(ui.visuals().window_corner_radius)
+                    .inner_margin(egui::Margin::symmetric(10, 5))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.label(egui::RichText::new(v).size(14.0).strong().color(p.ink));
+                            if !k.is_empty() {
+                                draw::text(ui, *k, draw::BODY, p.muted);
+                            }
+                        });
                     });
-                });
-        }
-    });
+            }
+        });
+    }
     if m.scene_objects {
         table(ui, p, m, &sc.objects, &object_figures(), out, true);
     } else {
@@ -339,11 +346,14 @@ fn table<T: SceneRow>(
                     if br.hovered() {
                         ui.painter().rect_filled(b, widgets::inner_radius(ui.visuals()), p.raised);
                     }
-                    widgets::paint_glyph(ui.painter(), "focus-2", b.center(), 14.0, if br.hovered() { p.ink } else { p.muted });
-                    if br
-                        .on_hover_text(tr!("monitor-inspect", name = row.name()))
-                        .clicked()
-                    {
+                    widgets::paint_glyph(
+                        ui.painter(),
+                        "focus-2",
+                        b.center(),
+                        14.0,
+                        if br.hovered() { p.ink } else { p.muted },
+                    );
+                    if br.on_hover_text(tr!("monitor-inspect", name = row.name())).clicked() {
                         out.push(row.action());
                     }
                 }

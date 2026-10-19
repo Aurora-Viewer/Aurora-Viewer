@@ -6,7 +6,7 @@
 use super::draw::{self, Col, Line};
 use super::memory::two;
 use super::snapshot::{HISTORY, Snapshot};
-use super::{Action, Monitor, fmt};
+use super::{Monitor, fmt};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use aurora_i18n::tr;
@@ -41,8 +41,7 @@ fn channels() -> [&'static str; 7] {
     ]
 }
 
-pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, out: &mut Vec<Action>) {
-    let _ = out;
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
     let n = &s.net;
     super::heading(
         ui,
@@ -75,9 +74,19 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, m: &Monitor, s: &Snapshot) {
             ui.spacing_mut().item_spacing.x = 8.0;
             draw::text(ui, tr!("ui-perf-throughput"), 13.0, p.ink);
             widgets::status_dot(ui, p.teal);
-            draw::text(ui, tr!("monitor-incoming-value", value = fmt::kbps(f64::from(n.in_kbps))), draw::BODY, p.muted);
+            draw::text(
+                ui,
+                tr!("monitor-incoming-value", value = fmt::kbps(f64::from(n.in_kbps))),
+                draw::BODY,
+                p.muted,
+            );
             widgets::status_dot(ui, p.rose);
-            draw::text(ui, tr!("monitor-outgoing-value", value = fmt::kbps(f64::from(n.out_kbps))), draw::BODY, p.muted);
+            draw::text(
+                ui,
+                tr!("monitor-outgoing-value", value = fmt::kbps(f64::from(n.out_kbps))),
+                draw::BODY,
+                p.muted,
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 draw::text(ui, tr!("monitor-scale-minute", scale = fmt::kbps(top)), draw::BODY, p.muted);
             });
@@ -126,7 +135,8 @@ fn traffic(ui: &mut egui::Ui, p: &Palette, m: &Monitor, s: &Snapshot) {
             (tr!("ui-perf-unacknowledged").to_owned(), n.unacked.to_string()),
             (
                 tr!("ui-perf-input-delay").to_owned(),
-                n.input_delay_ms.map_or("–".into(), |v| format!("{} ms", aurora_i18n::number(f64::from(v), 0))),
+                n.input_delay_ms
+                    .map_or("–".into(), |v| format!("{} ms", aurora_i18n::number(f64::from(v), 0))),
             ),
             (tr!("ui-perf-network-loop-pause").to_owned(), fmt::ms(f64::from(n.loop_ms))),
             (tr!("ui-perf-event-wait").to_owned(), fmt::ms(f64::from(n.event_wait_ms))),
@@ -199,7 +209,15 @@ fn http(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
                 p.ink,
                 draw::BODY,
             );
-            draw::cell_text(ui, r[3], cy, &fmt::kbps(k.bytes as f64 * 8.0 / 1000.0 / secs), true, p.ink, draw::BODY);
+            draw::cell_text(
+                ui,
+                r[3],
+                cy,
+                &fmt::kbps(k.bytes as f64 * 8.0 / 1000.0 / secs),
+                true,
+                p.ink,
+                draw::BODY,
+            );
             let latency = if k.latency.count() > 0 {
                 fmt::ms(f64::from(k.latency.percentile(50.0)))
             } else {
@@ -224,7 +242,11 @@ fn throttle(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             tr!("monitor-throttle-setting", setting = fmt::kbps(f64::from(n.throttle_setting)))
         };
         draw::card_title(ui, p, tr!("monitor-throttle-title"), &right);
-        let asked = if n.throttle_asked > 0 { n.throttle_asked } else { n.throttle_setting };
+        let asked = if n.throttle_asked > 0 {
+            n.throttle_asked
+        } else {
+            n.throttle_setting
+        };
         let group = aurora_net::throttle::group(asked as f32);
         let largest = group.iter().copied().fold(1.0f32, f32::max);
         for (name, kbps) in channels().iter().zip(group) {
@@ -265,7 +287,11 @@ fn regions(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             let c = draw::col_ranges(&cols, rect.left(), rect.width());
             let cy = rect.center().y;
             draw::cell_text(ui, c[0], cy, &r.name, false, p.ink, draw::BODY);
-            let role = if r.main { tr!("monitor-region-current") } else { tr!("monitor-region-neighbour") };
+            let role = if r.main {
+                tr!("monitor-region-current")
+            } else {
+                tr!("monitor-region-neighbour")
+            };
             draw::cell_text(ui, c[1], cy, role, false, p.muted, draw::BODY);
             let slow = r.dilation < 0.9;
             draw::cell_text(
@@ -312,7 +338,7 @@ fn messages(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
                     .map(|m| (tr!("monitor-outgoing-message", name = m.name), m.count, m.bytes)),
             )
             .collect();
-        list.sort_by(|a, b| b.2.cmp(&a.2));
+        list.sort_by_key(|a| std::cmp::Reverse(a.2));
         for (name, count, bytes) in list.iter().take(8) {
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
             draw::row_surface(ui, p, rect, false, false);
@@ -320,7 +346,15 @@ fn messages(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             let cy = rect.center().y;
             draw::cell_text(ui, c[0], cy, name, false, p.ink, draw::BODY);
             draw::cell_text(ui, c[1], cy, &aurora_i18n::number(*count as f64 / secs, 0), true, p.ink, draw::BODY);
-            draw::cell_text(ui, c[2], cy, &fmt::kbps(*bytes as f64 * 8.0 / 1000.0 / secs), true, p.muted, draw::BODY);
+            draw::cell_text(
+                ui,
+                c[2],
+                cy,
+                &fmt::kbps(*bytes as f64 * 8.0 / 1000.0 / secs),
+                true,
+                p.muted,
+                draw::BODY,
+            );
         }
     });
 }

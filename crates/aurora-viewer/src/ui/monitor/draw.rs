@@ -42,7 +42,7 @@ pub fn card_title(ui: &mut egui::Ui, p: &Palette, title: &str, right: &str) {
         ui.label(egui::RichText::new(title).size(13.0).strong().color(p.ink));
         if !right.is_empty() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(right).size(BODY).color(p.muted));
+                ui.add(egui::Label::new(egui::RichText::new(right).size(BODY).color(p.muted)).truncate());
             });
         }
     });
@@ -145,7 +145,11 @@ pub fn graph(
         painter.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0, p.muted_dim));
         let galley = painter.layout_no_wrap(hover(i), egui::FontId::proportional(SMALL), p.ink);
         let box_size = galley.size() + vec2(10.0, 4.0);
-        let bx = if x + 6.0 + box_size.x > rect.right() { x - 6.0 - box_size.x } else { x + 6.0 };
+        let bx = if x + 6.0 + box_size.x > rect.right() {
+            x - 6.0 - box_size.x
+        } else {
+            x + 6.0
+        };
         let r = Rect::from_min_size(pos2(bx.max(rect.left()), rect.top() + 2.0), box_size);
         painter.rect_filled(r, ui.visuals().window_corner_radius, p.panel);
         painter.galley(r.min + vec2(5.0, 2.0), galley, p.ink);
@@ -184,10 +188,7 @@ pub fn segments(ui: &mut egui::Ui, p: &Palette, height: f32, parts: &[Segment], 
     if total <= 0.0 {
         return resp;
     }
-    let wide: Vec<bool> = parts
-        .iter()
-        .map(|s| s.value / total * f64::from(rect.width()) >= 0.5)
-        .collect();
+    let wide: Vec<bool> = parts.iter().map(|s| s.value / total * f64::from(rect.width()) >= 0.5).collect();
     let first = wide.iter().position(|w| *w).unwrap_or(0);
     let last = wide.iter().rposition(|w| *w).unwrap_or(0);
     let mut x = rect.left();
@@ -335,7 +336,11 @@ pub fn header(ui: &mut egui::Ui, p: &Palette, cols: &[Col]) -> Option<usize> {
         }
         if let Some(total) = &c.total {
             let g = painter.layout_no_wrap(total.clone(), egui::FontId::proportional(15.0), p.ink);
-            let gx = if c.right { cell.right() - pad - g.size().x } else { cell.left() + pad };
+            let gx = if c.right {
+                cell.right() - pad - g.size().x
+            } else {
+                cell.left() + pad
+            };
             let galley_h = g.size().y;
             painter.galley(pos2(gx, ty - 8.0 - galley_h), g, p.ink);
         }
@@ -345,8 +350,7 @@ pub fn header(ui: &mut egui::Ui, p: &Palette, cols: &[Col]) -> Option<usize> {
             clicked = Some(i);
         }
     }
-    ui.painter()
-        .hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, p.raised));
+    ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, p.raised));
     clicked
 }
 
@@ -398,7 +402,7 @@ pub fn figures(ui: &mut egui::Ui, p: &Palette, columns: usize, items: &[(String,
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (k, v) in row {
-                ui.allocate_ui(vec2(width, 34.0), |ui| {
+                ui.allocate_ui_with_layout(vec2(width, 34.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.vertical(|ui| {

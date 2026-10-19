@@ -37,6 +37,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
     };
     super::heading(ui, p, tr!("monitor-tab-region"), &sub, |ui| draw::pill(ui, p, dot, label));
     let num = |v: Option<f32>, d: usize| v.map_or("–".into(), |v| aurora_i18n::number(f64::from(v), d));
+    let count = |v: Option<f32>| v.map_or("–".into(), |v| fmt::count(v.max(0.0) as usize));
     let ms = |v: Option<f32>| v.map_or("–".into(), |v| fmt::ms(f64::from(v)));
     let tiles = [
         (tr!("region-time-dilation"), num(r.dilation, 2), tr!("monitor-real-time").to_owned()),
@@ -48,7 +49,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         (
             tr!("monitor-script-time"),
             ms(r.script_ms),
-            tr!("monitor-active-scripts", count = num(r.scripts, 0)),
+            tr!("monitor-active-scripts", count = count(r.scripts)),
         ),
         (
             tr!("monitor-spare-time"),
@@ -57,12 +58,12 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         ),
         (
             tr!("monitor-avatars"),
-            num(r.agents, 0),
-            tr!("monitor-child-agents", count = num(r.child_agents, 0)),
+            count(r.agents),
+            tr!("monitor-child-agents", count = count(r.child_agents)),
         ),
         (
             tr!("common-objects"),
-            num(r.objects, 0),
+            count(r.objects),
             if r.capacity > 0 {
                 tr!(
                     "monitor-capacity",
@@ -84,16 +85,13 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
                     for (label, value, note) in row {
-                        ui.allocate_ui(vec2(w, 0.0), |ui| {
+                        ui.allocate_ui_with_layout(vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.set_width(w);
                             draw::card(ui, p, |ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
                                 draw::text(ui, *label, draw::BODY, p.muted);
                                 draw::text(ui, value, 22.0, p.ink);
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(note).size(draw::SMALL).color(p.muted))
-                                        .truncate(),
-                                );
+                                ui.add(egui::Label::new(egui::RichText::new(note).size(draw::SMALL).color(p.muted)).truncate());
                             });
                         });
                     }
@@ -125,7 +123,7 @@ fn frame_card(ui: &mut egui::Ui, p: &Palette, r: &RegionHealth, out: &mut Vec<Ac
     let net = [r.net_ms, r.agent_ms, r.images_ms, r.other_ms]
         .iter()
         .flatten()
-        .map(|v| f64::from(*v))
+        .map(|v| f64::from(v.max(0.0)))
         .sum::<f64>();
     let parts = [
         (colors[0], tr!("monitor-sim-physics"), r.physics_ms.map(f64::from)),

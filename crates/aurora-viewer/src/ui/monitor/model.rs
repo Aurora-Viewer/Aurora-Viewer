@@ -286,7 +286,14 @@ const GROUPS: &[(&str, RowId)] = &[
 ];
 
 /// Groups shared out by what they ran ([`attribute`]).
-const SHARED: [&str; 6] = ["main", "aurora-render", "aurora-render-finish", "aurora-worker", "aurora-jobs", "aurora-net"];
+const SHARED: [&str; 6] = [
+    "main",
+    "aurora-render",
+    "aurora-render-finish",
+    "aurora-worker",
+    "aurora-jobs",
+    "aurora-net",
+];
 
 /// The main thread's steps (ms per frame), each to the part it works for.
 fn main_steps(f: &Averages) -> Vec<(RowId, f64)> {
@@ -318,7 +325,11 @@ fn main_steps(f: &Averages) -> Vec<(RowId, f64)> {
     split(
         &mut out,
         lap(Lap::Results),
-        &[(Part::Geometry, RowId::MeshGpu), (Part::Fetched, RowId::Textures), (Part::Decoded, RowId::Textures)],
+        &[
+            (Part::Geometry, RowId::MeshGpu),
+            (Part::Fetched, RowId::Textures),
+            (Part::Decoded, RowId::Textures),
+        ],
         RowId::Scene,
     );
     // (texture pages are made during the uploads: part of `Upload`)
@@ -504,7 +515,12 @@ pub fn attribute(inp: &Inputs) -> Attribution {
     if let Some(cpu) = inp.cpu {
         let cores = cpu.cores.max(1) as f64;
         let group = |name: &str| -> f64 {
-            cpu.groups.iter().filter(|g| g.group == name).map(|g| f64::from(g.percent)).sum::<f64>() / cores
+            cpu.groups
+                .iter()
+                .filter(|g| g.group == name)
+                .map(|g| f64::from(g.percent))
+                .sum::<f64>()
+                / cores
         };
         let mut attributed = 0.0;
         for &(name, row) in GROUPS {
@@ -543,7 +559,10 @@ pub fn attribute(inp: &Inputs) -> Attribution {
             .map(|p| {
                 let (n, ms) = p.texture_decodes();
                 let (m, mesh_ms) = p.mesh_builds();
-                vec![(RowId::TexDecode, n as f64 * f64::from(ms)), (RowId::MeshDecode, m as f64 * f64::from(mesh_ms))]
+                vec![
+                    (RowId::TexDecode, n as f64 * f64::from(ms)),
+                    (RowId::MeshDecode, m as f64 * f64::from(mesh_ms)),
+                ]
             })
             .unwrap_or_default();
         if !share(&mut u, Column::Cpu, jobs, &job_weights) {
@@ -717,10 +736,7 @@ mod tests {
         let mut disk = [[0.0; 2]; Origin::ALL.len()];
         disk[Origin::Meshes as usize] = [100.0, 50.0];
         disk[Origin::Logs as usize] = [0.0, 8.0];
-        let a = attribute(&Inputs {
-            disk,
-            ..Inputs::default()
-        });
+        let a = attribute(&Inputs { disk, ..Inputs::default() });
         assert_eq!(a.get(RowId::MeshCache).get(Column::Disk), Some(150.0));
         assert_eq!(a.get(RowId::Services).get(Column::Disk), Some(8.0));
     }

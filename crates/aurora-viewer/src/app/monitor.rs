@@ -7,8 +7,8 @@
 use super::*;
 use crate::disk_io::Origin;
 use crate::ui::monitor::snapshot::{
-    AvatarMode, AvatarRow, DiskInfo, Feature, FrameParts, GeometryInfo, NetInfo, ObjectRow, RegionHealth, RegionLink,
-    SceneInfo, Snapshot, TextureInfo,
+    AvatarMode, AvatarRow, DiskInfo, Feature, FrameParts, GeometryInfo, NetInfo, ObjectRow, RegionHealth, RegionLink, SceneInfo, Snapshot,
+    TextureInfo,
 };
 use crate::ui::monitor::{self, Action, MediaProcess, Page, Vram, model};
 use std::collections::{HashMap, HashSet};
@@ -84,8 +84,7 @@ impl App {
             && let Some(handle) = self.world.main_region
         {
             self.monitor_feed.region_asked = true;
-            self.net
-                .send(NetCommand::Estate(aurora_net::estate::EstateCommand::Refresh { handle }));
+            self.send(NetCommand::Estate(aurora_net::estate::EstateCommand::Refresh { handle }));
         }
         let media = self.media_processes();
         crate::sys_probe::watch_children(media.iter().map(|m| m.pid).collect());
@@ -242,8 +241,7 @@ impl App {
         };
         let geometry = GeometryInfo {
             allocated: r.geometry_bytes,
-            used: r.vertex_used
-                * (std::mem::size_of::<aurora_render::Vertex>() + std::mem::size_of::<aurora_render::SkinVertex>()) as u64
+            used: r.vertex_used * (std::mem::size_of::<aurora_render::Vertex>() + std::mem::size_of::<aurora_render::SkinVertex>()) as u64
                 + r.index_used * 2,
             pending: self.scene.stats.geom_pending,
             records: r.records as usize,
@@ -508,7 +506,7 @@ impl App {
         // the costliest linksets by triangles, then their textures and
         // what else makes them dear
         let mut roots: Vec<(usize, Count)> = objects.into_iter().collect();
-        roots.sort_by(|a, b| b.1.tris.cmp(&a.1.tris));
+        roots.sort_by_key(|a| std::cmp::Reverse(a.1.tris));
         roots.truncate(SCENE_ROWS);
         let object_rows = roots
             .into_iter()
@@ -523,7 +521,9 @@ impl App {
                 };
                 let mut center = None;
                 for i in crate::build::family(world, root) {
-                    let (Some(prim), Some(g)) = (world.objects.get(i), scene.gpu.get(i)) else { continue };
+                    let (Some(prim), Some(g)) = (world.objects.get(i), scene.gpu.get(i)) else {
+                        continue;
+                    };
                     center.get_or_insert(g.center);
                     for f in &g.faces {
                         textures.insert(f.tex_id);
@@ -544,10 +544,7 @@ impl App {
                     if !prim.sound.id.is_nil() {
                         add(Feature::Sound);
                     }
-                    if prim
-                        .tex_anim
-                        .is_some_and(|a| a.mode & aurora_net::objects::TextureAnim::ON != 0)
-                    {
+                    if prim.tex_anim.is_some_and(|a| a.mode & aurora_net::objects::TextureAnim::ON != 0) {
                         add(Feature::Animation);
                     }
                 }
@@ -598,11 +595,16 @@ impl App {
             if asked >= NAMES_PER_SECOND * SCENE_EVERY.as_secs() as usize || !self.monitor_feed.names_asked.insert(id) {
                 continue;
             }
-            let Some(handle) = self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)).map(|o| o.key.region)
+            let Some(handle) = self
+                .world
+                .objects
+                .index_of_uuid(&id)
+                .and_then(|i| self.world.objects.get(i))
+                .map(|o| o.key.region)
             else {
                 continue;
             };
-            self.net.send(NetCommand::RequestObjectProperties { handle, object: id });
+            self.send(NetCommand::RequestObjectProperties { handle, object: id });
             asked += 1;
         }
     }

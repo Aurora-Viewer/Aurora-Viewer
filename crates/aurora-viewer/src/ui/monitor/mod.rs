@@ -171,6 +171,12 @@ impl Default for Monitor {
 }
 
 impl Monitor {
+    /// The scene section on its objects (`AURORA_DEMO_PERF=monitor-scene-objects`).
+    pub fn show_scene_objects(&mut self) {
+        self.tab = Tab::Scene;
+        self.scene_objects = true;
+    }
+
     /// The subsystems' table sorted by a column, a row selected (the
     /// overview's "biggest consumer" rows).
     fn open_subsystems(&mut self, sort: Column, row: RowId) {
@@ -227,11 +233,11 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, ou
                 });
             }
             Some(s) => match m.tab {
-                Tab::Overview => overview::show(ui, p, m, &s, out),
+                Tab::Overview => overview::show(ui, p, m, &s),
                 Tab::Subsystems => subsystems::show(ui, p, m, &s, out),
-                Tab::Threads => threads::show(ui, p, m, &s),
-                Tab::Memory => memory::show(ui, p, m, &s, out),
-                Tab::Network => network::show(ui, p, m, &s, out),
+                Tab::Threads => threads::show(ui, p, &s),
+                Tab::Memory => memory::show(ui, p, &s, out),
+                Tab::Network => network::show(ui, p, m, &s),
                 Tab::Disk => disk::show(ui, p, m, &s, out),
                 Tab::Scene => scene::show(ui, p, m, &s, out),
                 Tab::Region => region::show(ui, p, m, &s, out),
@@ -270,7 +276,13 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
         }
         let icon_color = if on { p.violet_light } else { p.muted };
-        widgets::paint_glyph(ui.painter(), tab.icon(), pos2(rect.left() + 18.0, rect.center().y), 16.0, icon_color);
+        widgets::paint_glyph(
+            ui.painter(),
+            tab.icon(),
+            pos2(rect.left() + 18.0, rect.center().y),
+            16.0,
+            icon_color,
+        );
         let left = rect.left() + 36.0;
         let room = rect.right() - left - 6.0;
         widgets::paint_elided(
@@ -299,11 +311,8 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
     let room = ui.available_height();
     if room > foot_h + 8.0 {
         ui.add_space(room - foot_h);
-        ui.painter().hline(
-            ui.max_rect().x_range(),
-            ui.cursor().top() - 1.0,
-            Stroke::new(1.0, p.raised),
-        );
+        ui.painter()
+            .hline(ui.max_rect().x_range(), ui.cursor().top() - 1.0, Stroke::new(1.0, p.raised));
         ui.add_space(8.0);
         ui.spacing_mut().item_spacing.y = 4.0;
         ui.horizontal(|ui| {
@@ -420,7 +429,12 @@ fn status_ui(ui: &mut egui::Ui, p: &Palette, m: &Monitor, device: &Device) {
             );
         }
         if let Some(file) = &m.exported {
-            draw::text(ui, aurora_i18n::tr!("monitor-status-exported", file = file.clone()), draw::SMALL, p.muted_dim);
+            draw::text(
+                ui,
+                aurora_i18n::tr!("monitor-status-exported", file = file.clone()),
+                draw::SMALL,
+                p.muted_dim,
+            );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let vram = device

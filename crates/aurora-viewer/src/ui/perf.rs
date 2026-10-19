@@ -516,7 +516,6 @@ pub fn show(
     actions
 }
 
-
 fn fps_color(p: &Palette, fps: f32) -> Color32 {
     if fps >= 55.0 {
         p.teal
@@ -747,7 +746,6 @@ pub(crate) fn cpu_part_names() -> [(&'static str, &'static str); CPU_PARTS] {
         ),
     ]
 }
-
 
 /// The demo has no circuit: counters that grow like a session's traffic
 /// (about 1.2 Mb/s in and 100 kb/s out, in waves), added to the network's,

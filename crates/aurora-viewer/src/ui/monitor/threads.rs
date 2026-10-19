@@ -3,9 +3,9 @@
 //! the viewer with what it does.
 
 use super::draw::{self, Col, ROW_H};
-use super::model::{Column, RowId};
+use super::fmt;
+use super::model::Column;
 use super::snapshot::Snapshot;
-use super::{Monitor, fmt};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use aurora_i18n::tr;
@@ -50,8 +50,7 @@ fn priority(p: Option<i32>) -> &'static str {
     }
 }
 
-pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
-    let _ = m;
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
     let Some(cpu) = &s.cpu else {
         super::heading(ui, p, tr!("monitor-tab-threads"), "", |_| {});
         draw::text(ui, tr!("monitor-no-system-counters"), draw::BODY, p.muted);
@@ -74,7 +73,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         let half = (ui.available_width() - gap) / 2.0;
-        ui.allocate_ui(vec2(half, 110.0), |ui| {
+        ui.allocate_ui_with_layout(vec2(half, 110.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             draw::card(ui, p, |ui| {
                 draw::card_title(
                     ui,
@@ -88,7 +87,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                 cores(ui, p, &cpu.per_core);
             });
         });
-        ui.allocate_ui(vec2(half, 110.0), |ui| {
+        ui.allocate_ui_with_layout(vec2(half, 110.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             draw::card(ui, p, |ui| {
                 draw::card_title(ui, p, tr!("monitor-processes-title"), tr!("monitor-processes-units"));
                 let own = f64::from(cpu.process) * cpu.cores as f64;
@@ -106,11 +105,11 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
 
     let cols = [
         Col::new(tr!("monitor-col-thread"), 0.0, false),
-        Col::new(tr!("monitor-col-count"), 64.0, true),
-        Col::new(tr!("monitor-col-cpu-core"), 180.0, true),
-        Col::new(tr!("monitor-col-busiest"), 120.0, true),
-        Col::new(tr!("monitor-col-priority"), 130.0, false),
-        Col::new(tr!("monitor-col-role"), 300.0, false),
+        Col::new(tr!("monitor-col-count"), 60.0, true),
+        Col::new(tr!("monitor-col-cpu-core"), 170.0, true),
+        Col::new(tr!("monitor-col-busiest"), 130.0, true),
+        Col::new(tr!("monitor-col-priority"), 160.0, false),
+        Col::new(tr!("monitor-col-role"), 260.0, false),
     ];
     let frame = egui::Frame::new()
         .fill(p.bar)
@@ -136,14 +135,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                     let meter = Rect::from_min_size(pos2(r[2].0 + 10.0, cy - 3.0), vec2(80.0, 6.0));
                     draw::paint_meter(ui, p, meter, g.percent / busiest.max(100.0), p.violet);
                     draw::cell_text(ui, r[2], cy, &fmt::pct(f64::from(g.percent)), true, p.ink, draw::BODY);
-                    let busy = if g.threads > 1 { fmt::pct(f64::from(g.busiest)) } else { "–".into() };
+                    let busy = if g.threads > 1 {
+                        fmt::pct(f64::from(g.busiest))
+                    } else {
+                        "–".into()
+                    };
                     draw::cell_text(ui, r[3], cy, &busy, true, p.muted, draw::BODY);
                     draw::cell_text(ui, r[4], cy, priority(g.priority), false, p.muted, draw::BODY);
                     draw::cell_text(ui, r[5], cy, role(&g.group), false, p.muted, draw::BODY);
                 }
             });
     });
-    let _ = RowId::Other;
 }
 
 /// One bar per logical core, its load on hover.
@@ -184,5 +186,12 @@ fn process_row(ui: &mut egui::Ui, p: &Palette, name: &str, one_core: f64, ram: O
     widgets::paint_row_text(ui.painter(), cg, cx, cy, p.ink);
     let meter = Rect::from_min_size(pos2(cx - 98.0, cy - 3.0), vec2(90.0, 6.0));
     draw::paint_meter(ui, p, meter, (one_core / 600.0) as f32, p.violet);
-    widgets::paint_elided(ui, name, pos2(rect.left(), cy), (meter.left() - rect.left() - 8.0).max(20.0), font, p.ink);
+    widgets::paint_elided(
+        ui,
+        name,
+        pos2(rect.left(), cy),
+        (meter.left() - rect.left() - 8.0).max(20.0),
+        font,
+        p.ink,
+    );
 }

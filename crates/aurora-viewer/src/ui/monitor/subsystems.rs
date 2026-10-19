@@ -254,7 +254,9 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
             if any_open {
                 m.open.clear();
             } else {
-                m.open = RowId::parents().filter(|r| r.kids().next().is_some() || *r == RowId::Media).collect();
+                m.open = RowId::parents()
+                    .filter(|r| r.kids().next().is_some() || *r == RowId::Media)
+                    .collect();
             }
         }
         let mut unit = usize::from(m.per_core);
@@ -287,10 +289,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
     let titles: Vec<&str> = Column::ALL.iter().map(|c| column_title(*c, m.per_core)).collect();
     let mut cols = vec![Col::new(tr!("monitor-col-subsystem"), 0.0, false).total("Aurora".into())];
     for (c, title) in Column::ALL.iter().zip(&titles) {
-        let total = s
-            .attribution
-            .total(*c)
-            .map_or("–".into(), |v| format(*c, scale(*c, v)));
+        let total = s.attribution.total(*c).map_or("–".into(), |v| format(*c, scale(*c, v)));
         cols.push(Col::new(title, 96.0, true).sort(m.sort == *c).total(total));
     }
     let frame = egui::Frame::new()
@@ -301,10 +300,10 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         ui.set_width(ui.available_width());
         ui.set_height(table_h);
         ui.spacing_mut().item_spacing.y = 0.0;
-        if let Some(i) = draw::header(ui, p, &cols) {
-            if i > 0 {
-                m.sort = Column::ALL[i - 1];
-            }
+        if let Some(i) = draw::header(ui, p, &cols)
+            && i > 0
+        {
+            m.sort = Column::ALL[i - 1];
         }
         // (hints on the column titles)
         let head = ui.min_rect();
@@ -374,8 +373,7 @@ fn lines(m: &Monitor, s: &Snapshot) -> Vec<Entry> {
         }
         let has_kids = !found.is_empty() || parent.kids().next().is_some();
         let open = m.open.contains(&parent) || (!q.is_empty() && !found.is_empty());
-        let badge = (parent == RowId::Media && !a.media.is_empty())
-            .then(|| tr!("monitor-processes", count = a.media.len() as i64));
+        let badge = (parent == RowId::Media && !a.media.is_empty()).then(|| tr!("monitor-processes", count = a.media.len() as i64));
         out.push(Entry {
             name: name.to_owned(),
             usage: a.get(parent),
@@ -393,15 +391,7 @@ fn lines(m: &Monitor, s: &Snapshot) -> Vec<Entry> {
     out
 }
 
-fn table_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    m: &mut Monitor,
-    cols: &[Col],
-    line: &Entry,
-    max: &[f64],
-    scale: &dyn Fn(Column, f64) -> f64,
-) {
+fn table_row(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, cols: &[Col], line: &Entry, max: &[f64], scale: &dyn Fn(Column, f64) -> f64) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     let ranges = draw::col_ranges(cols, rect.left(), rect.width());
     let selected = m.selected == line.select;
@@ -428,8 +418,7 @@ fn table_row(
         let caret = Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0));
         let c = ui.interact(caret, ui.id().with(("monitor-fold", &line.name)), Sense::click());
         if c.hovered() {
-            ui.painter()
-                .rect_filled(caret, widgets::inner_radius(ui.visuals()), p.raised);
+            ui.painter().rect_filled(caret, widgets::inner_radius(ui.visuals()), p.raised);
         }
         widgets::paint_glyph(
             ui.painter(),
@@ -438,12 +427,12 @@ fn table_row(
             13.0,
             if c.hovered() { p.ink } else { p.muted },
         );
-        if c.on_hover_text(if open { tr!("common-collapse") } else { tr!("common-expand") }).clicked()
+        if c.on_hover_text(if open { tr!("common-collapse") } else { tr!("common-expand") })
+            .clicked()
             && let Some(row) = line.row
+            && !m.open.remove(&row)
         {
-            if !m.open.remove(&row) {
-                m.open.insert(row);
-            }
+            m.open.insert(row);
         }
     }
     x += 24.0;
@@ -459,7 +448,14 @@ fn table_row(
     }
     let color = if line.depth > 0 { p.muted } else { p.ink };
     let name_color = if selected { p.ink } else { color };
-    widgets::paint_elided(ui, &line.name, pos2(x, cy), (end - x).max(20.0), egui::FontId::proportional(draw::BODY), name_color);
+    widgets::paint_elided(
+        ui,
+        &line.name,
+        pos2(x, cy),
+        (end - x).max(20.0),
+        egui::FontId::proportional(draw::BODY),
+        name_color,
+    );
     if resp.clicked() {
         m.selected = line.select;
     }
@@ -470,15 +466,15 @@ fn table_row(
 fn detail(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, cores: f64, out: &mut Vec<Action>) {
     let a = &s.attribution;
     let (title, parent, usage, series) = match m.selected {
-        Selected::Row(r) => (
-            row_name(r).to_owned(),
-            r.parent(),
-            a.get(r),
-            m.history.row_series(r),
-        ),
+        Selected::Row(r) => (row_name(r).to_owned(), r.parent(), a.get(r), m.history.row_series(r)),
         Selected::Media(pid) => match a.media.iter().find(|x| x.0.pid == pid) {
             Some((proc_, u)) => (proc_.label.clone(), Some(RowId::Media), *u, Vec::new()),
-            None => (row_name(RowId::Media).to_owned(), None, a.get(RowId::Media), m.history.row_series(RowId::Media)),
+            None => (
+                row_name(RowId::Media).to_owned(),
+                None,
+                a.get(RowId::Media),
+                m.history.row_series(RowId::Media),
+            ),
         },
     };
     let part = match m.selected {
@@ -491,7 +487,7 @@ fn detail(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, cores: 
         ui.set_min_height(130.0);
         ui.horizontal_top(|ui| {
             let left = (ui.available_width() - 14.0) * 0.56;
-            ui.allocate_ui(vec2(left, 130.0), |ui| {
+            ui.allocate_ui_with_layout(vec2(left, 130.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(left);
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.horizontal(|ui| {
@@ -506,7 +502,11 @@ fn detail(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, cores: 
                     ui.spacing_mut().item_spacing.x = 4.0;
                     draw::text(ui, tr!("monitor-threads"), draw::SMALL, p.muted_dim);
                     for name in row_threads(part) {
-                        let n = s.cpu.as_ref().and_then(|c| c.groups.iter().find(|g| g.group == *name)).map(|g| g.threads);
+                        let n = s
+                            .cpu
+                            .as_ref()
+                            .and_then(|c| c.groups.iter().find(|g| g.group == *name))
+                            .map(|g| g.threads);
                         let chip = match n {
                             Some(n) if n > 1 => format!("{name} ×{n}"),
                             _ => (*name).to_owned(),
@@ -565,12 +565,7 @@ fn detail(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, cores: 
                         HISTORY,
                         Some(&|i: usize| scaled.get(i).map_or(String::new(), |v| fmt::pct(*v))),
                     );
-                    draw::text(
-                        ui,
-                        tr!("monitor-cpu-graph", scale = fmt::pct(top)),
-                        draw::SMALL,
-                        p.muted_dim,
-                    );
+                    draw::text(ui, tr!("monitor-cpu-graph", scale = fmt::pct(top)), draw::SMALL, p.muted_dim);
                 }
             });
         });

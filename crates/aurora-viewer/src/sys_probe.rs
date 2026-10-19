@@ -408,7 +408,11 @@ impl Sampler {
         let system = system_times();
         let per_core = self.cores.get_or_insert_with(CoreCounters::open).read();
         // each watched process with its descendants: (root, pid, time, memory)
-        let trees = if children.is_empty() { HashMap::new() } else { process_trees(children) };
+        let trees = if children.is_empty() {
+            HashMap::new()
+        } else {
+            process_trees(children)
+        };
         let child_times: Vec<(u32, u32, u64, u64)> = trees
             .iter()
             .flat_map(|(&root, pids)| pids.iter().map(move |&pid| (root, pid)))
@@ -482,9 +486,7 @@ impl Sampler {
 #[cfg(windows)]
 fn group_priority(threads: &[ThreadTime], group: &str, main: u32) -> Option<i32> {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{
-        GetThreadPriority, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
-    };
+    use windows_sys::Win32::System::Threading::{GetThreadPriority, OpenThread, THREAD_QUERY_LIMITED_INFORMATION};
     // (GetThreadPriority's error value, MAXLONG)
     const THREAD_PRIORITY_ERROR_RETURN: i32 = i32::MAX;
     let t = threads.iter().find(|t| group_of(&t.name, t.id, main) == group)?;
@@ -634,9 +636,7 @@ impl CoreCounters {
                 return Vec::new();
             }
             let (mut size, mut count) = (0u32, 0u32);
-            if PdhGetFormattedCounterArrayW(self.counter, PDH_FMT_DOUBLE, &mut size, &mut count, std::ptr::null_mut())
-                != PDH_MORE_DATA
-            {
+            if PdhGetFormattedCounterArrayW(self.counter, PDH_FMT_DOUBLE, &mut size, &mut count, std::ptr::null_mut()) != PDH_MORE_DATA {
                 return Vec::new();
             }
             let item = std::mem::size_of::<PDH_FMT_COUNTERVALUE_ITEM_W>();

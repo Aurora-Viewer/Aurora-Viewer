@@ -775,7 +775,10 @@ mod tests {
         let mut acc = [vec![m("ObjectUpdate", 10, 1000)], vec![]];
         merge_messages(
             &mut acc,
-            &[vec![m("PacketAck", 50, 2000), m("ObjectUpdate", 5, 500)], vec![m("AgentUpdate", 1, 60)]],
+            &[
+                vec![m("PacketAck", 50, 2000), m("ObjectUpdate", 5, 500)],
+                vec![m("AgentUpdate", 1, 60)],
+            ],
         );
         assert_eq!(acc[0], [m("PacketAck", 50, 2000), m("ObjectUpdate", 15, 1500)]);
         assert_eq!(acc[1], [m("AgentUpdate", 1, 60)]);

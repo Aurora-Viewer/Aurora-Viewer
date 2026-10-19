@@ -5,7 +5,7 @@
 use super::draw::{self, Line, Segment};
 use super::model::{Column, RowId};
 use super::snapshot::{HISTORY, Point, Snapshot};
-use super::{Action, Monitor, Tab, fmt, subsystems};
+use super::{Monitor, Tab, fmt, subsystems};
 use crate::theme::Palette;
 use crate::ui::widgets;
 use aurora_i18n::tr;
@@ -33,9 +33,15 @@ struct Tile {
     hover: Box<dyn Fn(&Point) -> String>,
 }
 
-pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, out: &mut Vec<Action>) {
-    let _ = out;
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
     super::heading(ui, p, tr!("monitor-tab-overview"), tr!("monitor-overview-sub"), |_| {});
+    egui::ScrollArea::vertical()
+        .id_salt("monitor-overview")
+        .auto_shrink([false, false])
+        .show(ui, |ui| body(ui, p, m, s));
+}
+
+fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
     alerts(ui, p, m, s);
     let tiles = tiles(p, m, s);
     let gap = 10.0;
@@ -48,12 +54,16 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
             }
         });
     }
-    let room = ui.available_height();
+    let room = ui.available_height().max(330.0);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         let left = (ui.available_width() - gap) * 0.55;
-        ui.allocate_ui(vec2(left, room), |ui| frame_card(ui, p, s));
-        ui.allocate_ui(vec2(ui.available_width(), room), |ui| top_card(ui, p, m, s));
+        ui.allocate_ui_with_layout(vec2(left, room), egui::Layout::top_down(egui::Align::Min), |ui| {
+            frame_card(ui, p, s)
+        });
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), room), egui::Layout::top_down(egui::Align::Min), |ui| {
+            top_card(ui, p, m, s)
+        });
     });
 }
 
@@ -122,7 +132,11 @@ fn tiles(p: &Palette, m: &Monitor, s: &Snapshot) -> Vec<Tile> {
         sub: tr!(
             "monitor-tile-cpu-sub",
             media = a.get(RowId::Media).get(Column::Cpu).map_or("–".into(), fmt::pct),
-            machine = s.cpu.as_ref().and_then(|c| c.machine).map_or("–".into(), |v| fmt::pct(f64::from(v)))
+            machine = s
+                .cpu
+                .as_ref()
+                .and_then(|c| c.machine)
+                .map_or("–".into(), |v| fmt::pct(f64::from(v)))
         ),
         max: draw::nice_max(cpu_series.iter().copied().fold(10.0, f64::max) * 1.2),
         lines: vec![(cpu_series, p.violet_light, true)],
@@ -163,9 +177,9 @@ fn tiles(p: &Palette, m: &Monitor, s: &Snapshot) -> Vec<Tile> {
     out.push(Tile {
         icon: "stack-2-filled",
         label: tr!("monitor-tile-ram"),
-        right: s
-            .memory
-            .map_or(String::new(), |mem| tr!("monitor-peak", value = fmt::bytes(mem.peak_working_set as f64))),
+        right: s.memory.map_or(String::new(), |mem| {
+            tr!("monitor-peak", value = fmt::bytes(mem.peak_working_set as f64))
+        }),
         value,
         unit,
         sub: tr!(
@@ -285,7 +299,11 @@ fn tile(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, t: &Tile, width: f32) {
         egui::StrokeKind::Inside,
     );
     let inner = rect.shrink2(vec2(12.0, 10.0));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
     child.spacing_mut().item_spacing.y = 2.0;
     child.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 7.0;

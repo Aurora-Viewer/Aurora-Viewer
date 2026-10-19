@@ -5,13 +5,12 @@
 use super::draw::{self, Segment};
 use super::model::{Column, RowId};
 use super::snapshot::Snapshot;
-use super::{Action, Monitor, Page, fmt};
+use super::{Action, Page, fmt};
 use crate::theme::Palette;
 use aurora_i18n::tr;
 use egui::{Color32, Sense, vec2};
 
-pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot, out: &mut Vec<Action>) {
-    let _ = m;
+pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &Snapshot, out: &mut Vec<Action>) {
     super::heading(ui, p, tr!("monitor-tab-memory"), tr!("monitor-memory-sub"), |_| {});
     egui::ScrollArea::vertical()
         .id_salt("monitor-memory")
@@ -28,11 +27,11 @@ pub(super) fn two(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: im
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = gap;
         let half = (ui.available_width() - gap) / 2.0;
-        ui.allocate_ui(vec2(half, 0.0), |ui| {
+        ui.allocate_ui_with_layout(vec2(half, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(half);
             left(ui);
         });
-        ui.allocate_ui(vec2(half, 0.0), |ui| {
+        ui.allocate_ui_with_layout(vec2(half, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(half);
             right(ui);
         });
@@ -76,7 +75,12 @@ fn ram_card(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
         ui.add_space(6.0);
         ui.spacing_mut().item_spacing.y = 0.0;
         let mem = s.memory;
-        draw::kv_row(ui, p, tr!("monitor-private"), &mem.map_or("–".into(), |m| fmt::bytes(m.private as f64)));
+        draw::kv_row(
+            ui,
+            p,
+            tr!("monitor-private"),
+            &mem.map_or("–".into(), |m| fmt::bytes(m.private as f64)),
+        );
         draw::kv_row(
             ui,
             p,
@@ -107,7 +111,8 @@ fn vram_card(ui: &mut egui::Ui, p: &Palette, s: &Snapshot, out: &mut Vec<Action>
             ui,
             p,
             &v.usage.map_or("–".into(), |u| fmt::bytes(u as f64)),
-            &v.budget.map_or(String::new(), |b| tr!("monitor-of-value", value = fmt::bytes(b as f64))),
+            &v.budget
+                .map_or(String::new(), |b| tr!("monitor-of-value", value = fmt::bytes(b as f64))),
         );
         let colors = draw::part_colors(p);
         let rest = v.allocated.map(|a| a.saturating_sub(v.pages + v.geometry) as f64);
@@ -152,11 +157,7 @@ fn vram_card(ui: &mut egui::Ui, p: &Palette, s: &Snapshot, out: &mut Vec<Action>
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
         let cy = rect.center().y;
         let label = if t.pressure > 0 {
-            tr!(
-                "monitor-reduction",
-                step = i64::from(t.pressure),
-                steps = i64::from(t.max_pressure)
-            )
+            tr!("monitor-reduction", step = i64::from(t.pressure), steps = i64::from(t.max_pressure))
         } else {
             tr!("monitor-no-reduction").to_owned()
         };
@@ -175,14 +176,7 @@ fn vram_card(ui: &mut egui::Ui, p: &Palette, s: &Snapshot, out: &mut Vec<Action>
                 if on { p.warn } else { p.raised },
             );
         }
-        crate::ui::widgets::paint_elided(
-            ui,
-            tr!("ui-perf-texture-budget"),
-            egui::pos2(rect.left(), cy),
-            120.0,
-            font,
-            p.muted,
-        );
+        crate::ui::widgets::paint_elided(ui, tr!("ui-perf-texture-budget"), egui::pos2(rect.left(), cy), 120.0, font, p.muted);
         ui.painter().hline(
             rect.x_range(),
             rect.bottom() - 0.5,

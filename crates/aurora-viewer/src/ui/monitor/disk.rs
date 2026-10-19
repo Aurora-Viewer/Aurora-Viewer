@@ -88,7 +88,12 @@ fn activity(ui: &mut egui::Ui, p: &Palette, m: &Monitor, s: &Snapshot) {
             widgets::status_dot(ui, p.amber);
             draw::text(ui, tr!("monitor-read-value", value = fmt::disk_rate(read)), draw::BODY, p.muted);
             widgets::status_dot(ui, p.rose);
-            draw::text(ui, tr!("monitor-written-value", value = fmt::disk_rate(written)), draw::BODY, p.muted);
+            draw::text(
+                ui,
+                tr!("monitor-written-value", value = fmt::disk_rate(written)),
+                draw::BODY,
+                p.muted,
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 draw::text(ui, tr!("monitor-scale-minute", scale = fmt::disk_rate(top)), draw::BODY, p.muted);
             });
@@ -183,12 +188,12 @@ fn hits(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), egui::Sense::hover());
             let cy = rect.center().y;
             let font = egui::FontId::proportional(draw::BODY);
-            widgets::paint_elided(ui, name, egui::pos2(rect.left(), cy), 170.0, font.clone(), p.muted);
+            widgets::paint_elided(ui, name, egui::pos2(rect.left(), cy), 210.0, font.clone(), p.muted);
             let text = hit.map_or("–".into(), |(pct, _)| fmt::pct(f64::from(pct)));
             let v = ui.painter().layout_no_wrap(text, font, p.ink);
             let vx = rect.right() - v.size().x;
             widgets::paint_row_text(ui.painter(), v, vx, cy, p.ink);
-            let meter = egui::Rect::from_min_max(egui::pos2(rect.left() + 178.0, cy - 3.0), egui::pos2(vx - 12.0, cy + 3.0));
+            let meter = egui::Rect::from_min_max(egui::pos2(rect.left() + 218.0, cy - 3.0), egui::pos2(vx - 12.0, cy + 3.0));
             draw::paint_meter(ui, p, meter, hit.map_or(0.0, |h| h.0 / 100.0), p.teal);
             if let Some((_, reads)) = hit {
                 ui.interact(rect, ui.id().with(("monitor-hits", name)), egui::Sense::hover())

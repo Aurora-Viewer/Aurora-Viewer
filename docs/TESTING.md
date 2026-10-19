@@ -2364,7 +2364,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   monitor's Network section as the bars open it (the full view for this
   opening only); `monitor-<section>` one section of the monitor:
   `overview`, `subsystems`, `threads`, `memory`, `network`, `disk`, `scene`
-  or `region`. The monitor samples every half second: allow
+  or `region` (`scene-objects`: the scene on its objects). The monitor samples every half second: allow
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=1500` (25 s) for graphs
   with some history, and `AURORA_WINDOW_SIZE=1600,1000` so that its default
   size (1180 × 760) fits. What to look for: the rail's eight sections with

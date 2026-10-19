@@ -11609,6 +11609,9 @@ impl ApplicationHandler for App {
                 let v = v.trim();
                 if v == "network" {
                     ui::perf::show_network(&self.egui_ctx);
+                } else if v == "monitor-scene-objects" {
+                    ui::perf::set_full(&self.egui_ctx, true);
+                    self.monitor.show_scene_objects();
                 } else if let Some(tab) = v.strip_prefix("monitor-").and_then(ui::monitor::Tab::from_key) {
                     ui::perf::set_full(&self.egui_ctx, true);
                     ui::monitor::demo_tab(&self.egui_ctx, tab);
