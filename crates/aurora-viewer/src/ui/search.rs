@@ -411,6 +411,11 @@ fn unix_now() -> i64 {
 }
 
 impl SearchUi {
+    /// The system id of the search page's browser process, while one runs.
+    pub fn web_process_id(&self) -> Option<u32> {
+        self.web.process_id()
+    }
+
     /// Open on a tab (FSFloaterSearch::onOpen with a "tab" key, demo).
     pub fn open_tab(&mut self, tab: Tab) {
         self.tab = tab.index();

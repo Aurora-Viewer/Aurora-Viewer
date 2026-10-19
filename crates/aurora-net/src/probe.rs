@@ -21,6 +21,12 @@ pub fn enable() {
     ENABLED.store(true, Relaxed);
 }
 
+/// Turn the probes on or off (the resource monitor, while it is open).
+/// Requests started while they counted still leave the in-flight count.
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on, Relaxed);
+}
+
 /// The probes count (one relaxed load: the whole cost when they are off).
 #[inline]
 pub fn enabled() -> bool {
@@ -227,6 +233,23 @@ pub fn take_messages() -> [Vec<MessageCount>; 2] {
         out.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(b.count.cmp(&a.count)));
         out
     })
+}
+
+/// Adds the messages of `other` to `acc` (the same lists for a longer
+/// period), each list still from the most bytes down.
+pub fn merge_messages(acc: &mut [Vec<MessageCount>; 2], other: &[Vec<MessageCount>; 2]) {
+    for (list, more) in acc.iter_mut().zip(other) {
+        for m in more {
+            match list.iter_mut().find(|x| x.name == m.name) {
+                Some(x) => {
+                    x.count += m.count;
+                    x.bytes += m.bytes;
+                }
+                None => list.push(*m),
+            }
+        }
+        list.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(b.count.cmp(&a.count)));
+    }
 }
 
 /// Kinds of object updates, as the summary names them.
@@ -560,6 +583,39 @@ pub struct HttpTotals {
     pub hosts: Vec<HostCount>,
 }
 
+impl HttpTotals {
+    /// Adds a later period: sums, the latest in-flight counts, the peaks.
+    pub fn merge(&mut self, later: &HttpTotals) {
+        for (a, b) in self.kinds.iter_mut().zip(&later.kinds) {
+            a.started += b.started;
+            a.done += b.done;
+            for (x, y) in a.failed.iter_mut().zip(b.failed) {
+                *x += y;
+            }
+            a.retries += b.retries;
+            a.bytes += b.bytes;
+            a.in_flight = b.in_flight;
+            a.in_flight_peak = a.in_flight_peak.max(b.in_flight_peak);
+            a.latency.merge(&b.latency);
+            a.wait.merge(&b.wait);
+        }
+        self.queue_peak = self.queue_peak.max(later.queue_peak);
+        for h in &later.hosts {
+            match self.hosts.iter_mut().find(|x| x.host == h.host) {
+                Some(x) => {
+                    x.responses += h.responses;
+                    x.errors += h.errors;
+                    x.bytes += h.bytes;
+                    x.ttfb_ms += h.ttfb_ms;
+                    x.ttfb_max_ms = x.ttfb_max_ms.max(h.ttfb_max_ms);
+                }
+                None => self.hosts.push(h.clone()),
+            }
+        }
+        self.hosts.sort_by_key(|h| std::cmp::Reverse(h.bytes));
+    }
+}
+
 /// The HTTP requests of the period; the counts start again from nothing
 /// (the in-flight peaks from what is in flight now).
 pub fn take_http() -> HttpTotals {
@@ -710,6 +766,36 @@ mod tests {
             line,
             "in 15 msg/s 83.1 kb/s: ObjectUpdate=100/100.0k PacketAck=50/1.0k others=2/0.5k | out 0 msg/s 0.0 kb/s: - \
              | objects full=5 compressed=6 terse=7 cached=8 cache_hit=9 cache_miss=1 requested=1 killed=2"
+        );
+    }
+
+    #[test]
+    fn merged_periods_add_up() {
+        let m = |name, count, bytes| MessageCount { name, count, bytes };
+        let mut acc = [vec![m("ObjectUpdate", 10, 1000)], vec![]];
+        merge_messages(
+            &mut acc,
+            &[
+                vec![m("PacketAck", 50, 2000), m("ObjectUpdate", 5, 500)],
+                vec![m("AgentUpdate", 1, 60)],
+            ],
+        );
+        assert_eq!(acc[0], [m("PacketAck", 50, 2000), m("ObjectUpdate", 15, 1500)]);
+        assert_eq!(acc[1], [m("AgentUpdate", 1, 60)]);
+
+        let mut a = HttpTotals::default();
+        a.kinds[0].started = 3;
+        a.kinds[0].in_flight = 2;
+        a.kinds[0].in_flight_peak = 5;
+        let mut b = HttpTotals::default();
+        b.kinds[0].started = 4;
+        b.kinds[0].in_flight = 1;
+        b.kinds[0].in_flight_peak = 3;
+        b.queue_peak = 9;
+        a.merge(&b);
+        assert_eq!(
+            (a.kinds[0].started, a.kinds[0].in_flight, a.kinds[0].in_flight_peak, a.queue_peak),
+            (7, 1, 5, 9)
         );
     }
 

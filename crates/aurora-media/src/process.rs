@@ -59,6 +59,11 @@ pub struct PluginProcess {
 }
 
 impl PluginProcess {
+    /// The system id of the plugin process while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(Child::id)
+    }
+
     /// Bind the listening socket and launch `launcher` (SLPlugin) with the
     /// port as its only argument, in `plugin_dir`.
     pub fn launch(launcher: &Path, plugin_dir: &Path, plugin_file: &Path) -> std::io::Result<PluginProcess> {

@@ -88,6 +88,9 @@ pub struct Region {
     pub heightmap: Heightmap,
     pub wind: aurora_net::terrain::WindGrid,
     pub dirty_chunks: HashSet<u32>,
+    /// Terrain patches received so far: what the grass standing on it was
+    /// placed for (scene/plants.rs).
+    pub terrain_revision: u64,
     pub caps: Arc<HashMap<String, String>>,
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
@@ -1304,6 +1307,7 @@ impl World {
             heightmap: Heightmap::new(size.0.max(256), size.1.max(256)),
             wind: Default::default(),
             dirty_chunks: HashSet::new(),
+            terrain_revision: 0,
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
             avatar_hover_height: false,
@@ -1851,6 +1855,7 @@ impl World {
                     let dirty = r.heightmap.apply_patch(p.x, p.y, p.size, &p.heights);
                     r.dirty_chunks.extend(dirty);
                 }
+                r.terrain_revision += 1;
                 None
             }
             NetEvent::Wind { handle, grid } => {

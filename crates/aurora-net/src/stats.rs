@@ -50,6 +50,9 @@ pub struct NetStats {
     pub unacked: AtomicU32,
     pub http_in_flight: AtomicU32,
     pub http_queued: AtomicU32,
+    /// What the agent's simulator was last asked to send at most (kb/s,
+    /// throttle.rs; 0 before the first request).
+    pub throttle_asked_kbps: AtomicU32,
     pub http_bytes: AtomicU64,
     pub http_completed: AtomicU64,
     pub http_failed: AtomicU64,

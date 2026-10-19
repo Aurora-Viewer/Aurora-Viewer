@@ -53,6 +53,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod link_health;
 mod marketplace_listings;
+mod monitor;
 mod movement;
 mod object_actions;
 mod object_menu;
@@ -227,6 +228,10 @@ pub struct App {
     /// The History window (a conversation's whole transcript).
     history_ui: ui::chat::history::HistoryUi,
     perf: PerfData,
+    /// The Performance window's full view (ui/monitor) and what its
+    /// snapshots need (app/monitor.rs).
+    monitor: ui::monitor::Monitor,
+    monitor_feed: monitor::MonitorFeed,
     /// The interface hidden (Alt+Shift+U) and the bars in mouselook.
     interface: ui::interface::Interface,
     /// AURORA_PROFILE: frame laps and the summary line in the log.
@@ -847,6 +852,8 @@ impl App {
             favorite_images: Default::default(),
             history_ui: Default::default(),
             perf: PerfData::default(),
+            monitor: ui::monitor::Monitor::default(),
+            monitor_feed: monitor::MonitorFeed::default(),
             interface: Default::default(),
             frame_profile: FrameProfile::default(),
             net_profile: crate::net_profile::NetProfile::default(),
@@ -7411,6 +7418,7 @@ impl App {
         self.frame_profile.lap(Lap::Tail);
         self.end_profile_frame(w, h);
         self.end_deep_profile(&gfx.renderer);
+        self.monitor_frame(&gfx.renderer);
         self.gfx = Some(gfx);
         self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
@@ -8244,7 +8252,9 @@ impl App {
     /// AURORA_PROFILE: the frame's share of the lines written every 10 s
     /// (deep_profile.rs), and what only their end reads.
     fn end_deep_profile(&mut self, renderer: &aurora_render::Renderer) {
-        if !self.deep_profile.enabled() {
+        self.monitor_feed.upload_bytes = self.scene.textures.stats.uploaded_bytes_frame;
+        // (the probes are read once a second for the resource monitor too)
+        if !self.deep_profile.tick() {
             return;
         }
         let in_world = self.in_world();
@@ -11105,27 +11115,13 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiMaps, t);
                 let mut open = self.panels.perf;
-                let net = self.net.stats.snapshot();
                 let view = ui::perf::PerfView {
                     data: &self.perf,
-                    render: &self.last_render,
                     gpu: &renderer.info,
-                    net: &net,
-                    link: (&self.net_profile.last, &self.net_profile.totals),
-                    scene: &self.scene.stats,
-                    tex: &self.scene.textures.stats,
-                    meshes_fetching: self.scene.meshes.fetching,
-                    regions: self.world.regions.len(),
-                    draw_distance: self.settings.draw_distance,
-                    probes: self.probes.counts(),
-                    sounds: self.scene.sounds.voices(),
-                    complexity: (
-                        self.scene.avatar_complexity.get(&self.world.agent_id).copied(),
-                        self.scene.too_complex.len(),
-                    ),
                 };
-                ui::perf::show(&ctx, &p, &view, &mut open);
+                let monitor_actions = ui::perf::show(&ctx, &p, &view, &mut self.monitor, &mut open);
                 self.panels.perf = open;
+                self.monitor_actions(monitor_actions);
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
                 if self.panels.environment {
@@ -11709,16 +11705,24 @@ impl ApplicationHandler for App {
                     .load_texture(format!("demo-favorite-{id}"), image, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(id, t);
             }
-            // AURORA_DEMO_PERF=compact|full|network: the performance window in
-            // that view (network: full, with its Network section open)
+            // AURORA_DEMO_PERF=compact|full|network|monitor-<section>: the
+            // performance window in that view (full: the resource monitor's
+            // overview; network or monitor-<section>: that section of it)
             // a minute of synthetic traffic for the network's graphs
             self.perf.demo_history();
             if let Ok(v) = std::env::var("AURORA_DEMO_PERF") {
                 self.panels.perf = true;
-                if v.trim() == "network" {
+                let v = v.trim();
+                if v == "network" {
                     ui::perf::show_network(&self.egui_ctx);
+                } else if v == "monitor-scene-objects" {
+                    ui::perf::set_full(&self.egui_ctx, true);
+                    self.monitor.show_scene_objects();
+                } else if let Some(tab) = v.strip_prefix("monitor-").and_then(ui::monitor::Tab::from_key) {
+                    ui::perf::set_full(&self.egui_ctx, true);
+                    ui::monitor::demo_tab(&self.egui_ctx, tab);
                 } else {
-                    ui::perf::set_full(&self.egui_ctx, v.trim() == "full");
+                    ui::perf::set_full(&self.egui_ctx, v != "compact");
                 }
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {

@@ -228,7 +228,9 @@ fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     };
     // one write: an append-mode write lands whole at the end of the file,
     // also when another viewer appends to it
-    file.write_all(bytes)
+    file.write_all(bytes)?;
+    crate::disk_io::written(crate::disk_io::Origin::Logs, bytes.len());
+    Ok(())
 }
 
 /// Remove the transcript files of a folder (and the folder once empty).
@@ -271,6 +273,7 @@ pub fn read_tail(path: &Path) -> std::io::Result<Vec<Entry>> {
     }
     let mut bytes = Vec::with_capacity(LOG_RECALL_SIZE as usize);
     file.take(LOG_RECALL_SIZE).read_to_end(&mut bytes)?;
+    crate::disk_io::read(crate::disk_io::Origin::Logs, bytes.len());
     Ok(parse(&bytes, cut))
 }
 

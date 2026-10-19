@@ -18,16 +18,33 @@ static WRITTEN: AtomicU64 = AtomicU64::new(0);
 
 /// Write a cache file (counted towards the size limit).
 pub fn write(path: impl AsRef<Path>, data: &[u8]) -> std::io::Result<()> {
-    crate::atomic_file::write(path.as_ref(), data)?;
+    crate::atomic_file::publish(path.as_ref(), data)?;
     WRITTEN.fetch_add(data.len() as u64, Ordering::Relaxed);
+    crate::disk_io::written(origin_of(path.as_ref()), data.len());
     Ok(())
 }
 
 /// Read a cache file and mark it as used.
 pub fn read_touch(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     let d = std::fs::read(path.as_ref())?;
+    crate::disk_io::read(origin_of(path.as_ref()), d.len());
     touch(path.as_ref());
     Ok(d)
+}
+
+/// What a cache file holds, by the folder it is in (the disk statistics).
+pub fn origin_of(path: &Path) -> crate::disk_io::Origin {
+    use crate::disk_io::Origin;
+    for part in path.components().rev().skip(1) {
+        match part.as_os_str().to_str() {
+            Some("tex" | "mat") => return Origin::Textures,
+            Some("mesh") => return Origin::Meshes,
+            Some("objects") => return Origin::Objects,
+            Some("inventory") => return Origin::Inventory,
+            _ => {}
+        }
+    }
+    Origin::Other
 }
 
 /// Mark a cache file as recently used (LRU eviction works on mtime).
@@ -45,6 +62,10 @@ enum Cmd {
 pub struct DiskCache {
     limit: Arc<AtomicU64>,
     usage: Arc<AtomicU64>,
+    /// Bytes of each folder of [`DIRS`] at the last walk.
+    by_dir: Arc<[AtomicU64; DIRS.len()]>,
+    /// The last eviction: when, files removed, bytes freed.
+    last_trim: Arc<parking_lot::Mutex<Option<(SystemTime, usize, u64)>>>,
     clearing: Arc<AtomicBool>,
     tx: crossbeam_channel::Sender<Cmd>,
 }
@@ -65,12 +86,28 @@ fn walk(dir: &Path, out: &mut Vec<(PathBuf, u64, SystemTime)>) {
     }
 }
 
-fn scan(root: &Path) -> Vec<(PathBuf, u64, SystemTime)> {
+/// Every file of the cache, and the bytes of each folder of [`DIRS`].
+fn scan(root: &Path) -> (Vec<(PathBuf, u64, SystemTime)>, [u64; DIRS.len()]) {
     let mut files = Vec::new();
-    for d in DIRS {
+    let mut by_dir = [0u64; DIRS.len()];
+    for (i, d) in DIRS.iter().enumerate() {
+        let start = files.len();
         walk(&root.join(d), &mut files);
+        by_dir[i] = files[start..].iter().map(|f| f.1).sum();
     }
-    files
+    (files, by_dir)
+}
+
+/// The folder of [`DIRS`] a cache file is in.
+fn dir_index(root: &Path, path: &Path) -> Option<usize> {
+    let first = path.strip_prefix(root).ok()?.components().next()?;
+    DIRS.iter().position(|d| first.as_os_str() == *d)
+}
+
+fn store_sizes(by_dir: &[AtomicU64; DIRS.len()], sizes: &[u64; DIRS.len()]) {
+    for (a, v) in by_dir.iter().zip(sizes) {
+        a.store(*v, Ordering::Relaxed);
+    }
 }
 
 impl DiskCache {
@@ -80,10 +117,13 @@ impl DiskCache {
         }
         let limit = Arc::new(AtomicU64::new(limit_mb as u64 * 1024 * 1024));
         let usage = Arc::new(AtomicU64::new(0));
+        let by_dir: Arc<[AtomicU64; DIRS.len()]> = Arc::new(std::array::from_fn(|_| AtomicU64::new(0)));
+        let last_trim = Arc::new(parking_lot::Mutex::new(None));
         let clearing = Arc::new(AtomicBool::new(false));
         let (tx, rx) = crossbeam_channel::unbounded::<Cmd>();
         {
             let (root, limit, usage, clearing) = (root.clone(), limit.clone(), usage.clone(), clearing.clone());
+            let (by_dir, last_trim) = (by_dir.clone(), last_trim.clone());
             let mut last_walk = Instant::now();
             let _ = std::thread::Builder::new().name("aurora-cache".into()).spawn(move || {
                 loop {
@@ -112,25 +152,28 @@ impl DiskCache {
                     match cmd {
                         Cmd::Clear => {
                             let mut freed = 0u64;
-                            for (path, len, _) in scan(&root) {
+                            for (path, len, _) in scan(&root).0 {
                                 if std::fs::remove_file(&path).is_ok() {
                                     freed += len;
                                 }
                             }
                             log::info!("cache cleared ({} MB)", freed / (1024 * 1024));
-                            usage.store(scan(&root).iter().map(|f| f.1).sum(), Ordering::Relaxed);
+                            let (files, sizes) = scan(&root);
+                            usage.store(files.iter().map(|f| f.1).sum(), Ordering::Relaxed);
+                            store_sizes(&by_dir, &sizes);
                             clearing.store(false, Ordering::Release);
                         }
                         Cmd::Trim => {
                             last_walk = Instant::now();
                             WRITTEN.store(0, Ordering::Relaxed);
-                            let mut files = scan(&root);
+                            let (mut files, mut sizes) = scan(&root);
                             let mut total: u64 = files.iter().map(|f| f.1).sum();
                             let max = limit.load(Ordering::Relaxed);
                             if total > max {
                                 // least recently used first; trim to 85 % to avoid churn
                                 files.sort_by_key(|f| f.2);
                                 let target = max / 100 * 85;
+                                let before = total;
                                 let mut removed = 0usize;
                                 for (path, len, _) in files {
                                     if total <= target {
@@ -139,11 +182,16 @@ impl DiskCache {
                                     if std::fs::remove_file(&path).is_ok() {
                                         total = total.saturating_sub(len);
                                         removed += 1;
+                                        if let Some(i) = dir_index(&root, &path) {
+                                            sizes[i] = sizes[i].saturating_sub(len);
+                                        }
                                     }
                                 }
                                 log::info!("cache trimmed: {removed} files evicted, {} MB used", total / (1024 * 1024));
+                                *last_trim.lock() = Some((SystemTime::now(), removed, before - total));
                             }
                             usage.store(total, Ordering::Relaxed);
+                            store_sizes(&by_dir, &sizes);
                         }
                     }
                 }
@@ -152,6 +200,8 @@ impl DiskCache {
         let cache = DiskCache {
             limit,
             usage,
+            by_dir,
+            last_trim,
             clearing,
             tx,
         };
@@ -185,11 +235,40 @@ impl DiskCache {
     pub fn usage(&self) -> u64 {
         self.usage.load(Ordering::Relaxed)
     }
+
+    /// The size limit (bytes).
+    pub fn limit(&self) -> u64 {
+        self.limit.load(Ordering::Relaxed)
+    }
+
+    /// Bytes of each folder of [`DIRS`] at the last walk (the files
+    /// written since are only in [`DiskCache::usage`]).
+    pub fn usage_by_dir(&self) -> [u64; DIRS.len()] {
+        std::array::from_fn(|i| self.by_dir[i].load(Ordering::Relaxed))
+    }
+
+    /// The last eviction of this session: when, files removed, bytes
+    /// freed.
+    pub fn last_trim(&self) -> Option<(SystemTime, usize, u64)> {
+        *self.last_trim.lock()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_count_under_their_folder() {
+        use crate::disk_io::Origin;
+        let root = Path::new("cache");
+        assert_eq!(origin_of(&root.join("tex").join("ab").join("x.j2c")), Origin::Textures);
+        assert_eq!(origin_of(&root.join("mesh").join("x")), Origin::Meshes);
+        assert_eq!(origin_of(&root.join("inventory").join("x.inv")), Origin::Inventory);
+        assert_eq!(origin_of(&root.join("anim").join("x")), Origin::Other);
+        // a file named like a folder is not one
+        assert_eq!(origin_of(&root.join("tex")), Origin::Other);
+    }
 
     #[test]
     fn evicts_least_recently_used() {

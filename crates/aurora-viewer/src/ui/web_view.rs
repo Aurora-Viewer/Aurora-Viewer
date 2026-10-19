@@ -66,6 +66,11 @@ pub struct WebView {
 }
 
 impl WebView {
+    /// The system id of this page's browser process, while one runs.
+    pub fn process_id(&self) -> Option<u32> {
+        self.plugin.as_ref().and_then(|p| p.pid())
+    }
+
     /// A browser that leaves nothing behind: each time it starts it gets a
     /// new profile under `root`, deleted when it stops.
     pub fn private(root: PathBuf) -> WebView {
