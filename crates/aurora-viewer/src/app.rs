@@ -6673,6 +6673,7 @@ impl App {
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
+            photo_tile,
             camera_pos: self.camera.position,
             near: self.camera.near,
             far: self.settings.draw_distance,
