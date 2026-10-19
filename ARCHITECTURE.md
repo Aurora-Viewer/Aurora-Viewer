@@ -390,6 +390,20 @@ permissions for Save As through CopyInventoryItem, patches only the transaction
 success. Non-modifiable shapes can be copied only unchanged. Requests and replies
 are scoped by request/item/asset identities; failed saves retain the draft. A
 confirmed save uses the existing outfit/COF path to request server appearance.
+The same path saves a physics layer (clothing, wearable type 15).
+
+`physics_editor.rs` owns the worn physics layer's draft: the 33 tweakable
+physics parameters of `avatar_lad.xml` in the seven tabs of the Legacy Viewer's
+panel (breasts bounce / cleavage / sway, belly bounce, butt bounce / sway,
+advanced), hidden by sex as there, checked against the XML by a test. Its
+weights are previewed through the same `World` visual-parameter view as the
+shape draft, so `scene/body_physics.rs` bounces the body with them at once.
+"New physics" (outfit gallery) creates a default layer in the Clothing folder,
+wears it and opens the editor once the outfit wears it. `ui/physics.rs` is
+its floater (single-expansion accordion, 0–100 sliders, the shape editor's
+footer and dialogs); `app/physics_editor.rs` opens it from the worn layer's
+menus, keeps one appearance editor open at a time and provides
+`AURORA_DEMO_PHYSICS_EDIT`.
 
 Account login: `login_accounts.rs` keeps the per-grid catalogue, each account's start location, remember preferences and last-place image reference without secrets, and merges changes under an OS file lock. `credentials.rs` stores password hashes and MFA authorizations in separate OS credential entries per grid/user; MFA expires after 30 days and is saved only when requested. `atomic_file.rs` publishes complete files through a unique temporary per write. `ui/login/carousel.rs` presents account cards with their own grid/start selectors, keyboard selection and the separate Add button. `ui/login/credentials_form.rs` shares the full first-account/Add form and the compact password/MFA prompt for existing profiles; registration happens after successful login. `ui/login/manager.rs` provides searchable portrait rows, saved account ordering and account-scoped credential removal, with confirmation keyed by identity. `ui/login/manager_drag.rs` tracks row gestures, insertion targets, a floating identity preview, Escape cancellation and edge scrolling; order changes happen once on release. Reordering moves identities in the latest lock-protected catalogue without replacing profile metadata or touching credentials. Login dialogs use `widgets::Modal::login_surface`: the existing GPU modal backdrop blurs the sky and lower account cards, with the login cards’ lighter tint inside the theme’s frame. Ordinary world modals retain their scene-glass markers; opaque skins skip the login blur. The floating drag preview shares `aurora_bg::frosted_pane` with login cards. `ui/login/derez.rs` prepares fragments on a background worker and batches them by GPU texture. `login_places.rs` resizes scene captures off the frame thread, publishes unique images atomically and loads bounded thumbnails; metadata updates only the matching grid/user/agent. Portraits and scene images (at most 512 pixels wide) live in each account's own folder. Place capture piggybacks on the existing scene capture at logout/quit, without interface overlays or a recurring readback.
 

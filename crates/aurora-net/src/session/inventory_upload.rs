@@ -70,7 +70,8 @@ impl Session<'_> {
         let asset = Uuid::from_bytes(md5::compute(key).0);
         let mut message = AssetUploadRequest::default();
         message.asset_block.transaction_id = transaction;
-        message.asset_block.type_ = 13;
+        // bodypart (13) for a shape, clothing (5) for a physics layer
+        message.asset_block.type_ = pending.item.asset_type as i8;
         if data.len() + 100 < 1200 {
             message.asset_block.asset_data.clone_from(&data);
         }
@@ -288,14 +289,17 @@ impl Session<'_> {
                 return Ok(true);
             }
             if let Some(pending) = upload.wearable {
-                if m.asset_block.success && m.asset_block.type_ == 13 {
+                if m.asset_block.success && i32::from(m.asset_block.type_) == pending.item.asset_type {
                     self.wearable_asset_ready(pending, upload.transaction, m.asset_block.uuid);
                 } else {
                     emit(
                         self.sh,
                         NetEvent::WearableSaved {
                             request: pending.request,
-                            result: Err(aurora_i18n::tr!("shape-save-rejected").into()),
+                            result: Err(super::wearable_save::failure(
+                                &pending.item,
+                                super::wearable_save::Failure::Rejected,
+                            )),
                         },
                     );
                 }
@@ -359,7 +363,10 @@ impl Session<'_> {
                         self.sh,
                         NetEvent::WearableSaved {
                             request: pending.request,
-                            result: Err(aurora_i18n::tr!("shape-save-interrupted").into()),
+                            result: Err(super::wearable_save::failure(
+                                &pending.item,
+                                super::wearable_save::Failure::Interrupted,
+                            )),
                         },
                     );
                     return Ok(true);
@@ -395,7 +402,10 @@ impl Session<'_> {
         self.inventory_uploads.assets.retain(|id, u| {
             if u.started.elapsed() > Duration::from_secs(60) {
                 if let Some(pending) = &u.wearable {
-                    wearables.push(pending.request);
+                    wearables.push((
+                        pending.request,
+                        super::wearable_save::failure(&pending.item, super::wearable_save::Failure::Interrupted),
+                    ));
                 }
                 if u.report.is_some() {
                     reports += 1;
@@ -412,7 +422,10 @@ impl Session<'_> {
             {
                 if t.retries >= 3 {
                     if let Some(pending) = &u.wearable {
-                        wearables.push(pending.request);
+                        wearables.push((
+                            pending.request,
+                            super::wearable_save::failure(&pending.item, super::wearable_save::Failure::Interrupted),
+                        ));
                     }
                     if u.report.is_some() {
                         reports += 1;
@@ -440,18 +453,21 @@ impl Session<'_> {
         }
         self.inventory_uploads.wearable_copies.retain(|_, pending| {
             if pending.started.elapsed() > Duration::from_secs(60) {
-                wearables.push(pending.request);
+                wearables.push((
+                    pending.request,
+                    super::wearable_save::failure(&pending.item, super::wearable_save::Failure::Interrupted),
+                ));
                 false
             } else {
                 true
             }
         });
-        for request in wearables {
+        for (request, reason) in wearables {
             emit(
                 self.sh,
                 NetEvent::WearableSaved {
                     request,
-                    result: Err(aurora_i18n::tr!("shape-save-interrupted").into()),
+                    result: Err(reason),
                 },
             );
         }

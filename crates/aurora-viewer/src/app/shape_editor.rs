@@ -66,6 +66,10 @@ impl App {
         }
     }
     pub(super) fn open_shape_editor(&mut self, item: uuid::Uuid) {
+        if !self.close_physics_editor_for_shape() {
+            self.appearance_ui.message = aurora_i18n::tr!("physics-other-editor").into();
+            return;
+        }
         self.shape_ui.hints = self.settings.shape_show_hints;
         self.shape_ui.feet = self.settings.shape_height_feet;
         if let Some(command) = self.shape_ui.open_item(&mut self.world, item) {
@@ -119,42 +123,7 @@ impl App {
             ui::shape::Action::Save(name) => {
                 if let Some(command) = self.shape_ui.save(&self.world, name) {
                     if self.demo {
-                        if let NetCommand::SaveWearable {
-                            request,
-                            item,
-                            data,
-                            copy_name,
-                        } = command
-                        {
-                            let mut item = *item;
-                            if let Some(name) = copy_name {
-                                item.id = uuid::Uuid::new_v4();
-                                item.name = name;
-                            }
-                            item.asset_id = uuid::Uuid::new_v4();
-                            // Exercise the exact encoder/parser, without any grid traffic.
-                            let result = aurora_assets::wearable::Wearable::parse(&data)
-                                .map(|wearable| {
-                                    self.demo_documents.insert(item.id, data);
-                                    let mut appearance = self.world.server_appearance().cloned().unwrap_or(aurora_net::AvatarAppearance {
-                                        avatar_id: self.world.agent_id,
-                                        texture_entry: None,
-                                        visual_params: Vec::new(),
-                                        cof_version: 0,
-                                        hover_height: 0.0,
-                                        attachments: 0,
-                                    });
-                                    appearance.visual_params = self
-                                        .world
-                                        .avatar_lib
-                                        .shape_params
-                                        .edit_values(self.world.server_visual_params(), &wearable.params);
-                                    self.world.apply(NetEvent::Appearance(appearance));
-                                    item
-                                })
-                                .map_err(|_| aurora_i18n::tr!("shape-error").to_owned());
-                            self.on_app_event(NetEvent::WearableSaved { request, result });
-                        }
+                        self.demo_save_wearable(command);
                     } else {
                         self.send(command);
                     }
