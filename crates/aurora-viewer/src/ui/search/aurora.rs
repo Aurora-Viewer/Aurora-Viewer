@@ -382,6 +382,16 @@ impl SearchUi {
         if classic { "" } else { &self.aurora.web_query }
     }
 
+    /// A classified or an event opened from a link (`Search::show_one`):
+    /// Aurora's window shows its list as searched, the row selected, and
+    /// does not search it again for the text it holds.
+    pub fn aurora_show_one(&mut self, tab: Tab, key: Key, settings: &SearchSettings) {
+        if let Some(request) = self.aurora_request(tab, settings) {
+            self.aurora.searched.insert(tab, request);
+        }
+        self.aurora.selected = Some((tab, key));
+    }
+
     /// Whether Aurora's window searched this list for what it shows now.
     fn aurora_shows(&self, tab: Tab) -> bool {
         self.aurora.searched.contains_key(&tab)

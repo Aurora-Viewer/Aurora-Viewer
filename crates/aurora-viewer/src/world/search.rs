@@ -843,13 +843,14 @@ impl Search {
     }
 
     /// The details of a row answered: a row shown without its name
-    /// (`show_one`) takes it.
-    pub fn name_row(&mut self, tab: Tab, key: Key, name: &str) {
+    /// (`show_one`) takes it, and its columns (an event's date).
+    pub fn name_row(&mut self, tab: Tab, key: Key, name: &str, values: Vec<Value>) {
         let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
             return;
         };
         for row in list.rows.iter_mut().filter(|r| r.key == key && r.name.is_empty()) {
             row.name = name.to_owned();
+            row.values = values.clone();
         }
     }
 
@@ -1611,5 +1612,28 @@ mod tests {
         for tab in Tab::ALL.into_iter().skip(1) {
             assert_eq!(s.list(tab).map(|l| l.tab), Some(tab));
         }
+    }
+
+    #[test]
+    fn a_classified_or_an_event_shown_alone() {
+        let mut s = Search::default();
+        let id = Uuid::from_u128(5);
+        s.show_one(Tab::Classifieds, Key::Id(id));
+        assert!(matches!(&s.take_commands()[..], [NetCommand::ClassifiedInfoRequest(a)] if *a == id));
+        let list = s.list(Tab::Classifieds).expect("classifieds");
+        assert_eq!(list.selected, Some(Key::Id(id)));
+        assert_eq!(list.status, Status::Found);
+        assert!(list.query_id.is_nil(), "an older query's replies no longer apply");
+        s.name_row(Tab::Classifieds, Key::Id(id), "Atelier", Vec::new());
+        assert_eq!(s.list(Tab::Classifieds).map(|l| l.rows[0].name.as_str()), Some("Atelier"));
+        s.show_one(Tab::Events, Key::Event(5001));
+        assert!(matches!(&s.take_commands()[..], [NetCommand::EventInfoRequest(5001)]));
+        let date = Value::Dated {
+            text: "10/08 09:00".into(),
+            unix: 1_791_475_200,
+        };
+        s.name_row(Tab::Events, Key::Event(5001), "Jazz", vec![date.clone()]);
+        let row = &s.list(Tab::Events).expect("events").rows[0];
+        assert_eq!((row.name.as_str(), &row.values[..]), ("Jazz", &[date][..]));
     }
 }

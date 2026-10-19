@@ -338,12 +338,13 @@ impl PlacesUi {
                 self.want_fetch(&world.inventory, root, true, 0);
             }
         }
-        // a profile opened from elsewhere (a place link): the preview shows it
+        // a profile opened from elsewhere (a place or parcel link): the
+        // preview shows it
         let link = world
             .place_details
             .panel
             .as_ref()
-            .filter(|p| matches!(p.source, Profile::Link { .. }))
+            .filter(|p| matches!(p.source, Profile::Link { .. } | Profile::Parcel(_)))
             .map(|p| p.source.clone());
         if let Some(l) = &link
             && self.aurora.previewed.as_ref() != Some(l)

@@ -45,7 +45,7 @@ pub fn take_wanted() -> Wanted {
 
 /// A group's name: ours, then the name cache, else asked (LLUrlEntryGroup:
 /// "(none)" for the null group).
-fn group_name(world: &World, id: Uuid) -> String {
+pub(crate) fn group_name(world: &World, id: Uuid) -> String {
     if id.is_nil() {
         return aurora_i18n::tr!("status-none").to_owned();
     }
@@ -152,7 +152,7 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
         let ctx = ui.ctx().clone();
         let run = || request(&ctx, CtxAction::AppLink(link.clone()));
         let copy_label = |ui: &mut egui::Ui, text: &'static str| {
-            if menu::item(ui, p, "copy", text) {
+            if menu::item(ui, p, "copy-filled", text) {
                 ui.ctx().copy_text(label.to_owned());
             }
         };
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn labels_of_the_legacy_entries() {
-        let world = World::default();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let mut names = HashSet::new();
         let label = |url: &str, names: &mut HashSet<Uuid>| {
             let link = crate::slapp::parse(url).expect("app link");

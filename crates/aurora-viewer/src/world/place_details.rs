@@ -528,4 +528,21 @@ mod tests {
             Some(Stage::Failed(PlaceError::LandmarkUnavailable))
         );
     }
+
+    #[test]
+    fn a_parcel_link_asks_its_parcel_at_once() {
+        let now = Instant::now();
+        let mut lm = Landmarks::default();
+        let mut d = PlaceDetails::default();
+        let parcel = Uuid::from_u128(0x9A2C);
+        d.open_panel(Source::Parcel(parcel), &WorldMap::default(), &mut lm, now);
+        assert!(matches!(&d.take_commands()[..], [NetCommand::ParcelInfoRequest(id)] if *id == parcel));
+        assert_eq!(d.panel.as_ref().and_then(|p| p.parcel()), Some(parcel));
+        assert_eq!(d.panel.as_ref().and_then(|p| p.global), None);
+        // ParcelInfoReply: where it is, for Teleport and Map
+        d.parcel_known(parcel, DVec3::new(256_140.0, 256_120.0, 25.0));
+        let p = d.panel.as_ref().expect("panel");
+        assert_eq!(p.global, Some(DVec3::new(256_140.0, 256_120.0, 25.0)));
+        assert_eq!(p.region_pos, Vec3::new(140.0, 120.0, 25.0));
+    }
 }

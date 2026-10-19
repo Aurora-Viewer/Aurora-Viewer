@@ -1,6 +1,7 @@
 //! Local chat window (nearby chat + instant messages).
 
 mod app_links;
+pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
 mod completion;
@@ -324,26 +325,36 @@ enum Link {
     Url(String),
     Place(String, crate::slurl::PlaceLink),
     Agent(uuid::Uuid),
+    /// A `secondlife:///app/...` command (`app_links.rs`).
+    App(String, crate::slapp::AppLink),
 }
 
 /// A line's text cut into pieces, links replaced by their labels as
 /// Firestorm's chat console does (LLConsole::Paragraph with parse_urls,
 /// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
-/// avatar's name, mentions "@name" like the conversation window.
-fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(String, Option<Link>)> {
+/// avatar's name, mentions "@name" like the conversation window, app
+/// commands their label. `label_of` gives the label of an agent link, a
+/// mention (without its "@") or an app command.
+fn pieces(text: &str, mut label_of: impl FnMut(&Seg) -> String) -> Vec<(String, Option<Link>)> {
     segments(text)
         .into_iter()
         .map(|s| match s {
             Seg::Text(t) | Seg::Slurl(t) => (t.to_owned(), None),
             Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
-            Seg::Agent(id) => (name_of(id), Some(Link::Agent(id))),
-            Seg::Mention(id) => (format!("@{}", name_of(id)), Some(Link::Agent(id))),
+            Seg::Agent(id) => (label_of(&s), Some(Link::Agent(id))),
+            Seg::Mention(id) => (format!("@{}", label_of(&s)), Some(Link::Agent(id))),
+            Seg::App(..) => {
+                let label = label_of(&s);
+                let Seg::App(u, link) = s else { unreachable!() };
+                (label, Some(Link::App(u.to_owned(), link)))
+            }
             Seg::Labelled(label, inner) => (
                 label.into_owned(),
                 match *inner {
                     Seg::Url(u) => Some(Link::Url(u.to_owned())),
                     Seg::Agent(id) | Seg::Mention(id) => Some(Link::Agent(id)),
+                    Seg::App(u, link) => Some(Link::App(u.to_owned(), link)),
                     _ => None,
                 },
             ),
@@ -603,9 +614,13 @@ fn line_job(
     let mut links = Vec::new();
     let mut badges = Vec::new();
     let mut at = job.text.chars().count();
-    let name_of = |id| {
-        want_names.insert(id);
-        world.social.name_of(&id)
+    let name_of = |s: &Seg| match s {
+        Seg::Agent(id) | Seg::Mention(id) => {
+            want_names.insert(*id);
+            world.social.name_of(id)
+        }
+        Seg::App(u, link) => app_links::label(world, want_names, u, link),
+        _ => String::new(),
     };
     // the badge of a web link takes the place of an invisible glyph glued to
     // the link (no space between them), so both wrap to the next row
@@ -784,6 +799,8 @@ enum Seg<'a> {
     /// shown as the text, it acts as the link inside (a web link, an agent
     /// link or another SL link; a place takes the text as its label).
     Labelled(Cow<'a, str>, Box<Seg<'a>>),
+    /// Another `secondlife:///app/...` command (`slapp.rs`).
+    App(&'a str, crate::slapp::AppLink),
 }
 
 fn segments(text: &str) -> Vec<Seg<'_>> {
@@ -901,10 +918,12 @@ fn link_seg(link: &str) -> Seg<'_> {
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
-            _ => Seg::Slurl(link),
+            _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
     } else if let Some(place) = crate::slurl::place_link(link) {
         Seg::Place(link, place)
+    } else if let Some(app) = crate::slapp::parse(link) {
+        Seg::App(link, app)
     } else if link.starts_with("secondlife://") {
         Seg::Slurl(link)
     } else {
@@ -1089,8 +1108,13 @@ pub(crate) fn chat_text_marked(
                     Seg::Slurl(u) => {
                         select::label(ui, RichText::new(label.as_ref()).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
                     }
+                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
                     _ => marked_run(ui, emoji, &label, size, color, italics, mark),
                 },
+                Seg::App(u, link) => {
+                    let label = app_links::label(world, want_names, u, &link);
+                    app_links::link(ui, p, world, u, &link, &label, size);
+                }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Mention(id) => {
                     want_names.insert(id);
@@ -1287,6 +1311,7 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
             Seg::Place(_, place) => place.label,
             Seg::Mention(id) => format!(" @{} ", world.social.name_of(&id)),
             Seg::Agent(id) => world.social.name_of(&id),
+            Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
         .collect()
 }
@@ -2854,6 +2879,14 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                         super::profile::request_open(ui.ctx(), *id);
                     }
                 }
+                Link::App(u, app) => {
+                    // the bubble's label is the menu's "copy name"
+                    let label = app_links::label(world, &mut HashSet::new(), u, app);
+                    app_links::menu(&resp, p, world, u, app, &label);
+                    if resp.on_hover_text(format!("{}\n{u}", app_links::tooltip(app))).clicked() {
+                        super::context::request(ui.ctx(), CtxAction::AppLink(app.clone()));
+                    }
+                }
             }
         });
 }
@@ -2991,8 +3024,13 @@ mod tests {
         let segs = segments(&t);
         assert_eq!(segs[1], Seg::Agent(id));
         assert_eq!(segs[3], Seg::Mention(id));
+        // not an agent link: the generic SLapp (LLUrlEntrySL), whose click
+        // says the command is not supported
         let bad = segments("secondlife:///app/agent/nope/about");
-        assert!(matches!(bad[0], Seg::Slurl(_)));
+        assert!(matches!(bad[0], Seg::App(_, crate::slapp::AppLink::Unsupported)));
+        // another verb acts (LLAgentHandler) and shows the name
+        let im = format!("secondlife:///app/agent/{id}/im");
+        assert!(matches!(segments(&im)[0], Seg::App(_, crate::slapp::AppLink::Agent { .. })));
     }
 
     #[test]

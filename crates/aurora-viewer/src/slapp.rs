@@ -70,7 +70,10 @@ pub enum Blocked {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppLink {
-    Agent { id: Uuid, verb: AgentVerb },
+    Agent {
+        id: Uuid,
+        verb: AgentVerb,
+    },
     /// `group/<id>/about` or `inspect` (both show the group's profile).
     Group(Uuid),
     /// `parcel/<id>/about`.
@@ -78,7 +81,10 @@ pub enum AppLink {
     ObjectIm(RemoteObject),
     /// `inventory/<id>/select`: the inventory, the item selected; `name=`
     /// is the label.
-    Inventory { id: Uuid, name: Option<String> },
+    Inventory {
+        id: Uuid,
+        name: Option<String>,
+    },
     /// `inventory/show`.
     InventoryShow,
     /// `experience/<id>/profile`.
@@ -88,11 +94,20 @@ pub enum AppLink {
     /// `event/<id>/details`.
     Event(u32),
     /// `worldmap/Region/x/y/z`: the map on the place.
-    WorldMap { region: String, pos: Vec3 },
+    WorldMap {
+        region: String,
+        pos: Vec3,
+    },
     /// `chat/<channel>/<text>`: say the text on a positive channel.
-    Chat { channel: i32, text: String },
+    Chat {
+        channel: i32,
+        text: String,
+    },
     /// `search/<category>/<query>`.
-    Search { category: String, query: String },
+    Search {
+        category: String,
+        query: String,
+    },
     Blocked(Blocked),
     /// Any other command, or one whose arguments are wrong: the Legacy
     /// Viewer says UnsupportedCommandSLURL.
@@ -136,7 +151,10 @@ fn id(s: &str) -> Option<Uuid> {
 /// Agent links that only show a name and place links (region, teleport)
 /// are read before this.
 pub fn parse(url: &str) -> Option<AppLink> {
-    let rest = url.get(..PREFIX.len()).filter(|p| p.eq_ignore_ascii_case(PREFIX)).map(|_| &url[PREFIX.len()..])?;
+    let rest = url
+        .get(..PREFIX.len())
+        .filter(|p| p.eq_ignore_ascii_case(PREFIX))
+        .map(|_| &url[PREFIX.len()..])?;
     let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
     let tokens: Vec<&str> = path.split('/').filter(|t| !t.is_empty()).collect();
     let token = |i: usize| tokens.get(i).copied().unwrap_or("");
@@ -246,8 +264,14 @@ mod tests {
         assert_eq!(parse(&format!("secondlife:///app/group/{ID}/about")), Some(AppLink::Group(uid())));
         assert_eq!(parse(&format!("SecondLife:///app/group/{ID}/inspect")), Some(AppLink::Group(uid())));
         assert_eq!(parse(&format!("secondlife:///app/parcel/{ID}/about")), Some(AppLink::Parcel(uid())));
-        assert_eq!(parse(&format!("secondlife:///app/experience/{ID}/profile")), Some(AppLink::Experience(uid())));
-        assert_eq!(parse(&format!("secondlife:///app/classified/{ID}/about")), Some(AppLink::Classified(uid())));
+        assert_eq!(
+            parse(&format!("secondlife:///app/experience/{ID}/profile")),
+            Some(AppLink::Experience(uid()))
+        );
+        assert_eq!(
+            parse(&format!("secondlife:///app/classified/{ID}/about")),
+            Some(AppLink::Classified(uid()))
+        );
         assert_eq!(parse("secondlife:///app/event/1234/details"), Some(AppLink::Event(1234)));
         assert_eq!(parse("secondlife:///app/inventory/show"), Some(AppLink::InventoryShow));
         assert_eq!(

@@ -1306,6 +1306,62 @@ pub fn slurls_text() -> String {
     .join(" · ")
 }
 
+/// AURORA_DEMO_APPLINKS: a message with a `secondlife:///app/...` link of
+/// each kind (`slapp.rs`), in a conversation with Nova and in the bubbles.
+pub fn applinks_scene() -> bool {
+    std::env::var_os("AURORA_DEMO_APPLINKS").is_some()
+}
+
+/// The text of `applinks_scene`; `item` is an item of the demo inventory
+/// (its id and name) for the inventory link.
+pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
+    let app = "secondlife:///app";
+    let classified = Uuid::from_u128(0x5EA2_C1A5_0000_0000_0000_0000_0000_0001);
+    // the region's treasure hunt (its name only) and the experience of
+    // AURORA_DEMO_EXPERIENCE (its profile)
+    let experience = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0007);
+    let profiled = experience::EXPERIENCE;
+    let mut links = vec![
+        format!("{app}/group/{DEMO_GROUP2}/about"),
+        format!("[{app}/group/{DEMO_GROUP1}/about our group]"),
+        format!("{app}/parcel/{}/about", land::PARCEL_UUID),
+        format!(
+            "{app}/objectim/{}?name=Welcome%20Sign&owner={DEMO_LOUP}&slurl=Aurora%20Demo/140/120/25",
+            Uuid::from_u128(0x5106)
+        ),
+        format!("{app}/experience/{experience}/profile"),
+        format!("{app}/experience/{profiled}/profile"),
+        format!("{app}/classified/{classified}/about"),
+        format!("{app}/event/5001/details"),
+        format!("{app}/worldmap/Pine%20Grove/40/80/22"),
+        format!("{app}/chat/42/Hello%20from%20a%20link"),
+        format!("{app}/search/places/beach"),
+        format!("{app}/agent/{DEMO_LOUP}/im"),
+        format!("{app}/wear_folder/?folder_id={}", Uuid::from_u128(0xF01D)),
+        format!("{app}/frobnicate/1"),
+    ];
+    // the demo inventory may not be loaded yet: a made-up item then
+    let (id, name) = item.unwrap_or_else(|| (Uuid::from_u128(0x17E3), "Demo notecard".into()));
+    let name: String = name
+        .chars()
+        .map(|c| if c == ' ' { "%20".to_owned() } else { c.to_string() })
+        .collect();
+    links.insert(4, format!("{app}/inventory/{id}/select?name={name}"));
+    links.join(" · ")
+}
+
+/// `AURORA_DEMO_APPLINKS=<command>` (group, parcel, objectim, inventory,
+/// experience, classified, event, worldmap, chat, search, agent,
+/// wear_folder, frobnicate): the first link of that command in `text` is
+/// clicked once the scene is set.
+pub fn applinks_click(text: &str) -> Option<crate::slapp::AppLink> {
+    let kind = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
+    let needle = format!("secondlife:///app/{}/", kind.trim());
+    let at = text.find(&needle)?;
+    let url = text[at..].split([' ', ']']).next()?;
+    crate::slapp::parse(url)
+}
+
 /// What the map would have taught before `slurls_scene`: the lagoon and
 /// Nordheim, not the pine grove.
 pub fn slurls_events() -> Vec<NetEvent> {
