@@ -8662,6 +8662,7 @@ impl App {
         }
         crate::world::search::web_home(
             self.search_grid(),
+            self.search_ui.web_query(self.settings.classic_search),
             self.world.agent_access(),
             aurora_i18n::language(),
             self.search_session(),
@@ -8766,6 +8767,8 @@ impl App {
                     }
                 }
                 SearchAction::SettingsChanged => save = true,
+                SearchAction::WantParcel(id) => self.send(NetCommand::ParcelInfoRequest(id)),
+                SearchAction::WantClassified(id) => self.send(NetCommand::ClassifiedInfoRequest(id)),
             }
         }
         if save {
@@ -10805,9 +10808,15 @@ impl App {
                     anonymous: search_anonymous,
                 };
                 let mut open = self.panels.search;
-                let search_acts = self
-                    .search_ui
-                    .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
+                let search_acts = self.search_ui.show(
+                    &ctx,
+                    &mut c,
+                    &self.avatar_pics,
+                    &mut self.settings.search,
+                    &search_web,
+                    self.settings.classic_search,
+                    &mut open,
+                );
                 // the profile of a group, whose name was clicked anywhere
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
@@ -11657,22 +11666,35 @@ impl ApplicationHandler for App {
                 }
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_SEARCH=<tab>[:text]: "Search" on a tab, its
-            // search done ("page" in the text: a full page, "xyz": nothing;
-            // for land the text is the price limit, 0 by default)
+            // AURORA_DEMO_SEARCH=<tab>[:text]: "Search" on a tab (or on
+            // Aurora's "all" chip), its search done ("page" in the text: a
+            // full page, "xyz": nothing; for land in the Legacy look the
+            // text is the price limit, 0 by default)
             if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH") {
                 let (name, text) = v.split_once(':').unwrap_or((v.as_str(), "aurora"));
                 // land without a text keeps the default price field ("0")
                 let typed = !name.trim().eq_ignore_ascii_case("land") || v.contains(':');
-                if let Some(tab) = crate::world::search::Tab::from_name(name) {
-                    self.search_ui.open_tab(tab);
+                let tab = crate::world::search::Tab::from_name(name);
+                let all = name.trim().eq_ignore_ascii_case("all") && !self.settings.classic_search;
+                if tab.is_some() || all {
+                    match tab {
+                        Some(tab) => self.search_ui.open_tab(tab),
+                        None => self.search_ui.open_all(),
+                    }
                     if typed {
-                        self.search_ui.set_text(tab, text);
+                        self.search_ui.set_text(tab.unwrap_or(crate::world::search::Tab::People), text);
                     }
                     self.panels.search = true;
                     self.panels.perf = false;
-                    if let Some(request) = self.search_ui.request(tab, &self.settings.search) {
-                        let access = self.world.agent_access();
+                    let requests = if self.settings.classic_search {
+                        tab.and_then(|t| self.search_ui.request(t, &self.settings.search))
+                            .into_iter()
+                            .collect()
+                    } else {
+                        self.search_ui.aurora_requests(&self.settings.search)
+                    };
+                    let access = self.world.agent_access();
+                    for request in requests {
                         self.world.search.find(request, access, Instant::now());
                     }
                 }
