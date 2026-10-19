@@ -205,7 +205,9 @@ pub(super) fn card_frame(
             .show(ui, |ui| {
                 ui.set_width(width - 22.0);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.spacing_mut().item_spacing.y = 3.0;
+                    // the theme's gap between the icon and the title, and
+                    // between the buttons: the lines around may have none
+                    ui.spacing_mut().item_spacing = egui::vec2(ui.ctx().global_style().spacing.item_spacing.x, 3.0);
                     contents(ui, env);
                 });
             });
