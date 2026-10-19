@@ -2211,7 +2211,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
-| `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
+| `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
@@ -3612,13 +3612,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (x and y 64..192): a landmark made there lights the star, wherever in it
   the avatar stands. With `AURORA_DEMO_PLACES` the folder list shows the
   demo's subfolder.
-- **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:text]`**:
-  the "Search" window on this tab, the search for the text already
-  run (`aurora` by default): the list is filled by the directory of the
-  demo, the first row is selected and its details shown on the right.
-  For `land`, the text is the price limit (`land:25000`); without it the
-  field keeps its default "0" and only the auctions (L$ 0) pass
-  the limit checked by default.
+- **`AURORA_DEMO_SEARCH=all|web|people|groups|places|land|events|classifieds[:text]`**:
+  the "Search" window on this tab (Aurora's look: on this chip, `all`
+  being its "All" chip that searches the five text directories at once),
+  the search for the text already run (`aurora` by default): the list is
+  filled by the directory of the demo, the first row is selected and its
+  details shown on the right. In Aurora's look the rows of places, land
+  sales and classifieds show the demo snapshot and their region once
+  their details answered. For `land` in the Legacy look, the text is the
+  price limit (`land:25000`); without it the field keeps its default "0"
+  and only the auctions (L$ 0) pass the limit checked by default; Aurora's
+  land filters start empty (no limit).
   A text containing `page` (for example `people:page`) answers a full
   page: "> 100 found" and the Next button; a text containing
   `xyz` finds nothing ("'xyz' not found").

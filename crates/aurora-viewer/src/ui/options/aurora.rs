@@ -42,6 +42,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
         PhotoWindowStyle::Legacy
     };
     s.classic_about_land = !aurora;
+    s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
     s.classic_inventory = !aurora;
     s.classic_places = !aurora;
@@ -541,6 +542,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
         c |= look_choice(
             ui,
             p,
+            aurora_i18n::tr!("search-title"),
+            aurora_i18n::tr!("ui-options-aurora-search-help"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-search-classic"),
+            &mut s.classic_search,
+        );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
             aurora_i18n::tr!("region-title"),
             aurora_i18n::tr!("ui-options-aurora-region-estate-help"),
             aurora_i18n::tr!("ui-options-aurora-about-land-aurora"),
@@ -772,6 +783,7 @@ mod tests {
         assert!(s.classic_profiles);
         assert_eq!(s.photo_window, PhotoWindowStyle::Legacy);
         assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
+        assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
         assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
@@ -802,6 +814,7 @@ mod tests {
         assert_eq!(fresh.photo_window, PhotoWindowStyle::Aurora);
         assert_eq!(s.classic_about_land, fresh.classic_about_land);
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
+        assert!(!s.classic_search && !fresh.classic_search, "the Aurora Search is the default");
         assert!(!s.classic_region_estate && !fresh.classic_region_estate);
         assert!(
             !s.classic_inventory && !fresh.classic_inventory,
@@ -853,7 +866,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1800.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 2400.0))),
                 ..Default::default()
             },
             |ui| {
