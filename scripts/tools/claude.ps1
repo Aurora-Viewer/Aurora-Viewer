@@ -35,6 +35,7 @@ $ClaudeAllowRules = @(
     'PowerShell(gh issue close *)'
     'PowerShell(gh issue reopen *)'
     'PowerShell(./scripts/pr-captures.ps1 *)'
+    'PowerShell(./scripts/issue-board.ps1 *)'
 )
 # For the classifier, should one of these commands still reach it (a listing
 # piped into a PowerShell loop does not match the allow rule). One rule per
@@ -46,6 +47,7 @@ $ClaudeAutoModeRules = @(
     'In the Aurora-Viewer repository, reading the state of its pull requests and CI runs with gh pr view, gh pr list, gh pr checks, gh run view, gh run list or gh run watch, including formatting their JSON output in PowerShell, is allowed: these commands only read (AGENTS.md, sections 8 and 11).'
     'In the Aurora-Viewer repository, labelling, editing, assigning to the human''s own account (--add-assignee / --remove-assignee @me), closing and reopening an issue of that repository with gh issue edit, gh issue close or gh issue reopen is allowed: triaging the issues is part of the agents'' work (AGENTS.md, section 15).'
     'In the Aurora-Viewer repository, publishing the demo captures of a pull request with scripts/pr-captures.ps1 is allowed: the script only pushes image files to the dedicated captures branch, never to main (AGENTS.md, section 12).'
+    'In the Aurora-Viewer repository, reading the team''s project board and moving the Status of an issue of that repository on it (adding the issue to the board if needed) with scripts/issue-board.ps1 is allowed: tracking the issues on the board is part of the agents'' work, and the script never changes the Priority or the milestone (AGENTS.md, section 15).'
 )
 
 function Get-ClaudeSettingsFile {

@@ -75,19 +75,28 @@ a review or that left the queue.
 - **Labels**: each PR has a **type** (`feature`, `fix`, `performance`,
   `maintenance`, `docs`, and `breaking` if it breaks a compatibility), which
   files it in the release notes, and an **area** (`render`, `avatar`,
-  `world`, `network`, `audio-voice`, `ui`, `build-tools`, `tooling`) to find
-  one's way around.
+  `world`, `network`, `audio-voice`, `ui`, `chat`, `nameplate`,
+  `contact-group`, `inventory`, `build-tools`, `tooling`) to find one's way
+  around; the issues carry the same areas.
 - **Screenshots**: the images of the PRs are stored on the `captures` branch
   (it contains nothing else).
 - **Issues**: the agents also read the screenshots and attached files, set
-  each report's type (Bug, Feature, Task or Epic; issues carry no labels),
-  then reply directly on GitHub. A Bug is the report, `fix` the PR. An issue
+  each report's type (Bug, Feature, Task or Epic) and area labels, then
+  reply directly on GitHub. A Bug is the report, `fix` the PR. An issue
   stays open if information or a validation is missing; it is closed after a
   verified resolution and merge, or with an explanation for a duplicate / an
   out-of-scope request. The rules are detailed in
   [AGENTS.md](AGENTS.md#15-github-issues-read-analyse-type-reply-and-close);
-  the PR labels are created by `scripts/setup-labels.ps1`, which keeps the
+  the labels are created by `scripts/setup-labels.ps1`, which keeps the
   other labels.
+- **The project board** (GitHub project Aurora Team Planning): the project
+  manager sets each issue's Priority and milestone, which say what to work on
+  first. An agent that takes an issue assigns it to you and moves it to
+  `In progress`; at the end it replies on the issue and moves it to `Done`,
+  or to `Waiting Review` when it waits on someone (a reporter's answer, your
+  test). The agents move the Status with `scripts/issue-board.ps1`, which
+  needs the `project` right on your `gh` account, once per machine:
+  `gh auth refresh -s project`.
 - **Dependabot** opens dependency update PRs every week; an agent can check
   them for you, and merges them if you agree.
 - **The wiki** is generated: after each merge that touches a guide, a

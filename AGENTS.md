@@ -326,10 +326,13 @@ change to the interface:
      whose CI failed, or that left the merge queue) comes before the rest:
      finish its review (section 11) then its merge (step 9);
    - **issues**: look at the open issues and the new comments on the issues
-     linked to your task (section 15), then check their type and reply.
+     linked to your task (section 15), then check their type and reply. To
+     choose what to take next, follow the Priority the project manager set
+     on the project board (`issue-board.ps1 -Todo`, section 15).
 1. **Read** AGENTS.md, ARCHITECTURE.md, TASKS.md; study Firestorm.
 2. **Create the worktree** (`new-task.ps1`), set the task to 🔧 in TASKS.md;
-   when the task comes from an issue, assign it to yourself (section 15).
+   when the task comes from an issue, take it on the board right away
+   (section 15): assigned to your human, area labels, Status `In progress`.
 3. **Develop** in small local commits (clear messages, section 10).
 4. **Test in demo mode**, `check.ps1` green.
 5. **Human validation (mandatory, before the PR)**:
@@ -373,7 +376,8 @@ change to the interface:
      "Claude permissions" choice of `aurora-tools.cmd`, which allows the
      follow-up commands once and for all: `gh pr view / list / checks /
      comment`, `gh run view / list / watch`, `gh issue list / view / edit /
-     comment / close / reopen`, `merge-pr.ps1` and `pr-captures.ps1`. Run
+     comment / close / reopen`, `merge-pr.ps1`, `pr-captures.ps1` and
+     `issue-board.ps1`. Run
      each one alone, with no `cd`, `;` or variable around it, so that it
      matches the rule.
 10. **After the merge**: first move to the main repository, **in a separate
@@ -381,8 +385,11 @@ change to the interface:
     Your tool watches its current folder: as long as it is in the task's
     folder, Windows refuses to delete it (the same with an editor or a viewer
     open in it; the script says so, just run it again once the folder is
-    free). Then **tell the human**: link of the merged PR, what changed, and
-    what is left to test on the grid if anything. If the session stops before
+    free). If the task came from an issue, **close it on the board** before
+    handing back (section 15, "End of the work"): reply on the issue, Status
+    `Done` or `Waiting Review`. Then **tell the human**: link of the merged
+    PR, what changed, the state of the issue, and what is left to test on the
+    grid if anything. If the session stops before
     the merge, the merge still happens on GitHub; housekeeping is done at
     step 0 of the next session.
 
@@ -409,15 +416,17 @@ in English and must be **readable by a human in two minutes**:
   was tested).
 - **Limits and follow-up**: what is not done, ⬜ lines added to TASKS.md.
 
-Labels, for PRs only (created by `scripts/setup-labels.ps1`; issues carry a
-type instead, section 15):
+Labels (created by `scripts/setup-labels.ps1`):
 
-- **one type**, which files the PR in the release notes: `feature`, `fix`,
-  `performance`, `maintenance` (refactoring, dependencies, tooling), `docs`;
-  plus `breaking` if the PR breaks a compatibility (settings, cache format…);
-- **one or more areas**: `render`, `avatar`, `world`, `network`,
-  `audio-voice`, `ui`, `build-tools` (in-world building and editing),
-  `tooling` (repository, CI, scripts).
+- **one type**, for PRs only, which files the PR in the release notes:
+  `feature`, `fix`, `performance`, `maintenance` (refactoring, dependencies,
+  tooling), `docs`; plus `breaking` if the PR breaks a compatibility
+  (settings, cache format…). Issues carry an issue type instead (section 15);
+- **one or more areas**, on PRs and issues: `render`, `avatar`, `world`,
+  `network`, `audio-voice`, `ui`, `chat` (chat window), `nameplate` (name
+  tags above avatars), `contact-group` (contact groups / sets), `inventory`,
+  `build-tools` (in-world building and editing), `tooling` (repository, CI,
+  scripts).
 
 ## 10. Commits, identity and mentions
 
@@ -575,8 +584,9 @@ the review comment.
 ## 15. GitHub issues: read, analyse, type, reply and close
 
 Handling issues is part of the agents' work on this repository. You can read
-them with their attachments, analyse them, set their type, reply and close
-them according to the rules below, without asking for
+them with their attachments, analyse them, set their type and area labels,
+move their Status on the project board, reply and close them according to
+the rules below, without asking for
 permission again for each action. This never replaces the human validation of
 a viewer fix nor the PR cycle (section 8). Use the human's already logged-in
 `gh` account; if rights are missing, report precisely the blocked action,
@@ -626,8 +636,8 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
   behaviour depends on it. Look for duplicates and for PRs that already
   address the problem. Reproduce in demo mode when possible; grid tests are
   still done by the human.
-- **Issues carry no labels.** Their nature is their **type**, one of the
-  organisation's issue types (add none):
+- Their nature is their **type**, one of the organisation's issue types
+  (add none):
   - **Bug**: something reported as broken or wrong, a performance problem
     included (slowness, hitches, memory);
   - **Feature**: a feature or an improvement to plan, a performance
@@ -637,19 +647,26 @@ gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/comments --paginate
 
   The issue forms set Bug or Feature; check it **from the content and the
   attachments**, not only the title or the form chosen, and correct it if
-  needed. Labels stay for PRs only (section 9): `fix` designates the PR
-  that fixes a Bug, `feature` the PR that brings a Feature.
+  needed. The type labels stay for PRs only (section 9): `fix` designates
+  the PR that fixes a Bug, `feature` the PR that brings a Feature.
+- Its domain is given by **area labels** (section 9: `chat`, `ui`, `avatar`,
+  `build-tools`…): at least one, the ones that fit the content; add one that
+  is missing, keep the ones a human set unless they are plainly wrong.
+  Create no new label: if no area fits, say so to your human.
 
 ```powershell
 # Read or change the type (Bug, Feature, Task or Epic).
 gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n> --jq .type.name
 gh api -X PATCH repos/Aurora-Viewer/Aurora-Viewer/issues/<n> -f type=Bug
+# Area labels.
+gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-label chat
 ```
 
-- **Tracking** goes through the assignment and the comments: whether
-  information, a reproduction or a validation is missing is said in a
-  comment, with what is needed. A high impact (major blocker, frequent
-  crash, data loss) is explained in a comment too.
+- **Tracking** goes through the project board (below), the assignment and
+  the comments: whether information, a reproduction or a validation is
+  missing is said in a comment, with what is needed. A high impact (major
+  blocker, frequent crash, data loss) is explained in a comment too, for the
+  project manager.
 
 Do not change the type set by a human without a reason. Before taking an
 issue, check the assignments, comments and PRs to avoid duplicating another
@@ -657,21 +674,67 @@ agent's work. Link the issue number in `TASKS.md` and the PR; keep the work
 in your own worktree. Read the thread again just before a mutation, to
 preserve the changes made in the meantime by others.
 
-**Assign yourself when you start.** When you begin working on an issue,
-assign it to your human's `gh` account:
+### The project board
+
+The team follows the issues on the GitHub project **Aurora Team Planning**
+(organisation Aurora-Viewer). Its **Status** column says where each issue
+stands: `Todo`, `In progress`, `Waiting Review`, `Done`. Its **Priority**
+(High, Medium, Low) and the milestone are set by the **project manager**:
+they tell the team what to work on first. **Never change the Priority, the
+milestone or the parent issue**; if one looks wrong, tell your human. When
+your human asks what to take next, propose from the board, highest priority
+first, the `1.0 Release` milestone before the rest:
 
 ```powershell
-gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-assignee @me
+./scripts/issue-board.ps1 -Todo                        # open Todo issues, by priority
+./scripts/issue-board.ps1 -Issue <n>                   # Status, Priority, milestone of one issue
+./scripts/issue-board.ps1 -Issue <n> -Status 'In progress'
 ```
 
-- If the issue is already assigned to someone else, do not take it: it is
-  someone else's work. Tell your human.
-- If you drop or hand back the task, remove your assignment
-  (`--remove-assignee @me`) and say where the work stands in a comment.
+The script reads the board and moves the Status only; it adds the issue to
+the board if it is not there yet. It needs the `project` scope on the `gh`
+token: if it says so, give your human `gh auth refresh -s project`, to run
+once in their terminal (it opens GitHub to grant the right; never ask for a
+token). Run it alone, with no `cd` or `;`, like the `gh issue` commands.
+
+**At the very start of the work on an issue**, before the code, in this
+order:
+
+1. **Assign it to your human** (their `gh` account):
+
+   ```powershell
+   gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-assignee @me
+   ```
+
+   If the issue is already assigned to someone else, do not take it: it is
+   someone else's work. Tell your human.
+2. **Tag it**: check its type and its area labels (above), fix them if
+   needed.
+3. **Status `In progress`**: `./scripts/issue-board.ps1 -Issue <n> -Status
+   'In progress'`.
+
+**End of the work.** Before handing back on a task that comes from an
+issue, check that both are done:
+
+- **a reply on the issue** (below, "Reply and close"): what was done, the PR
+  link, or what is missing;
+- **the Status**:
+  - `Done` when the issue is resolved and closed (closing rules below; check
+    the Status after an automatic close by `Closes #<n>` too, the board may
+    not have followed);
+  - `Waiting Review` when the issue now waits on someone else: you asked
+    the reporter for information or a test in a comment, or the fix waits
+    for your human's validation or a grid test (🟡 in TASKS.md).
+
+  Then read it back with `issue-board.ps1 -Issue <n>`.
+
+- If you drop or hand back the task unfinished, remove the assignment
+  (`--remove-assignee @me`), put the Status back to `Todo` and say where the
+  work stands in a comment.
 - On closing, the assignment stays: it records who did the work.
-- Run the command alone, with no `cd` or `;`, like the other `gh issue`
-  commands. If your tool refuses it, do not work around it: give it to your
-  human.
+- Run each command alone, with no `cd` or `;`, like the other `gh issue`
+  commands. If your tool refuses one, do not work around it: give it to your
+  human, and suggest the "Claude permissions" choice of `aurora-tools.cmd`.
 
 ### Reply and close
 
@@ -709,7 +772,8 @@ gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-assignee @me
   with `--reason "not planned"`. A new or disputed product choice must be
   decided by the human before closing.
 - **Missing information, unreadable attachment, problem not reproduced or
-  partial fix**: keep the issue open and say in a comment what is missing. A lack
+  partial fix**: keep the issue open, say in a comment what is missing and
+  set its Status to `Waiting Review` (above). A lack
   of reply and a mere hypothesis are not enough to close it. If new evidence
   invalidates the resolution, reopen it (`gh issue reopen`), explain why and
   resume the triage.
