@@ -533,6 +533,7 @@ impl App {
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
             CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
                 // LLWeb::loadURLInternal: a Marketplace page opens in the

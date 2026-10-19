@@ -25,6 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod ao;
+mod app_links;
 mod bridge;
 mod movelock;
 // Bug report form (disabled, see main.rs):
@@ -478,6 +479,10 @@ pub struct App {
     demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
+    /// The object of an `objectim` link clicked (LLInspectRemoteObject).
+    remote_object: Option<crate::slapp::RemoteObject>,
+    /// Parcels asked for the labels of `parcel` links (once each).
+    app_link_parcels: HashSet<uuid::Uuid>,
     /// Parcel music stream on (radio toggle).
     music_playing: bool,
     /// Parcel media and media on a prim (web / video plugins).
@@ -996,6 +1001,8 @@ impl App {
             reconnect_place: None,
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
+            remote_object: None,
+            app_link_parcels: HashSet::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
@@ -5121,6 +5128,7 @@ impl App {
         for id in self.chat_ui.wanted_names.drain() {
             self.world.social.want_name(id);
         }
+        self.ask_app_link_names();
         let mut wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
         if !self.demo && !self.world.agent_id.is_nil() {
             wanted.push(self.world.agent_id);
@@ -10823,6 +10831,8 @@ impl App {
                 if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
                     self.world.experiences.change(experience, change);
                 }
+                // an `objectim` link clicked (LLInspectRemoteObject)
+                ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, renderer);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
@@ -12268,6 +12278,50 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_APPLINKS: a link of each `secondlife:///app/...`
+            // command, in a conversation and in the bubbles
+            if crate::demo::applinks_scene() {
+                let item = self
+                    .world
+                    .inventory
+                    .items
+                    .values()
+                    .filter(|i| !i.name.is_empty())
+                    .min_by(|a, b| a.name.cmp(&b.name))
+                    .map(|i| (i.id, i.name.clone()));
+                let text = crate::demo::applinks_text(item);
+                let agent = self.world.agent_id;
+                self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                    from_agent_id: crate::demo::DEMO_NOVA,
+                    from_name: "Tess Touch".into(),
+                    to_agent_id: agent,
+                    dialog: 0,
+                    session_id: uuid::Uuid::nil(),
+                    message: text.clone(),
+                    offline: false,
+                    from_group: false,
+                    binary_bucket: Vec::new(),
+                    timestamp: 0,
+                }));
+                self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                    from_name: aurora_i18n::tr!("demo-places-sign").into(),
+                    source_id: uuid::Uuid::from_u128(0x5106),
+                    owner_id: uuid::Uuid::nil(),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::Normal,
+                    position: glam::Vec3::ZERO,
+                    message: text.clone(),
+                }));
+                self.panels.perf = false;
+                self.panels.places = false;
+                self.panels.people = false;
+                self.panels.chat = true;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 380.0), egui::vec2(640.0, 380.0));
+                if let Some(link) = crate::demo::applinks_click(&text) {
+                    self.run_app_link(link);
                 }
             }
             // AURORA_DEMO_SLURLS: place links of every rating, and one unknown
