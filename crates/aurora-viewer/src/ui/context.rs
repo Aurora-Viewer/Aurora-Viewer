@@ -216,6 +216,9 @@ pub enum CtxAction {
     /// handle_attachment_edit).
     TouchWorn(Uuid),
     EditWorn(Uuid),
+    /// "New physics" of the outfit gallery: created, worn and edited
+    /// (LLAgentWearables::createWearable).
+    NewPhysics,
     Touch(u32),
     Sit {
         target: Uuid,

@@ -2365,6 +2365,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
+| `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
@@ -3909,6 +3910,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   settings of the demo, separate from those of the connected viewer.
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
+
+**`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
+the balls and the hops): `1` wears a physics layer with the lively values of
+`AURORA_DEMO_PHYSICS` and opens its editor, Breasts bounce open; moving a slider
+changes the balls' bounce at once, Cancel restores it. `new` runs the outfit
+gallery's "New physics": a "New Physics" layer is created, worn (it shows in
+Appearance › Worn) and its editor opens; every Max Effect is at 0, so the
+balls follow the body rigidly. `drag`: the same, then four seconds after the
+editor opens every slider moves in two seconds to the lively values, as a
+hand would (log: `demo physics edit: sliders at the lively layer`); the
+`demo physics: frame …` offsets of `own` go from zero to a bounce while those
+of `other` keep bouncing. Save stores the asset and applies it as the
+appearance, as a simulator bake would.
 
 **`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
 opens the editor with a synthetic worn shape, without reading a real inventory or

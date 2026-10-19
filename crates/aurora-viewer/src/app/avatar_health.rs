@@ -54,7 +54,10 @@ struct Worn {
 
 impl App {
     /// Once per frame: the customise animation follows the appearance
-    /// editors, and the `AURORA_DEMO_AVATAR_HEALTH` scenario.
+    /// editors, and the `AURORA_DEMO_AVATAR_HEALTH` scenario. The physics
+    /// layer editor does not count: its wearable type keeps the camera
+    /// (LLWearableType WT_PHYSICS, disable_camera_switch), so the Legacy
+    /// Viewer never enters customise mode for it.
     pub(super) fn update_avatar_health(&mut self) {
         let editing = self.shape_ui.open && !self.world.agent_id.is_nil();
         for (anim, start) in customize_changes(&mut self.avatar_health.customizing, editing) {

@@ -60,6 +60,7 @@ mod object_menu;
 mod object_menu_demo;
 mod own_motion;
 mod pay;
+mod physics_editor;
 mod plate_click;
 mod region_restart;
 mod region_window;
@@ -632,6 +633,7 @@ pub struct App {
     appearance_ui: ui::appearance::AppearanceUi,
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
+    physics_ui: crate::physics_editor::State,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
@@ -1096,6 +1098,7 @@ impl App {
             appearance_ui: Default::default(),
             shape_ui: Default::default(),
             shape_camera: None,
+            physics_ui: Default::default(),
             avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -1935,6 +1938,7 @@ impl App {
         self.appearance_ui = Default::default();
         self.shape_ui = Default::default();
         self.shape_camera = None;
+        self.physics_ui = Default::default();
         self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
@@ -2017,6 +2021,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryCreated(item) = ev {
+            if self.physics_created(&item) {
+                return;
+            }
             let gesture = item.asset_type == 21;
             let id = item.id;
             if self.create_landmark_ui.created(id, item.parent, item.asset_type) {
@@ -2079,6 +2086,9 @@ impl App {
         }
         if let NetEvent::InventoryOperationFailed(reason) = ev {
             self.gesture_state.new_editor = false;
+            if self.physics_ui.creation_failed() {
+                self.appearance_ui.message.clone_from(&reason);
+            }
             self.inventory_ui.message = reason;
             return;
         }
@@ -2126,6 +2136,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
+            if self.physics_ui.loaded(&mut self.world, item, asset, &result) {
+                return;
+            }
             if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -2141,6 +2154,9 @@ impl App {
             return;
         }
         if let NetEvent::WearableSaved { request, result } = ev {
+            if self.physics_saved(request, &result) {
+                return;
+            }
             if self.shape_ui.draft.as_ref().is_none_or(|draft| draft.pending != Some(request)) {
                 return;
             }
@@ -10542,6 +10558,7 @@ impl App {
                 {
                     self.camera = camera;
                 }
+                self.physics_window(&ctx, &p);
                 self.ao_window(&ctx, &p);
                 t = self.ui_parts.lap(Part::UiInventory, t);
                 let facts = self.context_facts();
@@ -12919,6 +12936,9 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
+            // AURORA_DEMO_PHYSICS_EDIT: after the layer above, which a new
+            // layer replaces
+            self.demo_physics_editor();
             // AURORA_DEMO_FEET=opaque|blend: a shoe on each foot of our avatar
             // and of the crowd (what the contact shadows see touch the ground)
             if let Some(blend) = crate::demo::feet_demo() {
