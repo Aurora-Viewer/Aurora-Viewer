@@ -280,6 +280,15 @@ pub struct FaceDraw {
 }
 
 impl FaceDraw {
+    /// Its zero alpha hides the whole face, as LL never draws it: a
+    /// Blinn-Phong face, or a blended glTF material. An opaque glTF
+    /// material ignores its base color alpha and a masked one leaves it to
+    /// the shader's cutoff (LLVolumeGeometryManager::rebuildGeom and
+    /// genDrawInfo, indra/newview/llvovolume.cpp, originally LGPL 2.1).
+    pub fn fully_transparent(&self) -> bool {
+        self.te_alpha < 0.004 && matches!(self.pbr_alpha, None | Some(1))
+    }
+
     /// Alpha mode bits of the face's draw record (shaders, shadows). A
     /// blended system body part is also alpha-tested.
     fn record_flags(&self) -> u32 {
@@ -1053,7 +1062,7 @@ impl Scene {
         if self.debug_alpha.is_some() != debug_alpha.is_some() {
             for (idx, slot) in world.objects.slots.iter_mut().enumerate() {
                 let Some(object) = slot else { continue };
-                if object.is_avatar() || !(0..aurora_prim::te::MAX_TES).any(|face| object.visual_texture_face(face).color[3] < 0.004) {
+                if object.is_avatar() || !(0..aurora_prim::te::MAX_TES).any(|face| te_invisible(object, face)) {
                     continue;
                 }
                 object.material_dirty = true;
@@ -1075,9 +1084,9 @@ impl Scene {
         for &idx in self.selection_faces.keys().chain(selected.keys()) {
             let changed = self.selection_faces.get(&idx).copied().unwrap_or(0) ^ selected.get(&idx).copied().unwrap_or(0);
             let invisible = changed != 0
-                && world.objects.get(idx).and_then(|object| object.te.as_ref()).is_some_and(|te| {
+                && world.objects.get(idx).is_some_and(|object| {
                     (0..aurora_prim::te::MAX_TES)
-                        .any(|face| changed & 1u64.checked_shl(face as u32).unwrap_or(0) != 0 && te.face(face).color[3] < 0.004)
+                        .any(|face| changed & 1u64.checked_shl(face as u32).unwrap_or(0) != 0 && te_invisible(object, face))
                 });
             if invisible && let Some(object) = world.objects.get_mut(idx) {
                 // Face allocations changed: a placement update alone cannot
@@ -2981,7 +2990,10 @@ impl Scene {
                 continue;
             };
             let tf = plant.unwrap_or_else(|| o.visual_texture_face(fi));
-            let invisible = tf.color[3] < 0.004;
+            let mat_id = o.visual_material(fi).filter(|_| plant.is_none());
+            // a glTF material ignores the texture entry's color: its own base
+            // color alpha decides, in `classify`
+            let invisible = tf.color[3] < 0.004 && mat_id.is_none();
             if invisible && self.debug_alpha.is_none() && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0 {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
@@ -3000,7 +3012,6 @@ impl Scene {
             let repeats = tf.scale_s.abs().min(tf.scale_t.abs());
             let mut two_sided = false;
             // GLTF material?
-            let mat_id = o.visual_material(fi).filter(|_| plant.is_none());
             let mut base_tex = tf.texture;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
@@ -4886,7 +4897,7 @@ impl Scene {
                             for (fi, face) in geom.faces.iter().enumerate() {
                                 if face.is_some() {
                                     built += 1;
-                                    if o.visual_texture_face(fi).color[3] < 0.004 {
+                                    if te_invisible(o, fi) {
                                         transparent += 1;
                                     }
                                 }
@@ -5182,10 +5193,18 @@ struct AvatarSkeleton {
     physics: Option<Arc<body_physics::Params>>,
 }
 
+/// A face `rebuild_faces` omits (LL's PASS_ALPHA_INVISIBLE): a zero
+/// texture-entry alpha. A glTF material ignores the texture entry's color
+/// (LLVolumeGeometryManager::genDrawInfo): its faces are always built and
+/// `FaceDraw::fully_transparent` decides.
+fn te_invisible(o: &Object, face: usize) -> bool {
+    o.visual_texture_face(face).color[3] < 0.004 && o.visual_material(face).is_none()
+}
+
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
     // mesh heads and bodies): nothing to draw
-    if f.te_alpha < 0.004 || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none()) {
+    if f.fully_transparent() || (f.base_slot == aurora_render::textures::TRANSPARENT && f.pbr_alpha.is_none()) {
         return Pass::Hidden;
     }
     // A system body part: the avatar pool decides, not the texture alone.
@@ -5817,6 +5836,38 @@ mod tests {
             ..test_face(Pass::Blend, false)
         };
         assert_eq!(prim.record_flags(), flags::ALPHA_BLEND);
+    }
+
+    /// LLVolumeGeometryManager::rebuildGeom / genDrawInfo: a zero base color
+    /// alpha hides a blended glTF face only. An opaque one ignores it and a
+    /// masked one is left to the shader's cutoff; a Blinn-Phong face with a
+    /// zero alpha stays hidden.
+    #[test]
+    fn zero_alpha_hides_a_gltf_face_only_when_blended() {
+        let face = |pbr_alpha: Option<u8>, two_sided: bool| FaceDraw {
+            te_alpha: 0.0,
+            pbr_alpha,
+            two_sided,
+            ..test_face(Pass::Hidden, false)
+        };
+        for tex in [AlphaKind::Opaque, AlphaKind::Mask, AlphaKind::Blend] {
+            assert_eq!(classify(&face(Some(0), false), tex), Pass::Opaque, "{tex:?}");
+            assert_eq!(classify(&face(Some(0), true), tex), Pass::OpaqueTwoSided, "{tex:?}");
+            assert_eq!(classify(&face(Some(2), false), tex), Pass::Mask, "{tex:?}");
+            assert_eq!(classify(&face(Some(2), true), tex), Pass::MaskTwoSided, "{tex:?}");
+            assert_eq!(classify(&face(Some(1), false), tex), Pass::Hidden, "{tex:?}");
+            assert_eq!(classify(&face(None, false), tex), Pass::Hidden, "{tex:?}");
+        }
+        assert!(!face(Some(0), false).fully_transparent());
+        assert!(!face(Some(2), false).fully_transparent());
+        assert!(face(Some(1), false).fully_transparent());
+        assert!(face(None, false).fully_transparent());
+        // a faint blended face is still drawn
+        let faint = FaceDraw {
+            te_alpha: 0.01,
+            ..face(Some(1), false)
+        };
+        assert_eq!(classify(&faint, AlphaKind::Opaque), Pass::Blend);
     }
 
     #[test]

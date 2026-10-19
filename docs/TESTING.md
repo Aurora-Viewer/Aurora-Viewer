@@ -1628,7 +1628,7 @@ tests do not establish that this report uses an invalid joint or index.
 |---|---|
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
-| `AURORA_DEMO_PBR_OVERRIDE=1` | GLTF material override |
+| `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
@@ -1699,6 +1699,12 @@ tests do not establish that this report uses an invalid joint or index.
   demo, contains only bumps: each must be light on the side
   of the sun (at the top of the panel with `AURORA_DEMO_TOD=2`). Dark at the
   top and light at the bottom, the relief is inverted.
+  With `alpha`, three upright panels of the same opaque material, in
+  front of `AURORA_DEMO_POS="131,128"`, get an override with a zero base
+  color alpha: the opaque one stays drawn (an opaque glTF material ignores
+  its alpha), the masked one is cut out by its cutoff and the blended one
+  is not drawn, only their labels show. The opaque one missing is the bug of a worn mesh attachment that
+  the Legacy Viewer draws.
 - **`AURORA_DEMO_TEXANIM=1`**: two rows of panels in place of the
   alpha panels — smooth scrolling, grid of 4 × 4 frames, ping-pong,
   rotation, scale (alpha mask: prepass and shadows), a cube animated on

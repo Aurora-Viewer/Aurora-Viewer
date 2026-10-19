@@ -1302,7 +1302,10 @@ fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(rec.tex.x, in.uv).a <= 32.0 / 255.0;
-    if (hidden_texel || rec.base_color.a < 0.004) {
+    // An opaque glTF material ignores its base color alpha (FaceDraw::
+    // fully_transparent): drawn, it stays a target.
+    let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
+    if (hidden_texel || (rec.base_color.a < 0.004 && !gltf_opaque)) {
         discard;
     }
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));

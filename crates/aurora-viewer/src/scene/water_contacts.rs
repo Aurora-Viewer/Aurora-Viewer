@@ -358,7 +358,7 @@ pub(super) fn visibility(scene: &super::Scene, world: &crate::world::World, cand
                 if geom.faces.iter().flatten().any(|alloc| {
                     g.faces.iter().any(|f| {
                         f.pass != Pass::Hidden
-                            && f.te_alpha > 0.004
+                            && !f.fully_transparent()
                             && f.cmd.base_vertex == alloc.vertex_offset as i32
                             && f.cmd.first_index == alloc.index_offset
                     })
@@ -372,7 +372,7 @@ pub(super) fn visibility(scene: &super::Scene, world: &crate::world::World, cand
     // One bounded-cadence scan for all nearby avatars, not an attachment walk
     // per body part or per frame. Hidden/HUD geometry never supplies coverage.
     for (idx, g) in scene.gpu.iter().enumerate() {
-        if !g.rigged || g.hud || !g.faces.iter().any(|f| f.pass != Pass::Hidden && f.te_alpha > 0.004) {
+        if !g.rigged || g.hud || !g.faces.iter().any(|f| f.pass != Pass::Hidden && !f.fully_transparent()) {
             continue;
         }
         let Some(owner) = g.skeleton_owner else { continue };
