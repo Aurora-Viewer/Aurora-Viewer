@@ -2,7 +2,8 @@
 .SYNOPSIS
     Reads or moves an issue on the team's GitHub project (Aurora Team
     Planning), and lists the issues still to take, highest priority first.
-    The project manager sets Priority and the milestone; the agents only move
+    The project manager sets Priority (an issue field of the organisation,
+    like the type) and the milestone; the agents only move the project's
     Status: In progress when they start, Waiting Review or Done at the end
     (AGENTS.md, section 15). An issue not on the project yet is added to it
     when its Status is set.
@@ -52,29 +53,36 @@ function Invoke-Graphql([string]$Query, [hashtable]$Vars) {
     ($out | ConvertFrom-Json).data
 }
 
-$fieldNames = @{ sf = 'Status'; pf = 'Priority' }
-$single = '... on ProjectV2SingleSelectField { id name options { id name } }'
+$fieldNames = @{ sf = 'Status' }
 $value = '... on ProjectV2ItemFieldSingleSelectValue { name }'
+# Priority is an issue field of the organisation, not a field of the project
+$issueFields = 'issueFieldValues(first:20){nodes{... on IssueFieldSingleSelectValue{name field{... on IssueFieldSingleSelect{name options{name}}}}}}'
 
-# The project, its Status and Priority fields with their options (in the
-# project's order: the first Priority option is the most urgent).
-$q = 'query($o:String!,$q:String!,$sf:String!,$pf:String!){organization(login:$o){projectsV2(first:20,query:$q){nodes{id title ' +
-    'status:field(name:$sf){' + $single + '} priority:field(name:$pf){' + $single + '}}}}}'
+# The project and its Status field with the options.
+$q = 'query($o:String!,$q:String!,$sf:String!){organization(login:$o){projectsV2(first:20,query:$q){nodes{id title ' +
+    'status:field(name:$sf){... on ProjectV2SingleSelectField{id name options{id name}}}}}}}'
 $projects = (Invoke-Graphql $q (@{ o = $owner; q = $Project } + $fieldNames)).organization.projectsV2.nodes
 $board = @($projects | Where-Object { $_.title -eq $Project }) | Select-Object -First 1
 if (-not $board) { throw "No project named '$Project' in $owner (found: $(($projects | ForEach-Object title) -join ', '))." }
 if (-not $board.status) { throw "The project '$Project' has no single select field named Status." }
-$rank = @{}
-if ($board.priority) { for ($i = 0; $i -lt $board.priority.options.Count; $i++) { $rank[$board.priority.options[$i].name] = $i } }
+
+# Priority of an issue: its name and its rank among the options (the first,
+# Urgent, is the most urgent); rank 99 without a priority.
+function Get-Priority($Issue) {
+    $v = @($Issue.issueFieldValues.nodes | Where-Object { $_.field -and $_.field.name -eq 'Priority' }) | Select-Object -First 1
+    if (-not $v) { return [pscustomobject]@{ Name = $null; Rank = 99 } }
+    $names = @($v.field.options | ForEach-Object name)
+    [pscustomobject]@{ Name = $v.name; Rank = [array]::IndexOf($names, $v.name) }
+}
 
 if ($Todo) {
     # open issues of this repository whose Status is Todo
     $rows = @()
     $after = $null
     do {
-        $q = 'query($p:ID!,$sf:String!,$pf:String!,$after:String){node(id:$p){... on ProjectV2{items(first:100,after:$after){' +
-            'pageInfo{hasNextPage endCursor} nodes{status:fieldValueByName(name:$sf){' + $value + '} priority:fieldValueByName(name:$pf){' + $value + '} ' +
-            'content{... on Issue{number title state repository{nameWithOwner} milestone{title} assignees(first:5){nodes{login}}}}}}}}}'
+        $q = 'query($p:ID!,$sf:String!,$after:String){node(id:$p){... on ProjectV2{items(first:100,after:$after){' +
+            'pageInfo{hasNextPage endCursor} nodes{status:fieldValueByName(name:$sf){' + $value + '} ' +
+            'content{... on Issue{number title state repository{nameWithOwner} milestone{title} assignees(first:5){nodes{login}} ' + $issueFields + '}}}}}}}'
         $vars = @{ p = $board.id } + $fieldNames
         if ($after) { $vars.after = $after }
         $page = (Invoke-Graphql $q $vars).node.items
@@ -82,11 +90,11 @@ if ($Todo) {
             $c = $n.content
             if (-not $c -or -not $c.number -or $c.state -ne 'OPEN' -or $c.repository.nameWithOwner -ne "$owner/$name") { continue }
             if ($n.status.name -ne 'Todo') { continue }
-            $p = $n.priority.name
+            $p = Get-Priority $c
             $rows += [pscustomobject]@{
-                Rank      = if ($p -and $rank.ContainsKey($p)) { $rank[$p] } else { 99 }
+                Rank      = $p.Rank
                 Issue     = "#$($c.number)"
-                Priority  = if ($p) { $p } else { '-' }
+                Priority  = if ($p.Name) { $p.Name } else { '-' }
                 Milestone = if ($c.milestone) { $c.milestone.title } else { '-' }
                 Assignees = (@($c.assignees.nodes | ForEach-Object login) -join ', ')
                 Title     = $c.title
@@ -101,8 +109,8 @@ if ($Todo) {
 }
 
 function Get-IssueItem {
-    $q = 'query($o:String!,$r:String!,$n:Int!,$sf:String!,$pf:String!){repository(owner:$o,name:$r){issue(number:$n){id title state milestone{title} ' +
-        'projectItems(first:20){nodes{id project{id} status:fieldValueByName(name:$sf){' + $value + '} priority:fieldValueByName(name:$pf){' + $value + '}}}}}}'
+    $q = 'query($o:String!,$r:String!,$n:Int!,$sf:String!){repository(owner:$o,name:$r){issue(number:$n){id title state milestone{title} ' + $issueFields + ' ' +
+        'projectItems(first:20){nodes{id project{id} status:fieldValueByName(name:$sf){' + $value + '}}}}}}'
     $i = (Invoke-Graphql $q (@{ o = $owner; r = $name; n = $Issue } + $fieldNames)).repository.issue
     if (-not $i) { throw "Issue #$Issue not found in $owner/$name." }
     $item = @($i.projectItems.nodes | Where-Object { $_.project.id -eq $board.id }) | Select-Object -First 1
@@ -112,9 +120,10 @@ function Get-IssueItem {
 function Show-IssueItem($s) {
     $i = $s.Issue
     Write-Host "#$Issue $($i.title) ($($i.state.ToLowerInvariant()))"
-    if (-not $s.Item) { Write-Host "  Not on the project '$Project'."; return }
+    $p = (Get-Priority $i).Name
+    $pr = if ($p) { $p } else { '- (set by the project manager)' }
+    if (-not $s.Item) { Write-Host "  Not on the project '$Project'.   Priority: $pr"; return }
     $st = if ($s.Item.status) { $s.Item.status.name } else { '-' }
-    $pr = if ($s.Item.priority) { $s.Item.priority.name } else { '- (set by the project manager)' }
     $ms = if ($i.milestone) { $i.milestone.title } else { '-' }
     Write-Host "  Status: $st   Priority: $pr   Milestone: $ms"
 }

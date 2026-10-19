@@ -678,8 +678,9 @@ preserve the changes made in the meantime by others.
 
 The team follows the issues on the GitHub project **Aurora Team Planning**
 (organisation Aurora-Viewer). Its **Status** column says where each issue
-stands: `Todo`, `In progress`, `Waiting Review`, `Done`. Its **Priority**
-(High, Medium, Low) and the milestone are set by the **project manager**:
+stands: `Todo`, `In progress`, `Waiting Review`, `Done`. The **Priority**
+(Urgent, High, Medium, Low; an issue field of the organisation, like the
+type) and the milestone are set by the **project manager**:
 they tell the team what to work on first. **Never change the Priority, the
 milestone or the parent issue**; if one looks wrong, tell your human. When
 your human asks what to take next, propose from the board, highest priority
