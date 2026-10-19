@@ -570,8 +570,32 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
     }
 }
 
+/// The height of an item row in Aurora's lists, shared with Appearance.
+pub const AURORA_ROW_HEIGHT: f32 = aurora::rows::HEIGHT;
+
+/// The tint of an item's type icon, the same in every window that lists
+/// items (inventory, Appearance, contents, properties): one colour per
+/// family, so a row's kind reads before its name.
+pub fn item_icon_color(asset_type: i32, inv_type: i32, p: &Palette) -> egui::Color32 {
+    match (asset_type, inv_type) {
+        (_, 15) | (0 | 57, _) => p.indigo_light,
+        (6 | 49, _) => p.amber,
+        (5, _) => p.rose,
+        (2 | 13, _) => p.violet_light,
+        (1 | 10 | 20 | 21, _) => p.teal,
+        (7, _) => p.success,
+        (3 | 56, _) => p.warn,
+        _ => p.muted,
+    }
+}
+
 fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
     tree::icon(ui, icons, name, p, None);
+}
+
+fn item_type_icon(ui: &mut egui::Ui, icons: &Icons, it: &aurora_net::inventory::InvItem, p: &Palette) {
+    let color = item_icon_color(it.asset_type, it.inv_type, p);
+    tree::icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p, Some(color));
 }
 
 fn item_row(
@@ -596,14 +620,13 @@ fn item_row(
     st.visible.push(*id);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p);
+        item_type_icon(ui, icons, it, p);
         if rename_row(ui, p, inv, *id, st, prefs, actions) {
             return;
         }
         let worn = facts.worn_label(inv, *id);
-        let suffix = worn.map_or_else(String::new, |label| format!(" ({label})"));
         let font_id = egui::FontId::proportional(13.0);
-        let mut label = super::widgets::name_with_suffix(&it.name, &suffix, font_id.clone(), p.ink);
+        let mut label = super::widgets::name_with_suffix(&it.name, "", font_id.clone(), p.ink);
         if worn.is_some()
             && let Some(section) = label.sections.first_mut()
         {
@@ -620,7 +643,9 @@ fn item_row(
         }
         let r = ui
             .push_id(("inv_item", it.id), |ui| {
-                super::widgets::inventory_item_label(ui, label, st.selection.contains(id), egui::Sense::click_and_drag(), name)
+                // The same worn tag as Aurora's rows and Appearance.
+                let tag = worn.map(|worn| (p, worn));
+                super::widgets::inventory_item_label_tagged(ui, label, st.selection.contains(id), egui::Sense::click_and_drag(), name, tag)
             })
             .inner;
         item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
@@ -1090,6 +1115,7 @@ fn row_width(
     show_next_owner: bool,
 ) -> f32 {
     let mut label = rules::name(inv, id);
+    let mut tag_width = 0.0;
     if folder {
         label = folder_name(inv, id);
         match inv.folders.get(&id).map(|folder| folder.state) {
@@ -1098,14 +1124,14 @@ fn row_width(
             _ => {}
         }
     } else if let Some(worn) = facts.worn_label(inv, id) {
-        label.push_str(&format!(" ({worn})"));
+        tag_width = super::widgets::row_tag_width(ui, worn) + 4.0;
     }
     let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
     if !folder && let Some(permissions) = permissions::Permissions::inventory(inv, id) {
         permissions.with_next_owner(show_next_owner).append_suffix(&mut label, p);
     }
     let label_width = ui.fonts_mut(|fonts| fonts.layout_job(label).size().x);
-    depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0
+    depth.min(24) as f32 * ui.spacing().indent + label_width + tag_width + 40.0
 }
 
 fn rename_row(
@@ -1669,6 +1695,18 @@ mod tests {
         assert_eq!(item_icon(0, 0, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_Texture");
         assert_eq!(item_icon(0, 15, 0), "Inv_Snapshot");
         assert_eq!(item_icon(24, 24, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_LinkItem");
+    }
+
+    #[test]
+    fn item_icon_colors_group_types_by_family() {
+        let p = crate::theme::Theme::default().palette();
+        assert_eq!(item_icon_color(6, 6, &p), p.amber);
+        assert_eq!(item_icon_color(5, 18, &p), p.rose);
+        assert_eq!(item_icon_color(13, 18, &p), p.violet_light);
+        assert_eq!(item_icon_color(21, 20, &p), p.teal);
+        // A snapshot is a texture whatever its asset type says.
+        assert_eq!(item_icon_color(0, 15, &p), p.indigo_light);
+        assert_eq!(item_icon_color(24, 24, &p), p.muted);
     }
 
     #[test]

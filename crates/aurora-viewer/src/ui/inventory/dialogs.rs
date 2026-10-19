@@ -419,14 +419,20 @@ fn share(
     actions: &mut Vec<InvAction>,
 ) -> bool {
     let name = facts.names.get(&resident).map_or("…", String::as_str);
-    // (icon, name, fate, tag, why)
-    let rows: Vec<(&str, String, Fate, &str, String)> = ids
+    // ((icon, tint), name, fate, tag, why)
+    let rows: Vec<((&str, egui::Color32), String, Fate, &str, String)> = ids
         .iter()
         .map(|id| {
             let item = inv.items.get(id);
             let icon = item.map_or_else(
-                || super::tree::folder_icon(inv.folders.get(id).map_or(-1, |f| f.info.type_default), false),
-                |it| item_icon(it.asset_type, it.inv_type, it.flags),
+                || {
+                    let kind = inv.folders.get(id).map_or(-1, |f| f.info.type_default);
+                    (super::tree::folder_icon(kind, false), p.muted)
+                },
+                |it| {
+                    let color = item_icon_color(it.asset_type, it.inv_type, p);
+                    (item_icon(it.asset_type, it.inv_type, it.flags), color)
+                },
             );
             let (fate, tag, why) = match rules::offer(inv, *id, &prefs.protected, &facts.worn) {
                 Ok(bucket) if rules::offer_has_no_copy(inv, &bucket) => {
@@ -470,20 +476,14 @@ fn share(
         ui.add_space(10.0);
         ui.spacing_mut().item_spacing.y = 6.0;
         let tag_font = egui::FontId::proportional(11.5);
-        for (icon, label, fate, tag, why) in rows.iter().take(SHARE_SHOWN) {
+        for ((icon, tint), label, fate, tag, why) in rows.iter().take(SHARE_SHOWN) {
             let (ink, tag_color) = match fate {
                 Fate::Given => (p.ink, p.muted),
                 Fate::NoCopy => (p.ink, p.warn),
                 Fate::Excluded => (p.muted_dim, p.muted),
             };
             ui.horizontal(|ui| {
-                super::tree::icon(
-                    ui,
-                    icons,
-                    icon,
-                    p,
-                    Some(if *fate == Fate::Excluded { p.muted_dim } else { p.muted }),
-                );
+                super::tree::icon(ui, icons, icon, p, Some(if *fate == Fate::Excluded { p.muted_dim } else { *tint }));
                 let tag_w = if tag.is_empty() {
                     0.0
                 } else {

@@ -9,7 +9,7 @@ use super::super::*;
 use crate::ui::{menu, widgets};
 use egui::{Pos2, Rect, Sense, Vec2};
 
-const ROW: f32 = 28.0;
+const ROW: f32 = super::rows::HEIGHT;
 const INDENT: f32 = 14.0;
 const CARET: f32 = 13.0;
 const ICON: f32 = 16.0;

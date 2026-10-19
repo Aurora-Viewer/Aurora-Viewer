@@ -543,7 +543,13 @@ impl ListingsUi {
                 let response = ui
                     .horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        tree::icon(ui, icons, icon, p, None);
+                        tree::icon(
+                            ui,
+                            icons,
+                            icon,
+                            p,
+                            Some(super::inventory::item_icon_color(it.asset_type, it.inv_type, p)),
+                        );
                         tree::label(ui, label, selected, egui::Sense::click_and_drag(), None)
                     })
                     .inner;

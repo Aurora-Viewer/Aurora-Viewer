@@ -145,9 +145,10 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.horizontal(|ui| {
             let name = item_icon(it.asset_type, it.inv_type, it.flags);
             if let Some(icons) = icons {
-                icon(ui, icons, name, p);
+                item_type_icon(ui, icons, it, p);
             } else if let Some(texture) = crate::ui::icons::global(name) {
-                ui.add(egui::Image::new(&texture).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
+                let color = item_icon_color(it.asset_type, it.inv_type, p);
+                ui.add(egui::Image::new(&texture).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
             } else {
                 ui.add_space(16.0);
             }

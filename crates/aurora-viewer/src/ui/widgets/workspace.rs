@@ -17,6 +17,19 @@ pub(crate) fn inventory_item_label(
     sense: Sense,
     bold_name: Option<std::sync::Arc<egui::Galley>>,
 ) -> egui::Response {
+    inventory_item_label_tagged(ui, label, selected, sense, bold_name, None)
+}
+
+/// `inventory_item_label` followed by a row tag (`paint_row_tag`), such as
+/// "Worn", right after the text.
+pub(crate) fn inventory_item_label_tagged(
+    ui: &mut egui::Ui,
+    label: egui::text::LayoutJob,
+    selected: bool,
+    sense: Sense,
+    bold_name: Option<std::sync::Arc<egui::Galley>>,
+    tag: Option<(&Palette, &str)>,
+) -> egui::Response {
     inventory_spacing(ui);
     let text_id = ui.make_persistent_id("label");
     ui.add_sized([ui.available_width(), 20.0], |ui: &mut egui::Ui| {
@@ -33,6 +46,9 @@ pub(crate) fn inventory_item_label(
         {
             let color = ui.visuals().text_color();
             ui.painter().galley(rect.min + offset, name, color);
+        }
+        if let Some(((p, text), rect)) = tag.zip(response.rect(text_id)) {
+            paint_row_tag(ui, p, text, true, rect.right() + 6.0, rect.center().y);
         }
         response.response
     })
