@@ -4,11 +4,14 @@
 
 pub mod extra;
 pub mod flexible;
+pub mod grass;
+pub mod noise;
 mod pack;
 pub mod params;
 pub mod particles;
 pub mod sculpt;
 pub mod te;
+pub mod tree;
 pub mod volume;
 
 pub use extra::{ExtraParams, LightParams, parse_extra_params};

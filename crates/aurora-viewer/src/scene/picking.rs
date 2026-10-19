@@ -593,7 +593,7 @@ impl Scene {
         }
         let geom = self.geom_ready(&g.geom?)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
+        let model = super::plants::geometry_model(world.visual_scale(idx), o, g.geom, pos, rot);
         let inv = model.inverse();
         let counts = &self.exact_tests;
         counts.objects.fetch_add(1, Relaxed);
@@ -613,7 +613,7 @@ impl Scene {
             if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
                 return None;
             }
-            if !include_hidden && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
+            if !include_hidden && super::plants::plant_face(o).is_none() && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
                 return None;
             }
             let f = f.as_ref()?;
@@ -775,7 +775,7 @@ impl Scene {
         let key = g.geom?;
         let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = Mat4::from_scale_rotation_translation(world.visual_scale(idx), rot, pos);
+        let model = super::plants::geometry_model(world.visual_scale(idx), o, Some(key), pos, rot);
         let inv = model.inverse();
         // (the ray in object space, as `pick::ray_faces` takes it there)
         let (origin, dir) = (inv.transform_point3(ray.0), inv.transform_vector3(ray.1));
@@ -789,7 +789,7 @@ impl Scene {
             if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
                 continue;
             }
-            if !include_hidden && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
+            if !include_hidden && super::plants::plant_face(o).is_none() && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
                 continue;
             }
             let Some(f) = f else { continue };
@@ -840,7 +840,7 @@ impl Scene {
     ) -> Vec2 {
         use aurora_render::tex_anim::{AnimClock, TexAnimParams, TexXform, clock_counter, frame_from_counter};
         let (geom, model) = geometry;
-        let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
+        let tf = super::plants::plant_face(o).unwrap_or_else(|| o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default());
         let mut st = hit.uv;
         if tf.planar() {
             let p = model.inverse().transform_point3(ray.0 + ray.1 * hit.t) * o.visual_scale();
@@ -1282,7 +1282,7 @@ impl Scene {
             let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let inv = Mat4::from_scale_rotation_translation(o.visual_scale(), rot, pos).inverse();
+            let inv = super::plants::geometry_model(o.visual_scale(), o, g.geom, pos, rot).inverse();
             if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
                 continue;
             }

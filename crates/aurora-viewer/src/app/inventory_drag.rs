@@ -607,6 +607,7 @@ mod tests {
                 heightmap: crate::world::terrain::Heightmap::new(256, 256),
                 wind: Default::default(),
                 dirty_chunks: HashSet::new(),
+                terrain_revision: 0,
                 caps: Arc::new(Default::default()),
                 voice_server: String::new(),
                 avatar_hover_height: false,

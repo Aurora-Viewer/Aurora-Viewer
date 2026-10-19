@@ -81,6 +81,9 @@ pub mod object_menu;
 pub mod people;
 #[path = "demo_place.rs"]
 pub mod place;
+/// Linden trees and grass, near, far or as a forest (AURORA_DEMO_PLANTS).
+#[path = "demo_plants.rs"]
+pub mod plants;
 /// The friends' online / offline toasts at one of their places
 /// (AURORA_DEMO_PRESENCE).
 #[path = "demo_presence.rs"]
@@ -4264,6 +4267,7 @@ pub fn events() -> Vec<NetEvent> {
         ev.extend(lure_events(scene, agent));
     }
     ev.extend(sculpt::events());
+    ev.extend(plants::events());
     ev
 }
 
@@ -5738,7 +5742,7 @@ fn hair_texture(empty: u32, period: u32) -> (Vec<u8>, u32, u32) {
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
-    *id == TEX_HAIR || *id == TEX_PROJECTED || *id == TEX_FOLIAGE
+    *id == TEX_HAIR || *id == TEX_PROJECTED || *id == TEX_FOLIAGE || plants::is_texture(id)
 }
 
 #[cfg(test)]
@@ -6159,6 +6163,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     }
     if *id == TEX_FOLIAGE {
         return Some(foliage_texture());
+    }
+    if let Some(species) = plants::texture(id) {
+        return Some(species);
     }
     if let Some(picture) = tags::picture_pixels(id) {
         return Some(picture);
