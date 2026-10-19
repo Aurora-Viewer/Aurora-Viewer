@@ -1410,6 +1410,78 @@ mod tests {
         assert!(!open(), "no tooltip under the menu");
     }
 
+    /// The home button's right click offers Set Home to Here (instead of the
+    /// island's own menu), greyed where the region does not allow it.
+    #[test]
+    fn the_home_button_right_click_sets_home_here() {
+        fn find(shape: &egui::Shape, text: &str) -> Option<Rect> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(Rect::from_min_size(t.pos, t.galley.size())),
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, text)),
+                _ => None,
+            }
+        }
+        for allowed in [true, false] {
+            let ctx = egui::Context::default();
+            let mut st = status(true, true);
+            st.can_set_home = allowed;
+            frame_at(&ctx, &st, 0.0, vec![]);
+            frame_at(&ctx, &st, 0.1, vec![]);
+            let place = ctx
+                .memory(|m| m.area_rect(Id::new(("bars_island", "place"))))
+                .expect("the place island");
+            // back, forward, then home
+            let home = Pos2::new(place.left() + PAD + 2.0 * (SLOT + GAP) + SLOT / 2.0, place.center().y);
+            frame_at(&ctx, &st, 0.2, vec![egui::Event::PointerMoved(home)]);
+            frame_at(&ctx, &st, 0.25, vec![press(home, egui::PointerButton::Secondary, true)]);
+            let action = frame_at(&ctx, &st, 0.3, vec![press(home, egui::PointerButton::Secondary, false)]);
+            assert!(matches!(action, BarAction::None), "a right click does not go home");
+            // the menu's row, as the next frame paints it
+            let shapes = {
+                let p = crate::theme::Theme::default().palette();
+                let settings = crate::settings::Settings::default();
+                let mut panels = Panels::from_settings(&settings);
+                let mut audio = settings.audio.clone();
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1536.0, 864.0))),
+                    time: Some(0.35),
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(input, |ui| {
+                    top(
+                        ui,
+                        &p,
+                        &Icons::default(),
+                        &mut panels,
+                        &st,
+                        &mut audio,
+                        &mut crate::ui::audio::AudioUi::default(),
+                        Default::default(),
+                        &mut crate::ui::notifications::NotifUi::default(),
+                        BellState::default(),
+                    );
+                });
+                out.textures_delta.clear();
+                out.shapes
+            };
+            let label = aurora_i18n::tr!("world-set-home-here");
+            let row = shapes
+                .iter()
+                .find_map(|c| find(&c.shape, label))
+                .expect("Set Home to Here in the menu");
+            let island_menu = aurora_i18n::tr!("ui-options-place-bar-stretch");
+            assert!(
+                shapes.iter().all(|c| find(&c.shape, island_menu).is_none()),
+                "not the island's menu"
+            );
+            let at = row.center();
+            frame_at(&ctx, &st, 0.4, vec![egui::Event::PointerMoved(at)]);
+            frame_at(&ctx, &st, 0.45, vec![press(at, egui::PointerButton::Primary, true)]);
+            let action = frame_at(&ctx, &st, 0.5, vec![press(at, egui::PointerButton::Primary, false)]);
+            assert_eq!(matches!(action, BarAction::SetHome), allowed, "allowed {allowed}");
+        }
+    }
+
     /// One frame of the islands and of Performance (`open`), at `width` ×
     /// 9/16, the work area under the islands and 60 px above the bottom
     /// (the dock), at `time`, the pointer's `events`.
