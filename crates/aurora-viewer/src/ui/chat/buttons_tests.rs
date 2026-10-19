@@ -983,11 +983,13 @@ fn the_field_acts() {
         for _ in 0..20 {
             h.settle();
         }
-        // a resident: no volume, the paperclip, and the send button
+        // a resident: no volume, no attach button (#627), and the send button
         h.open(Some(JANE));
         assert!(h.shown(control_id("box-volume")).is_none(), "{style:?}: no volume in an IM");
-        h.press(control_id("box-paperclip"));
-        assert!(has(&h.take(), |a| matches!(a, ConvAction::OpenInventory)), "{style:?}: paperclip");
+        assert!(
+            h.shown(control_id("box-paperclip")).is_none(),
+            "{style:?}: no attach button in an IM"
+        );
         h.st.conv_focus_request = true;
         h.settle();
         h.type_text("hi Jane");
@@ -998,6 +1000,78 @@ fn the_field_acts() {
                 |a| matches!(a, ConvAction::Im { to, text } if *to == JANE && text == "hi Jane")
             ),
             "{style:?}: send"
+        );
+    }
+}
+
+/// Inventory dragged with an IM shown (#627): its messages fade behind
+/// "Drop here to give to Jane" from the start of the drag, wherever the
+/// pointer is; a drop on the conversation gives what is carried; a group's
+/// conversation, which takes no inventory, shows no hint.
+#[test]
+fn an_inventory_drag_says_where_to_drop_it() {
+    const ITEM: Uuid = Uuid::from_u128(0x17E);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = H::new(style);
+        let hint = aurora_i18n::tr!("ui-chat-drop-to-give", name = h.world.session_title(&JANE));
+        h.open(Some(JANE));
+        assert!(!h.painted(&hint), "{style:?}: no hint without a drag");
+        // the drag starts outside the window (from the inventory's)
+        let away = egui::pos2(4.0, 4.0);
+        h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+        egui::DragAndDrop::set_payload(&h.frames.ctx, crate::ui::inventory::InvDrag(ITEM));
+        for _ in 0..20 {
+            h.frame(Vec::new());
+        }
+        assert!(h.painted(&hint), "{style:?}: the hint shows before the pointer reaches the IM");
+        let over = h.text_rect(&hint).center();
+        h.frame(vec![egui::Event::PointerMoved(over)]);
+        h.frame(vec![button(over, false)]);
+        assert!(
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::GiveItems { to, items } if *to == JANE && items[..] == [ITEM])
+            ),
+            "{style:?}: the drop gives"
+        );
+        for _ in 0..20 {
+            h.frame(Vec::new());
+        }
+        assert!(!h.painted(&hint), "{style:?}: the hint goes with the drag");
+        // a group's conversation: no hint, nothing given
+        h.open(Some(GROUP));
+        let group_hint = aurora_i18n::tr!("ui-chat-drop-to-give", name = h.world.session_title(&GROUP));
+        h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+        egui::DragAndDrop::set_payload(&h.frames.ctx, crate::ui::inventory::InvDrag(ITEM));
+        for _ in 0..20 {
+            h.frame(Vec::new());
+        }
+        assert!(!h.painted(&group_hint), "{style:?}: no hint in a group");
+        h.frame(vec![button(away, false)]);
+        assert!(
+            !has(&h.take(), |a| matches!(a, ConvAction::GiveItems { .. })),
+            "{style:?}: nothing given in a group"
+        );
+        // a resident dropped on the conference still joins it
+        const NEW: Uuid = Uuid::from_u128(0xD0);
+        h.open(Some(MEETING));
+        h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+        egui::DragAndDrop::set_payload(&h.frames.ctx, crate::ui::call_invite::PersonDrag(NEW));
+        let over = h.text_rect("hi meeting").center();
+        h.frame(vec![egui::Event::PointerMoved(over)]);
+        h.frame(vec![button(over, false)]);
+        assert!(
+            has(
+                &h.take(),
+                |a| matches!(a, ConvAction::AddPeople(c, people) if *c == MEETING && people[..] == [NEW])
+            ),
+            "{style:?}: a resident joins"
         );
     }
 }

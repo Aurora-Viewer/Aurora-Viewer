@@ -2155,7 +2155,12 @@ ui-options-send-the-text-below-to-blocked-people-their-im = Envoyer le texte ci-
 ui-options-send-the-text-below-when-i-am-away = Envoyer le texte ci-dessous quand je suis absent
 ui-context-send-im = Envoyer un IM
 ui-contacts-send-im = Envoyer un IM...
-ui-inventory-dialogs-send-item-s-to-resident = { "Envoyer " }{ $value0 }{ " élément(s) au résident " }{ $value1 }{ " ?" }
+ui-inventory-dialogs-give-to = Donner à
+ui-inventory-dialogs-give = Donner
+ui-inventory-dialogs-and-more = { $count ->
+    [one] et { $number } autre
+   *[other] et { $number } autres
+}
 ui-perf-sent-to-simulator-udp = Envoyé au simulateur (UDP)
 ui-media-error = Erreur
 voice-voice-error = { "Erreur de voix : " }{ $e }
@@ -2803,7 +2808,17 @@ ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically 
 build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Cochez « Sélectionner les sondes de réflexion » en bas de la fenêtre pour sélectionner une sonde.
 ui-options-camera-firestorm-views-camera-presets = Les vues du Legacy Viewer (Caméra › Préréglages)
 ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Les écrans de chargement et de téléportation montrent votre dernière vue, floutée (prise en vous téléportant ou en quittant)
-ui-inventory-dialogs-no-copy-items-will-leave-your-inventory = Les éléments non copiables quitteront votre inventaire.
+ui-inventory-dialogs-no-copy = non copiable
+ui-inventory-dialogs-no-transfer = non transférable
+ui-inventory-dialogs-left-out = exclu
+ui-inventory-dialogs-not-given = { $count ->
+    [one] { $number } élément ne peut pas être donné : il sera ignoré.
+   *[other] { $number } éléments ne peuvent pas être donnés : ils seront ignorés.
+}
+ui-inventory-dialogs-no-copy-will-leave = { $count ->
+    [one] { $number } élément non copiable quittera votre inventaire.
+   *[other] { $number } éléments non copiables quitteront votre inventaire.
+}
 ui-inventory-dialogs-items-will-be-moved-to-trash = Les éléments seront déplacés dans la corbeille.
 ui-environment-sunrise = Lever
 ui-bars-sunrise = Lever du soleil
@@ -3379,7 +3394,7 @@ ui-chat-date-at = { $date } à { $time }
 ui-chat-new-messages = Nouveaux
 ui-chat-copy-message = Copier le message
 ui-chat-quote-message = Citer
-ui-chat-give-inventory-tip = Donner depuis l'inventaire : glissez un objet sur la conversation
+ui-chat-drop-to-give = Déposez ici pour donner à { $name }
 ui-chat-give-from-inventory = Donner un objet de l'inventaire…
 ui-chat-channel = Canal
 ui-chat-channel-tip = Canal de discussion (/n avant le texte)

@@ -2152,7 +2152,12 @@ ui-options-send-the-text-below-to-blocked-people-their-im = Send the text below 
 ui-options-send-the-text-below-when-i-am-away = Send the text below when I am away
 ui-context-send-im = Send IM
 ui-contacts-send-im = Send IM...
-ui-inventory-dialogs-send-item-s-to-resident = { "Send " }{ $value0 }{ " item(s) to resident " }{ $value1 }?
+ui-inventory-dialogs-give-to = Give to
+ui-inventory-dialogs-give = Give
+ui-inventory-dialogs-and-more = { $count ->
+    [one] and { $number } more
+   *[other] and { $number } more
+}
 ui-perf-sent-to-simulator-udp = Sent to simulator (UDP)
 ui-media-error = Error
 voice-voice-error = { "Voice error: " }{ $e }
@@ -2800,7 +2805,17 @@ ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically 
 build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Enable Select reflection probes at the bottom of the build window to select probes.
 ui-options-camera-firestorm-views-camera-presets = Legacy Viewer views (Camera > Presets)
 ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Loading and teleport screens show your last view, blurred (captured while teleporting or quitting)
-ui-inventory-dialogs-no-copy-items-will-leave-your-inventory = No-copy items will leave your inventory.
+ui-inventory-dialogs-no-copy = no copy
+ui-inventory-dialogs-no-transfer = no transfer
+ui-inventory-dialogs-left-out = left out
+ui-inventory-dialogs-not-given = { $count ->
+    [one] { $number } item can't be given and will be left out.
+   *[other] { $number } items can't be given and will be left out.
+}
+ui-inventory-dialogs-no-copy-will-leave = { $count ->
+    [one] { $number } no-copy item will leave your inventory.
+   *[other] { $number } no-copy items will leave your inventory.
+}
 ui-inventory-dialogs-items-will-be-moved-to-trash = Items will be moved to trash.
 ui-environment-sunrise = Sunrise
 ui-bars-sunrise = Sunrise
@@ -3376,7 +3391,7 @@ ui-chat-date-at = { $date } at { $time }
 ui-chat-new-messages = New
 ui-chat-copy-message = Copy the message
 ui-chat-quote-message = Quote
-ui-chat-give-inventory-tip = Give from the inventory: drag an item onto the conversation
+ui-chat-drop-to-give = Drop here to give to { $name }
 ui-chat-give-from-inventory = Give an inventory item…
 ui-chat-channel = Channel
 ui-chat-channel-tip = Chat channel (/n before the text)

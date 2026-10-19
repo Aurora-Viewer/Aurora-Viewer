@@ -2681,11 +2681,16 @@ fn line_extras(
 
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
 /// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
-/// on a conversation of the list (`conv_menu`).
+/// on a conversation of the list (`conv_menu`); `AURORA_DEMO_CONV_GIVE`'s
+/// inventory carried to an IM (`workspace`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let reorder = reorder::demo_events(ctx, frame);
     if !reorder.is_empty() {
         return reorder;
+    }
+    let give = workspace::give_demo_events(ctx, frame);
+    if !give.is_empty() {
+        return give;
     }
     let menu = conv_menu::demo_events(ctx, frame);
     if !menu.is_empty() {
