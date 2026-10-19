@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::{collections::HashSet, time::Duration};
 use uuid::Uuid;
 
-pub const MAX_AVATARS: usize = 32;
+pub const MAX_AVATARS: usize = 16;
 const MAX_REPLY: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -237,13 +237,17 @@ mod tests {
     }
     #[test]
     fn bounded_queries_have_no_movement_fields_and_reject_empty_duplicate_targets() {
-        for ids in [vec![], vec![Uuid::nil()], vec![id(1), id(1)], (1..=33).map(id).collect()] {
+        for ids in [vec![], vec![Uuid::nil()], vec![id(1), id(1)], (1..=17).map(id).collect()] {
             assert!(!Query::Altitudes(ids).valid());
         }
-        let query = Query::Altitudes((1..=32).map(id).collect());
+        let query = Query::Altitudes((1..=16).map(id).collect());
         assert!(query.valid());
         let body = query.body(id(100));
-        assert!(body.starts_with("query|") && body.len() <= 1536);
+        // bridge.lsl denies longer queries and reads the keys at a fixed
+        // 37-character stride, without splitting the body into lists.
+        assert!(body.starts_with("query|") && body.len() <= 768);
+        assert_eq!(&body[42..53], "|altitudes|");
+        assert_eq!(body.len() - 53, 16 * 37 - 1);
         assert!(!body.contains("lock|") && !body.contains("https://"));
         assert!(!Query::ScriptInfo(Uuid::nil()).valid());
         assert!(!Query::ObjectInfo(Uuid::nil()).valid());
