@@ -407,8 +407,15 @@ impl Snapshot {
         for mesh in &self.meshes {
             let faces = &mesh.faces;
             let binding = mesh.skin.as_ref().filter(|skin| !skin.joint_names.is_empty()).map(|skin| {
-                let joints: Vec<_> = skin.joint_names.iter().map(|n| rig.skin_joint(n)).collect();
-                let inverse: Vec<_> = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect();
+                let (joints, inverse): (Vec<_>, Vec<_>) = skin
+                    .joint_names
+                    .iter()
+                    .zip(&skin.inverse_bind)
+                    .map(|(n, m)| {
+                        let (joint, m) = rig.skin_bind(n, *m);
+                        (joint, m * skin.bind_shape)
+                    })
+                    .unzip();
                 let rest = joints
                     .iter()
                     .zip(&inverse)

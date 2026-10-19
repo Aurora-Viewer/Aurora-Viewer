@@ -438,7 +438,10 @@ fn mesh_min(faces: &[MeshFace], skin: Option<&SkinInfo>, rigid: Option<Mat4>, ri
         .joint_names
         .iter()
         .zip(&skin.inverse_bind)
-        .map(|(name, inv)| matrices.get(rig.skin_joint(name)).copied().unwrap_or(Mat4::IDENTITY) * *inv)
+        .map(|(name, inv)| {
+            let (joint, inv) = rig.skin_bind(name, *inv);
+            matrices.get(joint).copied().unwrap_or(Mat4::IDENTITY) * inv
+        })
         .collect();
     // Same packing as jobs::mesh_to_faces, without rebuilding normals, UVs
     // and GPU buffers for an already loaded mesh just to measure its feet.

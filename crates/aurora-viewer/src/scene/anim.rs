@@ -42,6 +42,10 @@ pub struct Rig {
     pub pelvis: usize,
     /// Upright root-to-skull chain, including the Bento spine joints.
     pub(super) tag_chain: Vec<(usize, f32)>,
+    /// Body attachment points by name ("Nose", "Left Ear"…): the joint
+    /// they hang from and their fixed transform below it (avatar_lad.xml).
+    /// Filled by the avatar library, which reads the points.
+    pub(crate) skin_points: HashMap<String, (usize, Mat4)>,
 }
 
 impl Rig {
@@ -101,6 +105,7 @@ impl Rig {
             names,
             pelvis,
             tag_chain,
+            skin_points: HashMap::new(),
         };
         let rot = rig.local_rot.clone();
         let world = rig.world(&rot, Vec3::ZERO);
@@ -112,11 +117,24 @@ impl Rig {
         self.parent.len()
     }
 
-    /// LLSkinningUtil::initJointNums (indra/newview/llskinningutil.cpp):
-    /// older meshes may name missing joints; keep their inverse bind and
-    /// resolve them to the pelvis rather than an unposed identity matrix.
-    pub(crate) fn skin_joint(&self, name: &str) -> usize {
-        self.names.get(name).copied().unwrap_or(self.pelvis)
+    /// The rig joint a mesh skin joint follows, and the inverse bind to
+    /// pose it with (LLSkinningUtil::initJointNums,
+    /// indra/newview/llskinningutil.cpp). LLVOAvatar::getJoint finds any
+    /// joint of the avatar's tree, attachment points included: some meshes
+    /// are rigged to "Nose" or "Left Ear". Such a point is not in the
+    /// palette, so it is its joint, with the point's fixed transform folded
+    /// into the inverse bind (the joint's own scale then also applies to the
+    /// point, a shape-dependent few millimetres where the Legacy Viewer has
+    /// unit scale). Any other unknown name resolves to the pelvis, keeping
+    /// its inverse bind, rather than an unposed identity matrix.
+    pub(crate) fn skin_bind(&self, name: &str, inverse_bind: Mat4) -> (usize, Mat4) {
+        if let Some(&joint) = self.names.get(name) {
+            return (joint, inverse_bind);
+        }
+        match self.skin_points.get(name) {
+            Some(&(joint, local)) => (joint, local * inverse_bind),
+            None => (self.pelvis, inverse_bind),
+        }
     }
 
     fn name_tag_height(&self, pos: &[Vec3], scale: &[Vec3], delta: &[f32], pelvis_offset: f32) -> Option<f32> {
