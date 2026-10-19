@@ -41,6 +41,8 @@ const ZOOM_BUTTON: f32 = 18.0;
 /// Room between two items of a row of buttons.
 const ROW_GAP: f32 = 4.0;
 const BUTTON_H: f32 = 26.0;
+/// Width of `widgets::icon_button`, the delete button of a saved position.
+const SHOT_DELETE_W: f32 = 20.0;
 /// Room between the body's rows.
 const BODY_GAP: f32 = 8.0;
 /// A key list's row (`caps_rows`).
@@ -380,7 +382,15 @@ impl ControlsUi {
                 ui.set_min_width(grid.field);
                 for (i, shot) in view.shots.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        if super::menu::item(ui, p, "bookmark-filled", &shot.name) {
+                        // the row takes the menu's width less the delete
+                        // button: a full-width row pushed the button out and
+                        // the menu widened by that much every frame (#718)
+                        let room = ui.available_width() - SHOT_DELETE_W - ui.spacing().item_spacing.x;
+                        let used = ui.scope(|ui| {
+                            ui.set_max_width(room);
+                            super::menu::item(ui, p, "bookmark-filled", &shot.name)
+                        });
+                        if used.inner {
                             out.actions.push(ControlAction::UseShot(i));
                         }
                         if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("controls-shot-delete"), true) {
@@ -1511,6 +1521,98 @@ mod tests {
         assert_eq!(parse_speed("3 m/s"), Some(3.0));
         assert_eq!(parse_speed(" 12"), Some(12.0));
         assert_eq!(parse_speed("vite"), None);
+    }
+
+    /// The saved positions' menu keeps its width once open, a long name
+    /// included: its rows used to push their delete button out of the menu,
+    /// which widened by that much every frame, off the screen (#718).
+    #[test]
+    fn the_saved_positions_menu_keeps_its_width() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let shot = |name: &str| CameraShot {
+            name: name.to_owned(),
+            camera_offset: [-3.0, 0.0, 1.0],
+            focus_offset: [0.0, 0.0, 0.5],
+        };
+        // one clock for both menus: egui's time never goes back
+        let mut time = 0.0;
+        for shots in [
+            vec![shot("Close up"), shot("Wide")],
+            vec![shot("Close up"), shot("A rather long name for a saved camera position")],
+        ] {
+            let mut controls = ControlsUi::default();
+            let view = View {
+                zoom: 0.5,
+                preset: CameraPreset::Rear,
+                shots: &shots,
+                flying: false,
+                always_run: false,
+                seated: false,
+                mouselook: false,
+                object_view: false,
+                keys: &keys,
+                free: None,
+            };
+            let mut frame = |events| {
+                time += 0.1;
+                let mut out = Output::default();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.allocate_ui(Vec2::new(INNER, 200.0), |ui| {
+                            controls.shots(ui, &p, &view, &mut out, &ButtonGrid::new(INNER));
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let output = frame(Vec::new());
+            let field = output
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("controls-shots") => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+                .expect("the saved positions' field");
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(field),
+                    egui::Event::PointerButton {
+                        pos: field,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            let menu = |ctx: &egui::Context| {
+                ctx.memory(|m| {
+                    let layer = m.areas().top_layer_id(egui::Order::Foreground).expect("the menu is open");
+                    m.area_rect(layer.id).expect("the menu's rect")
+                })
+            };
+            for _ in 0..4 {
+                frame(Vec::new());
+            }
+            let settled = menu(&ctx);
+            for _ in 0..20 {
+                frame(Vec::new());
+            }
+            let later = menu(&ctx);
+            assert_eq!(settled.width(), later.width(), "{settled:?} then {later:?}");
+            assert!(later.right() <= 800.0, "{later:?}");
+        }
     }
 
     #[test]
