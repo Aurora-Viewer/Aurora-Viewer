@@ -171,7 +171,9 @@ root-height changes before they reach the rendered body. Initial placement
 starts at the valid support height. The common support
 height raises a body compressed over two higher supports; both contact-leg
 reach intervals bound its displacement to 45 cm. Down-step anticipation acts
-on body elevation using the whole future footprint. Analytic two-bone IK uses
+on body elevation using the whole future footprint, limited to stair-size
+drops (25 cm); a ledge must not provoke a crouch before support is lost.
+Analytic two-bone IK uses
 the knee's rig-defined local Y hinge and retains the source lateral knee offset
 in metres while changing forward flexion. Segment lengths and authored bends
 survive small contact corrections; near-straight joints cannot amplify their

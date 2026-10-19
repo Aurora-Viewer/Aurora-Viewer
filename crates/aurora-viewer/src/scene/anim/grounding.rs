@@ -374,7 +374,13 @@ impl Placement {
                         point + (point - previous).with_z(0.0) * (0.22 / dt)
                     });
                     if let Some(lift) = correction(ahead, ahead.map(query)) {
-                        goal = goal.map(|value| value.min(reference_floor + lift));
+                        let next = reference_floor + lift;
+                        // A ledge is not a stair tread. Preparing a large
+                        // drop while the heels still have support would
+                        // crouch the body even if the avatar stops at its edge.
+                        if floor - next <= 0.25 {
+                            goal = goal.map(|value| value.min(next));
+                        }
                     }
                 }
             }
@@ -1052,6 +1058,75 @@ mod tests {
                 }
                 previous = Some(body);
             }
+        }
+    }
+
+    #[test]
+    fn grounding_rewrite_approaching_a_ledge_does_not_crouch_before_leaving_support() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(if p.x < 0.0 { 0.4 } else { 0.0 }),
+                normal: Vec3::Z,
+            })
+        };
+        for fps in [30, 60, 144] {
+            let mut placement = Placement::default();
+            for i in 0..=fps * 3 {
+                let x = (-0.6 + i as f32 / fps as f32 * 0.5).min(-0.03);
+                let frame = f.frame(Vec3::new(x, 0.0, 0.4), 0.0);
+                let placed = f.sample(
+                    &mut placement,
+                    &f.rig.local_rot,
+                    Vec3::ZERO,
+                    Some(frame),
+                    now + Duration::from_secs_f32(i as f32 / fps as f32),
+                    &ground,
+                );
+                f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &ground);
+                assert!(
+                    placed.pelvis.z.abs() < 0.005,
+                    "the body crouched in anticipation of a fall: {:?}",
+                    placed.pelvis
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_rewrite_source_gait_has_continuous_takeoff_and_landing_velocity() {
+        let f = Fixture::new();
+        let clip = crate::demo::grounding::contact_animation(&f.rig, &f.base, false);
+        let ankle = f.rig.names["mAnkleLeft"];
+        let sample = |time: f32| {
+            let time = clip.local_time(f64::from(time)) as f32;
+            let mut raw = f.rig.local_rot.clone();
+            let mut pelvis = Vec3::ZERO;
+            for joint in &clip.joints {
+                if let Some(&j) = f.rig.names.get(&joint.joint_name) {
+                    if let Some(rotation) = joint.rotation_at_loop(time, clip.loop_range()) {
+                        raw[j] = rotation;
+                    }
+                    if j == f.rig.pelvis
+                        && let Some(position) = joint.position_at_loop(time, clip.loop_range())
+                    {
+                        pelvis = position;
+                    }
+                }
+            }
+            f.rig.world_with(&raw, pelvis, &f.base.local_pos, &f.base.scale)[ankle]
+                .w_axis
+                .truncate()
+        };
+        let dt = 1.0 / 60.0;
+        for at in [0.6, 1.0] {
+            let before = (sample(at) - sample(at - dt)) / dt;
+            let after = (sample(at + dt) - sample(at)) / dt;
+            assert!(
+                before.distance(after) < 0.4,
+                "the source gait jerked at {at}: {before:?} -> {after:?}"
+            );
         }
     }
 

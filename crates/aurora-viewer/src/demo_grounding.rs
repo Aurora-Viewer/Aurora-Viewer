@@ -104,8 +104,11 @@ pub fn contact_animation(rig: &Rig, base: &SkeletonBase, recovery: bool) -> auro
                 (0.21 - 0.42 * phase / 0.6, 0.0)
             } else {
                 let flight = (phase - 0.6) / 0.4;
+                // Hermite endpoint velocities match the backward-moving
+                // stance foot; both position and velocity survive toe-off.
+                let tangent = -0.28 * (2.0 * flight.powi(3) - 3.0 * flight * flight + flight);
                 (
-                    -0.21 + 0.42 * flight * flight * (3.0 - 2.0 * flight),
+                    -0.21 + 0.42 * flight * flight * (3.0 - 2.0 * flight) + tangent,
                     0.12 * (std::f32::consts::PI * flight).sin().powi(2),
                 )
             };
