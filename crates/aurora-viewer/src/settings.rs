@@ -365,6 +365,9 @@ pub struct Settings {
     pub windows_stop_left: bool,
     pub windows_stop_right: bool,
     pub windows_stop_bottom: bool,
+    /// Performance opens with the session (Preferences › General, off):
+    /// the user's choice only, not the window's state at exit. Off, the
+    /// frame rate of the bars opens it.
     pub show_perf: bool,
     pub show_chat: bool,
     pub show_minimap: bool,
@@ -857,7 +860,7 @@ pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
 
-const SETTINGS_VERSION: u32 = 25;
+const SETTINGS_VERSION: u32 = 26;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1184,11 +1187,11 @@ impl Default for Settings {
             windows_stop_right: true,
             windows_stop_bottom: true,
             // First launch (no settings file): the radar (People on its
-            // first tab, top left), the mini-map (top right), Performance
-            // under it and Conversations (bottom right) are open, as asked
-            // by the human; the other windows wait for their button. A
-            // saved file keeps what was open at exit.
-            show_perf: true,
+            // first tab, top left), the mini-map (top right) and
+            // Conversations (bottom right) are open, as asked by the human;
+            // the other windows wait for their button. A saved file keeps
+            // what was open at exit, Performance aside (`show_perf`).
+            show_perf: false,
             show_chat: true,
             show_minimap: true,
             standalone_place_details: false,
@@ -1773,6 +1776,12 @@ impl Settings {
             // Khronos PBR Neutral, which looked the same while skies were
             // not tone mapped (no automatic exposure nor mix either)
             self.tonemapper = 1;
+        }
+        if self.settings_version < 26 {
+            // `show_perf` held Performance's state at exit (open on a first
+            // launch): now a choice, off, the window waits for the frame
+            // rate's click
+            self.show_perf = false;
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
@@ -2487,6 +2496,25 @@ mod tests {
         };
         let chosen = chosen.sanitized();
         assert_eq!((chosen.tonemapper, chosen.tonemap_mix), (0, 0.7));
+    }
+
+    /// Performance does not open with the session: off by default, off
+    /// once for earlier files (they held the window's state at exit), on
+    /// when Preferences ask for it.
+    #[test]
+    fn performance_waits_for_the_frame_rate_click() {
+        assert!(!Settings::default().sanitized().show_perf);
+        let old = Settings {
+            settings_version: 25,
+            show_perf: true,
+            ..Settings::default()
+        };
+        assert!(!old.sanitized().show_perf);
+        let chosen = Settings {
+            show_perf: true,
+            ..Settings::default()
+        };
+        assert!(chosen.sanitized().show_perf);
     }
 
     /// The rez effect is the default; earlier files all held the former

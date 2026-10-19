@@ -146,8 +146,8 @@ pub struct Panels {
 impl Panels {
     /// The panels of a new session: those the settings recorded at the last
     /// exit, or, without a settings file, the first-launch layout of
-    /// `Settings::default` (the radar, the mini-map, Performance and
-    /// Conversations).
+    /// `Settings::default` (the radar, the mini-map and Conversations).
+    /// Performance opens only if Preferences ask for it (`show_perf`).
     pub fn from_settings(settings: &crate::settings::Settings) -> Panels {
         Panels {
             chat: settings.show_chat,
@@ -211,12 +211,12 @@ mod tests {
     }
 
     #[test]
-    fn first_launch_opens_the_radar_the_mini_map_performance_and_conversations() {
+    fn first_launch_opens_the_radar_the_mini_map_and_conversations() {
         let missing_file = Settings::default();
         let empty_file: Settings = serde_json::from_str("{}").expect("blank settings");
         for blank in [missing_file, empty_file] {
             let panels = Panels::from_settings(&blank);
-            assert_eq!(open(&panels), ["chat", "perf", "people", "minimap"]);
+            assert_eq!(open(&panels), ["chat", "people", "minimap"]);
             assert_eq!(panels.people_tab, 0, "the radar is the first tab of People");
             assert!(
                 !blank.radar.show_minimap,

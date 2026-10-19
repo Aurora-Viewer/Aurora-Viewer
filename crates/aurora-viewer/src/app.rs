@@ -11443,7 +11443,6 @@ impl App {
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
-                self.settings.show_perf = self.panels.perf;
                 self.settings.show_minimap = self.panels.minimap;
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;
