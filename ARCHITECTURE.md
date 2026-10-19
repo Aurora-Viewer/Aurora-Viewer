@@ -149,6 +149,19 @@ Switching to synchronized playback rejoins the receipt phase immediately;
 switching back preserves the current phase and uses Legacy timing for future
 starts and edit pauses. Import preview seeking overrides either preference.
 
+The same section's enabled-by-default `Settings::ground_avatar_feet` controls
+`scene/anim/grounding.rs`: standard stand/crouch motions solve both leg chains
+before priority blending, preserving higher-priority AO poses. Foot targets
+track ease-in, root movement and shape changes; short support traces in
+`scene/grounding.rs` run on the existing pose workers, using terrain, solid
+geometry and the region-corrected simulator contact plane as a fallback.
+Exact geometry deliberately improves separate-step placement over one shared
+contact plane; ankle targets retain the scaled ankle-to-foot clearance to
+keep the soles on the support plane. Standing-up recovery follows LLKeyframeFallMotion's velocity
+ease-in and pelvis tilt, returning upright between 50% and 75% of the clip.
+Seated/control avatars and animation import previews do not acquire support.
+`demo_grounding.rs` provides offline slope, step and recovery fixtures.
+
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these
 separate requests and formats the extended `llGetObjectDetails` report in nearby

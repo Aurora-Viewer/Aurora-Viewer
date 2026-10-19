@@ -1422,6 +1422,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit` | Animation loops, sequences, stops and synchronization after delayed loading or editing |
+| `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -1435,6 +1436,14 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+`AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
+different-height steps (`steps`). `landing` repeats a synthetic standing-up
+clip on the ramp. Append `-off` to compare the original keyframes. Compare
+each foot's height and orientation, knee bending, and the recovery's return
+upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
+without restarting. Imported animation previews and higher-priority AO poses
+must retain control. These fixtures never connect to a grid.
 
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
 bottom AO button with a complete swimming set. `quick-missing` and

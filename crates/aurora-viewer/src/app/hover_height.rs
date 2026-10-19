@@ -3,6 +3,16 @@ use super::App;
 impl App {
     pub(super) fn update_hover_height(&mut self) {
         if self.demo {
+            if let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING") {
+                crate::demo::grounding::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
+                if self.frame_count == 600 {
+                    self.settings.ground_avatar_feet = !mode.ends_with("-off");
+                    self.panels.chat = false;
+                    self.panels.people = false;
+                    self.panels.perf = false;
+                    self.camera.demo_orbit(0.2, 0.25, Some(4.0), &self.settings.camera);
+                }
+            }
             let mode = std::env::var("AURORA_DEMO_HOVER_HEIGHT").ok();
             if let Some(region) = self.world.main_region.and_then(|handle| self.world.regions.get_mut(&handle)) {
                 region.avatar_hover_height = mode.as_deref() != Some("unsupported");

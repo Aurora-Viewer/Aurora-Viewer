@@ -649,6 +649,15 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-animations"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         c |= animation_clock_choice(ui, p, &mut s.synchronize_animations);
+        between(ui, p);
+        c |= item(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-aurora-ground-feet"),
+            aurora_i18n::tr!("ui-options-aurora-ground-feet-help"),
+            widgets::SWITCH_SIZE,
+            |ui| toggle(ui, p, &mut s.ground_avatar_feet),
+        );
     });
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-avatar-plates"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -794,6 +803,22 @@ mod tests {
             assert_eq!(back.synchronize_animations, synchronized);
             super::super::sections::reset(super::super::TAB_AURORA, &mut back);
             assert!(!back.synchronize_animations, "section reset restores Legacy");
+        }
+    }
+
+    #[test]
+    fn grounding_defaults_on_is_saved_and_resets_with_its_section() {
+        let old: Settings = serde_json::from_str("{}").expect("older settings");
+        assert!(old.ground_avatar_feet);
+        for enabled in [false, true] {
+            let settings = Settings {
+                ground_avatar_feet: enabled,
+                ..Settings::default()
+            };
+            let mut back: Settings = serde_json::from_str(&serde_json::to_string(&settings).expect("save")).expect("load");
+            assert_eq!(back.ground_avatar_feet, enabled);
+            super::super::sections::reset(super::super::TAB_AURORA, &mut back);
+            assert!(back.ground_avatar_feet);
         }
     }
 

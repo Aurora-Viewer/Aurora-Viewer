@@ -6002,6 +6002,7 @@ impl App {
         if in_world {
             self.scene.draw_distance = self.settings.draw_distance;
             self.scene.synchronize_animations = self.settings.synchronize_animations;
+            self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
             self.scene.body_physics = crate::scene::body_physics::Config {
                 enabled: self.settings.avatar_physics,
                 detail: self.settings.avatar_physics_detail,

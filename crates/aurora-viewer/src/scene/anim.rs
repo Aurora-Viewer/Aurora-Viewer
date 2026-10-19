@@ -2,6 +2,8 @@
 //! bones), animation asset streaming and per-avatar pose evaluation into
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
+pub(super) mod grounding;
+
 use super::default_motions;
 use super::fetch_priority::urgent;
 use super::jobs::Jobs;
@@ -270,6 +272,8 @@ struct Motion {
     /// Started by another motion (the expression an animation names), not
     /// by the simulator: it ends on its own.
     internal: bool,
+    stand: grounding::Stand,
+    landing: Option<grounding::Landing>,
 }
 
 impl Motion {
@@ -277,8 +281,9 @@ impl Motion {
         let a = &self.anim.anim;
         let start = if a.looping { self.continuous_activation } else { self.activation };
         let elapsed = now.saturating_duration_since(start).as_secs_f64();
-        if a.ease_in > 0.0 {
-            aurora_assets::anim::cubic_step(elapsed / f64::from(a.ease_in))
+        let ease_in = self.landing.map_or(a.ease_in, |landing| landing.ease_in);
+        if ease_in > 0.0 {
+            aurora_assets::anim::cubic_step(elapsed / f64::from(ease_in))
         } else {
             1.0
         }
@@ -324,6 +329,7 @@ impl Motion {
 pub struct Controller {
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
+    pub(super) ground: Option<grounding::Frame>,
     /// Opt-in receipt clock; the default keeps Legacy Viewer activation / pauses.
     synchronized: bool,
     /// Newest first (mActiveMotions, push_front).
@@ -627,6 +633,9 @@ impl Controller {
         self.pelvis_offset = None;
         self.tag_pelvis_offset = 0.0;
         self.last_eval = None;
+        for motion in &mut self.motions {
+            motion.stand = grounding::Stand::default();
+        }
         if animations {
             self.motions.retain(|m| m.stop.is_none());
         }
@@ -815,6 +824,7 @@ impl Controller {
         let frozen = self.paused_at;
         let now = frozen.unwrap_or(now);
         let preview = self.preview_start;
+        let ground = self.ground.filter(|_| !self.control);
         let activation = |id, start: Instant| {
             preview
                 .filter(|(target, _)| target.is_none_or(|target| target == id))
@@ -823,6 +833,11 @@ impl Controller {
         self.aiming = playing.iter().any(|p| default_motions::GUN_AIM_ANIMS.contains(&p.id));
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut().filter(|m| !m.internal) {
+            if ground.is_none() {
+                m.landing = None;
+            } else if m.landing.is_none() && grounding::landing(m.id) {
+                m.landing = ground.map(grounding::Landing::new);
+            }
             if !playing
                 .iter()
                 .any(|p| p.id == m.id && p.continuous_start == m.signal.continuous_start)
@@ -869,6 +884,8 @@ impl Controller {
                         residual: 0.0,
                         weight: 0.0,
                         internal: false,
+                        stand: grounding::Stand::default(),
+                        landing: ground.filter(|_| grounding::landing(signal.id)).map(grounding::Landing::new),
                     },
                 );
                 self.signals.insert(signal.id, *signal);
@@ -937,6 +954,17 @@ impl Controller {
     /// space, feet at z = 0); meshes multiply them by their inverse binds.
     /// `base`: the avatar's rest skeleton (None = default).
     pub fn evaluate(&mut self, rig: &Rig, now: Instant, base: Option<&SkeletonBase>, out: &mut [[[f32; 4]; 4]]) {
+        self.evaluate_on_ground(rig, now, base, out, |_| None);
+    }
+
+    pub(super) fn evaluate_on_ground(
+        &mut self,
+        rig: &Rig,
+        now: Instant,
+        base: Option<&SkeletonBase>,
+        out: &mut [[[f32; 4]; 4]],
+        ground: impl Fn(Vec3) -> Option<grounding::Surface>,
+    ) {
         let now = self.paused_at.unwrap_or(now);
         let n = rig.len().min(out.len());
         // Keep the displayed pose even if signals stop/change or a file arrives
@@ -956,12 +984,41 @@ impl Controller {
         // (LLJointStateBlender::addJointState)
         type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
-        for m in self.motions.iter().filter(|_| !hold_pose) {
+        for m in self.motions.iter_mut().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
                 continue;
             }
             let a = &m.anim.anim;
             let t = m.local_time(now) as f32;
+            if let (Some(mut frame), Some(landing)) = (self.ground.filter(|_| !self.control), &mut m.landing)
+                && !landing.support_sampled
+            {
+                let foot = frame
+                    .to_world
+                    .transform_point3(rig.local_pos[rig.pelvis] - Vec3::Z * frame.pelvis_height);
+                if let Some(support) = ground(foot) {
+                    frame.normal = support.normal;
+                    landing.rotation = grounding::Landing::new(frame).rotation;
+                }
+                landing.support_sampled = true;
+            }
+            let corrected = if let Some(frame) = self.ground.filter(|_| !self.control && grounding::standing(m.id)) {
+                let fallback;
+                let base = match base {
+                    Some(base) => base,
+                    None => {
+                        fallback = SkeletonBase {
+                            local_pos: rig.local_pos.clone(),
+                            scale: rig.scale.clone(),
+                        };
+                        &fallback
+                    }
+                };
+                m.stand.sample(rig, &m.anim, (t, m.weight), base, frame, &ground)
+            } else {
+                m.stand = grounding::Stand::default();
+                None
+            };
             for ((jm, j), top) in a.joints.iter().zip(&m.anim.joints).zip(&m.anim.position_top) {
                 let Some(j) = *j else {
                     continue;
@@ -969,7 +1026,20 @@ impl Controller {
                 if j >= n {
                     continue;
                 }
-                let rot = jm.rotation_at_loop(t, a.loop_range());
+                let mut rot = jm.rotation_at_loop(t, a.loop_range());
+                if let Some(corrected) = &corrected {
+                    // Only replace states this motion owns; priorities and
+                    // ease weights still pass through the ordinary blender.
+                    rot = rot.map(|_| corrected[j]);
+                }
+                if j == rig.pelvis
+                    && self.ground.is_some()
+                    && !self.control
+                    && let Some(landing) = m.landing
+                {
+                    let phase = (t / a.duration.max(0.001) - 0.5) / 0.25;
+                    rot = rot.map(|r| (r * landing.rotation.slerp(Quat::IDENTITY, phase.clamp(0.0, 1.0))).normalize());
+                }
                 let pos = jm
                     .position_at_loop(t, a.loop_range())
                     .filter(|p| p.is_finite())
