@@ -1444,6 +1444,11 @@ fly or jump with the normal controls, then stop on either support. Jumps
 trigger recovery on actual return to the surface; walking uses the demo's
 normal gait clips. Append `-off` to compare the original keyframes, or
 `-motion` for an automated side-step/stop/return/jump input sequence. Compare
+`slope-lift` with `slope-lift-off` (or `steps-lift` with `steps-lift-off`):
+the stand alternately raises each foot.
+The raised leg must follow the original animation exactly, while the other
+foot keeps its support; corrections resume progressively on replanting.
+Scene geometry above the raised foot must not pull it back onto a step. Compare
 each foot's height and orientation, knee bending, and the recovery's return
 upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
 without restarting: corrections enter and leave smoothly, and should behave

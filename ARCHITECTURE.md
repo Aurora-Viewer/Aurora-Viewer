@@ -153,9 +153,14 @@ The same section's enabled-by-default `Settings::ground_avatar_feet` controls
 `scene/anim/grounding.rs`: standard stand/crouch motions solve both leg chains
 before priority blending, preserving higher-priority AO poses. Support is
 sampled continuously; only the IK corrections are smoothed with an 80 ms
-half-life, independently of the frame rate. Activation, retargeting, lost
-support and disabling the setting ease through the authored pose; editing
-pauses that clock, while shape resets and teleports discard old corrections.
+half-life, independently of the frame rate. Each leg's contact weight comes
+from its uncorrected ankle height above the shaped neutral skeleton, with a
+smooth 5–30 mm release band. An authored lift skips that leg's support trace
+and discards its correction, preserving the exact raised pose independently
+of scene steps and the other foot. Missing support affects only that leg.
+Activation, retargeting, lost support and disabling the setting ease through
+the authored pose; editing pauses that clock, while shape resets and
+teleports discard old corrections.
 This human-requested improvement removes abrupt ankle retargeting without
 delaying the original animations. Short support traces in
 `scene/grounding.rs` run on the existing pose workers, using terrain, solid
@@ -169,7 +174,8 @@ Seated/control avatars and animation import previews do not acquire support.
 `demo_grounding.rs` provides offline slope, step and recovery fixtures. It
 places the avatar once, then keeps normal movement, matching support planes
 and stand/walk/run/crouch/flight/jump/recovery signals. Explicit `-motion`
-fixtures drive the same input/physics path for automated captures.
+fixtures drive the same input/physics path for automated captures; `-lift`
+alternates authored left/right foot lifts to verify release and replanting.
 
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these

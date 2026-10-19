@@ -56,6 +56,33 @@ pub fn animation(landing: bool) -> aurora_assets::Animation {
     anim
 }
 
+/// Alternate authored foot lifts while standing, independently of scene IK.
+pub fn lifting_animation() -> aurora_assets::Animation {
+    let mut anim = animation(false);
+    anim.duration = 4.0;
+    anim.loop_out = 4.0;
+    for (side, offset) in [("Left", 0.0), ("Right", 2.0)] {
+        for (bone, angle) in [("Hip", -0.55), ("Knee", 1.1), ("Ankle", -0.55)] {
+            if let Some(joint) = anim.joints.iter_mut().find(|joint| joint.joint_name == format!("m{bone}{side}")) {
+                joint.rot_keys = [
+                    (0.0, 0.0),
+                    (offset + 0.6, 0.0),
+                    (offset + 1.0, angle),
+                    (offset + 1.6, 0.0),
+                    (4.0, 0.0),
+                ]
+                .into_iter()
+                .map(|(time, angle)| RotKey {
+                    time,
+                    rotation: Quat::from_rotation_y(angle),
+                })
+                .collect();
+            }
+        }
+    }
+    anim
+}
+
 pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode: &str) {
     if frame != 600 {
         return;
@@ -77,10 +104,12 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
             scene.anims.insert(id, Arc::new(BoundAnim::bind(clip, &rig)));
         }
         for state in [State::Standing, State::StandingUp] {
-            scene.anims.insert(
-                state.motion(),
-                Arc::new(BoundAnim::bind(animation(state == State::StandingUp), &rig)),
-            );
+            let clip = if state == State::Standing && mode.contains("-lift") {
+                lifting_animation()
+            } else {
+                animation(state == State::StandingUp)
+            };
+            scene.anims.insert(state.motion(), Arc::new(BoundAnim::bind(clip, &rig)));
         }
         for state in [State::Jumping, State::Falling, State::Crouching] {
             let mut clip = animation(true);

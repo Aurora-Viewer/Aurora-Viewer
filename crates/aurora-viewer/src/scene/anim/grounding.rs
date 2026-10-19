@@ -23,6 +23,7 @@ pub(crate) struct Frame {
 
 pub(super) struct Stand {
     base: Option<SkeletonBase>,
+    rest_ankles: [f32; 2],
     corrections: [[Quat; 3]; 2],
     sampled: Option<Instant>,
     root: Option<Vec3>,
@@ -32,11 +33,18 @@ impl Default for Stand {
     fn default() -> Self {
         Self {
             base: None,
+            rest_ankles: [0.0; 2],
             corrections: [[Quat::IDENTITY; 3]; 2],
             sampled: None,
             root: None,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct Contact {
+    weight: f32,
+    clearance: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -135,6 +143,8 @@ impl Stand {
         let teleported = root.zip(self.root).is_some_and(|(a, b)| a.distance_squared(b) > 4.0);
         if self.base.as_ref() != Some(base) || teleported {
             self.base = Some(base.clone());
+            let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+            self.rest_ankles = joints.map(|[_, _, ankle]| rest[ankle].w_axis.z);
             self.corrections = [[Quat::IDENTITY; 3]; 2];
             self.sampled = None;
         }
@@ -160,10 +170,26 @@ impl Stand {
                 }
             }
         }
-        let projected = frame.and_then(|frame| {
-            let world = rig.world_with(&rot, pelvis_offset, &pos, &base.scale);
-            project(rig, joints, &world, &pos, &base.scale, frame, ground)
+        let world = rig.world_with(&rot, pelvis_offset, &pos, &base.scale);
+        let contacts = std::array::from_fn(|side| {
+            let ankle = joints[side][2];
+            // Detect lift in the uncorrected animation's skeleton space,
+            // against the shaped neutral ankle, never against scene geometry
+            // or the previous IK pose. A high step must not recapture a foot
+            // that the animation is raising. Release over 5–30 mm, with no
+            // residual IK once airborne; the other leg keeps its own support.
+            let lift = world[ankle].w_axis.z - self.rest_ankles[side];
+            let foot_name = if side == 0 { "mFootLeft" } else { "mFootRight" };
+            Contact {
+                weight: 1.0 - cubic_step((lift - 0.005) / 0.025),
+                clearance: rig
+                    .names
+                    .get(foot_name)
+                    .filter(|&&j| rig.parent[j] == Some(ankle))
+                    .map_or(0.0, |&j| (-pos[j].z * base.scale[ankle].z).max(0.0)),
+            }
         });
+        let projected = frame.map_or([None; 2], |frame| project(rig, joints, &world, contacts, frame, ground));
         // Human-requested improvement over LLKeyframeStandMotion's retarget
         // thresholds: continuously sample support and smooth only the IK
         // corrections, never the authored pose. The 80 ms half-life is time
@@ -172,15 +198,19 @@ impl Stand {
         // from the new authored pose; editing suspends this clock.
         let alpha = 1.0 - 2.0_f32.powf(-dt / 0.08);
         for (side, chain) in joints.into_iter().enumerate() {
+            if contacts[side].weight == 0.0 {
+                self.corrections[side] = [Quat::IDENTITY; 3];
+                continue;
+            }
             for (bone, joint) in chain.into_iter().enumerate() {
-                let desired = projected.map_or(Quat::IDENTITY, |pose| (rot[joint].inverse() * pose[side][bone]).normalize());
+                let desired = projected[side].map_or(Quat::IDENTITY, |pose| (rot[joint].inverse() * pose[bone]).normalize());
                 let desired = if desired.w < 0.0 { -desired } else { desired };
                 let correction = &mut self.corrections[side][bone];
                 *correction = correction.slerp(desired, alpha).normalize();
-                if projected.is_none() && correction.abs_diff_eq(Quat::IDENTITY, 1e-5) {
+                if projected[side].is_none() && correction.abs_diff_eq(Quat::IDENTITY, 1e-5) {
                     *correction = Quat::IDENTITY;
                 }
-                rot[joint] = (rot[joint] * *correction).normalize();
+                rot[joint] = (rot[joint] * Quat::IDENTITY.slerp(*correction, contacts[side].weight)).normalize();
             }
         }
         Some(rot)
@@ -191,26 +221,26 @@ fn project(
     rig: &Rig,
     joints: [[usize; 3]; 2],
     world: &[Mat4],
-    pos: &[Vec3],
-    scale: &[Vec3],
+    contacts: [Contact; 2],
     frame: Frame,
     ground: &dyn Fn(Vec3) -> Option<Surface>,
-) -> Option<[[Quat; 3]; 2]> {
+) -> [Option<[Quat; 3]>; 2] {
     let inverse = frame.to_world.inverse();
-    let mut result = [[Quat::IDENTITY; 3]; 2];
+    let mut result = [None; 2];
     for (side, [hip, knee, ankle]) in joints.into_iter().enumerate() {
+        if contacts[side].weight == 0.0 {
+            continue;
+        }
         let p = |j: usize| world[j].w_axis.truncate();
-        let target = ground(frame.to_world.transform_point3(p(ankle)))?;
+        let Some(target) = ground(frame.to_world.transform_point3(p(ankle))) else {
+            continue;
+        };
         // Preserve the sole's clearance below the ankle. Projecting the
         // ankle itself onto the surface sinks mFoot by its local height.
-        let foot_name = if side == 0 { "mFootLeft" } else { "mFootRight" };
-        let clearance = rig
-            .names
-            .get(foot_name)
-            .filter(|&&j| rig.parent[j] == Some(ankle))
-            .map_or(0.0, |&j| (-pos[j].z * scale[ankle].z).max(0.0));
-        let target_pos = inverse.transform_point3(target.position + target.normal * clearance);
-        let (hip_delta, knee_delta) = solve(p(hip), p(knee), p(ankle), target_pos)?;
+        let target_pos = inverse.transform_point3(target.position + target.normal * contacts[side].clearance);
+        let Some((hip_delta, knee_delta)) = solve(p(hip), p(knee), p(ankle), target_pos) else {
+            continue;
+        };
         let parent_rot = rig.parent[hip].map_or(Quat::IDENTITY, |j| rotation(world, j));
         let hip_rot = (hip_delta * rotation(world, hip)).normalize();
         let knee_rot = (knee_delta * hip_delta * rotation(world, knee)).normalize();
@@ -218,13 +248,13 @@ fn project(
         let old_forward = (knee_delta * hip_delta * rotation(world, ankle)) * Vec3::X;
         let forward = (old_forward - normal * old_forward.dot(normal)).normalize_or(Vec3::X);
         let ankle_rot = Quat::from_mat3(&Mat3::from_cols(forward, normal.cross(forward), normal)).normalize();
-        result[side] = [
+        result[side] = Some([
             (parent_rot.inverse() * hip_rot).normalize(),
             (hip_rot.inverse() * knee_rot).normalize(),
             (knee_rot.inverse() * ankle_rot).normalize(),
-        ];
+        ]);
     }
-    Some(result)
+    result
 }
 
 #[cfg(test)]
@@ -543,5 +573,122 @@ mod tests {
             .sample(&rig, &anim, 0.0, &base, Some(moved), now + Duration::from_secs(11), &ground)
             .unwrap();
         assert!(teleported[rig.names["mKneeLeft"]].abs_diff_eq(Quat::IDENTITY, 1e-6));
+    }
+
+    #[test]
+    fn grounding_authored_foot_lifts_release_independently_at_every_frame_rate() {
+        let (rig, mut base, _) = fixture();
+        // Contact follows this shape's neutral skeleton, not a fixed height.
+        base.local_pos[rig.pelvis].z += 0.23;
+        base.scale[rig.names["mHipLeft"]].z = 0.95;
+        let anim = BoundAnim::bind(crate::demo::grounding::lifting_animation(), &rig);
+        for fps in [30, 60, 144] {
+            let mut stand = Stand::default();
+            let now = Instant::now();
+            let queries = std::cell::Cell::new([0usize; 2]);
+            let ground = |p: Vec3| {
+                let side = usize::from(p.y < 0.0);
+                let mut counts = queries.get();
+                counts[side] += 1;
+                queries.set(counts);
+                // Even support above the lifted foot cannot capture it.
+                Some(Surface {
+                    position: p.with_z(p.z + 0.25),
+                    normal: Vec3::Z,
+                })
+            };
+            for i in 0..=fps {
+                stand.sample(
+                    &rig,
+                    &anim,
+                    0.0,
+                    &base,
+                    Some(frame()),
+                    now + Duration::from_secs_f64(i as f64 / fps as f64),
+                    &ground,
+                );
+            }
+            for i in 1..=fps * 4 {
+                queries.set([0; 2]);
+                let t = i as f32 / fps as f32;
+                let rot = stand
+                    .sample(
+                        &rig,
+                        &anim,
+                        t,
+                        &base,
+                        Some(frame()),
+                        now + Duration::from_secs_f64(1.0 + i as f64 / fps as f64),
+                        &ground,
+                    )
+                    .expect("standing pose");
+                let lifted = if i == fps {
+                    Some((0, "Left"))
+                } else if i == fps * 3 {
+                    Some((1, "Right"))
+                } else {
+                    None
+                };
+                if let Some((side, name)) = lifted {
+                    assert_eq!(queries.get()[side], 0, "an authored lift must skip its support trace");
+                    assert_eq!(queries.get()[1 - side], 1, "the other foot still has support");
+                    for bone in ["Hip", "Knee", "Ankle"] {
+                        let joint_name = format!("m{bone}{name}");
+                        let joint = rig.names[&joint_name];
+                        let authored = anim
+                            .anim
+                            .joints
+                            .iter()
+                            .find(|j| j.joint_name == joint_name)
+                            .and_then(|j| j.rotation_at_loop(t, anim.anim.loop_range()))
+                            .expect("authored leg");
+                        assert!(
+                            rot[joint].abs_diff_eq(authored, 1e-5),
+                            "a lifted leg retains its exact authored pose at {fps} fps"
+                        );
+                    }
+                    let other_knee = rig.names[if side == 0 { "mKneeRight" } else { "mKneeLeft" }];
+                    assert!(
+                        !rot[other_knee].abs_diff_eq(Quat::IDENTITY, 0.01),
+                        "the planted leg keeps its correction"
+                    );
+                }
+                if i == fps * 2 || i == fps * 4 {
+                    assert_eq!(queries.get(), [1, 1], "both feet reacquire support after landing");
+                    assert!(stand.corrections.iter().all(|chain| !chain[1].abs_diff_eq(Quat::IDENTITY, 0.01)));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_one_missing_support_does_not_release_the_other_leg() {
+        let (rig, base, anim) = fixture();
+        let mut stand = Stand::default();
+        let now = Instant::now();
+        let ground = |p: Vec3| {
+            (p.y > 0.0).then_some(Surface {
+                position: p.with_z(p.z + 0.2),
+                normal: Vec3::Z,
+            })
+        };
+        let mut rot = rig.local_rot.clone();
+        for i in 0..=120 {
+            rot = stand
+                .sample(
+                    &rig,
+                    &anim,
+                    0.0,
+                    &base,
+                    Some(frame()),
+                    now + Duration::from_secs_f64(i as f64 / 60.0),
+                    &ground,
+                )
+                .expect("one supported foot");
+        }
+        assert!(!rot[rig.names["mKneeLeft"]].abs_diff_eq(Quat::IDENTITY, 0.01));
+        for name in ["mHipRight", "mKneeRight", "mAnkleRight"] {
+            assert!(rot[rig.names[name]].abs_diff_eq(Quat::IDENTITY, 1e-5));
+        }
     }
 }
