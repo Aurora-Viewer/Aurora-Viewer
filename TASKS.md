@@ -1560,7 +1560,7 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 - ✅ "Reset everything" of the preferences is a real button (#291, alpha report of 2026-10-13; validated by the human in demo on 2026-10-14): it was a line of grey text at the bottom of the categories; it is now a flat action button with the restore icon, the width of the column, that turns red on hover (like "Erase the chat logs"), and still opens the confirmation whose "Reset" button is the red one. Firestorm has the same confirmation ("Reset All Settings", Preferences › Advanced, `FirestormClearSettingsPrompt`)
   - ⬜ later, idea: an "Advanced" section of the preferences grouping the settings to think twice about (suggested in #291; Firestorm has one)
 - ⬜ Back up and restore the settings (preferences, colours, layout) to a file, like the Legacy Viewer's Backup tab
-- ⬜ Preferences, later (no equivalent yet): sit when away, quit after a long idle time, hide group titles in name tags, reopen IMs at login, announce accepted group invitations, script count change and simulator version alerts, mute sounds when minimised, stream title in chat, crouch as a toggle, fly after a teleport, no connection to neighbour regions, block click-to-sit, choice of the cache and chat log folders
+- 🔧 Preferences, later (no equivalent yet; #684, task `remaining-prefs`): sit when away, quit after a long idle time, hide group titles in name tags, reopen IMs at login, announce accepted group invitations, script count change and simulator version alerts, mute sounds when minimised, stream title in chat, crouch as a toggle, fly after a teleport, no connection to neighbour regions, block click-to-sit, choice of the cache and chat log folders
 
 ## Audio and voice
 

@@ -2538,6 +2538,21 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-become-away-after-this-time-without-keyboard-or-mouse"),
                     |ui| slider(ui, &mut a.away_after_minutes, 0..=60, " min"),
                 );
+                // Legacy Viewer › General (AvatarSitOnAway, QuitAfterSecondsOfAFK)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-sit-when-away"),
+                    aurora_i18n::tr!("ui-options-sit-when-away-help"),
+                    |ui| toggle(ui, p, &mut a.sit_when_away),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-quit-after-away"),
+                    aurora_i18n::tr!("ui-options-quit-after-away-help"),
+                    |ui| slider(ui, &mut a.quit_after_away_minutes, 0..=60, " min"),
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-automatic-rejections"), |ui| {
                 c |= response_text(

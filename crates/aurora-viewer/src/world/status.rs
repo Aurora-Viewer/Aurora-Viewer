@@ -13,10 +13,10 @@ use super::notifications::im as d;
 use super::social::{Friend, Social, rights};
 use super::{ChatKind, ChatLine, Origin, World};
 use aurora_llsd::{Llsd, llsd_map};
-use aurora_net::{InstantMessage, NetCommand};
+use aurora_net::{InstantMessage, NetCommand, control};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use uuid::Uuid;
 
 /// The "Invisible" status of the account, kept between sessions like
@@ -77,6 +77,11 @@ pub struct AutoResponse {
     pub reject_friendship_text: String,
     /// AFKTimeout in minutes (0 = never away automatically).
     pub away_after_minutes: u32,
+    /// AvatarSitOnAway: sit on the ground when going away (off).
+    pub sit_when_away: bool,
+    /// QuitAfterSecondsOfAFK in minutes: quit the viewer after being away
+    /// this long (0 = never, the default).
+    pub quit_after_away_minutes: u32,
     /// "Only friends and groups can call or IM me" (VoiceCallsFriendsOnly,
     /// per account, off).
     pub friends_only: bool,
@@ -105,6 +110,8 @@ impl Default for AutoResponse {
             dont_reject_friends_teleports: false,
             reject_friendship_text: aurora_i18n::tr!("world-status-the-resident-you-messaged-has-enabled-aurora-viewer-s").into(),
             away_after_minutes: 0,
+            sit_when_away: false,
+            quit_after_away_minutes: 0,
             friends_only: false,
         }
     }
@@ -191,6 +198,12 @@ fn show_online_to(social: &mut Social, out: &mut Vec<NetCommand>, friend: Uuid, 
 #[derive(Debug, Default)]
 pub struct Status {
     pub away: bool,
+    /// When away started (LLAgent's gAwayTimer), for the quit after a long
+    /// time away.
+    pub away_since: Option<Instant>,
+    /// We sat down because we went away (LLAgent::mIsAfkSitting): coming
+    /// back stands us up again.
+    afk_sitting: bool,
     pub dnd: bool,
     pub invisible: Invisible,
     /// Copy of the settings (refreshed by the app).
@@ -258,15 +271,41 @@ impl World {
     }
 
     /// Away (LLAgent::setAFK / clearAFK): the "away" animation; the AWAY
-    /// control flag is added to the agent updates by the app.
+    /// control flag is added to the agent updates by the app. With "Sit
+    /// when away" (AvatarSitOnAway) the avatar sits on the ground when it
+    /// goes away standing, and stands up when it comes back; an avatar that
+    /// was already sitting stays seated.
     pub fn set_away(&mut self, on: bool) {
-        if self.status.away != on {
-            self.status.away = on;
-            self.groups.out.push(NetCommand::AgentAnimation {
-                anim: ANIM_AWAY,
-                start: on,
-            });
+        if self.status.away == on {
+            return;
         }
+        self.status.away = on;
+        self.groups.out.push(NetCommand::AgentAnimation {
+            anim: ANIM_AWAY,
+            start: on,
+        });
+        if on {
+            self.status.away_since = Some(Instant::now());
+            if self.status.cfg.sit_when_away && !self.agent.is_sitting() {
+                self.groups.out.push(NetCommand::OneShotControl(control::SIT_ON_GROUND));
+                self.status.afk_sitting = true;
+            }
+        } else {
+            self.status.away_since = None;
+            if std::mem::take(&mut self.status.afk_sitting) && self.status.cfg.sit_when_away && self.agent.ground_sit {
+                self.groups.out.push(NetCommand::OneShotControl(control::STAND_UP));
+            }
+        }
+    }
+
+    /// QuitAfterSecondsOfAFK: away for longer than the setting, the viewer
+    /// quits (LLAppViewer::idle). The Legacy Viewer restarts its away timer
+    /// on every idle frame, so its check seldom fires after an automatic
+    /// away; here the time counts from the moment we went away, whatever
+    /// made us away.
+    pub fn away_too_long(&self, now: Instant) -> bool {
+        let limit = self.status.cfg.quit_after_away_minutes as u64 * 60;
+        limit > 0 && self.status.away_since.is_some_and(|t| now.duration_since(t).as_secs() >= limit)
     }
 
     /// Do not disturb (LLAgent::setDoNotDisturb).
@@ -495,6 +534,57 @@ mod tests {
         // her next ordinary message: the hint is gone
         world.on_im(im(0, "back!"));
         assert!(!world.social.auto_responded.contains(&tess));
+    }
+
+    fn sit_controls(world: &mut World) -> Vec<u32> {
+        world
+            .groups
+            .take_commands()
+            .into_iter()
+            .filter_map(|c| match c {
+                NetCommand::OneShotControl(flags) => Some(flags),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn sit_when_away_sits_a_standing_avatar_and_stands_it_up_on_return() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        // off: away only plays the animation
+        world.set_away(true);
+        world.set_away(false);
+        assert!(sit_controls(&mut world).is_empty());
+        world.status.cfg.sit_when_away = true;
+        world.set_away(true);
+        assert_eq!(sit_controls(&mut world), vec![control::SIT_ON_GROUND]);
+        world.agent.ground_sit = true;
+        world.set_away(false);
+        assert_eq!(sit_controls(&mut world), vec![control::STAND_UP]);
+        // already sitting: stays seated on the way back
+        world.agent.ground_sit = true;
+        world.set_away(true);
+        world.set_away(false);
+        assert!(sit_controls(&mut world).is_empty());
+        // stood up meanwhile: nothing to stand up from
+        world.agent.ground_sit = false;
+        world.set_away(true);
+        sit_controls(&mut world);
+        world.set_away(false);
+        assert!(sit_controls(&mut world).is_empty());
+    }
+
+    #[test]
+    fn quit_after_away_counts_from_the_moment_away_started() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let now = Instant::now();
+        world.set_away(true);
+        assert!(!world.away_too_long(now + std::time::Duration::from_secs(3600)), "off by default");
+        world.status.cfg.quit_after_away_minutes = 5;
+        assert!(!world.away_too_long(now + std::time::Duration::from_secs(4 * 60)));
+        assert!(world.away_too_long(now + std::time::Duration::from_secs(5 * 60 + 1)));
+        world.set_away(false);
+        assert!(!world.away_too_long(now + std::time::Duration::from_secs(3600)));
     }
 
     #[test]

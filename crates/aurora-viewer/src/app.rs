@@ -5600,6 +5600,14 @@ impl App {
                 self.world.set_away(false);
                 self.auto_away = false;
             }
+            // QuitAfterSecondsOfAFK: an ordinary quit (unsaved scripts still
+            // ask); asked once per time away
+            if self.world.away_too_long(Instant::now()) {
+                log::info!("quitting: away for longer than the setting");
+                self.world.status.away_since = None;
+                self.exit_prompt.request();
+                self.confirm_exit(ui::exit::Action::Quit);
+            }
             self.world.tick_social();
             self.update_gestures();
             for cmd in self.world.take_social_commands() {

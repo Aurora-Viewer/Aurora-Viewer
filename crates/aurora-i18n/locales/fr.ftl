@@ -954,6 +954,10 @@ common-abandon-land = Abandonner le terrain
 ui-inventory-dialogs-discard-changes = Abandonner les modifications
 common-away = Absent
 ui-options-away-after = Absent après
+ui-options-sit-when-away = S'asseoir en absence
+ui-options-sit-when-away-help = L'avatar s'assoit par terre quand vous passez en absent, et se relève à votre retour
+ui-options-quit-after-away = Quitter après une absence de
+ui-options-quit-after-away-help = Quitter le viewer après cette durée en absent (0 = jamais)
 ui-notifications-accept = Accepter
 world-appearance-spare-attachment = Accessoire de rechange
 world-inventory-demo-attachments = Accessoires
