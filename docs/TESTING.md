@@ -4650,6 +4650,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PBR_OCCLUSION=0` or `alt` | PBR materials without their own occlusion, as before |
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
+| `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
@@ -4792,6 +4793,29 @@ What the inventory must show with these scenarios:
   image does not change. `0` leaves it out, as before; `alt` leaves it out
   every other second (`AURORA_DEMO_PBR_METAL=1`: the inside corner left
   of the cube, and the folds of the avatars' clothes and skin).
+- **`AURORA_GTAO_TEMPORAL=0|alt`**: GTAO gathers its occlusion over the
+  frames, as XeGTAO expects of the TAA it is made for (`temporal` in
+  gtao.wgsl): its noise moves every frame (XeGTAO's SpatioTemporalNoise, 64
+  frames), and each pixel blends with its history where its point was in
+  the previous frame, through its depth and the camera's motion (there are
+  no motion vectors), else at the same pixel when the depth there is its
+  own (our avatar, which the camera follows as it walks). A history texel
+  whose depth is not the point's is not read (an uncovered surface starts
+  again from the current frame, converging in a few frames), and the
+  history is clipped to the mean and deviation of the current 3 × 3
+  neighbourhood, so the occlusion of a moving avatar or object does not
+  trail behind it. The current frame weighs at least 0.1. A resize, a
+  quality change, a photo frame or tile, and a frame after one without
+  GTAO start again from the current frame, with the blur of before. `0`
+  leaves it out (the noise fixed again: the fine grain in the penumbra of
+  folds and under objects), `alt` leaves it out every other second. To
+  compare, `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2` or `gtao:3`: the
+  folds of the avatars' clothes and the shadow under the stools; with
+  `AURORA_DEMO_CAMERA=drift,800,600,30` (the camera turning) and
+  `AURORA_DEMO_DOUBLECLICK=walk` (our avatar walking, the camera behind
+  it); `AURORA_DEMO_CAMERA=close,800,600,1` with
+  `AURORA_DEMO_DOUBLECLICK=walk,1100,640` (the avatar walks before a
+  camera that stays): no ring of occlusion lags behind its feet.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility

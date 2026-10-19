@@ -1207,6 +1207,14 @@ fn gtao_specular_now() -> bool {
     crate::gtao::SpecularOcclusion::from_env().applied(secs)
 }
 
+/// Whether GTAO accumulates over the frames this frame
+/// (AURORA_GTAO_TEMPORAL).
+fn gtao_temporal_now() -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    crate::gtao::Temporal::from_env().applied(secs)
+}
+
 /// AURORA_PROFILE: the summary also wants the time each step waited.
 fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -4952,11 +4960,16 @@ impl Backend {
             let light = crate::contact_shadows::light_projection(fu.proj * fu.view, f.sun_dir);
             self.contact.write(&self.queue, t, light);
         }
-        if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
+        if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
             let intensity = crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity);
+            let frame = crate::gtao::Frame {
+                index: self.frame_index,
+                temporal: gtao_temporal_now(),
+                previous_camera: self.prev_view_proj.is_some(),
+            };
             self.gtao
-                .write(&self.queue, t, f.proj, crate::gtao::reprojection(f.view, prev), intensity);
+                .write(&self.queue, t, f.proj, crate::gtao::reprojection(f.view, prev), intensity, frame);
         } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {

@@ -42,10 +42,17 @@
 //    bitmask (Therrien et al. 2023), into `il_out` alone, blurred by
 //    `denoise_il` (then `denoise_il_final`) with `main`'s edges; the
 //    occlusion stays `main`'s, the same with the light on or off;
-// 4. `denoise` (then `denoise_final`): XeGTAO's edge-aware 3 x 3 blur, which
-//    replaces its temporal accumulation (we have none): the noise is a
-//    Hilbert curve driving the R2 sequence, the same for every frame, so the
-//    result does not flicker and the blur removes its pattern.
+//    `temporal` then accumulates it over the frames, as XeGTAO expects of
+//    the TAA it runs under: the noise (a Hilbert curve driving the R2
+//    sequence) moves every frame (SpatioTemporalNoise), and each pixel blends
+//    with the history where its point was in the previous frame, refused
+//    where the depth there does not match (a surface uncovered) and clipped
+//    to its 3 x 3 neighbourhood (moving avatars and objects: the history
+//    follows the camera only);
+// 4. `denoise` (then `denoise_final`): XeGTAO's edge-aware 3 x 3 blur. Without
+//    the accumulation (`AURORA_GTAO_TEMPORAL=0`) the noise stays the same
+//    every frame, so the result does not flicker, and the blur alone removes
+//    its pattern, leaving a fine grain in the penumbra.
 //
 // The result is a visibility (1 = nothing occludes) in `.r` of the last
 // target, sampled where the Legacy occlusion is (screen_ao, common.wgsl),
@@ -72,7 +79,8 @@ struct GtaoParams {
     // final value power, depth MIP sampling offset, slices, steps per slice
     quality: vec4<f32>,
     // denoise blur beta, full-resolution pixels per occlusion pixel (1 or
-    // 2), unused, unused
+    // 2), slices of `main` (`quality.z`, or more where the accumulation has
+    // no history), unused
     misc: vec4<f32>,
     // screen-space indirect light (main_bitmask): this frame's view space
     // (z in front) to the clip space of the previous frame, whose lit
@@ -81,6 +89,11 @@ struct GtaoParams {
     // its thickness of a surface (metres), radius (metres), strength,
     // unused
     il: vec4<f32>,
+    // the accumulation (`temporal`): the noise's frame index (0 without
+    // it), 1 when there is no history to read (first frame, new targets, a
+    // frame without GTAO before), the current frame's least weight, the
+    // half width of the neighbourhood clip in standard deviations
+    temporal: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: GtaoParams;
@@ -97,6 +110,13 @@ struct GtaoParams {
 @group(0) @binding(12) var il_final: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(13) var scene_tex: texture_2d<f32>;
 @group(0) @binding(14) var il_out: texture_storage_2d<rgba16float, write>;
+// the accumulation's history, read from the previous frame and written for
+// the next: the working values (`working`), and the view depth with the
+// number of frames gathered (pack2x16float)
+@group(0) @binding(15) var hist_in: texture_2d<f32>;
+@group(0) @binding(16) var meta_in: texture_2d<u32>;
+@group(0) @binding(17) var hist_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(18) var meta_out: texture_storage_2d<r32uint, write>;
 
 const PI: f32 = 3.1415926535897932;
 const PI_HALF: f32 = 1.5707963267948966;
@@ -224,11 +244,13 @@ fn hilbert_index(px: u32, py: u32) -> u32 {
     return index;
 }
 
-// SpatioTemporalNoise with its temporal index at 0: the Hilbert index
-// drives the R2 sequence, so neighbouring pixels get well spread slice and
-// sample offsets (a low-discrepancy pattern the blur takes out).
-fn pixel_noise(px: vec2<u32>) -> vec2<f32> {
-    let index = hilbert_index(px.x % HILBERT_WIDTH, px.y % HILBERT_WIDTH);
+// SpatioTemporalNoise: the Hilbert index drives the R2 sequence, so
+// neighbouring pixels get well spread slice and sample offsets (a
+// low-discrepancy pattern the blur takes out), and the frame index `t`
+// moves it along by XeGTAO's 288 per frame, over 64 frames, for the
+// accumulation to gather different samples (0: the same every frame).
+fn pixel_noise(px: vec2<u32>, t: u32) -> vec2<f32> {
+    let index = hilbert_index(px.x % HILBERT_WIDTH, px.y % HILBERT_WIDTH) + 288u * (t % 64u);
     return fract(vec2<f32>(0.5) + f32(index) * vec2<f32>(0.75487766624669276005, 0.5698402909980532659114));
 }
 
@@ -351,10 +373,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let falloff_from = effect_radius * (1.0 - g.radius.y);
     let falloff_mul = -1.0 / falloff_range;
     let falloff_add = falloff_from / falloff_range + 1.0;
-    let slice_count = g.quality.z;
+    // (more on a frame without history: a photo, new targets)
+    let slice_count = g.misc.z;
     let steps_per_slice = g.quality.w;
 
-    let noise = pixel_noise(id.xy);
+    let noise = pixel_noise(id.xy, u32(g.temporal.x));
     // view-space size of a pixel at the centre's depth, and the radius in
     // pixels
     let pixel_view_size = z * 2.0 / (g.proj.x * size.x);
@@ -545,7 +568,8 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     let sample_distribution_power = g.radius.z;
     let slice_count = g.quality.z;
     let steps_per_slice = g.quality.w;
-    let noise = pixel_noise(id.xy);
+    // (the light is not accumulated: its noise stays the same every frame)
+    let noise = pixel_noise(id.xy, 0u);
     let pixel_view_size = z * 2.0 / (g.proj.x * size.x);
     let screen_radius = radius / pixel_view_size;
     let min_s = 1.3 / screen_radius;
@@ -613,6 +637,114 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     light /= max(weight_sum, 1e-4);
     textureStore(il_out, px, vec4<f32>(light * g.il.z, 1.0));
+}
+
+// ---- 3 ter: the temporal accumulation
+
+// `v`, or `fallback` for its components that are NaN.
+fn finite_or(v: vec4<f32>, fallback: vec4<f32>) -> vec4<f32> {
+    return select(v, fallback, v != v);
+}
+
+// The history's depth (metres in front) and frame count at `q`.
+fn history_meta(q: vec2<i32>) -> vec2<f32> {
+    return unpack2x16float(textureLoad(meta_in, q, 0).x);
+}
+
+// One pixel of `main`'s result (`ao_in`) blended with the history where its
+// point was in the previous frame (`g.reproj`, the camera's motion: there
+// are no motion vectors), into `hist_out`, which the blur then reads and
+// the next frame takes as its history. The four history texels around the
+// point count by their bilinear weight, each only where its depth is the
+// point's (an uncovered surface starts again from the current frame), else
+// the pixel's own texel if its depth is the same (what the camera follows); the
+// history is clipped to the mean and deviation of the current 3 x 3
+// neighbourhood, so an occlusion that moved with an avatar or an object
+// does not trail behind it. The current frame weighs 1 / (frames + 1),
+// never less than `g.temporal.z`: a new pixel converges in a few frames.
+@compute @workgroup_size(8, 8)
+fn temporal(@builtin(global_invocation_id) id: vec3<u32>) {
+    let size = target_size();
+    if (f32(id.x) >= size.x || f32(id.y) >= size.y) {
+        return;
+    }
+    let px = vec2<i32>(id.xy);
+    // (a NaN in the history would stay there: none is let in)
+    let cur = finite_or(ao_at(px), working(1.0, vec3<f32>(0.0, 0.0, -1.0)));
+    let zc = depth0(px);
+    if (zc >= FAR * 0.5) {
+        textureStore(hist_out, px, cur);
+        textureStore(meta_out, px, vec4<u32>(pack2x16float(vec2<f32>(0.0)), 0u, 0u, 0u));
+        return;
+    }
+    var m1 = vec4<f32>(0.0);
+    var m2 = vec4<f32>(0.0);
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let s = finite_or(ao_at(px + vec2<i32>(dx, dy)), cur);
+            m1 += s;
+            m2 += s * s;
+        }
+    }
+    m1 /= 9.0;
+    let sigma = sqrt(max(m2 / 9.0 - m1 * m1, vec4<f32>(0.0)));
+
+    var count = 0.0;
+    var hist = cur;
+    let isize = vec2<i32>(size);
+    let uv = (vec2<f32>(px) + vec2<f32>(0.5)) / size;
+    let clip = g.reproj * vec4<f32>(view_position(uv, zc), 1.0);
+    if (g.temporal.y < 0.5 && clip.w > 1e-4) {
+        let ndc = clip.xy / clip.w;
+        let pp = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * size - vec2<f32>(0.5);
+        let base = vec2<i32>(floor(pp));
+        let f = pp - floor(pp);
+        // the history texels lie within a pixel of the point: allow the
+        // surface's own slope over that pixel (the smaller step on each
+        // axis, so a depth edge beside the pixel does not count), and a
+        // little more for the depths' precision
+        let gx = min(abs(depth0(px + vec2<i32>(-1, 0)) - zc), abs(depth0(px + vec2<i32>(1, 0)) - zc));
+        let gy = min(abs(depth0(px + vec2<i32>(0, -1)) - zc), abs(depth0(px + vec2<i32>(0, 1)) - zc));
+        let tolerance = 0.01 * clip.w + 1.5 * (gx + gy);
+        var weight = 0.0;
+        var sum = vec4<f32>(0.0);
+        for (var k = 0; k < 4; k++) {
+            let o = vec2<i32>(k & 1, k >> 1u);
+            let q = base + o;
+            if (any(q < vec2<i32>(0)) || any(q >= isize)) {
+                continue;
+            }
+            let m = history_meta(q);
+            let h = textureLoad(hist_in, q, 0);
+            if (m.y < 0.5 || abs(m.x - clip.w) > tolerance || any(h != h)) {
+                continue;
+            }
+            let bw = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+            weight += bw;
+            sum += h * bw;
+            count += m.y * bw;
+        }
+        // what moves with the camera (our own avatar, which the camera
+        // follows as it walks) is where it was on screen, at its depth: the
+        // same pixel, when the camera's motion found nothing
+        let m = history_meta(px);
+        let h = textureLoad(hist_in, px, 0);
+        if (weight <= 1e-3 && m.y >= 0.5 && abs(m.x - zc) <= 0.01 * zc + 1.5 * (gx + gy) && all(h == h)) {
+            weight = 1.0;
+            sum = h;
+            count = m.y;
+        }
+        if (weight > 1e-3) {
+            let gamma = g.temporal.w;
+            hist = clamp(sum / weight, m1 - gamma * sigma, m1 + gamma * sigma);
+        } else {
+            count = 0.0;
+        }
+    }
+    let alpha = max(1.0 / (count + 1.0), g.temporal.z);
+    textureStore(hist_out, px, mix(hist, cur, alpha));
+    let frames = min(count + 1.0, 255.0);
+    textureStore(meta_out, px, vec4<u32>(pack2x16float(vec2<f32>(min(zc, 60000.0), frames)), 0u, 0u, 0u));
 }
 
 // ---- 4: the blur
