@@ -19,6 +19,7 @@
 use super::model::{self, Catalog, Key, Place, PlacesSort};
 use super::{Confirm, PlacesAction, PlacesUi, history_sections, now_secs, slurl_at, system_folder};
 use crate::theme::Palette;
+use crate::ui::place_card::{self, RowSize, Thumb};
 use crate::ui::place_details::{self, Ctx};
 use crate::ui::{menu, widgets};
 use crate::world::World;
@@ -39,8 +40,8 @@ const RAIL_W: f32 = 210.0;
 const PREVIEW_W: f32 = 316.0;
 const TOOLBAR_H: f32 = 52.0;
 const FOOTER_H: f32 = 38.0;
-const WIDE_ROW_H: f32 = 54.0;
-const NARROW_ROW_H: f32 = 48.0;
+/// The last visit's column of a wide row.
+const VISIT_W: f32 = 112.0;
 /// FT_TRASH.
 const FOLDER_TRASH: i32 = 14;
 /// DB_INV_ITEM_DESC_STR_LEN - 1: the longest notes a landmark keeps.
@@ -156,45 +157,16 @@ fn section(ui: &egui::Ui, p: &Palette, text: &str, at: Pos2) {
     ui.painter().galley(at, g, p.muted);
 }
 
-/// The picture of a place: its item's thumbnail, else the snapshot of its
-/// parcel once the preview read it, else the mountain of the place profiles.
-fn picture(ui: &egui::Ui, p: &Palette, c: &mut Ctx, tex: Uuid, rect: Rect, icon_size: f32) {
-    let radius = ui.visuals().widgets.inactive.corner_radius;
-    let loaded = (!tex.is_nil())
-        .then(|| {
-            c.wanted_images.insert(tex);
-            c.images.get(&tex)
-        })
-        .flatten();
-    match loaded {
-        Some(t) => {
-            // cover the frame, the middle of the picture kept
-            let [w, h] = t.size();
-            let aspect = w.max(1) as f32 / h.max(1) as f32;
-            let frame = rect.width() / rect.height().max(1.0);
-            let uv = if aspect > frame {
-                let k = frame / aspect;
-                Rect::from_min_max(Pos2::new((1.0 - k) * 0.5, 0.0), Pos2::new((1.0 + k) * 0.5, 1.0))
-            } else {
-                let k = aspect / frame;
-                Rect::from_min_max(Pos2::new(0.0, (1.0 - k) * 0.5), Pos2::new(1.0, (1.0 + k) * 0.5))
-            };
-            egui::Image::from_texture(egui::load::SizedTexture::new(t.id(), rect.size()))
-                .uv(uv)
-                .tint(widgets::PICTURE_TINT)
-                .corner_radius(radius)
-                .paint_at(ui, rect);
-        }
-        None => {
-            ui.painter().rect_filled(rect, radius, p.field);
-            paint_icon(
-                ui.painter(),
-                "mountain-filled",
-                Rect::from_center_size(rect.center(), Vec2::splat(icon_size)),
-                p.muted_dim,
-            );
-        }
+/// The texture of a place's picture (its item's thumbnail, else the snapshot
+/// of its parcel once the preview read it), asked for while not loaded;
+/// `place_card::picture` draws the mountain without one.
+fn texture<'x>(c: &mut Ctx<'x>, tex: Uuid) -> Option<&'x egui::TextureHandle> {
+    if tex.is_nil() {
+        return None;
     }
+    c.wanted_images.insert(tex);
+    let images = c.images;
+    images.get(&tex)
 }
 
 /// The G / M / A badge of a region, when known.
@@ -327,14 +299,10 @@ enum Line {
     Place(Key, Place),
 }
 
-/// What a row answered.
-#[derive(Default)]
+/// What a row answered: the row's own response, and its star's click.
 struct RowOut {
-    clicked: bool,
-    double: bool,
-    secondary: Option<egui::Response>,
+    resp: egui::Response,
     star: bool,
-    drag_started: bool,
 }
 
 impl PlacesUi {
@@ -781,27 +749,14 @@ impl PlacesUi {
             } else {
                 place.thumbnail
             };
-            let out = if wide {
-                wide_row(ui, p, c, place, key, selected, snapshot, draggable)
-            } else {
-                narrow_row(ui, p, c, place, key, selected, snapshot, draggable)
-            };
+            let out = place_row(ui, p, c, place, selected, snapshot, draggable, wide);
             if let Some(fav) = place.favorite.filter(|_| draggable) {
-                rects.push((ui.min_rect().intersect(Rect::EVERYTHING), fav));
-                if let Some(last) = rects.last_mut() {
-                    last.0 = Rect::from_min_max(
-                        Pos2::new(
-                            ui.max_rect().left(),
-                            ui.cursor().top() - if wide { WIDE_ROW_H } else { NARROW_ROW_H } - 1.0,
-                        ),
-                        Pos2::new(ui.max_rect().right(), ui.cursor().top() - 1.0),
-                    );
-                }
-                if out.drag_started {
+                rects.push((out.resp.rect, fav));
+                if out.resp.drag_started() {
                     self.aurora.drag = Some(fav);
                 }
             }
-            if out.clicked {
+            if out.resp.clicked() {
                 if !wide && selected {
                     // a second click folds the row back
                     self.aurora.selected = None;
@@ -809,7 +764,7 @@ impl PlacesUi {
                     self.select(key, place, &world.inventory, history, actions);
                 }
             }
-            if out.double {
+            if out.resp.double_clicked() {
                 self.teleport(place, &world.inventory, history);
             }
             if out.star
@@ -820,12 +775,11 @@ impl PlacesUi {
                 }
                 actions.push(PlacesAction::Edit(change));
             }
-            if let Some(resp) = &out.secondary {
-                menu::context_menu(resp, p, |ui| {
-                    self.select(key, place, &world.inventory, history, actions);
-                    self.place_menu(ui, p, world, key, place, actions);
-                });
-            }
+            // asked every frame: the menu shows as long as it is open
+            menu::context_menu(&out.resp, p, |ui| {
+                self.select(key, place, &world.inventory, history, actions);
+                self.place_menu(ui, p, world, key, place, actions);
+            });
             if !wide && self.aurora.selected == Some(key) {
                 self.narrow_details(ui, c, place, actions);
             }
@@ -1071,7 +1025,7 @@ impl PlacesUi {
             parcel.map(|d| d.snapshot).unwrap_or_default()
         };
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 158.0), Sense::hover());
-        picture(ui, p, c, tex, rect, 40.0);
+        place_card::picture(ui, p, texture(c, tex), rect, 40.0);
         ui.add_space(12.0);
         // name (or its edit) and region
         self.title(ui, p, world, key, &place, width, actions);
@@ -1680,187 +1634,108 @@ fn rail_row(
     resp
 }
 
-/// The face of a row and its star; the row's own response.
-#[allow(clippy::too_many_arguments)]
-fn row_base(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    place: &Place,
-    key: Key,
-    selected: bool,
-    height: f32,
-    draggable: bool,
-) -> (Rect, egui::Response, Rect, RowOut) {
-    let w = ui.available_width();
-    let sense = if draggable { Sense::click_and_drag() } else { Sense::click() };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), sense);
-    let radius = ui.visuals().window_corner_radius;
-    let star_rect = Rect::from_center_size(Pos2::new(rect.right() - 16.0, rect.center().y), Vec2::splat(28.0));
-    let star = place
-        .is_landmark()
-        .then(|| ui.interact(star_rect, egui::Id::new(("places-star", key)), Sense::click()));
-    if selected {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() || star.as_ref().is_some_and(|s| s.hovered()) {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.6));
+/// The favourite star at a row's right end: true when clicked.
+fn star(ui: &mut egui::Ui, p: &Palette, place: &Place) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::click());
+    let fav = place.favorite.is_some();
+    let hot = resp.hovered();
+    if hot {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
     }
-    let mut out = RowOut {
-        clicked: resp.clicked(),
-        double: resp.double_clicked(),
-        drag_started: resp.drag_started(),
-        ..Default::default()
+    let (icon, tint) = if fav {
+        ("star-filled", p.amber)
+    } else {
+        ("star", if hot { p.ink } else { p.muted_dim })
     };
-    if let Some(s) = &star {
-        let fav = place.favorite.is_some();
-        let hot = s.hovered();
-        if hot {
-            ui.painter()
-                .rect_filled(star_rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
-        }
-        let (icon, tint) = if fav {
-            ("star-filled", p.amber)
-        } else {
-            ("star", if hot { p.ink } else { p.muted_dim })
-        };
-        paint_icon(
-            ui.painter(),
-            icon,
-            Rect::from_center_size(star_rect.center(), Vec2::splat(16.0)),
-            tint,
-        );
-        let tip = if fav {
-            aurora_i18n::tr!("ui-places-remove-favorite")
-        } else {
-            aurora_i18n::tr!("ui-places-add-favorite")
-        };
-        if s.clone().on_hover_text(tip).clicked() {
-            out.star = true;
-            out.clicked = false;
-        }
-    }
-    if resp.secondary_clicked() {
-        out.secondary = Some(resp.clone());
-    }
-    // the menu stays attached to the row while it is open
-    let resp = if out.secondary.is_none() { resp } else { resp.clone() };
-    (rect, resp, star_rect, out)
+    paint_icon(ui.painter(), icon, Rect::from_center_size(rect.center(), Vec2::splat(16.0)), tint);
+    let tip = if fav {
+        aurora_i18n::tr!("ui-places-remove-favorite")
+    } else {
+        aurora_i18n::tr!("ui-places-add-favorite")
+    };
+    resp.on_hover_text(tip).clicked()
 }
 
-/// A row of the wide list: picture, name, region, badge, last visit, star.
+/// The G / M / A badge as a widget of a row's right end (room kept while the
+/// rating is not known, so the badges stay in one column).
+fn badge_slot(ui: &mut egui::Ui, p: &Palette, rating: Option<u8>) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+    badge(ui, p, rating, rect);
+}
+
+/// A row of the list on the shared place card: picture, name and second
+/// line, then from the right the mockup's star, (wide) last visit, badge.
 #[allow(clippy::too_many_arguments)]
-fn wide_row(
+fn place_row(
     ui: &mut egui::Ui,
     p: &Palette,
     c: &mut Ctx,
     place: &Place,
-    key: Key,
     selected: bool,
     picture_id: Uuid,
     draggable: bool,
+    wide: bool,
 ) -> RowOut {
-    let (rect, resp, star, mut out) = row_base(ui, p, place, key, selected, WIDE_ROW_H, draggable);
-    let mut x = rect.left() + 6.0;
-    if draggable {
-        paint_icon(
-            ui.painter(),
-            "grip-vertical",
-            Rect::from_center_size(Pos2::new(x + 7.0, rect.center().y), Vec2::splat(14.0)),
-            p.muted_dim,
-        );
-        x += 16.0;
-    }
-    picture(
-        ui,
-        p,
-        c,
-        picture_id,
-        Rect::from_min_size(Pos2::new(x, rect.center().y - 21.0), Vec2::new(72.0, 42.0)),
-        16.0,
-    );
-    x += 72.0 + 12.0;
-    let visit_w = 112.0;
-    let right = star.left() - 4.0;
-    let badge_rect = Rect::from_min_size(Pos2::new(right - visit_w - 12.0 - 16.0, rect.center().y - 8.0), Vec2::splat(16.0));
-    let names_w = (badge_rect.left() - 12.0 - x).max(20.0);
-    let name = line(ui, &place.name, 13.0, p.ink, true, names_w);
-    let mut region = region_line(place);
-    if !place.is_landmark() {
-        region = format!("{region} · {}", aurora_i18n::tr!("ui-places-no-landmark"));
-    }
-    let sub = line(ui, &region, 12.0, p.muted, false, names_w);
-    ui.painter().galley(Pos2::new(x, rect.center().y - 17.0), name, p.ink);
-    ui.painter().galley(Pos2::new(x, rect.center().y + 2.0), sub, p.muted);
-    badge(ui, p, place.rating, badge_rect);
-    if let Some(d) = place.last_visit {
-        let g = line(ui, &model::visit_label(d, now_secs()), 12.0, p.muted, false, visit_w);
-        let w = g.size().x;
-        widgets::paint_row_text(ui.painter(), g, right - w, rect.center().y, p.muted);
-    }
-    let _ = resp.on_hover_cursor(egui::CursorIcon::Default);
-    if out.secondary.is_some() {
-        out.clicked = false;
-    }
-    out
-}
-
-/// A row of the narrow list: picture, name, region and last visit, badge,
-/// star.
-#[allow(clippy::too_many_arguments)]
-fn narrow_row(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    c: &mut Ctx,
-    place: &Place,
-    key: Key,
-    selected: bool,
-    picture_id: Uuid,
-    draggable: bool,
-) -> RowOut {
-    let (rect, _, star, mut out) = row_base(ui, p, place, key, selected, NARROW_ROW_H, draggable);
-    let mut x = rect.left() + 6.0;
-    if draggable {
-        paint_icon(
-            ui.painter(),
-            "grip-vertical",
-            Rect::from_center_size(Pos2::new(x + 6.0, rect.center().y), Vec2::splat(13.0)),
-            p.muted_dim,
-        );
-        x += 14.0;
-    }
-    picture(
-        ui,
-        p,
-        c,
-        picture_id,
-        Rect::from_min_size(Pos2::new(x, rect.center().y - 16.0), Vec2::new(52.0, 32.0)),
-        14.0,
-    );
-    x += 52.0 + 10.0;
-    let right = if place.is_landmark() {
-        star.left() - 4.0
+    let subtitle = if wide {
+        let region = region_line(place);
+        if place.is_landmark() {
+            region
+        } else {
+            format!("{region} · {}", aurora_i18n::tr!("ui-places-no-landmark"))
+        }
     } else {
-        rect.right() - 8.0
+        let region = if place.region.is_empty() {
+            place_details::loading().to_owned()
+        } else {
+            place.region.clone()
+        };
+        match place.last_visit {
+            Some(d) => format!("{region} · {}", model::visit_label(d, now_secs())),
+            None => region,
+        }
     };
-    let badge_rect = Rect::from_min_size(Pos2::new(right - 16.0, rect.center().y - 8.0), Vec2::splat(16.0));
-    let names_w = (badge_rect.left() - 10.0 - x).max(20.0);
-    let name = line(ui, &place.name, 13.0, p.ink, true, names_w);
-    let region = if place.region.is_empty() {
-        place_details::loading().to_owned()
+    let card = place_card::Row {
+        thumb: Thumb::Picture(texture(c, picture_id)),
+        title: &place.name,
+        subtitle: &subtitle,
+        // drawn in `trailing`, between the names and the star
+        rating: None,
+        selected,
+    };
+    let size = if wide { RowSize::PLACES_WIDE } else { RowSize::PLACES_NARROW };
+    let mut starred = false;
+    let trailing = |ui: &mut egui::Ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if place.is_landmark() {
+            starred = star(ui, p, place);
+            ui.add_space(4.0);
+        } else if wide {
+            // the wide list keeps the column of the stars
+            ui.add_space(28.0 + 4.0);
+        }
+        if wide {
+            ui.allocate_ui_with_layout(
+                Vec2::new(VISIT_W, size.height),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    if let Some(d) = place.last_visit {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(model::visit_label(d, now_secs())).size(12.0).color(p.muted)).truncate(),
+                        );
+                    }
+                },
+            );
+            ui.add_space(12.0);
+        }
+        badge_slot(ui, p, place.rating);
+    };
+    let resp = if draggable {
+        place_card::draggable_row(ui, p, size, &card, trailing)
     } else {
-        place.region.clone()
+        place_card::row(ui, p, size, &card, trailing)
     };
-    let sub = match place.last_visit {
-        Some(d) => format!("{region} · {}", model::visit_label(d, now_secs())),
-        None => region,
-    };
-    let sub = line(ui, &sub, 11.5, p.muted, false, names_w);
-    ui.painter().galley(Pos2::new(x, rect.center().y - 15.0), name, p.ink);
-    ui.painter().galley(Pos2::new(x, rect.center().y + 2.0), sub, p.muted);
-    badge(ui, p, place.rating, badge_rect);
-    if out.secondary.is_some() {
-        out.clicked = false;
-    }
-    out
+    RowOut { resp, star: starred }
 }
 
 #[cfg(test)]
