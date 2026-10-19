@@ -483,6 +483,8 @@ pub struct Settings {
     pub mute_groups_without_notices: bool,
     /// FSReportBlockToNearbyChat: say in nearby chat when the block list changes.
     pub report_blocks: bool,
+    /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
+    pub object_im_filter: crate::world::object_im_filter::Settings,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1141,6 +1143,7 @@ impl Default for Settings {
             mute_all_groups: false,
             mute_groups_without_notices: false,
             report_blocks: false,
+            object_im_filter: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             name_tag_distance: 64.0,

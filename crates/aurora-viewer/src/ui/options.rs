@@ -873,7 +873,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
-                            TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat, &mut s.autoresponse.friends_only),
+                            TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat, &mut s.autoresponse.friends_only, &mut s.object_im_filter),
                             TAB_ACCESSIBILITY => accessibility::page(ui, p, s),
                             TAB_AURORA => {
                                 let mut reset = false;

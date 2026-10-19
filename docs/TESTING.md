@@ -2170,6 +2170,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
+| `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
@@ -2557,6 +2558,19 @@ failure. Grid validation and any paid upload are performed by the human.
   `history`. A script menu (`AURORA_DEMO_DIALOG=12`) stays rolled out
   until answered. Hover the cards to see them pause. The history is kept in
   memory in demo; on the grid it is saved per account.
+- **`AURORA_DEMO_OBJECT_IM=off|region|parcel|strict`**: the filter of
+  Preferences › Privacy › "Block object messages from elsewhere", set for
+  this run only (the saved setting is not changed): `off`, on for the
+  region, on for the parcel, or on for the parcel with friends' objects
+  blocked too. Seven object messages reach nearby chat at 60 frames a
+  second, from frame 700 to 880, each saying when it should be hidden:
+  another region's stranger, our own object and a friend's object in
+  another region, a stranger in this region outside the demo parcel (the
+  128 m square around the plaza) and on it, an llRegionSayTo from outside
+  the parcel, and a message with no location. `off` shows all seven,
+  `region` hides the first, `parcel` the first, fourth and sixth,
+  `strict` the friend's too. Each hidden message logs one line
+  `object message from … dropped`. Capture around frame 1000.
 - **`AURORA_DEMO_PRESENCE=<place>`**: the friends' online / offline toasts
   of Aurora's notification center at `top-left`, `top-center`,
   `top-right`, `bottom-left`, `bottom-center` or `bottom-right`, for this
