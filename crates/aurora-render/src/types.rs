@@ -935,6 +935,12 @@ pub struct FrameParams {
     pub selection_scale: f32,
     pub view: Mat4,
     pub proj: Mat4,
+    /// A photo drawn in tiles: the part of it this frame draws, `proj`
+    /// being this times the whole photo's projection (the viewer's
+    /// `snapshot::tile_matrix`); identity otherwise. The sun's cascades
+    /// and their casters are fitted to the whole photo, so that every tile
+    /// reads the shadow maps of one pass.
+    pub photo_tile: Mat4,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,

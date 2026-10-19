@@ -2070,6 +2070,17 @@ fn shadow_anchor(center: Vec3, radius: f32) -> Vec3 {
     (center / radius).floor() * radius
 }
 
+/// The projection of the whole image a frame draws with `proj`: the
+/// photo's when the frame draws one of its tiles (`FrameParams::photo_tile`),
+/// `proj` itself otherwise.
+fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
+    if photo_tile == Mat4::IDENTITY {
+        proj
+    } else {
+        photo_tile.inverse() * proj
+    }
+}
+
 /// Whether this frame uses the receiver bias of before
 /// (`AURORA_SHADOW_BIAS`: 0 the new one, 1 the old one, 2 one second in
 /// two each).
@@ -4109,7 +4120,11 @@ impl Backend {
     fn cascade_matrices(&self, f: &FrameParams) -> ([Mat4; CASCADES], [f32; CASCADES]) {
         let far = f.far.min(f.shadow_distance).max(16.0);
         let splits = [far * 0.08, far * 0.3, far];
-        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+        // the whole photo's proportions when a frame draws one of its tiles
+        // (the render size is the tile's): cascades fitted to a tile, centred
+        // on the view axis and as narrow as the tile, left the receivers of
+        // the tiles off that axis outside them
+        let aspect = (self.config.width as f32 * f.photo_tile.x_axis.x) / (self.config.height.max(1) as f32 * f.photo_tile.y_axis.y);
         let inv_view = f.view.inverse();
         let light_dir = -f.sun_dir.normalize_or(Vec3::Z);
         let mut out = [Mat4::IDENTITY; CASCADES];
@@ -5011,11 +5026,15 @@ impl Backend {
         let shadow_path = self.shadow_path;
         let caster_planes = if f.shadows && shadow_path & crate::shadow_cull::path::TIGHT != 0 {
             let (near, far) = crate::shadow_cull::cascade_reach(splits, shadow_path & crate::shadow_cull::path::PIXEL_SPLITS != 0);
+            // the receivers of the whole photo, which every tile's cascades
+            // cover: the view's volume is centred on its axis, a tile's
+            // frustum is not
+            let proj = whole_proj(f.proj, f.photo_tile);
             crate::shadow_cull::cascade_caster_planes(
                 &crate::shadow_cull::ReceiverView {
                     inv_view: f.view.inverse(),
-                    tan_x: 1.0 / f.proj.x_axis.x.abs().max(1e-6),
-                    tan_y: 1.0 / f.proj.y_axis.y.abs().max(1e-6),
+                    tan_x: 1.0 / proj.x_axis.x.abs().max(1e-6),
+                    tan_y: 1.0 / proj.y_axis.y.abs().max(1e-6),
                     near: f.near,
                 },
                 -f.sun_dir.normalize_or(Vec3::Z),
@@ -6980,6 +6999,20 @@ mod tests {
         assert!((metres(bias) - 2.0 * 2.0 * radius / 2048.0).abs() < 1e-4, "{}", metres(bias));
         // the bias of before was about 0.4 m in the finest cascade
         assert!((metres(0.0005) - 0.406).abs() < 0.01, "{}", metres(0.0005));
+    }
+
+    /// A tile of a photo gets back the projection of the whole photo, the
+    /// one its sun shadows are fitted to; a frame in one pass keeps its own.
+    #[test]
+    fn a_tile_shadows_the_whole_photo() {
+        let photo = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.1);
+        assert_eq!(whole_proj(photo, Mat4::IDENTITY), photo);
+        // the right-hand tile of the middle row of a 3 x 3 grid (snapshot::tile_matrix)
+        let tile = Mat4::from_cols(Vec4::X * 3.0, Vec4::Y * 3.0, Vec4::Z, Vec4::new(-2.0, 0.0, 0.0, 1.0));
+        assert!(whole_proj(tile * photo, tile).abs_diff_eq(photo, 1e-5));
+        // the photo's centre, around which the cascades are laid, is
+        // outside the tile
+        assert!((tile * photo).project_point3(Vec3::new(0.0, 0.0, -10.0)).x < -1.0);
     }
 
     #[test]

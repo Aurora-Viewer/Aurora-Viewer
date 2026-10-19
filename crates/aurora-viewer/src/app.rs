@@ -4800,7 +4800,16 @@ impl App {
     pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
         self.world.social.focus_im = Some(id);
         self.chat_ui.conv_focus_request = true;
-        self.panels.chat = true;
+        self.show_conversations();
+    }
+
+    /// The Conversations window for a conversation the user asked for (Send
+    /// IM, Group chat, Conference, Call from a menu, a profile, People or
+    /// Contacts): opened if closed, expanded if minimized and brought to the
+    /// front (#704), as LLFloater::openFloater does to the container hosting
+    /// the conversation (setMinimized(false), setVisibleAndFrontmost).
+    pub(super) fn show_conversations(&mut self) {
+        ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
     }
 
     /// A letter key started the nearby chat: in the Conversations window
@@ -6673,6 +6682,7 @@ impl App {
             selection_scale: self.egui_ctx.pixels_per_point(),
             view,
             proj,
+            photo_tile,
             camera_pos: self.camera.position,
             near: self.camera.near,
             far: self.settings.draw_distance,
@@ -10688,7 +10698,7 @@ impl App {
                         ui::people::PeopleAction::GroupChat(id) => {
                             self.world.ui_sounds.push(UiSound::StartIm);
                             self.world.start_group_chat(id);
-                            self.panels.chat = true;
+                            self.show_conversations();
                         }
                         ui::people::PeopleAction::GroupNotices(id, on) => self.world.groups.set_accept_notices(id, on),
                         ui::people::PeopleAction::ModifyRights { friend, rights, grant } => {
@@ -11173,7 +11183,7 @@ impl App {
                         }
                         ui::profile::ProfileAction::GroupChat(id) => {
                             self.world.start_group_chat(id);
-                            self.panels.chat = true;
+                            self.show_conversations();
                         }
                         ui::profile::ProfileAction::Save { target, data } => {
                             let cmd = self.world.save_profile(target, data);
