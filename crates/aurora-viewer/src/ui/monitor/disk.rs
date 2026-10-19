@@ -20,6 +20,8 @@ fn folder_name(dir: &str) -> &'static str {
         "anim" => tr!("monitor-http-animations"),
         "objects" => tr!("monitor-folder-objects"),
         "inventory" => tr!("monitor-http-inventory"),
+        "sound" => tr!("monitor-http-sounds"),
+        "settings" => tr!("monitor-http-environments"),
         _ => tr!("monitor-row-other"),
     }
 }
@@ -216,4 +218,14 @@ fn origins(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             );
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_cache_folder_has_a_name() {
+        for d in crate::cache::DIRS {
+            assert_ne!(super::folder_name(d), aurora_i18n::tr!("monitor-row-other"), "{d}");
+        }
+    }
 }
