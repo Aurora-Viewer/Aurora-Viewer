@@ -20,6 +20,12 @@ pub(super) fn show(
     let Some(mut dialog) = st.dialog.take() else {
         return;
     };
+    if let EditDialog::Share(ids, resident) = &dialog {
+        if !share(ctx, p, icons, inv, prefs, facts, st.ui_id, ids, *resident, actions) {
+            st.dialog = Some(dialog);
+        }
+        return;
+    }
     let mut open = true;
     let mut done = false;
     let title = match &dialog {
@@ -171,25 +177,8 @@ pub(super) fn show(
                     }
                 });
             }
-            EditDialog::Share(ids, resident) => {
-                ui.label(aurora_i18n::tr!(
-                    "ui-inventory-dialogs-send-item-s-to-resident",
-                    value0 = format!("{}", ids.len()),
-                    value1 = format!("{}", resident)
-                ));
-                if ids.iter().any(|id| {
-                    rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok_and(|bucket| rules::offer_has_no_copy(inv, &bucket))
-                }) {
-                    ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-dialogs-no-copy-items-will-leave-your-inventory")).color(p.warn));
-                }
-                if flat_button(ui, p, aurora_i18n::tr!("common-share")).clicked() {
-                    actions.push(InvAction::Share {
-                        items: ids.clone(),
-                        resident: *resident,
-                    });
-                    done = true;
-                }
-            }
+            // a modal of its own (`share`)
+            EditDialog::Share(..) => done = true,
             EditDialog::ReplaceLinks(old, selected) => {
                 if st.fetch_all {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-all-folders-before-replacing"));
@@ -391,6 +380,138 @@ pub(super) fn show(
     if open && !done {
         st.dialog = Some(dialog);
     }
+}
+
+/// Entries listed by the give confirmation; the rest are counted.
+const SHARE_SHOWN: usize = 5;
+
+/// The confirmation of a give, from an inventory window or a drop on a
+/// conversation (ShareItemsConfirmation, LLToolDragAndDrop's
+/// show_object_sharing_confirmation and LLAvatarActions::shareWithAvatars,
+/// indra/newview): to whom, then what, the entries that cannot be copied
+/// marked as they leave the inventory (CannotCopyWarning), then Cancel /
+/// Give. Enter gives; Escape or a click beside it cancels. True once
+/// answered.
+#[allow(clippy::too_many_arguments)]
+fn share(
+    ctx: &egui::Context,
+    p: &Palette,
+    icons: &Icons,
+    inv: &Inventory,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    ui_id: Uuid,
+    ids: &[Uuid],
+    resident: Uuid,
+    actions: &mut Vec<InvAction>,
+) -> bool {
+    let name = facts.names.get(&resident).map_or("…", String::as_str);
+    let rows: Vec<(&str, String, bool)> = ids
+        .iter()
+        .map(|id| {
+            let icon = inv.items.get(id).map_or_else(
+                || super::tree::folder_icon(inv.folders.get(id).map_or(-1, |f| f.info.type_default), false),
+                |it| item_icon(it.asset_type, it.inv_type, it.flags),
+            );
+            let no_copy = rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok_and(|bucket| rules::offer_has_no_copy(inv, &bucket));
+            (icon, rules::name(inv, *id).to_string(), no_copy)
+        })
+        .collect();
+    let no_copy = rows.iter().filter(|(_, _, no_copy)| *no_copy).count();
+    let mut give = false;
+    let mut cancel = false;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::new(("inventory_share", ui_id))).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::hover());
+            crate::ui::widgets::avatar_disc(ui, p, rect, None, name, false);
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-inventory-dialogs-give-to"))
+                        .size(12.0)
+                        .color(p.muted),
+                );
+                ui.add(egui::Label::new(RichText::new(name).size(15.0).strong().color(p.ink)).truncate());
+            });
+        });
+        ui.add_space(10.0);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let tag = aurora_i18n::tr!("ui-inventory-dialogs-no-copy");
+        let tag_font = egui::FontId::proportional(11.5);
+        let tag_w = ui
+            .fonts_mut(|f| f.layout_no_wrap(tag.to_owned(), tag_font.clone(), p.warn))
+            .size()
+            .x
+            + 10.0;
+        for (icon, label, no_copy) in rows.iter().take(SHARE_SHOWN) {
+            ui.horizontal(|ui| {
+                super::tree::icon(ui, icons, icon, p, Some(p.muted));
+                let room = ui.available_width() - if *no_copy { tag_w } else { 0.0 };
+                ui.allocate_ui(Vec2::new(room.max(40.0), 18.0), |ui| {
+                    ui.add(egui::Label::new(RichText::new(label).color(p.ink)).truncate());
+                });
+                if *no_copy {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(tag).font(tag_font.clone()).color(p.warn));
+                    });
+                }
+            });
+        }
+        if rows.len() > SHARE_SHOWN {
+            let more = rows.len() - SHARE_SHOWN;
+            ui.label(
+                RichText::new(aurora_i18n::tr!(
+                    "ui-inventory-dialogs-and-more",
+                    count = more,
+                    number = aurora_i18n::integer(more as i64)
+                ))
+                .size(12.0)
+                .color(p.muted),
+            );
+        }
+        if no_copy > 0 {
+            ui.add_space(4.0);
+            egui::Frame::new()
+                .fill(p.warn.gamma_multiply(0.12))
+                .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal_top(|ui| {
+                        crate::ui::widgets::glyph(ui, "alert-triangle-filled", p.warn, 15.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(aurora_i18n::tr!(
+                                    "ui-inventory-dialogs-no-copy-will-leave",
+                                    count = no_copy,
+                                    number = aurora_i18n::integer(no_copy as i64)
+                                ))
+                                .size(12.0)
+                                .color(p.warn),
+                            )
+                            .wrap(),
+                        );
+                    });
+                });
+        }
+        ui.add_space(14.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let primary =
+                crate::ui::widgets::primary_button_sized(ui, p, aurora_i18n::tr!("ui-inventory-dialogs-give"), Vec2::new(96.0, 28.0));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("inventory_share_give", ui_id)), primary.rect));
+            give = primary.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+            cancel = crate::ui::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked();
+        });
+    });
+    if give {
+        actions.push(InvAction::Share {
+            items: ids.to_vec(),
+            resident,
+        });
+    }
+    give || cancel || modal.should_close()
 }
 
 fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool) -> bool {
@@ -1794,5 +1915,121 @@ mod tests {
                 .iter()
                 .any(|s| matches!(&s.shape, egui::epaint::Shape::Text(t) if t.galley.text() == "Fermer / Annuler"))
         );
+    }
+
+    /// The give confirmation (#627): the resident by name, the entries with
+    /// the one that cannot be copied marked and counted, Give gives, Escape
+    /// gives nothing.
+    #[test]
+    fn the_give_confirmation_names_the_resident_and_marks_no_copy_entries() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let agent = Uuid::from_u128(2);
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, agent);
+        let resident = Uuid::from_u128(77);
+        let worn = HashSet::new();
+        let mut ids: Vec<Uuid> = inv
+            .items
+            .values()
+            .filter(|it| it.owner_mask & rules::COPY != 0 && rules::offer(&inv, it.id, &HashSet::new(), &worn).is_ok())
+            .map(|it| it.id)
+            .collect();
+        ids.sort();
+        ids.truncate(2);
+        assert_eq!(ids.len(), 2, "two givable demo items");
+        inv.items.get_mut(&ids[1]).expect("item").owner_mask &= !rules::COPY;
+        let mut facts = Facts {
+            agent,
+            ..Default::default()
+        };
+        facts.names.insert(resident, "Nova Exemple".into());
+        let frame = |st: &mut InventoryUi, events: Vec<egui::Event>| {
+            let mut actions = Vec::new();
+            let output = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0))),
+                    events,
+                    ..Default::default()
+                },
+                |_ui| {
+                    show(
+                        &ctx,
+                        &p,
+                        &Icons::default(),
+                        &inv,
+                        st,
+                        &InventoryPreferences::default(),
+                        &facts,
+                        &Default::default(),
+                        &mut actions,
+                    )
+                },
+            ));
+            let texts: Vec<String> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::epaint::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                    _ => None,
+                })
+                .collect();
+            (texts, actions)
+        };
+        let mut st = InventoryUi {
+            dialog: Some(EditDialog::Share(ids.clone(), resident)),
+            ..Default::default()
+        };
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            texts = frame(&mut st, Vec::new()).0;
+        }
+        let shown = |s: &str| texts.iter().any(|t| t == s);
+        assert!(shown("Nova Exemple"), "the resident by name: {texts:?}");
+        assert!(!texts.iter().any(|t| t.contains(&resident.to_string())), "never the resident's id");
+        for id in &ids {
+            assert!(shown(&rules::name(&inv, *id)), "each entry listed");
+        }
+        assert!(shown(aurora_i18n::tr!("ui-inventory-dialogs-no-copy")), "the no-copy entry marked");
+        assert!(shown(&aurora_i18n::tr!(
+            "ui-inventory-dialogs-no-copy-will-leave",
+            count = 1usize,
+            number = "1"
+        )));
+        // Give
+        let give = ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_share_give", st.ui_id))))
+            .expect("give button")
+            .center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos: give,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&mut st, vec![egui::Event::PointerMoved(give), button(true)]);
+        let (_, actions) = frame(&mut st, vec![button(false)]);
+        assert!(
+            matches!(&actions[..], [InvAction::Share { items, resident: to }] if *items == ids && *to == resident),
+            "Give gives"
+        );
+        assert!(st.dialog.is_none());
+        // Escape
+        st.dialog = Some(EditDialog::Share(ids.clone(), resident));
+        for _ in 0..3 {
+            frame(&mut st, Vec::new());
+        }
+        let (_, actions) = frame(
+            &mut st,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+        );
+        frame(&mut st, Vec::new());
+        assert!(actions.is_empty() && st.dialog.is_none(), "Escape gives nothing");
     }
 }

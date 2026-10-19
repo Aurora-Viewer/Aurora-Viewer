@@ -2126,7 +2126,12 @@ ui-options-send-the-text-below-to-blocked-people-their-im = Send the text below 
 ui-options-send-the-text-below-when-i-am-away = Send the text below when I am away
 ui-context-send-im = Send IM
 ui-contacts-send-im = Send IM...
-ui-inventory-dialogs-send-item-s-to-resident = { "Send " }{ $value0 }{ " item(s) to resident " }{ $value1 }?
+ui-inventory-dialogs-give-to = Give to
+ui-inventory-dialogs-give = Give
+ui-inventory-dialogs-and-more = { $count ->
+    [one] and { $number } more
+   *[other] and { $number } more
+}
 ui-perf-sent-to-simulator-udp = Sent to simulator (UDP)
 ui-media-error = Error
 voice-voice-error = { "Voice error: " }{ $e }
@@ -2774,7 +2779,11 @@ ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically 
 build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Reflection probes can only be selected when Select reflection probes is checked.
 ui-options-camera-firestorm-views-camera-presets = Legacy Viewer views (Camera > Presets)
 ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Loading and teleport screens show your last view, blurred (captured while teleporting or quitting)
-ui-inventory-dialogs-no-copy-items-will-leave-your-inventory = No-copy items will leave your inventory.
+ui-inventory-dialogs-no-copy = no copy
+ui-inventory-dialogs-no-copy-will-leave = { $count ->
+    [one] { $number } no-copy item will leave your inventory.
+   *[other] { $number } no-copy items will leave your inventory.
+}
 ui-inventory-dialogs-items-will-be-moved-to-trash = Items will be moved to trash.
 ui-environment-sunrise = Sunrise
 ui-bars-sunrise = Sunrise

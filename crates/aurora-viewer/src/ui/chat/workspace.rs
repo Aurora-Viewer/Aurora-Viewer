@@ -469,7 +469,7 @@ fn give_demo() -> Option<&'static str> {
         (std::env::var("AURORA_DEMO").as_deref() == Ok("1"))
             .then(|| std::env::var("AURORA_DEMO_CONV_GIVE").ok())
             .flatten()
-            .filter(|mode| matches!(mode.as_str(), "away" | "over" | "many"))
+            .filter(|mode| matches!(mode.as_str(), "away" | "over" | "many" | "drop"))
     })
     .as_deref()
 }
@@ -478,19 +478,27 @@ fn give_demo_id() -> egui::Id {
     egui::Id::new("conversation_give_demo")
 }
 
-/// From frame 700, inventory carried and never released: the pointer left
-/// outside the window (`away`), or on the conversation with one entry
-/// (`over`) or three (`many`). No button is pressed: the payload alone
-/// lasts until a release.
+/// The entries `drop` gives: seven of `AURORA_DEMO_INVENTORY`'s, its no-copy
+/// object among them (world/inventory/demo.rs).
+const GIVE_DEMO_ITEMS: [u128; 7] = [8100, 8103, 8109, 8111, 8104, 8105, 8106];
+
+/// From frame 700, inventory carried: the pointer left outside the window
+/// (`away`), or on the conversation with one entry (`over`) or three
+/// (`many`), never released; `drop` releases seven entries of the demo
+/// inventory on it at frame 720, which opens the give confirmation. No
+/// button is pressed: the payload alone lasts until a release.
 pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Some(mode) = give_demo().filter(|_| frame >= 700) else {
         return Vec::new();
     };
     if frame == 700 {
-        let n = if mode == "many" { 3 } else { 1 };
-        let ids = (1..=n)
-            .map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k))
-            .collect();
+        let ids = match mode {
+            "drop" => GIVE_DEMO_ITEMS.iter().map(|&n| Uuid::from_u128(n)).collect(),
+            "many" => (1..=3)
+                .map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k))
+                .collect(),
+            _ => vec![Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0001)],
+        };
         crate::ui::inventory::drag::demo_carry(ctx, ids);
     }
     let pane = ctx.data(|d| d.get_temp::<egui::Rect>(give_demo_id()));
@@ -498,7 +506,19 @@ pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Eve
         ("away", _) | (_, None) => egui::pos2(4.0, 4.0),
         (_, Some(pane)) => pane.center(),
     };
-    vec![egui::Event::PointerMoved(pos)]
+    let mut events = vec![egui::Event::PointerMoved(pos)];
+    if mode == "drop" && frame == 720 {
+        events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        });
+    }
+    if mode == "drop" && frame > 720 {
+        return Vec::new();
+    }
+    events
 }
 
 /// The conversation shown is in sight: its "New" line (`NewLines`).
