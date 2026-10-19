@@ -661,7 +661,7 @@ Suggested order (1, 2, 5, 7, 8, 10, 11, 13 and 15 are done): 17 and 19, then the
 - 🟡 pelvis_offset of meshes (scale locking done): the offset of the rigged mesh is applied (`scene/joint_overrides.rs`, `pelvis_fixup`, #564), to verify on the grid with a mesh body that sets one
 - 🟡 Morphs of the system body (deformation of the vertices of the base SL body): done with "Classic avatars" above (`scene/morph.rs`), to verify on Agni with that line.
 - 🟡 Position keys of animations on all the bones (Bento: face, fingers), not only the pelvis
-- ⬜ Facial expressions and hand poses of animations, like LLEmote / LLHandMotion: `emote_name` and `hand_pose` of the animation header are read then dropped (`scene/anim.rs`), so the Express_* and Hands_* morphs of the system avatar never play; body noise and breathing (LLBodyNoiseMotion, LLBreatheMotionRot) too
+- 🔧 Facial expressions and hand poses of animations ([#661](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/661)), like LLEmote / LLHandMotion: `emote_name` and `hand_pose` of the animation header are read then dropped (`scene/anim.rs`), so the Express_* and Hands_* morphs of the system avatar never play; body noise and breathing (LLBodyNoiseMotion, LLBreatheMotionRot) too
 - 🟡 Legacy specular like materialF.glsl (normalised Blinn-Phong, shininess = exponent × alpha of the normal map, environment = intensity × alpha of the specular map); without a specular map: TE shininess (shiny 0 / 0.25 / 0.5 / 0.75)
 - 🟡 Point lights like LL: attenuation 2·(1−x)², intensity ×3.25, radius ×1.5 and falloff ×0.5 in deferred (pipeline.cpp)
 - 🟡 AMD CAS sharpening ("Sharpness" setting, 0.4 by default like Firestorm)

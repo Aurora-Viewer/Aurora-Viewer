@@ -500,20 +500,24 @@ impl Scene {
                 moved.push(base + lo..base + hi);
             }
         }
-        if !self.lips.uploaded {
-            renderer.set_palette_range(&self.palettes, 0..self.lips.matrices.len());
-            self.lips.uploaded = true;
+        if !self.live_morphs.uploaded {
+            renderer.set_palette_range(&self.palettes, 0..self.live_morphs.matrices.len());
+            self.live_morphs.uploaded = true;
         }
         let mut driven = Vec::new();
         for (id, slot) in &self.palette_slots {
-            let index = *slot as usize * PALETTE_JOINTS + super::lipsync::WEIGHTS;
+            let index = *slot as usize * PALETTE_JOINTS + super::live_morphs::WEIGHTS;
             self.physics_driven(id, &mut driven);
-            let weights = self.lips.weights(id, now, &driven);
-            if let Some(previous) = self.palettes.get_mut(index)
+            if let Some(motions) = self.motions.get(id) {
+                driven.extend_from_slice(motions.live_morphs());
+            }
+            let weights = self.live_morphs.weights(id, now, &driven);
+            let range = index..index + weights.len();
+            if let Some(previous) = self.palettes.get_mut(range.clone())
                 && *previous != weights
             {
-                *previous = weights;
-                moved.push(index..index + 1);
+                previous.copy_from_slice(&weights);
+                moved.push(range);
             }
         }
         renderer.set_palette_slots(&self.palettes, &posed, PALETTE_JOINTS);

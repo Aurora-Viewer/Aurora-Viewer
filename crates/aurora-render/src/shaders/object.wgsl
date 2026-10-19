@@ -13,18 +13,32 @@ struct VsIn {
     @builtin(vertex_index) vertex: u32,
 };
 
-// Live morphs of the system avatar body (lip sync, body physics) share one
-// static delta bank in the palette buffer: per vertex, a matrix of the
-// position deltas of up to four morphs, then one of their normal deltas.
-// anim.xyz holds the geometry's first vertex, the bank's first matrix and the
-// vertex count; anim.w the row of the skeleton's weight matrix to use.
+// Live morphs of the system avatar body (lip sync, body physics, facial
+// expressions, hand poses) share one static, sparse delta bank in the
+// palette buffer, read as vectors: per vertex of a part, (first entry,
+// entry count); per entry, (position delta, weight column) then (normal
+// delta, 0). A vertex no live morph moves costs one read. anim.xyz holds the
+// geometry's first vertex, the vector of its first vertex in the bank and
+// the vertex count; the weights are the skeleton's (LIVE_MORPH_WEIGHTS).
+fn palette_vector(i: u32) -> vec4<f32> { return palettes[i >> 2u][i & 3u]; }
+
 fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
     var result = mat2x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0));
     if ((rec.flags.x & FLAG_LIP_SYNC) != 0u && in.vertex >= rec.anim.x && in.vertex - rec.anim.x < rec.anim.z) {
-        let at = rec.anim.y + 2u * (in.vertex - rec.anim.x);
-        let weights = palettes[rec.flags.y + 208u][rec.anim.w & 3u];
-        result[0] = (palettes[at] * weights).xyz;
-        result[1] = (palettes[at + 1u] * weights).xyz;
+        let head = palette_vector(rec.anim.y + in.vertex - rec.anim.x);
+        let first = u32(head.x);
+        // (a bound on the bank's own data: no part has more live morphs)
+        let count = min(u32(head.y), 64u);
+        let weights = rec.flags.y + LIVE_MORPH_WEIGHTS;
+        for (var i = 0u; i < count; i++) {
+            let delta = palette_vector(first + 2u * i);
+            let k = u32(delta.w);
+            let w = palettes[weights + (k >> 4u)][(k >> 2u) & 3u][k & 3u];
+            if (w != 0.0) {
+                result[0] += delta.xyz * w;
+                result[1] += palette_vector(first + 2u * i + 1u).xyz * w;
+            }
+        }
     }
     return result;
 }

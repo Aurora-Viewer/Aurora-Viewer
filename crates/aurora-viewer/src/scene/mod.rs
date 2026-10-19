@@ -10,6 +10,7 @@ pub mod banlines;
 pub mod blend_order;
 pub mod body_physics;
 pub mod complexity;
+pub(crate) mod default_motions;
 pub mod drawn;
 pub mod fetch_priority;
 mod flexible;
@@ -22,7 +23,7 @@ pub mod jobs;
 pub(crate) mod joint_overrides;
 pub mod legacy_mat;
 pub mod lights;
-pub(crate) mod lipsync;
+pub(crate) mod live_morphs;
 mod list_index;
 pub mod loading;
 mod lod_watch;
@@ -829,7 +830,7 @@ pub struct Scene {
     palette_free: Vec<u32>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
-    pub lips: lipsync::LipSync,
+    pub live_morphs: live_morphs::LiveMorphs,
     /// Avatar body physics: which avatars move, and their motions.
     pub body_physics: body_physics::Config,
     physics_rig: Option<Arc<body_physics::PhysicsRig>>,
@@ -1120,8 +1121,13 @@ impl Scene {
     pub fn new(cache_dir: std::path::PathBuf, avatar_lib: Arc<AvatarLibrary>) -> Scene {
         let (jobs, job_rx) = Jobs::new();
         let cache_dir_anim = cache_dir.clone();
-        let live: Vec<i32> = body_physics::driven_ids().collect();
-        let lips = lipsync::LipSync::new(&avatar_lib, &live);
+        let live: Vec<i32> = body_physics::driven_ids()
+            .chain(default_motions::emote_params())
+            .chain(default_motions::HAND_PARAMS[1..].iter().copied())
+            .collect();
+        let lips = live_morphs::LiveMorphs::new(&avatar_lib, &live);
+        let mut anims = anim::AnimStreamer::new(cache_dir_anim.clone());
+        default_motions::register(&mut anims, &avatar_lib.rig);
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
             jobs,
@@ -1224,13 +1230,13 @@ impl Scene {
             sounds: sounds::SoundManager::new(cache_dir_anim.clone()),
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
-            anims: anim::AnimStreamer::new(cache_dir_anim),
+            anims,
             object_signals: HashMap::new(),
             palette_slots: HashMap::new(),
             palette_free: Vec::new(),
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
-            lips,
+            live_morphs: lips,
             body_physics: body_physics::Config::default(),
             physics_rig,
             physics: HashMap::new(),
@@ -1744,8 +1750,8 @@ impl Scene {
         self.palette_slots.clear();
         self.motions.clear();
         self.palette_free.clear();
-        self.palette_count = self.lips.slots;
-        self.lips.uploaded = false;
+        self.palette_count = self.live_morphs.slots;
+        self.live_morphs.uploaded = false;
     }
 
     /// What is at a picked world point: an avatar (capsule test) or the most
@@ -3340,9 +3346,9 @@ impl Scene {
                     flags: [flags::SKINNED, palette, system_binds, 0],
                     ..Default::default()
                 };
-                if let Some((base, count, row)) = self.lips.parts.get(pi).copied().flatten() {
+                if let Some((base, count)) = self.live_morphs.parts.get(pi).copied().flatten() {
                     rec.flags[0] |= flags::LIP_SYNC;
-                    rec.anim = [alloc.vertex_offset, base, count, row];
+                    rec.anim = [alloc.vertex_offset, base, count, 0];
                 }
                 let mut slot = aurora_render::textures::WHITE;
                 if jelly {
@@ -4292,6 +4298,7 @@ impl Scene {
                 }
             });
             motions.control = control;
+            motions.sitting = !control && world.objects.get(idx).is_some_and(|o| o.parent_id != 0);
             let preview = if owner == world.agent_id {
                 world.animation_preview_clock
             } else {
@@ -4642,7 +4649,7 @@ impl Scene {
     }
 
     /// The weights of the body physics' driven parameters of an avatar at
-    /// its last pose (the system body's live morphs, lipsync.rs).
+    /// its last pose (the system body's live morphs, live_morphs.rs).
     fn physics_driven(&self, id: &Uuid, out: &mut Vec<(i32, f32)>) {
         out.clear();
         if let (Some(state), Some(params), Some(rig)) = (

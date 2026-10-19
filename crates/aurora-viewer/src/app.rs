@@ -9834,7 +9834,7 @@ impl App {
                 self.world.calls.voice_peers.clear();
                 self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
                 let audio = &self.settings.audio;
-                self.scene.lips.set_levels(
+                self.scene.live_morphs.set_levels(
                     &voice_levels,
                     audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
                     Instant::now(),
