@@ -67,6 +67,8 @@ const INDIRECT_EXTRA_BLUR: u32 = 4;
 /// history is clipped to, in standard deviations.
 const TEMPORAL_MIN_WEIGHT: f32 = 0.1;
 const TEMPORAL_CLIP: f32 = 1.25;
+/// Times more slices on a frame that accumulates without a history.
+const NO_HISTORY_SLICES: u32 = 4;
 /// Frames the noise goes through before it repeats (XeGTAO's 64).
 const NOISE_FRAMES: u64 = 64;
 
@@ -373,6 +375,9 @@ fn uniforms(
         Some((index, history)) => ((index % NOISE_FRAMES) as f32, history),
         None => (0.0, false),
     };
+    // a frame that accumulates without a history (a photo, its tiles, new
+    // targets) would show the grain the history takes out: it samples more
+    let slices = if temporal.is_some() && !history { NO_HISTORY_SLICES } else { 1 };
     GtaoU {
         // scales and off-centre terms (a photo tile's projection has them)
         proj: [proj.x_axis.x, proj.y_axis.y, proj.z_axis.x, proj.z_axis.y],
@@ -380,7 +385,7 @@ fn uniforms(
         depth: [proj.w_axis.z, proj.z_axis.z, size.0 as f32, size.1 as f32],
         radius: [EFFECT_RADIUS, FALLOFF_RANGE, SAMPLE_DISTRIBUTION_POWER, THIN_OCCLUDER_COMPENSATION],
         quality: [FINAL_VALUE_POWER, DEPTH_MIP_SAMPLING_OFFSET, q.slices as f32, q.steps as f32],
-        misc: [DENOISE_BLUR_BETA, if q.half_res { 2.0 } else { 1.0 }, 0.0, 0.0],
+        misc: [DENOISE_BLUR_BETA, if q.half_res { 2.0 } else { 1.0 }, (q.slices * slices) as f32, 0.0],
         reproj: reproj.to_cols_array_2d(),
         il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
         temporal: [
@@ -983,6 +988,12 @@ mod tests {
         assert_eq!(u(None)[..2], [0.0, 1.0]);
         assert_eq!(u(Some((3, true)))[..2], [3.0, 0.0]);
         assert_eq!(u(Some((NOISE_FRAMES + 5, false)))[..2], [5.0, 1.0]);
+        // without a history the frame samples more slices; without the
+        // accumulation, as before
+        let slices = |t| uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), t).misc[2];
+        assert_eq!(slices(None), 3.0);
+        assert_eq!(slices(Some((3, true))), 3.0);
+        assert_eq!(slices(Some((3, false))), 3.0 * NO_HISTORY_SLICES as f32);
     }
 
     #[test]

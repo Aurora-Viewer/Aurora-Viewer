@@ -79,7 +79,8 @@ struct GtaoParams {
     // final value power, depth MIP sampling offset, slices, steps per slice
     quality: vec4<f32>,
     // denoise blur beta, full-resolution pixels per occlusion pixel (1 or
-    // 2), unused, unused
+    // 2), slices of `main` (`quality.z`, or more where the accumulation has
+    // no history), unused
     misc: vec4<f32>,
     // screen-space indirect light (main_bitmask): this frame's view space
     // (z in front) to the clip space of the previous frame, whose lit
@@ -372,7 +373,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let falloff_from = effect_radius * (1.0 - g.radius.y);
     let falloff_mul = -1.0 / falloff_range;
     let falloff_add = falloff_from / falloff_range + 1.0;
-    let slice_count = g.quality.z;
+    // (more on a frame without history: a photo, new targets)
+    let slice_count = g.misc.z;
     let steps_per_slice = g.quality.w;
 
     let noise = pixel_noise(id.xy, u32(g.temporal.x));
