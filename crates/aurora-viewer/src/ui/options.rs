@@ -2465,6 +2465,31 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-last-name-for-recent-accounts"),
                     |ui| toggle(ui, p, &mut s.trim_resident),
                 );
+                // Legacy Viewer › General: GroupTitlesTagMode, RenderHideGroupTitle
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-group-titles"),
+                    aurora_i18n::tr!("ui-options-group-titles-help"),
+                    |ui| {
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("group-titles")
+                            .selected_text(s.group_titles.label())
+                            .show_ui(ui, |ui| {
+                                for mode in crate::world::names::GroupTitles::ALL {
+                                    changed |= ui.selectable_value(&mut s.group_titles, mode, mode.label()).changed();
+                                }
+                            });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-hide-own-group-title"),
+                    aurora_i18n::tr!("ui-options-hide-own-group-title-help"),
+                    |ui| toggle(ui, p, &mut s.hide_own_group_title),
+                );
             });
             group(ui, p, aurora_i18n::tr!("extra-skin"), |ui| {
                 ui.label(

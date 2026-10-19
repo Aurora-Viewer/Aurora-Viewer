@@ -733,6 +733,10 @@ pub struct Settings {
     /// (FSShowDisplayNameUpdateNotification, on).
     pub use_display_names: bool,
     pub show_usernames: bool,
+    /// Which group titles the name tags show (GroupTitlesTagMode, all).
+    pub group_titles: crate::world::names::GroupTitles,
+    /// Hide our own group title from everyone (RenderHideGroupTitle, off).
+    pub hide_own_group_title: bool,
     pub legacy_username_format: bool,
     pub trim_resident: bool,
     pub display_name_notices: bool,
@@ -1259,6 +1263,8 @@ impl Default for Settings {
             tag_complexity_own: false,
             use_display_names: true,
             show_usernames: true,
+            group_titles: Default::default(),
+            hide_own_group_title: false,
             legacy_username_format: true,
             trim_resident: true,
             display_name_notices: true,

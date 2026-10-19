@@ -124,6 +124,9 @@ pub fn takes_ground_double_click(p: Press) -> bool {
 
 /// AU_FLAGS_CLIENT_AUTOPILOT of `AgentUpdate` (send_agent_update).
 pub const AU_FLAGS_CLIENT_AUTOPILOT: u8 = 0x02;
+/// AU_FLAGS_HIDETITLE: the simulator hides our group title from everyone
+/// (RenderHideGroupTitle).
+pub const AU_FLAGS_HIDETITLE: u8 = 0x01;
 
 /// How long the destination stays marked (the HUD blob of
 /// walkToClickedLocation lasts 3 s).

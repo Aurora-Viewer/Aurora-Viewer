@@ -406,6 +406,8 @@ pub struct World {
     /// The instant messages kept while offline were asked for (once per
     /// login).
     offline_im_requested: bool,
+    /// Which group titles the name tags show (from the settings).
+    pub group_titles: names::GroupTitles,
     /// The account's list of open private conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -582,6 +584,7 @@ impl World {
             profiles: profiles::Profiles::default(),
             arrived_once: false,
             offline_im_requested: false,
+            group_titles: Default::default(),
             open_ims_path: None,
             reopen_ims: Vec::new(),
             cache_dir: None,

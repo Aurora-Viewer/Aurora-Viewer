@@ -64,6 +64,7 @@ sections! {
         confirm_payments, payment_confirm_threshold,
         name_tag_distance, show_own_name_tag, show_friend_name_tags, show_other_name_tags,
         temporary_name_tags, name_tag_show_seconds, use_display_names, show_usernames, legacy_username_format, trim_resident,
+        group_titles, hide_own_group_title,
         display_name_notices, tag_complexity, tag_complexity_too_complex_only, tag_complexity_own,
         inventory.sort, inventory.show_library, inventory.show_recent, inventory.show_worn,
         inventory.show_favorites, inventory.search_trash, inventory.search_library, inventory.search_outfits,
