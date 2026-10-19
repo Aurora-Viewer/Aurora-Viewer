@@ -12324,6 +12324,8 @@ impl ApplicationHandler for App {
                         | "aurora-medium"
                         | "aurora-wide"
                         | "aurora-rights"
+                        | "aurora-folder-window"
+                        | "aurora-folder-window-wide"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -12352,6 +12354,13 @@ impl ApplicationHandler for App {
                         }
                         if view == "aurora-rights" {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
+                        }
+                        if view.starts_with("aurora-folder-window") {
+                            // the right-click tests in a window of their own
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            if let Some(window) = self.inventory_ui.windows.last_mut() {
+                                window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
+                            }
                         }
                     }
                     if view == "recent" {

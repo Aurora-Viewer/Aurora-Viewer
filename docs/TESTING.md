@@ -3786,6 +3786,12 @@ offline; the files and snapshots uploaded in demo stay offline.
   next owner switches) and the status bar. Hover an object or clothing row
   for Wear / Take off (and More at the wide width); widen the narrow
   window with the title bar button.
+- `aurora-folder-window`, `aurora-folder-window-wide`: the same, with the
+  right-click tests opened in a folder window ("Show in a new window") beside
+  the narrow main window, narrow (420 px) or wide (1180 px). No tabs; the
+  column holds the folder itself and its subfolders only (no shortcuts, no
+  Trash); the explorer and the breadcrumb stop at the folder; a search stays
+  inside it.
 - `permissions`: expanded inventory with the approved additive next-owner
   indicators enabled. Combine with `AURORA_DEMO_BUILD=contents-ready,object:118`
   and `AURORA_DEMO_BUILD_TAB=contents+next-owner` to inspect both windows.
