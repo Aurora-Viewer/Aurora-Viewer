@@ -628,15 +628,24 @@ and metering; preferences apply live without running DSP on the UI thread.
 `ui/options/audio.rs` owns Sound and voice preferences and the shared ear/noise
 controls in the microphone popup. `AudioSettings` persists the processing,
 camera/avatar listening and visualizer options with the Legacy Viewer defaults.
-`scene/lipsync.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble curves
-and holds the system body's other live morphs, the body physics' driven
-parameters (`scene/body_physics.rs`). Static deltas are shared in a reserved
-prefix of the GPU palette buffer, two matrices per vertex (position and
-normal deltas of up to four morphs); the extra matrix after each skeleton's
-anchors stores one row of four live weights per body part. Object, shadow and
-picking vertex passes apply the deltas before skinning, including
-shape-morphed system parts, without rebuilding meshes per speech or physics
-frame.
+`scene/live_morphs.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble
+curves and holds the system body's other live morphs: the body physics' driven
+parameters (`scene/body_physics.rs`), the facial expressions and the hand
+poses (`scene/default_motions.rs`). Static deltas are shared, sparse, in a
+reserved prefix of the GPU palette buffer: per vertex of a part, where its
+entries start and how many there are; per entry, the position delta and
+weight column of one morph, then its normal delta. The three matrices after
+each skeleton's anchors hold one weight per live parameter (48 columns).
+Object, shadow and picking vertex passes apply the deltas before skinning,
+including shape-morphed system parts, without rebuilding meshes per speech,
+expression or physics frame.
+`scene/default_motions.rs` ports LLEmote, LLHandMotion, LLBodyNoiseMotion and
+LLBreatheMotionRot: the expressions are built-in motions without joints
+(registered in the animation streamer, never fetched), started by the
+simulator or by the `emote_name` of an animation's header (`anim::Controller::sync`);
+the hand pose is the `hand_pose` of the strongest animation, blended in
+0.2 s; breathing and body noise are joint states of the controller's
+default motions, the noise blended additively.
 
 The voice indicators of the classic name tags are drawn by
 `ui/voice_tag.rs` (the name plates have their own outline and halo,

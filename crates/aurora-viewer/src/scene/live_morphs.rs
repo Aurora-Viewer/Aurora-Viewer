@@ -66,7 +66,8 @@ impl LiveMorphs {
                     continue;
                 };
                 for (i, &vertex) in m.vertices.iter().enumerate() {
-                    let (Some(list), Some(dp), Some(dn)) = (entries.get_mut(vertex as usize), m.d_positions.get(i), m.d_normals.get(i)) else {
+                    let (Some(list), Some(dp), Some(dn)) = (entries.get_mut(vertex as usize), m.d_positions.get(i), m.d_normals.get(i))
+                    else {
                         continue;
                     };
                     let dn = *dn * NORMAL_SOFTEN_FACTOR;
@@ -221,9 +222,9 @@ mod tests {
                 let column = bank.columns.iter().position(|p| *p == m.param).expect("column") as f32;
                 for (i, &v) in m.vertices.iter().enumerate() {
                     let [first, n, ..] = vector(table as usize + v as usize);
-                    let found = (0..n as usize).map(|e| vector(first as usize + 2 * e)).any(|d| {
-                        d[3] == column && (glam::Vec3::new(d[0], d[1], d[2]) - m.d_positions[i]).length() < 1e-6
-                    });
+                    let found = (0..n as usize)
+                        .map(|e| vector(first as usize + 2 * e))
+                        .any(|d| d[3] == column && (glam::Vec3::new(d[0], d[1], d[2]) - m.d_positions[i]).length() < 1e-6);
                     assert!(found, "{} param {} vertex {v}", part.name, m.param);
                 }
             }

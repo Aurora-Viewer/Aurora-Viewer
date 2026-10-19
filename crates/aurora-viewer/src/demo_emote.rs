@@ -72,7 +72,9 @@ pub fn animation(mode: &Mode) -> Animation {
     let emote_name = if mode.signal {
         String::new()
     } else {
-        crate::scene::default_motions::emote_name(&mode.emote).unwrap_or_default().to_owned()
+        crate::scene::default_motions::emote_name(&mode.emote)
+            .unwrap_or_default()
+            .to_owned()
     };
     Animation {
         base_priority: 4,

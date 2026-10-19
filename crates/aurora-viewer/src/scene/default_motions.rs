@@ -306,7 +306,11 @@ mod tests {
             assert!((q.length() - 1.0).abs() < 1e-4);
             largest = largest.max(q.angle_between(Quat::IDENTITY));
         }
-        assert!(largest > 0.2f32.to_radians() && largest < 3f32.to_radians(), "{}", largest.to_degrees());
+        assert!(
+            largest > 0.2f32.to_radians() && largest < 3f32.to_radians(),
+            "{}",
+            largest.to_degrees()
+        );
         let top = breathe(std::f32::consts::FRAC_PI_2);
         assert!((top.angle_between(Quat::IDENTITY) - 0.05).abs() < 1e-4);
         assert!((top * glam::Vec3::Y - glam::Vec3::Y).length() < 1e-5);
