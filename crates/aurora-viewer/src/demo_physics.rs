@@ -2,9 +2,10 @@
 //! our avatar and the one in front of it wear a physics layer and a rigged
 //! "body", a ball on each breast, the belly and the butt weighted to the
 //! LEFT_PEC, RIGHT_PEC, BELLY and BUTT collision volumes as mesh bodies are.
-//! Both hop in place twice every two seconds while their chest rolls from
-//! side to side: the balls bounce after each landing, then settle.
-//! `still`: the same avatars do not hop, the balls stay where they are;
+//! Both turn their side to the camera and hop in place twice every two
+//! seconds while their chest rolls from side to side: the balls bounce after
+//! each landing, then settle. `still`: the same pose without the hops, the
+//! balls stay where they are;
 //! `off`: they hop with Preferences › Graphics › Avatar physics off, the
 //! balls follow the body without bouncing.
 
@@ -89,8 +90,11 @@ const LAYER: [(i32, f32); 33] = [
 ];
 
 /// Two hops in two seconds, the pelvis rising 9 cm and landing at once,
-/// while the chest rolls one way then the other.
-pub fn animation() -> Animation {
+/// while the chest rolls one way then the other; the body turned a quarter
+/// turn, its side to the camera behind the avatar. `Still`: the same turn
+/// only.
+pub fn animation(mode: Mode) -> Animation {
+    let amplitude = if mode == Mode::Still { 0.0 } else { 1.0 };
     let hop = [
         (0.0, 0.0),
         (0.15, 0.06),
@@ -118,12 +122,15 @@ pub fn animation() -> Animation {
             JointMotion {
                 joint_name: "mPelvis".into(),
                 priority: 4,
-                rot_keys: Vec::new(),
+                rot_keys: vec![RotKey {
+                    time: 0.0,
+                    rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                }],
                 pos_keys: hop
                     .into_iter()
                     .map(|(time, z)| PosKey {
                         time,
-                        position: Vec3::Z * z,
+                        position: Vec3::Z * z * amplitude,
                     })
                     .collect(),
             },
@@ -134,7 +141,7 @@ pub fn animation() -> Animation {
                     .into_iter()
                     .map(|(time, angle)| RotKey {
                         time,
-                        rotation: Quat::from_rotation_x(angle),
+                        rotation: Quat::from_rotation_x(angle * amplitude),
                     })
                     .collect(),
                 pos_keys: Vec::new(),
@@ -146,10 +153,10 @@ pub fn animation() -> Animation {
 /// The balls (`crate::scene::Scene::install_demo_physics_body`): joint, ball
 /// centre relative to the joint at rest, radii.
 pub const BALLS: [(&str, Vec3, Vec3); 4] = [
-    ("LEFT_PEC", Vec3::new(0.03, 0.0, 0.0), Vec3::splat(0.055)),
-    ("RIGHT_PEC", Vec3::new(0.03, 0.0, 0.0), Vec3::splat(0.055)),
-    ("BELLY", Vec3::new(0.06, 0.0, -0.02), Vec3::new(0.06, 0.09, 0.08)),
-    ("BUTT", Vec3::new(-0.03, 0.0, 0.0), Vec3::new(0.08, 0.13, 0.08)),
+    ("LEFT_PEC", Vec3::new(0.05, 0.01, 0.0), Vec3::splat(0.07)),
+    ("RIGHT_PEC", Vec3::new(0.05, -0.01, 0.0), Vec3::splat(0.07)),
+    ("BELLY", Vec3::new(0.09, 0.0, -0.03), Vec3::new(0.07, 0.1, 0.08)),
+    ("BUTT", Vec3::new(-0.08, 0.0, 0.0), Vec3::new(0.1, 0.15, 0.1)),
 ];
 
 /// The appearances with the physics layer, and the balls worn on the chest.
@@ -202,7 +209,7 @@ pub fn events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent> {
 
 /// The animation lists at `frame`: the hops join the idle motion.
 pub fn animation_events(frame: u64, mode: Mode) -> Vec<NetEvent> {
-    if frame != HOP_FRAME || mode == Mode::Still {
+    if frame != HOP_FRAME {
         return Vec::new();
     }
     log::info!("demo physics: hops start");
@@ -233,6 +240,6 @@ mod tests {
             assert!(lib.rig.names.contains_key(name), "{name}");
         }
         assert_eq!(animation_events(HOP_FRAME, Mode::Hop).len(), 2);
-        assert!(animation_events(HOP_FRAME, Mode::Still).is_empty());
+        assert!(animation_events(HOP_FRAME - 1, Mode::Still).is_empty());
     }
 }

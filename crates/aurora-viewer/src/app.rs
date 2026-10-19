@@ -11581,12 +11581,12 @@ impl ApplicationHandler for App {
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::water::animation(), &rig)),
                 );
             }
-            if crate::demo::physics::mode().is_some() {
+            if let Some(mode) = crate::demo::physics::mode() {
                 self.scene.anims.insert(
                     crate::demo::physics::HOP_ANIM,
-                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::physics::animation(), &rig)),
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::physics::animation(mode), &rig)),
                 );
-                if crate::demo::physics::mode() == Some(crate::demo::physics::Mode::Off) {
+                if mode == crate::demo::physics::Mode::Off {
                     self.settings.avatar_physics = false;
                 }
             }

@@ -1582,13 +1582,14 @@ tests do not establish that this report uses an invalid joint or index.
 - **`AURORA_DEMO_PHYSICS=1`**: our avatar and the one in front of it wear a
   physics layer and a rigged mesh of four pink balls weighted to the
   LEFT_PEC, RIGHT_PEC, BELLY and BUTT collision volumes, as mesh bodies are.
-  From frame 240 both hop twice every two seconds, their chest rolling from
-  side to side: the balls overshoot at each landing, sway, then settle
-  before the next hop. The log writes the volumes' offsets every 6 frames
-  from frame 230 to 1200 (`demo physics: frame …`). `still`: no hop, every
-  offset stays at 0. `off`: the same hops with Preferences › Graphics ›
-  Avatar physics off, no offsets logged and the balls follow the body
-  rigidly. Compare the frame-rate independence with `AURORA_FPS_LIMIT=30`,
+  From frame 240 both turn their side to the camera and hop twice every two
+  seconds, their chest rolling from side to side: the balls overshoot at each
+  landing, sway, then settle before the next hop (capture after frame 1300,
+  when the rez effect is over). The log writes the volumes' offsets every 6
+  frames from frame 230 to 1200 (`demo physics: frame …`). `still`: the
+  same turn without the hops, the offsets stay constant (the layer's gravity
+  sag). `off`: the same hops with Preferences › Graphics › Avatar physics
+  off, no offsets logged and the balls follow the body rigidly. Compare the frame-rate independence with `AURORA_FPS_LIMIT=30`,
   `60` and `144`: the offsets at the same frame time match.
 - **`AURORA_DEMO_DEFORM`** (issue #272): at frame 240, a one-second pose
   that moves the neck up and the shoulders out plays once on the avatar in

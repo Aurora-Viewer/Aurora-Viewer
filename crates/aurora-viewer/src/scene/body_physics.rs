@@ -19,8 +19,9 @@
 //!   per frame (in sub-steps of at most 0.05 s): its bounce changes with the
 //!   frame rate. Its acceleration smoothing, a third of the new value per
 //!   frame, becomes the same decay per 1/30 s;
-//! - a motion starts at its rest position, not at the bottom of its range (no
-//!   jolt when an avatar appears or puts on a physics layer);
+//! - a motion starts where its spring holds it against gravity, not at the
+//!   bottom of its range (no jolt when an avatar appears or puts on a
+//!   physics layer);
 //! - every frame shows the current position (no `min_delta` threshold: moving
 //!   four collision volumes costs nothing);
 //! - turned off, bodies return to their rest shape instead of freezing.
@@ -324,12 +325,19 @@ impl BodyPhysics {
     /// Advance to `now`, the reference joints (mChest, mPelvis) at their
     /// world position and rotation at that time.
     pub fn update(&mut self, rig: &PhysicsRig, params: &Params, now: Instant, joints: [(Vec3, Quat); 2]) {
-        for ((m, b), r) in self.motions.iter_mut().zip(&params.motions).zip(&rig.motions) {
+        for (((def, m), b), r) in MOTIONS.iter().zip(&mut self.motions).zip(&params.motions).zip(&rig.motions) {
             match b {
-                Some(_) if !m.active => {
+                Some(b) if !m.active => {
+                    // where the spring holds it against gravity
+                    let dir = (joints[def.joint as usize].1 * def.dir).normalize_or_zero();
+                    let rest = if b.spring > 0.0 {
+                        (r.user + dir.z * b.gravity * b.mass / b.spring).clamp(0.0, 1.0)
+                    } else {
+                        r.user
+                    };
                     *m = Motion {
-                        position: r.user,
-                        previous: r.user,
+                        position: rest,
+                        previous: rest,
                         active: true,
                         ..Motion::default()
                     }
@@ -703,6 +711,9 @@ mod tests {
         // parameter's positive weight moves the volumes down)
         let rest = sag(b);
         assert!((rest - (0.5 + 10.0 * 0.2 / 10.0)).abs() < 0.01, "{rest}");
+        // already there on the first frame: no settling when it appears
+        let first = run(&rig, &only_breast_bounce(b), 60.0, 0.1, |_| 0.0);
+        assert!(first.iter().all(|(_, p)| (p - rest).abs() < 1e-3), "{first:?}");
         let start = Instant::now();
         let mut physics = BodyPhysics::new(start);
         let mut offsets = Vec::new();
