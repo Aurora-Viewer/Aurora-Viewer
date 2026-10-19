@@ -1,0 +1,172 @@
+//! Render-space collision queries for pose-space foot placement.
+//! Exact solid geometry and terrain, with streamed contact as a fallback.
+
+use super::anim::grounding::{Frame, Surface};
+use super::*;
+
+impl Scene {
+    pub(super) fn grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
+        let object = world.objects.get(idx)?;
+        if !self.ground_avatar_feet
+            || crate::settings::foot_height_limit(self.ground_feet_max_height) == 0.0
+            || !object.is_avatar()
+            || object.parent_id != 0
+            || (object.full_id == world.agent_id
+                && (world.agent.flying || world.agent.is_sitting() || world.animation_preview_clock.is_some()))
+        {
+            return None;
+        }
+        let (position, rotation, _) = Self::object_transform(world, idx, now, 0)?;
+        let velocity_z = if object.full_id == world.agent_id {
+            world.agent.velocity.z
+        } else {
+            object.velocity.z
+        };
+        let contact = object.foot_plane.filter(|p| p.is_finite() && p.z > 0.1).map(|mut plane| {
+            // Simulator planes are region-relative; queries use render space.
+            plane.w += plane.truncate().dot(world.region_offset(object.key.region).unwrap_or(Vec3::ZERO));
+            plane
+        });
+        let to_world = Mat4::from_rotation_translation(rotation, position) * Mat4::from_translation(-self.avatar_lib.pelvis);
+        (to_world.is_finite() && velocity_z.is_finite()).then_some(Frame {
+            to_world,
+            contact,
+            velocity_z,
+            sole_height: self.grounding_sole_height(world, object.full_id),
+            max_height: crate::settings::foot_height_limit(self.ground_feet_max_height),
+        })
+    }
+
+    pub(super) fn ground_surface(&self, world: &World, frame: Frame, ankle: Vec3, now: Instant) -> Option<Surface> {
+        let reach = crate::settings::MAX_GROUND_FEET_HEIGHT + 0.002;
+        let ray = (ankle + Vec3::Z * reach, -Vec3::Z);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let hit = candidates
+            .iter()
+            .filter_map(|&idx| {
+                let object = world.objects.get(idx)?;
+                let gpu = self.gpu.get(idx)?;
+                if object.pcode != aurora_prim::params::LL_PCODE_VOLUME
+                    || object.update_flags & crate::build::edits::FLAGS_PHANTOM != 0
+                    || gpu.hud
+                    || gpu.rigged
+                    || gpu.owner_avatar.is_some()
+                {
+                    return None;
+                }
+                self.face_hit(world, idx, ray, now, true)
+                    .filter(|hit| hit.t.is_finite() && (0.0..=reach * 2.0).contains(&hit.t) && hit.normal.is_finite() && hit.normal.z > 0.1)
+            })
+            .min_by(|a, b| a.t.total_cmp(&b.t));
+        let terrain = world
+            .ground_height(ankle)
+            .filter(|z| z.is_finite() && (ankle.z - z).abs() <= reach)
+            .map(|z| Surface {
+                position: ankle.with_z(z),
+                normal: terrain_normal(world, ankle),
+            });
+        let object = hit.map(|hit| Surface {
+            position: ray.0 + ray.1 * hit.t,
+            normal: hit.normal.normalize_or(Vec3::Z),
+        });
+        // Exact steps take precedence over extending one simulator contact
+        // plane across both feet. Contact is useful while geometry is loading.
+        let support = match (object, terrain) {
+            (Some(a), Some(b)) => Some(if a.position.z >= b.position.z { a } else { b }),
+            (a, b) => a.or(b),
+        };
+        if object.is_some() {
+            return support;
+        }
+        let contact = frame.contact.and_then(|p| {
+            let z = (p.w - p.x * ankle.x - p.y * ankle.y - 0.05) / p.z;
+            (z.is_finite() && (ankle.z - z).abs() <= reach).then_some(Surface {
+                position: ankle.with_z(z),
+                normal: p.truncate().normalize_or(Vec3::Z),
+            })
+        });
+        match (support, contact) {
+            (Some(a), Some(b)) => Some(if a.position.z >= b.position.z { a } else { b }),
+            (a, b) => a.or(b),
+        }
+    }
+}
+
+fn terrain_normal(world: &World, p: Vec3) -> Vec3 {
+    let height = world.ground_height(p).unwrap_or(p.z);
+    let sample = |offset| world.ground_height(p + offset).unwrap_or(height);
+    Vec3::new(
+        sample(-Vec3::X * 0.1) - sample(Vec3::X * 0.1),
+        sample(-Vec3::Y * 0.1) - sample(Vec3::Y * 0.1),
+        0.2,
+    )
+    .normalize_or(Vec3::Z)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec4;
+
+    #[test]
+    fn grounding_support_uses_exact_steps_and_excludes_phantom_or_worn_geometry() {
+        let (mut world, mut scene, front, _) = super::super::picking::tests::scene_with_two_objects();
+        let object = world.objects.get_mut(front).expect("platform");
+        object.update_flags = 0;
+        object.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        scene.gpu[front].center = Vec3::new(3.0, 0.0, 50.0);
+        scene.gpu[front].radius = 1.0;
+        scene.pick.set(front, hover::PickEntry::of(&scene.gpu[front]));
+        let mut frame = Frame {
+            to_world: Mat4::IDENTITY,
+            contact: Some(Vec4::new(0.0, 0.0, 1.0, 50.9)),
+            velocity_z: 0.0,
+            sole_height: None,
+            max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
+        };
+        let ankle = Vec3::new(3.0, 0.0, 50.7);
+        let now = Instant::now();
+        let support = scene.ground_surface(&world, frame, ankle, now).expect("platform top");
+        assert!(
+            (support.position.z - 50.5).abs() < 0.001,
+            "exact step overrides one higher contact plane"
+        );
+        assert!(support.normal.z > 0.99);
+        world.objects.get_mut(front).unwrap().update_flags = crate::build::edits::FLAGS_PHANTOM;
+        let contact = scene.ground_surface(&world, frame, ankle, now).expect("contact fallback");
+        assert!((contact.position.z - 50.85).abs() < 0.001);
+        frame.contact = None;
+        assert!(scene.ground_surface(&world, frame, ankle, now).is_none());
+        world.objects.get_mut(front).unwrap().update_flags = 0;
+        scene.gpu[front].owner_avatar = Some(front);
+        assert!(scene.ground_surface(&world, frame, ankle, now).is_none());
+    }
+
+    #[test]
+    fn grounding_frame_respects_disable_seating_flight_and_preview() {
+        let (mut world, mut scene, _, _) = super::super::picking::tests::scene_with_two_objects();
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
+        let now = Instant::now();
+        world.agent.flying = false;
+        assert!(scene.grounding_frame(&world, idx, now).is_none(), "placement defaults off");
+        scene.ground_avatar_feet = true;
+        assert!(scene.grounding_frame(&world, idx, now).is_some());
+        scene.ground_feet_max_height = 1.0;
+        assert_eq!(scene.grounding_frame(&world, idx, now).expect("enabled").max_height, 1.0);
+        scene.ground_feet_max_height = 0.0;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        scene.ground_feet_max_height = 0.4;
+        scene.ground_avatar_feet = false;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        scene.ground_avatar_feet = true;
+        world.agent.flying = true;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        world.agent.flying = false;
+        world.objects.get_mut(idx).unwrap().parent_id = 970;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        world.objects.get_mut(idx).unwrap().parent_id = 0;
+        world.animation_preview_clock = Some((Uuid::nil(), now, now));
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+    }
+}

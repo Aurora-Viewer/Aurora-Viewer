@@ -602,6 +602,11 @@ pub struct Settings {
     /// elapsed time, including late loading and edit release. Off by default:
     /// the Legacy Viewer starts at asset activation and suspends during edits.
     pub synchronize_animations: bool,
+    /// Project standing feet onto support and adapt landing recovery to its
+    /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
+    pub ground_avatar_feet: bool,
+    /// Maximum vertical terrain correction in metres, relative to animation.
+    pub ground_feet_max_height: f32,
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
@@ -853,6 +858,17 @@ pub struct Settings {
 /// bounce) it hardly shows in the demo's coloured corner, at 2 a glow starts
 /// around the foot of objects, at 4 it is grainy (captures of 2026-10-17).
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
+
+pub(crate) const DEFAULT_GROUND_FEET_HEIGHT: f32 = 0.4;
+pub(crate) const MAX_GROUND_FEET_HEIGHT: f32 = 1.0;
+
+pub(crate) fn foot_height_limit(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.0, MAX_GROUND_FEET_HEIGHT)
+    } else {
+        DEFAULT_GROUND_FEET_HEIGHT
+    }
+}
 
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
@@ -1290,6 +1306,8 @@ impl Default for Settings {
             classic_rez_effect: false,
             predict_own_motion: false,
             synchronize_animations: false,
+            ground_avatar_feet: false,
+            ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
             region_restart: Default::default(),
             reduce_motion: false,
             color_blindness: crate::colorblind::Deficiency::Off,
@@ -1656,6 +1674,7 @@ impl Settings {
             );
         }
         self.lookat = self.lookat.sanitized();
+        self.ground_feet_max_height = foot_height_limit(self.ground_feet_max_height);
         self.camera = std::mem::take(&mut self.camera).sanitized();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
@@ -2219,6 +2238,25 @@ mod tests {
         assert!(old.bubbles);
     }
     use super::*;
+
+    #[test]
+    fn foot_height_settings_sanitize_limits_and_nonfinite_values() {
+        for (value, expected) in [
+            (-1.0, 0.0),
+            (0.4, 0.4),
+            (1.0, 1.0),
+            (4.0, 1.0),
+            (f32::NAN, 0.4),
+            (f32::INFINITY, 0.4),
+        ] {
+            let settings = Settings {
+                ground_feet_max_height: value,
+                ..Settings::default()
+            }
+            .sanitized();
+            assert_eq!(settings.ground_feet_max_height, expected);
+        }
+    }
 
     #[test]
     fn name_tag_preferences_preserve_old_defaults_and_saved_choices() {

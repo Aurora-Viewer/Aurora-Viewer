@@ -15,6 +15,7 @@ pub mod drawn;
 pub mod fetch_priority;
 mod flexible;
 pub mod geometry_need;
+mod grounding;
 pub mod hover;
 pub mod hud;
 pub mod impostors;
@@ -660,6 +661,8 @@ pub struct Scene {
     pub paused_skeletons: HashSet<Uuid>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    pub ground_avatar_feet: bool,
+    pub ground_feet_max_height: f32,
     /// Avatar rendering complexity by avatar id (complexity.rs).
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
@@ -1152,6 +1155,8 @@ impl Scene {
             movement_preview: None,
             paused_skeletons: HashSet::new(),
             synchronize_animations: false,
+            ground_avatar_feet: false,
+            ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             sets: SyncSets::default(),
@@ -4313,6 +4318,7 @@ impl Scene {
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
             motions.set_synchronized(self.synchronize_animations);
             motions.set_paused(self.paused_skeletons.contains(&owner), now);
+            motions.ground = self.grounding_frame(world, idx, now);
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
@@ -4376,13 +4382,19 @@ impl Scene {
                 }
             };
             shape_dz.push((owner, dz));
+            if let Some(frame) = &mut motions.ground {
+                let previous = world.avatar_shape_dz.get(&owner).copied().unwrap_or(0.0);
+                frame.to_world.w_axis.z += dz - previous;
+                frame.sole_height = self.grounding_sole_height(world, owner);
+            }
             let physics = self.physics_job(world, owner, idx, control, eye, now);
             work.push((slot as usize, motions, base, owner, pose_now, physics));
             posed.push((owner, slot as usize));
             self.posed_now.insert(idx);
         }
         self.stats.posed = work.len();
-        let pal = &mut self.palettes;
+        // Keep the scene available for read-only support traces on pose workers.
+        let mut pal = std::mem::take(&mut self.palettes);
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
         let mut jobs: Vec<(
             &mut [[[f32; 4]; 4]],
@@ -4398,7 +4410,14 @@ impl Scene {
             for m in chunk.iter_mut().take(anim::ANCHOR_BASE).skip(rig.len()) {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
-            motions.evaluate(&rig, *pose_now, Some(base), chunk);
+            let frame = motions.ground;
+            if let Some(frame) = frame {
+                motions.evaluate_on_ground(&rig, *pose_now, Some(base), chunk, |ankle| {
+                    self.ground_surface(world, frame, ankle, now)
+                });
+            } else {
+                motions.evaluate(&rig, *pose_now, Some(base), chunk);
+            }
             if let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref()) {
                 job.run(physics_rig, &rig, now, chunk);
             }
@@ -4409,6 +4428,7 @@ impl Scene {
                 }
             }
         });
+        self.palettes = pal;
         for (_, motions, _, owner, _, physics) in work {
             self.motions.insert(owner, motions);
             if let Some(job) = physics {

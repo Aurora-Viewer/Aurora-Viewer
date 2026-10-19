@@ -2,6 +2,8 @@
 //! bones), animation asset streaming and per-avatar pose evaluation into
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
+pub(super) mod grounding;
+
 use super::default_motions;
 use super::fetch_priority::urgent;
 use super::jobs::Jobs;
@@ -277,8 +279,9 @@ impl Motion {
         let a = &self.anim.anim;
         let start = if a.looping { self.continuous_activation } else { self.activation };
         let elapsed = now.saturating_duration_since(start).as_secs_f64();
-        if a.ease_in > 0.0 {
-            aurora_assets::anim::cubic_step(elapsed / f64::from(a.ease_in))
+        let ease_in = a.ease_in;
+        if ease_in > 0.0 {
+            aurora_assets::anim::cubic_step(elapsed / f64::from(ease_in))
         } else {
             1.0
         }
@@ -324,6 +327,8 @@ impl Motion {
 pub struct Controller {
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
+    pub(super) ground: Option<grounding::Frame>,
+    placement: grounding::Placement,
     /// Opt-in receipt clock; the default keeps Legacy Viewer activation / pauses.
     synchronized: bool,
     /// Newest first (mActiveMotions, push_front).
@@ -627,6 +632,7 @@ impl Controller {
         self.pelvis_offset = None;
         self.tag_pelvis_offset = 0.0;
         self.last_eval = None;
+        self.placement = grounding::Placement::default();
         if animations {
             self.motions.retain(|m| m.stop.is_none());
         }
@@ -666,6 +672,7 @@ impl Controller {
         pr.breathe_start = pr.breathe_start.map(|t| t + d);
         pr.noise_start = pr.noise_start.map(|t| t + d);
         self.last_eval = self.last_eval.map(|t| t + d);
+        self.placement.resume(d);
     }
 
     /// Skeleton-space position of the head as posed last frame.
@@ -937,6 +944,17 @@ impl Controller {
     /// space, feet at z = 0); meshes multiply them by their inverse binds.
     /// `base`: the avatar's rest skeleton (None = default).
     pub fn evaluate(&mut self, rig: &Rig, now: Instant, base: Option<&SkeletonBase>, out: &mut [[[f32; 4]; 4]]) {
+        self.evaluate_on_ground(rig, now, base, out, |_| None);
+    }
+
+    pub(super) fn evaluate_on_ground(
+        &mut self,
+        rig: &Rig,
+        now: Instant,
+        base: Option<&SkeletonBase>,
+        out: &mut [[[f32; 4]; 4]],
+        ground: impl Fn(Vec3) -> Option<grounding::Surface>,
+    ) {
         let now = self.paused_at.unwrap_or(now);
         let n = rig.len().min(out.len());
         // Keep the displayed pose even if signals stop/change or a file arrives
@@ -956,7 +974,7 @@ impl Controller {
         // (LLJointStateBlender::addJointState)
         type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
-        for m in self.motions.iter().filter(|_| !hold_pose) {
+        for m in self.motions.iter_mut().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
                 continue;
             }
@@ -1087,15 +1105,70 @@ impl Controller {
         let pelvis_rest =
             rest_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO) - rig.local_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO);
         let pelvis_offset = self.pelvis_offset.map_or(Vec3::ZERO, |position| position - pelvis_rest);
-        let world = if added_rot.is_empty() {
-            rig.world_with(&self.rot, pelvis_offset, &local_pos, scale)
+        let source_rotations = if added_rot.is_empty() {
+            None
         } else {
             let mut rot = self.rot.clone();
             for (j, r) in added_rot {
                 rot[j] = r;
             }
-            rig.world_with(&rot, pelvis_offset, &local_pos, scale)
+            Some(rot)
         };
+        let source_rotations = source_rotations.as_deref().unwrap_or(&self.rot);
+        // Include additive source motions in placement, while keeping both
+        // additive and placement deltas out of self.rot's held blend state.
+        let protected = |names: [&str; 3]| {
+            names.iter().any(|name| {
+                rig.names
+                    .get(*name)
+                    .and_then(|&j| states.get(j))
+                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _)| priority >= 5 && weight > 0.01))
+            })
+        };
+        let allowed = [
+            !protected(["mPelvis"; 3]) && !protected(["mHipLeft", "mKneeLeft", "mAnkleLeft"]),
+            !protected(["mPelvis"; 3]) && !protected(["mHipRight", "mKneeRight", "mAnkleRight"]),
+        ];
+        if self.control || self.preview_start.is_some() {
+            self.placement = grounding::Placement::default();
+        }
+        let frame = self.ground.filter(|frame| {
+            !self.control
+                && self.preview_start.is_none()
+                && frame.velocity_z.abs() < 0.5
+                && !self
+                    .motions
+                    .iter()
+                    .any(|motion| motion.stop.is_none() && grounding::unplanted(motion.id))
+        });
+        let fallback;
+        let skeleton = match base {
+            Some(base) => base,
+            None => {
+                fallback = SkeletonBase {
+                    local_pos: rig.local_pos.clone(),
+                    scale: rig.scale.clone(),
+                };
+                &fallback
+            }
+        };
+        let corrected = self.placement.apply(
+            rig,
+            skeleton,
+            grounding::Pose {
+                rotations: source_rotations,
+                positions: &local_pos,
+                pelvis: pelvis_offset,
+                allowed,
+            },
+            frame,
+            now,
+            &ground,
+        );
+        let (rotations, pelvis) = corrected.as_ref().map_or((source_rotations, pelvis_offset), |pose| {
+            (pose.rotations.as_slice(), pelvis_offset + pose.pelvis)
+        });
+        let world = rig.world_with(rotations, pelvis, &local_pos, scale);
         if !hold_pose {
             self.update_live_morphs(now);
         }

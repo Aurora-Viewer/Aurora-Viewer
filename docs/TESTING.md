@@ -1422,6 +1422,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit` | Animation loops, sequences, stops and synchronization after delayed loading or editing |
+| `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -1435,6 +1436,56 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+`AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
+different-height steps (`steps`). `landing` starts with a synthetic standing-up
+clip on the ramp. The avatar is placed only once: walk, strafe, turn, crouch,
+fly or jump with the normal controls, then stop on either support. Jumps
+trigger recovery on actual return to the surface; walking uses the demo's
+normal gait clips. Append `-off` to compare the original keyframes, or
+`-motion` for an automated side-step/stop/return/jump input sequence. Compare
+`slope-lift` with `slope-lift-off` (or `steps-lift` with `steps-lift-off`):
+the stand alternately raises each foot.
+The raised leg must keep its authored clearance over the terrain, while the other foot
+keeps its support. If a swing foot intersects a step, only the necessary
+upward correction should prevent penetration; it must not be forced down to
+the floor. `steps-front-walk` and `steps-reach-front-walk` use an independently
+authored walk with explicit stance/flight paths; `-off` exposes its source.
+On flat support, adaptation should retain that source animation. During real
+movement across a step, inspect the rendered body rather than its correction
+offset: a sudden change of the physical centre must not pop the body upward.
+Heel/toe rolls should survive the slope correction. `steps-reach`
+starts with the physical root on the high step and a foot over the low step:
+the pelvis must compensate enough for both soles to reach their surfaces,
+without stretching the legs. Compare `steps-reach-off`, then walk across the
+seam and jump with the normal controls. In `steps-reach-lift`, the pelvis must
+stay prepared for the lower foot's return rather than popping up and down
+with each swing. `steps-rise-front` places both soles on raised supports over
+a narrow groove beneath the physical centre. The body must rise smoothly
+instead of leaving both knees compressed; compare `steps-rise-front-off`.
+Append `-transition` to interrupt a fade-out after 100 ms, then fully disable
+and re-enable placement (frames 660/666 and 720/750 at the 60 fps cap). Both
+returns should continue from the visible pose. Terrain offsets settle toward
+lower support in about 500 ms, while source foot lifts remain immediate.
+Collision correction takes priority over smoothing within the configured
+correction-height limit.
+`steps-range-reach-front` uses a 0.9 m upper support: the saved correction
+limit starts at 0.4 m, then changes to 1 m at frame 900. Compare frames 850
+and 950, and inspect the live slider in Preferences › Aurora › Animations
+(`AURORA_DEMO_OPTIONS=13:animations`). Feet and body must respect the limit;
+supports beyond it may remain out of reach. Ordinary modes use 0.4 m.
+`steps-rise-front-lift` must retain this height while either foot lifts and
+replants. An intentional crouch (normal downward control) must retain its
+authored flexion. Inspect
+from the front with `steps-reach-front` and `steps-reach-front-lift` (the
+fixture moves west to keep the frontal camera outside the plaza deck): each
+knee must bend forward on its own side, including when either step is higher,
+and must not turn a nearly straight leg inward across the other knee. Inspect
+each foot's height and orientation, knee bending, and the recovery's return
+upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
+without restarting: corrections enter and leave smoothly, and should behave
+alike at 30, 60 and 144 fps. Imported animation previews and higher-priority AO poses
+of priority 5/6 must retain control. These fixtures never connect to a grid.
 
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
 bottom AO button with a complete swimming set. `quick-missing` and
