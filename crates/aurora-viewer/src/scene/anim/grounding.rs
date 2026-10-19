@@ -198,8 +198,6 @@ impl Height {
     }
 }
 
-/// Knee local Y defines flexion, including a straight source leg. Inferring
-/// a pole from nearly collinear positions amplifies the rest leg's taper.
 fn precise_arc(from: Vec3, to: Vec3) -> Quat {
     let dot = from.dot(to);
     if dot < -1.0 + 2.0 * f32::EPSILON {
@@ -212,6 +210,8 @@ fn precise_arc(from: Vec3, to: Vec3) -> Quat {
     }
 }
 
+/// Knee local Y defines flexion, including a straight source leg. Inferring
+/// a pole from nearly collinear positions amplifies the rest leg's taper.
 fn hinge(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, side: Vec3) -> Option<(Quat, Quat)> {
     let upper = knee - hip;
     let lower = ankle - knee;
@@ -1532,6 +1532,39 @@ mod tests {
                     assert!(gap < 0.004, "re-enable never reached support");
                 }
                 last_gap = gap;
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_retains_additive_source_motion_without_feedback_into_the_held_blend() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let torso = f.rig.names["mTorso"];
+        let ankle = f.rig.names["mAnkleLeft"];
+        let additive = Quat::from_rotation_x(0.12);
+        let mut source = f.rig.local_rot.clone();
+        source[torso] = additive * source[torso];
+        let expected = f.rig.world_with(&source, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        for enabled in [false, true] {
+            // A newly evaluated paused controller uses its retained procedural
+            // states, giving a deterministic additive body-noise substitute.
+            let mut controller = Controller {
+                ground: enabled.then(|| f.frame(Vec3::Z * 0.2, 0.0)),
+                paused_at: Some(now),
+                held_procedural: vec![(torso, 2, 1.0, additive, true)],
+                ..Default::default()
+            };
+            let mut output = vec![Mat4::IDENTITY.to_cols_array_2d(); f.rig.len()];
+            controller.evaluate_on_ground(&f.rig, now, Some(&f.base), &mut output, flat);
+            let torso_world = Mat4::from_cols_array_2d(&output[torso]);
+            assert!(orientation(torso_world).abs_diff_eq(orientation(expected[torso]), 1e-5));
+            assert!(controller.rot[torso].abs_diff_eq(f.rig.local_rot[torso], 1e-5));
+            let ankle_world = Mat4::from_cols_array_2d(&output[ankle]);
+            if enabled {
+                assert!(ankle_world.w_axis.z < expected[ankle].w_axis.z - 0.15);
+            } else {
+                assert!(ankle_world.abs_diff_eq(expected[ankle], 1e-5));
             }
         }
     }

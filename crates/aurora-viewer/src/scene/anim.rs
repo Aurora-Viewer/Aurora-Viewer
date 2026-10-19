@@ -1115,15 +1115,14 @@ impl Controller {
             Some(rot)
         };
         let source_rotations = source_rotations.as_deref().unwrap_or(&self.rot);
-        // Foot constraints run on the final authored pose. Keep that pose in
-        // self.rot: feeding corrected rotations back into the blender would
-        // turn the next frame's contact analysis into an IK feedback loop.
+        // Include additive source motions in placement, while keeping both
+        // additive and placement deltas out of self.rot's held blend state.
         let protected = |names: [&str; 3]| {
             names.iter().any(|name| {
                 rig.names
                     .get(*name)
                     .and_then(|&j| states.get(j))
-                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _)| priority >= 5 && weight > 0.01))
+                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _)| priority >= 5 && weight > 0.01))
             })
         };
         let allowed = [

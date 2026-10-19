@@ -151,7 +151,10 @@ starts and edit pauses. Import preview seeking overrides either preference.
 
 The same section's disabled-by-default `Settings::ground_avatar_feet` controls
 terrain adaptation in `scene/anim/grounding.rs`, applied to the final blended
-pose without feeding corrections back into the source animation. The previous
+pose without feeding corrections back into the source animation. Additive
+procedural rotations are included in the source pose before placement;
+the held blend state and live expression/hand weights retain their own updates.
+The previous
 placement solver was replaced at the human's request. The new implementation
 separates authored foot clearance, terrain elevation and world-space body
 elevation, following independently implemented concepts from
