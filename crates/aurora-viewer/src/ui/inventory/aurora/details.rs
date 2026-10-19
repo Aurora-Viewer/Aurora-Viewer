@@ -157,9 +157,15 @@ fn picture(
         return ui.interact(rect, ui.id().with(("aurora_picture", id)), Sense::click());
     }
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
-    let icon = inv.items.get(&id).map_or_else(
-        || tree::folder_icon(inv.folders.get(&id).map_or(-1, |f| f.info.type_default), false),
-        |it| item_icon(it.asset_type, it.inv_type, it.flags),
+    let (icon, tint) = inv.items.get(&id).map_or_else(
+        || {
+            let kind = inv.folders.get(&id).map_or(-1, |f| f.info.type_default);
+            (tree::folder_icon(kind, false), p.muted_dim)
+        },
+        |it| {
+            let color = item_icon_color(it.asset_type, it.inv_type, p);
+            (item_icon(it.asset_type, it.inv_type, it.flags), color)
+        },
     );
     let size = (rect.height() * 0.42).clamp(20.0, 44.0);
     if let Some(texture) = icons.get(icon) {
@@ -167,7 +173,7 @@ fn picture(
             texture.id(),
             Rect::from_center_size(rect.center(), Vec2::splat(size)),
             Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            p.muted_dim,
+            tint,
         );
     }
     ui.interact(rect, ui.id().with(("aurora_picture", id)), Sense::click())

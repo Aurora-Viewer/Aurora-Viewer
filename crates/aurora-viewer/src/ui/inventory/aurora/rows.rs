@@ -14,7 +14,7 @@ use crate::ui::{sheet, widgets};
 use egui::{Color32, Pos2, Rangef, Rect, Sense, Vec2};
 
 /// The height of a row, without the spacing between rows.
-pub const HEIGHT: f32 = 28.0;
+pub const HEIGHT: f32 = 24.0;
 /// Where a placeholder's text starts ("Empty" under an open folder): past
 /// the caret and the icon.
 pub const LEAD: f32 = 34.0;
@@ -129,26 +129,12 @@ enum Tone {
     Plain,
 }
 
-const PILL_PAD: f32 = 6.0;
-
 fn pill_width(ui: &egui::Ui, text: &str) -> f32 {
-    ui.painter()
-        .layout_job(sheet::semibold(ui, text, 11.0, Color32::PLACEHOLDER))
-        .size()
-        .x
-        + PILL_PAD * 2.0
+    widgets::row_tag_width(ui, text)
 }
 
 fn paint_pill(ui: &egui::Ui, p: &Palette, text: &str, tone: Tone, left: f32, center_y: f32) -> f32 {
-    let (fill, ink) = match tone {
-        Tone::Worn => (p.teal.gamma_multiply(0.14), p.teal),
-        Tone::Plain => (p.raised, p.muted),
-    };
-    let galley = ui.painter().layout_job(sheet::semibold(ui, text, 11.0, ink));
-    let rect = Rect::from_min_size(Pos2::new(left, center_y - 9.0), Vec2::new(galley.size().x + PILL_PAD * 2.0, 18.0));
-    ui.painter().rect_filled(rect, widgets::inner_radius(ui.visuals()), fill);
-    widgets::paint_row_text(ui.painter(), galley, rect.left() + PILL_PAD, rect.center().y, ink);
-    rect.width()
+    widgets::paint_row_tag(ui, p, text, tone == Tone::Worn, left, center_y)
 }
 
 /// The pills of an item: worn (where, at the wide width) or an active
@@ -395,9 +381,9 @@ pub(in super::super) fn item(
     let cols = Columns::new(frame, rect.right());
     let icon_center = Pos2::new(rect.left() + 4.0 + ICON / 2.0, rect.center().y);
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
-    let tint = if selected { p.violet_pale } else { p.muted };
+    let tint = item_icon_color(it.asset_type, it.inv_type, p);
     // Renaming: the field in place of the name.
-    let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(4.0));
+    let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
     if rename_row(&mut field, p, inv, id, st, prefs, actions) {
         background(ui, p, full, selected);
@@ -508,7 +494,7 @@ pub(in super::super) fn folder(
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
     let tint = if selected { p.violet_pale } else { p.muted };
     let icon = folder_icon(folder.info.type_default, *open && !frame.explorer);
-    let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(4.0));
+    let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
     if rename_row(&mut field, p, inv, id, st, prefs, actions) {
         background(ui, p, full, selected);

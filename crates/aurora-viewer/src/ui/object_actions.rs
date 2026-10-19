@@ -27,10 +27,10 @@ fn permission_name(name: &str, mask: u32) -> String {
     text
 }
 
-fn named_row(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &str) {
+fn named_row(ui: &mut egui::Ui, p: &Palette, icon: &str, tint: egui::Color32, text: &str) {
     ui.horizontal(|ui| {
         if let Some(t) = super::icons::global(icon) {
-            ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
+            ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
         }
         ui.add(egui::Label::new(RichText::new(text).color(p.ink)).truncate())
             .on_hover_text(text);
@@ -101,7 +101,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                 } else {
                     permission_name(&props.name, props.next_owner_mask)
                 };
-                named_row(ui, p, "box", &object_label);
+                named_row(ui, p, "box", p.ink, &object_label);
                 ui.add_space(6.0);
                 ui.label(aurora_i18n::tr!("ui-object-actions-contents"));
                 egui::Frame::new()
@@ -121,6 +121,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                                             ui,
                                             p,
                                             super::inventory::item_icon(item.asset_type as i32, item.inv_type as i32, item.flags),
+                                            super::inventory::item_icon_color(item.asset_type as i32, item.inv_type as i32, p),
                                             &permission_name(&item.name, item.next_owner_mask),
                                         );
                                     }
@@ -141,7 +142,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     "ui-object-actions-buy-for-from",
                     value0 = money(props.sale_price).to_string()
                 ));
-                named_row(ui, p, "user-filled", &seller);
+                named_row(ui, p, "user-filled", p.ink, &seller);
                 if !affordable(props.sale_price) {
                     ui.label(RichText::new(aurora_i18n::tr!("common-insufficient-or-unknown-balance")).color(p.danger));
                 }
@@ -149,9 +150,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, state: &mut Interactions, world: &
                     ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-for-sale")).color(p.danger));
                 }
             } else {
-                named_row(ui, p, "user-filled", &seller);
+                named_row(ui, p, "user-filled", p.ink, &seller);
                 ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-via-object")).color(p.muted));
-                named_row(ui, p, "box", &props.name);
+                named_row(ui, p, "box", p.ink, &props.name);
                 ui.add_space(6.0);
                 if let Some((default, buttons)) = &d.prices {
                     if buttons.iter().any(|v| *v > 0) {
@@ -327,7 +328,8 @@ pub fn show_contents(
                                             if let Some(t) =
                                                 icons.get(super::inventory::item_icon(item.asset_type, item.inv_type, item.flags))
                                             {
-                                                ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(p.ink));
+                                                let color = super::inventory::item_icon_color(item.asset_type, item.inv_type, p);
+                                                ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
                                             } else {
                                                 ui.add_space(16.0);
                                             }

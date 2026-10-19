@@ -33,7 +33,8 @@ pub use workspace::{
     paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_spacing, island_shape, overlay, overlay_frame, paint_world_label,
+    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island_shape, overlay, overlay_frame,
+    paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -2382,6 +2383,48 @@ pub fn row_text_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32
 pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, center_y: f32, color: Color32) {
     let pos = row_text_origin(painter, &galley, left, center_y);
     painter.galley(pos, galley, color);
+}
+
+const ROW_TAG_PAD: f32 = 6.0;
+/// The room on each side of a tag laid in a text (`reserve_row_tag`).
+const ROW_TAG_GAP: f32 = 6.0;
+
+/// Leave room in `job` for a row tag reading `text`, before what is
+/// appended next; returns where the room ends, for
+/// `inventory_item_label_tagged`.
+pub fn reserve_row_tag(ui: &egui::Ui, job: &mut egui::text::LayoutJob, text: &str, p: &Palette) -> usize {
+    let at = job.text.chars().count();
+    let room = ROW_TAG_GAP + row_tag_width(ui, text);
+    job.append(" ", room, egui::TextFormat::simple(egui::FontId::proportional(12.0), p.muted));
+    at
+}
+
+/// The width of a row's tag (`paint_row_tag`).
+pub fn row_tag_width(ui: &egui::Ui, text: &str) -> f32 {
+    ui.painter()
+        .layout_job(super::sheet::semibold(ui, text, 11.0, Color32::PLACEHOLDER))
+        .size()
+        .x
+        + ROW_TAG_PAD * 2.0
+}
+
+/// A small tag after an item's name, the same in every list: teal when
+/// `active` (worn, an active gesture), neutral for a plain fact (a link).
+/// Returns its width.
+pub fn paint_row_tag(ui: &egui::Ui, p: &Palette, text: &str, active: bool, left: f32, center_y: f32) -> f32 {
+    let (fill, ink) = if active {
+        (p.teal.gamma_multiply(0.14), p.teal)
+    } else {
+        (p.raised, p.muted)
+    };
+    let galley = ui.painter().layout_job(super::sheet::semibold(ui, text, 11.0, ink));
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(left, center_y - 9.0),
+        Vec2::new(galley.size().x + ROW_TAG_PAD * 2.0, 18.0),
+    );
+    ui.painter().rect_filled(rect, inner_radius(ui.visuals()), fill);
+    paint_row_text(ui.painter(), galley, rect.left() + ROW_TAG_PAD, rect.center().y, ink);
+    rect.width()
 }
 
 /// A picture fitted in `size` keeping its aspect, or a placeholder (a

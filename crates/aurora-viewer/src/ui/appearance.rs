@@ -138,8 +138,17 @@ fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl F
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
+/// Pulls what follows an item row up to the inventory's row pitch. The
+/// list's spacing itself stays: the rows' context menus inherit it.
+fn row_gap(ui: &mut egui::Ui) {
+    ui.add_space(1.0 - ui.spacing().item_spacing.y);
+}
+
 fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool, worn: Option<&str>) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 25.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), super::inventory::AURORA_ROW_HEIGHT),
+        egui::Sense::click(),
+    );
     if selected || response.hovered() {
         ui.painter().rect_filled(
             rect,
@@ -147,13 +156,8 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
             if selected { p.violet.gamma_multiply(0.25) } else { p.raised },
         );
     }
-    let (name, color) = match it.asset_type {
-        6 => ("box", p.amber),
-        13 => ("man-filled", p.violet_light),
-        5 => ("shirt-filled", p.rose),
-        21 => ("hand-move", p.teal),
-        _ => ("link-filled", p.muted),
-    };
+    let name = super::inventory::item_icon(it.asset_type, it.inv_type, it.flags);
+    let color = super::inventory::item_icon_color(it.asset_type, it.inv_type, p);
     if let Some(t) = icons::global(name) {
         ui.painter().image(
             t.id(),
@@ -167,12 +171,8 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
     } else {
         format!("{} {desc}", it.name)
     };
-    let marker_color = p.ink.gamma_multiply(0.85);
-    let marker = worn.map(|label| {
-        ui.painter()
-            .layout_no_wrap(label.into(), egui::FontId::proportional(12.0), marker_color)
-    });
-    let marker_width = marker.as_ref().map_or(0.0, |g| g.size().x + 10.0);
+    // The worn tag follows the name, as in the inventory's rows.
+    let tag_width = worn.map_or(0.0, |label| widgets::row_tag_width(ui, label) + 6.0);
     let font_id = egui::FontId::proportional(12.0);
     let format = if worn.is_some() {
         widgets::bold_format(ui, font_id, p.ink)
@@ -180,8 +180,9 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
         egui::TextFormat::simple(font_id, p.ink)
     };
     let mut job = egui::text::LayoutJob::single_section(text.clone(), format);
-    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 30.0 - marker_width).max(20.0));
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 30.0 - tag_width).max(20.0));
     let galley = ui.painter().layout_job(job);
+    let name_end = rect.left() + 25.0 + galley.size().x;
     let text_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + 25.0, rect.top()), rect.right_bottom());
     let painter = ui.painter().with_clip_rect(text_rect);
     let pos = egui::pos2(rect.left() + 25.0, rect.center().y - galley.size().y * 0.5);
@@ -191,9 +192,8 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
         painter.galley(pos + offset, galley.clone(), p.ink);
     }
     painter.galley(pos, galley, p.ink);
-    if let Some(marker) = marker {
-        let at = crate::ui::widgets::row_text_origin(&painter, &marker, rect.right() - marker.size().x - 3.0, rect.center().y);
-        painter.galley(at, marker, marker_color);
+    if let Some(label) = worn {
+        widgets::paint_row_tag(ui, p, label, true, name_end + 6.0, rect.center().y);
     }
     response.on_hover_text(match worn {
         Some(label) => format!("{text} ({label})"),
@@ -364,6 +364,7 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
                         }
                         items::context_menu(&response, p, world, st, *id, it, actions);
                     });
+                    row_gap(ui);
                 } else {
                     ui.label(RichText::new(&link.name).size(12.0).color(p.muted));
                 }
@@ -496,6 +497,7 @@ fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
                 });
             }
         });
+        row_gap(ui);
     }
     if edit && st.edit_tab != 1 {
         for (kind, name) in model::wearables()
@@ -605,6 +607,7 @@ fn add_list(ui: &mut egui::Ui, p: &Palette, world: &mut World, st: &mut Appearan
     items.sort_by_key(|it| it.name.to_lowercase());
     for it in items {
         let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
+        row_gap(ui);
         if response.clicked() {
             st.selected_item = Some(it.id);
         }
@@ -656,6 +659,7 @@ fn add_folder(
                 continue;
             }
             let response = row(ui, p, it, "", st.selected_item == Some(it.id), None);
+            row_gap(ui);
             if response.clicked() {
                 st.selected_item = Some(it.id);
             }
@@ -769,7 +773,9 @@ pub fn show(
                 let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(100.0);
                 ui.add_sized(
                     Vec2::new(width, 28.0),
-                    egui::TextEdit::singleline(&mut st.search).hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits")),
+                    egui::TextEdit::singleline(&mut st.search)
+                        .hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits"))
+                        .vertical_align(egui::Align::Center),
                 );
                 icon_menu(
                     ui,
@@ -1149,6 +1155,23 @@ mod tests {
             .expect(label)
     }
 
+    /// `label_position` in an open menu: its row rather than a button of the
+    /// same name that the menu covers. A menu is clipped to the screen, the
+    /// window's widgets to the window.
+    fn menu_label_position(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, label: &str) -> egui::Pos2 {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            ..Default::default()
+        };
+        draw_output(ctx, world, st, input)
+            .1
+            .iter()
+            .filter(|s| s.clip_rect.contains_rect(screen))
+            .find_map(|s| text_position(&s.shape, label))
+            .expect(label)
+    }
+
     fn draw_output(
         ctx: &egui::Context,
         world: &mut World,
@@ -1269,11 +1292,15 @@ mod tests {
             }
             let mut actions = Vec::new();
             let label = world.inventory.items[&item].name.clone();
-            for (label, button) in [
-                (label.as_str(), egui::PointerButton::Secondary),
-                (aurora_i18n::tr!("common-add"), egui::PointerButton::Primary),
+            for (label, button, menu) in [
+                (label.as_str(), egui::PointerButton::Secondary, false),
+                (aurora_i18n::tr!("common-add"), egui::PointerButton::Primary, true),
             ] {
-                let pos = label_position(&ctx, &mut world, &mut st, label);
+                let pos = if menu {
+                    menu_label_position(&ctx, &mut world, &mut st, label)
+                } else {
+                    label_position(&ctx, &mut world, &mut st, label)
+                };
                 for pressed in [true, false] {
                     actions.extend(draw_input(
                         &ctx,

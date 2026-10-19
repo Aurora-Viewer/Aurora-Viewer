@@ -277,7 +277,7 @@ impl ThumbnailUi {
                                     items.sort_by_key(|it| it.name.to_lowercase());
                                     for it in items.into_iter().take(500) {
                                         ui.horizontal(|ui| {
-                                            icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p);
+                                            item_type_icon(ui, icons, it, p);
                                             if ui.selectable_label(self.selected == Some(it.asset_id), &it.name).clicked() {
                                                 self.selected = Some(it.asset_id);
                                             }
@@ -328,12 +328,10 @@ pub(super) fn image(inv: &Inventory, item: Uuid) -> Uuid {
         .unwrap_or_default()
 }
 pub(super) fn type_name(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &Inventory, item: Uuid) {
-    let name = inv
-        .items
-        .get(&item)
-        .map(|it| item_icon(it.asset_type, it.inv_type, it.flags))
-        .unwrap_or("Inv_FolderClosed");
-    icon(ui, icons, name, p);
+    match inv.items.get(&item) {
+        Some(it) => item_type_icon(ui, icons, it, p),
+        None => icon(ui, icons, "Inv_FolderClosed", p),
+    }
     ui.label(RichText::new(rules::name(inv, item)).color(p.ink));
 }
 fn paint_image(ui: &egui::Ui, rect: egui::Rect, texture: &egui::TextureHandle) {
@@ -448,7 +446,7 @@ fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Invent
                     && usable(inv, it)
                 {
                     ui.horizontal(|ui| {
-                        icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), p);
+                        item_type_icon(ui, icons, it, p);
                         if ui.selectable_label(*selected == Some(it.asset_id), &it.name).clicked() {
                             *selected = Some(it.asset_id);
                         }

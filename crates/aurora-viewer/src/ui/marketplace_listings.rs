@@ -537,13 +537,19 @@ impl ListingsUi {
                 let icon = super::inventory::item_icon(it.asset_type, it.inv_type, it.flags);
                 let mut label = tree::name(&it.name, p);
                 if let Some(permissions) = super::inventory::permissions::Permissions::inventory(inv, item) {
-                    permissions.append_suffix(&mut label, p);
+                    permissions.append_suffix(ui, &mut label, p);
                 }
                 let selected = self.selected == Some(item);
                 let response = ui
                     .horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        tree::icon(ui, icons, icon, p, None);
+                        tree::icon(
+                            ui,
+                            icons,
+                            icon,
+                            p,
+                            Some(super::inventory::item_icon_color(it.asset_type, it.inv_type, p)),
+                        );
                         tree::label(ui, label, selected, egui::Sense::click_and_drag(), None)
                     })
                     .inner;

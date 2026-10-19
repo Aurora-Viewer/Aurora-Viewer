@@ -132,7 +132,8 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
                                         if let Some(icon) =
                                             crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
                                         {
-                                            ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(p.ink))
+                                            let color = crate::ui::inventory::item_icon_color(i32::from(*t), i32::from(*t), p);
+                                            ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(color))
                                                 .on_hover_text(type_name(*t));
                                         } else {
                                             ui.allocate_space(Vec2::splat(18.0));

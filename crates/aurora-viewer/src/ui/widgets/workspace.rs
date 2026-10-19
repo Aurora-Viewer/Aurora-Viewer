@@ -17,8 +17,26 @@ pub(crate) fn inventory_item_label(
     sense: Sense,
     bold_name: Option<std::sync::Arc<egui::Galley>>,
 ) -> egui::Response {
+    inventory_item_label_tagged(ui, label, selected, sense, bold_name, None)
+}
+
+/// `inventory_item_label` with a row tag (`paint_row_tag`), such as "Worn",
+/// in the room `reserve_row_tag` left in `label` before the character `at`.
+pub(crate) fn inventory_item_label_tagged(
+    ui: &mut egui::Ui,
+    label: egui::text::LayoutJob,
+    selected: bool,
+    sense: Sense,
+    bold_name: Option<std::sync::Arc<egui::Galley>>,
+    tag: Option<(&Palette, &str, usize)>,
+) -> egui::Response {
     inventory_spacing(ui);
     let text_id = ui.make_persistent_id("label");
+    let tag = tag.map(|(p, text, at)| {
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(label.clone()));
+        let x = galley.pos_from_cursor(egui::text::CCursor::new(at)).min.x;
+        (p, text, x - row_tag_width(ui, text))
+    });
     ui.add_sized([ui.available_width(), 20.0], |ui: &mut egui::Ui| {
         let response = egui::Button::selectable(selected, "")
             .left_text(egui::Atom::from(label).atom_id(text_id))
@@ -33,6 +51,9 @@ pub(crate) fn inventory_item_label(
         {
             let color = ui.visuals().text_color();
             ui.painter().galley(rect.min + offset, name, color);
+        }
+        if let Some(((p, text, x), rect)) = tag.zip(response.rect(text_id)) {
+            paint_row_tag(ui, p, text, true, rect.left() + x, rect.center().y);
         }
         response.response
     })
