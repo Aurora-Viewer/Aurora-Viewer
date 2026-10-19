@@ -1325,6 +1325,10 @@ pub enum NetCommand {
     },
     /// Change the draw distance used in AgentUpdate (`Far`).
     SetDrawDistance(f32),
+    /// No connection to the neighbouring regions while true
+    /// (FSDisableNeighbourRegionConnections): the viewer sends false while
+    /// the agent is outside its region, so that a crossing still connects.
+    RefuseNeighbourRegions(bool),
     /// The camera's vertical viewing angle (radians) changed: AgentFOV now,
     /// and again at each arrival (LLViewerCamera::setView).
     SetFov(f32),

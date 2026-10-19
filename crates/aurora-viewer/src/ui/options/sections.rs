@@ -82,7 +82,7 @@ sections! {
         lookat.static_eyes,
     ],
     5 => [colors],
-    6 => [bandwidth_kbps, cache_size_mb],
+    6 => [bandwidth_kbps, no_neighbour_regions, cache_size_mb],
     TAB_AUDIO => [audio, media],
     TAB_SHORTCUTS => [keybinds],
     9 => [debug],

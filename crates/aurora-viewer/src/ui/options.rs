@@ -2815,6 +2815,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         .changed()
                     },
                 );
+                // Legacy Viewer › Move & View (FSDisableNeighbourRegionConnections)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-no-neighbour-regions"),
+                    aurora_i18n::tr!("ui-options-no-neighbour-regions-help"),
+                    |ui| toggle(ui, p, &mut s.no_neighbour_regions),
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-disk-cache"), |ui| {
                 c |= row(

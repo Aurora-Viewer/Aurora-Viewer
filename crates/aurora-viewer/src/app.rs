@@ -638,6 +638,8 @@ pub struct App {
     /// whether the current away status was set by that timer.
     last_input: Instant,
     auto_away: bool,
+    /// What the network was last told about the neighbouring regions.
+    neighbours_refused: bool,
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
@@ -1099,6 +1101,7 @@ impl App {
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
+            neighbours_refused: false,
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
@@ -1927,6 +1930,8 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        // the next session's network starts with the neighbours allowed
+        self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
         self.chat_ui = ChatUi::default();
@@ -5587,6 +5592,12 @@ impl App {
             self.world.groups.mute_all_groups = self.settings.mute_all_groups;
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
+            // FSDisableNeighbourRegionConnections, lifted while crossing
+            let refuse = self.settings.no_neighbour_regions && self.world.agent_inside_main_region();
+            if self.neighbours_refused != refuse {
+                self.neighbours_refused = refuse;
+                self.net.send(NetCommand::RefuseNeighbourRegions(refuse));
+            }
             // FSRestoreOpenIMs: the last session's private conversations,
             // once, after login
             if !self.world.reopen_ims.is_empty() {

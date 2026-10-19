@@ -746,6 +746,10 @@ pub struct Settings {
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
     pub bandwidth_kbps: u32,
+    /// Connect only to the region we are in (the Legacy Viewer's
+    /// FSDisableNeighbourRegionConnections, off): the neighbours are not
+    /// shown, and crossings on foot or in vehicles are less reliable.
+    pub no_neighbour_regions: bool,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
     /// Width of the chat island of the bottom islands (px, 0 = the default
@@ -1257,6 +1261,7 @@ impl Default for Settings {
             anisotropy: 8,
             cache_size_mb: 20480,
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
+            no_neighbour_regions: false,
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
             toolbar: Default::default(),

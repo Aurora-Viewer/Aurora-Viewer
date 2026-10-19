@@ -964,6 +964,16 @@ impl World {
         self.regions.values().find_map(|r| r.caps.get("ViewerAsset").cloned())
     }
 
+    /// The agent stands inside its region (process_enable_simulator: with
+    /// the neighbours off, they still connect while crossing a border).
+    pub fn agent_inside_main_region(&self) -> bool {
+        let Some(r) = self.main_region.and_then(|h| self.regions.get(&h)) else {
+            return true;
+        };
+        let p = self.agent.position;
+        p.x >= 0.0 && p.y >= 0.0 && p.x < r.heightmap.size_x as f32 && p.y < r.heightmap.size_y as f32
+    }
+
     /// Terrain height under a render-space position.
     pub fn ground_height(&self, p: Vec3) -> Option<f32> {
         for r in self.regions.values() {
