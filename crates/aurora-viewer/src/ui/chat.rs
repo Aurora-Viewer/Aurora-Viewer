@@ -138,6 +138,9 @@ pub struct ChatUi {
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
+    /// "> " before the "… is typing" of a tab (FSTypingChevronPrefix,
+    /// Preferences › Chat), given every frame by the app.
+    pub typing_chevron: bool,
     /// The entries of conversations with news flash (Preferences › Chat),
     /// given every frame by the app; and where each flash stands.
     pub flash_unread: bool,
@@ -164,6 +167,12 @@ pub struct ChatUi {
     /// Our typing notices, and what the field did this frame.
     me_typing: typing::MeTyping,
     typing_field: Option<typing::Field>,
+    /// An emote shows us typing in the nearby chat too (FSTypeDuringEmote,
+    /// Preferences › Chat), given every frame by the app.
+    pub type_during_emote: bool,
+    /// Our typing in the nearby chat, and what its fields did this frame.
+    local_typing: typing::LocalTyping,
+    local_field: typing::LocalField,
     /// The resident picker of the column's "+", and what it starts.
     picker: super::avatar_picker::AvatarPicker,
     start: Start,
@@ -248,6 +257,41 @@ impl ChatUi {
     /// The names of the avatars in chat range who type.
     fn nearby_typing_names(&self, world: &World) -> Vec<String> {
         self.nearby_typing.iter().map(|id| world.social.display_name_of(id)).collect()
+    }
+
+    /// A nearby chat field drawn this frame: its keyboard, its text after
+    /// a key, a line sent (FSNearbyChat::handleChatBarKeystroke).
+    /// `said`: its text, after this frame's key, says something aloud
+    /// (`typing::says_aloud`).
+    fn local_field(&mut self, resp: &egui::Response, said: bool, sent: bool) {
+        self.local_field.focused |= resp.has_focus();
+        if resp.changed() {
+            self.local_field.typed = Some(said);
+        }
+        self.local_field.sent |= sent;
+    }
+
+    /// Once per frame, after the fields are drawn: our typing in the nearby
+    /// chat starts (Some(true)) or stops (Some(false)).
+    pub fn local_typing_update(&mut self, now: std::time::Instant) -> Option<bool> {
+        self.local_typing.update(now, std::mem::take(&mut self.local_field))
+    }
+
+    /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
+    /// it starts.
+    pub fn hold_local_typing(&mut self, now: std::time::Instant) -> bool {
+        self.local_field = typing::LocalField::default();
+        self.local_typing.hold(now)
+    }
+
+    /// We type in the nearby chat (AGENT_STATE_TYPING).
+    pub fn local_typing(&self) -> bool {
+        self.local_typing.typing()
+    }
+
+    /// Stop typing in the nearby chat (after a teleport); true when we were.
+    pub fn stop_local_typing(&mut self) -> bool {
+        self.local_typing.stop()
     }
 }
 
@@ -2155,10 +2199,11 @@ pub fn show(
                         // FSFloaterIM::addTypingIndicator: the tab of a
                         // resident typing to us reads "Nova is typing…", by
                         // their display name alone, so that it shows in a
-                        // narrow tab
+                        // narrow tab; "> " first with FSTypingChevronPrefix
                         let typing = (sidebar::kind(world, &other) == sidebar::Kind::Private && world.social.is_typing(&other))
                             .then(|| typing::text(&[world.social.display_name_of(&other)]))
-                            .flatten();
+                            .flatten()
+                            .map(|t| if st.typing_chevron { format!("> {t}") } else { t });
                         let entry = list_entry(
                             ui,
                             p,
@@ -2435,6 +2480,10 @@ pub fn show(
                     empty: draft.trim().is_empty(),
                     sent,
                 });
+                if st.selected.is_none() {
+                    let said = typing::says_aloud(&draft, st.type_during_emote);
+                    st.local_field(&resp, said, sent);
+                }
                 if !draft.is_empty() {
                     *st.draft_mut(st.selected) = draft;
                 } else {
@@ -2960,6 +3009,9 @@ pub(crate) fn bar_input(
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
     let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
+    let said = typing::says_aloud(&st.input, st.type_during_emote);
+    st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
     }

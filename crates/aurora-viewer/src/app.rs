@@ -2469,6 +2469,7 @@ impl App {
                 self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
+                self.stop_local_typing();
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
                     // Finish and arrival can be drained in the same frame.
                     // Start the screen here so a fast remote teleport still
@@ -2485,6 +2486,7 @@ impl App {
                         self.scene.own_attachment_count()
                     )
                 });
+                self.stop_local_typing();
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
@@ -5790,6 +5792,9 @@ impl App {
             }
             // send_agent_update: Alt or Ctrl turns script clicks into releases
             c.alt_or_ctrl = self.alt || self.ctrl;
+            if self.chat_ui.local_typing() {
+                c.state |= aurora_net::AGENT_STATE_TYPING;
+            }
             // diagnostic: vertical controls sent to the simulator
             let vertical = c.control_flags & (control::UP_POS | control::UP_NEG | control::FLY);
             if vertical != self.last_vertical_flags {
@@ -8336,6 +8341,53 @@ impl App {
         });
     }
 
+    /// Our typing in the nearby chat, once per frame after its fields are
+    /// drawn (`ChatUi::local_typing_update`).
+    fn update_local_typing(&mut self) {
+        self.chat_ui.type_during_emote = self.settings.type_during_emote;
+        // AURORA_DEMO_TYPING: we type from our arrival on, no key needed
+        if self.demo && crate::demo::typing_scenario() && matches!(self.screen, Screen::World) {
+            if self.chat_ui.hold_local_typing(Instant::now()) {
+                self.send_local_typing(true);
+            }
+            return;
+        }
+        if let Some(typing) = self.chat_ui.local_typing_update(Instant::now()) {
+            self.send_local_typing(typing);
+        }
+    }
+
+    /// LLAgent::startTyping / stopTyping: the typing animation (started
+    /// only with PlayTypingAnim, always stopped), then the empty typing
+    /// notice on channel 0 for those in range. AGENT_STATE_TYPING follows
+    /// in the agent updates (`ChatUi::local_typing`).
+    fn send_local_typing(&mut self, typing: bool) {
+        log::info!("nearby chat: typing {}", if typing { "started" } else { "stopped" });
+        if !typing || self.settings.play_typing_anim {
+            self.send(NetCommand::AgentAnimation {
+                anim: crate::world::radar::ANIM_AGENT_TYPE,
+                start: typing,
+            });
+        }
+        self.send(NetCommand::Chat {
+            message: String::new(),
+            channel: 0,
+            chat_type: if typing {
+                aurora_net::ChatType::StartTyping
+            } else {
+                aurora_net::ChatType::StopTyping
+            },
+        });
+    }
+
+    /// A teleport or an arrival ends our typing in the nearby chat (FIRE-7273
+    /// in process_teleport_finish / process_agent_movement_complete).
+    fn stop_local_typing(&mut self) {
+        if self.chat_ui.stop_local_typing() {
+            self.send_local_typing(false);
+        }
+    }
+
     /// "Report a bug" (login screen, top bar, Help menu): GitHub's issue
     /// template chooser in the browser, in place of the built-in form
     /// (disabled, see main.rs).
@@ -8361,9 +8413,12 @@ impl App {
             LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             LoginAction::None | LoginAction::Login => {}
         }
+        // the line first, then the typing stop it brings (sendChat, then
+        // stopTyping)
         if let Some(c) = a.chat {
             self.send_local_chat(c);
         }
+        self.update_local_typing();
         for cmd in a.typing {
             self.send(cmd);
         }
@@ -9652,6 +9707,7 @@ impl App {
                             pictures: &self.avatar_pics,
                             too_complex: &self.scene.too_complex,
                             demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                            own_typing: self.chat_ui.local_typing(),
                         }),
                     )
                 };
@@ -10171,6 +10227,7 @@ impl App {
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
+                self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, their typing animation)
@@ -11671,6 +11728,10 @@ impl ApplicationHandler for App {
             self.scene.anims.insert(
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
+            );
+            self.scene.anims.insert(
+                crate::world::radar::ANIM_AGENT_TYPE,
+                Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );
             if crate::demo::water::mode().is_some() {
                 self.scene.anims.insert(
