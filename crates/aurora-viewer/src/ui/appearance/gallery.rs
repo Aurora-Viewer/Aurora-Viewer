@@ -189,11 +189,20 @@ pub(super) fn context_menu(
                     aurora_i18n::tr!("ui-appearance-gallery-new-t-shirt"),
                     aurora_i18n::tr!("ui-appearance-gallery-new-underwear"),
                     aurora_i18n::tr!("ui-appearance-gallery-new-alpha-layer"),
-                    aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
-                    aurora_i18n::tr!("common-new-tattoo"),
                 ] {
                     menu::todo(ui, p, "shirt-filled", label);
                 }
+                // created, worn, then edited (wear_and_edit_cb)
+                if menu::item_if(
+                    ui,
+                    p,
+                    "shirt-filled",
+                    aurora_i18n::tr!("ui-appearance-gallery-new-physics"),
+                    st.pending.is_none(),
+                ) {
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::NewPhysics);
+                }
+                menu::todo(ui, p, "shirt-filled", aurora_i18n::tr!("common-new-tattoo"));
             },
         );
         menu::submenu(

@@ -2366,6 +2366,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
+| `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
+| `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
@@ -3926,6 +3928,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
 
+**`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
+the balls and the hops): `1` wears a physics layer with the lively values of
+`AURORA_DEMO_PHYSICS` and opens its editor, Breasts bounce open; moving a slider
+changes the balls' bounce at once, Cancel restores it. `new` runs the outfit
+gallery's "New physics": a "New Physics" layer is created, worn (it shows in
+Appearance › Worn) and its editor opens; every Max Effect is at 0, so the
+balls follow the body rigidly. `drag`: the same, then four seconds after the
+editor opens every slider moves in two seconds to the lively values, as a
+hand would (log: `demo physics edit: sliders at the lively layer`); the
+`demo physics: frame …` offsets of `own` go from zero to a bounce while those
+of `other` keep bouncing. Save stores the asset and applies it as the
+appearance, as a simulator bake would.
+
 **`AURORA_DEMO_SHAPE=body|head|eyes|ears|nose|mouth|chin|torso|legs|male|readonly|nocopy|dirty|save-as|saving|save-feedback|mesh-head|static-head|pbr-head|mesh-drag|layered-head`**
 opens the editor with a synthetic worn shape, without reading a real inventory or
 connecting to a grid. Category modes select the corresponding controls; `male`
@@ -3962,6 +3977,25 @@ server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after f
 900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
 On the grid, also check a rigged body, real baked textures and persistence after
 relogin; only the human connects and performs these checks.
+Opening the editor stands our avatar up (a seated avatar leaves its seat, as
+in the Legacy Viewer), and while the editor is open our avatar plays the
+customise animation (not the physics layer editor, which keeps the camera,
+like the Legacy Viewer's): the log
+says `customise animation: start 038fcec9-…` on opening and, on closing, its
+stop then `start 6883a61a-…` (the "done" animation). In demo the animation
+is listed on our avatar but has no motion (no built-in animation assets).
+
+**`AURORA_DEMO_AVATAR_HEALTH=undeform|refresh`** runs one entry of Me ›
+Avatar health at frame 600, as its menu row would. `undeform`: our skeleton
+and animations reset, then the undeform animation started; the log says
+`undeform: …`. `refresh`: every object we wear from the inventory asked again
+on its point; the log says `refresh attachments: <n> of <m> worn objects
+asked again`. The demo's worn objects (`AURORA_DEMO_WORN`, outfits) carry
+their item id as object id, which is how a temporary attachment looks, so
+the demo always logs `0 of <m>`; the choice of objects is covered by the
+unit tests, the real requests by a grid test. The menu itself:
+`AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
+opens its submenu.
 
 **`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:

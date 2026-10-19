@@ -44,6 +44,7 @@ mod media;
 mod movement;
 mod net_profile;
 mod own_motion;
+mod physics_editor;
 mod report_abuse;
 mod scene;
 mod screen_rate;

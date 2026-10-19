@@ -1,17 +1,20 @@
-//! Rolling disk cache: textures, meshes, materials, animations (shared by
-//! every region, keyed by asset id), per-region object caches and the
-//! inventory cache. A background thread keeps the total under the size
-//! limit by evicting the least recently used files. The directories are
-//! only walked at startup, when the bytes written since push the estimate
-//! over the limit, and every 30 minutes (cheap even for a 20 GB cache).
+//! Rolling disk cache: textures, meshes, materials, animations, sounds and
+//! environment settings (shared by every region, keyed by asset id),
+//! per-region object caches and the inventory cache. A background thread
+//! keeps the total under the size limit by evicting the least recently used
+//! files. The directories are only walked at startup, when the bytes written
+//! since push the estimate over the limit, and every 30 minutes (cheap even
+//! for a 20 GB cache).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
-/// Sub-directories managed by the cache.
-pub const DIRS: [&str; 6] = ["tex", "mesh", "mat", "anim", "objects", "inventory"];
+/// Sub-directories managed by the cache. Every folder written through
+/// [`write`] belongs here, or the walks never see it: never trimmed, never
+/// counted.
+pub const DIRS: [&str; 8] = ["tex", "mesh", "mat", "anim", "objects", "inventory", "sound", "settings"];
 
 /// Bytes written to the cache since the last walk.
 static WRITTEN: AtomicU64 = AtomicU64::new(0);
@@ -266,6 +269,8 @@ mod tests {
         assert_eq!(origin_of(&root.join("mesh").join("x")), Origin::Meshes);
         assert_eq!(origin_of(&root.join("inventory").join("x.inv")), Origin::Inventory);
         assert_eq!(origin_of(&root.join("anim").join("x")), Origin::Other);
+        assert_eq!(origin_of(&root.join("sound").join("x.ogg")), Origin::Other);
+        assert_eq!(origin_of(&root.join("settings").join("x.settings")), Origin::Other);
         // a file named like a folder is not one
         assert_eq!(origin_of(&root.join("tex")), Origin::Other);
     }
@@ -290,6 +295,39 @@ mod tests {
         }
         assert!(!root.join("tex").join("b").exists(), "least recently used evicted");
         assert!(root.join("tex").join("a").exists(), "touched file kept");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sounds_and_settings_are_trimmed_and_counted() {
+        let root = std::env::temp_dir().join(format!("aurora-cache-test-{}", uuid::Uuid::new_v4()));
+        let cache = DiskCache::new(root.clone(), 1);
+        // 1210 KB against the 1 MB limit: the oldest file, a sound, goes
+        let files = [
+            ("sound", "old.ogg", 400),
+            ("tex", "a", 400),
+            ("tex", "b", 400),
+            ("settings", "x.settings", 10),
+        ];
+        for (i, (dir, name, kb)) in files.iter().enumerate() {
+            let p = root.join(dir).join(name);
+            std::fs::write(&p, vec![0u8; kb * 1024]).unwrap();
+            let t = SystemTime::now() - Duration::from_secs(100 - i as u64 * 10);
+            std::fs::File::options().append(true).open(&p).unwrap().set_modified(t).unwrap();
+        }
+        cache.trim();
+        let at = |d: &str| DIRS.iter().position(|x| *x == d).unwrap();
+        let want =
+            |by_dir: [u64; DIRS.len()]| by_dir[at("sound")] == 0 && by_dir[at("tex")] == 800 * 1024 && by_dir[at("settings")] == 10 * 1024;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !want(cache.usage_by_dir()) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!root.join("sound").join("old.ogg").exists(), "least recently used sound evicted");
+        assert!(root.join("tex").join("a").exists() && root.join("tex").join("b").exists());
+        assert!(root.join("settings").join("x.settings").exists());
+        assert!(want(cache.usage_by_dir()), "counted by folder: {:?}", cache.usage_by_dir());
+        assert_eq!(cache.usage(), 810 * 1024);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

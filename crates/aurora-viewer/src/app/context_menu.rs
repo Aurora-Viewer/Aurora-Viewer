@@ -243,9 +243,14 @@ impl App {
                     self.on_ctx_action(CtxAction::Edit(id));
                 }
             }
+            CtxAction::NewPhysics => self.new_physics(),
             CtxAction::EditWorn(item) => {
                 if Some(item) == crate::shape_editor::worn_shape(&self.world) {
                     self.open_shape_editor(item);
+                    return;
+                }
+                if Some(item) == crate::physics_editor::worn_physics(&self.world) {
+                    self.open_physics_editor(item);
                     return;
                 }
                 if let Some(key) = self
@@ -484,6 +489,9 @@ impl App {
             }
             CtxAction::ResetSkeleton { avatar, animations } => self.reset_skeleton(avatar, animations),
             CtxAction::StopAnimations => self.stop_current_animations(),
+            CtxAction::StopAnimationsKeepPermissions => self.stop_animations(false),
+            CtxAction::Undeform => self.undeform_avatar(),
+            CtxAction::RefreshAttachments => self.refresh_attachments(),
             CtxAction::AnswerTeleport { invite, accept } => {
                 for c in self.world.answer_teleport_invite(invite, accept) {
                     if matches!(c, NetCommand::AcceptLure { .. }) {
