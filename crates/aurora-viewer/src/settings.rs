@@ -495,6 +495,9 @@ pub struct Settings {
     pub log_im: bool,
     /// Write the nearby chat too (Firestorm LogNearbyChat, off).
     pub log_nearby: bool,
+    /// Reopen the private conversations of the last session at login (the
+    /// Legacy Viewer's FSRestoreOpenIMs, off).
+    pub reopen_ims: bool,
     /// Show the end of a conversation's file when it opens (LogShowHistory).
     pub log_show_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
@@ -509,6 +512,16 @@ pub struct Settings {
     pub mute_groups_without_notices: bool,
     /// FSReportBlockToNearbyChat: say in nearby chat when the block list changes.
     pub report_blocks: bool,
+    /// Show the invitations to a group we are already in (the Legacy
+    /// Viewer's FSShowJoinedGroupInvitations, off: they are dropped).
+    pub show_joined_group_invitations: bool,
+    /// Tell in nearby chat when the region's script count changes by at
+    /// least the threshold (FSReportTotalScriptCountChanges, off; 100).
+    pub script_count_alert: bool,
+    pub script_count_threshold: u32,
+    /// A notice when the region runs another simulator version than the
+    /// last one (FSShowServerVersionChangeNotice, on).
+    pub sim_version_alert: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
     /// Automatic responses and the kept online status modes.
@@ -653,6 +666,14 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Always fly after a teleport (the Legacy Viewer's FSFlyAfterTeleport,
+    /// off); a region that blocks flying still lands the avatar.
+    pub fly_after_teleport: bool,
+    /// The crouch key stays down until pressed again (FSCrouchToggle, off).
+    pub crouch_toggle: bool,
+    /// A left click on an object whose click action is Sit does not sit
+    /// (FSBlockClickSit, off); the menu's Sit still does.
+    pub block_click_sit: bool,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in Firestorm.
     pub double_click: crate::autopilot::DoubleClick,
@@ -760,6 +781,10 @@ pub struct Settings {
     /// (FSShowDisplayNameUpdateNotification, on).
     pub use_display_names: bool,
     pub show_usernames: bool,
+    /// Which group titles the name tags show (GroupTitlesTagMode, all).
+    pub group_titles: crate::world::names::GroupTitles,
+    /// Hide our own group title from everyone (RenderHideGroupTitle, off).
+    pub hide_own_group_title: bool,
     pub legacy_username_format: bool,
     pub trim_resident: bool,
     pub display_name_notices: bool,
@@ -769,10 +794,20 @@ pub struct Settings {
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
     pub cache_size_mb: u32,
+    /// The folder the cache goes in, "" for the default one (the Legacy
+    /// Viewer's CacheLocation): read at startup (cache_location.rs).
+    pub cache_location: String,
+    /// The folder holding the conversation transcripts, one folder per
+    /// account inside, "" for the default one (InstantMessageLogPath).
+    pub chat_log_location: String,
     /// The most the simulators may send, all channels together, in kb/s
     /// (Firestorm's ThrottleBandwidthKBPS; the default and the top of the
     /// range are Aurora's, `aurora_net::throttle::DEFAULT_KBPS`).
     pub bandwidth_kbps: u32,
+    /// Connect only to the region we are in (the Legacy Viewer's
+    /// FSDisableNeighbourRegionConnections, off): the neighbours are not
+    /// shown, and crossings on foot or in vehicles are less reliable.
+    pub no_neighbour_regions: bool,
     /// Width of the local chat input in the bottom bar (px, 0 = skin default).
     pub chat_bar_width: f32,
     /// Width of the chat island of the bottom islands (px, 0 = the default
@@ -960,6 +995,15 @@ pub fn audio_channels() -> [&'static str; 7] {
     ]
 }
 
+/// ShowStreamMetadata: 0 off, 1 toast, 2 nearby chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StreamTitleShow {
+    Off,
+    Toast,
+    #[default]
+    Chat,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -985,6 +1029,15 @@ pub struct AudioSettings {
     pub music_autoplay: bool,
     /// Play parcel media automatically.
     pub media_autoplay: bool,
+    /// Where the parcel music's title is told when it changes (the Legacy
+    /// Viewer's ShowStreamMetadata: nearby chat).
+    pub stream_title: StreamTitleShow,
+    /// Also say it on a script channel (StreamMetadataAnnounceToChat, off;
+    /// StreamMetadataAnnounceChannel, 362394).
+    pub stream_title_announce: bool,
+    pub stream_title_channel: i32,
+    /// Cut every sound while the window is minimised (MuteWhenMinimized, off).
+    pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
     pub output_device: String,
     /// Microphone name (empty = system default).
@@ -1033,6 +1086,10 @@ impl Default for AudioSettings {
             enabled: [true; 7],
             music_autoplay: false,
             media_autoplay: false,
+            stream_title: StreamTitleShow::Chat,
+            stream_title_announce: false,
+            stream_title_channel: 362394,
+            mute_when_minimized: false,
             output_device: String::new(),
             input_device: String::new(),
             voice_enabled: true,
@@ -1193,12 +1250,17 @@ impl Default for Settings {
             im_toast_seconds: 30.0,
             log_im: true,
             log_nearby: false,
+            reopen_ims: false,
             log_show_history: true,
             log_dated_names: false,
             warn_external_links: true,
             mute_all_groups: false,
             mute_groups_without_notices: false,
             report_blocks: false,
+            show_joined_group_invitations: false,
+            script_count_alert: false,
+            script_count_threshold: 100,
+            sim_version_alert: true,
             object_im_filter: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
@@ -1250,6 +1312,9 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            fly_after_teleport: false,
+            crouch_toggle: false,
+            block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             lookat: Default::default(),
             former_look_at: None,
@@ -1288,6 +1353,8 @@ impl Default for Settings {
             tag_complexity_own: false,
             use_display_names: true,
             show_usernames: true,
+            group_titles: Default::default(),
+            hide_own_group_title: false,
             legacy_username_format: true,
             trim_resident: true,
             display_name_notices: true,
@@ -1295,7 +1362,10 @@ impl Default for Settings {
             ssr: false,
             anisotropy: 8,
             cache_size_mb: 20480,
+            cache_location: String::new(),
+            chat_log_location: String::new(),
             bandwidth_kbps: aurora_net::throttle::DEFAULT_KBPS as u32,
+            no_neighbour_regions: false,
             chat_bar_width: 0.0,
             chat_island_width: 0.0,
             toolbar: Default::default(),
@@ -1388,11 +1458,23 @@ pub fn cache_dir() -> PathBuf {
     if let Some(test) = aurora_updater::test_environment() {
         return test.root.join("cache");
     }
-    for_mode(
-        directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
-            .map(|d| d.cache_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("cache")),
-    )
+    // the folder chosen in the preferences, read at startup (cache_location.rs)
+    if let Some(chosen) = crate::cache_location::chosen() {
+        return for_mode(chosen.to_path_buf());
+    }
+    for_mode(default_cache_root())
+}
+
+pub(crate) fn default_cache_root() -> PathBuf {
+    directories::ProjectDirs::from("org", "Aurora", "AuroraViewer")
+        .map(|d| d.cache_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("cache"))
+}
+
+/// The cache folders the viewer uses when none is chosen (before the demo's
+/// subfolder): the ones a change of folder may remove.
+pub fn default_cache_dirs() -> Vec<PathBuf> {
+    vec![default_cache_root()]
 }
 
 /// Where Aurora's media plugins pack is installed: next to the logs, outside
@@ -1453,7 +1535,7 @@ impl Settings {
             .collect()
     }
 
-    fn path() -> PathBuf {
+    pub(crate) fn path() -> PathBuf {
         config_dir().join("settings.json")
     }
 

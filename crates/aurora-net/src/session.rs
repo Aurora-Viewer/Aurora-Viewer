@@ -188,6 +188,9 @@ struct Session<'a> {
     /// "No agent updates" already reported for this CompleteAgentMovement.
     cam_warned: bool,
     far: f32,
+    /// FSDisableNeighbourRegionConnections, while the agent stands inside its
+    /// region: EnableSimulator for another region is ignored.
+    refuse_neighbours: bool,
     /// The camera's vertical viewing angle, last told to the simulator.
     fov: f32,
     logout_started: Option<Instant>,
@@ -321,6 +324,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         one_shot: 0,
         cam_warned: false,
         far: 128.0,
+        refuse_neighbours: false,
         fov: DEFAULT_FOV,
         logout_started: None,
         finished: false,
@@ -1271,6 +1275,7 @@ impl Session<'_> {
                 self.send_main(&m, true);
             }
             NetCommand::SetDrawDistance(d) => self.far = d.clamp(32.0, 1024.0),
+            NetCommand::RefuseNeighbourRegions(on) => self.refuse_neighbours = on,
             NetCommand::SetFov(angle) => {
                 if angle.is_finite() && angle > 0.0 && angle != self.fov {
                     self.fov = angle;
@@ -2964,6 +2969,17 @@ impl Session<'_> {
                     let port = info["Port"].as_i32() as u16;
                     let size = (info["RegionSizeX"].as_u32().max(256), info["RegionSizeY"].as_u32().max(256));
                     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+                    // process_enable_simulator (llworld.cpp): no circuit to a
+                    // neighbour; the simulator keeps its child agent
+                    if self.refuse_neighbours && self.main.is_some_and(|main| main != addr) {
+                        transition::link(|| {
+                            format!(
+                                "EnableSimulator region {} ({addr}) ignored: neighbours off",
+                                transition::grid(handle)
+                            )
+                        });
+                        continue;
+                    }
                     transition::link(|| {
                         let known = if self.sims.contains_key(&addr) {
                             ", circuit already open"
@@ -4780,6 +4796,7 @@ mod event_queue_tests {
             one_shot: 0,
             cam_warned: false,
             far: 128.0,
+            refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
             finished: false,

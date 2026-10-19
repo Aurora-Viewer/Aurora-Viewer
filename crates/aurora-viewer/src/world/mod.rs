@@ -44,6 +44,7 @@ pub mod notification_history;
 pub mod notifications;
 pub mod object_im_filter;
 pub mod objects;
+pub mod open_ims;
 pub mod outfit;
 pub mod parked;
 pub mod place_details;
@@ -51,6 +52,7 @@ pub mod place_snapshots;
 pub mod profiles;
 pub mod radar;
 pub mod recent;
+pub mod region_alerts;
 pub mod region_restart;
 pub mod script_debug;
 pub mod search;
@@ -411,6 +413,17 @@ pub struct World {
     /// The instant messages kept while offline were asked for (once per
     /// login).
     offline_im_requested: bool,
+    /// Which group titles the name tags show (from the settings).
+    pub group_titles: names::GroupTitles,
+    /// Script count and simulator version alerts (region_alerts.rs).
+    pub region_alerts: region_alerts::RegionAlerts,
+    /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
+    pub fly_after_teleport: bool,
+    /// The account's list of open private conversations (open_ims.rs).
+    open_ims_path: Option<std::path::PathBuf>,
+    /// Conversations of the last session, read at login, that the app
+    /// reopens when the setting asks for it.
+    pub reopen_ims: Vec<Uuid>,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
@@ -584,6 +597,11 @@ impl World {
             profiles: profiles::Profiles::default(),
             arrived_once: false,
             offline_im_requested: false,
+            group_titles: Default::default(),
+            region_alerts: Default::default(),
+            fly_after_teleport: false,
+            open_ims_path: None,
+            reopen_ims: Vec::new(),
             cache_dir: None,
         }
     }
@@ -592,6 +610,7 @@ impl World {
     /// stays for the next one: the conversations and the nearby chat go, and
     /// the transcripts close (only their writer and settings are kept).
     pub fn reset(&mut self) {
+        self.save_open_ims();
         let lib = self.avatar_lib.clone();
         let cache_dir = self.cache_dir.take();
         let mut chat_log = std::mem::take(&mut self.chat_log);
@@ -599,6 +618,14 @@ impl World {
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
+    }
+
+    /// saveOpenIMs, when the session ends (quit, logout or disconnection).
+    pub fn save_open_ims(&self) {
+        if let Some(path) = &self.open_ims_path {
+            let others: Vec<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
+            open_ims::save(path, &others);
+        }
     }
 
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
@@ -953,6 +980,16 @@ impl World {
             return Some(u.clone());
         }
         self.regions.values().find_map(|r| r.caps.get("ViewerAsset").cloned())
+    }
+
+    /// The agent stands inside its region (process_enable_simulator: with
+    /// the neighbours off, they still connect while crossing a border).
+    pub fn agent_inside_main_region(&self) -> bool {
+        let Some(r) = self.main_region.and_then(|h| self.regions.get(&h)) else {
+            return true;
+        };
+        let p = self.agent.position;
+        p.x >= 0.0 && p.y >= 0.0 && p.x < r.heightmap.size_x as f32 && p.y < r.heightmap.size_y as f32
     }
 
     /// Terrain height under a render-space position.
@@ -1572,6 +1609,9 @@ impl World {
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
                 self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
+                let open = account.join(open_ims::FILE);
+                self.reopen_ims = open_ims::load(&open);
+                self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
@@ -2026,6 +2066,11 @@ impl World {
                 self.tp_show_progress = remote;
                 self.tp_progress = self.tp_progress.max(0.5);
                 self.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
+                // FSFlyAfterTeleport (process_teleport_finish); a region that
+                // blocks flying lands us on arrival (land_if_fly_blocked)
+                if self.fly_after_teleport {
+                    self.agent.flying = true;
+                }
                 Some(NetEvent::TeleportFinished { handle })
             }
             NetEvent::TeleportLocal { flying } => {
@@ -2034,7 +2079,7 @@ impl World {
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
-                self.agent.flying = flying;
+                self.agent.flying = flying || self.fly_after_teleport;
                 None
             }
             NetEvent::TeleportStarted => {
@@ -2410,6 +2455,11 @@ impl World {
                 None
             }
             NetEvent::Estate(ev) => {
+                match &ev {
+                    aurora_net::estate::EstateEvent::Stats { stats, .. } => self.on_sim_stats_alert(stats),
+                    aurora_net::estate::EstateEvent::SimVersion { version, .. } => self.on_sim_version_alert(version),
+                    _ => {}
+                }
                 if self.estate.apply(ev)
                     && let Some(handle) = self.estate.open
                 {
@@ -2971,6 +3021,11 @@ impl World {
                 if !task {
                     self.on_inventory_offer_card(im, &from, asset_type, entry);
                 }
+            }
+            // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
+            // group we are already in is dropped unless asked for
+            d::GROUP_INVITATION if self.groups.is_member(&im.from_agent_id) && !self.groups.show_joined_invitations => {
+                log::info!("group invitation to a group we are already in: not shown");
             }
             d::GROUP_INVITATION => {
                 self.ui_sounds.push(UiSound::GroupInvitation);

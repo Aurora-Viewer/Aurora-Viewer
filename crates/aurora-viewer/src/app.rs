@@ -41,6 +41,8 @@ mod context_menu;
 mod controls;
 mod cursor_hold;
 mod derender;
+mod folders;
+use folders::chat_log_root;
 mod dof;
 mod double_click;
 mod env_apply;
@@ -501,6 +503,12 @@ pub struct App {
     /// Settings last applied to the engine, stream URL playing, parcel music URL seen.
     applied_audio: Option<crate::settings::AudioSettings>,
     stream_url: String,
+    /// The parcel music's title last told (ShowStreamMetadata).
+    stream_title_said: Option<String>,
+    /// Every sound is cut because the window is minimised (MuteWhenMinimized).
+    minimized_mute: bool,
+    /// The Down key's latch (FSCrouchToggle).
+    crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
     music_parcel_url: String,
     /// `/music` chat command: a stream played instead of the parcel's until
     /// the parcel stream changes.
@@ -652,6 +660,10 @@ pub struct App {
     /// whether the current away status was set by that timer.
     last_input: Instant,
     auto_away: bool,
+    /// What the network was last told about the neighbouring regions.
+    neighbours_refused: bool,
+    /// The cache and transcript folders being chosen (app/folders.rs).
+    folders: folders::Folders,
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
@@ -1021,6 +1033,9 @@ impl App {
             },
             applied_audio: None,
             stream_url: String::new(),
+            stream_title_said: None,
+            minimized_mute: false,
+            crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
@@ -1114,6 +1129,8 @@ impl App {
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
+            neighbours_refused: false,
+            folders: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
@@ -1788,6 +1805,11 @@ impl App {
         } else {
             crate::world::chat_log::grid_name(&s.grid, &s.custom_login_uri, self.demo)
         });
+        // the chosen folder (InstantMessageLogPath); once logged in it only
+        // changes with its files (`relocate`)
+        if log.identity().is_none() {
+            log.set_folder(chat_log_root(&s.chat_log_location));
+        }
     }
 
     // ------------------------------------------------------------------ login
@@ -1942,6 +1964,8 @@ impl App {
             self.scene.clear(&mut g.renderer);
         }
         self.world.reset();
+        // the next session's network starts with the neighbours allowed
+        self.neighbours_refused = false;
         // the transcripts shown belong to the account that leaves
         self.history_ui = Default::default();
         self.chat_ui = ChatUi::default();
@@ -3744,6 +3768,35 @@ impl App {
         sounds.update(engine, &self.world, &listener, Instant::now());
     }
 
+    /// StreamTitleDisplay::checkMetadata (streamtitledisplay.cpp): the title
+    /// in nearby chat or in a notice, and on a script channel when asked.
+    fn tell_stream_title(&mut self, title: &str) {
+        let a = &self.settings.audio;
+        match a.stream_title {
+            crate::settings::StreamTitleShow::Off => {}
+            crate::settings::StreamTitleShow::Chat => self
+                .world
+                .system_message(aurora_i18n::tr!("app-stream-title-now-playing", title = title.to_owned())),
+            crate::settings::StreamTitleShow::Toast => {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("app-stream-title-toast"),
+                    title.to_owned(),
+                    crate::world::notifications::Data::None,
+                );
+            }
+        }
+        // FSCommon::send_message_to_script_channel: a whisper
+        if a.stream_title_announce && a.stream_title_channel != 0 {
+            let channel = a.stream_title_channel;
+            self.send(NetCommand::Chat {
+                message: title.to_owned(),
+                channel,
+                chat_type: aurora_net::ChatType::Whisper,
+            });
+        }
+    }
+
     fn update_audio(&mut self) {
         let in_world = self.in_world();
         let url = if in_world {
@@ -3785,6 +3838,20 @@ impl App {
             }
             self.stream_url = want;
         }
+        // StreamTitleDisplay: the station's title, told when it changes
+        let title = match engine.stream_status() {
+            aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
+            _ => None,
+        };
+        if self.stream_url.is_empty() {
+            self.stream_title_said = None;
+        } else if let Some(title) = title.filter(|t| self.stream_title_said.as_ref() != Some(t)) {
+            self.stream_title_said = Some(title.clone());
+            self.tell_stream_title(&title);
+        }
+        let Some(engine) = &self.audio_engine else {
+            return;
+        };
         if self.applied_audio.as_ref() != Some(&self.settings.audio) {
             let a = &self.settings.audio;
             if self.applied_audio.as_ref().map(|p| p.output_device.as_str()) != Some(a.output_device.as_str())
@@ -3795,10 +3862,27 @@ impl App {
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
                 engine.set_volume(*ch, a.volume[i]);
-                engine.set_muted(*ch, a.muted[i]);
+                engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute));
                 engine.set_enabled(*ch, i == 0 || a.enabled[i]);
             }
             self.applied_audio = Some(a.clone());
+        }
+        self.sync_minimized_mute();
+    }
+
+    /// MuteWhenMinimized (audio_update_volume): every sound stops while the
+    /// window is minimised, losing the focus alone does not. Called each
+    /// frame and when the window's size changes, frames being rare while it
+    /// is minimised.
+    fn sync_minimized_mute(&mut self) {
+        let minimized = self.gfx.as_ref().is_some_and(|g| g.window.is_minimized().unwrap_or(false));
+        let mute = self.settings.audio.mute_when_minimized && minimized;
+        if mute == self.minimized_mute {
+            return;
+        }
+        self.minimized_mute = mute;
+        if let Some(engine) = &self.audio_engine {
+            engine.set_muted(aurora_audio::Channel::Master, mute || self.settings.audio.muted[0]);
         }
     }
 
@@ -3852,6 +3936,9 @@ impl App {
         }
         if !self.exit_prompt.confirm(action, Instant::now()) {
             return;
+        }
+        if self.in_world() {
+            self.world.save_open_ims();
         }
         if self.in_world() && !self.demo {
             self.record_inventory_logout();
@@ -4839,6 +4926,13 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        i.down = self.crouch_toggle.apply(
+            self.settings.crouch_toggle,
+            self.world.agent.flying,
+            self.world.agent.is_sitting(),
+            i.down,
+            i.up,
+        );
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start)
@@ -5607,6 +5701,30 @@ impl App {
             self.world.groups.mute_all_groups = self.settings.mute_all_groups;
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
+            self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
+            self.world.group_titles = self.settings.group_titles;
+            self.world.fly_after_teleport = self.settings.fly_after_teleport;
+            self.world.region_alerts.cfg = crate::world::region_alerts::Config {
+                script_count: self.settings.script_count_alert,
+                script_threshold: self.settings.script_count_threshold,
+                version: self.settings.sim_version_alert,
+            };
+            // FSDisableNeighbourRegionConnections, lifted while crossing
+            let refuse = self.settings.no_neighbour_regions && self.world.agent_inside_main_region();
+            if self.neighbours_refused != refuse {
+                self.neighbours_refused = refuse;
+                self.net.send(NetCommand::RefuseNeighbourRegions(refuse));
+            }
+            // FSRestoreOpenIMs: the last session's private conversations,
+            // once, after login
+            if !self.world.reopen_ims.is_empty() {
+                let others = std::mem::take(&mut self.world.reopen_ims);
+                if self.settings.reopen_ims {
+                    for other in others {
+                        self.world.social.session_mut(other);
+                    }
+                }
+            }
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)
@@ -5622,6 +5740,14 @@ impl App {
             } else if self.auto_away && self.last_input.elapsed().as_secs() < 1 {
                 self.world.set_away(false);
                 self.auto_away = false;
+            }
+            // QuitAfterSecondsOfAFK: an ordinary quit (unsaved scripts still
+            // ask); asked once per time away
+            if self.world.away_too_long(Instant::now()) {
+                log::info!("quitting: away for longer than the setting");
+                self.world.status.away_since = None;
+                self.exit_prompt.request();
+                self.confirm_exit(ui::exit::Action::Quit);
             }
             self.world.tick_social();
             self.update_gestures();
@@ -5787,6 +5913,10 @@ impl App {
             );
             if self.autopilot.is_some() {
                 c.flags |= crate::autopilot::AU_FLAGS_CLIENT_AUTOPILOT;
+            }
+            // RenderHideGroupTitle (send_agent_update)
+            if self.settings.hide_own_group_title {
+                c.flags |= crate::autopilot::AU_FLAGS_HIDETITLE;
             }
             let moving = control::AT_POS | control::AT_NEG | control::LEFT_POS | control::LEFT_NEG | control::UP_POS | control::UP_NEG;
             if self.world.status.away && c.control_flags & moving != 0 {
@@ -9419,6 +9549,19 @@ impl App {
         self.options_ui.cache_usage = self.disk_cache.usage();
         self.options_ui.cache_clearing = self.disk_cache.is_clearing();
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
+        self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
+        self.poll_folder_pick();
+        if let Some(done) = self.world.chat_log.take_relocated() {
+            self.options_ui.chat_log_status = match done {
+                Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-moved", count = count),
+                Err(e) => {
+                    log::warn!("conversation transcripts: moving failed ({e})");
+                    self.settings.chat_log_location = self.folders.chat_log_previous.take().unwrap_or_default();
+                    self.folders.settings_changed = true;
+                    aurora_i18n::tr!("ui-options-chat-logs-move-failed").to_owned()
+                }
+            };
+        }
         if let Some(done) = self.world.chat_log.take_erased() {
             self.options_ui.chat_log_status = match done {
                 Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-erased", count = count),
@@ -9489,7 +9632,10 @@ impl App {
             self.options_ui.chat_log_status.clear();
             self.world.chat_log.erase();
         }
-        a.settings_changed = res.changed;
+        if let Some((folder, choice)) = res.folder {
+            self.choose_folder(folder, choice);
+        }
+        a.settings_changed = res.changed || std::mem::take(&mut self.folders.settings_changed);
         a.ui_scale_changed = res.ui_scale_changed;
         a.font_changed = res.font_changed;
         if res.refresh_devices {
@@ -11630,6 +11776,11 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
                     self.options_ui.scroll_to_name_tags = filter == "name-tags";
+                    self.options_ui.scroll_to_new = match filter {
+                        "new" => 1,
+                        "new2" => 2,
+                        _ => 0,
+                    };
                     self.options_ui.scroll_to_attention = filter == "attention";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
@@ -13354,6 +13505,7 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(s) => {
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
+                self.sync_minimized_mute();
             }
             WindowEvent::Moved(_) => self.geom_changed = Some(Instant::now()),
             WindowEvent::RedrawRequested => {
