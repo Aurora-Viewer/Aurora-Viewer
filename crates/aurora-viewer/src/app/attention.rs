@@ -30,6 +30,10 @@ pub struct State {
     opens: VecDeque<(u64, Open)>,
     /// A flash asked during the frame, done once the window is back.
     flash: bool,
+    /// The window is not the foreground window, or is minimized, as
+    /// Windows says between frames (LLWindowWin32::flashIcon asks
+    /// GetForegroundWindow): the focus events can miss a minimize.
+    behind: bool,
 }
 
 /// The titles told lately (GrowlManager::mTitleTimers).
@@ -68,8 +72,8 @@ pub fn flashes(cause: Cause, s: &Settings) -> bool {
 /// Whether the system is told now (GrowlManager::shouldNotify): turned on,
 /// never in do not disturb, and only while the window is not in front
 /// unless FSGrowlWhenActive. `forced`: turned on by AURORA_DEMO_ATTENTION.
-pub fn notifies(s: &Settings, forced: bool, focused: bool, dnd: bool) -> bool {
-    (s.system_notifications || forced) && !dnd && (s.system_notifications_when_active || !focused)
+pub fn notifies(s: &Settings, forced: bool, in_front: bool, dnd: bool) -> bool {
+    (s.system_notifications || forced) && !dnd && (s.system_notifications_when_active || !in_front)
 }
 
 /// What a notification opens, without its session (for the log).
@@ -96,7 +100,7 @@ impl App {
     /// Each frame in world: what the world asked for since the last frame.
     pub(super) fn update_attention(&mut self) {
         for a in std::mem::take(&mut self.world.attention) {
-            if !self.focused && flashes(a.cause, &self.settings) {
+            if self.attention.behind && flashes(a.cause, &self.settings) {
                 self.flash_taskbar();
             }
             if let Some(notice) = a.notice {
@@ -109,7 +113,7 @@ impl App {
     /// disturb and the throttle let it through.
     pub(super) fn tell_system(&mut self, notice: Notice) {
         let forced = self.demo && crate::demo::attention::mode().is_some();
-        if !notifies(&self.settings, forced, self.focused, self.world.status.dnd) {
+        if !notifies(&self.settings, forced, !self.attention.behind, self.world.status.dnd) {
             return;
         }
         let names = &self.world.social.avatar_names;
@@ -136,9 +140,12 @@ impl App {
             .show(crate::system_notify::Toast { id, title, body });
     }
 
-    /// Between frames, the window at hand (the frame holds it): the flash
-    /// asked for, and the clicks on the notifications.
+    /// Between frames, the window at hand (the frame holds it): whether it
+    /// is in front, the flash asked for, and the clicks on the notifications.
     pub(super) fn attention_window(&mut self) {
+        if let Some(g) = &self.gfx {
+            self.attention.behind = !window_in_front(&g.window);
+        }
         if std::mem::take(&mut self.attention.flash)
             && let Some(g) = &self.gfx
         {
@@ -193,6 +200,35 @@ impl App {
     pub(super) fn flash_taskbar(&mut self) {
         self.attention.flash = true;
     }
+
+    /// The window is not in front (another window has the foreground, or
+    /// it is minimized).
+    pub(super) fn window_behind(&self) -> bool {
+        self.attention.behind
+    }
+}
+
+/// The window is the foreground window and not minimized.
+#[cfg(windows)]
+fn window_in_front(window: &winit::window::Window) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic};
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else {
+        return true;
+    };
+    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+        return true;
+    };
+    let hwnd = handle.hwnd.get() as HWND;
+    // SAFETY: two read-only window manager queries on the window this
+    // thread created.
+    unsafe { GetForegroundWindow() == hwnd && IsIconic(hwnd) == 0 }
+}
+
+#[cfg(not(windows))]
+fn window_in_front(window: &winit::window::Window) -> bool {
+    window.has_focus() && !window.is_minimized().unwrap_or(false)
 }
 
 #[cfg(windows)]

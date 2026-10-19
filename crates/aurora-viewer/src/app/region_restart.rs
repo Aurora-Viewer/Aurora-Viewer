@@ -193,7 +193,7 @@ impl App {
                     self.region_restart.legacy_open = true;
                     self.region_restart.legacy_pick = None;
                     // LLWindow::flashIcon(5.f) when the box opens
-                    if !self.focused {
+                    if self.window_behind() {
                         self.flash_taskbar();
                     }
                     // the notification of the well, without a toast

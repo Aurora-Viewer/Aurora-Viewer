@@ -7336,7 +7336,11 @@ impl App {
             }
             let agent = self.world.agent_id;
             for event in crate::demo::attention::events(self.frame_count, agent) {
-                log::info!("demo attention: arrival at frame {}, focused {}", self.frame_count, self.focused);
+                log::info!(
+                    "demo attention: arrival at frame {}, behind {}",
+                    self.frame_count,
+                    self.window_behind()
+                );
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
