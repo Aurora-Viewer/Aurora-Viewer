@@ -3960,7 +3960,10 @@ server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after f
 900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
 On the grid, also check a rigged body, real baked textures and persistence after
 relogin; only the human connects and performs these checks.
-While the editor is open our avatar plays the customise animation: the log
+Opening the editor stands our avatar up (a seated avatar leaves its seat, as
+in the Legacy Viewer), and while the editor is open our avatar plays the
+customise animation (not the physics layer editor, which keeps the camera,
+like the Legacy Viewer's): the log
 says `customise animation: start 038fcec9-…` on opening and, on closing, its
 stop then `start 6883a61a-…` (the "done" animation). In demo the animation
 is listed on our avatar but has no motion (no built-in animation assets).

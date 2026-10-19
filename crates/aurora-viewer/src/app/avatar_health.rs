@@ -13,10 +13,11 @@
 //!   items asked for less than MIN_RETRY_REQUEST_TIME ago are left alone.
 //! - The customise animation (LLAgentCamera::changeCameraToCustomizeAvatar
 //!   in indra/newview/llagentcamera.cpp, LLAgent::endAnimationUpdateUI in
-//!   indra/newview/llagent.cpp): while the camera frames our avatar for
+//!   indra/newview/llagent.cpp): when the camera frames our avatar for
 //!   editing its appearance (AppearanceCameraMovement, on by default; the
-//!   shape editor always does), ANIM_AGENT_CUSTOMIZE plays; leaving stops
-//!   it and plays ANIM_AGENT_CUSTOMIZE_DONE.
+//!   shape editor always does), our avatar stands up and
+//!   ANIM_AGENT_CUSTOMIZE plays; leaving stops it and plays
+//!   ANIM_AGENT_CUSTOMIZE_DONE.
 //!
 //! All originally LGPL 2.1.
 use super::App;
@@ -60,6 +61,11 @@ impl App {
     /// Viewer never enters customise mode for it.
     pub(super) fn update_avatar_health(&mut self) {
         let editing = self.shape_ui.open && !self.world.agent_id.is_nil();
+        if editing && !self.avatar_health.customizing {
+            // changeCameraToCustomizeAvatar: "force stand up" first
+            // (LLAgent::standUp, AGENT_CONTROL_STAND_UP)
+            self.send(NetCommand::OneShotControl(aurora_net::control::STAND_UP));
+        }
         for (anim, start) in customize_changes(&mut self.avatar_health.customizing, editing) {
             log::info!("customise animation: {} {anim}", if start { "start" } else { "stop" });
             self.own_animation(anim, start);
