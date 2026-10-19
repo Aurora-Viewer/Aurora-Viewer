@@ -82,6 +82,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "hand-stop",
     "heart-handshake",
     "history",
+    "home-check",
     "id-off",
     "inbox",
     "indent-decrease",

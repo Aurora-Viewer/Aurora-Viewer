@@ -557,6 +557,16 @@ pub enum NetEvent {
     /// The answer to `SetMaturityPreference`: the preference the server
     /// kept, or None when the request failed.
     MaturityPreference(Option<u8>),
+    /// The HomeLocation capability's answer to `SetHomeLocation`.
+    HomeLocation(crate::home::Reply),
+    /// A simulator alert about the home location (home.rs), shown in the
+    /// viewer's words.
+    HomeAlert(crate::home::Alert),
+    /// The account's directory settings (UserInfo capability or
+    /// UserInfoReply), or why they could not be read.
+    UserInfo(Result<crate::user_info::UserInfo, crate::user_info::Error>),
+    /// `UpdateUserInfo` did not go through.
+    UserInfoUpdateFailed(crate::user_info::Error),
     TeleportFailed {
         reason: String,
     },
@@ -1290,6 +1300,24 @@ pub enum NetCommand {
     /// LLAgent::sendMaturityPreferenceToServer); answered by
     /// `NetEvent::MaturityPreference`.
     SetMaturityPreference(u8),
+    /// World › Set Home to Here (LLAgent::setStartPosition): the agent's
+    /// feet in its region and where it faces, through the HomeLocation
+    /// capability (answered by `NetEvent::HomeLocation`) or
+    /// SetStartLocationRequest without it.
+    SetHomeLocation {
+        position: Vec3,
+        look_at: Vec3,
+    },
+    /// The account's directory settings (LLAgent::sendAgentUserInfoRequest),
+    /// answered by `NetEvent::UserInfo`.
+    RequestUserInfo,
+    /// LLAgent::sendAgentUpdateUserInfo: "hidden" or "default", and the
+    /// e-mail flag off Second Life only; a failure answers
+    /// `NetEvent::UserInfoUpdateFailed`.
+    UpdateUserInfo {
+        directory_visibility: String,
+        im_via_email: Option<bool>,
+    },
     TeleportTo {
         handle: RegionHandle,
         position: Vec3,
