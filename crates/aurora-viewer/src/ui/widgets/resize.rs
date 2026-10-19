@@ -28,7 +28,7 @@ const LIT_HOVER: f32 = 0.7;
 /// An edge/corner owns the current drag, even before its window is drawn.
 /// Inspect all visible windows so menus close independently of their owner
 /// and drawing order; hovering a grip or dragging content is not a resize.
-pub(crate) fn active(ctx: &Context) -> bool {
+pub(super) fn active(ctx: &Context) -> bool {
     let Some(dragged) = ctx.dragged_id() else { return false };
     ctx.memory(|memory| memory.areas().visible_layer_ids())
         .into_iter()

@@ -487,7 +487,7 @@ const HOVERED: &str = "world_context_menu_hovered";
 
 /// Draw the world menu; `menu` becomes `None` once it closed.
 pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts, use_pie: bool) {
-    if menu::dismiss_on_resize(ctx) {
+    if menu::dismiss_on_window_change(ctx) {
         *menu = None;
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
         return;

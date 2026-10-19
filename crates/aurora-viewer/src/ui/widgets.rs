@@ -23,7 +23,6 @@ pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 pub(crate) mod pills;
 mod resize;
-pub(crate) use resize::active as window_resizing;
 mod unread;
 mod workspace;
 pub use color::color_button;
@@ -43,6 +42,18 @@ pub(crate) use workspace::{
 /// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
 pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
     ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+}
+
+/// Any floater/bare window is moving or resizing, independently of drawing
+/// order. The move ID starts dragging only after the window's click tolerance,
+/// so pointer jitter, child controls and text selection keep their behavior.
+pub(crate) fn window_dragging(ctx: &egui::Context) -> bool {
+    let Some(dragged) = ctx.dragged_id() else { return false };
+    resize::active(ctx)
+        || ctx
+            .memory(|memory| memory.areas().visible_layer_ids())
+            .into_iter()
+            .any(|layer| layer.id.with("move") == dragged)
 }
 
 /// Wait for egui's click tolerance before moving a window. Area's drag-only

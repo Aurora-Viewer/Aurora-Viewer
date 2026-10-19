@@ -149,31 +149,32 @@ pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl
     )
 }
 
-/// Resizing any window dismisses menus at once, as the Legacy Viewer's
-/// LLMenuHolderGL::handleMouseDown does before LLResizeBar takes capture
-/// (indra/llui/llmenugl.cpp, llresizebar.cpp). Check before painting, including
-/// menus drawn before the window being resized and menus with external state.
-pub(crate) fn dismiss_on_resize(ctx: &egui::Context) -> bool {
-    let resized = ctx
-        .data(|d| d.get_temp::<u64>(Id::new("menus_native_resize")))
+/// Moving or resizing any window dismisses menus at once, as the Legacy Viewer's
+/// LLMenuHolderGL::handleMouseDown does before LLDragHandle/LLResizeBar take
+/// capture (indra/llui/llmenugl.cpp, lldraghandle.cpp, llresizebar.cpp). Check
+/// before painting, including menus drawn before the window being moved or
+/// resized and menus with external state.
+pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
+    let changed = ctx
+        .data(|d| d.get_temp::<u64>(Id::new("menus_native_window_change")))
         .is_some_and(|frame| ctx.cumulative_frame_nr() <= frame);
-    if !resized && !super::widgets::window_resizing(ctx) {
+    if !changed && !super::widgets::window_dragging(ctx) {
         return false;
     }
     Popup::close_all(ctx);
     true
 }
 
-/// Native resize events arrive between egui frames. Keep the dismissal through
+/// Native move/resize events arrive between egui frames. Keep dismissal through
 /// the next frame and all its layout passes, including externally owned menus.
-pub(crate) fn window_resized(ctx: &egui::Context) {
+pub(crate) fn window_geometry_changed(ctx: &egui::Context) {
     let through = ctx.cumulative_frame_nr() + 1;
-    ctx.data_mut(|d| d.insert_temp(Id::new("menus_native_resize"), through));
+    ctx.data_mut(|d| d.insert_temp(Id::new("menus_native_window_change"), through));
     Popup::close_all(ctx);
 }
 
 fn context_menu_popup(popup: Popup<'_>, p: &Palette, body: impl FnOnce(&mut Ui)) -> bool {
-    if dismiss_on_resize(popup.ctx()) {
+    if dismiss_on_window_change(popup.ctx()) {
         return false;
     }
     // below-right of the pointer like the world menu, pushed back into the
@@ -207,7 +208,7 @@ pub fn dropdown_placed(
     body: impl FnOnce(&mut Ui),
 ) -> bool {
     use egui::containers::menu::MenuConfig;
-    if dismiss_on_resize(&resp.ctx) {
+    if dismiss_on_window_change(&resp.ctx) {
         return false;
     }
     // a click on a voice row's slider or mute button leaves the menu open
@@ -242,7 +243,7 @@ pub fn button(ui: &mut Ui, p: &Palette, button: egui::Button<'_>, body: impl FnO
 /// right click). `open` is cleared when it closes. Returns the hovered row
 /// (top level only) for the slice sounds.
 pub fn popup_at(ctx: &egui::Context, id: Id, pos: egui::Pos2, open: &mut bool, p: &Palette, body: impl FnOnce(&mut Ui)) -> Option<usize> {
-    if dismiss_on_resize(ctx) {
+    if dismiss_on_window_change(ctx) {
         *open = false;
         return None;
     }
@@ -889,6 +890,15 @@ mod tests {
     /// native resizing below exercises its dismissal without bypassing capture.
     #[test]
     fn resizing_any_window_dismisses_context_menus() {
+        dragging_any_window_dismisses_context_menus(false);
+    }
+
+    #[test]
+    fn moving_any_window_dismisses_context_menus() {
+        dragging_any_window_dismisses_context_menus(true);
+    }
+
+    fn dragging_any_window_dismisses_context_menus(moving: bool) {
         for kind in 0..4 {
             for resize_first in [false, true] {
                 for bare in [false, true] {
@@ -917,19 +927,42 @@ mod tests {
                     let before = h.frame(vec![button(at, egui::PointerButton::Secondary, false)]);
                     h.frame(vec![]);
                     assert!(h.shown, "kind={kind}, first={resize_first}, bare={bare}: menu opened");
-                    let grab = before.right_bottom() - egui::vec2(6.0, 6.0);
+                    let grab = if !moving {
+                        before.right_bottom() - egui::vec2(6.0, 6.0)
+                    } else if bare {
+                        before.center()
+                    } else {
+                        h.frames
+                            .ctx
+                            .read_response(Id::new("resize_other").with("title_double_click"))
+                            .expect("other window title")
+                            .rect
+                            .center()
+                    };
                     h.frame(vec![egui::Event::PointerMoved(grab)]);
-                    assert!(h.shown, "hovering a resize grip keeps the menu open");
+                    assert!(h.shown, "hovering a window grip keeps the menu open");
                     h.frame(vec![button(grab, egui::PointerButton::Primary, true)]);
+                    if moving {
+                        let jittered = h.frame(vec![egui::Event::PointerMoved(grab + egui::vec2(2.0, 1.0))]);
+                        assert_eq!(jittered, before, "click jitter does not move the window");
+                        assert!(h.shown, "click jitter keeps the menu open");
+                    }
                     let resized = h.frame(vec![egui::Event::PointerMoved(grab + egui::vec2(40.0, 30.0))]);
                     assert!(
-                        (resized.size() - before.size()).length() > 10.0,
-                        "kind={kind}, first={resize_first}, bare={bare}: the other window resized: {before:?} -> {resized:?}"
+                        if moving {
+                            resized.min.distance(before.min) > 10.0
+                        } else {
+                            (resized.size() - before.size()).length() > 10.0
+                        },
+                        "kind={kind}, first={resize_first}, bare={bare}, moving={moving}: the real window changed: {before:?} -> {resized:?}"
                     );
+                    if moving {
+                        assert_eq!(resized.size(), before.size(), "moving preserves the window's size");
+                    }
                     assert!(h.frames.ctx.input(|i| i.pointer.primary_down()));
                     assert!(
                         !h.shown,
-                        "kind={kind}, first={resize_first}, bare={bare}: menu dismissed before release"
+                        "kind={kind}, first={resize_first}, bare={bare}, moving={moving}: menu dismissed before release"
                     );
                     assert!(!Popup::is_any_open(&h.frames.ctx), "popup memory is cleared too");
                 }
@@ -938,7 +971,7 @@ mod tests {
     }
 
     #[test]
-    fn native_window_resize_dismisses_menus_without_blocking_reopening() {
+    fn native_window_changes_dismiss_menus_without_blocking_reopening() {
         for kind in 0..5 {
             let mut h = Menus {
                 frames: Frames::new(),
@@ -968,7 +1001,7 @@ mod tests {
                 assert!(h.shown, "kind={kind}, resized={resized}: menu opens");
                 if !resized {
                     // The winit adapter forwards this event between egui frames.
-                    window_resized(&h.frames.ctx);
+                    window_geometry_changed(&h.frames.ctx);
                     for _ in 0..4 {
                         h.frame(vec![]);
                         assert!(!h.shown, "kind={kind}: native resize dismisses the menu");

@@ -13351,11 +13351,14 @@ impl ApplicationHandler for App {
                 self.request_exit();
             }
             WindowEvent::Resized(s) => {
-                ui::menu::window_resized(&self.egui_ctx);
+                ui::menu::window_geometry_changed(&self.egui_ctx);
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
             }
-            WindowEvent::Moved(_) => self.geom_changed = Some(Instant::now()),
+            WindowEvent::Moved(_) => {
+                ui::menu::window_geometry_changed(&self.egui_ctx);
+                self.geom_changed = Some(Instant::now());
+            }
             WindowEvent::RedrawRequested => {
                 self.frame(event_loop);
             }
