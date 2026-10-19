@@ -161,7 +161,14 @@ struct PostU {
     bloom_threshold: f32,
     bloom_knee: f32,
     bloom_norm: f32,
+    tonemap_mix: f32,
+    /// Written on the GPU by `Exposure::encode`; 1 until then.
+    auto_exposure: f32,
+    _pad: [f32; 2],
 }
+
+/// Where `PostU::auto_exposure` sits in the post uniforms.
+const POST_AUTO_EXPOSURE_OFFSET: u64 = std::mem::offset_of!(PostU, auto_exposure) as u64;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -1319,6 +1326,10 @@ pub(crate) struct Backend {
     /// switches them each second).
     contact_now: bool,
     bloom: crate::bloom::Bloom,
+    /// The automatic exposure of skies that are not classic (exposure.rs).
+    exposure: crate::exposure::Exposure,
+    /// The glow was drawn last frame: its image is there for the exposure.
+    glow_drawn: bool,
     frame_buffer: wgpu::Buffer,
     refl_buffers: [wgpu::Buffer; 8],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
@@ -2516,6 +2527,8 @@ impl Backend {
             msaa_samples,
             &settings,
         );
+        let mut exposure = crate::exposure::Exposure::new(&device);
+        exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -2575,6 +2588,8 @@ impl Backend {
             contact,
             contact_now: false,
             bloom,
+            exposure,
+            glow_drawn: false,
             frame_buffer,
             refl_buffers,
             hud_depth: None,
@@ -3791,6 +3806,8 @@ impl Backend {
             self.msaa_samples,
             &self.settings,
         );
+        self.exposure
+            .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
         self.smaa_targets = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa.make_targets(
                 &self.device,
@@ -4877,6 +4894,12 @@ impl Backend {
             bloom_threshold: crate::bloom::THRESHOLD,
             bloom_knee: crate::bloom::KNEE,
             bloom_norm: self.bloom.norm() * crate::bloom::GAIN,
+            // RenderTonemapMix on skies that are not classic; a classic sky
+            // tone mapped all the same (probe ambiance above 0) is not mixed
+            // (LLSettingsSky::getTonemapMix, LLSettingsVOSky::applySpecial)
+            tonemap_mix: if f.sky.classic { 0.0 } else { f.tonemap_mix.clamp(0.0, 1.0) },
+            auto_exposure: 1.0,
+            _pad: [0.0; 2],
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -6270,6 +6293,23 @@ impl Backend {
         self.prev_view_proj = Some(unjittered_vp);
         self.last_inv_vp = unjittered_vp.inverse();
 
+        // ---- automatic exposure, from the resolved scene and the glow of
+        // the last frame, into the post uniforms the glow, the bloom and the
+        // tone mapping read
+        self.exposure.encode(
+            &self.queue,
+            &mut encoder,
+            &crate::exposure::FrameExposure {
+                tone_mapped: !f.sky.no_post,
+                hdr_scale: f.sky.hdr_scale,
+                hold: snapshot.is_some(),
+                glow: self.glow_drawn,
+                inv_view_proj: unjittered_vp.inverse(),
+            },
+            &self.post_buffer,
+            POST_AUTO_EXPOSURE_OFFSET,
+        );
+        self.glow_drawn = glow_on;
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
         }
@@ -6615,6 +6655,7 @@ impl Backend {
         self.occlusion.after_submit();
         self.cull.after_submit();
         self.depth_pick.after_submit();
+        self.exposure.after_submit();
         self.drawn_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;

@@ -949,6 +949,9 @@ pub struct FrameParams {
     pub fog_color: Vec3,
     pub fog_density: f32,
     pub exposure: f32,
+    /// Share of the tone mapped color over the exposed linear one on skies
+    /// that are not classic (RenderTonemapMix, 0.7 in the Legacy Viewer).
+    pub tonemap_mix: f32,
     /// Contrast adaptive sharpening strength (0 = off; Firestorm RenderCASSharpness).
     pub sharpen: f32,
     /// Screen-space glow of faces with a glow value (RenderGlow).

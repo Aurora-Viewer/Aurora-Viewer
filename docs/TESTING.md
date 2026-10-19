@@ -4637,6 +4637,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
+| `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
 | `AURORA_BLEND_AO=old`, `new` or `alt` | Blended faces with the screen-space occlusion and indirect light of what is behind them, as before |
@@ -4823,6 +4824,19 @@ What the inventory must show with these scenarios:
   captures off differ by the demo's run-to-run noise only). `g_bloom` of
   `perf summary` is its GPU time (demo, 2560 × 1369, RTX 4090: about
   0.07 ms on the plaza, 0.09 ms in a crowd of 40).
+- **`AURORA_AUTO_EXPOSURE=0|1|alt`**: the automatic exposure of skies that
+  are not classic (reflection probe ambiance above 0), like the Legacy
+  Viewer's dynamic exposure, for this launch: `0` off (exposure 1 on every
+  sky, as before), `1` on (the default), `alt` on one second in two, switched
+  at once without the easing. The middle of the image (the luminance of the
+  ground counted at half) sets an exposure between `1 / (sqrt(gamma) x 2)`
+  and `sqrt(gamma) x 2` of the sky, eased towards over about two seconds:
+  a dark scene opens up, a bright one closes down; a classic sky keeps 1.
+  The log gives the value every 30 s and 4 s after a change of sky:
+  `auto exposure: 1.538 (target 1.546, average luminance 0.275, range 0.500
+  to 2.000)`. Demo: `AURORA_DEMO_SKY=1,0.8,0,1` (a non-classic sky of gamma
+  1, like the library Midday) gives that line; `AURORA_DEMO_SKY=1,0.8,1,1`
+  (ambient 1) a brighter scene and an exposure under 1.
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,

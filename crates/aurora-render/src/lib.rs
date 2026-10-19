@@ -11,6 +11,7 @@ mod bloom;
 mod contact_shadows;
 mod dof;
 mod drawn_pick;
+mod exposure;
 pub mod frame_priority;
 pub mod gpu_alloc;
 pub mod gpu_cull;
@@ -776,6 +777,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn post_shader_is_valid() {
         validate(include_str!("shaders/post.wgsl"));
+    }
+
+    #[test]
+    fn exposure_shader_is_valid() {
+        validate(include_str!("shaders/exposure.wgsl"));
     }
 
     #[test]

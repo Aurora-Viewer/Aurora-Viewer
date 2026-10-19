@@ -53,7 +53,7 @@ sections! {
         complexity_mode, avatar_physics, avatar_physics_detail, occlusion_culling, max_particles, texture_budget_auto, texture_budget_mb, anisotropy,
         shadow_quality, shadows, projector_shadows, contact_shadows, ssao, ao_method, gtao_quality, screen_indirect_light, screen_indirect_intensity, time_of_day, env_manual_transition, env_persist,
         exposure, sharpen, glow, bloom, bloom_strength, water_reflections, mirrors, ssr, reflection_probes, probe_count, antialiasing,
-        specular_aa, tonemapper, dof, vsync, fps_cap, fps_limit, background_fps_cap, background_fps_limit,
+        specular_aa, tonemapper, tonemap_mix, dof, vsync, fps_cap, fps_limit, background_fps_cap, background_fps_limit,
     ],
     1 => [
         language, language_is_public, update_mode, ui_scale, use_pie_menu, snap_windows, windows_stop_left,

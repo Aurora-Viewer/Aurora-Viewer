@@ -19,6 +19,13 @@ struct PostParams {
     bloom_threshold: f32,
     bloom_knee: f32,
     bloom_norm: f32,
+    // RenderTonemapMix: share of the tone mapped color over the exposed
+    // linear one (tonemapUtilF.glsl), 0 on classic skies
+    tonemap_mix: f32,
+    // the automatic exposure (exposure.wgsl), copied here on the GPU before
+    // the glow, the bloom and this pass
+    auto_exposure: f32,
+    _pad: vec2<f32>,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -59,26 +66,48 @@ fn neutral(color_in: vec3<f32>) -> vec3<f32> {
     return mix(color, vec3<f32>(new_peak), g);
 }
 
-// ACES filmic (Narkowicz fit).
+// ACES filmic, Stephen Hill's fit (toneMapACES_Hill, tonemapUtilF.glsl,
+// from MJP's BakingLab): sRGB to the RRT's space, the RRT and ODT curve,
+// and back. WGSL matrices are column-major like GLSL's.
+const ACES_INPUT = mat3x3<f32>(
+    vec3<f32>(0.59719, 0.07600, 0.02840),
+    vec3<f32>(0.35458, 0.90834, 0.13383),
+    vec3<f32>(0.04823, 0.01566, 0.83777),
+);
+const ACES_OUTPUT = mat3x3<f32>(
+    vec3<f32>(1.60475, -0.10208, -0.00327),
+    vec3<f32>(-0.53108, 1.10813, -0.07276),
+    vec3<f32>(-0.07367, -0.00605, 1.07602),
+);
+
 fn aces(x: vec3<f32>) -> vec3<f32> {
-    let a = 2.51;
-    let b = 0.03;
-    let c = 2.43;
-    let d = 0.59;
-    let e = 0.14;
-    return (x * (a * x + b)) / (x * (c * x + d) + e);
+    let c = ACES_INPUT * x;
+    let a = c * (c + 0.0245786) - 0.000090537;
+    let b = c * (0.983729 * c + 0.4329510) + 0.238081;
+    return clamp(ACES_OUTPUT * (a / b), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
+// Preferences' exposure times the automatic one (final_exposure).
+fn exposure() -> f32 {
+    return post.exposure * post.auto_exposure;
+}
+
+// toneMap (tonemapUtilF.glsl): exposed, tone mapped, mixed back with the
+// exposed linear color by RenderTonemapMix, clamped.
 fn tonemap(c: vec3<f32>) -> vec3<f32> {
-    let e = max(c * post.exposure, vec3<f32>(0.0));
+    let e = max(c * exposure(), vec3<f32>(0.0));
     var m: vec3<f32>;
     if (post.tonemapper > 1.5) {
         // classic skies (tonemapUtilF NO_POST): exposure, then clamp
         m = e;
-    } else if (post.tonemapper > 0.5) {
-        m = aces(e * 0.8);
     } else {
-        m = neutral(e);
+        var t: vec3<f32>;
+        if (post.tonemapper > 0.5) {
+            t = aces(e);
+        } else {
+            t = neutral(e);
+        }
+        m = mix(e, t, post.tonemap_mix);
     }
     return clamp(m, vec3<f32>(0.0), vec3<f32>(1.0));
 }
@@ -115,7 +144,7 @@ fn luma(c: vec3<f32>) -> f32 {
 // threshold once exposed, with a quadratic knee below it (scene units).
 fn bloom_extract(c: vec3<f32>) -> vec3<f32> {
     let lit = max(c, vec3<f32>(0.0));
-    let b = max(lit.r, max(lit.g, lit.b)) * post.exposure;
+    let b = max(lit.r, max(lit.g, lit.b)) * exposure();
     let knee = max(post.bloom_knee, 1e-4);
     var soft = clamp(b - post.bloom_threshold + knee, 0.0, 2.0 * knee);
     soft = soft * soft / (4.0 * knee);
@@ -229,7 +258,7 @@ fn bloom_box(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>) -> vec4<f32
     let m = (a + b + c + d) * 0.25;
     // Karis average: each box weighs 1 / (1 + its luma), so that one very
     // bright pixel (a specular on a moving mesh) does not flicker
-    let w = 1.0 / (1.0 + dot(m, vec3<f32>(0.2126, 0.7152, 0.0722)) * post.exposure);
+    let w = 1.0 / (1.0 + dot(m, vec3<f32>(0.2126, 0.7152, 0.0722)) * exposure());
     return vec4<f32>(m * w, w);
 }
 
