@@ -23,7 +23,8 @@ impl App {
             AppLink::Parcel(id) => self.show_place_profile(crate::world::place_details::Source::Parcel(id)),
             AppLink::ObjectIm(o) => self.remote_object = Some(o),
             AppLink::Inventory { id, .. } => {
-                // FS: always show the item (openInventoryPanelAndSetSelection)
+                // the Legacy Viewer always shows the item
+                // (openInventoryPanelAndSetSelection)
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 self.panels.inventory = true;
             }
