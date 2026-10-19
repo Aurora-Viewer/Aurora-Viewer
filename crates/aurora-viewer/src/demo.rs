@@ -4229,8 +4229,8 @@ pub fn events() -> Vec<NetEvent> {
         }
     }
     let dialog = std::env::var("AURORA_DEMO_DIALOG").ok().filter(|mode| !mode.is_empty());
-    let inventory_offer =
-        std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject")) || offer_card_scene().is_some();
+    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject"))
+        || offer_card_scene().is_some();
     ev.extend(notification_samples(
         std::env::var_os("AURORA_DEMO_NOTIF").is_some(),
         inventory_offer,

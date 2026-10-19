@@ -254,7 +254,9 @@ mod tests {
     fn answers(cmds: &[NetCommand]) -> Vec<u8> {
         cmds.iter()
             .filter_map(|c| match c {
-                NetCommand::SendImDialog { to: JANE, dialog, id: TX, .. } => Some(*dialog),
+                NetCommand::SendImDialog {
+                    to: JANE, dialog, id: TX, ..
+                } => Some(*dialog),
                 _ => None,
             })
             .collect()
