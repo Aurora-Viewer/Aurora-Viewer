@@ -224,8 +224,9 @@ pub struct Floater<'a> {
     pub min_size: Vec2,
     pub resizable: bool,
     pub help: Option<&'a str>,
-    /// Extra title bar button: (Tabler icon, tooltip, set when clicked).
-    pub action: Option<(&'a str, &'a str, &'a mut bool)>,
+    /// Extra title bar buttons: (Tabler icon, tooltip, set when clicked),
+    /// the first one nearest "Collapse".
+    pub actions: Vec<(&'a str, &'a str, &'a mut bool)>,
     /// No open / close sounds (sound_flags="0", e.g. floater_tools).
     pub silent: bool,
     /// An inset dark title bar and edge-to-edge body for inspector layouts.
@@ -267,7 +268,7 @@ impl<'a> Floater<'a> {
             resizable: true,
             height_only: false,
             help: None,
-            action: None,
+            actions: Vec::new(),
             silent: false,
             framed_header: None,
             auto_height: false,
@@ -318,9 +319,10 @@ impl<'a> Floater<'a> {
         self
     }
 
-    /// Add a title bar button left of "Collapse"; `clicked` is set when pressed.
+    /// Add a title bar button left of "Collapse" (and of the buttons added
+    /// before it); `clicked` is set when pressed.
     pub fn action(mut self, icon: &'a str, tip: &'a str, clicked: &'a mut bool) -> Self {
-        self.action = Some((icon, tip, clicked));
+        self.actions.push((icon, tip, clicked));
         self
     }
 
@@ -610,10 +612,10 @@ impl<'a> Floater<'a> {
                         {
                             toggle_min = true;
                         }
-                        if let Some((icon, tip, clicked)) = self.action.as_mut()
-                            && title_button(ui, p, icon).on_hover_text(*tip).clicked()
-                        {
-                            **clicked = true;
+                        for (icon, tip, clicked) in &mut self.actions {
+                            if title_button(ui, p, icon).on_hover_text(*tip).clicked() {
+                                **clicked = true;
+                            }
                         }
                         if let Some(h) = self.help {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);

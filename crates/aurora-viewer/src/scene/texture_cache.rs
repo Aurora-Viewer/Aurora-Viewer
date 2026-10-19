@@ -228,6 +228,7 @@ fn read_for(path: &Path, want: impl FnOnce(&[u8]) -> u8) -> Option<Transcoded> {
             for (w, h, blocks) in &mut cached.levels {
                 *blocks = vec![0u8; TexelFormat::Bc7.level_bytes(*w, *h) as usize];
                 file.read_exact(blocks).ok()?;
+                crate::disk_io::read(crate::disk_io::Origin::Textures, blocks.len());
             }
             // (least recently used files go first when the cache is full)
             crate::cache::touch(path);

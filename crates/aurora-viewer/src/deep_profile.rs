@@ -12,13 +12,15 @@
 
 use crate::scene::{AvatarCounts, AvatarSample};
 use crate::sys_probe::ProcessMemory;
-use aurora_net::probe::{self, Durations, Hist};
+use aurora_net::probe::{self, Durations, Hist, HttpTotals, MessageCount};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::{Duration, Instant};
 
 /// Time covered by one set of lines.
 const PERIOD: Duration = Duration::from_secs(10);
+/// The probes are read this often (the resource monitor's second).
+const SECOND: Duration = Duration::from_secs(1);
 /// Message types listed in each direction.
 const TOP_MESSAGES: usize = 15;
 /// Hosts listed in `http summary`.
@@ -161,11 +163,80 @@ struct Before {
     page_faults: u32,
 }
 
+/// What the probes counted over a span: the network's messages and
+/// requests, the background jobs' durations.
+#[derive(Debug, Default, Clone)]
+pub struct ProbeTotals {
+    pub messages: [Vec<MessageCount>; 2],
+    pub objects: [u64; 8],
+    pub http: HttpTotals,
+    texture: Durations,
+    bc7: Durations,
+    mesh_lod: Durations,
+    mesh_parse: Durations,
+    /// Mesh disk cache reads found, missed.
+    pub mesh_cache: [u64; 2],
+    /// Length of the span (s).
+    pub secs: f32,
+}
+
+impl ProbeTotals {
+    /// What the probes counted since the last take; they start again from
+    /// nothing.
+    fn take(secs: f32) -> ProbeTotals {
+        ProbeTotals {
+            messages: probe::take_messages(),
+            objects: probe::take_objects(),
+            http: probe::take_http(),
+            texture: ASSETS.texture.take(),
+            bc7: ASSETS.bc7.take(),
+            mesh_lod: ASSETS.mesh_lod.take(),
+            mesh_parse: ASSETS.mesh_parse.take(),
+            mesh_cache: [ASSETS.mesh_cache[0].swap(0, Relaxed), ASSETS.mesh_cache[1].swap(0, Relaxed)],
+            secs,
+        }
+    }
+
+    /// Adds a later span.
+    fn merge(&mut self, later: &ProbeTotals) {
+        probe::merge_messages(&mut self.messages, &later.messages);
+        for (a, b) in self.objects.iter_mut().zip(later.objects) {
+            *a += b;
+        }
+        self.http.merge(&later.http);
+        self.texture.merge(&later.texture);
+        self.bc7.merge(&later.bc7);
+        self.mesh_lod.merge(&later.mesh_lod);
+        self.mesh_parse.merge(&later.mesh_parse);
+        self.mesh_cache[0] += later.mesh_cache[0];
+        self.mesh_cache[1] += later.mesh_cache[1];
+        self.secs += later.secs;
+    }
+
+    /// Texture decodes of the span: (count, median ms).
+    pub fn texture_decodes(&self) -> (u64, f32) {
+        (self.texture.count(), self.texture.percentile(50.0))
+    }
+
+    /// Mesh levels of detail built over the span: (count, median ms).
+    pub fn mesh_builds(&self) -> (u64, f32) {
+        (self.mesh_lod.count(), self.mesh_lod.percentile(50.0))
+    }
+}
+
 pub struct DeepProfile {
     enabled: bool,
+    /// The probes count for the resource monitor, without a log line.
+    live: bool,
     start: Option<Instant>,
     frames: Frames,
     before: Option<Before>,
+    /// Start of the second being counted.
+    second: Option<Instant>,
+    /// The probes of the 10 s period so far (with AURORA_PROFILE).
+    probes: ProbeTotals,
+    /// The probes of the last second.
+    last_second: Option<ProbeTotals>,
 }
 
 impl Default for DeepProfile {
@@ -184,14 +255,58 @@ impl DeepProfile {
         }
         DeepProfile {
             enabled,
+            live: false,
             start: None,
             frames: Frames::default(),
             before: None,
+            second: None,
+            probes: ProbeTotals::default(),
+            last_second: None,
         }
     }
 
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// The probes count while the resource monitor is open (they are on
+    /// for good with AURORA_PROFILE); nothing more is logged.
+    pub fn set_live(&mut self, live: bool) {
+        if live == self.live {
+            return;
+        }
+        self.live = live;
+        if !self.enabled {
+            probe::set_enabled(live);
+            self.second = None;
+            self.last_second = None;
+        }
+    }
+
+    /// Reads the probes once a second, while they count; true when the
+    /// main thread should call [`DeepProfile::end_frame`] too (logging).
+    pub fn tick(&mut self) -> bool {
+        if !self.enabled && !self.live {
+            return false;
+        }
+        let now = Instant::now();
+        let second = *self.second.get_or_insert(now);
+        let elapsed = now.duration_since(second);
+        if elapsed >= SECOND {
+            self.second = Some(now);
+            let taken = ProbeTotals::take(elapsed.as_secs_f32());
+            if self.enabled {
+                self.probes.merge(&taken);
+            }
+            self.last_second = Some(taken);
+        }
+        self.enabled
+    }
+
+    /// What the probes counted over the last second (None while they are
+    /// off or before the first second).
+    pub fn last_second(&self) -> Option<&ProbeTotals> {
+        self.last_second.as_ref()
     }
 
     /// End of a frame: adds it to the period, and every 10 s writes the
@@ -216,17 +331,19 @@ impl DeepProfile {
             geometry_uploaded: sample.geometry_uploaded,
             page_faults: sample.process.map_or(0, |p| p.page_faults),
         });
-        let messages = probe::take_messages();
-        let objects = probe::take_objects();
-        log::info!("msg summary: {}", probe::message_line(&messages, &objects, secs, TOP_MESSAGES));
-        let http = probe::take_http();
-        log::info!("http summary: {}", probe::http_line(&http, sample.http_queued, secs, TOP_HOSTS));
+        // the part of a second not read yet belongs to this period
+        let rest = ProbeTotals::take(self.second.map_or(0.0, |s| now.duration_since(s).as_secs_f32()));
+        self.second = Some(now);
+        let mut p = std::mem::take(&mut self.probes);
+        p.merge(&rest);
+        log::info!("msg summary: {}", probe::message_line(&p.messages, &p.objects, secs, TOP_MESSAGES));
+        log::info!("http summary: {}", probe::http_line(&p.http, sample.http_queued, secs, TOP_HOSTS));
         let jobs = JobTimes {
-            texture: ASSETS.texture.take(),
-            bc7: ASSETS.bc7.take(),
-            mesh_lod: ASSETS.mesh_lod.take(),
-            mesh_parse: ASSETS.mesh_parse.take(),
-            mesh_cache: [ASSETS.mesh_cache[0].swap(0, Relaxed), ASSETS.mesh_cache[1].swap(0, Relaxed)],
+            texture: p.texture,
+            bc7: p.bc7,
+            mesh_lod: p.mesh_lod,
+            mesh_parse: p.mesh_parse,
+            mesh_cache: p.mesh_cache,
         };
         let before = before.unwrap_or(Before {
             texture_cache: sample.texture_cache,
@@ -398,9 +515,13 @@ mod tests {
     fn frames_add_up_to_averages_and_peaks() {
         let mut p = DeepProfile {
             enabled: true,
+            live: false,
             start: None,
             frames: Frames::default(),
             before: None,
+            second: None,
+            probes: ProbeTotals::default(),
+            last_second: None,
         };
         for (decoding, rebuilt) in [(10, 0), (30, 2)] {
             p.add(&FrameSample {

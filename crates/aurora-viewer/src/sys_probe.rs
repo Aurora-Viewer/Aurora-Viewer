@@ -1,4 +1,5 @@
-//! What the system knows of the process (AURORA_PROFILE, Windows only):
+//! What the system knows of the process (AURORA_PROFILE and the resource
+//! monitor, Windows only):
 //! its memory, and the CPU time of each of its threads, gathered by group
 //! of threads (the decode pool, the frame workers, the network runtime…).
 //! The threads are read by a thread of their own every 10 s, which writes
@@ -270,6 +271,342 @@ pub fn start(main: u32) {
     }
     #[cfg(not(windows))]
     let _ = main;
+}
+
+// ------------------------------------------------------- resource monitor
+
+/// One group of threads over the last half second (resource monitor).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupLoad {
+    pub group: String,
+    pub threads: usize,
+    /// Share of one core (%), all its threads together.
+    pub percent: f32,
+    /// Share of one core of its busiest thread (%).
+    pub busiest: f32,
+    /// Scheduling priority of its threads (`THREAD_PRIORITY_*`), when read.
+    pub priority: Option<i32>,
+}
+
+/// A process the viewer started (a media plugin) over the last half
+/// second.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChildLoad {
+    pub pid: u32,
+    /// Share of one core (%).
+    pub percent: f32,
+    pub working_set: u64,
+}
+
+/// What the system says of the process and the machine, every half second
+/// while the resource monitor is open.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CpuSnapshot {
+    /// Logical cores of the machine.
+    pub cores: usize,
+    /// The process, as a share of the whole machine (%).
+    pub process: f32,
+    /// The machine's whole load (%), every process together.
+    pub machine: Option<f32>,
+    /// Load of each logical core (%), when the system's counters answer.
+    pub per_core: Vec<f32>,
+    /// Groups of threads, the busiest first.
+    pub groups: Vec<GroupLoad>,
+    pub children: Vec<ChildLoad>,
+}
+
+/// How often the monitor's sampler reads the system.
+pub const LIVE_PERIOD: Duration = Duration::from_millis(500);
+
+struct Live {
+    wanted: std::sync::atomic::AtomicBool,
+    main: std::sync::atomic::AtomicU32,
+    children: parking_lot::Mutex<Vec<u32>>,
+    last: parking_lot::Mutex<Option<CpuSnapshot>>,
+}
+
+static LIVE: Live = Live {
+    wanted: std::sync::atomic::AtomicBool::new(false),
+    main: std::sync::atomic::AtomicU32::new(0),
+    children: parking_lot::Mutex::new(Vec::new()),
+    last: parking_lot::Mutex::new(None),
+};
+
+/// Samples the system every half second while `on` (the resource monitor
+/// is open; `main` is the main thread's id), on a thread of its own started
+/// the first time: listing the threads costs a few milliseconds the frame
+/// must not pay. Off, the thread sleeps and the last snapshot is dropped.
+pub fn set_live(on: bool, main: u32) {
+    use std::sync::atomic::Ordering::Relaxed;
+    LIVE.main.store(main, Relaxed);
+    if LIVE.wanted.swap(on, Relaxed) == on {
+        return;
+    }
+    if !on {
+        *LIVE.last.lock() = None;
+        return;
+    }
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let spawned = std::thread::Builder::new().name("aurora-monitor".into()).spawn(live_loop);
+        if let Err(e) = spawned {
+            log::warn!("resource monitor sampler not started: {e}");
+        }
+    });
+}
+
+/// The processes whose load the sampler reads besides the viewer's (the
+/// media plugins).
+pub fn watch_children(pids: Vec<u32>) {
+    let mut c = LIVE.children.lock();
+    if *c != pids {
+        *c = pids;
+    }
+}
+
+/// The last snapshot (None before the first one, or while off).
+pub fn live_snapshot() -> Option<CpuSnapshot> {
+    LIVE.last.lock().clone()
+}
+
+fn live_loop() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut sampler = Sampler::default();
+    loop {
+        std::thread::sleep(LIVE_PERIOD);
+        if !LIVE.wanted.load(Relaxed) {
+            sampler = Sampler::default();
+            continue;
+        }
+        let children = LIVE.children.lock().clone();
+        if let Some(snapshot) = sampler.sample(LIVE.main.load(Relaxed), &children) {
+            *LIVE.last.lock() = Some(snapshot);
+        }
+    }
+}
+
+/// The readings of the previous sample, to turn counters into loads.
+#[derive(Default)]
+struct Sampler {
+    at: Option<Instant>,
+    threads: HashMap<u32, u64>,
+    process: u64,
+    system: Option<(u64, u64)>,
+    /// Children: pid → CPU time (100 ns).
+    children: HashMap<u32, u64>,
+    #[cfg(windows)]
+    cores: Option<CoreCounters>,
+}
+
+impl Sampler {
+    /// A snapshot from the second sample on.
+    #[cfg(windows)]
+    fn sample(&mut self, main: u32, children: &[u32]) -> Option<CpuSnapshot> {
+        let rate = aurora_render::thread_cpu::cycles_per_ms();
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let (threads, process) = read_threads();
+        let system = system_times();
+        let per_core = self.cores.get_or_insert_with(CoreCounters::open).read();
+        let child_times: Vec<(u32, u64, u64)> = children
+            .iter()
+            .filter_map(|&pid| child_times(pid).map(|(t, ws)| (pid, t, ws)))
+            .collect();
+        let now = Instant::now();
+        let out = self.at.map(|at| {
+            let elapsed_ms = now.duration_since(at).as_secs_f64() * 1000.0;
+            let pct = |ms: f64| (ms / elapsed_ms.max(1.0) * 100.0) as f32;
+            let groups = group_times(&self.threads, &threads, main, rate)
+                .into_iter()
+                .map(|g| GroupLoad {
+                    percent: pct(g.ms),
+                    busiest: pct(g.busiest_ms),
+                    threads: g.threads,
+                    priority: group_priority(&threads, &g.group, main),
+                    group: g.group,
+                })
+                .collect();
+            let machine = match (self.system, system) {
+                (Some((idle0, total0)), Some((idle1, total1))) if total1 > total0 => {
+                    Some(((1.0 - idle1.saturating_sub(idle0) as f64 / (total1 - total0) as f64) * 100.0) as f32)
+                }
+                _ => None,
+            };
+            let process_ms = process.saturating_sub(self.process) as f64 / rate.max(1.0);
+            CpuSnapshot {
+                cores,
+                process: pct(process_ms) / cores as f32,
+                machine,
+                per_core,
+                groups,
+                children: child_times
+                    .iter()
+                    .map(|&(pid, t, ws)| ChildLoad {
+                        pid,
+                        // 100 ns units
+                        percent: self
+                            .children
+                            .get(&pid)
+                            .map_or(0.0, |&t0| pct(t.saturating_sub(t0) as f64 / 10_000.0)),
+                        working_set: ws,
+                    })
+                    .collect(),
+            }
+        });
+        self.at = Some(now);
+        self.threads = threads.iter().map(|t| (t.id, t.cycles)).collect();
+        self.process = process;
+        self.system = system;
+        self.children = child_times.iter().map(|&(pid, t, _)| (pid, t)).collect();
+        out
+    }
+
+    #[cfg(not(windows))]
+    fn sample(&mut self, _main: u32, _children: &[u32]) -> Option<CpuSnapshot> {
+        None
+    }
+}
+
+/// The priority of the first thread of a group (a pool's threads share
+/// theirs).
+#[cfg(windows)]
+fn group_priority(threads: &[ThreadTime], group: &str, main: u32) -> Option<i32> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetThreadPriority, OpenThread, THREAD_QUERY_LIMITED_INFORMATION,
+    };
+    // (GetThreadPriority's error value, MAXLONG)
+    const THREAD_PRIORITY_ERROR_RETURN: i32 = i32::MAX;
+    let t = threads.iter().find(|t| group_of(&t.name, t.id, main) == group)?;
+    // SAFETY: the handle is checked, read and closed here.
+    unsafe {
+        let handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, t.id);
+        if handle.is_null() {
+            return None;
+        }
+        let p = GetThreadPriority(handle);
+        CloseHandle(handle);
+        (p != THREAD_PRIORITY_ERROR_RETURN).then_some(p)
+    }
+}
+
+/// A child process's CPU time (100 ns) and working set, None once it has
+/// ended or cannot be read.
+#[cfg(windows)]
+fn child_times(pid: u32) -> Option<(u64, u64)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+    use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows_sys::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ};
+    let t = |f: FILETIME| (u64::from(f.dwHighDateTime) << 32) | u64::from(f.dwLowDateTime);
+    // SAFETY: the handle is checked and closed before returning; the calls
+    // write into structures of the size they are given.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let (mut created, mut exited, mut kernel, mut user) =
+            (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let ok = GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) != 0;
+        let mut m: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+        m.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let mem = K32GetProcessMemoryInfo(handle, &mut m, m.cb) != 0;
+        CloseHandle(handle);
+        ok.then(|| (t(kernel) + t(user), if mem { m.WorkingSetSize as u64 } else { 0 }))
+    }
+}
+
+/// The system's per-core load counters (`\Processor(*)\% Processor Time`,
+/// by their English names whatever the system's language); none when they
+/// cannot be opened.
+#[cfg(windows)]
+struct CoreCounters {
+    query: windows_sys::Win32::System::Performance::PDH_HQUERY,
+    counter: windows_sys::Win32::System::Performance::PDH_HCOUNTER,
+}
+
+// SAFETY: the query handle is only ever used by the sampler's thread, which
+// owns the counters.
+#[cfg(windows)]
+unsafe impl Send for CoreCounters {}
+
+#[cfg(windows)]
+impl CoreCounters {
+    fn open() -> CoreCounters {
+        use windows_sys::Win32::System::Performance::{PdhAddEnglishCounterW, PdhCollectQueryData, PdhOpenQueryW};
+        let path: Vec<u16> = "\\Processor(*)\\% Processor Time\0".encode_utf16().collect();
+        let mut query = std::ptr::null_mut();
+        let mut counter = std::ptr::null_mut();
+        // SAFETY: the out pointers are valid; the path ends with a zero.
+        unsafe {
+            if PdhOpenQueryW(std::ptr::null(), 0, &mut query) != 0 {
+                return CoreCounters {
+                    query: std::ptr::null_mut(),
+                    counter: std::ptr::null_mut(),
+                };
+            }
+            if PdhAddEnglishCounterW(query, path.as_ptr(), 0, &mut counter) != 0 {
+                counter = std::ptr::null_mut();
+            }
+            // the first collection only sets the baseline
+            PdhCollectQueryData(query);
+        }
+        CoreCounters { query, counter }
+    }
+
+    /// Load of each logical core since the last read (%), in core order.
+    fn read(&mut self) -> Vec<f32> {
+        use windows_sys::Win32::System::Performance::{
+            PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
+        };
+        if self.counter.is_null() {
+            return Vec::new();
+        }
+        let mut cores: Vec<(u32, f32)> = Vec::new();
+        // SAFETY: the buffer is sized from the size the first call reports,
+        // aligned for the items, and only the `count` items it says it
+        // wrote are read; their names point inside that buffer.
+        unsafe {
+            if PdhCollectQueryData(self.query) != 0 {
+                return Vec::new();
+            }
+            let (mut size, mut count) = (0u32, 0u32);
+            if PdhGetFormattedCounterArrayW(self.counter, PDH_FMT_DOUBLE, &mut size, &mut count, std::ptr::null_mut())
+                != PDH_MORE_DATA
+            {
+                return Vec::new();
+            }
+            let item = std::mem::size_of::<PDH_FMT_COUNTERVALUE_ITEM_W>();
+            let mut buffer: Vec<PDH_FMT_COUNTERVALUE_ITEM_W> = vec![std::mem::zeroed(); (size as usize).div_ceil(item) + 1];
+            if PdhGetFormattedCounterArrayW(self.counter, PDH_FMT_DOUBLE, &mut size, &mut count, buffer.as_mut_ptr()) != 0 {
+                return Vec::new();
+            }
+            for it in buffer.iter().take(count as usize) {
+                if it.szName.is_null() || it.FmtValue.CStatus != 0 {
+                    continue;
+                }
+                let len = (0..).take_while(|&i| *it.szName.add(i) != 0).count();
+                let name = String::from_utf16_lossy(std::slice::from_raw_parts(it.szName, len));
+                // "_Total" and anything not a plain core number left out
+                if let Ok(n) = name.parse::<u32>() {
+                    cores.push((n, it.FmtValue.Anonymous.doubleValue.clamp(0.0, 100.0) as f32));
+                }
+            }
+        }
+        cores.sort_by_key(|c| c.0);
+        cores.into_iter().map(|c| c.1).collect()
+    }
+}
+
+#[cfg(windows)]
+impl Drop for CoreCounters {
+    fn drop(&mut self) {
+        if !self.query.is_null() {
+            // SAFETY: the query was opened by `open` and is closed once.
+            unsafe {
+                windows_sys::Win32::System::Performance::PdhCloseQuery(self.query);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -91,9 +91,11 @@ impl Write for Tee {
         let _ = std::io::stderr().write_all(text.as_bytes());
         if let Some(f) = &mut self.file {
             let _ = f.write_all(text.as_bytes());
+            crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
         }
         if let Some(f) = &mut self.session_file {
             let _ = f.write_all(text.as_bytes());
+            crate::disk_io::written(crate::disk_io::Origin::Logs, text.len());
         }
         Ok(buf.len())
     }

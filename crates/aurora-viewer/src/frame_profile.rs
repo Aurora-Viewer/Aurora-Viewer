@@ -445,6 +445,11 @@ struct Period {
 
 pub struct FrameProfile {
     enabled: bool,
+    /// Measured without a log line: the resource monitor is open and
+    /// reads [`FrameProfile::averages`].
+    live: bool,
+    /// Averages per frame of the last period measured.
+    averages: Option<Averages>,
     last: Option<Instant>,
     /// Laps of the frame being measured (ms).
     frame: [f32; LAPS],
@@ -472,6 +477,8 @@ impl FrameProfile {
     pub fn new(enabled: bool) -> Self {
         FrameProfile {
             enabled,
+            live: false,
+            averages: None,
             last: None,
             frame: [0.0; LAPS],
             frame_cycles: [0; LAPS],
@@ -492,6 +499,34 @@ impl FrameProfile {
 
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    /// Measure the frames without AURORA_PROFILE (the resource monitor
+    /// shows them); nothing is logged. Turned off, the averages are
+    /// forgotten.
+    pub fn set_live(&mut self, live: bool) {
+        if live == self.live {
+            return;
+        }
+        self.live = live;
+        if !self.measuring() {
+            self.averages = None;
+            self.last = None;
+            self.started = None;
+            self.period = Period::default();
+            self.frame = [0.0; LAPS];
+            self.frame_cycles = [0; LAPS];
+        }
+    }
+
+    fn measuring(&self) -> bool {
+        self.enabled || self.live
+    }
+
+    /// Averages per frame of the last second measured (with
+    /// AURORA_PROFILE or [`FrameProfile::set_live`]).
+    pub fn averages(&self) -> Option<&Averages> {
+        self.averages.as_ref()
     }
 
     /// AURORA_BLEND_EARLY_DISCARD=alt: the blended faces take the old path
@@ -519,7 +554,7 @@ impl FrameProfile {
 
     /// End a step of the frame now.
     pub fn lap(&mut self, lap: Lap) {
-        if self.enabled {
+        if self.measuring() {
             self.lap_cpu_at(lap, Instant::now(), thread_cpu::cycles());
         }
     }
@@ -557,8 +592,9 @@ impl FrameProfile {
     /// End the frame (after the `Tail` lap); logs the summary once a
     /// second, and tells when it did.
     pub fn end_frame(&mut self, render: &RenderStats, scene: &SceneCounts, parts: &Parts) -> bool {
-        if self.enabled
+        if self.measuring()
             && let Some(line) = self.end_frame_at(render, scene, parts, Instant::now())
+            && self.enabled
         {
             log::info!("perf summary: {line}{}", self.mark);
             return true;
@@ -662,9 +698,53 @@ impl FrameProfile {
         self.started = Some(now);
         self.periods += 1;
         let mut p = std::mem::take(&mut self.period);
+        self.averages = Some(Averages::of(&p, elapsed));
+        if !self.enabled {
+            return Some(String::new());
+        }
         // (with AURORA_SHADOW_LEGACY=ab, the next period compares the other path)
         p.shadow_path = aurora_render::shadow_cull::next_path();
         Some(summary(&p, elapsed))
+    }
+}
+
+/// Averages per frame of one period (ms), for the resource monitor.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Averages {
+    pub fps: f32,
+    pub frame_ms: f32,
+    laps: [f32; LAPS],
+    parts: [f32; PARTS],
+    phases: [f32; PHASES],
+    /// GPU elements, when the GPU timed them.
+    pub gpu: Option<[f32; GPU]>,
+}
+
+impl Averages {
+    fn of(p: &Period, elapsed: Duration) -> Averages {
+        let n = p.frames.max(1) as f32;
+        Averages {
+            fps: p.frames as f32 / elapsed.as_secs_f32().max(1e-3),
+            frame_ms: p.frame_ms.iter().sum::<f32>() / n,
+            laps: p.laps.map(|v| v / n),
+            parts: p.parts.0.map(|v| v / n),
+            phases: p.phases.map(|v| v / n),
+            gpu: (p.gpu_frames > 0).then(|| p.gpu.map(|v| v / p.gpu_frames as f32)),
+        }
+    }
+
+    pub fn lap(&self, lap: Lap) -> f32 {
+        self.laps[lap as usize]
+    }
+
+    pub fn part(&self, part: Part) -> f32 {
+        self.parts[part as usize]
+    }
+
+    /// A step of the render thread, by its key in [`RENDER_PHASES`]
+    /// (`shadows`, `scene_a`…); 0 for an unknown key.
+    pub fn phase(&self, key: &str) -> f32 {
+        RENDER_PHASES.iter().position(|k| *k == key).map_or(0.0, |i| self.phases[i])
     }
 }
 
