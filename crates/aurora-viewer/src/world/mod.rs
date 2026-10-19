@@ -2937,6 +2937,11 @@ impl World {
                     self.on_inventory_offer_card(im, &from, asset_type, entry);
                 }
             }
+            // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
+            // group we are already in is dropped unless asked for
+            d::GROUP_INVITATION if self.groups.is_member(&im.from_agent_id) && !self.groups.show_joined_invitations => {
+                log::info!("group invitation to a group we are already in: not shown");
+            }
             d::GROUP_INVITATION => {
                 self.ui_sounds.push(UiSound::GroupInvitation);
                 n.push(

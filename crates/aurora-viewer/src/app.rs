@@ -5602,6 +5602,7 @@ impl App {
             self.world.groups.mute_all_groups = self.settings.mute_all_groups;
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
+            self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.group_titles = self.settings.group_titles;
             // FSDisableNeighbourRegionConnections, lifted while crossing
             let refuse = self.settings.no_neighbour_regions && self.world.agent_inside_main_region();

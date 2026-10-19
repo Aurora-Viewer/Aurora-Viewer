@@ -588,6 +588,41 @@ mod tests {
     }
 
     #[test]
+    fn an_invitation_to_a_group_we_are_in_is_dropped_unless_asked_for() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let group = Uuid::from_u128(9);
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Builders".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        let invite = |from: Uuid| InstantMessage {
+            from_agent_id: from,
+            from_name: "Builders".into(),
+            to_agent_id: Uuid::nil(),
+            dialog: d::GROUP_INVITATION,
+            session_id: Uuid::from_u128(1),
+            message: "Join us".into(),
+            offline: false,
+            from_group: true,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        };
+        let shown = |world: &World| world.notifications.list.len();
+        world.on_im(invite(group));
+        assert_eq!(shown(&world), 0, "already a member");
+        world.on_im(invite(Uuid::from_u128(8)));
+        assert_eq!(shown(&world), 1, "another group");
+        world.groups.show_joined_invitations = true;
+        world.on_im(invite(group));
+        assert_eq!(shown(&world), 2);
+    }
+
+    #[test]
     fn response_priority() {
         let mut s = Status::default();
         assert!(s.response_for(false).is_none());

@@ -2579,6 +2579,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-announce-additions-to-and-removals-from-the-block-list"),
                     |ui| toggle(ui, p, &mut s.report_blocks),
                 );
+                // Legacy Viewer › Privacy (FSShowJoinedGroupInvitations)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-joined-group-invitations"),
+                    aurora_i18n::tr!("ui-options-joined-group-invitations-help"),
+                    |ui| toggle(ui, p, &mut s.show_joined_group_invitations),
+                );
             });
             // Firestorm: Preferences > Privacy > Autoresponse 1 and 2
             let a = &mut s.autoresponse;

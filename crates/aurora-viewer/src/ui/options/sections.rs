@@ -76,7 +76,7 @@ sections! {
         chat_timestamps, show_chat_channel, chat_keep_focus, chat_toast_seconds, toast_friends_online, friends_online_in_chat, presence_position, toast_im, toast_group_im, im_toast_seconds,
         warn_external_links, show_chat, show_contacts_tab, send_typing_state, flash_unread_conversations, log_im, log_nearby,
         log_show_history, reopen_ims, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
-        report_blocks,
+        report_blocks, show_joined_group_invitations,
     ],
     4 => [
         mouse_sensitivity, invert_mouse, arrows_strafe, arrow_keys_always_move, letter_keys_move, walk_backwards_without_turning, double_click, lookat.head_yaw, lookat.head_pitch,
