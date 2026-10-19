@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 impl App {
     pub(super) fn release_bridge(&mut self) {
+        self.release_native_movelock();
         if let Some(command) = self.bridge_runtime.release() {
             self.send(command);
         }
@@ -14,12 +15,13 @@ impl App {
         }
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
         prefs.enabled = !prefs.enabled;
-        if prefs.enabled && self.bridge_runtime.error.is_some() {
+        if prefs.enabled && prefs.mode == crate::world::bridge::LockMode::Bridge && self.bridge_runtime.error.is_some() {
             self.bridge_runtime.retry(Instant::now());
         }
         if !self.demo {
             self.settings.save();
         }
+        self.update_native_movelock();
         self.update_bridge();
     }
     pub(super) fn update_bridge(&mut self) {
@@ -32,13 +34,15 @@ impl App {
             && (std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
                 || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || crate::ao::water_demo::mode().is_some()
                 || folder_names)
         {
             crate::world::bridge::demo::seed(&mut self.world);
             if self.ao_demo.is_none() {
                 crate::ao::demo::inventory_services(&mut self.world, true);
             }
-            self.movelock_ui.open = !folder_names && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
+            self.movelock_ui.open =
+                crate::ao::water_demo::mode().is_none() && !folder_names && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
             if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "radar") {
                 crate::world::bridge::demo::seed_queries(&mut self.world);
                 self.panels.people = true;
@@ -47,12 +51,30 @@ impl App {
             self.panels.perf = false;
             self.settings.bridge.entry(self.world.agent_id).or_default().enabled =
                 std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode != "off");
+            if std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode.starts_with("native")) {
+                self.settings.bridge.entry(self.world.agent_id).or_default().mode = crate::world::bridge::LockMode::NativeSit;
+                crate::ao::demo::assets(&mut self.scene);
+                crate::ao::demo::native_anchor_assets(&mut self.scene);
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.panels.people = false;
+                crate::ui::widgets::place_floater(&self.egui_ctx, "movelock", egui::pos2(60.0, 90.0), egui::vec2(470.0, 450.0));
+                let selected = crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.settings.ao.accounts.insert(
+                    self.world.agent_id,
+                    crate::ao::Account {
+                        selected,
+                        enabled: std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode != "native-missing"),
+                    },
+                );
+            }
         }
         let online = self.in_world()
             && (!self.demo
                 || std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
                 || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || crate::ao::water_demo::mode().is_some()
                 || folder_names);
         if !online {
             return;
@@ -197,7 +219,11 @@ impl App {
             self.movelock_ui.open = true;
         }
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
-        let status = prefs.state();
+        let status = if prefs.enabled && prefs.mode == crate::world::bridge::LockMode::NativeSit {
+            self.native_anchor.status.label()
+        } else {
+            prefs.state()
+        };
         let was_enabled = prefs.enabled;
         let shortcut = self
             .settings
@@ -213,15 +239,16 @@ impl App {
         if prefs.enabled && prefs.indicator {
             self.movelock_ui.indicator(ctx, p, status);
         }
-        let (changed, repair) = self.movelock_ui.show(
-            ctx,
-            p,
-            prefs,
-            status,
-            self.bridge_runtime.error.as_deref().or(self.bridge_runtime.progress()),
-            &shortcut,
-        );
-        if repair || (prefs.enabled && !was_enabled && self.bridge_runtime.error.is_some()) {
+        let diagnostic = (prefs.mode == crate::world::bridge::LockMode::Bridge)
+            .then(|| self.bridge_runtime.error.as_deref().or(self.bridge_runtime.progress()))
+            .flatten();
+        let (changed, repair) = self.movelock_ui.show(ctx, p, prefs, status, diagnostic, &shortcut);
+        if repair
+            || (prefs.mode == crate::world::bridge::LockMode::Bridge
+                && prefs.enabled
+                && !was_enabled
+                && self.bridge_runtime.error.is_some())
+        {
             // Repair preserves the requested mode.
             self.bridge_runtime.retry(Instant::now());
         }

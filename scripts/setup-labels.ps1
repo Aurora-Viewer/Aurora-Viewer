@@ -1,8 +1,9 @@
 ﻿<#
 .SYNOPSIS
-    Creates (or updates) the PR labels on GitHub: types and areas. Issues
-    carry no labels: their nature is their issue type (Bug, Feature, Task,
-    Epic; AGENTS.md section 15). Keeps the other labels and their history. A
+    Creates (or updates) the labels on GitHub: types, for PRs only, and
+    areas, for PRs and issues. The nature of an issue is its issue type (Bug,
+    Feature, Task, Epic; AGENTS.md section 15). Keeps the other labels and
+    their history. A
     label still under its former French name (Was) is renamed, so the PRs
     that carry it keep it. Run again when the list changes.
 
@@ -35,6 +36,10 @@ $labels = @(
     @{ Name = 'network'; Was = 'réseau'; Color = '070B1F'; Desc = 'Protocol, connection, assets' },
     @{ Name = 'audio-voice'; Was = 'audio-voix'; Color = 'F472B6'; Desc = 'Sound, music, voice' },
     @{ Name = 'ui'; Was = 'interface'; Color = 'C4B5FD'; Desc = 'Windows, options, usability' },
+    @{ Name = 'chat'; Color = '9F6DCF'; Desc = 'Features related to chat window' },
+    @{ Name = 'nameplate'; Color = 'F3C07F'; Desc = 'Features regarding the nameplate above avatars' },
+    @{ Name = 'contact-group'; Color = 'C3C33F'; Desc = 'Contact Groups/Sets and related features' },
+    @{ Name = 'inventory'; Color = 'AAAAAA'; Desc = 'Inventory window, folders and items' },
     @{ Name = 'build-tools'; Was = 'construction'; Color = 'FCD34D'; Desc = 'In-world building and editing tools' },
     @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' }
 )

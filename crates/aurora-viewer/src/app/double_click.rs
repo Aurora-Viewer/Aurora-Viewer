@@ -45,16 +45,18 @@ impl App {
         }
     }
 
-    /// walkToClickedLocation: not while flying or sitting.
+    /// walkToClickedLocation: not while flying or manually sitting. Our own
+    /// idle anchor releases before the walk and does not cancel its handover.
     fn walk_to(&mut self, point: Vec3, run: bool) {
         let agent = &self.world.agent;
-        if agent.flying || agent.is_sitting() || !point.is_finite() {
+        if agent.flying || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit) || !point.is_finite() {
             return;
         }
         // the target stays its centre's height above the ground
         let target = point + Vec3::Z * self.pelvis_to_foot();
         let was_running = self.autopilot.as_ref().is_some_and(|a| a.run);
         self.autopilot = Some(AutoPilot::start(agent.position, target, run, Instant::now()));
+        self.release_native_movelock();
         if run != was_running {
             self.sync_run();
         }
@@ -140,7 +142,12 @@ impl App {
         let i = &self.input;
         let keys = i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right || i.up || i.down;
         let agent = &self.world.agent;
-        if keys || self.mouse_mode == MouseMode::Steer || agent.flying || agent.is_sitting() || !self.in_world() {
+        if keys
+            || self.mouse_mode == MouseMode::Steer
+            || agent.flying
+            || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit)
+            || !self.in_world()
+        {
             self.stop_autopilot(true);
             return;
         }

@@ -174,6 +174,13 @@ impl Session<'_> {
                 m.physical_avatar_event_list = Vec::new();
                 self.send_main(&m, true);
             }
+            NetCommand::AgentAnimationChanges { changes } => {
+                // Keep ordinary AO transitions in one reliable packet. The
+                // bounded chunks also cover unusually large user track sets.
+                for message in agent_animation_changes_messages(self.agent_id(), self.session_id(), changes) {
+                    self.send_main(&message, true);
+                }
+            }
             NetCommand::AgentAnimations { anims, start } => {
                 // LLAgent::sendAnimationRequests: one message, the nil ids left
                 // out, not sent without an animation
@@ -519,6 +526,24 @@ fn agent_animation_message(agent: uuid::Uuid, session: uuid::Uuid, list: Vec<age
     m
 }
 
+fn agent_animation_changes_messages(
+    agent: uuid::Uuid,
+    session: uuid::Uuid,
+    changes: &[(uuid::Uuid, bool)],
+) -> impl Iterator<Item = AgentAnimation> + '_ {
+    changes.chunks(64).filter_map(move |changes| {
+        let list = changes
+            .iter()
+            .filter(|(id, _)| !id.is_nil())
+            .map(|(id, start)| agent_animation::AnimationList {
+                anim_id: *id,
+                start_anim: *start,
+            })
+            .collect::<Vec<_>>();
+        (!list.is_empty()).then(|| agent_animation_message(agent, session, list))
+    })
+}
+
 /// Xfer ids only need to be unique among our transfers.
 fn rand_u64() -> u64 {
     use std::hash::{BuildHasher, Hasher};
@@ -530,4 +555,44 @@ fn rand_u64() -> u64 {
             .unwrap_or(0),
     );
     h.finish()
+}
+
+#[cfg(test)]
+mod animation_tests {
+    use super::*;
+    use aurora_msg::{Msg, Writer};
+    use uuid::Uuid;
+
+    #[test]
+    fn ao_transition_wire_keeps_stops_and_starts_in_one_bounded_message() {
+        let changes = [
+            (Uuid::from_u128(1), false),
+            (Uuid::nil(), false),
+            (Uuid::from_u128(2), true),
+            (Uuid::from_u128(3), true),
+        ];
+        let messages = agent_animation_changes_messages(Uuid::from_u128(4), Uuid::from_u128(5), &changes).collect::<Vec<_>>();
+        assert_eq!(messages.len(), 1);
+        let mut writer = Writer::default();
+        messages[0].encode_body(&mut writer);
+        let decoded = AgentAnimation::decode(&writer.buf).expect("animation wire");
+        assert_eq!(
+            decoded.animation_list.iter().map(|a| (a.anim_id, a.start_anim)).collect::<Vec<_>>(),
+            vec![changes[0], changes[2], changes[3]]
+        );
+        assert_eq!(decoded.physical_avatar_event_list.len(), 1);
+        assert!(
+            agent_animation_changes_messages(Uuid::nil(), Uuid::nil(), &[(Uuid::nil(), true)])
+                .next()
+                .is_none()
+        );
+        let changes = (1..=130).map(|i| (Uuid::from_u128(i), i > 65)).collect::<Vec<_>>();
+        let messages = agent_animation_changes_messages(Uuid::nil(), Uuid::nil(), &changes).collect::<Vec<_>>();
+        assert_eq!(messages.iter().map(|m| m.animation_list.len()).collect::<Vec<_>>(), vec![64, 64, 2]);
+        for message in messages {
+            let mut writer = Writer::default();
+            message.encode_body(&mut writer);
+            assert!(writer.buf.len() < 1200);
+        }
+    }
 }

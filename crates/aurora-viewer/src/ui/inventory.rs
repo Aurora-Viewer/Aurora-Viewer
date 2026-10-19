@@ -31,7 +31,7 @@ pub(crate) mod task_drop;
 pub mod thumbnail;
 pub(crate) mod tree;
 pub(crate) mod view;
-pub use aurora::demo_place as aurora_demo;
+pub use aurora::{DEMO_FOLDER_WINDOW as AURORA_DEMO_FOLDER_WINDOW, demo_place as aurora_demo};
 pub use controls::preferences;
 
 /// A demo scenario written for the Legacy Viewer's window (its tabs, its
@@ -387,6 +387,9 @@ pub struct InventoryUi {
     hide_details: bool,
     /// A row's "more actions" menu, opened by its button: the row, where.
     row_menu: Option<(Uuid, egui::Pos2)>,
+    /// The folder a folder window shows (nil: the whole inventory). Its
+    /// lists, searches, column and breadcrumb stay under it.
+    scope: Uuid,
 }
 
 #[derive(Clone)]
@@ -1225,7 +1228,11 @@ fn list_scope(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPrefer
     // LLSidepanelInventory::observeInboxModifications/onInboxChanged
     // (indra/newview/llsidepanelinventory.cpp): scope and fetch the full FT_INBOX.
     // Aurora presents it as a tab, as requested, instead of a second bottom pane.
-    let root = if st.tab == RECEIVED_TAB {
+    // A folder window has no tabs: its folder is its root.
+    let root = if !st.scope.is_nil() {
+        st.tab = 0;
+        st.scope
+    } else if st.tab == RECEIVED_TAB {
         rules::system(inv, 50).unwrap_or_default()
     } else {
         inv.root
@@ -1234,6 +1241,10 @@ fn list_scope(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPrefer
     if root.is_nil() {
         st.fetch_all = false;
         st.view.results.clear();
+    } else if !filtered && st.fetch_all && !st.scope.is_nil() {
+        // a folder window loads its whole tree when an operation asks (the
+        // main window does it for the root in `show`)
+        st.fetch_all = !rules::request_tree(inv, root);
     } else if filtered {
         request_search(inv, root, st, prefs);
         st.view.search(
@@ -1512,26 +1523,55 @@ pub fn show(
         let before = (w.state.clipboard.clone(), w.state.cut);
         let title = aurora_i18n::tr!("ui-inventory-inventory", value0 = folder_name(&world.inventory, w.root).to_string());
         let window_id = format!("inventory_{}", w.id);
-        super::widgets::Floater::new(
+        let floater = super::widgets::Floater::new(
             &window_id,
             title,
             screen.center() - egui::vec2(210.0, 220.0),
             Vec2::new(420.0, 440.0),
         )
-        .compact_header()
-        .show(ctx, p, &mut w.open, |ui| {
-            folder_window_contents(
-                ui,
-                p,
-                icons,
-                &mut world.inventory,
-                w.root,
-                &mut w.state,
-                prefs,
-                &facts,
-                &mut actions,
-            );
-        });
+        .compact_header();
+        if classic {
+            w.state.aurora = None;
+            floater.show(ctx, p, &mut w.open, |ui| {
+                folder_window_contents(
+                    ui,
+                    p,
+                    icons,
+                    &mut world.inventory,
+                    w.root,
+                    &mut w.state,
+                    prefs,
+                    &facts,
+                    &mut actions,
+                );
+            });
+        } else {
+            // Aurora's window, kept under its folder.
+            w.state.scope = w.root;
+            let mut widen = false;
+            let layout = aurora::Layout::of_window(ctx, &window_id);
+            let floater = if layout == aurora::Layout::Compact {
+                floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen)
+            } else {
+                floater
+            };
+            floater.show(ctx, p, &mut w.open, |ui| {
+                aurora::contents(
+                    ui,
+                    p,
+                    icons,
+                    &mut world.inventory,
+                    &mut w.state,
+                    prefs,
+                    &facts,
+                    images,
+                    &mut actions,
+                )
+            });
+            if widen {
+                aurora::widen(ctx, &window_id);
+            }
+        }
         finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         controls::dialogs(ctx, p, &mut w.state, prefs);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);

@@ -233,6 +233,8 @@ pub struct World {
     /// A ground animesh entry holds only its mesh pelvis fixup.
     /// The adjustable hover height stays live, independent of pose timing.
     pub avatar_shape_dz: HashMap<Uuid, f32>,
+    /// Local water-wave heave of our drawn avatar, independent of physics/hover.
+    pub water_float: crate::movement::water_float::Follower,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
     pub bodies: HashMap<Uuid, body::Body>,
     /// Where avatars look (ours and the ones others send).
@@ -421,6 +423,13 @@ fn saved_prefix(timestamp: u32) -> String {
 }
 
 impl World {
+    pub fn water_visual_dz(&self, id: &Uuid) -> f32 {
+        if *id == self.agent_id && !self.teleporting && self.movement_complete && !self.agent.is_sitting() {
+            self.water_float.offset()
+        } else {
+            0.0
+        }
+    }
     /// LLFloaterRegionInfo::refreshFromRegion on `handle`: the panels ask
     /// (estate, access, covenant, experiences, environment), then, when the
     /// window opens, RequestRegionInfo (requestRegionInfo).
@@ -467,6 +476,7 @@ impl World {
             appearances: HashMap::new(),
             avatar_poses: HashMap::new(),
             avatar_shape_dz: HashMap::new(),
+            water_float: Default::default(),
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             appearance_counter: 1,
@@ -1089,7 +1099,13 @@ impl World {
     /// (`intent`), with Aurora's movement on; off, or seated, in a teleport
     /// or before the arrival, the simulator's signals as they are.
     /// `window`: how long a local start or stop waits for the simulator.
-    pub fn update_own_locomotion(&mut self, intent: Option<crate::own_motion::Intent>, window: f32, now: Instant) {
+    pub fn update_own_locomotion(
+        &mut self,
+        intent: Option<crate::own_motion::Intent>,
+        window: f32,
+        now: Instant,
+        ao_basis: Option<PlayingAnimation>,
+    ) {
         let standing = self.agent.has_local_control() && !self.agent.ground_sit;
         if !self.agent.predicting() || !standing || self.teleporting || !self.movement_complete {
             self.own_locomotion.reset();
@@ -1097,6 +1113,20 @@ impl World {
             return;
         }
         let base = self.animations.get(&self.agent_id).map(Vec::as_slice).unwrap_or_default();
+        // The AO can stop a replaced stock clip on the simulator. Retain its
+        // semantic basis for local key-release prediction without altering the
+        // received animation list or overriding a newer simulator state.
+        let basis;
+        let base = if let Some(signal) = ao_basis.filter(|_| {
+            !base
+                .iter()
+                .any(|a| crate::ao::State::from_motion(a.id).is_some_and(|s| s != crate::ao::State::Typing))
+        }) {
+            basis = base.iter().copied().chain(std::iter::once(signal)).collect::<Vec<_>>();
+            basis.as_slice()
+        } else {
+            base
+        };
         // the walk goes on while the drawn avatar glides to its stop: the
         // feet do not slide
         let gliding = self.agent.drawn_velocity().truncate().length() > GLIDE_WALKING;
@@ -1108,6 +1138,20 @@ impl World {
             drawn: gliding,
         };
         self.own_drawn = self.own_locomotion.overlay(base, wanted, moving, window, now);
+    }
+
+    /// Native Movelock must not force Standing while either the simulator or
+    /// the drawn avatar is still coasting. Share the ordinary walk-stop speed;
+    /// airborne anchoring also waits for vertical flight motion to settle.
+    pub fn own_motion_moving(&self) -> bool {
+        let speed_squared = |v: Vec3| {
+            if self.agent.flying {
+                v.length_squared()
+            } else {
+                v.truncate().length_squared()
+            }
+        };
+        speed_squared(self.agent.velocity).max(speed_squared(self.agent.settling_velocity())) > GLIDE_WALKING.powi(2)
     }
 
     /// Our avatar's signals as the AO and the pose take them: the
@@ -5454,16 +5498,90 @@ mod motion_tests {
         let ids = |w: &World| w.animations_of(&me).iter().map(|a| a.id).collect::<Vec<_>>();
         let now = Instant::now();
         world.agent.set_predicting(true);
-        world.update_own_locomotion(walk, 0.8, now);
+        world.update_own_locomotion(walk, 0.8, now, None);
         assert_eq!(ids(&world), [ANIM_WALK]);
         assert_eq!(world.animations[&me].iter().map(|a| a.id).collect::<Vec<_>>(), [ANIM_STAND]);
         world.agent.set_predicting(false);
-        world.update_own_locomotion(walk, 0.8, now);
+        world.update_own_locomotion(walk, 0.8, now, None);
         assert_eq!(ids(&world), [ANIM_STAND]);
         world.agent.set_predicting(true);
         world.agent.seated = true;
-        world.update_own_locomotion(walk, 0.8, now);
+        world.update_own_locomotion(walk, 0.8, now, None);
         assert_eq!(ids(&world), [ANIM_STAND]);
+    }
+
+    #[test]
+    fn native_movelock_motion_includes_server_travel_and_visual_settling() {
+        let (mut world, _, _) = arrived_fixture();
+        world.agent.reset_motion();
+        for speed in [3.2, 5.13, 15.0] {
+            world.agent.velocity = Vec3::X * speed;
+            assert!(world.own_motion_moving(), "walk/run/boost deceleration is still movement");
+        }
+        world.agent.velocity = Vec3::ZERO;
+        world.agent.position -= Vec3::X * 0.2;
+        assert!(world.own_motion_moving(), "a zero-velocity report does not finish visual smoothing");
+        for _ in 0..60 {
+            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
+        }
+        assert!(!world.own_motion_moving());
+        world.agent.velocity = Vec3::Z * 2.0;
+        assert!(!world.own_motion_moving(), "ground vertical corrections are not walking");
+        world.agent.flying = true;
+        assert!(world.own_motion_moving(), "vertical flight must settle before airborne anchoring");
+        world.agent.velocity = Vec3::ZERO;
+        assert!(!world.own_motion_moving());
+
+        world.agent.set_predicting(true);
+        world.agent.position -= Vec3::X * 0.2;
+        world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
+        assert!(world.own_motion_moving(), "Aurora's drawn glide must settle too");
+        for _ in 0..180 {
+            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
+        }
+        assert!(!world.own_motion_moving());
+    }
+
+    #[test]
+    fn an_ao_suppressed_walk_still_predicts_key_release_without_replacing_new_server_states() {
+        use crate::own_motion::{ANIM_STAND, ANIM_WALK, Intent};
+        use std::time::Duration;
+        let (mut world, _, _) = arrived_fixture();
+        let me = world.agent_id;
+        let now = Instant::now();
+        world.agent.set_predicting(true);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: me,
+            anims: vec![(ANIM_STAND, 1)],
+            sources: Vec::new(),
+        });
+        let walk = Intent::from_flags(aurora_net::control::AT_POS, 0.0, false);
+        world.update_own_locomotion(walk, 0.8, now, None);
+        let basis = world
+            .own_signals()
+            .iter()
+            .find(|a| a.id == ANIM_WALK)
+            .copied()
+            .expect("predicted walk");
+        let custom = Uuid::from_u128(29001);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: me,
+            anims: vec![(custom, 1)],
+            sources: Vec::new(),
+        });
+        world.update_own_locomotion(None, 0.8, now + Duration::from_millis(100), Some(basis));
+        assert!(world.own_signals().iter().any(|a| a.id == ANIM_STAND));
+        assert!(!world.own_signals().iter().any(|a| a.id == ANIM_WALK));
+        assert_eq!(world.animations[&me].iter().map(|a| a.id).collect::<Vec<_>>(), vec![custom]);
+        let fall = crate::ao::State::Falling.motion();
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: me,
+            anims: vec![(fall, 1), (custom, 1)],
+            sources: Vec::new(),
+        });
+        world.update_own_locomotion(None, 0.8, now + Duration::from_millis(120), Some(basis));
+        assert!(world.own_signals().iter().any(|a| a.id == fall));
+        assert!(!world.own_signals().iter().any(|a| a.id == ANIM_WALK));
     }
 
     /// Offline, any prim can be sat on and stood up from (`demo::sit_on_prim`):

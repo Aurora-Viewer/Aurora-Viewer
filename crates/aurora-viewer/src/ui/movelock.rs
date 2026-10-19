@@ -1,6 +1,9 @@
 //! Physical position lock controls, shared by the menu and toolbar.
 use super::widgets::{self, ActionKind, Floater};
-use crate::{theme::Palette, world::bridge::Preferences};
+use crate::{
+    theme::Palette,
+    world::bridge::{LockMode, Preferences},
+};
 
 #[derive(Default)]
 pub struct MoveLockUi {
@@ -23,11 +26,27 @@ impl MoveLockUi {
             "movelock",
             aurora_i18n::tr!("movelock-title"),
             egui::pos2(460.0, 180.0),
-            egui::vec2(430.0, 300.0),
+            egui::vec2(470.0, 420.0),
         )
         .show(ctx, p, &mut self.open, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.label(aurora_i18n::tr!("movelock-help"));
+            ui.add_space(8.0);
+            ui.label(aurora_i18n::tr!("movelock-mode"));
+            let response = widgets::radio_value(ui, p, &mut prefs.mode, LockMode::Bridge, aurora_i18n::tr!("movelock-mode-bridge"));
+            #[cfg(test)]
+            remember(ui.ctx(), 3, response.rect);
+            #[cfg(not(test))]
+            let _ = response;
+            let response = widgets::radio_value(ui, p, &mut prefs.mode, LockMode::NativeSit, aurora_i18n::tr!("movelock-mode-sit"));
+            #[cfg(test)]
+            remember(ui.ctx(), 4, response.rect);
+            #[cfg(not(test))]
+            let _ = response;
+            ui.label(match prefs.mode {
+                LockMode::Bridge => aurora_i18n::tr!("movelock-bridge-help"),
+                LockMode::NativeSit => aurora_i18n::tr!("movelock-sit-help"),
+            });
             ui.add_space(8.0);
             let response = widgets::switch_labeled(ui, p, &mut prefs.enabled, aurora_i18n::tr!("movelock-enable"));
             #[cfg(test)]
@@ -46,18 +65,20 @@ impl MoveLockUi {
             let _ = response;
             ui.add_space(8.0);
             ui.label(aurora_i18n::tr!("movelock-shortcut", shortcut = shortcut.to_owned()));
-            let response = widgets::action_button(
-                ui,
-                p,
-                "refresh",
-                aurora_i18n::tr!("bridge-repair"),
-                ActionKind::Flat,
-                egui::vec2(0.0, 28.0),
-            );
-            #[cfg(test)]
-            remember(ui.ctx(), 2, response.rect);
-            if response.clicked() {
-                repair = true;
+            if prefs.mode == LockMode::Bridge {
+                let response = widgets::action_button(
+                    ui,
+                    p,
+                    "refresh",
+                    aurora_i18n::tr!("bridge-repair"),
+                    ActionKind::Flat,
+                    egui::vec2(0.0, 28.0),
+                );
+                #[cfg(test)]
+                remember(ui.ctx(), 2, response.rect);
+                if response.clicked() {
+                    repair = true;
+                }
             }
         });
         (*prefs != before, repair)
@@ -115,7 +136,7 @@ mod tests {
         for _ in 0..4 {
             assert_eq!(frame(Vec::new(), &mut panel, &mut prefs), (false, false));
         }
-        for index in 0usize..3 {
+        for index in [0usize, 1, 2, 4, 3] {
             let before = prefs;
             let rect = ctx
                 .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("movelock_control", index))))
@@ -138,6 +159,8 @@ mod tests {
                 match index {
                     0 => expected.enabled = !expected.enabled,
                     1 => expected.indicator = !expected.indicator,
+                    3 => expected.mode = LockMode::Bridge,
+                    4 => expected.mode = LockMode::NativeSit,
                     _ => unreachable!(),
                 }
                 assert_eq!(prefs, expected);

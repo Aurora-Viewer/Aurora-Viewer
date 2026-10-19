@@ -195,7 +195,11 @@ fn reconstructs_all_sets_groups_tracks_options_and_selection_without_changing_fi
             (new.sits, new.smart, new.mouselook, new.default),
             (old.sits, old.smart, old.mouselook, old.default)
         );
-        assert_eq!(new.states.len(), old.states.len());
+        assert_eq!(
+            new.states.len(),
+            old.states.len() + State::SWIMMING.len() - State::LEGACY_VIEWER_SWIMMING.len()
+        );
+        assert!(new.swimming_ready());
         for (state, before) in &old.states {
             let after = &new.states[state];
             assert_eq!(after.cycle, before.cycle);
@@ -347,36 +351,81 @@ fn waits_for_the_bridge_owned_shared_parent_instead_of_creating_a_duplicate() {
 }
 
 #[test]
-fn firestorm_swimming_is_never_imported_or_required_to_finish_reading_the_source() {
+fn legacy_swimming_is_fetched_before_completing_native_slots_from_real_animations() {
     let (mut inv, owner, selected) = source();
     let fs = inventory::child(&inv, inv.root, "#Firestorm").expect("source");
     let ao = inventory::child(&inv, fs, "#AO").expect("source AO");
     let mut excluded = Vec::new();
+    let mut included = Vec::new();
+    let mut renamed = Vec::new();
     for set in inv.folders[&ao].children.clone() {
         for id in inv.folders[&set].children.clone() {
             let f = inv.folders.get_mut(&id).expect("state");
-            if State::parse(f.info.name.split(':').next().expect("name")).is_some_and(State::swimming) {
+            if let Some(state) = State::parse(f.info.name.split(':').next().expect("name"))
+                && state.swimming()
+            {
                 f.state = FetchState::Unknown;
-                excluded.push(id);
+                if State::LEGACY_VIEWER_SWIMMING.contains(&state) {
+                    let alias = match state {
+                        State::Floating => "Swim.H",
+                        State::SwimmingForward => "Swim.N",
+                        State::SwimmingUp => "Swim.U",
+                        State::SwimmingDown => "Swim.D",
+                        _ => unreachable!(),
+                    };
+                    let mut info = f.info.clone();
+                    info.name = format!("{alias}:CT13.00:CY:RN");
+                    renamed.push(info);
+                    included.push(id);
+                } else {
+                    excluded.push(id);
+                }
             }
         }
     }
+    inv.server_updated(renamed, Vec::new());
     assert!(!excluded.is_empty());
+    assert_eq!(included.len(), 4);
     let untouched = firestorm_snapshot(&inv);
     let target = native(&mut inv);
-    let (change, _) = Bootstrap::default()
+    let mut startup = Bootstrap::default();
+    assert!(startup.poll(&mut inv, &target, selected, true).is_none());
+    assert!(included.iter().all(|id| inv.queue.iter().any(|(queued, _)| queued == id)));
+    assert!(excluded.iter().all(|id| !inv.queue.iter().any(|(queued, _)| queued == id)));
+    for id in included {
+        inv.folders.get_mut(&id).expect("fetched swim slot").state = FetchState::Fetched;
+    }
+    inv.generation = inv.generation.wrapping_add(1);
+    let (change, _) = startup
         .poll(&mut inv, &target, selected, true)
         .expect("fallback")
-        .expect("no swimming fetch needed");
+        .expect("actual legacy swimming folders are ready");
     assert!(excluded.iter().all(|id| !inv.queue.iter().any(|(queued, _)| queued == id)));
     actions::demo_mutate(&mut inv, owner, change).expect("reconstruct");
     let target = native(&mut inv);
-    assert!(
-        target
-            .sets
-            .iter()
-            .all(|set| set.swimming_slots() == 0 && set.states.keys().all(|state| !state.swimming()))
+    let set = target.sets.first().expect("reconstructed set");
+    assert_eq!(set.swimming_slots(), 12);
+    for state in State::LEGACY_VIEWER_SWIMMING {
+        let config = &set.states[&state];
+        assert!(config.cycle.cycle && config.cycle.random);
+        assert_eq!(config.cycle.seconds, 13.0);
+        let originals = |config: &crate::ao::StateConfig| {
+            config
+                .steps
+                .iter()
+                .flat_map(|step| &step.members)
+                .map(|a| (a.original, a.asset, a.order))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(originals(config), originals(&startup.source.sets[0].states[&state]));
+    }
+    assert!(set.swimming_ready());
+    assert_eq!(set.states[&State::UnderwaterFloating].cycle.seconds, 13.0);
+    assert_eq!(
+        set.swimming_animation(State::UnderwaterFloating).expect("completed").original,
+        startup.source.sets[0].swimming_animation(State::Floating).expect("source").original
     );
+    assert_eq!(startup.source.sets[0].swimming_slots(), 4, "source mappings stay unchanged");
     assert_eq!(firestorm_snapshot(&inv), untouched);
 }
 
@@ -489,8 +538,8 @@ fn cached_firestorm_set_waits_for_inventory_services_and_reconstructs_once_when_
     let cycle = &set.states[&State::Standing].cycle;
     assert!(cycle.cycle && cycle.random);
     assert_eq!(cycle.seconds, 15.0);
-    assert!(set.states.keys().all(|state| !state.swimming()));
-    assert_eq!(set.swimming_slots(), 0);
+    assert_eq!(set.swimming_slots(), 12);
+    assert!(set.swimming_ready());
     assert_eq!(firestorm_snapshot(&inv), untouched);
     assert!(!startup.loading());
     for _ in 0..100 {
@@ -556,4 +605,62 @@ fn a_native_ao_arriving_while_services_are_delayed_cancels_fallback_without_touc
     assert_eq!(target.root, Some(native_root));
     assert!(target.sets.is_empty());
     assert_eq!(firestorm_snapshot(&inv), untouched);
+}
+
+#[test]
+fn legacy_swimming_styles_consolidate_once_after_services_and_preserve_originals_and_foreign_content() {
+    let mut inv = Inventory::default();
+    let owner = Uuid::from_u128(1);
+    let selected = demo::seed_movement_design(&mut inv, owner);
+    let mut catalog = native(&mut inv);
+    let set = catalog.selected(selected).expect("set").clone();
+    let original = set.swimming_animation(State::Floating).expect("clip").original;
+    let original_before = format!("{:?}", inv.items[&original]);
+    for state in State::LEGACY_SWIMMING {
+        let change = inventory::add(&inv, &set, state, original, None).expect("legacy style");
+        actions::demo_mutate(&mut inv, owner, change).expect("legacy assignment");
+    }
+    catalog.refresh(&mut inv);
+    let set = catalog.selected(selected).expect("set");
+    let old_folders = State::LEGACY_SWIMMING.map(|s| set.states[&s].folder);
+    let old_links = State::LEGACY_SWIMMING.map(|s| set.states[&s].steps[0].id);
+    let old_surface = set.states[&State::SwimmingForward].clone();
+    let foreign = Uuid::new_v4();
+    inv.add_items(vec![InvItem {
+        id: foreign,
+        parent: old_folders[0],
+        asset_type: 20,
+        inv_type: 19,
+        asset_id: Uuid::from_u128(29555),
+        name: "Keep this original animation".into(),
+        ..Default::default()
+    }]);
+    catalog.refresh(&mut inv);
+    let mut startup = Bootstrap::default();
+    assert!(startup.poll(&mut inv, &catalog, selected, false).is_none());
+    let (change, selection) = startup.poll(&mut inv, &catalog, selected, true).expect("migration").expect("plan");
+    assert!(selection.is_none());
+    assert!(inventory::editable(&inv, &change, &Default::default()));
+    assert!(
+        startup.poll(&mut inv, &catalog, selected, true).is_none(),
+        "no replay before acknowledgement"
+    );
+    actions::demo_mutate(&mut inv, owner, change).expect("acknowledged migration");
+    catalog.refresh(&mut inv);
+    let after = catalog.selected(selected).expect("same set");
+    let surface = &after.states[&State::SwimmingForward];
+    assert_eq!(surface.folder, old_surface.folder);
+    assert_eq!(surface.steps.len(), old_surface.steps.len() + 2);
+    assert!(old_links.iter().all(|id| surface.steps.iter().any(|s| s.id == *id)));
+    assert!(!after.legacy_swimming_pending());
+    assert_eq!(format!("{:?}", inv.items[&original]), original_before);
+    assert_eq!(inv.items[&foreign].parent, old_folders[0]);
+    assert_eq!(inv.folders[&old_folders[0]].info.parent, selected);
+    assert_eq!(inv.folders[&old_folders[0]].info.name, State::LegacySwimmingCrawl.name());
+    assert!(
+        inventory::consolidate_swimming(&inv, after)
+            .expect("already migrated")
+            .operations
+            .is_empty()
+    );
 }

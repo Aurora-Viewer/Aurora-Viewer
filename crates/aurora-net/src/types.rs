@@ -1249,6 +1249,10 @@ pub enum NetCommand {
         anims: Vec<Uuid>,
         start: bool,
     },
+    /// One AO transition, with old stops and new starts in the same message.
+    AgentAnimationChanges {
+        changes: Vec<(Uuid, bool)>,
+    },
     /// Clear the region's animation state overrides of our avatar
     /// (LLAgent::sendAnimationStateReset: a nil animation, stopped).
     AnimationStateReset,

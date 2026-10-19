@@ -104,12 +104,7 @@ fn members(inv: &Inventory, folder: Uuid, missing: &mut Vec<Uuid>) -> Vec<Animat
 
 impl Catalog {
     pub fn swimming_ready(&self, selected: Uuid) -> bool {
-        !self.firestorm
-            && !self.loading
-            && !self.failed
-            && self
-                .selected(selected)
-                .is_some_and(|set| set.swimming_slots() == State::SWIMMING.len())
+        !self.firestorm && !self.loading && !self.failed && self.selected(selected).is_some_and(|set| set.swimming_ready())
     }
     pub fn invalidate(&mut self) {
         self.generation = None;
@@ -186,9 +181,9 @@ impl Catalog {
                 let Some(state) = State::parse(params[0]) else {
                     continue;
                 };
-                // Firestorm swimming mappings are intentionally not imported.
-                // Do not even fetch their contents or unresolved originals.
-                if firestorm && state.swimming() {
+                // Read actual legacy swim slots, including their cycles and
+                // originals. Aurora-only water slots are not source mappings.
+                if firestorm && state.swimming() && !State::LEGACY_VIEWER_SWIMMING.contains(&state) {
                     continue;
                 }
                 let mut config = StateConfig {
@@ -394,7 +389,7 @@ pub fn create(inv: &Inventory, catalog: &Catalog, set: &Set) -> Result<(Mutation
 fn append_set(change: &mut Mutation, root: Uuid, set: &Set) -> Result<Uuid, String> {
     valid_name(&set.name)?;
     let id = folder(change, root, set.folder_name());
-    for state in State::ALL {
+    for state in State::ALL.into_iter().chain(State::LEGACY_SWIMMING) {
         let Some(config) = set.states.get(&state) else {
             continue;
         };
@@ -443,7 +438,9 @@ pub(super) fn reconstruct(inv: &Inventory, source: &Catalog, selected: Uuid) -> 
     let preferred = source.selected(selected).map(|s| s.id);
     let mut select = None;
     for set in &source.sets {
-        let id = append_set(&mut change, root, set)?;
+        let mut completed = set.clone();
+        super::completion::swimming(&mut completed);
+        let id = append_set(&mut change, root, &completed)?;
         if Some(set.id) == preferred {
             select = Some(id);
         }
@@ -474,9 +471,6 @@ pub fn save_cycle(inv: &Inventory, state: State, config: &StateConfig) -> Result
 }
 
 pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Option<Uuid>) -> Result<Mutation, String> {
-    if state.swimming() {
-        return set_swimming(inv, set, state, item);
-    }
     let a = animation(inv, item).ok_or(aurora_i18n::tr!("ao-not-animation"))?;
     let mut change = Mutation::default();
     let config = set.states.get(&state);
@@ -516,22 +510,6 @@ pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Opti
     Ok(finish(change))
 }
 
-/// Replace only Aurora's slot links; original animations remain read-only.
-pub fn set_swimming(inv: &Inventory, set: &Set, state: State, item: Uuid) -> Result<Mutation, String> {
-    let a = animation(inv, item)
-        .filter(|_| state.swimming())
-        .ok_or(aurora_i18n::tr!("ao-not-animation"))?;
-    let mut change = Mutation::default();
-    if let Some(old) = set.states.get(&state) {
-        let removed = remove(inv, old.folder)?;
-        change.operations.extend(removed.operations);
-        change.refresh.extend(removed.refresh);
-    }
-    let parent = folder(&mut change, set.id, state.name().into());
-    links(&mut change, parent, &[a]);
-    Ok(finish(change))
-}
-
 fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Result<(), String> {
     for (order, step) in steps.iter().enumerate() {
         let body = if step.group {
@@ -553,6 +531,72 @@ fn normalize_members(inv: &Inventory, change: &mut Mutation, members: &[Animatio
         change.refresh.extend(patch.refresh);
     }
     Ok(())
+}
+
+/// Consolidate the former style slots through acknowledged inventory edits.
+/// Move only AO links/containers; originals and unrecognized contents survive.
+pub fn consolidate_swimming(inv: &Inventory, set: &Set) -> Result<Mutation, String> {
+    if !set.legacy_swimming_pending() {
+        return Ok(Mutation::default());
+    }
+    let mut change = Mutation::default();
+    let config = set.states.get(&State::SwimmingForward);
+    let parent = config.map_or_else(|| folder(&mut change, set.id, State::SwimmingForward.name().into()), |c| c.folder);
+    let mut step_order = config.map_or(0, |c| c.steps.len());
+    let mut track_order = config.map_or(0, |c| c.tracks.len());
+    if let Some(config) = config {
+        normalize_steps(inv, &mut change, &config.steps)?;
+        for (order, track) in config.tracks.iter().enumerate() {
+            let part = actions::patch(
+                inv,
+                track.id,
+                llsd_map! { "name" => format!("{}:TR:OR{order}{}", track.name, track.cycle.suffix()) },
+            )?;
+            change.operations.extend(part.operations);
+            change.refresh.extend(part.refresh);
+        }
+    }
+    for state in State::LEGACY_SWIMMING {
+        let Some(old) = set.states.get(&state) else { continue };
+        for step in &old.steps {
+            if step.members.is_empty() {
+                continue;
+            }
+            let body = if step.group {
+                llsd_map! { "parent_id" => parent, "name" => format!("{}:OR{step_order}", step.name) }
+            } else {
+                llsd_map! { "parent_id" => parent, "desc" => step_order.to_string() }
+            };
+            let part = actions::patch(inv, step.id, body)?;
+            change.operations.extend(part.operations);
+            change.refresh.extend(part.refresh);
+            step_order += 1;
+        }
+        for track in &old.tracks {
+            if track.members.is_empty() {
+                continue;
+            }
+            let part = actions::patch(
+                inv,
+                track.id,
+                llsd_map! {
+                    "parent_id" => parent,
+                    "name" => format!("{}:TR:OR{track_order}{}", track.name, track.cycle.suffix())
+                },
+            )?;
+            change.operations.extend(part.operations);
+            change.refresh.extend(part.refresh);
+            track_order += 1;
+        }
+        // Keep source folders and all unknown contents intact. A partial move
+        // can be reconciled from a fresh read without copying links twice or
+        // hiding the remaining assignments behind a renamed/deleted state.
+    }
+    change.refresh.extend([parent, set.id]);
+    if change.operations.len() > 2048 {
+        return Err(aurora_i18n::tr!("ao-too-large").into());
+    }
+    Ok(finish(change))
 }
 
 /// Link deletion never deletes the original asset. Folders are moved to

@@ -115,6 +115,9 @@ struct Mover {
     position_scale: f32,
     parent_idx: Option<usize>,
     parent: Option<(Vec3, Quat)>,
+    /// A moved HUD root with a session accessibility offset (its UUID and
+    /// that offset): the move saves the visible place, see `HudDrag::update`.
+    hud_offset: Option<(uuid::Uuid, Vec3)>,
     /// Children that follow along: kept in place when their root moves alone
     /// ("Edit linked"), or scaled with the linkset.
     children: Vec<Child>,
@@ -1182,6 +1185,9 @@ fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now:
             position_scale: world.hud_position_scale(idx),
             parent_idx,
             parent,
+            hud_offset: (mode == EditMode::Move && world.hud_root(idx) == Some(idx))
+                .then(|| (o.full_id, world.hud_scales.offset(o.full_id)))
+                .filter(|(_, offset)| *offset != Vec3::ZERO),
             children,
         });
     }
@@ -1193,7 +1199,11 @@ fn save_movers(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode, now:
 fn apply(world: &mut World, d: &Drag, targets: &[(Vec3, Quat, Vec3)]) {
     let new_world: HashMap<usize, (Vec3, Quat)> = d.movers.iter().zip(targets).map(|(m, t)| (m.idx, (t.0, t.1))).collect();
     for (m, &(wp, wr, sc)) in d.movers.iter().zip(targets) {
-        let parent = m.parent_idx.and_then(|p| new_world.get(&p).copied()).or(m.parent);
+        let mut parent = m.parent_idx.and_then(|p| new_world.get(&p).copied()).or(m.parent);
+        if let Some((id, offset)) = m.hud_offset {
+            world.hud_scales.set_offset(id, Vec3::ZERO);
+            parent = parent.map(|(pp, pr)| (pp - offset, pr));
+        }
         let (lp, lr) = match (m.root, parent) {
             (_, Some((pp, pr))) => (pr.inverse() * (wp - pp) / m.position_scale, (pr.inverse() * wr).normalize()),
             _ => (wp - m.region_off, wr.normalize()),
@@ -2109,6 +2119,54 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn moving_a_zoomed_hud_saves_where_it_is_shown_and_drops_the_session_offset() {
+        let mut world = hud_world();
+        let now = Instant::now();
+        let s = BuildSettings {
+            snap: false,
+            ..Default::default()
+        };
+        let idx = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let o = world.objects.get(idx).unwrap();
+        let (key, id) = (o.key, o.full_id);
+        world.hud_scales.set(id, 0.68);
+        world.hud_scales.set_offset(id, Vec3::new(0.0, 0.1, 0.05));
+        let shown = Scene::object_transform(&world, idx, now, 0).unwrap().0;
+        let cam = Cam::for_hud(aurora_render::HudView::new([1280, 720], 1.0, -1.0, 1.0), 1.5);
+        let bounds = bounds_of(&world, &[key], false, now).unwrap();
+        let start = cam
+            .project_px(bounds.center + Vec3::Y * cam.meters_for_pixels(bounds.center, 45.0))
+            .unwrap();
+        let mut manip = Manip::default();
+        assert!(manip.try_grab(&mut world, &s, &cam, &[key], false, EditMode::Move, start, now));
+        let mut out = Vec::new();
+        manip.update(
+            &mut world,
+            &s,
+            &cam,
+            &[key],
+            false,
+            EditMode::Move,
+            (start.0 + 40.0, start.1),
+            false,
+            Mods {
+                shift: true,
+                ..Default::default()
+            },
+            now,
+            &mut out,
+        );
+        // No jump, and a relog (no session offset) shows it at the same place.
+        assert_eq!(world.hud_scales.offset(id), Vec3::ZERO);
+        let moved = Scene::object_transform(&world, idx, now, 0).unwrap().0;
+        assert!(moved.abs_diff_eq(shown - Vec3::Y * (40.0 / 720.0), 1e-5));
+        let saved = world.objects.get(idx).unwrap().position;
+        manip.release(&mut world, &s, false, &mut out);
+        assert!(matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+            if updates[0].position.unwrap().abs_diff_eq(saved, 1e-6)));
     }
 
     #[test]

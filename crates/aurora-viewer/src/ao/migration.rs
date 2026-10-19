@@ -1,4 +1,4 @@
-//! Explicit, read-only selection of one Firestorm set after native AO setup.
+//! Explicit, read-only selection of one Legacy Viewer set after native AO setup.
 //! As AOEngine::cloneSet (indra/newview/aoengine.cpp, originally LGPL 2.1),
 //! recreate options, cycles and links; never move or edit the source set.
 
@@ -65,7 +65,7 @@ impl Migration {
         set.name = name;
         // Adding an explicit set must not change the existing native default.
         set.default = native.sets.is_empty();
-        set.states.retain(|state, _| !state.swimming());
+        super::completion::swimming(&mut set);
         inventory::create(inv, native, &set)
     }
 }

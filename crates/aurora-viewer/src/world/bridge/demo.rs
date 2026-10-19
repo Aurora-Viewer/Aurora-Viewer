@@ -123,6 +123,28 @@ impl Demo {
             {
                 Some(self.handshake(bridge, world).into_iter().collect())
             }
+            NetCommand::AgentAnimationChanges { changes } if !world.agent_id.is_nil() => {
+                let mut anims: Vec<_> = world
+                    .animations
+                    .get(&world.agent_id)
+                    .into_iter()
+                    .flatten()
+                    .map(|a| (a.id, a.sequence))
+                    .collect();
+                let mut sequence = anims.iter().map(|a| a.1).max().unwrap_or(0);
+                for (id, start) in changes {
+                    anims.retain(|(old, _)| old != id);
+                    if *start {
+                        sequence = sequence.saturating_add(1);
+                        anims.push((*id, sequence));
+                    }
+                }
+                Some(vec![NetEvent::AvatarAnimations {
+                    avatar: world.agent_id,
+                    anims,
+                    sources: Vec::new(),
+                }])
+            }
             NetCommand::AgentAnimation { anim, start } if !bridge.agent.is_nil() => {
                 let mut anims: Vec<_> = world
                     .animations
@@ -245,6 +267,14 @@ impl Demo {
                         mode: command.motion.mode,
                         run_state: if seated {
                             9
+                        } else if matches!(command.motion.mode, 11 | 12) {
+                            if world.agent.position.z - command.motion.parameters[1] * 0.35 <= world.main_water_height() {
+                                14
+                            } else if world.agent.velocity.z.abs() > 0.25 {
+                                13
+                            } else {
+                                12
+                            }
                         } else if command.motion.mode == 1 && moving {
                             5
                         } else {

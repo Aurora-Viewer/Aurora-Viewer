@@ -9,8 +9,14 @@
 //! (FSPanelSearchWeb).
 //!
 //! The window only reads the world: what it asks for comes back as
-//! [`SearchAction`]s. State and rules: `world/search.rs`.
+//! [`SearchAction`]s. State and rules: `world/search.rs`. This is the
+//! Legacy look (Preferences › Aurora); Aurora's own, one field and the
+//! details beside rich rows, is `search/aurora.rs`, on the same lists.
 
+mod aurora;
+mod aurora_details;
+#[cfg(test)]
+mod aurora_tests;
 mod details;
 
 use super::place_details::Ctx;
@@ -52,6 +58,7 @@ pub(crate) fn group_details(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, name: &str
 }
 
 /// What the window asks the app to do.
+#[derive(Clone)]
 pub enum SearchAction {
     /// onBtnFind of a tab.
     Find(Request),
@@ -70,6 +77,11 @@ pub enum SearchAction {
     RefreshGroup(Uuid),
     /// The saved choices changed.
     SettingsChanged,
+    /// A row of Aurora's window shows a parcel (place, land sale) whose
+    /// snapshot and region it does not have yet: ParcelInfoRequest.
+    WantParcel(Uuid),
+    /// The same for a classified: ClassifiedInfoRequest.
+    WantClassified(Uuid),
 }
 
 /// What the web tab needs from the app.
@@ -132,6 +144,8 @@ pub struct SearchUi {
     web_home: String,
     /// Profile pictures of the residents shown.
     pub wanted_pics: HashSet<Uuid>,
+    /// Aurora's window: its field, type and selection.
+    aurora: aurora::Aurora,
 }
 
 impl Default for SearchUi {
@@ -161,6 +175,7 @@ impl Default for SearchUi {
             web_edit: None,
             web_home: String::new(),
             wanted_pics: HashSet::new(),
+            aurora: aurora::Aurora::default(),
         }
     }
 }
@@ -401,6 +416,13 @@ impl SearchUi {
         self.tab = tab.index();
         self.restored = true;
         self.focus = true;
+        self.aurora.open(aurora::Kind::of(tab));
+    }
+
+    /// Aurora's window on its "All" chip (demo).
+    pub fn open_all(&mut self) {
+        self.aurora.open(aurora::Kind::All);
+        self.focus = true;
     }
 
     pub fn tab(&self) -> Tab {
@@ -417,6 +439,7 @@ impl SearchUi {
     /// Demo: the text typed in the tab's field (the price field of the land
     /// sales, which have no search field).
     pub fn set_text(&mut self, tab: Tab, text: &str) {
+        self.aurora.text = text.to_owned();
         if tab == Tab::Land {
             self.land_price = text.to_owned();
         } else if let Some(t) = tab.list_index().and_then(|i| self.texts.get_mut(i)) {
@@ -478,6 +501,7 @@ impl SearchUi {
         pics: &HashMap<Uuid, egui::TextureHandle>,
         settings: &mut SearchSettings,
         web: &WebEnv,
+        classic: bool,
         open: &mut bool,
     ) -> Vec<SearchAction> {
         let mut actions = Vec::new();
@@ -501,6 +525,10 @@ impl SearchUi {
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("search-title"), default.min, default.size());
         floater.min_size = MIN_SIZE;
         floater.show(ctx, p, open, |ui| {
+            if !classic {
+                self.aurora_body(ui, c, pics, settings, web, &mut actions);
+                return;
+            }
             // "ls_tabs" of floater_fs_search.xml, in its order (Tab::ALL)
             let labels = [
                 (aurora_i18n::tr!("search-tab-web"), true),

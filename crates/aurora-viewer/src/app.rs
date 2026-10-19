@@ -26,6 +26,7 @@ use winit::window::{Window, WindowId};
 
 mod ao;
 mod bridge;
+mod movelock;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod buy_currency;
@@ -183,6 +184,10 @@ pub struct App {
     logo_rx: Option<crossbeam_channel::Receiver<LogoData>>,
     world: World,
     bridge_runtime: crate::world::bridge::Bridge,
+    native_anchor: crate::movement::movelock::Controller,
+    anchor_stands: crate::ao::anchor::StandCheck,
+    /// Keep the verified standing set through an asynchronous stand-up reply.
+    anchor_pose: Option<(u64, crate::ao::Set)>,
     bridge_services: crate::world::bridge::services::Services,
     bridge_demo: crate::world::bridge::demo::Demo,
     movelock_ui: ui::movelock::MoveLockUi,
@@ -807,6 +812,9 @@ impl App {
                 w
             },
             bridge_runtime: Default::default(),
+            native_anchor: Default::default(),
+            anchor_stands: Default::default(),
+            anchor_pose: None,
             bridge_services: Default::default(),
             bridge_demo: Default::default(),
             movelock_ui: Default::default(),
@@ -1105,10 +1113,17 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        if let Some(flags) = self.native_anchor.observe(&cmd, self.world.agent.seated, Instant::now()) {
+            let release = self.native_anchor.command(flags);
+            self.send(release);
+        }
         if self.bridge_runtime.observe_command(&cmd, Instant::now()) {
-            self.settings.bridge.entry(self.world.agent_id).or_default().enabled = false;
-            if !self.demo {
-                self.settings.save();
+            let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
+            if prefs.mode == crate::world::bridge::LockMode::Bridge {
+                prefs.enabled = false;
+                if !self.demo {
+                    self.settings.save();
+                }
             }
         }
         if self.demo && self.bridge_demo_command(&cmd) {
@@ -1656,6 +1671,7 @@ impl App {
                 self.world.apply(NetEvent::Balance(balance - price));
             }
             for mut ev in crate::demo::demo_reply(&cmd) {
+                crate::ao::demo::preserve_custom_motions(&self.world, &cmd, &mut ev);
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
@@ -2285,6 +2301,9 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 self.bridge_runtime = Default::default();
+                self.native_anchor = Default::default();
+                self.anchor_stands = Default::default();
+                self.anchor_pose = None;
                 self.movement_runtime = Default::default();
                 self.scene.movement_preview = None;
                 self.movement_probe = (None, false, None);
@@ -4595,6 +4614,8 @@ impl App {
     /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
     /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
+        self.release_native_movelock();
+        self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
     }
 
@@ -4784,8 +4805,7 @@ impl App {
             self.world.agent.record_jump_input(now);
             let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
             if held > FLY_TIME
-                && !self.movement_runtime.state.swimming()
-                && self.movement_runtime.state != crate::movement::State::Leaving
+                && self.movement_runtime.native_fly_allowed()
                 && !self.world.agent.flying
                 && !self.world.agent.seated
                 && self.in_world()
@@ -5582,6 +5602,7 @@ impl App {
         if self.in_world() {
             self.world.auto_land(&self.input);
         }
+        self.update_native_movelock();
         self.update_movement();
         self.update_audio();
         let mut edit_camera_frame = None;
@@ -5689,6 +5710,19 @@ impl App {
         self.update_radar();
         self.update_bridge();
         self.update_region_restart();
+        if self.demo
+            && matches!(self.screen, Screen::World)
+            && crate::demo::water::update(
+                &mut self.camera,
+                &mut self.settings,
+                &mut self.world,
+                &mut self.panels,
+                self.frame_count,
+                self.start.elapsed().as_secs_f32(),
+            )
+        {
+            gfx.renderer.apply_settings(self.settings.render_settings());
+        }
         let mut view = self.camera.view();
         let mut proj = frame_proj(&self.camera);
         let mut vp = proj * view;
@@ -6321,6 +6355,14 @@ impl App {
             None
         };
         t_part = self.scene.parts.lap(Part::ParamsMirror, t_part);
+        if in_world {
+            self.scene.update_water_effects(
+                &self.world,
+                self.camera.position,
+                self.start.elapsed().as_secs_f32(),
+                self.settings.water_effects.render(),
+            );
+        }
         // particles
         if in_world {
             let max_particles = self.settings.max_particles as usize;
@@ -6391,7 +6433,11 @@ impl App {
             near: self.camera.near,
             far: self.settings.draw_distance,
             fov_y: self.camera.fov_y,
-            time: self.start.elapsed().as_secs_f32(),
+            time: if self.demo {
+                crate::demo::water::inspection_time(self.start.elapsed().as_secs_f32())
+            } else {
+                self.start.elapsed().as_secs_f32()
+            },
             sun_dir: env.sun_dir,
             sun_visible: env.sun_visible,
             sun_color: env.sun_color,
@@ -8394,6 +8440,8 @@ impl App {
             }
             BarAction::CameraControls => self.panels.camera_controls = true,
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleWaterWalk => self.toggle_water_walk(),
+            BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
             BarAction::MovementEnhancer => self.open_movement(),
             BarAction::NetworkGraph => {
@@ -8671,6 +8719,7 @@ impl App {
         }
         crate::world::search::web_home(
             self.search_grid(),
+            self.search_ui.web_query(self.settings.classic_search),
             self.world.agent_access(),
             aurora_i18n::language(),
             self.search_session(),
@@ -8775,6 +8824,8 @@ impl App {
                     }
                 }
                 SearchAction::SettingsChanged => save = true,
+                SearchAction::WantParcel(id) => self.send(NetCommand::ParcelInfoRequest(id)),
+                SearchAction::WantClassified(id) => self.send(NetCommand::ClassifiedInfoRequest(id)),
             }
         }
         if save {
@@ -10816,9 +10867,15 @@ impl App {
                     anonymous: search_anonymous,
                 };
                 let mut open = self.panels.search;
-                let search_acts = self
-                    .search_ui
-                    .show(&ctx, &mut c, &self.avatar_pics, &mut self.settings.search, &search_web, &mut open);
+                let search_acts = self.search_ui.show(
+                    &ctx,
+                    &mut c,
+                    &self.avatar_pics,
+                    &mut self.settings.search,
+                    &search_web,
+                    self.settings.classic_search,
+                    &mut open,
+                );
                 // the profile of a group, whose name was clicked anywhere
                 // (LLGroupActions::show)
                 let group_env = ui::group_profile::Env {
@@ -11430,6 +11487,12 @@ impl ApplicationHandler for App {
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
             );
+            if crate::demo::water::mode().is_some() {
+                self.scene.anims.insert(
+                    crate::demo::water::CONTACT_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::water::animation(), &rig)),
+                );
+            }
             if crate::demo::deform::mode().is_some() {
                 self.scene.anims.insert(
                     crate::demo::deform::DEFORM_ANIM,
@@ -11668,22 +11731,35 @@ impl ApplicationHandler for App {
                 }
                 self.panels.perf = false;
             }
-            // AURORA_DEMO_SEARCH=<tab>[:text]: "Search" on a tab, its
-            // search done ("page" in the text: a full page, "xyz": nothing;
-            // for land the text is the price limit, 0 by default)
+            // AURORA_DEMO_SEARCH=<tab>[:text]: "Search" on a tab (or on
+            // Aurora's "all" chip), its search done ("page" in the text: a
+            // full page, "xyz": nothing; for land in the Legacy look the
+            // text is the price limit, 0 by default)
             if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH") {
                 let (name, text) = v.split_once(':').unwrap_or((v.as_str(), "aurora"));
                 // land without a text keeps the default price field ("0")
                 let typed = !name.trim().eq_ignore_ascii_case("land") || v.contains(':');
-                if let Some(tab) = crate::world::search::Tab::from_name(name) {
-                    self.search_ui.open_tab(tab);
+                let tab = crate::world::search::Tab::from_name(name);
+                let all = name.trim().eq_ignore_ascii_case("all") && !self.settings.classic_search;
+                if tab.is_some() || all {
+                    match tab {
+                        Some(tab) => self.search_ui.open_tab(tab),
+                        None => self.search_ui.open_all(),
+                    }
                     if typed {
-                        self.search_ui.set_text(tab, text);
+                        self.search_ui.set_text(tab.unwrap_or(crate::world::search::Tab::People), text);
                     }
                     self.panels.search = true;
                     self.panels.perf = false;
-                    if let Some(request) = self.search_ui.request(tab, &self.settings.search) {
-                        let access = self.world.agent_access();
+                    let requests = if self.settings.classic_search {
+                        tab.and_then(|t| self.search_ui.request(t, &self.settings.search))
+                            .into_iter()
+                            .collect()
+                    } else {
+                        self.search_ui.aurora_requests(&self.settings.search)
+                    };
+                    let access = self.world.agent_access();
+                    for request in requests {
                         self.world.search.find(request, access, Instant::now());
                     }
                 }
@@ -12222,11 +12298,11 @@ impl ApplicationHandler for App {
                     crate::ao::demo::seed_firestorm(&mut self.world.inventory, self.world.agent_id)
                 } else if mode.starts_with("interface") {
                     crate::ao::demo::seed_interface(&mut self.world.inventory, self.world.agent_id, mode)
-                } else if mode == "swim-missing" {
+                } else if matches!(mode.as_str(), "swim-missing" | "quick-missing") {
                     crate::ao::demo::seed_swimming_incomplete(&mut self.world.inventory, self.world.agent_id)
-                } else if mode == "empty" {
+                } else if matches!(mode.as_str(), "empty" | "quick-empty") {
                     uuid::Uuid::nil()
-                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "swim") {
+                } else if mode.starts_with("design-") || matches!(mode.as_str(), "movement" | "movement-rebound" | "swim" | "quick") {
                     crate::ao::demo::seed_movement_design(&mut self.world.inventory, self.world.agent_id)
                 } else {
                     crate::ao::demo::seed(&mut self.world.inventory, self.world.agent_id)
@@ -12324,6 +12400,8 @@ impl ApplicationHandler for App {
                         | "aurora-medium"
                         | "aurora-wide"
                         | "aurora-rights"
+                        | "aurora-folder-window"
+                        | "aurora-folder-window-wide"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -12352,6 +12430,13 @@ impl ApplicationHandler for App {
                         }
                         if view == "aurora-rights" {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
+                        }
+                        if view.starts_with("aurora-folder-window") {
+                            // the right-click tests in a window of their own
+                            self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            if let Some(window) = self.inventory_ui.windows.last_mut() {
+                                window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
+                            }
                         }
                     }
                     if view == "recent" {

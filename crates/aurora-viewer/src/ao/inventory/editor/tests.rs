@@ -151,10 +151,9 @@ fn main_drag_order_moves_in_both_directions_and_rejects_other_lists() {
 }
 
 #[test]
-fn stale_selection_swimming_and_unloaded_sources_never_plan_edits() {
+fn stale_selection_and_unloaded_sources_never_plan_edits() {
     let (mut inv, set, _) = fixture();
     assert!(combine(&inv, &set, State::Standing, "Bad:name", false, &HashSet::new()).is_err());
-    assert!(combine(&inv, &set, State::SwimmingForward, "Group", false, &HashSet::new()).is_err());
     assert!(combine(&inv, &set, State::Standing, "Group", false, &HashSet::from([Uuid::new_v4()])).is_err());
     assert!(dissolve(&inv, &set, State::Standing, Uuid::new_v4()).is_err());
     let folder = set.states[&State::Standing].folder;

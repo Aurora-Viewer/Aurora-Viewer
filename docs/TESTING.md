@@ -609,7 +609,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
-| `AURORA_DEMO_MOVELOCK=on\|off\|moving\|seated\|error\|timeout\|endpoint` | Aurora bridge creation, confirmed position lock, movement/sitting pause and simulated failure |
+| `AURORA_DEMO_MOVELOCK=<mode>` | Bridge lifecycle/lock and native sitting choice; see details below |
 | `AURORA_DEMO_BRIDGE_QUERY=radar\|scripts\|object\|error` | Bridge altitude correction, basic script and extended object-information reports |
 | `AURORA_DEMO_MOVEMENT=surface\|underwater\|breaststroke\|backstroke\|crawl\|independent\|float-low\|float-high\|off\|run-fall\|run-ao\|run-drop\|passage-blocked\|passage-reached\|passage-pending` | Movement options, local swimming poses and synthetic passage feedback |
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
@@ -1069,11 +1069,58 @@ wrapped status message and a 64-item object inventory at two heights.
 **`AURORA_DEMO_LSL_BRIDGE=1`** — messages of the Firestorm LSL bridge
 (hidden) between two "owner say" lines.
 
+**Native Movelock choice (2026-10-18):** `AURORA_DEMO_MOVELOCK=native`
+opens the same options with native sitting selected and an offline full-body
+P4 standing AO above a P3 constrained sit. `native-missing` disables the AO:
+the status must wait for compatible standing animations without sitting.
+`native-moving` simulates continuous voluntary input: the selected option
+stays enabled while its status reports free movement. Capture after frame
+620. The bridge modes below remain available and the bridge stays the default
+for existing/new accounts. The choice is saved per avatar; right-click the
+toolbar lock to open these options.
+
+Offline checks exercise control edges, bounded retries/late replies, manual
+seat ownership, region changes, per-channel priorities, complete standing
+cycles and observer animation commands. Demo sitting replies are synthetic;
+they do not model Havok push resistance. Human grid acceptance must compare
+both methods: enable a suitable standing AO, stop/move/run/jump, walk/run to a
+double-clicked point, hover in air,
+switch/disable the method, sit on the ground/on a chair, cross a region and
+relog. Confirm with another viewer that standing cycles remain visible and
+that scripts still report sitting. Check physical/scripted pushes while
+anchored, then swim/walk on water and return to land: native sitting must
+pause for these water controllers. It requires an active AO whose looping
+standing selections override every constrained-sit channel at a higher joint
+priority; incomplete, downloading or lower-priority sets leave it waiting.
+No animation is imported/uploaded, and no seat object is rezzed.
+
+**Native observer transitions:** `AURORA_DEMO_MOVELOCK=native-cycle` uses
+the same options and complete standing fixture, walks during frames 600–799
+and 1000–1199, and stops otherwise. Capture at 700/1100 while moving and
+900/1300 after reanchoring. Native sitting waits for the real AO batch's
+synthetic simulator echo and authored easing; custom AO clips survive the
+native state reply. The enabled preparing status precedes the confirmed lock.
+After releasing movement, preparation must wait for simulator velocity and
+local visual settling to fall below the ordinary 0.5 m/s walk-stop threshold.
+Offline regressions cover delayed walk/run stops, short taps, legacy position
+smoothing, Aurora's drawn glide, vertical flight and push reports while locked.
+For a native-window check with delayed simulator reports, combine this mode
+with `AURORA_DEMO_LINK=200,stoplag=300,aurora,trace` (or `firestorm` for legacy
+movement). Inspect the end of each walk before the 900/1300 reanchor captures.
+The local regression feeds raw P3 sit/stand-up plus P4 standing/walking clips
+to a separate production motion controller, rather than the owner's filtered
+pose. It checks entry and unequal ease-in/ease-out handover for a pelvis dip,
+as well as late movement signals, standing cycles and missing replacements.
+Human observer acceptance remains required: have another viewer watch repeated
+walk/run starts and stops, including short taps and turning, while confirming
+the anchor still resists pushes at rest. A cold observer's animation download
+cannot be acknowledged by this viewer; this fixture tests known loaded clips.
+
 **`AURORA_DEMO_MOVELOCK=on|off|moving|seated|error|timeout|endpoint`** — Aurora's bridge and position lock. The demo seeds the library object, runs the nested inventory creation/copy/attach/script-upload/save callbacks, opens the options and shows the requested activation immediately in the bottom toolbar and indicator; provisioning remains a separate diagnostic. `moving` and `seated` change physical maintenance internally while the button, enabled label and indicator remain active; `error` simulates failed compilation; `timeout` withholds the first hello and reports the script-startup timeout after 60 seconds; `endpoint` supplies an untrusted address and must show a refused connection response without exposing its URL. The normal fixture uses the current secondlife.io simulator domain. Click the lock icon or press Ctrl+Alt+P to toggle; its right-click menu opens the options. Settings are saved per avatar. The human must validate real LSL permissions, physical bump resistance, movement/sitting, relog and region changes. Confirm a single existing object is reused/moved into inventory root → `#Aurora` → `Aurora Bridge`, with `#Aurora` sorted above system folders. The stable object/script name remains `#Aurora Bridge v1.0`; the installed protocol is 1.8. The factory waits for the new script to respond before detaching, then five seconds after detachment before reattaching, without requiring an inventory asset UUID update. A lost hello is repeated until confirmed; a stopped script can be started once. Startup, movement permission, simulator connection, inventory save and rejected responses have distinct progress/timeout messages. HTTPS must use the same simulator TLS trust as the other capability requests; redirects remain disabled. on_rez must preserve the queued attach event. Readiness must follow the real TAKE_CONTROLS grant without a script-debug error. The visible enabled state follows the user selection even while physically moving, seated, being pushed, waiting for acknowledgements or encountering a connection error; diagnostics remain in the options. Physical convergence (within 0.35 m of the anchor and below 0.5 m/s) remains internal. Region changes keep activation enabled; the obsolete region-off option is ignored. Movelock has no timeout/keepalive: it must still resist pushes after a long gap without viewer HTTP, until explicitly disabled. LSL control events alone release/reanchor the hold. Movement always releases the hold through simulator control events and relocks at the new position on release; all movement/nudge keys remain available. Old hard-lock settings are ignored. Toggling from the toolbar, shortcut or options emits no dedicated Movelock sound. Detach it explicitly: Movelock turns off, enhanced movement pauses and the bridge stays detached for the current session until enabled, worn or repaired again. The internal installation save must still reattach after its delay. Check explicit unlock and cleanup at logout; no elapsed timer may disable Movelock. Demo validates lifecycle and UI; it does not execute simulator physics. The human validated Movelock on 2026-10-15; the new movement motors retain its hold/reanchor functions.
 
-**`AURORA_DEMO_MOVEMENT=surface|underwater|breaststroke|backstroke|crawl|independent|float-low|float-high|off|run-fall|run-ao|run-drop|passage-blocked|passage-reached|passage-pending`** — Enable the movement aids and raise synthetic water at frame 360; `underwater` raises it further, and the three named stroke modes show the contributed local poses. Ctrl+Alt+M opens the AO Movement tab: running and flight use x1..x5 factors, with native x1 as default. Passage requires its own switch and Ctrl plus the configured jump key. Native flight is disabled on swim entry and its previous state is restored on ordinary exit. Vertical controls reach LSL only after capture acknowledgement; fast-up stays absent during swimming/controlled exit. The ordinary AO owns swimming choices and broadcasts inventory animation assets; private local IDs must never be broadcast. The six bundled priority-4 loops remain available locally without upload. No pack uploader or automatic swim-state seeding remains. The ordinary AO uses inventory assets, including any swimming states recovered from Firestorm.
+**`AURORA_DEMO_MOVEMENT=surface|underwater|breaststroke|backstroke|crawl|independent|float-low|float-high|off|run-fall|run-ao|run-drop|passage-blocked|passage-reached|passage-pending`** — Enable the movement aids and raise synthetic water at frame 360; `underwater` raises it further, and the three named stroke modes show the contributed local poses. Ctrl+Alt+M opens the AO Movement tab: running and flight use x1..x5 factors, with native x1 as default. Passage requires its own switch and Ctrl plus the configured jump key. Native flight is disabled on swim entry and its previous state is restored on ordinary exit. Vertical controls reach LSL only after capture acknowledgement; fast-up stays absent during swimming/controlled exit. The ordinary AO owns swimming choices and broadcasts inventory animation assets; private local IDs must never be broadcast. The six bundled priority-4 loops remain available locally without upload. No pack uploader or automatic swim-state seeding remains. The ordinary AO uses inventory assets, while swimming assignments belong to Aurora’s own set.
 
-Water gestures (2026-10-15, bridge 1.13): use the configured ascent/descent actions, not hard-coded Page Up/Down. Tap descent at the surface: finish a physical dive after release, then retain depth. Tap ascent underwater: finish resurfacing at the adjusted flotation height, with no flight from that same release. Tap ascent again at the surface: controlled water exit to native flight; hold ascent for 0.5 s from either depth: exit and continue climbing with normal flight or the selected boost. With a steep solid obstacle ahead, a surface tap instead requests one rise-then-advance physical jump toward a nearby walkable top, without enabling flight; this manual jump also works when automatic jumping is disabled. Gentle beaches/phantom objects must not trigger it, ceilings/occupied tops must be rejected, and repeats cannot drift the target or restart an expired jump. Opposing descent cancels takeoff; sitting, suspension, disable, bridge loss and timeout release pending motor phases. Check x1/x2 flight handover, remapped ascent/descent keys, a no-fly parcel, a low ceiling, shallow/deep water, and manual/automatic shore exits in a human-driven grid session. Offline tests cover gesture timing, completion after release, cancellation, motor bounds and landing geometry; they do not simulate Havok.
+Water gestures (2026-10-17, bridge 1.23): use the configured ascent/descent actions (PageUp/PageDown by default). Tap descent at the surface: complete a physical dive after release and retain depth. Tap ascent underwater: return to the adjusted flotation height; holding/releasing that same press must never start flight or jump on arrival. Repeated ascent presses continue the return; descent cancels it. Current surface gesture: a single ascent press jumps, whether stationary or moving; at a solid shore with a safe landing it uses the rise-then-advance jump. A second distinct press within 400 ms requests higher flight when allowed; holding a key must not request flight. A no-fly parcel still allows a surface jump. Check the correct surface/underwater forward AO list across ascent and idle, short/tall avatars and float offsets from -0.5 to +0.5 m. Bridge 1.23 increases the surface return command to 3-5 m/s with stronger acceleration and braking near the goal; these are command limits, not measured Havok speeds. Inspect actual ascent duration and overshoot on the grid. Ceilings/occupied landings must stop the physical target; sitting, suspension, disable, bridge loss and timeout release pending phases. Check remapped keys, native/enhanced flight handover, shallow/deep water and automatic shore exits. Offline unit tests, LSL lint and prescribed native trajectories verify controls/animation continuity; they do not simulate Havok.
 
 Physical passage experiment (2026-10-16, bridge 1.16): human feedback confirms that 1.15 executes the action but fails at a wall (0.60 m progress, 1.31 m remaining, highest sampled speed 6.0 m/s, 11 impulse requests). At the maintainer's request, the new motor uses the accepted Movelock physics with its anchor at the bounded far-side target: SLED, linear/angular friction timescales 0.05 and MoveToTarget(target, 0.05). It changes no normal Movelock setting/anchor and does not capture keys. No impulse or velocity assignment is used. Verify whether this attraction crosses the same simple wall; record observed progress, remaining distance and sampled velocity, rather than command receipt. Impulse count is no longer displayed. Arrival or expiry must remove the temporary target/SLED, while enabling normal Movelock during the attempt must preserve the new normal anchor. Also check cancellation on disable, sitting, focus loss, region change and detachment; replay cannot retarget or renew the deadline. The server lifetime remains 1.2 s, viewer delivery allowance 1.5 s. The passage-blocked/reached/pending fixtures remain synthetic UI/protocol states; they do not simulate Havok or establish wall penetration.
 
@@ -1336,7 +1383,7 @@ To check with these scenarios:
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ANIM_LOOP=1\|sync\|sync-edit` | Animation loops, sequences, stops and synchronization after delayed loading or editing |
-| `AURORA_DEMO_AO=interface\|interface-group\|interface-track\|interface-combine\|interface-swim\|folder-names\|folder-names-wait\|1\|transitions\|off\|movement\|swim\|swim-missing\|firestorm\|firestorm-wait\|migrate\|migrate-done\|empty\|design-current\|design-tabs\|design-movement\|design-section\|design-swim` | Built-in AO and interactive native layout study |
+| `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
@@ -1347,6 +1394,82 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
+bottom AO button with a complete swimming set. `quick-missing` and
+`quick-empty` show the disabled swimming gate and empty catalogue. Inspect
+English/French, the set selector (selection keeps the panel open), AO enable,
+mutually exclusive swimming/water walking, run/flight switches and multipliers,
+and the manager button. Check Escape, click-away and repeated toolbar clicks.
+Existing movement preferences and the full manager must reflect the same
+choices. The other menus/commands still open the full manager directly.
+
+`interface` opens General; `interface-sitting` selects Sitting in the same
+category. `interface-running` opens Ground with Running selected;
+`interface-jumping`, `interface-flight` and `interface-swim` open the other
+categories. Their order is General, Ground, Jumping, Flying, Swimming: Flying
+is penultimate and Swimming last. General lists Standing, Sitting, Sitting on
+ground, Standing up, Typing and Always, with sitting immediately after Standing.
+Ground orders Walking, Turn right, Turn left, Running, Crouching and Crouch walking. Jumping orders preparation,
+jump, fall, soft landing and hard landing, with Jumping selected on its first
+visit. Flying orders Hovering, Flying slow, Flying, Descend and Ascend.
+In Swimming, Underwater floating immediately precedes Underwater swimming, Obstacle exit follows Flight exit, and Cushioned water entry follows Cannonball.
+Switch categories, return to a previous state and
+use Up/Down in the state rail; all original states remain accessible, including
+Typing and Always under General. Animation lists/groups/tracks keep their existing edits.
+
+AO readiness and legacy swim migration validation (2026-10-18): full `scripts/check.ps1` green, 3,569 passed, zero failures, 26 ignored; scripts, formatting and Clippy clean. Regression tests check actual rail marker placement and disappearance of the missing warning, optional underwater swimming, alias fetching, preserved original targets/cycles and read-only legacy sources. Built the default dev viewer. Inspected `.scratch/ao-readiness-{ready-fr,missing-fr,ground-fr,missing-en,quick-fr,movement-fr,migrate-fr,migrated-fr}.png`; the English incomplete-set capture uses 1024x768, the others 1440x900. Shared warning glyphs and text fit, optional states are unmarked, Ground order is correct, and manual migration acknowledges a new selected set while retaining the native default. The previous `.scratch/ao-readiness-before-fr.png` provides the comparison. Last-five profile medians: before/complete/missing FR all 60 FPS, UI 1.09/0.71/0.72 ms and GPU 1.91/2.01/2.67 ms; scene motion and shared desktop/compilation load differ, so these are regression observations, not an isolated speed comparison. Scoped logs have zero errors/panics and only the same baseline synthetic missing-outfit warning. Human acceptance of the native UI and a real inventory migration remains required before PR. Suggested Aurora-only fallback mappings are a proposal, not automatic assignments.
+
+Swimming activation and approved migration completion (2026-10-18): the gate checks eight populated states in the selected, fetched native set. Each state needs at least one resolved inventory animation in a main entry, simultaneous group or independent track; eight distinct assets are not required. The gate remains global even when the user does not use the exit transitions. An incomplete selection disables swimming. Active swimming owns its AO contexts even when ordinary AO overrides are off or paused.
+
+| Required state | Movement context |
+|---|---|
+| Float at the surface | Surface idle |
+| Swimming at the surface | Horizontal movement at the surface |
+| Float underwater | Underwater idle |
+| Swimming up | Underwater ascent or the return-to-surface action |
+| Swimming down | Underwater descent or the surface dive action |
+| Leap into flight | The near-surface exit into flight, normally double ascent |
+| Leap onto an obstacle | The physical shore/obstacle jump, normally one surface ascent press |
+| Cushioned water entry | The initial downward entry fall while buoyancy cushions it |
+
+Swimming underwater, Dive jump, Dive entry and Cannonball are optional. An empty underwater swimming list reuses the surface swimming list at runtime. During both explicit migration and initial legacy reconstruction, the new native set receives these approved copies when the donor is populated:
+
+| Aurora target | Existing donor |
+|---|---|
+| Float underwater | Float at the surface |
+| Swimming underwater | Swimming at the surface |
+| Leap into flight | Flying up |
+| Leap onto an obstacle | Jumping |
+| Dive jump | Flying |
+| Dive entry | Swimming down |
+| Cannonball | Crouching |
+| Cushioned water entry | Falling |
+
+Copies preserve main lists, groups and independent track cycles through new native folder/link identities. Existing populated targets win, absent/unresolved donors leave explicit gaps, and the four original legacy swimming slots are never guessed from ordinary flight. No asset upload, source edit, automatic swimming enable or repair of an already existing native set occurs. The resulting fields are independent and remain editable; Cannonball/Crouching is a provisional pose until a dedicated animation is assigned. In `migrate-swim`, inspect the copied Underwater floating list, other water mappings, readiness and original native default after acknowledgement. Unit and integration tests cover exact mappings, idempotence, authored targets, track-only donors, unchanged source originals and a missing Flying up donor keeping the gate at seven of eight.
+
+Approved AO completion validation (2026-10-18): full `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev viewer and inspected `.scratch/ao-completion-migrate-fr.png`, `ao-completion-swim-fr.png` and `ao-completion-swim-en.png` (EN at 1024x768), compared with `ao-completion-before-fr.png`. The acknowledged migrated selection shows the copied Underwater floating list, required green checks and the complete-state message; the new migration help fits. Exact mappings, cycle/group/track preservation, source immutability, authored-target precedence, idempotence, both migration paths and the missing-donor activation guard pass offline. Last-five profile medians for before/migration/completed FR: 60 FPS throughout, UI 0.68/0.66/0.66 ms and GPU 1.65/2.27/2.47 ms; scene motion, background compilation and desktop load vary, so this is not an isolated speed comparison. Owned logs show zero errors/panics and the same single synthetic missing-outfit warning as the baseline. Human validation of a real source set remains required before PR.
+
+Water control help (2026-10-18): Movement shows one short gesture per row for surface descent, underwater ascent, surface shore jump, double-tap flight exit, jump/descend dive, cannonball and leaving water walking. Keycaps read both current Up/Down bindings, including modifiers, keyboard layout and mouse buttons; no default Page key is assumed. Unassigned actions are labelled explicitly, and the detailed dive tooltip interpolates the current descent bindings. The dense water/AO paragraphs and the swimming-animation navigation button are removed. `movement` previews default keys; `movement-rebound` supplies offline F10 / Alt+mouse-back ascent and F11 descent, with no secondary descent. Compare FR/EN at 1440x900 and EN at 1024x768: alternatives, double-tap and sequential gestures must fit, and rebinding must update every row immediately. Test secondary-only and unbound controls too. The native regression reads the actual rendered keycap labels before/after changing keyboard, modifiers, mouse and unassigned slots. These explicit demo bindings never alter a real user's settings; movement input and physics remain unchanged.
+
+Water controls validation (2026-10-18): final `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. The rendered regression updates default Up/Down controls to modified keyboard and secondary mouse bindings, then to a new primary binding and unassigned descent, checking that stale keys disappear immediately. Built the default dev viewer. Inspected `.scratch/ao-water-controls-compact-fr.png`, `ao-water-controls-rebound-compact-fr.png`, `ao-water-controls-compact-en.png` and `ao-water-controls-compact-small-en.png` (last at 1024x768, others 1440x900), compared with `ao-water-controls-before-fr.png`. Read-only hint rows use body text height, not button height: all water controls fit the normal window, and the smaller viewport keeps ordinary vertical scrolling. Double-tap and sequential gestures, modifiers, alternatives and mouse buttons remain readable; the old animation-navigation button and AO implementation paragraph are gone. Last-five medians for before/default/rebound FR: 60 FPS throughout, UI 0.59/0.65/0.63 ms and GPU 1.66/1.65/1.65 ms; shared desktop load and scene motion vary, so this is a regression observation, not an isolated speed comparison. Owned logs have zero errors/panics and only the same single synthetic missing-outfit warning as the baseline. Human acceptance remains required before PR.
+
+Passage / water-walk layout: in Movement, obstacle passage occupies the left column and water walking the right, directly below the run/flight boosts. Passage has a short explanation and the current shortcut; its result feedback remains full width below the columns. Water walking keeps its current descent keycaps and disables swimming when enabled. Check both water toggles, default/rebound keys, FR/EN and a 1024x768 viewport; swimming and dive controls must remain accessible below the paired settings.
+
+Movement presentation follow-up (2026-10-19): the passage column reserves two theme-spacing units inside its right edge, so wrapped prose stays clear of water-walk controls without shifting their alignment with flight boosts. Passage and the dive tooltip use the same keycaps as water controls, with current primary/secondary, modified, mouse and unassigned bindings; the old inline passage shortcut string is removed. Surface hints are consecutive (submerge, leap, double ascent for flight), followed by underwater ascent. Remove "automatically" from the shore-jump label in EN/FR; input and behavior remain unchanged. The explicit offline `movement-rebound` fixture now requests a 520-pixel manager width. Inspect default/rebound FR and narrow EN layouts, including long custom chords.
+
+Optional water controls (2026-10-19): built-in and restored toolbar defaults omit swimming (`movement`) and water walking (`water_walk`). Both remain in the customization catalogue and AO quick controls. Login no longer inserts water walking into existing customized bars; saved placements remain authoritative, and the retired upgrade flag is accepted as an unknown field. The Movement pane adds one theme-spacing unit above the shore-jump option and above dive/cannonball options, keeping each group's key hints close to its checkbox. Inspect the bottom bar and both vertical gaps in default FR and narrow EN demo captures; explicit custom toolbar additions must survive save/login, and Restore defaults must remove both again.
+
+Further gesture spacing (2026-10-19): both gaps above shore-jump and dive/cannonball options now use two theme-spacing units. Keep the associated key hints close to each option and verify small-viewport scrolling.
+
+Optional water controls validation (2026-10-19): full `scripts/check.ps1` green, 3,575 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. The toolbar regression verifies absent defaults, catalogue availability, manual bottom/side placement, persistence with the retired flag, unchanged login and Restore defaults. The legacy-account migration regression confirms no inserted water button. Built the default dev viewer and inspected `.scratch/ao-optional-water-controls-fr.png`, `ao-optional-water-controls-narrow-fr.png` and `ao-optional-water-controls-narrow-en.png` (last at 1024x768), compared with `ao-movement-presentation-fr.png`. The bottom toolbar omits both water modes; the two gesture groups keep visible gaps and readable default/custom keycaps, with normal vertical scrolling in the short viewport. Last-five before/default/rebound FR medians: 60 FPS throughout, UI 0.66/0.64/0.64 ms and GPU 1.83/1.68/1.73 ms; shared desktop and demo state vary, so this is a regression observation rather than an isolated speed comparison. Owned captures have no errors/panics and only the baseline synthetic outfit warning. Human acceptance remains required before PR.
+
+Movement presentation validation (2026-10-19): final `scripts/check.ps1` green, 3,575 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. The pure passage-binding regression covers derived Ctrl chords, modifier filtering, secondary-only explicit mouse bindings and unassigned controls; the existing rendered regression also checks standalone modifier keycaps. Built the default dev viewer and inspected `.scratch/ao-movement-presentation-fr.png`, `ao-movement-presentation-narrow-fr.png` and `ao-movement-presentation-narrow-en.png` (last at 1024x768), compared with `water-crouch-controls-fr.png`. The inner child scope preserves the gutter even though the parent columns have fixed minimum widths. Surface/underwater order, shared keycaps, switch alignment, custom mouse alternatives and small-viewport scrolling are correct. Last-five before/default/rebound FR medians: 60 FPS and UI 0.66 ms throughout; GPU 2.05/1.83/1.84 ms. These are shared-desktop regression observations, not an isolated performance comparison. Owned logs contain no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
+
+Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev viewer and inspected `.scratch/ao-passage-layout-fr.png`, `ao-passage-layout-rebound-fr.png` and `ao-passage-layout-small-en.png`, compared with `ao-passage-layout-before-fr.png`. Both switches align beneath the run/flight boosts, concise passage text fits its column, default/rebound hints remain current, and swimming controls remain accessible at both viewport sizes. Last-five before/after FR medians: 60 FPS, UI 0.72/0.69 ms and GPU 2.04/2.09 ms; shared desktop load varies, so these are regression observations. Owned logs contain zero errors/panics and only the same synthetic missing-outfit warning. Human acceptance remains required before PR.
+
+Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, empty, design-current, design-tabs, design-movement, design-section, design-swim.
+
 
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
   sequence changed every 120 frames, stop / restart at frames
@@ -1377,7 +1500,7 @@ To check with these scenarios:
   must preserve their current phase and suspend again during subsequent edits.
   Check persistence after reopening the viewer, both bulk Aurora/Legacy choices,
   and Reset this section restoring Legacy.
-- **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
+- **`AURORA_DEMO_AO=interface|interface-group|interface-track|interface-combine|interface-swim|interface-swim-missing`**: approved native AO interface. `interface` has six synthetic standing entries; `interface-group` opens a simultaneous group, `interface-track` an independent cycle, `interface-combine` its guided creation dialog, and `interface-swim` one selected swimming slot with all eight resolved. `interface-swim-missing` removes Floating from that fixture: its state row must show an amber warning triangle, assigned required states a green check, and optional states no marker. The detail pane, compact AO panel and Movement gate share the triangle and missing-animation message; tooltips distinguish missing and assigned required states. No optional-slot counter remains. Test FR/EN, state navigation, single-click selection, row drag insertion/reload, creation from checked main entries, group-member add/remove/order, track cycle isolation, rename and dissociation. Inventory operations use the normal mutation/acknowledgement path against the offline simulator. Examples never seed a user's inventory; all shared theme/font/widget files remain unchanged.
 - **`AURORA_DEMO_AO=folder-names`**: seeds an existing native AO (including all eight swimming slots) and an empty bridge directory under their previous `AO` / `Bridge` names. The real acknowledged startup edits must rename both to `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`; the AO selection and links remain unchanged. Opens the real inventory beside the AO after frame 360 with both sibling folders visible; capture at 1050 after bridge provisioning. Regression tests additionally cover an already worn current bridge retaining its folder/item/object identity and valid handshake without another copy/upload/detach, new-name precedence, pending/failed acknowledgements, an authoritative empty old AO and old interrupted-import protection. Human grid validation: confirm the two existing folders are renamed on login, the selected set and animations still work, and a second login creates no duplicate folder or legacy AO import.
 - **`AURORA_DEMO_AO=folder-names-wait`**: uses the same cached old native folders but withholds both inventory services until frame 720. Capture at 450: `AO` and `Bridge` are unchanged, the selected set still works and no metadata edit is sent. Capture at 1200: both folders have their new names and the bridge reaches Ready after its five-second inventory save. The factory must wait beyond its normal timeout if services are delayed, rename an already worn controller without replacing its identities, and still time out a request that was actually sent. The readiness gate is shared with AO startup; running/ready bridge commands continue independently of inventory availability. Offline only.
 - **`AURORA_DEMO_AO=1`**: opens the AO manager, with two standing poses in
@@ -1386,7 +1509,7 @@ To check with these scenarios:
   states automatically after loading, every 180 frames;
   `off` starts with the AO disabled. Check the AO button at the bottom, the
   poses, the pause, the cycles and adding / importing from the inventory.
-- **`AURORA_DEMO_AO=movement|swim`**: test the actual integrated AO window. `movement` opens its persistent Movement (EXPERIMENTAL) tab, with a matching experimental heading and menu/toolbar/keybinding labels; `swim` opens the selected single-animation swimming slot with synthetic contributed inventory links and expands only this owned offline window so all eight can be inspected together; normal users retain their saved window size and scrolling. `swim-missing` opens Movement with one slot absent: swimming must remain unavailable with a 7/8 explanation. Confirm independent run/flight/swim/passage toggles, run and flight multipliers starting at x1, the active toolbar indicator, swim-state navigation, AO enable/pause, and animation choice/cycles. Ctrl+Alt+M and the movement toolbar open this same manager. Passage uses Ctrl plus the current jump keys (default E / Page Up); it requires its own switch, leaves text/media focus alone, and yields to explicit shortcut conflicts. Rebind Jump and confirm the displayed chord follows. Disable passage during its pulse to cancel it. In a normal human-driven grid session, assign all eight swimming slots in the selected set, enable swimming and verify another viewer sees the matching idle, movement, cushioned-entry and separate flight/shore exit animations. Ordinary AO disable/pause must not stop active swimming animations. Removing a slot or selecting an incomplete set must stop swimming; a different complete set cannot unlock that selection. No import-pack button or automatic fill/upload prompt may appear. Capture around frame 850.
+- **`AURORA_DEMO_AO=movement|movement-rebound|swim`**: test the actual integrated AO window. `movement` opens its persistent Movement (EXPERIMENTAL) tab, with a matching experimental heading and menu/toolbar/keybinding labels; `swim` opens the selected generic swimming list with synthetic contributed inventory links and expands only this owned offline window so the lists and cycle controls can be inspected; normal users retain their saved window size and scrolling. `swim-missing` opens Movement with one slot absent: swimming must remain unavailable with the shared warning triangle and missing-animation message. Confirm independent run/flight/swim/passage toggles, run and flight multipliers starting at x1, the active toolbar indicator, swim-state navigation, AO enable/pause, and animation choice/cycles. Ctrl+Alt+M and the movement toolbar open this same manager. Passage uses Ctrl plus the current jump keys (default E / Page Up); it requires its own switch, leaves text/media focus alone, and yields to explicit shortcut conflicts. Rebind Jump and confirm the displayed chord follows. Disable passage during its pulse to cancel it. In a normal human-driven grid session, assign all eight swimming slots in the selected set, enable swimming and verify another viewer sees the matching idle, movement, cushioned-entry and separate flight/shore exit animations. Ordinary AO disable/pause must not stop active swimming animations. Removing a slot or selecting an incomplete set must stop swimming; a different complete set cannot unlock that selection. No import-pack button or automatic fill/upload prompt may appear. Capture around frame 850.
 - **`AURORA_DEMO_AO=design-current|design-tabs|design-movement|design-section|design-swim`**: a native interactive layout study. The Current view reuses the existing AO body unchanged; the side workbench switches to Animations/Movement tabs or a collapsible section. Ctrl+Alt+M and the movement toolbar button open the prototype Movement tab and reopen its workbench; the separate movement floater stays hidden in this design scenario. Movement switches/sliders are temporary preview values and do not control motors or write account movement preferences. `design-swim` opens the AO swimming list and its matching avatar preview. The workbench selects simulated avatar animation states; swimming selection uses the actual AO state lists, including the eight separate swimming contexts in the synthetic inventory. Check AO activation/pause, state selection, animation double-click/cycles, independent motor switches and reset, and returning from movement controls to swimming animation selection. All inventory changes stay in the offline demo. Capture each layout around frame 850; keep the existing dimensions, palette, fonts and widgets for comparison.
 - **`AURORA_DEMO_ANIMESH=1|churn|alpha|alpha-cycle`**: animated root mesh, linked mesh flagged
   by a child and worn animesh, with independent skeletons of their own and
@@ -2211,7 +2334,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
 | `AURORA_DEMO_PLACE_WINDOW=1` | Place profiles in separate windows |
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
-| `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab, search done |
+| `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
@@ -3621,13 +3744,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (x and y 64..192): a landmark made there lights the star, wherever in it
   the avatar stands. With `AURORA_DEMO_PLACES` the folder list shows the
   demo's subfolder.
-- **`AURORA_DEMO_SEARCH=web|people|groups|places|land|events|classifieds[:text]`**:
-  the "Search" window on this tab, the search for the text already
-  run (`aurora` by default): the list is filled by the directory of the
-  demo, the first row is selected and its details shown on the right.
-  For `land`, the text is the price limit (`land:25000`); without it the
-  field keeps its default "0" and only the auctions (L$ 0) pass
-  the limit checked by default.
+- **`AURORA_DEMO_SEARCH=all|web|people|groups|places|land|events|classifieds[:text]`**:
+  the "Search" window on this tab (Aurora's look: on this chip, `all`
+  being its "All" chip that searches the five text directories at once),
+  the search for the text already run (`aurora` by default): the list is
+  filled by the directory of the demo, the first row is selected and its
+  details shown on the right. In Aurora's look the rows of places, land
+  sales and classifieds show the demo snapshot and their region once
+  their details answered. For `land` in the Legacy look, the text is the
+  price limit (`land:25000`); without it the field keeps its default "0"
+  and only the auctions (L$ 0) pass the limit checked by default; Aurora's
+  land filters start empty (no limit).
   A text containing `page` (for example `people:page`) answers a full
   page: "> 100 found" and the Next button; a text containing
   `xyz` finds nothing ("'xyz' not found").
@@ -3791,6 +3918,12 @@ offline; the files and snapshots uploaded in demo stay offline.
   next owner switches) and the status bar. Hover an object or clothing row
   for Wear / Take off (and More at the wide width); widen the narrow
   window with the title bar button.
+- `aurora-folder-window`, `aurora-folder-window-wide`: the same, with the
+  right-click tests opened in a folder window ("Show in a new window") beside
+  the narrow main window, narrow (420 px) or wide (1180 px). No tabs; the
+  column holds the folder itself and its subfolders only (no shortcuts, no
+  Trash); the explorer and the breadcrumb stop at the folder; a search stays
+  inside it.
 - `permissions`: expanded inventory with the approved additive next-owner
   indicators enabled. Combine with `AURORA_DEMO_BUILD=contents-ready,object:118`
   and `AURORA_DEMO_BUILD_TAB=contents+next-owner` to inspect both windows.
@@ -5471,15 +5604,15 @@ Read-only bridge validation (2026-10-16): 2,843 workspace tests pass, 24 ignored
 
 Cleanup regressions (2026-10-16): verify known native/coarse heights never issue a bridge query, cached/late replies cannot override a newly known 250 m height, and an unloaded avatar with missing coarse height becomes a 2480 m range from a 20 m observer after a 2500 m bridge reply. Parent-chain coverage retains missing direct/indirect seat ancestors, a rotated complete chain and cyclic parents. Nil IDs must not invalidate a batch containing a valid missing-height target. The speculative stale/native verification scenarios and status-counter UI were removed at the maintainer's request after they clarified that the actual target altitude was 250 m, not 2500 m. The approximately 235 m real-region case and script information were confirmed by the maintainer; real-grid lookup above the coarse altitude limit remains unconfirmed. LSL and physical motors are unchanged. Cleanup validation: 2,848 workspace tests pass, zero failures, 24 ignored, with the known unrelated GPU transparency test skipped. Scripts, formatting, final Clippy and the default dev build pass. Inspected .scratch/bridge-query-radar-fr.png and bridge-query-radar-en.png: both menus retain the simple default-on toggle without counters, and the missing-height target shows a distance of about 2 km. Dedicated radar demo logs have no panic/error. The unchanged complete LSL 1.20 source is embedded byte-for-byte; source hashes confirm the read-only protocol, physical motors and swimming routing are unchanged. The normal test viewer was relaunched as Test aurora-bridge-movelock radar cleanup 1.20, without automatic login.
 
-**`AURORA_DEMO_AO=firestorm|empty`** — AO startup reconstruction. `firestorm` seeds a synthetic Legacy Viewer catalogue and an empty shared Aurora parent; the real bootstrap and inventory-mutation callbacks must create #Aurora/Aurora AO, preserve non-swimming sets/links/options and select the remapped set without changing any #Firestorm folder or item. Legacy Viewer swimming states must not be fetched or imported; the new native set requires explicit swimming assignments. `empty` opens an AO without either source and must create no AO data or upload prompt. `swim` remains the visual check that the old import-pack button is gone in English/French. All scenarios are offline and never log into a grid.
+**`AURORA_DEMO_AO=firestorm|empty`** — AO startup reconstruction. `firestorm` seeds a synthetic Legacy Viewer catalogue and an empty shared Aurora parent; the real bootstrap and inventory-mutation callbacks must create #Aurora/Aurora AO, preserve sets/links/options and the four actual legacy swim mappings and select the remapped set without changing any #Firestorm folder or item. Floating, Swimming Forward, Swimming Up and Swimming Down (including their Swim.H/N/U/D aliases) must be fetched and copied when present; The approved completion copies available donor configurations into Aurora-only slots. A missing donor for a required slot must keep swimming unavailable; copying the set must not enable the swimming preference. `empty` opens an AO without either source and must create no AO data or upload prompt. `swim` remains the visual check that the old import-pack button is gone in English/French. All scenarios are offline and never log into a grid.
 
 AO startup regressions cover existing (including empty) Aurora-folder precedence, complete Firestorm set/group/track/cycle reconstruction, original-link preservation, saved selection remapping, missing source/legacy swim items, incomplete fetches and missing original items, interrupted staging without duplicate replay, and shared-parent creation coordination. A bridge factory regression provisions and updates its script without an AO or enabled Movelock. Human grid validation remains required for first-login AIS behavior, a second login with existing Aurora data, absent source data, and animation visibility from another viewer.
 
 AO startup validation (2026-10-16): 2,854 workspace tests pass, zero failures, 24 ignored, with the known unrelated GPU transparency test skipped. Scripts, formatting, final Clippy and default dev build succeed. Inspected .scratch/ao-startup-swim-fr.png and ao-startup-swim-en.png (ordinary swimming inventory editor, no pack-import button), ao-startup-firestorm-fr.png (reconstructed catalogue, saved set and working cycle) and ao-startup-empty-fr.png (no set and no upload prompt). Their dedicated offline logs have no panic/error. Source hashes confirm the bridge factory, full LSL 1.20, physical motors and AO animation runtime are unchanged; the executable embeds that full script and no longer contains the removed pack action/description. Normal viewer relaunched as Test aurora-bridge-movelock AO startup 1.20, without automatic login. Real-grid first-login reconstruction remains for human validation.
 
-**`AURORA_DEMO_AO=firestorm-wait`** — cached inventory with delayed write/readback services. Seeds a synthetic MonSet with Standing:CT15.00:CY:RN under #Firestorm/#AO and no native AO. Before frame 720, the ordinary AO window must show loading and no new AO folder. At frame 720 both synthetic capabilities become available through the same writable gate as production; the real bootstrap must reconstruct exactly one #Aurora/Aurora AO/MonSet, preserve the standing options and original source, and omit swimming mappings. Capture at 620 (waiting) and 1000 (saved); offline only.
+**`AURORA_DEMO_AO=firestorm-wait`** — cached inventory with delayed write/readback services. Seeds a synthetic MonSet with Standing:CT15.00:CY:RN under #Firestorm/#AO and no native AO. Before frame 720, the ordinary AO window must show loading and no new AO folder. At frame 720 both synthetic capabilities become available through the same writable gate as production; the real bootstrap must reconstruct exactly one #Aurora/Aurora AO/MonSet, preserve the standing options, the four actual swim mappings and the original source. Capture at 620 (waiting) and 1000 (saved); offline only.
 
-**`AURORA_DEMO_AO=migrate|migrate-done`** — explicit Firestorm migration beside an already existing native AO. Both modes seed two synthetic Firestorm sets and one native default, so automatic fallback must do nothing. `migrate` opens the real picker at frame 360, initially showing the duplicate-name guard for Aurora AO. Choose Firestorm Walk Set or change the destination name, then migrate; cancel must leave inventory and the native selection unchanged. `migrate-done` chooses Firestorm Walk Set and invokes the real action at frame 720; capture at 1000 to check the new selection and saved status. The native default is retained, only one set is added, Firestorm stays unchanged and swimming mappings are excluded. These fixtures are offline only.
+**`AURORA_DEMO_AO=migrate|migrate-done|migrate-swim`** — explicit Legacy Viewer migration beside an already existing native AO. Both modes seed two synthetic legacy sets and one native default, so automatic fallback must do nothing. `migrate` opens the real picker at frame 360, initially showing the duplicate-name guard for Aurora AO. Choose Firestorm Walk Set or change the destination name, then migrate; cancel must leave inventory and the native selection unchanged. `migrate-done` chooses Firestorm Walk Set and invokes the real action at frame 720; capture at 1000 to check the new selection and saved status. The native default is retained, only one set is added, the legacy source stays unchanged and the four actual swim mappings retain their original animation targets, order and cycles. Aurora-only slots reuse the approved existing donor animations with new native links; missing donors remain empty. `migrate-swim` performs the same migration and reveals Underwater floating at frame 900; capture at 1100 to check the copied animation and the completed gate. These fixtures are offline only.
 
 AO interface integration validation (2026-10-16): scripts and formatting pass; Clippy is clean with warnings denied; 2,882 workspace tests pass, zero failures and 24 ignored, with the existing unrelated GPU transparency test excluded. The native row test performs pointer press/drag/release and reads back the acknowledged inventory order. Additional coverage checks guided cancellation, remapped/scoped editor selection, member/track ordering, group dissociation, original preservation, independent cycles and programmatic swimming-state reveal after the native smooth-scroll animation. The default dev viewer builds. Inspected owned `.scratch/ao-interface-interface-{fr,en}.png`, `interface-group-{fr,en}.png`, `interface-combine-{fr,en}.png`, `interface-swim-{fr,en}.png`, `interface-track-fr.png` and `movement-{fr,en}.png` (all with the `ao-interface-` prefix): controls and text fit the unchanged Aurora theme, swimming selection is visible in the rail and its remove action shares the picker row, and the movement layout retains its independent switches and diagnostics. Scoped offline logs contain no error/panic. The theme, fonts, shared widgets, complete LSL source and physical controller sources match their pre-integration hashes. Real-grid confirmation of grouping, dissociation and persisted ordering remains for the human.
 
@@ -5496,3 +5629,501 @@ Link two independent objects and wait for simulator confirmation: one root,
 child-colored outlines, one whole-object selection and consistent bounds.
 Compare linked-prim navigation with script-side link numbers, especially for
 pre-existing linksets; UDP ObjectUpdate carries ParentID but no link number.
+
+
+### Interactive water
+
+
+Anatomical contacts: append `:parts-feet`, `:parts-feet-run`, `:parts-hands` or `:parts-head` to
+a water quality, with `AURORA_DEMO_WATER_ACTIONS` unset. Each isolates one
+native avatar: stepping feet, arms stirring while the root stays still, or
+head immersion/emergence. Shore foam, caustics, the moving hull and the fixture's
+system skirt are omitted to expose the local contact; macro waves stay enabled.
+There must be separate foot/hand traces,
+no automatic torso-wide V, no trails from dry parts, and only sparse head air.
+Foot slaps occur once per lifted foot's descent into water: a short low sheet,
+scattered small droplets and a restrained ring. Running produces stronger,
+quicker contacts; dragging a submerged foot and waves passing an idle foot
+must not manufacture new slaps. An ankle-deep lifted heel can slap even when
+the whole sole does not clear the surface. The fixture closes restored demo
+floaters and reasserts its camera after loading, keeping the contacts visible.
+Continuous furrows should be gentle at low
+speed and small limbs must not displace a torso-sized volume of water.
+Combine the ordinary `swim`, `swim-turn` and `wade-run` action fixtures for the
+supplied clips and translating avatar. Recheck each effect/quality, actual
+underwater transmission, dive/cannonball entry and dry/hidden body regions.
+The fitting uses animated collision volumes and visible skin influences;
+custom meshes and per-texel alpha cutouts remain approximate, so the human
+checks their actual outfit and animations on the grid. No supplied animation
+is imported or modified. Tests cover material-point motion, independent parts,
+fast crossings, head entry/exit, visibility ancestry, teleports, 30/60/144 fps,
+particle independence and sparse per-head air. The GPU atlas regression also
+checks a small vertical strike and CPU contact height against the actual
+rendered Gerstner spectrum at all qualities and several depths.
+
+| Variable | Purpose |
+|---|---|
+| `AURORA_DEMO_WATER=medium` | Offline coast, moving hull, pillars, wading and submerged avatars |
+| `AURORA_DEMO_WATER_ACTIONS=dive` | Local native water animation and jump/entry preview |
+| `AURORA_DEMO_WATER_ANIMS=<folder>` | Read-only folder containing the twelve native water clips |
+| `AURORA_DEMO_WATER_SHADERS=1` | Load water shader sources for offline material iteration |
+
+The enhanced-water master is disabled by default (2026-10-19), including missing/partial saved preferences and Aurora section reset. Individual effects stay selected for an explicit opt-in; saved on/off choices survive reload and graphics-preset changes. The explicit "All Aurora" bulk choice still enables water effects. Only the global activation carries the shared experimental warning triangle and its localized tooltip in Preferences › Aurora › Water. Compare disabled and enabled FR/EN captures: individual controls have no warning marks, disabled effect controls stay readable and the global warning must not overlap text or its switch.
+
+Experimental water defaults validation (2026-10-19): final `scripts/check.ps1` green, 3,576 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Regressions cover fresh/missing/partial defaults, disabled render flags, saved choices, all graphics presets, Aurora section reset and explicit bulk opt-in. Built the default dev viewer and inspected `.scratch/ao-water-spacing-final-fr.png`, `ao-water-spacing-final-en.png` (1024x768), `water-experimental-off-fr.png` and `water-experimental-on-en.png`, compared with `ao-optional-water-controls-fr.png` and `water-experimental-before-fr.png`. The two gesture gaps are wider and scrolling remains available. Water preferences show exactly one warning on global activation, with ordinary individual controls and readable disabled choices. Both water modes are explicit offline fixtures; they do not verify a real user's saved preference. Last-five disabled-water preferences before/after medians: 60 FPS, UI 0.83/0.80 ms and GPU 1.95/1.59 ms; baseline compilation and desktop load vary, so no isolated performance gain is claimed. Preferences captures have zero warnings/errors/panics; AO captures have no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
+
+Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=13` for Preferences › Aurora › Water; `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
+
+With `AURORA_DEMO_WATER_SHADERS=1`, an offline viewer loads common/spectrum, scene object/environment, water simulation, swept-wake and caustics WGSL from its own source checkout when pipelines are created. Restart the demo after editing shaders; no build is needed for each visual comparison. This switch is ignored without `AURORA_DEMO`; normal viewers and final acceptance runs use baked shaders. Missing source files fall back to the baked version.
+
+Water contact checks: foam must have continuous torn edges without a regular dotted pore pattern, including close views and low quality. Static terrain must not acquire object-contact foam. Walking/running and surface swimming must leave a visible short wake and modest bow spray even with a pose without foot downstrokes. Individual shallow downstrokes add droplets; deeply submerged bodies/limbs create no spray through the surface. Only the head releases air while immersed and moving/entering, at most one packet every 1.25 seconds: two small bubbles at low quality, three at medium, four at high/ultra. The water underside must show the exterior crossbar and sky through a wave-distorted window, with submerged-scene reflection toward grazing angles. Moving a target farther along the same ray after its exit into air must not add underwater fog. Idle avatars emit none. Ripples can remain active with spray and bubbles disabled; switching particle effects must not change displacement. The GPU packs particle emitters separately from particle-free events and honours the shared particle budget.
+
+
+Water performance A/B (2026-10-19): compare `AURORA_DEMO_WATER=off:shore`
+with `medium:shore`, then `off:underwater` with `medium:underwater`, in the
+same optimized Dev executable. Both modes use quality 1 and identical
+individual-effect choices; only the master changes, with base water retained.
+Set `AURORA_DEMO=1`, `AURORA_GRAPHICS_PRESET=high`, `AURORA_AO=gtao:2`,
+`AURORA_AA=6`, `AURORA_WINDOW_SIZE=1920,1080`, `AURORA_NOVSYNC=1`,
+`AURORA_PRESENT_MODE=immediate`, `AURORA_FPS_LIMIT=500` and `AURORA_PROFILE=1`.
+Clear other demo switches. Exit through a unique `AURORA_CAPTURE` with
+`AURORA_CAPTURE_EXIT=1`, `AURORA_CAPTURE_FRAMES=12000`; use the automated
+window title/border. Run order: shore A/B, underwater B/A; shore B/A,
+underwater A/B; shore A/B, underwater B/A. Select one-second profile summaries
+at 12-22 s after the first startup log and take each run's median, then the
+median of its three repetitions. Animated actors use elapsed time; end-of-run
+captures occur at different elapsed times and illustrate the views rather
+than serving as timing samples.
+
+RTX 3090 (Vulkan, NVIDIA 617.42), i9-12900K, High/SMAA/GTAO High:
+
+| View | GPU off/on (ms) | FPS off/on | Paired GPU delta range (ms) |
+|---|---|---|---|
+| Shore | 2.705 / 3.200 | 344.15 / 298.95 | +0.40 to +0.77 |
+| Underwater | 3.100 / 3.870 | 303.80 / 251.35 | +0.09 to +0.81 |
+
+Twelve runs supply 119 selected intervals; normalized profile settings differ
+only in the master, with zero warnings/errors/panics. The 500 FPS ceiling is
+not reached by a selected interval, but pacing is still configured. Real
+Windows `Process.TotalProcessorTime` counters sampled around 12-22 s in
+repeats 2/3, normalized by mean logged FPS, give approximate total CPU cost
+across all threads: shore 4.20/5.55 ms per frame and underwater 4.05/5.32 ms
+off/on. This cumulative parallel CPU time cannot be added to GPU time.
+`.scratch/water-ab-20261018/results.json` contains the protocol, binary SHA256,
+source revision, per-run values and paired deltas; `comparison.csv` and
+`runs.csv` accompany raw samples/logs/captures. Both camera pairs were inspected.
+Shared-desktop load and animated-scene variation remain visible in the ranges;
+this small local scene is not a prediction for a busy grid region or another
+water quality. No production code or human grid session changed.
+
+Offline water actions (2026-10-17): combine `AURORA_DEMO=1`,
+`AURORA_DEMO_WATER=high`, `AURORA_DEMO_WATER_ACTIONS=dive` and
+`AURORA_DEMO_WATER_ANIMS=<folder>`. The folder must contain the twelve numbered
+`.anim` files listed in `ao/water_demo.rs`. They are decoded once into memory;
+no inventory item, upload or animation import is created. The thirteenth clip
+is the authored `assets/animations/swimming/cannonball.anim`, also demo-only.
+The ephemeral AO catalogue disappears on exit, and demo settings are not saved.
+`dive` jumps and presses descent at 0.20 s to engage the deliberate plunge;
+`jump` follows the same trajectory without descent and must retain its ordinary
+jump/fall animations, with no intentional entry burst. A second descent press
+after an engaged dive switches to the cannonball. The early gesture window is
+450 ms from the observed jump signal; a later press remains a cannonball.
+`cannonball` presses the resolved descend control once in midair;
+`cannonball-flight` starts in flight above deep water, with no jump or predicted
+dive, then taps descent to release flight and tuck. `water-walk` and `water-run`
+hold the synthetic root with its feet at the native waterline, choose an
+ordinary AO gait and highlight the bottom-toolbar walking toggle. Raw falling
+signals deliberately exercise local/observer suppression. These paths are
+prescribed animation fixtures, not a Havok or bridge physics simulation.
+`water-crouch` holds Descend at rest; `water-crouch-walk` holds it while moving
+at the 1.2 m/s crouch target. Both keep the native waterline root and use
+ephemeral local crouch clips through the ordinary AO owner. Inspect the pose,
+wave following and AO command trace; no cannonball or swim transition should
+occur. These modes do not change inventory or simulate bridge physics.
+`water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
+inspection, with only their corresponding water mode active.
+`cannonball-late` presses it shortly before contact and checks that even a
+pre-loop tuck keeps its complete recovery; `cancel`
+switches to flight before impact, `dry` rejects shallow/dry landing and
+`missing` omits the optional jump clips while retaining the eight-slot swim gate.
+`slots` opens the native AO on the new optional cannonball slot.
+`wade` previews a shallow walking gait; `swim` previews the supplied breaststroke
+near the surface. `wade-run` raises the shallow trajectory's speed;
+`swim-turn` follows a curved path with tangent-facing orientation, and
+`swim-cycle` cycles the surface list through the supplied breaststroke, crawl
+and backstroke clips without selecting a separate locomotion style.
+`swim-submerged` starts below the surface and selects the independent underwater
+forward state. `swim-depth` swims at the surface, descends after 1.5 seconds,
+swims underwater, then begins a prescribed 0.7-second ascent after 4.5 seconds
+using the ordinary resolved descend/ascend controls. `swim-depth-hold` keeps
+ascent held after arrival: the pose must switch to surface forward swimming
+and remain there, without flight or a release jump. Vertical velocity matches
+this synthetic path; its timing is not a measurement of the bridge physics. Inspect local continuity and the offline AO command
+trace; actual observer visibility still requires a human grid test.
+`slots-surface` and `slots-underwater` show the generic AO list editor for the
+two visible swimming states (Add, Combine, tracks and cycle controls).
+Former crawl/backstroke assignments are consolidated only through the normal
+acknowledged inventory edit path. Original animation items, foreign contents and
+source folders are preserved. Verify groups/tracks/cycles in both water lists,
+surface-list fallback when underwater is empty, AO disable/pause, scripted
+seats, teleports and another viewer observing the selected clips, including
+clips whose priority is lower than the original system animation.
+For ground-like water crouching (bridge 1.27), let the viewer complete its
+ordinary bridge update, enable water walking and hold the configured Descend
+key: idle must crouch and forward/back/strafe must crouch-walk without losing
+support. Always-run must stay slower while crouched. Releasing Descend restores
+the ordinary gait; ascent still jumps, and the toolbar toggle still disables
+the mode. Test with an active AO set's crouch slots, disabled AO and missing
+slots (standard fallbacks), a nearby observer, waves, shallow shores, a deck,
+seats, flight, focus changes and bridge detach/reconnect. The simulator still
+owns collision geometry: this adds supported poses, not a physical water floor.
+Offline validation (2026-10-18): full `scripts/check.ps1` green, 3,574 passed,
+zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev
+viewer. Inspected `.scratch/water-crouch-idle-fr.png`, `water-crouch-walk-fr.png`,
+`water-crouch-controls-fr.png` and `water-crouch-controls-small-en.png`, compared
+with `water-crouch-before-walk.png`. Distinct synthetic crouch assets start in
+the AO trace without a water impact, and the new hints fit both locales. The
+offline poses are basic stand-ins; real authored animations and simulator
+physics still require the human online test. Last-five before/idle/moving
+medians: 60 FPS, agent-camera 0.10/0.10/0.09 ms, UI 0.51/0.44/0.46 ms and GPU
+2.68/2.66/2.63 ms; shared load and pose changes prevent an isolated speed claim.
+Owned logs contain zero errors/panics, no action-fixture warnings and only the
+baseline synthetic outfit warning in the two UI captures.
+`swim-stop` stops at 1.5 seconds so the old wake must spread/settle without a
+new trail. `swim-float` holds the physical root still and selects the supplied
+surface-floating clip: inspect the local visual heave through a crest and
+trough, including Low and the effect-switch cycle. `swim-float-offset` and
+`swim-offset` shift the synthetic simulator root 40 cm above its target after
+one second, without moving that target: both idle floating and translating
+breaststroke must keep following waves. This reproduces the former 30 cm
+activation cut-off. `swim-crawl` and `swim-back` choose entries in the same surface list;
+fast/backward input does not create separate AO style states. The body, attachments and
+following camera should share the smooth height change; camera inspection
+must not stop it. The saved float height stays additive. Disabling waves and
+leaving the surface settle the offset; diving, seating, teleporting and
+arrival changes must not keep a stale offset. Wave-carried motion alone must
+not generate splash or bubble streams. `water_contacts=trace` also records
+offline physical height, sampled wave displacement and filtered visual heave.
+It includes the resolved AO swim intent; root drift, unavailable terrain or
+motor readiness and measured speed must not veto an established surface pose.
+Add `:no-wake` to the water quality for the matching interaction-off
+performance/visual comparison. All use the same ordinary contact/GPU paths.
+The original `wade` and `swim` modes move the local avatar along a repeatable nine-second
+path, without a jump. Compare the direction of the low lateral splash fans,
+the small detached droplets, and the separate local trails extending behind
+the immersed limbs: a smoother central depression, expanding lateral crests,
+secondary ripples and thin broken foam rather than a painted white carpet.
+Turns must preserve the previous path; stops must let the depression refill
+and the waves decay. Repeat with spray/bubbles and contact foam off: water
+relief/reflection/refraction must remain, including with ambient waves off.
+The GPU atlas regression executes the production shader and checks the
+negative trough, positive outgoing shoulders, finite bounded slopes, no foam
+when disabled, and clearing for interaction-off, dry land or mismatched water
+height. Swept-contact tests compare path length at 30/60/144 fps and guard
+turn/stop lifetimes. Stationary
+turnarounds must not produce a fountain. The anatomical contact emitters remain
+active with flat custom poses, while deep limbs cannot throw surface spray.
+Horizontal joint centers just below water still displace the surface with
+depth attenuation; fully dry or deeply submerged poses produce no body wake.
+The synthetic jump begins at frame 750 and repeats every 540 frames. Its path
+is a local trajectory fixture, not a Havok simulation. Native AO selection,
+AgentAnimation messages, bridge acknowledgements, skeletal sampling and GPU
+water events use their ordinary paths. Inspect the held air pose, a single
+body-contact splash, the P5 entry hold and its full 2.4 s recovery, and the
+return to swimming. Missing clips or cancelling must not make a large splash.
+The bridge observer reports armed/airborne/water contact without taking over
+native jump controls or applying force. Simulator collision and other-viewer
+visibility still require later human grid validation.
+
+The twelve supplied clips are surface idle, breaststroke, crawl, backstroke,
+underwater idle, down, up, inertial entry, flight exit, shore exit, dive jump
+and dive entry. Cannonball is an additional optional clip. The supplied strokes are entries
+in one surface list; underwater forward swimming has a separate list. Existing
+eight-state sets use their surface list until underwater clips are assigned. A fresh
+PageDown (or the rebound descend key) during a jump above known deep native
+region water requests a cannonball. Held crouch on the ground, typing, flight,
+locked/seated avatars, teleports and unknown/shallow landings cannot trigger it.
+No generic prim/mesh water detection is inferred.
+
+Cannonball rendering uses ten radial packets; dives use six smaller packets.
+Each spends two instances on connected, torn water-sheet patches and leaves
+quality-scaled remaining droplets even at Low quality. Thin sheets refract the
+background, reflect the sky and break up along their foamy rim. An expanding
+foam ring follows the falling crown; one small air packet accompanies entry.
+Walking and swimming add low directed fans rather than radial fountains.
+All reuse the water particle pipeline and shared
+particle budget; no texture, extra binding, render pass or CPU fluid solver is
+added. Splashes, bubbles and displacement remain independently switchable.
+Completed displacement impulses expire after 0.3 s; ordinary droplets/fans
+after 0.8 s; entry sheets/rings after 1.6 s; bubbles after 3 s. At the quality
+event cap, active entry sheets/rings take priority over ordinary contacts.
+Low quality must preserve a complete crown while reducing detached droplets.
+The rough underwater reflection fallback now stays continuous when micro-normals
+turn a ray back toward the underside; scene-buffer coverage remains approximate.
+
+Offline acceptance (2026-10-17): full `check.ps1` passes (3,416 passed, 26 ignored),
+with clean scripts, formatting and workspace/all-target Clippy. LSL lint has zero
+errors/warnings; native WGSL specialization and the nine final action/UI captures
+have no GPU error or panic. The late-PageDown capture broadcasts dive -> cannonball,
+makes one impact, then waits 2.716 s after the stop before surface idle; the P5
+entry capture preserves its full recovery. Cancellation, actual dry terrain and
+missing optional clips make no intentional impact. FR/EN AO fields and the FR
+Movement checkbox are readable. The older `AURORA_DEMO_AO=movement` fixture used
+for that one UI capture reports its synthetic missing Current Outfit folder; it
+does not affect the new pack decoder or water action tests. Six additional baked
+captures inspect the tuck/crown, running shallows, continuous underside reflection
+and every effect toggle across the four quality levels. On the shared RTX 3090,
+1440 x 900 High/SMAA/GTAO High, adjacent pre-impact/impact one-second intervals
+both report 1.65 ms total GPU and 0.235/0.236 ms surface water pass; agent/camera
+work is 0.09/0.10 ms. These simple-scene intervals are illustrative only, and the
+water-pass marker excludes compute/opaque caustics. No online test, import or
+upload was performed. All twelve source hashes remain unchanged.
+
+Water walking / airborne cannonball acceptance (2026-10-17): enable the small
+walking icon in the bottom bar, then walk/run from shore onto water and stop.
+Its violet active state must match the Movement switch. With Aurora AO active,
+verify ordinary Standing/Walking/Running selections, groups and cycles; with AO
+disabled or an empty slot, verify stock motions. Repeat with an observing viewer.
+Descent leaves water walking without enabling swimming. A tap of ascent
+underwater with swimming enabled must return promptly and settle into
+the surface swim state; held ascent begun underwater must stay in that state.
+In flight above water, tap descent without any preceding jump: flight must
+release, the optional assigned cannonball clip must play and actual water
+contact must produce one entry splash. Repeat from a long fall, with no dive
+slots assigned, with AO disabled and with the cannonball slot absent. Resuming
+flight, sitting, teleporting or bridge loss must cancel. Keep ordinary shore
+walking, land running, platform collisions and Movelock behavior intact. These
+physical/remote checks require human grid validation; no automatic login.
+
+Offline verification: full `scripts/check.ps1` green (3,517 passed, zero failures,
+26 ignored); LSL lint clean. Native water walking/running, flight tuck/contact,
+the EN/FR Movement tab and adjacent wading captures inspected without warning,
+error or panic. The flight fixture starts without a jump and emits exactly one
+actual-contact burst. At 1440 x 900 High/SMAA/GTAO High, final reference/updated
+wading intervals both sustain 60 FPS; CPU agent/camera is 0.12–0.18/0.10 ms,
+GPU 2.30–2.38/2.14–2.21 ms and updated water pass 0.288–0.299 ms. Earlier
+shared-desktop GPU intervals varied up to 6.46 ms: do not infer a speedup from
+these samples. No added render pass or shader. Native trajectories are prescribed;
+real bridge responsiveness, collisions and remote playback remain human checks.
+
+Bridge 1.25 response checks: after its confirmed surface capture, tap descent
+briefly while stationary and moving. It must begin descending with the animation
+without the extra HTTP round trip, keep its depth after release and accept ascent
+as cancellation. Repeat while a periodic bridge refresh is pending and with
+Movelock enabled. With bridge 1.26, tap ascent once in surface mode to jump
+toward a reachable platform, whether stationary or moving. The feet must clear its lip before
+crossing, and flight must clear on contact with its top, including after a slow
+crossing or stale native Falling/foot-plane updates. Repeat when swimming began
+in flight. Holding that same press on land must not enable AutomaticFly;
+release and a fresh ground press retain the ordinary flight gesture. Two distinct
+surface ascent presses within 400 ms request flight with feet about 1.25 m above
+native water. The second must replace the first jump motor and its landing target,
+even during its Leaving phase. Repeat while stationary and moving. Holding one
+press, key repeat, a second press after the window, descent, seating, suspension,
+bridge loss or returning from underwater must not accidentally start flight.
+Respect no-fly parcels; underwater ascent remains surface return even when held
+through arrival. Jump from dry land
+toward water, then press descent early to dive; jumping alone must not select the dive automatically.
+Keep the independent cannonball available from later jumps and from flight.
+
+Bridge 1.26 acceptance: try a cannonball while hovering over a solid pontoon,
+including overlapping its edge: it must not tuck or turn flight off. Move clear
+over the water and tap descent again: tuck and the real-contact splash return.
+Phantom decorations and fully submerged floors do not block arming. Toggle the
+swim and water-walk toolbar icons in both orders; an inactive click enables only
+that mode, an active click leaves both off. Repeat through the Movement switches,
+with run/flight assistance enabled (those must not light the swim icon), and with
+an incomplete selected swim AO (swim stays off and the working water-walk mode
+is preserved). Explicit Fly after an exit must remain available. These are human
+grid checks: local tests use rendered geometry, not the simulator's collision mesh.
+
+Response follow-up offline validation: full `scripts/check.ps1` green (3,524
+passed, zero failures, 26 ignored); LSL lint clean. The actual scalar LSL native
+edge and stale-refresh guard pass with mocked native calls, including the
+unchanged watchdog and explicit cancellation. Native ordinary jump, deliberate
+dive and its contact, flight cannonball, adjacent depth motion and updated French
+Movement help inspected without warning/error/panic. Dive and cannonball produce
+one intentional burst each. The 1440 x 900 High/SMAA/GTAO High depth comparison
+stays at 60 FPS; reference/updated CPU agent-camera 0.16/0.12 ms, GPU 2.11/2.14 ms
+and water 0.379/0.358 ms. These are shared-desktop samples with animated phases,
+not isolated performance gains or a Havok latency measurement. The human tests
+real onset and platform arrival on the grid; no automated login or animation upload.
+
+
+Water ledges / exclusive-mode offline validation (2026-10-17): full
+`scripts/check.ps1` green, 3,529 passed, zero failures, 26 ignored; LSL lint
+clean. Geometry tests include a pontoon edge under the body, clear water beside
+it, phantom exclusion, submerged floors and support independent of native Falling.
+Movement tests cover immediate surface key edges, underwater hold continuity,
+slow crossing, repeated stale flight flags after arrival, low platform tops for
+small avatars, explicit Fly and fresh ground AutomaticFly, both-off mode toggles
+and the core AO gate. Extracted actual LSL shore goal selection passes vertical
+clearance, horizontal crossing, settling and release; an ideal first-order motor
+reaches the fixture in 1.20 s, which does not establish Havok timing. Native
+French water-walk and English swim controls, adjacent depth motion and flight
+cannonball captures inspected without warning/error/panic. The cannonball
+fixture produces one intentional contact burst. At 1440 x 900 High/SMAA/GTAO
+High, reference/updated depth intervals both sustain 60 FPS; GPU 2.11/2.11 ms,
+water 0.370/0.362 ms, agent-camera 0.15/0.10 ms. Shared desktop load and pose/wave
+phase vary: these samples do not establish a speedup. No renderer change. Real
+collisions, arrival flight state and remote playback remain human grid checks.
+
+
+Single/double surface ascent follow-up (2026-10-17): full `scripts/check.ps1`
+green, 3,530 passed, zero failures, 26 ignored; formatting and Clippy clean.
+Regressions cover a stationary single ledge jump, the second tap replacing an
+active shore/fallback motor within 400 ms, no repeated action while an input is held,
+late/disabled/seated/suspended/grounded/descent interruptions, no-fly parcels,
+underwater return continuity and native/enhanced flight handover. Flight retains
+the higher existing exit target. The script/protocol remain at bridge 1.26; this
+change only classifies viewer input. Repeat the surface gesture at rest and
+while moving on the grid; the human performs collision and observer validation.
+
+
+Underwater camera immersion (2026-10-18): the existing absorption control
+(Preferences > Aurora > Water, depth colour and underwater haze) now enables
+RGB extinction, EEP-coloured scattering and progressive depth lighting while
+the camera is submerged. Emissive/fullbright sources lose their warm wavelengths
+along the view path, without receiving a second sunlight-depth attenuation.
+Enter/leave near the surface, look at objects at several distances, swim deeper,
+look up through the exterior window, then test a night/custom EEP water/sky.
+Repeat at Low quality, with absorption disabled, and with the master disabled;
+above-water lighting and sky must remain unchanged. No new pass, texture, GPU
+readback or simulation allocation. The inexpensive medium model is identical
+across qualities; existing surface, reflection and particle detail still scale.
+
+Offline checks: full `scripts/check.ps1` green (3,530 passed, zero failures,
+26 ignored). The actual production-WGSL GPU test samples air-boundary clipping,
+RGB attenuation, deeper paths, zero path/density, near-surface fade, night
+scattering and Legacy scalar transmission when disabled/above water. Six
+source-shader previews inspected without warning/error/panic: reference fog,
+enhanced underwater, upward window, midnight, Low and adjacent surface MSAA.
+At 1440 x 900 High/SMAA/GTAO High, reference/enhanced underwater intervals both
+sustain 60 FPS, GPU 1.98/1.94 ms and water 0.211/0.202 ms. Shared desktop load
+and animated geometry/waves vary; these samples do not establish a speedup.
+Plain water inspection cameras now remain fixed across normal camera updates;
+free camera and animation-action framing are retained. `:underwater-deep` uses
+a lower lagoon view above its seabed, `:no-absorption` compares the previous
+scalar fog at the same camera position. Human grid acceptance remains pending.
+
+Wave crossings: `high:waterline-crest` places the offline camera 5 cm above
+native water under a moving crest; `high:waterline-trough` places it 5 cm below
+native water in an exposed trough. These inspection views choose a nearby
+crest/trough each frame and disable interactions to isolate macro waves.
+These waterline views omit the moving hull so it cannot obscure the interface.
+The frame-900 demo log records camera and sampled surface heights. The crest
+must show underwater fog across all exposed seabed pixels, including below the
+near-clipped surface; the trough must show the ordinary above-water view.
+Also check `low:waterline-crest`, `high:waterline-crest:no-waves` and
+`off:waterline-crest`, ordinary underwater/window/surface views, and MSAA/TAA.
+Camera immersion uses the shore-damped inverted Gerstner surface and the
+current GPU wake height near the waterline. Outside the possible wake crossing
+band, classification needs no field fetch; its small fog-boundary adjustment
+fades away by 38 cm of separation. Coloured attenuation now follows metres
+travelled in water, with no camera-depth fade under shallow crests. The physical
+water plane and swimming controls stay unchanged. Full `scripts/check.ps1`:
+3,531 passed, zero failures, 26 ignored. Reference/optimized underwater samples
+at 1440 x 900 High/SMAA/GTAO High: median GPU 2.22/2.44 ms and water
+0.161/0.214 ms across the last three intervals; shared desktop load and moving
+geometry vary, so these are observations rather than an isolated cost estimate.
+Human grid check: slowly cross crests and troughs with the camera while
+floating/swimming, then disable waves/master and repeat.
+
+Near-plane crossings: `high:waterline-split:no-waves` holds the eye 1 cm above
+flat water with a horizontal view; the near rectangle crosses the interface.
+The exposed lower strip must use the same water/refraction as the rest of the
+surface, rather than showing a clear unfiltered seabed. `high:waterline-split`
+follows the same crossing on waves; append `-under` to `waterline-split` to
+inspect the inverse crossing from 1 cm below the surface. Inspect SMAA, TAA,
+MSAA, Low, disabled absorption and master-off variants. Fully emerged/deep
+views must retain correct coverage and opaque-object occlusion.
+
+The geometric revision replaces the procedural near-plane patch with the
+actual displaced mesh. Hardware depth clamping retains its real perspective
+and coverage through the near plane. Adapters without depth-clip control use
+a portable pipeline only near water: the vertex shader retains real XY/W,
+and the fragment shader restores the actual clamped depth for occlusion.
+Append `:portable-depth` to any water demo to force this fallback at device
+creation; it has no effect outside demo mode. The demo log identifies the
+selected path. A separate single-sample depth target selects the closest real
+interface before water shading. Its monotonic view-distance depth preserves
+ordering even for two surfaces before the normal near plane. This prevents
+distant top faces from overwriting a nearby underside; the ordinary scene
+depth stays intact for submerged blended objects. The prepass runs only with
+displaced waves/interactions and reuses the existing indirect water draws.
+At 1440 x 900 its target is about 4.9 MiB. This interface prepass adds no scene
+colour render, copy or readback; GPU Water timing includes it. The exterior
+capture described below has its own reduced colour/depth target.
+
+The interface side comes from its actual geometric tangent. Transmission and
+reflection use known submerged segments without clipping them a second time
+to a fictitious flat surface. Coloured attenuation depends on water distance,
+including millimetre-deep camera positions. Surface/underwater paths share
+the same extinction model; source water fog is removed before applying the
+new path once. Immersed opaque endpoints retain their partial water path
+even with the eye just above the local surface; all-air rays remain clear.
+This avoids unfiltered holes at the analytic/triangulated wave boundary and
+keeps attenuation continuous at the exact waterline. Submerged sunlight
+attenuation depends on object depth, and
+the classic lighting model stays stable when the camera crosses the surface.
+Fullbright/emissive sources retain their own emission. Sky and EEP parameters
+are unchanged. Existing absorption/Fresnel/master controls remain independent.
+
+The production vertex/fragment GPU test renders both sides, fully clear/deep
+cameras, roll and front/behind opaque depths on native and portable paths at
+1x/4x MSAA. The real interface depth shader also renders overlapping sheets
+in both draw orders, before and beyond the near plane, retaining the closest
+sheet. Production fog tests cover actual interface segments, air clipping,
+RGB extinction, eye positions 1 mm above/below the surface, partial entry
+from air, entirely dry rays, zero path/density, disabled absorption, night,
+crests/troughs and GPU wake entry. Full `scripts/check.ps1`: 3,532 passed,
+zero failures, 26 ignored; formatting and Clippy clean. Eight baked native
+captures cover flat/wavy crossings, portable Low/MSAA, TAA underside, upward
+window, adjacent surface, deep water and disabled master/absorption; all exit
+0 without warnings/errors/panics. High/SMAA/GTAO High at 1440 x 900 stays at
+60 FPS. The deep-view last-three water medians before/after nearest-interface
+selection are 0.269/0.273 ms; total GPU medians are both 1.89 ms. Shared-desktop
+spikes and moving geometry vary, so these observations do not isolate cost.
+Human grid acceptance: reproduce the screenshot at the waterline, tilt/roll
+the camera and move slowly through crests/troughs, then check the upward
+window and deeper underwater view. No clear unfiltered strip should open
+below the near-clipped water surface.
+
+Exterior optics: `high:optics-60:no-waves` fixes the camera, animation time and
+four coloured air reference panels. The old main-screen-only refraction loses
+three panels at this angle because they are outside the main frustum. Append
+`:screen-only` to reproduce that baseline in the same binary, or `:air-quarter`
+to compare quarter-resolution exterior capture with High's half resolution.
+`optics-<degrees>` accepts upward pitches from 0 to 89 degrees; inspect 20, 45,
+60 and 89, omit `no-waves` for the same frozen wave phase, and append `:near-eye`
+for an eye 1.5 cm below the flat region plane. All these tokens are demo-only.
+The existing `:no-fresnel` token also disables the auxiliary capture and keeps
+the baseline transparent material. Main camera FOV, sky and EEP are unchanged.
+
+At 60 degrees upward the flat interface should transmit most of the exterior;
+at grazing angles, total internal reflection of the submerged scene is
+expected. The production GPU dielectric probe checks that distinction rather
+than weakening reflections arbitrarily. Inspect panel/shoreline continuity,
+wave distortion and the waterline variants above, including Low/MSAA and
+portable depth. The auxiliary view uses quarter/three-eighths/half/three-quarters
+linear resolution at Low/Medium/High/Ultra, only while an underwater exterior
+window can be visible. It captures opaque/masked air geometry with stored
+depth, reuses reflection draw candidates and existing pipelines, and does not
+rerender shadows or GTAO. High's extra colour/depth target is about 3.7 MiB at
+1440 x 900; GPU Water timing includes the capture. Transparent exterior layers
+and single-depth disocclusions remain approximate. Use identical frozen
+`optics-*` views for timing comparisons, then validate the moving ordinary
+`window`, `underwater`, `surface` and waterline views.
+
+Verification (2026-10-18): full `scripts/check.ps1` green, 3,536 passed, zero
+failures, 26 ignored; the separately run GPU culling comparison also passes
+with distinct reflection/exterior frusta. Production GPU tests distinguish
+total internal reflection at grazing angles from strong upward transmission;
+the capture-camera test aligns the central interface exit with its refracted
+axis at 45/60/89 degrees. Baked fixed-camera images recover all four air panels
+where screen-only loses red/green completely. Final RTX 3090/Vulkan at
+1440 x 900 High/SMAA/GTAO High, last-five-interval medians for
+screen-only/half/quarter exterior are Water 0.151/0.155/0.128 ms and total GPU
+1.16/1.08/1.17 ms, all at the 60 FPS cap. CPU parameter work is
+0.10/0.09/0.10 ms. Shared desktop load varies; these local simple-scene
+observations do not establish a general speedup or a busy-grid cost.

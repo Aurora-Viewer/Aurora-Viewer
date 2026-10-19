@@ -15,8 +15,8 @@ const CARET: f32 = 13.0;
 const ICON: f32 = 16.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Row {
-    id: Uuid,
+pub(super) struct Row {
+    pub(super) id: Uuid,
     depth: usize,
     open: bool,
     /// It holds folders, or is not fetched yet.
@@ -28,8 +28,8 @@ struct Row {
 pub struct Sidebar {
     open: HashSet<Uuid>,
     revision: u64,
-    key: Option<(u64, u64, bool)>,
-    rows: Vec<Row>,
+    key: Option<(u64, u64, bool, Uuid)>,
+    pub(super) rows: Vec<Row>,
     /// The explorer's folder last shown: a new one opens its ancestors and
     /// scrolls into sight.
     shown: Uuid,
@@ -37,14 +37,14 @@ pub struct Sidebar {
 
 impl Sidebar {
     /// Open the ancestors of `folder` when it is new; whether it is.
-    fn follow(&mut self, inv: &Inventory, folder: Uuid) -> bool {
+    fn follow(&mut self, inv: &Inventory, folder: Uuid, base: Uuid) -> bool {
         if self.shown == folder {
             return false;
         }
         self.shown = folder;
         let mut seen = HashSet::new();
         let mut id = rules::parent(inv, folder);
-        while let Some(parent) = id.filter(|id| *id != inv.root && seen.insert(*id)) {
+        while let Some(parent) = id.filter(|id| *id != inv.root && *id != base && seen.insert(*id)) {
             self.set_open(parent, true);
             id = rules::parent(inv, parent);
         }
@@ -60,15 +60,15 @@ impl Sidebar {
 
     /// The folders under the root, in the inventory's order, the Trash
     /// left for the foot of the column.
-    fn prepare(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool) {
-        let key = (view.built(), self.revision, show_library);
+    fn prepare(&mut self, view: &ViewCache, inv: &Inventory, base: Uuid, show_library: bool) {
+        let key = (view.built(), self.revision, show_library, base);
         if self.key == Some(key) {
             return;
         }
         self.key = Some(key);
         self.rows.clear();
         let mut stack: Vec<(Uuid, usize)> = view
-            .children_iter(inv.root, show_library, inv.lib_root)
+            .children_iter(base, show_library, inv.lib_root)
             .filter(|id| inv.folders.get(id).is_some_and(|f| f.info.type_default != 14))
             .map(|id| (id, 0))
             .collect();
@@ -190,53 +190,69 @@ pub(super) fn show(
     );
     let ui = &mut column;
     ui.spacing_mut().item_spacing.y = 1.0;
+    let base = super::base(inv, st);
+    let scoped = base != inv.root;
+    if scoped {
+        // A folder window: its folder, where "All inventory" would be.
+        let response = entry(ui, p, "folder-filled", &folder_name(inv, base), None, 0, st.browse == base, 8.0);
+        if response.clicked() {
+            browse(st, prefs, base);
+        }
+        let mut open = false;
+        folder_target(ui, p, inv, base, &response, &mut open, st, prefs, facts, actions);
+    }
     // The shortcuts.
     let everything = st.tab == 0 && st.browse == inv.root;
-    if entry(
-        ui,
-        p,
-        "briefcase-filled",
-        aurora_i18n::tr!("inventory-all"),
-        None,
-        0,
-        everything,
-        8.0,
-    )
-    .clicked()
+    if !scoped
+        && entry(
+            ui,
+            p,
+            "briefcase-filled",
+            aurora_i18n::tr!("inventory-all"),
+            None,
+            0,
+            everything,
+            8.0,
+        )
+        .clicked()
     {
         browse(st, prefs, inv.root);
     }
     let unseen = super::toolbar::unseen_received(inv, st);
-    for (tab, icon, label, count, shown) in [
-        (
-            2,
-            "clock-filled",
-            aurora_i18n::tr!("inventory-tab-recent"),
-            st.counts.recent,
-            prefs.show_recent,
-        ),
-        (
-            3,
-            "hanger-2-filled",
-            aurora_i18n::tr!("inventory-tab-worn"),
-            facts.worn.len(),
-            prefs.show_worn,
-        ),
-        (
-            4,
-            "star-filled",
-            aurora_i18n::tr!("inventory-tab-favorites"),
-            st.counts.favorites,
-            prefs.show_favorites,
-        ),
-        (
-            RECEIVED_TAB,
-            "inbox",
-            aurora_i18n::tr!("inventory-tab-received"),
-            st.counts.received,
-            true,
-        ),
-    ] {
+    for (tab, icon, label, count, shown) in if scoped {
+        Vec::new()
+    } else {
+        vec![
+            (
+                2,
+                "clock-filled",
+                aurora_i18n::tr!("inventory-tab-recent"),
+                st.counts.recent,
+                prefs.show_recent,
+            ),
+            (
+                3,
+                "hanger-2-filled",
+                aurora_i18n::tr!("inventory-tab-worn"),
+                facts.worn.len(),
+                prefs.show_worn,
+            ),
+            (
+                4,
+                "star-filled",
+                aurora_i18n::tr!("inventory-tab-favorites"),
+                st.counts.favorites,
+                prefs.show_favorites,
+            ),
+            (
+                RECEIVED_TAB,
+                "inbox",
+                aurora_i18n::tr!("inventory-tab-received"),
+                st.counts.received,
+                true,
+            ),
+        ]
+    } {
         if !shown {
             continue;
         }
@@ -250,9 +266,9 @@ pub(super) fn show(
     ui.add_space(2.0);
     // The folders.
     st.view.prepare(inv, prefs.sort);
-    let follow = st.side.follow(inv, st.browse);
-    st.side.prepare(&st.view, inv, prefs.show_library);
-    let trash = rules::system(inv, 14);
+    let follow = st.side.follow(inv, st.browse, base);
+    st.side.prepare(&st.view, inv, base, prefs.show_library);
+    let trash = rules::system(inv, 14).filter(|_| !scoped);
     let foot = if trash.is_some() { ROW + 8.0 } else { 0.0 };
     let height = (ui.available_height() - foot).max(ROW);
     let rows = st.side.rows.clone();
@@ -398,12 +414,12 @@ mod tests {
             },
         );
         let mut side = Sidebar::default();
-        side.prepare(&view, &inv, true);
+        side.prepare(&view, &inv, inv.root, true);
         let listed: Vec<_> = side.rows.iter().map(|r| (r.id.as_u128(), r.depth)).collect();
         assert_eq!(listed, [(10, 0), (20, 0)], "no item, no trash, closed folders");
         assert!(side.rows[0].branches && !side.rows[1].branches);
         side.set_open(id(10), true);
-        side.prepare(&view, &inv, true);
+        side.prepare(&view, &inv, inv.root, true);
         let listed: Vec<_> = side.rows.iter().map(|r| (r.id.as_u128(), r.depth)).collect();
         assert_eq!(listed, [(10, 0), (11, 1), (20, 0)]);
     }

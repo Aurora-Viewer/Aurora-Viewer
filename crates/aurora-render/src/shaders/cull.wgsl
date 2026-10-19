@@ -92,6 +92,7 @@ const F_SHADOW_STATS: u32 = 64u;
 const F_SHADOW_ALPHA_ALL: u32 = 128u;
 // projector shadow map k is drawn
 const F_SPOT: u32 = 256u;
+const F_WATER_AIR: u32 = 1024u;
 
 struct CullFace {
     index_count: u32,
@@ -139,6 +140,7 @@ struct CullFrame {
     // main view (6th plane accepts all: reverse-Z infinite projection)
     planes: array<vec4<f32>, 6>,
     water: array<vec4<f32>, 6>,
+    water_air: array<vec4<f32>, 6>,
     mirror: array<vec4<f32>, 6>,
     probe: array<vec4<f32>, 6>,
     // frustums of the two projector shadow maps
@@ -395,7 +397,8 @@ fn face_mask(i: u32) -> u32 {
     }
     let solid = fp >= PASS_OPAQUE && fp <= PASS_MASK_2S;
     if (reflects && solid) {
-        if ((fl & F_WATER) != 0u && sphere_in(frame.water, c, r)) {
+        if (((fl & F_WATER) != 0u && sphere_in(frame.water, c, r)) ||
+            ((fl & F_WATER_AIR) != 0u && sphere_in(frame.water_air, c, r))) {
             m |= 1u << BIN_REFL_WATER;
         }
         if ((fl & F_MIRROR) != 0u && sphere_in(frame.mirror, c, r)) {

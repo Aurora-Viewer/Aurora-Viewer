@@ -123,7 +123,7 @@ fn sky_pixel(in: SkyOut) -> vec4<f32> {
     var col = sky_full(dir);
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);
-        col = col * wf.a + wf.rgb;
+        col = col * wf.transmission + wf.color;
     }
     return vec4<f32>(col, 1.0);
 }
@@ -233,17 +233,33 @@ fn terrain_color(in: TerrainOut) -> vec3<f32> {
         let p3 = vec3<f32>(0.42, 0.42, 0.44);
         albedo = srgb_to_linear(p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3) * 1.6;
     }
+    var wet=0.0;
+    if(water_fx_on(1024u)) {
+        let level=water_fx_bed(in.world_pos.xy).y;
+        wet=(1.0-smoothstep(0.05,0.45,in.world_pos.z-level))*smoothstep(-2.0,-0.1,in.world_pos.z-level);
+        albedo*=1.0-wet*0.32;
+    }
     let n = normalize(in.normal);
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
     let dist = distance(in.world_pos, frame.camera_pos.xyz);
     let sh = sun_shadow(in.world_pos, n, dist, in.clip.xy);
-    if (is_classic_sky() && !camera_underwater()) {
-        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
-        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a), a);
-        return light_tiles_checked(debug_view(hazed, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
+    var wet_light=vec3<f32>(0.0);
+    if(wet>0.0) {
+        let l=normalize(frame.sun_dir.xyz);let half_vec=normalize(l+v);
+        let nv=max(dot(n,v),0.001);let nl=max(dot(n,l),0.0);
+        let fresnel=0.02037+0.97963*pow(1.0-nv,5.0);
+        let glint=d_ggx(max(dot(n,half_vec),0.0),0.08)*v_smith(nv,nl,0.08)*nl*0.02;
+        wet_light=(sky_color(reflect(-v,n))*fresnel*0.25+frame.sun_color.rgb*min(glint,2.0)*sh)*wet;
     }
-    let col = shade_pbr(albedo, 0.0, 0.92, 1.0, n, v, in.world_pos, sh, in.clip.xy);
-    return light_tiles_checked(debug_view(apply_fog(col, in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
+    if (is_classic_sky()) {
+        let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
+        let hazed = ll_haze(ll_classic_diffuse(albedo, n, in.world_pos, sh, in.clip.xy, a) + wet_light + albedo*water_caustics(in.world_pos,n), a);
+        var color=hazed*water_scene_light(in.world_pos);
+        if(camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){color=apply_fog(color,in.world_pos);}
+        return light_tiles_checked(debug_view(color, in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
+    }
+    let col = shade_pbr(albedo, 0.0, mix(0.92,0.4,wet), 1.0, n, v, in.world_pos, sh, in.clip.xy) + wet_light + albedo*water_caustics(in.world_pos,n);
+    return light_tiles_checked(debug_view(apply_fog(col*water_scene_light(in.world_pos), in.world_pos), in.world_pos, n, dist, in.clip.xy), in.world_pos, in.clip.xy);
 }
 
 @fragment
@@ -268,15 +284,35 @@ fn fs_terrain_g(in: TerrainOut) -> GOut {
 struct WaterOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world_pos: vec3<f32>,
+    @location(1) level: f32,
 };
 
-@vertex
-fn vs_water(in: VsIn) -> WaterOut {
+fn water_vertex(in: VsIn) -> WaterOut {
     let rec = records[in.instance];
-    let wp = rec.model * vec4<f32>(in.pos, 1.0);
+    var wp = rec.model * vec4<f32>(in.pos, 1.0);
+    var wave = vec3<f32>(0.0);
+    if(water_fx_on(1u) || water_fx_on(16u)){wave=water_fx_wave(wp.xy,wp.z);}
+    // Huge void tiles cannot resolve waves. Fade their geometry to avoid aliasing.
+    let tile = max(length(rec.model[0].xyz),length(rec.model[1].xyz));
+    let geometry = 1.0-smoothstep(70.0,140.0,tile);
+    let near = 1.0-smoothstep(80.0,160.0,distance(wp.xyz,frame.camera_pos.xyz));
+    wp = vec4<f32>(wp.xyz+wave*geometry*near,1.0);
     var out: WaterOut;
     out.clip = frame.view_proj * wp;
     out.world_pos = wp.xyz;
+    out.level = (rec.model * vec4<f32>(in.pos,1.0)).z;
+    return out;
+}
+
+@vertex
+fn vs_water(in:VsIn)->WaterOut { return water_vertex(in); }
+
+@vertex
+fn vs_water_unclipped(in:VsIn)->WaterOut {
+    var out=water_vertex(in);
+    // Preserve XY/W and perspective interpolation of the actual surface.
+    // Only raster depth changes; the fragment restores its physical depth.
+    out.clip.z=out.clip.w*0.5;
     return out;
 }
 
@@ -294,8 +330,174 @@ fn analytic_wave(p: vec2<f32>, t: f32) -> vec3<f32> {
     return normalize(vec3<f32>(-g.x, -g.y, 1.0));
 }
 
-@fragment
-fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
+// Reuse opaque depth/color: no second scene render or GPU/CPU synchronization.
+fn water_source_fog(source:vec3<f32>)->WaterFog {
+    if(!water_fx_on(256u) && !camera_underwater()){return WaterFog(vec3<f32>(0.0),vec3<f32>(1.0));}
+    return water_fog_view(source-frame.camera_pos.xyz,frame.water_normal.w);
+}
+
+// Rays cover the same 200 m at every quality, with finer steps at high quality.
+// Missing/offscreen geometry falls back to the environment, as with water SSR.
+fn water_scene_ray(origin:vec3<f32>,direction:vec3<f32>,level:f32,above:bool)->vec4<f32> {
+    let steps=12u+water_fx.counts.w*6u;
+    let growth=pow(2000.0,1.0/f32(steps));
+    var t=0.1*growth;var previous=0.0;
+    for(var i=0u;i<steps;i++) {
+        let p=origin+direction*t;
+        let clip=frame.view_proj*vec4<f32>(p,1.0);
+        if(clip.w<=0.01){break;}
+        let ndc=clip.xyz/clip.w;
+        let uv=vec2<f32>(ndc.x*0.5+0.5,0.5-ndc.y*0.5);
+        if(any(uv<vec2<f32>(0.001)) || any(uv>vec2<f32>(0.999))){break;}
+        let depth=scene_depth_at(uv);
+        if(depth>0.0 && depth>ndc.z) {
+            let hit=world_from_depth(uv,depth);
+            let gap=distance(hit,frame.camera_pos.xyz)-distance(p,frame.camera_pos.xyz);
+            if(abs(gap)<max(t-previous,0.15)*1.5) {
+                var lo=previous;var hi=t;var hit_uv=uv;
+                for(var k=0u;k<4u;k++) {
+                    let mid=(lo+hi)*0.5;
+                    let c=frame.view_proj*vec4<f32>(origin+direction*mid,1.0);
+                    let q=c.xyz/c.w;
+                    let u=vec2<f32>(q.x*0.5+0.5,0.5-q.y*0.5);
+                    if(scene_depth_at(u)>q.z){hi=mid;hit_uv=u;}else{lo=mid;}
+                }
+                let source=world_from_depth(hit_uv,scene_depth_at(hit_uv));
+                if(select(source.z>level+0.04,source.z<level-0.04,above)){return vec4<f32>(0.0);}
+                // Terrain has a continuous bathymetric fallback below. Sparse
+                // screen-space hits must not paint alternating bright/dark bands.
+                if(!above && source.z<water_fx_bed(source.xy).x+0.35){return vec4<f32>(0.0);}
+                let source_fog=water_source_fog(source);
+                let sampled=textureSampleLevel(scene_tex,lin_clamp,hit_uv,0.0).rgb;
+                // The source was already fogged in the opaque pass. Recover its
+                // incident radiance before applying the actual surface path once.
+                var color=max(sampled-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
+                if(!above) {
+                    let reflected_fog=water_fog_segment(source-origin,frame.water_normal.w,max(level-origin.z,0.0),max(level-source.z,0.0));
+                    color=color*reflected_fog.transmission+reflected_fog.color;
+                }
+                let edge=min(min(hit_uv.x,1.0-hit_uv.x),min(hit_uv.y,1.0-hit_uv.y));
+                let confidence=smoothstep(0.0,0.035,edge)*smoothstep(0.03,0.12,max(max(source_fog.transmission.r,source_fog.transmission.g),source_fog.transmission.b));
+                return vec4<f32>(color,confidence);
+            }
+        }
+        previous=t;t*=growth;
+    }
+    return vec4<f32>(0.0);
+}
+
+fn water_bottom_reflection(surface:vec3<f32>,direction:vec3<f32>,level:f32)->vec3<f32> {
+    // Approximate the rough, multiple-bounce floor lobe continuously when a
+    // micro-normal sends the single reflected ray back toward the underside.
+    let floor_ray=normalize(vec3<f32>(direction.xy,-sqrt(direction.z*direction.z+0.0144)));
+    var t=clamp((water_fx_bed(surface.xy).x-surface.z)/floor_ray.z,0.05,200.0);
+    for(var i=0u;i<2u;i++) {
+        let p=surface+floor_ray*t;
+        t=clamp((water_fx_bed(p.xy).x-surface.z)/floor_ray.z,0.05,200.0);
+    }
+    let bottom=surface+floor_ray*t;
+    let c=frame.view_proj*vec4<f32>(bottom,1.0);
+    if(c.w<=0.01){return frame.water_fog.rgb;}
+    // Outside the image, extend blurred bottom radiance rather than inventing
+    // sharp offscreen geometry or falling through to black gaps between SSR hits.
+    let uv=clamp(vec2<f32>(c.x/c.w*0.5+0.5,0.5-c.y/c.w*0.5),vec2<f32>(0.015),vec2<f32>(0.985));
+    let depth=scene_depth_at(uv);
+    if(depth<=0.0){return frame.water_fog.rgb;}
+    let source=world_from_depth(uv,depth);
+    if(source.z>level-0.03){return frame.water_fog.rgb;}
+    let sampled=(textureSampleLevel(scene_tex,lin_clamp,uv,0.0).rgb
+        +textureSampleLevel(scene_tex,lin_clamp,uv+vec2<f32>(0.006,0.0),0.0).rgb
+        +textureSampleLevel(scene_tex,lin_clamp,uv-vec2<f32>(0.006,0.0),0.0).rgb
+        +textureSampleLevel(scene_tex,lin_clamp,uv+vec2<f32>(0.0,0.006),0.0).rgb
+        +textureSampleLevel(scene_tex,lin_clamp,uv-vec2<f32>(0.0,0.006),0.0).rgb)*0.2;
+    let source_fog=water_source_fog(source);
+    let incoming=max(sampled-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
+    let fog=water_fog_segment(floor_ray*t,frame.water_normal.w,0.0,max(level-bottom.z,0.0));
+    return incoming*fog.transmission+fog.color;
+}
+
+// Exterior geometry has its own wider view: refracted rays commonly reach
+// objects outside the main image. Two depth-guided steps correct near parallax.
+fn water_exterior(surface:vec3<f32>,direction:vec3<f32>)->vec4<f32> {
+    var point=surface+direction*200.0;
+    var uv=vec2<f32>(0.5);
+    for(var i=0u;i<3u;i++) {
+        let clip=frame.water_air_vp*vec4<f32>(point,1.0);
+        if(clip.w<=0.0001){return vec4<f32>(0.0);}
+        uv=clip.xy/clip.w*vec2<f32>(0.5,-0.5)+0.5;
+        if(any(uv<vec2<f32>(0.001)) || any(uv>vec2<f32>(0.999))){return vec4<f32>(0.0);}
+        let size=vec2<i32>(textureDimensions(water_air_depth));
+        let depth=textureLoad(water_air_depth,vec2<i32>(uv*vec2<f32>(size)),0);
+        if(depth<=0.0){break;}
+        let world=frame.water_air_inv_vp*vec4<f32>(uv*vec2<f32>(2.0,-2.0)+vec2<f32>(-1.0,1.0),depth,1.0);
+        let source=world.xyz/world.w;
+        let along=dot(source-surface,direction);
+        if(along<=0.0){return vec4<f32>(0.0);}
+        point=surface+direction*along;
+    }
+    let edge=min(min(uv.x,1.0-uv.x),min(uv.y,1.0-uv.y));
+    return vec4<f32>(textureSampleLevel(water_air_color,lin_clamp,uv,0.0).rgb,smoothstep(0.0,0.025,edge));
+}
+
+fn water_dielectric(cos_i:f32)->f32 {
+    let eta=1.333;
+    let sin_t2=eta*eta*(1.0-cos_i*cos_i);
+    if(sin_t2>=1.0){return 1.0;}
+    let cos_t=sqrt(max(1.0-sin_t2,0.0));
+    let rs=(eta*cos_i-cos_t)/max(eta*cos_i+cos_t,0.001);
+    let rp=(cos_i-eta*cos_t)/max(cos_i+eta*cos_t,0.001);
+    return (rs*rs+rp*rp)*0.5;
+}
+
+fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+    let fog=water_fog_segment(surface-frame.camera_pos.xyz,frame.water_normal.w,max(camera_water_level()-frame.camera_pos.z,0.0),0.0);
+    if(!water_fx_on(512u)) {
+        // The disabled/master-off path keeps inexpensive baseline transparency.
+        let clip=frame.view_proj*vec4<f32>(surface,1.0);
+        let ndc=clip.xy/clip.w;
+        let uv=vec2<f32>(ndc.x*0.5+0.5,0.5-ndc.y*0.5);
+        var distorted=clamp(uv+normal.xy*0.008,vec2<f32>(0.001),vec2<f32>(0.999));
+        var depth=scene_depth_at(distorted);
+        if(depth>0.0 && world_from_depth(distorted,depth).z<level-0.04){distorted=uv;depth=scene_depth_at(uv);}
+        var color=sky_full(incident);
+        if(depth>0.0) {
+            let source=world_from_depth(distorted,depth);
+            let source_fog=water_source_fog(source);
+            let sampled=textureSampleLevel(scene_tex,lin_clamp,distorted,0.0).rgb;
+            color=max(sampled-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
+        }
+        return color*fog.transmission+fog.color;
+    }
+    let eta=1.333;
+    let cos_i=clamp(dot(-normal,-incident),0.0,1.0);
+    var reflected=frame.water_fog.rgb;
+    var transmitted=vec3<f32>(0.0);
+    let reflectance=water_dielectric(cos_i);
+    if(reflectance<1.0) {
+        let direction=refract(incident,-normal,eta);
+        transmitted=sky_full(direction);
+        var hit=vec4<f32>(0.0);
+        if(frame.water_air.x>0.5){hit=water_exterior(surface,direction);}
+        else {hit=water_scene_ray(surface+direction*0.025,direction,level,true);}
+        transmitted=mix(transmitted,hit.rgb,hit.a);
+    }
+    if(reflectance>0.04) {
+        let direction=reflect(incident,normal);
+        reflected=water_bottom_reflection(surface,direction,level);
+        let hit=water_scene_ray(surface+direction*0.025,direction,level,false);
+        reflected=mix(reflected,hit.rgb,hit.a);
+    }
+    return mix(transmitted,reflected,reflectance)*fog.transmission+fog.color;
+}
+
+fn water_pixel(in: WaterOut) -> vec4<f32> {
+    if(water_fx_on(1u) || water_fx_on(16u)) {
+        let depth=water_interface_depth(in.world_pos);
+        // Single-sample interface coverage must also retain MSAA edge samples.
+        let tolerance=0.6*(abs(dpdx(depth))+abs(dpdy(depth)))+0.000001;
+        let first=textureLoad(water_interface,vec2<i32>(in.clip.xy),0);
+        if(depth+tolerance<first){discard;}
+    }
     let uv = screen_uv(in.clip.xy);
     let t = frame.camera_pos.w * 0.5;
     let rel = in.world_pos - frame.camera_pos.xyz;
@@ -322,7 +524,23 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let wavef = (wave1 + wave2 * 0.4 + wave3 * 0.6) * 0.5;
     var n = wavef * frame.water_normal.xyz;
     n.z *= 2.0;
-    n = normalize(n);
+    let footprint=max(length(dpdx(in.world_pos.xy)),length(dpdy(in.world_pos.xy)));
+    let wake=water_wake_sample(in.world_pos.xy,in.level);
+    let furrow=1.0-smoothstep(0.003,0.035,-wake.z)*0.7;
+    if(water_fx_on(1u)) {
+        let micro=water_micro(in.world_pos.xy,frame.camera_pos.w,water_fx.counts.w,footprint);
+        let detail=clamp(length(frame.water_normal.xy)*0.35,0.5,1.5);
+        n=normalize(vec3<f32>((n.xy*0.18-micro.xy*detail)*furrow,1.0)+water_fx_normal(in.world_pos.xy,in.level,wake.xy));
+    } else { n=normalize(n+water_fx_normal(in.world_pos.xy,in.level,wake.xy)); }
+
+    // Below water, transmit the world through the moving Snell window and
+    // reflect the submerged scene at grazing angles. The sky itself is unchanged.
+    let geometric=cross(dpdx(in.world_pos),dpdy(in.world_pos));
+    let up=geometric*select(-1.0,1.0,geometric.z>=0.0);
+    let below=dot(frame.camera_pos.xyz-in.world_pos,up)<0.0;
+    if(below) {
+        return vec4<f32>(water_underside(in.world_pos,in.level,view_vec,n),1.0);
+    }
 
     // fresnel (calculateFresnelFactors)
     let fs = frame.water_params.y;
@@ -336,7 +554,9 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     let dmod = sqrt(dist);
     let waver = wavef * 3.0;
     let ref_scale = 0.018;
-    var distort2 = clamp(uv + waver.xy * ref_scale / max(dmod, 1.0) * 2.0, vec2<f32>(0.0), vec2<f32>(0.999));
+    var distortion=waver.xy*ref_scale/max(dmod,1.0)*2.0;
+    if(water_fx_on(1u) || water_fx_on(16u)){distortion=n.xy*0.08/max(dmod,1.0);}
+    var distort2=clamp(uv+distortion,vec2<f32>(0.0),vec2<f32>(0.999));
     let d0 = scene_depth_at(uv);
     let surf_dist = dist;
     var refr_dist = 1e5;
@@ -345,6 +565,10 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
     }
     // shoreline: no distortion where the water is shallow
     let fade = clamp((refr_dist - surf_dist) / 10.0, 0.0, 1.0);
+    if(water_fx_on(1u) || water_fx_on(16u)) {
+        let water_path=clamp(refr_dist-surf_dist,0.0,30.0);
+        distort2=clamp(uv+n.xy*min(water_path*0.018,0.16)/max(dmod*0.5,1.0),vec2<f32>(0.0),vec2<f32>(0.999));
+    }
     distort2 = mix(uv, distort2, min(1.0, fade * 10.0));
     let d1 = scene_depth_at(distort2);
     var ref_pos = frame.camera_pos.xyz + view_vec * 1e5;
@@ -357,53 +581,325 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
         ref_pos = frame.camera_pos.xyz + view_vec * refr_dist;
     }
     var fb = textureSampleLevel(scene_tex, lin_clamp, distort2, 0.0).rgb;
-    let underwater = frame.camera_pos.z < frame.params.y;
-    if (!underwater) {
-        // fog of the water volume between the surface and the refracted point
-        let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
-        fb = fb * wf.a + wf.rgb;
-    }
+    // Fog of the water volume between the surface and the refracted point.
+    let wf = water_fog_view(ref_pos - frame.camera_pos.xyz, frame.water_fog.w);
+    if (water_fx_on(256u)) {
+        let source_fog=water_source_fog(ref_pos);
+        fb=max(fb-source_fog.color,vec3<f32>(0.0))/max(source_fog.transmission,vec3<f32>(0.05));
+        let volume=water_fog_segment(ref_pos-in.world_pos,frame.water_normal.w,0.0,max(in.level-ref_pos.z,0.0));
+        fb=fb*volume.transmission+volume.color;
+    } else { fb = fb * wf.transmission + wf.color; }
 
     // reflection: planar texture, screen-space rays, or the sky
     let r = reflect(view_vec, normalize(mix(vec3<f32>(0.0, 0.0, 1.0), n, 0.6)));
     var radiance = sky_color(vec3<f32>(r.x, r.y, abs(r.z)));
-    if (probes_on() && !underwater) {
+    if (probes_on()) {
         // without a planar reflection the water reflects its probes
         let s = sample_probes_water(in.world_pos, in.clip.xy, vec3<f32>(r.x, r.y, abs(r.z)), 0.0);
         if (s.w > 0.0) {
             radiance = s.rgb;
         }
     }
-    if (frame.misc.z > 0.5 && !underwater) {
+    if (frame.misc.z > 0.5) {
         let ruv = clamp(uv + n.xy * 0.035 / max(dmod * 0.25, 1.0), vec2<f32>(0.001), vec2<f32>(0.999));
         radiance = textureSampleLevel(water_refl_tex, lin_clamp, ruv, 0.0).rgb;
-    } else if (frame.misc.y > 0.5 && !underwater) {
-        let hit = ssr_trace(in.world_pos + vec3<f32>(0.0, 0.0, 0.02), r, 40);
+    } else if (frame.misc.y > 0.5) {
+        let hit = ssr_trace(in.world_pos + vec3<f32>(0.0, 0.0, 0.02), r, select(40,16 + i32(water_fx.counts.w) * 12,water_fx.counts.z!=0u));
         radiance = mix(radiance, hit.rgb, hit.a);
     }
-    if (underwater) {
-        radiance = frame.water_fog.rgb;
-    }
-    radiance *= df2.y;
+    if (!water_fx_on(512u)) { radiance *= df2.y; }
 
     // sun glint (punctual light, roughness = blur multiplier)
     let l = normalize(frame.sun_dir.xyz);
     let vv = -view_vec;
     let h = normalize(l + vv);
-    let rough = clamp(frame.water_params.w, 0.02, 1.0);
+    var rough=clamp(frame.water_params.w,0.02,1.0);
+    if(water_fx_on(1u)){rough=clamp(rough*0.65+footprint*0.06,0.035,0.25);}
+    rough=mix(rough,0.055,smoothstep(0.004,0.045,-wake.z)*0.65);
     let nh = max(dot(n, h), 0.0);
     let nl = max(dot(n, l), 0.0);
     let spec = d_ggx(nh, rough * rough) * v_smith(max(dot(n, vv), 1e-3), nl, rough * rough) * nl;
     let shadow = shadow_factor(in.world_pos, vec3<f32>(0.0, 0.0, 1.0), dist);
     let punctual = clamp(spec * frame.sun_color.rgb * shadow, vec3<f32>(0.0), vec3<f32>(10.0));
 
-    var color = mix(fb, radiance, min(1.0, df2.x)) + punctual;
-    color = mix(fb, color, min(1.0, fade * 60.0));
-    if (underwater) {
-        let wf = water_fog_view(rel, frame.water_normal.w);
-        color = color * wf.a + wf.rgb;
-    } else {
-        color = apply_fog(color, in.world_pos);
+    var reflectance = min(1.0,df2.x);
+    var glint = punctual;
+    if (water_fx_on(512u)) {
+        let cos_i = clamp(dot(n,vv),0.0,1.0);
+        reflectance = 0.02037+0.97963*pow(1.0-cos_i,5.0);
+        glint *= 0.02037+0.97963*pow(1.0-max(dot(vv,h),0.0),5.0);
     }
+    var color = mix(fb, radiance, reflectance) + glint;
+    color = mix(fb, color, min(1.0, fade * 60.0));
+    if((water_fx.counts.z &14u)!=0u) {
+        let p=in.world_pos.xy;let bed=water_fx_bed(p);let depth=max(in.level-bed.x,0.0);
+        let field=water_fx_sample(p);
+        // Shore depth always comes from terrain, never an avatar or submerged
+        // mesh in the opaque depth. Contact refinement is masked below.
+        var foam=smoothstep(0.3,0.95,water_fx_foam(p))*0.55;
+        if(water_fx_on(2u) && depth<2.0) {
+            // Travel along the depth gradient: the front approaches every coast orientation.
+            let phase=depth*3.4+frame.camera_pos.w*1.25+water_fx_noise(p*0.32)*1.1;
+            let breaker=pow(max(sin(phase),0.0),4.0);
+            let runup=0.12+0.28*sin(frame.camera_pos.w*0.6+water_fx_noise(p*0.15));
+            let front=exp(-pow((depth-0.18-runup)*5.0,2.0));
+            foam=max(foam,front*breaker*0.95);
+            foam=max(foam,breaker*exp(-pow((depth-0.7)*2.8,2.0))*0.65);
+        }
+        if(water_fx_on(4u) && d0>0.0 && field.w>0.02) {
+            let hit=world_from_depth(uv,d0);
+            let ground=water_fx_bed(hit.xy).x;
+            let clearance=in.level-hit.z;
+            // The visible intersection refines the proxy to the actual mesh silhouette.
+            let obstacle=smoothstep(0.18,0.55,hit.z-ground);
+            foam+=obstacle*(1.0-smoothstep(0.03,0.42,clearance))*smoothstep(-0.08,0.03,clearance)*0.45*field.w;
+        }
+        if(water_fx_on(8u)) {
+            let wave=water_swell(p,frame.camera_pos.w,water_fx.counts.w);
+            let windpatch=water_fx_noise(p*0.22-frame.camera_pos.w*0.04);
+            foam+=smoothstep(0.08,0.2,wave.compression)*smoothstep(0.45,0.8,windpatch)*0.6;
+        }
+        foam=water_foam_coverage(p,foam,footprint);
+        // Fine breaking filaments already have a narrow, resolved footprint.
+        // Applying the coarse accumulation threshold twice erased slow swimmers.
+        if(water_fx_on(4u)){foam+=smoothstep(0.018,0.18,wake.w)*water_foam_coverage(p,1.0,footprint)*0.55;}
+        foam=clamp(foam,0.0,1.0)*smoothstep(0.0,0.06,depth);
+        let nl=max(frame.sun_dir.z,0.0);
+        var foam_light=(frame.sky_horizon.rgb*0.3+frame.sun_color.rgb*nl*shadow/PI)*0.75;
+        if(is_classic_sky()) {
+            // Classic water uses the sky's radiance units. Limit highlights
+            // without shifting their hue or inheriting the seabed's GTAO.
+            let lit=(frame.sky_horizon.rgb*0.38+frame.sun_color.rgb*nl*shadow*0.7)*0.85;
+            let peak=max(lit.r,max(lit.g,lit.b));
+            foam_light=lit/max(1.0,peak/1.15);
+        }
+        color=mix(color,max(foam_light,vec3<f32>(0.0)),foam*0.9);
+    }
+    // The upper face is viewed through air. Opaque source water fog was
+    // removed above; do not add another fictitious submerged interval here.
+    if(camera_underwater()) {
+        let fog=water_fog_view(rel,frame.water_normal.w);
+        color=color*fog.transmission+fog.color;
+    } else {color=apply_air_fog(color,in.world_pos);}
     return vec4<f32>(color, 1.0);
+}
+
+@fragment
+fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
+    return water_pixel(in);
+}
+
+struct WaterDepthOut {
+    @location(0) color:vec4<f32>,
+    @builtin(frag_depth) depth:f32,
+};
+
+fn water_physical_depth(world:vec3<f32>)->f32 {
+    let clip=frame.view_proj*vec4<f32>(world,1.0);
+    return clamp(clip.z/max(clip.w,0.000001),0.0,1.0);
+}
+
+@fragment
+fn fs_water_unclipped(in:WaterOut)->WaterDepthOut {
+    return WaterDepthOut(water_pixel(in),water_physical_depth(in.world_pos));
+}
+
+fn water_interface_depth(world:vec3<f32>)->f32 {
+    // Standard near-clamped depth merges all interfaces before near. This
+    // ordering retains their true distance, including millimetre crossings.
+    let clip=frame.view_proj*vec4<f32>(world,1.0);
+    return 1.0/(1.0+max(clip.w,0.0));
+}
+
+@fragment
+fn fs_water_interface(in:WaterOut)->@builtin(frag_depth) f32 {
+    return water_interface_depth(in.world_pos);
+}
+
+// Event history is small; all droplet/bubble trajectories are evaluated on GPU.
+struct WaterParticleOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) life: f32,
+    @location(3) @interpolate(flat) kind: u32,
+    @location(4) @interpolate(flat) level: f32,
+    @location(5) normal: vec3<f32>,
+};
+fn particle_water_level(p:vec2<f32>,level:f32)->f32 {
+    if(!water_fx_on(1u)){return level;}
+    return level+water_swell(p,water_fx.clock.x,water_fx.counts.w).offset.z*smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+}
+@vertex
+fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index) instance: u32) -> WaterParticleOut {
+    let counts=array<u32,4>(4u,6u,8u,12u); let count=counts[min(water_fx.counts.w,3u)]; let event=water_events[instance/count]; let index=instance%count;
+    let age=water_fx.clock.x-event.position.w; let bubble=event.params.y==1.0;
+    let entry=event.params.y==5.0;let fan=event.params.y==7.0;
+    let footfall=fan && event.params.w>0.5;
+    let h=water_fx_hash(vec2<f32>(f32(index)+event.motion.x*8.0,event.position.w*19.0+event.motion.y*8.0));
+    let angle=h.x*6.283185; let direction=vec2<f32>(cos(angle),sin(angle));
+    var pos=event.position.xyz; var size=0.004+h.y*0.006; var life=0.0;
+    var velocity=vec3<f32>(0.0);var elongation=0.0;
+    if(bubble && water_fx_on(128u)) {
+        let rise=0.22+h.y*0.14;
+        pos+=vec3<f32>(direction*0.035*sin(age*2.2+h.x)+event.motion.xy*age*0.025,rise*age);
+        size*=1.0+age*0.1;
+        life=smoothstep(0.0,0.15,age)*(1.0-smoothstep(2.5,3.0,age));
+        life*=smoothstep(0.0,0.04,particle_water_level(pos.xy,event.params.z)-pos.z);
+        let bubbles=2u+min(water_fx.counts.w,2u);
+        if(index>=bubbles){life=0.0;}
+    } else if ((event.params.y==0.0 || entry || fan) && water_fx_on(64u)) {
+        var launch=0.85+h.y*0.65+event.motion.w*0.9;
+        var horizontal=direction*(0.25+event.motion.w*0.5)+event.motion.xy*0.15;
+        var origin=direction*event.params.x*0.5;
+        var flight=age;
+        if(entry) {
+            // Each sector throws droplets through its own rim. Delayed release
+            // breaks up the sheet instead of making a simultaneous particle ring.
+            let theta=atan2(event.motion.y,event.motion.x)+(h.x-0.5)*event.params.w;
+            let radial=vec2<f32>(cos(theta),sin(theta));
+            launch=2.0+h.y*1.7+event.motion.w*1.1;
+            horizontal=radial*(0.8+h.y*0.7+event.motion.w*0.65);
+            origin=radial*event.params.x;
+            flight=age-h.x*0.09;
+            size=0.009+h.y*0.020;
+        } else if(fan) {
+            // Walking/strokes push water aside in low fans, rather than throwing
+            // an isotropic fountain from the avatar's center.
+            let forward=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
+            let side=vec2<f32>(-forward.y,forward.x)*select(-1.0,1.0,index%2u==0u);
+            let radial=normalize(forward*(0.15+h.x*0.45)+side);
+            launch=0.6+h.y*0.5+event.motion.w*1.4;
+            horizontal=radial*(0.45+event.motion.w*1.1)+event.motion.xy*0.06;
+            origin=side*event.params.x*0.55+forward*0.12;
+            size=0.007+h.y*0.008;
+            if(footfall) {
+                // A foot slap expels a small, uneven rim; most of the water
+                // stays close to the shoe. Faster landings lift it farther.
+                let power=sqrt(max(event.motion.w,0.0));
+                let theta=6.283185*(f32(index)/f32(count)+h.x*0.12);
+                let rim=vec2<f32>(cos(theta),sin(theta));
+                launch=0.35+power*1.45+h.y*0.25;
+                horizontal=rim*(0.25+power*0.85)+event.motion.xy*0.04;
+                origin=rim*event.params.x*0.65;
+                flight=age-h.x*0.035;
+                size=0.004+h.y*0.006;
+            }
+        }
+        let travel=(1.0-exp(-max(flight,0.0)*1.1))/1.1;
+        pos+=vec3<f32>(origin+horizontal*travel,0.018+launch*flight-4.905*flight*flight);
+        velocity=vec3<f32>(horizontal*exp(-max(flight,0.0)*1.1),launch-9.81*flight);
+        elongation=min(length(velocity)*select(0.010,0.016,entry),select(0.035,0.09,entry));
+        life=smoothstep(0.0,0.025,flight)*(1.0-smoothstep(select(0.28,0.7,entry),select(0.65,1.5,entry),flight));
+        life*=smoothstep(-0.01,0.025,pos.z-particle_water_level(pos.xy,event.params.z));
+        var droplets=select(min(count,max(3u,u32(ceil(event.motion.w*10.0)))),count,entry || fan);
+        if(footfall){droplets=min(count,max(4u,2u+u32(ceil(event.motion.w*10.0))));}
+        if(index>=droplets){life=0.0;}
+    }
+    if(age<0.0 || age>3.0){life=0.0;}
+    let corners=array<vec2<f32>,6>(vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,-1.0),vec2<f32>(1.0,1.0),vec2<f32>(-1.0,1.0));
+    let corner=corners[vertex%6u];
+    let segment=f32(vertex/6u);
+    if(entry && index<2u) {
+        // Two connected patches per sector leave droplets even at Low quality.
+        // Both dives and cannonballs use the same geometry, scaled by impact.
+        let radial=normalize(event.motion.xy+vec2<f32>(0.00001,0.0));
+        let u=(f32(index)*3.0+segment+corner.x*0.5+0.5)/6.0;
+        let top=corner.y*0.5+0.5;
+        let theta=atan2(radial.y,radial.x)+(u-0.5)*event.params.w;
+        let direction=vec2<f32>(cos(theta),sin(theta));
+        let tip=0.9+0.075*sin(theta*7.0+event.position.w*3.0)+0.045*sin(theta*13.0-event.position.w);
+        let height=max(0.0,(1.8+event.motion.w*1.05)*age-4.905*age*age)*tip;
+        let radius=event.params.x+age*(0.85+event.motion.w*0.3)+top*top*height*0.5;
+        pos=vec3<f32>(event.position.xy+direction*radius,event.params.z+0.012+top*height);
+        life=smoothstep(0.0,0.035,age)*(1.0-smoothstep(0.65,1.2,age))*smoothstep(0.0,0.05,height);
+        if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+        var crown:WaterParticleOut;
+        crown.clip=frame.view_proj*vec4<f32>(pos,1.0);crown.world=pos;crown.uv=vec2<f32>(u*2.0-1.0,top*2.0-1.0);
+        crown.life=life;crown.kind=2u;crown.level=event.params.z;
+        crown.normal=normalize(vec3<f32>(direction,-top));
+        return crown;
+    }
+    if(fan && index<2u) {
+        let forward=normalize(event.motion.xy+vec2<f32>(0.0001,0.0));
+        let side=vec2<f32>(-forward.y,forward.x)*select(-1.0,1.0,index==0u);
+        var center=event.position.xy+forward*0.12+side*event.params.x*0.45;
+        let top=corner.y*0.5+0.5;
+        let across=(segment+corner.x*0.5+0.5)/3.0*2.0-1.0;
+        let theta=atan2(side.y,side.x)+across*select(0.65,0.95,footfall);
+        let radial=vec2<f32>(cos(theta),sin(theta));
+        var height=max(0.0,(1.05+event.motion.w*1.5)*age-4.905*age*age);
+        var radius=0.04+age*(0.5+event.motion.w)+top*height*0.65;
+        if(footfall) {
+            center=event.position.xy+forward*event.params.x*0.2+side*event.params.x*0.25;
+            height=max(0.0,(0.35+sqrt(max(event.motion.w,0.0))*1.5)*age-4.905*age*age);
+            radius=event.params.x*0.45+age*(0.25+event.motion.w*0.75)+top*height*0.4;
+        }
+        pos=vec3<f32>(center+radial*radius+event.motion.xy*min(age,0.3)*0.05,event.position.z+0.008+top*height);
+        life=smoothstep(0.0,0.025,age)*smoothstep(0.0,select(0.035,0.012,footfall),height);
+        if(age<0.0 || !water_fx_on(64u)){life=0.0;}
+        var sheet:WaterParticleOut;
+        sheet.clip=frame.view_proj*vec4<f32>(pos,1.0);sheet.world=pos;sheet.uv=vec2<f32>(across,corner.y);
+        sheet.life=life;sheet.kind=4u;sheet.level=event.params.z;
+        sheet.normal=normalize(vec3<f32>(radial,-top*1.3));
+        return sheet;
+    }
+    if(vertex>=6u){size=0.0;elongation=0.0;}
+    let projected=vec2<f32>(dot(velocity,frame.cam_right.xyz),dot(velocity,frame.cam_up.xyz));
+    let along=normalize(projected+vec2<f32>(0.00001,0.001));
+    let across=vec2<f32>(along.y,-along.x);
+    let offset=across*corner.x*size+along*corner.y*(size+elongation);
+    pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
+    var out: WaterParticleOut; out.clip=frame.view_proj*vec4<f32>(pos,1.0);out.world=pos;out.uv=corner;
+    out.life=life;out.kind=select(select(0u,3u,entry),1u,bubble);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
+    return out;
+}
+fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.kind==2u || in.kind==4u) {
+        let top=in.uv.y*0.5+0.5;
+        let ragged=water_fx_noise(in.world.xy*7.0+vec2<f32>(in.level,top*3.0));
+        let fine=water_fx_noise(in.world.xy*19.0+top*2.0);
+        let holes=smoothstep(0.14+top*0.43,0.30+top*0.43,ragged*0.7+fine*0.3);
+        let edge=smoothstep(0.72,0.98,top)*(0.55+fine*0.45);
+        let view=normalize(frame.camera_pos.xyz-in.world);
+        let normal=normalize(in.normal+vec3<f32>((ragged-0.5)*0.12,(fine-0.5)*0.12,0.0));
+        let fresnel=0.02037+0.97963*pow(1.0-abs(dot(normal,view)),5.0);
+        var alpha=(0.22+fresnel*0.28+edge*0.32)*holes*in.life;
+        if(in.life<=0.001 || alpha<0.005){discard;}
+        let uv=clamp(screen_uv(in.clip.xy)+vec2<f32>(dot(normal,frame.cam_right.xyz),-dot(normal,frame.cam_up.xyz))*0.006*in.life,vec2<f32>(0.001),vec2<f32>(0.999));
+        let transmitted=textureSampleLevel(scene_tex,lin_clamp,uv,0.0).rgb;
+        let reflection=reflect(-view,normal);
+        let reflected=sky_color(vec3<f32>(reflection.xy,abs(reflection.z)));
+        let light=frame.sky_horizon.rgb*0.4+frame.sun_color.rgb*max(frame.sun_dir.z,0.0)*0.4;
+        let color=mix(transmitted*0.94,reflected,fresnel*0.7)+light*(0.04+edge*select(0.42,0.65,in.kind==4u));
+        let depth=scene_depth_at(screen_uv(in.clip.xy));
+        if(depth>0.0) {
+            let behind=world_from_depth(screen_uv(in.clip.xy),depth);
+            alpha*=clamp((distance(behind,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.12,0.0,1.0);
+        }
+        return vec4<f32>(apply_fog(color,in.world)*alpha,alpha);
+    }
+    let radius=length(in.uv); if(radius>1.0 || in.life<=0.001){discard;}
+    var alpha=(1.0-smoothstep(0.2,1.0,radius))*0.4;
+    if(in.kind==1u){alpha=exp(-pow((radius-0.8)*14.0,2.0))*0.3+exp(-length(in.uv-vec2<f32>(-0.25,0.3))*18.0)*0.1;}
+    let depth=scene_depth_at(screen_uv(in.clip.xy));
+    if(depth>0.0){let behind=world_from_depth(screen_uv(in.clip.xy),depth);alpha*=clamp((distance(behind,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.15,0.0,1.0);}
+    let sphere=normalize(vec3<f32>(in.uv,sqrt(max(1.0-radius*radius,0.001))));
+    let normal=frame.cam_right.xyz*sphere.x+frame.cam_up.xyz*sphere.y+normalize(frame.camera_pos.xyz-in.world)*sphere.z;
+    let reflected=sky_color(reflect(normalize(in.world-frame.camera_pos.xyz),normal));
+    let sun=pow(max(dot(reflect(-normalize(frame.sun_dir.xyz),normal),normalize(frame.camera_pos.xyz-in.world)),0.0),64.0);
+    var lighting=reflected*0.35+frame.sun_color.rgb*sun*0.5+frame.sky_horizon.rgb*0.15;
+    if(in.kind==3u){lighting+=frame.sky_horizon.rgb*0.32+frame.sun_color.rgb*0.12;alpha*=1.3;}
+    alpha*=in.life;
+    return vec4<f32>(apply_fog(lighting,in.world)*alpha,alpha);
+}
+@fragment
+fn fs_water_particle(in: WaterParticleOut) -> @location(0) vec4<f32> {
+    if(!camera_underwater() && in.world.z<in.level){discard;}
+    return water_particle_color(in);
+}
+@fragment
+fn fs_water_particle_under(in: WaterParticleOut) -> @location(0) vec4<f32> {
+    if(camera_underwater() || in.world.z>=in.level){discard;}
+    return water_particle_color(in);
 }

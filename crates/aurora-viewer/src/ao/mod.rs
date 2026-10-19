@@ -2,13 +2,19 @@
 //! AOEngine / AOSet (Firestorm indra/newview/aoengine.cpp, aoset.cpp,
 //! originally LGPL 2.1). Inventory links keep the original animations intact.
 
+pub mod anchor;
+mod anchor_blend;
 pub mod bootstrap;
+mod completion;
 pub mod demo;
 pub mod inventory;
 pub mod migration;
 pub mod runtime;
 #[cfg(test)]
+mod swimming_tests;
+#[cfg(test)]
 mod tests;
+pub mod water_demo;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -54,17 +60,23 @@ pub enum State {
     Typing,
     Floating,
     SwimmingForward,
+    UnderwaterSwimming,
     SwimmingUp,
     SwimmingDown,
     UnderwaterFloating,
     WaterFlightExit,
     WaterEntry,
     WaterShoreExit,
+    WaterDiveJump,
+    WaterDiveEntry,
+    WaterCannonball,
     Always,
+    LegacySwimmingCrawl,
+    LegacySwimmingBackward,
 }
 
 impl State {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 34] = [
         Self::Standing,
         Self::Walking,
         Self::Running,
@@ -88,12 +100,16 @@ impl State {
         Self::Typing,
         Self::Floating,
         Self::SwimmingForward,
+        Self::UnderwaterSwimming,
         Self::SwimmingUp,
         Self::SwimmingDown,
         Self::UnderwaterFloating,
         Self::WaterFlightExit,
         Self::WaterEntry,
         Self::WaterShoreExit,
+        Self::WaterDiveJump,
+        Self::WaterDiveEntry,
+        Self::WaterCannonball,
         Self::Always,
     ];
 
@@ -122,13 +138,19 @@ impl State {
             "Typing",
             "Floating",
             "Swimming Forward",
+            "Underwater Swimming",
             "Swimming Up",
             "Swimming Down",
             "Underwater Floating",
             "Water Flight Exit",
             "Water Entry",
             "Water Shore Exit",
+            "Water Dive Jump",
+            "Water Dive Entry",
+            "Water Cannonball",
             "Always",
+            "Swimming Crawl",
+            "Swimming Backward",
         ][self as usize]
     }
 
@@ -158,81 +180,88 @@ impl State {
                 "ao-typing",
                 "ao-floating",
                 "ao-swimming-forward",
+                "ao-underwater-swimming",
                 "ao-swimming-up",
                 "ao-swimming-down",
                 "ao-underwater-floating",
                 "ao-water-flight-exit",
                 "ao-water-entry",
                 "ao-water-shore-exit",
+                "ao-water-dive-jump",
+                "ao-water-dive-entry",
+                "ao-water-cannonball",
                 "ao-always",
+                "ao-swimming-crawl",
+                "ao-swimming-backward",
             ][self as usize],
         )
     }
 
     pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|s| s.name() == name).or(match name {
-            "Stand.1" | "Stand.2" | "Stand.3" => Some(Self::Standing),
-            "Walk.N" => Some(Self::Walking),
-            "Sit.N" => Some(Self::Sitting),
-            "Sit.G" => Some(Self::GroundSit),
-            "Crouch" => Some(Self::Crouching),
-            "Walk.C" => Some(Self::CrouchWalk),
-            "Land.N" => Some(Self::Landing),
-            "Stand.U" => Some(Self::StandingUp),
-            "Hover.D" => Some(Self::FlyingDown),
-            "Hover.U" => Some(Self::FlyingUp),
-            "Fly.N" => Some(Self::Flying),
-            "Hover.N" => Some(Self::Hovering),
-            "Jump.N" => Some(Self::Jumping),
-            "Jump.P" => Some(Self::PreJumping),
-            "Turn.R" => Some(Self::TurningRight),
-            "Turn.L" => Some(Self::TurningLeft),
-            "Swim.H" => Some(Self::Floating),
-            "Swim.N" => Some(Self::SwimmingForward),
-            "Swim.U" => Some(Self::SwimmingUp),
-            "Swim.D" => Some(Self::SwimmingDown),
-            _ => None,
-        })
+        Self::ALL
+            .into_iter()
+            .chain(Self::LEGACY_SWIMMING)
+            .find(|s| s.name() == name)
+            .or(match name {
+                "Stand.1" | "Stand.2" | "Stand.3" => Some(Self::Standing),
+                "Walk.N" => Some(Self::Walking),
+                "Sit.N" => Some(Self::Sitting),
+                "Sit.G" => Some(Self::GroundSit),
+                "Crouch" => Some(Self::Crouching),
+                "Walk.C" => Some(Self::CrouchWalk),
+                "Land.N" => Some(Self::Landing),
+                "Stand.U" => Some(Self::StandingUp),
+                "Hover.D" => Some(Self::FlyingDown),
+                "Hover.U" => Some(Self::FlyingUp),
+                "Fly.N" => Some(Self::Flying),
+                "Hover.N" => Some(Self::Hovering),
+                "Jump.N" => Some(Self::Jumping),
+                "Jump.P" => Some(Self::PreJumping),
+                "Turn.R" => Some(Self::TurningRight),
+                "Turn.L" => Some(Self::TurningLeft),
+                "Swim.H" => Some(Self::Floating),
+                "Swim.N" => Some(Self::SwimmingForward),
+                "Swim.U" => Some(Self::SwimmingUp),
+                "Swim.D" => Some(Self::SwimmingDown),
+                _ => None,
+            })
     }
 
     pub fn motion(self) -> Uuid {
-        Uuid::from_u128(
-            [
-                0x2408fe9e_df1d_1d7d_f4ff_1384fa7b350f,
-                0x6ed24bd8_91aa_4b12_ccc7_c97c857ab4e0,
-                0x05ddbff8_aaa9_92a1_2b74_8fe77a29b445,
-                0x1a5fe8ac_a804_8a5d_7cbd_56bd83184568,
-                0x1a2bd58e_87ff_0df8_0b4c_53e047b0bb6e,
-                0x201f3fdf_cb1f_dbec_201f_7333e328ae7c,
-                0x47f5f6fb_22e5_ae44_f871_73aaaf4a6022,
-                0x7a17b059_12b2_41b1_570a_186368b6aa6f,
-                0xf4f00d6e_b9fe_9292_f4cb_0ae06ea58d57,
-                0x3da1d753_028a_5446_24f3_9c9b856d9422,
-                0x666307d9_a860_572d_6fd4_c3ab8865c094,
-                0x20f063ea_8306_2562_0b07_5c853b37b31e,
-                0x62c5de58_cb33_5743_3d07_9e4cd4352864,
-                0xaec4610c_757f_bc4e_c092_c6e9caf18daf,
-                0x2b5a38b2_5e00_3a97_a495_4c826bc443e6,
-                0x4ae8016b_31b9_03bb_c401_b1ea941db41d,
-                0x2305bd75_1ca9_b03b_1faa_b176b8a8c49e,
-                0x7a4e87fe_de39_6fcb_6223_024b00893244,
-                0x2d6daa51_3192_6794_8e2e_a15f8338ec30,
-                0x56e0ba0d_4a9f_7f27_6117_32f2ebbf6135,
-                0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9,
-                0x4ae8016b_31b9_03bb_c401_b1ea941db41d,
-                0xaec4610c_757f_bc4e_c092_c6e9caf18daf,
-                0x62c5de58_cb33_5743_3d07_9e4cd4352864,
-                0x20f063ea_8306_2562_0b07_5c853b37b31e,
-                0x4ae8016b_31b9_03bb_c401_b1ea941db41d,
-                0x2305bd75_1ca9_b03b_1faa_b176b8a8c49e,
-                0x666307d9_a860_572d_6fd4_c3ab8865c094,
-                0x2305bd75_1ca9_b03b_1faa_b176b8a8c49e,
-                0,
-            ][self as usize],
-        )
+        Uuid::from_u128(match self {
+            Self::Standing => 0x2408fe9e_df1d_1d7d_f4ff_1384fa7b350f,
+            Self::Walking => 0x6ed24bd8_91aa_4b12_ccc7_c97c857ab4e0,
+            Self::Running => 0x05ddbff8_aaa9_92a1_2b74_8fe77a29b445,
+            Self::Sitting => 0x1a5fe8ac_a804_8a5d_7cbd_56bd83184568,
+            Self::GroundSit => 0x1a2bd58e_87ff_0df8_0b4c_53e047b0bb6e,
+            Self::Crouching => 0x201f3fdf_cb1f_dbec_201f_7333e328ae7c,
+            Self::CrouchWalk => 0x47f5f6fb_22e5_ae44_f871_73aaaf4a6022,
+            Self::Landing => 0x7a17b059_12b2_41b1_570a_186368b6aa6f,
+            Self::SoftLanding => 0xf4f00d6e_b9fe_9292_f4cb_0ae06ea58d57,
+            Self::StandingUp => 0x3da1d753_028a_5446_24f3_9c9b856d9422,
+            Self::Falling | Self::WaterEntry | Self::WaterDiveEntry => 0x666307d9_a860_572d_6fd4_c3ab8865c094,
+            Self::FlyingDown | Self::SwimmingDown => 0x20f063ea_8306_2562_0b07_5c853b37b31e,
+            Self::FlyingUp | Self::SwimmingUp => 0x62c5de58_cb33_5743_3d07_9e4cd4352864,
+            Self::Flying | Self::SwimmingForward | Self::UnderwaterSwimming | Self::LegacySwimmingCrawl | Self::LegacySwimmingBackward => {
+                0xaec4610c_757f_bc4e_c092_c6e9caf18daf
+            }
+            Self::FlyingSlow => 0x2b5a38b2_5e00_3a97_a495_4c826bc443e6,
+            Self::Hovering | Self::Floating | Self::UnderwaterFloating => 0x4ae8016b_31b9_03bb_c401_b1ea941db41d,
+            Self::Jumping | Self::WaterFlightExit | Self::WaterShoreExit | Self::WaterDiveJump | Self::WaterCannonball => {
+                0x2305bd75_1ca9_b03b_1faa_b176b8a8c49e
+            }
+            Self::PreJumping => 0x7a4e87fe_de39_6fcb_6223_024b00893244,
+            Self::TurningRight => 0x2d6daa51_3192_6794_8e2e_a15f8338ec30,
+            Self::TurningLeft => 0x56e0ba0d_4a9f_7f27_6117_32f2ebbf6135,
+            Self::Typing => 0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9,
+            Self::Always => 0,
+        })
     }
 
     pub fn from_motion(id: Uuid) -> Option<Self> {
+        if id == SIT_FEMALE {
+            return Some(Self::Sitting);
+        }
         if id == Uuid::from_u128(0x1c7600d6_661f_b87b_efe2_d7421eb93c86) {
             return Some(Self::GroundSit);
         }
@@ -249,7 +278,7 @@ impl State {
         )
     }
 
-    pub const SWIMMING: [Self; 8] = [
+    pub const CORE_SWIMMING: [Self; 8] = [
         Self::Floating,
         Self::SwimmingForward,
         Self::SwimmingDown,
@@ -260,8 +289,30 @@ impl State {
         Self::WaterShoreExit,
     ];
 
+    /// AOSet::stateNames / AOEngine::mapSwimming (indra/newview/aoset.cpp,
+    /// aoengine.cpp): these are the Legacy Viewer's four inventory swim slots.
+    pub const LEGACY_VIEWER_SWIMMING: [Self; 4] = [Self::Floating, Self::SwimmingForward, Self::SwimmingUp, Self::SwimmingDown];
+
+    /// Extra clips are optional for existing eight-slot sets.
+    pub const SWIMMING: [Self; 12] = [
+        Self::Floating,
+        Self::SwimmingForward,
+        Self::UnderwaterSwimming,
+        Self::UnderwaterFloating,
+        Self::SwimmingDown,
+        Self::SwimmingUp,
+        Self::WaterEntry,
+        Self::WaterFlightExit,
+        Self::WaterShoreExit,
+        Self::WaterDiveJump,
+        Self::WaterDiveEntry,
+        Self::WaterCannonball,
+    ];
+
+    pub const LEGACY_SWIMMING: [Self; 2] = [Self::LegacySwimmingCrawl, Self::LegacySwimmingBackward];
+
     pub fn swimming(self) -> bool {
-        Self::SWIMMING.contains(&self)
+        Self::SWIMMING.contains(&self) || Self::LEGACY_SWIMMING.contains(&self)
     }
 }
 
@@ -354,21 +405,50 @@ pub struct Set {
 }
 
 impl Set {
-    /// Swimming uses one explicit inventory animation per slot, never a
-    /// bundled/private fallback or a flight override inherited from Firestorm.
+    /// A representative explicit clip for movement timing/readiness. Water
+    /// states use the same lists, groups and parallel tracks as ordinary AO.
     pub fn swimming_animation(&self, state: State) -> Option<&Animation> {
         let config = self.states.get(&state).filter(|_| state.swimming())?;
-        let step = config.steps.first()?;
-        (config.steps.len() == 1 && config.tracks.is_empty() && !step.group && step.members.len() == 1)
-            .then(|| &step.members[0])
-            .filter(|a| !a.asset.is_nil())
+        config
+            .steps
+            .iter()
+            .flat_map(|s| &s.members)
+            .chain(config.tracks.iter().flat_map(|t| &t.members))
+            .find(|a| !a.asset.is_nil())
     }
 
+    /// Old sets keep their existing surface clip until underwater swimming is
+    /// assigned; never manufacture an uploaded asset or a bundled fallback.
+    pub fn animation_config(&self, state: State) -> Option<&StateConfig> {
+        let state = if state == State::UnderwaterSwimming && self.swimming_animation(state).is_none() {
+            State::SwimmingForward
+        } else {
+            state
+        };
+        self.states.get(&state)
+    }
+
+    #[cfg(test)]
     pub fn swimming_slots(&self) -> usize {
         State::SWIMMING
             .into_iter()
             .filter(|s| self.swimming_animation(*s).is_some())
             .count()
+    }
+
+    pub fn core_swimming_slots(&self) -> usize {
+        State::CORE_SWIMMING
+            .into_iter()
+            .filter(|s| self.swimming_animation(*s).is_some())
+            .count()
+    }
+
+    pub fn swimming_ready(&self) -> bool {
+        self.core_swimming_slots() == State::CORE_SWIMMING.len()
+    }
+
+    pub fn legacy_swimming_pending(&self) -> bool {
+        State::LEGACY_SWIMMING.iter().any(|state| self.swimming_animation(*state).is_some())
     }
 
     pub fn new(name: String) -> Self {

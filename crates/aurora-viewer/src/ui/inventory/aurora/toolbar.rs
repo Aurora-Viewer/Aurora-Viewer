@@ -148,7 +148,7 @@ fn new_target(inv: &Inventory, st: &InventoryUi, layout: Layout) -> Uuid {
     st.selected
         .filter(|id| inv.folders.contains_key(id))
         .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
-        .unwrap_or(inv.root)
+        .unwrap_or_else(|| super::base(inv, st))
 }
 
 fn new_menu(
@@ -421,12 +421,13 @@ fn breadcrumb(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inventor
         ui.add(egui::Label::new(sheet::semibold(ui, tab_name(st.tab), 13.0, p.ink)).truncate());
         return;
     }
+    let base = super::base(inv, st);
     let mut path = Vec::new();
     let mut id = st.browse;
     let mut seen = HashSet::new();
     while seen.insert(id) && inv.folders.contains_key(&id) {
         path.push(id);
-        if id == inv.root {
+        if id == inv.root || id == base {
             break;
         }
         id = rules::parent(inv, id).unwrap_or(Uuid::nil());

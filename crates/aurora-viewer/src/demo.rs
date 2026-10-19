@@ -15,6 +15,9 @@ use uuid::Uuid;
 #[path = "demo_texture_library.rs"]
 pub mod texture_library;
 
+#[path = "demo_water.rs"]
+pub mod water;
+
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
