@@ -1923,6 +1923,14 @@ common-draw-distance = Distance d'affichage
 app-chat-commands-draw-distance-set-to-m = { "Distance d'affichage réglée à " }{ $value0 }{ " m." }
 app-chat-commands-maximum-bandwidth-set-to-kbps = { "Bande passante maximale réglée à " }{ $value0 }{ " kb/s." }
 ui-options-name-distance = Distance des noms
+ui-options-name-tags = Étiquettes des avatars
+ui-options-show-own-tag = Afficher mon étiquette
+ui-options-show-friend-tags = Afficher les étiquettes des amis
+ui-options-show-other-tags = Afficher les étiquettes des autres
+ui-options-temporary-tags = Afficher temporairement
+ui-options-temporary-tags-help = Pour les plaques Aurora et les étiquettes classiques. Le délai repart quand un avatar revient dans le champ de vision.
+ui-options-tag-show-time = Durée d'affichage
+ui-options-tag-show-time-help = Fondu sur la dernière seconde, comme dans le Legacy Viewer.
 ui-minimap-far = Distant
 build-ui-floaters-divide = Diviser
 build-ui-floaters-divide-land-the-selection-will-become-a-new-parcel = Diviser le terrain ? La sélection deviendra une nouvelle parcelle.
@@ -2155,7 +2163,12 @@ ui-options-send-the-text-below-to-blocked-people-their-im = Envoyer le texte ci-
 ui-options-send-the-text-below-when-i-am-away = Envoyer le texte ci-dessous quand je suis absent
 ui-context-send-im = Envoyer un IM
 ui-contacts-send-im = Envoyer un IM...
-ui-inventory-dialogs-send-item-s-to-resident = { "Envoyer " }{ $value0 }{ " élément(s) au résident " }{ $value1 }{ " ?" }
+ui-inventory-dialogs-give-to = Donner à
+ui-inventory-dialogs-give = Donner
+ui-inventory-dialogs-and-more = { $count ->
+    [one] et { $number } autre
+   *[other] et { $number } autres
+}
 ui-perf-sent-to-simulator-udp = Envoyé au simulateur (UDP)
 ui-media-error = Erreur
 voice-voice-error = { "Erreur de voix : " }{ $e }
@@ -2800,10 +2813,20 @@ ui-land-environment-environment-settings-are-unavailable-in-this-region = Les pa
 ui-land-environment-environment-settings-are-unavailable-at-region-boundaries = Les paramètres environnementaux ne sont pas disponibles dans les limites des régions.
 world-inventory-preview-the-settings-are-unreadable = Les paramètres sont illisibles.
 ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically = Les plus proches sont dessinés en entier, les autres en imposteurs : une image d'eux rafraîchie de temps en temps (RenderAvatarMaxNonImpostors, comme le Legacy Viewer)
-build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Les sondes de réflexion ne se sélectionnent que si « Sél. les sondes de réfl. » est cochée.
+build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Cochez « Sélectionner les sondes de réflexion » en bas de la fenêtre pour sélectionner une sonde.
 ui-options-camera-firestorm-views-camera-presets = Les vues du Legacy Viewer (Caméra › Préréglages)
 ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Les écrans de chargement et de téléportation montrent votre dernière vue, floutée (prise en vous téléportant ou en quittant)
-ui-inventory-dialogs-no-copy-items-will-leave-your-inventory = Les éléments non copiables quitteront votre inventaire.
+ui-inventory-dialogs-no-copy = non copiable
+ui-inventory-dialogs-no-transfer = non transférable
+ui-inventory-dialogs-left-out = exclu
+ui-inventory-dialogs-not-given = { $count ->
+    [one] { $number } élément ne peut pas être donné : il sera ignoré.
+   *[other] { $number } éléments ne peuvent pas être donnés : ils seront ignorés.
+}
+ui-inventory-dialogs-no-copy-will-leave = { $count ->
+    [one] { $number } élément non copiable quittera votre inventaire.
+   *[other] { $number } éléments non copiables quitteront votre inventaire.
+}
 ui-inventory-dialogs-items-will-be-moved-to-trash = Les éléments seront déplacés dans la corbeille.
 ui-environment-sunrise = Lever
 ui-bars-sunrise = Lever du soleil
@@ -3379,7 +3402,7 @@ ui-chat-date-at = { $date } à { $time }
 ui-chat-new-messages = Nouveaux
 ui-chat-copy-message = Copier le message
 ui-chat-quote-message = Citer
-ui-chat-give-inventory-tip = Donner depuis l'inventaire : glissez un objet sur la conversation
+ui-chat-drop-to-give = Déposez ici pour donner à { $name }
 ui-chat-give-from-inventory = Donner un objet de l'inventaire…
 ui-chat-channel = Canal
 ui-chat-channel-tip = Canal de discussion (/n avant le texte)
@@ -4943,6 +4966,8 @@ world-maturity-change-error = { "Impossible de modifier vos préférences afin d
 world-mod-declined-your-teleport-offer = { $from }{ " a refusé votre téléportation" }
 world-mod-has-your-object = { $from }{ " a " }{ $verb }{ " votre objet" }
 world-mod-gives-you = { $from }{ " vous donne " }{ $what }
+world-inventory-offers-received = { $name }{ " vous a donné cet élément (" }{ $kind }{ ") : " }{ $item }
+world-inventory-offers-body-part = Partie du corps
 world-mod-offers-you-friendship = { $from }{ " vous propose son amitié" }
 world-calling-card-title = Carte de visite
 world-calling-card-offered = Vous avez proposé une carte de visite à { $name }.
@@ -6251,6 +6276,8 @@ ui-chat-yesterday = Hier
 ui-chat-invite-accepted = Accepté
 ui-chat-invite-declined = Refusé
 ui-chat-invite-change-and-continue = Modifier et continuer
+ui-chat-offer-kept = Gardé
+ui-chat-offer-rejected = Rejeté
 ui-chat-status-online = En ligne
 ui-chat-status-unknown = Statut inconnu
 ui-chat-more = Plus

@@ -32,6 +32,21 @@ pub enum Mode {
 /// Seconds a set of states lasts with `cycle`.
 const CYCLE: f64 = 6.0;
 
+/// Explicit offline overrides; the demo keeps its own preferences.
+pub fn apply_name_tag_preferences(settings: &mut crate::settings::Settings) -> bool {
+    let Ok(mode) = std::env::var("AURORA_DEMO_NAME_TAGS") else {
+        return false;
+    };
+    settings.show_own_name_tag = mode != "self-off" && mode != "off";
+    settings.show_friend_name_tags = mode != "friends-off" && mode != "off";
+    settings.show_other_name_tags = mode != "others-off" && mode != "off";
+    settings.temporary_name_tags = matches!(mode.as_str(), "temporary" | "classic-temporary");
+    settings.name_tag_show_seconds = 10.0;
+    settings.name_tag_distance = 64.0;
+    settings.classic_name_tags = mode == "classic-temporary";
+    true
+}
+
 pub fn mode() -> Option<Mode> {
     static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_TAGS").ok()?.trim() {

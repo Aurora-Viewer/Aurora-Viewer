@@ -1920,6 +1920,14 @@ common-draw-distance = Draw distance
 app-chat-commands-draw-distance-set-to-m = { "Draw distance set to " }{ $value0 }{ " m." }
 app-chat-commands-maximum-bandwidth-set-to-kbps = { "Maximum bandwidth set to " }{ $value0 }{ " kb/s." }
 ui-options-name-distance = Name distance
+ui-options-name-tags = Avatar name tags
+ui-options-show-own-tag = Show my name tag
+ui-options-show-friend-tags = Show friends' name tags
+ui-options-show-other-tags = Show other residents' name tags
+ui-options-temporary-tags = Show name tags briefly
+ui-options-temporary-tags-help = Applies to Aurora plates and classic tags. The timer restarts when an avatar returns to view.
+ui-options-tag-show-time = Display duration
+ui-options-tag-show-time-help = Fade out over the final second, as in the Legacy Viewer.
 ui-minimap-far = Far
 build-ui-floaters-divide = Divide
 build-ui-floaters-divide-land-the-selection-will-become-a-new-parcel = Divide land? The selection will become a new parcel.
@@ -2152,7 +2160,12 @@ ui-options-send-the-text-below-to-blocked-people-their-im = Send the text below 
 ui-options-send-the-text-below-when-i-am-away = Send the text below when I am away
 ui-context-send-im = Send IM
 ui-contacts-send-im = Send IM...
-ui-inventory-dialogs-send-item-s-to-resident = { "Send " }{ $value0 }{ " item(s) to resident " }{ $value1 }?
+ui-inventory-dialogs-give-to = Give to
+ui-inventory-dialogs-give = Give
+ui-inventory-dialogs-and-more = { $count ->
+    [one] and { $number } more
+   *[other] and { $number } more
+}
 ui-perf-sent-to-simulator-udp = Sent to simulator (UDP)
 ui-media-error = Error
 voice-voice-error = { "Voice error: " }{ $e }
@@ -2797,10 +2810,20 @@ ui-land-environment-environment-settings-are-unavailable-in-this-region = Enviro
 ui-land-environment-environment-settings-are-unavailable-at-region-boundaries = Environment settings are unavailable at region boundaries.
 world-inventory-preview-the-settings-are-unreadable = The settings are unreadable.
 ui-options-nearest-avatars-are-fully-rendered-others-use-impostors-periodically = Nearest avatars are fully rendered; others use impostors, periodically refreshed images (RenderAvatarMaxNonImpostors, as in the Legacy Viewer)
-build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Reflection probes can only be selected when Select reflection probes is checked.
+build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection = Enable Select reflection probes at the bottom of the build window to select probes.
 ui-options-camera-firestorm-views-camera-presets = Legacy Viewer views (Camera > Presets)
 ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Loading and teleport screens show your last view, blurred (captured while teleporting or quitting)
-ui-inventory-dialogs-no-copy-items-will-leave-your-inventory = No-copy items will leave your inventory.
+ui-inventory-dialogs-no-copy = no copy
+ui-inventory-dialogs-no-transfer = no transfer
+ui-inventory-dialogs-left-out = left out
+ui-inventory-dialogs-not-given = { $count ->
+    [one] { $number } item can't be given and will be left out.
+   *[other] { $number } items can't be given and will be left out.
+}
+ui-inventory-dialogs-no-copy-will-leave = { $count ->
+    [one] { $number } no-copy item will leave your inventory.
+   *[other] { $number } no-copy items will leave your inventory.
+}
 ui-inventory-dialogs-items-will-be-moved-to-trash = Items will be moved to trash.
 ui-environment-sunrise = Sunrise
 ui-bars-sunrise = Sunrise
@@ -3376,7 +3399,7 @@ ui-chat-date-at = { $date } at { $time }
 ui-chat-new-messages = New
 ui-chat-copy-message = Copy the message
 ui-chat-quote-message = Quote
-ui-chat-give-inventory-tip = Give from the inventory: drag an item onto the conversation
+ui-chat-drop-to-give = Drop here to give to { $name }
 ui-chat-give-from-inventory = Give an inventory item…
 ui-chat-channel = Channel
 ui-chat-channel-tip = Chat channel (/n before the text)
@@ -4938,6 +4961,8 @@ world-maturity-change-error = { "We were unable to change your preferences to vi
 world-mod-declined-your-teleport-offer = { $from }{ " declined your teleport offer" }
 world-mod-has-your-object = { $from }{ " has " }{ $verb }{ " your object" }
 world-mod-gives-you = { $from }{ " gives you " }{ $what }
+world-inventory-offers-received = { $name }{ " has given you this " }{ $kind }{ ": " }{ $item }
+world-inventory-offers-body-part = Body part
 world-mod-offers-you-friendship = { $from }{ " offers you friendship" }
 world-calling-card-title = Calling card
 world-calling-card-offered = You have offered a calling card to { $name }.
@@ -6249,6 +6274,8 @@ ui-chat-yesterday = Yesterday
 ui-chat-invite-accepted = Accepted
 ui-chat-invite-declined = Declined
 ui-chat-invite-change-and-continue = Change and Continue
+ui-chat-offer-kept = Kept
+ui-chat-offer-rejected = Rejected
 ui-chat-status-online = Online
 ui-chat-status-unknown = Status unknown
 ui-chat-more = More

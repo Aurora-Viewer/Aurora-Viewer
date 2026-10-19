@@ -1395,6 +1395,13 @@ pub fn show(
         }
     }
     property_names(st, world, &mut facts.names);
+    // the give confirmation names its resident
+    for state in std::iter::once(&*st).chain(st.windows.iter().map(|w| &*w.state)) {
+        if let Some(EditDialog::Share(_, resident)) = &state.dialog {
+            world.social.want_name(*resident);
+            facts.names.insert(*resident, world.social.name_of(resident));
+        }
+    }
     // Aurora's details of the selection name its creator and owner.
     if !classic && *open {
         let residents = st

@@ -94,7 +94,7 @@ viewer's process closes. For a test with human intervention, keep the title
 The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
-`AURORA_DEMO_INVENTORY=offer|offer-reject` adds only the received item.
+`AURORA_DEMO_INVENTORY=offer|offer-reject|offer-card…` adds only the received item.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal
@@ -1998,6 +1998,14 @@ tests do not establish that this report uses an invalid joint or index.
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
   `AURORA_LIGHT_TILES`.
+- **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
+  `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
+  selected, every inspector section must show "Select reflection probes"
+  in the footer. Turn it on to select an invisible probe; turn it off to
+  select the ordinary objects behind it. Check left/right clicks, face
+  selection, a selection rectangle and Ctrl + wheel. The option starts off
+  again in a new viewer session. Unit regressions use actual invisible CPU
+  geometry and pointer clicks on the native inspector in all seven sections.
 - **`AURORA_DEMO_PROBES=1`**: two manual reflection probes, as invisible
   prims on the plaza: a box of 10 × 8 × 6 m turned on itself, which the
   camera of `AURORA_DEMO_POS="135,134"` stands in, and a sphere of 12 m east
@@ -2319,6 +2327,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop` | Inventory carried to the IM shown: its drop hint, or the give confirmation (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
@@ -2665,7 +2674,16 @@ failure. Grid validation and any paid upload are performed by the human.
   there; "Reject" sends it to the Trash. With `AURORA_DEMO_INVENTORY=offer`,
   the inventory opens on the received object and the offer is still to be
   answered; `offer-reject` rejects it at frame 700, then shows the object in
-  the Trash. Take the screenshot after frame 900.
+  the Trash. Take the screenshot after frame 900. With
+  `AURORA_DEMO_INVENTORY=offer-card`, the offer's card shows in the giver's
+  conversation, opened in sight (Orion Example in the demo's names, Violet
+  Wolf in the offer's entry): "gives you « Aurora lantern »", "Object",
+  Keep / Reject, and no toast. `offer-card-keep` keeps it from the card at
+  frame 700: the card greys with "Kept" and the entry leaves the list.
+  `offer-card-legacy` shows the card as one line of the legacy lines;
+  `offer-card-legacy-reject` rejects it from its notification at frame 700:
+  the line ends with "· Rejected". Capture at frame 900, with
+  `--language fr` and `--language en`.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
@@ -2882,6 +2900,23 @@ failure. Grid validation and any paid upload are performed by the human.
   click. Check filtering, edge scrolling, close buttons, menus and switching
   chat styles. Order lasts while those conversations remain open; closing
   and reopening a conversation appends it again. No grid is needed.
+
+- **`AURORA_DEMO_CONV_GIVE=away|over|many|drop`**: with `AURORA_DEMO_CONV=aurora`
+  (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
+  frame 700 and is never released. `away` leaves the pointer outside the
+  window: the friend's messages fade behind the gift and "Drop here to
+  give to <name>" in the muted ink. `over` brings the pointer onto the
+  conversation: the violet outline of the drop zone and the hint in the
+  ink. `many` carries three entries: "3 items" under the hint. `drop`,
+  with `AURORA_DEMO_INVENTORY=1`, drops seven of its entries on the
+  conversation at frame 720: the give confirmation opens, the resident by
+  name, five entries and "and 2 more", the no-copy object tagged with the
+  amber warning, the no-transfer one greyed and tagged with the line
+  saying it is left out (its reason on hover), then Cancel / Give. Capture at
+  frame 780 with `AURORA_FPS_LIMIT=60`. The field has no attach button.
+  Manually: drag an item from the inventory onto a private conversation
+  (the Share confirmation opens), onto a group's (no hint, nothing given),
+  and Escape during the drag (the messages come back). No grid is needed.
 
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is
@@ -3990,7 +4025,9 @@ offline; the files and snapshots uploaded in demo stay offline.
   from an inventory limited to a folder. Select a folder then
   Move; Cancel must leave the selection in its initial location.
 - `offer`, `offer-reject`: object offered by a resident, kept or rejected
-  (see `AURORA_DEMO_NOTIF` above).
+  (see `AURORA_DEMO_NOTIF` above). `offer-card`, `offer-card-keep`,
+  `offer-card-legacy`, `offer-card-legacy-reject`: its card in the giver's
+  conversation, kept from the card or rejected from the notification.
 - `folder`, `object`, `animation`, `script`, `note`, `properties`, `nocopy`,
   `notransfer`, `link`: the menu of the chosen item, or its properties.
   `clothes`, `body`, `settings`, `uploads` are aliases of `folder`, to be
@@ -4195,6 +4232,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
+| `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
 
@@ -4287,6 +4325,14 @@ What the inventory must show with these scenarios:
     "Full plates for friends only" for this run, not saved): only Orion, the
     friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
     compact pills however near; the far pills do not change.
+  - `AURORA_DEMO_NAME_TAGS=all|self-off|friends-off|others-off|off|temporary|classic-temporary`
+    selects the visibility scenario at startup. Combine with `AURORA_DEMO_TAGS=voice`
+    for a row containing a friend and other residents. Temporary modes use
+    ten seconds and the final one-second fade; turn away and return to check
+    a fresh interval. `AURORA_DEMO_OPTIONS=1:name-tags` opens the new controls.
+    These explicit scenarios use a 64 m tag distance and close the AO panel
+    so earlier demo preferences cannot hide the fixture. Only the isolated
+    demo preferences are affected.
   - `AURORA_DEMO_PLATE_HOVER=x,y` holds the pointer at x, y (points) for
     the plates only: the plate there shows full ("Expand a plate on hover",
     on by default), a pill or a far name included; with `,click` the plate

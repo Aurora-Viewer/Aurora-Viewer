@@ -506,6 +506,7 @@ pub struct App {
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
+    name_tag_visibility: ui::hud::NameTagVisibility,
     /// Clickable destination marker last painted under the HUDs and UI.
     beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
@@ -1013,6 +1014,7 @@ impl App {
             voice_tags: Default::default(),
             plates: Default::default(),
             name_tags: Vec::new(),
+            name_tag_visibility: Default::default(),
             beacon_hit: None,
             plate_hover: None,
             sound_blocks: Default::default(),
@@ -4291,8 +4293,12 @@ impl App {
             .then_some(self.scene.lists.hud_view)
             .flatten()
             .map(|view| {
-                self.scene
-                    .edit_ray_hits(&self.world, view.ray(self.cursor_pos.0, self.cursor_pos.1), true)
+                self.scene.edit_ray_hits(
+                    &self.world,
+                    view.ray(self.cursor_pos.0, self.cursor_pos.1),
+                    true,
+                    self.settings.build.select_probes,
+                )
             })
             .unwrap_or_default();
         if hits.is_empty()
@@ -4301,7 +4307,7 @@ impl App {
                 .as_ref()
                 .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
         {
-            hits = self.scene.edit_ray_hits(&self.world, ray, false);
+            hits = self.scene.edit_ray_hits(&self.world, ray, false, self.settings.build.select_probes);
         }
         self.build.cycle_under_cursor(&mut self.world, &self.settings.build, &hits, steps);
         self.flush_build();
@@ -4345,15 +4351,25 @@ impl App {
             // LLToolFace picks the current cursor ray. A delayed GPU depth
             // sample can still point at the previous object during Shift clicks.
             let ray = self.build.cam.ray(x, y);
-            let target = self.scene.edit_ray_hits(&self.world, ray, false).first().copied();
+            let target = self
+                .scene
+                .edit_ray_hits(&self.world, ray, false, self.settings.build.select_probes)
+                .first()
+                .copied();
             (None, target, ray)
         } else {
             let Some(picked) = self.click_pick() else {
                 return false;
             };
             let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene
-                    .selection_pick(&self.world, picked.ray, picked.depth, true, self.settings.draw_distance)
+                self.scene.selection_pick(
+                    &self.world,
+                    picked.ray,
+                    picked.depth,
+                    true,
+                    self.settings.build.select_probes,
+                    self.settings.draw_distance,
+                )
             } else {
                 (
                     picked.depth,
@@ -7346,11 +7362,20 @@ impl App {
         self.demo_hud_drag_steps();
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
         // shown in the folder it reaches; the second rejects it at frame 700
+        // (offer-card…: answered from its card or its notification, the
+        // conversation in sight)
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY")
             && mode.starts_with("offer")
         {
-            if self.frame_count == 700 && mode == "offer-reject" {
+            let card = crate::demo::offer_card_scene();
+            if self.frame_count == 700
+                && card.is_some_and(|s| s.keep)
+                && let Some(offer) = self.world.inventory_offers.list.first().map(|v| v.id)
+            {
+                self.on_ctx_action(ui::context::CtxAction::AnswerInventoryOffer { offer, keep: true });
+            }
+            if self.frame_count == 700 && (mode == "offer-reject" || card.is_some_and(|s| s.reject)) {
                 let offer = self
                     .world
                     .notifications
@@ -7368,7 +7393,7 @@ impl App {
                 }
             }
             let folder = self.world.inventory.items.get(&crate::demo::DEMO_OFFER).map(|it| it.parent);
-            if folder.is_some() && folder != self.demo_offer_shown {
+            if card.is_none() && folder.is_some() && folder != self.demo_offer_shown {
                 self.demo_offer_shown = folder;
                 self.inventory_ui.show_original(&self.world.inventory, crate::demo::DEMO_OFFER);
             }
@@ -9453,6 +9478,7 @@ impl App {
                 self.plates.probe = ui::nameplate::level_log().then_some(self.world.agent_id);
                 self.update_plate_hover(&ctx);
                 self.name_tags = if held {
+                    self.name_tag_visibility.clear();
                     Vec::new()
                 } else {
                     ui::hud::draw(
@@ -9464,7 +9490,8 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
-                        self.settings.name_tag_distance,
+                        &self.settings,
+                        &mut self.name_tag_visibility,
                         &voice_levels,
                         &self.settings.audio,
                         &mut self.voice_tags,
@@ -10155,7 +10182,14 @@ impl App {
                         ui::chat::ConvAction::GiveItems { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
                         }
-                        ui::chat::ConvAction::OpenInventory => self.panels.inventory = true,
+                        // shown and in front even when already open
+                        // (LLAvatarActions::share → showInstance), else the
+                        // menu entry seems to do nothing (#627)
+                        ui::chat::ConvAction::OpenInventory => {
+                            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                            self.egui_ctx
+                                .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("inventory")));
+                        }
                         ui::chat::ConvAction::SetOutputDevice(device) => {
                             self.settings.audio.output_device = device;
                             self.settings.save();
@@ -10477,8 +10511,9 @@ impl App {
                 if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
                 }
-                // a teleport invitation whose card is in sight needs no toast
-                // (LLOfferHandler: a toast only when the IM floater is closed)
+                // a teleport invitation or an inventory offer whose card is in
+                // sight needs no toast (LLOfferHandler: a toast only when the
+                // IM floater is closed)
                 if self.panels.chat
                     && let Some(open) = self.chat_ui.selected
                 {
@@ -10486,6 +10521,7 @@ impl App {
                         .world
                         .teleport_invites
                         .pending_notifications()
+                        .chain(self.world.inventory_offers.pending_notifications())
                         .filter(|(_, from)| *from == open)
                         .map(|(n, _)| n)
                         .collect();
@@ -11372,6 +11408,7 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
+                    self.options_ui.scroll_to_name_tags = filter == "name-tags";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
@@ -11613,6 +11650,9 @@ impl ApplicationHandler for App {
                 if p.len() >= 2 {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
+            }
+            if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
+                self.panels.ao = false;
             }
             // AURORA_DEMO_TAGS: residents whose name plates show every
             // state, at the three distance levels
@@ -12065,6 +12105,17 @@ impl ApplicationHandler for App {
                     self.notif_ui.open = false;
                 }
                 if scene == LureScene::Legacy {
+                    self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
+                }
+            }
+            // AURORA_DEMO_INVENTORY=offer-card…: the giver's conversation in
+            // sight, the card alone
+            if let Some(scene) = crate::demo::offer_card_scene() {
+                self.panels.perf = false;
+                self.panels.chat = true;
+                self.chat_ui.open(crate::demo::DEMO_GIVER);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 420.0), egui::vec2(600.0, 320.0));
+                if scene.legacy {
                     self.chat_ui.demo_style = Some(crate::settings::ChatStyle::Legacy);
                 }
             }

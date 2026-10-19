@@ -1,9 +1,7 @@
 //! The field of a conversation in Aurora's workspace: who is typing above
 //! it, then a wide box with the emoji, the volume of the nearby chat (a
 //! menu of whisper, say, shout, kept at every width: Ctrl+Enter shouts and
-//! Shift+Enter whispers whatever is chosen, like the chat bar) or the
-//! inventory to give (a resident: what is dragged onto the conversation is
-//! offered, like LLFloaterIMSession::handleDragAndDrop), the text, the
+//! Shift+Enter whispers whatever is chosen, like the chat bar), the text, the
 //! channel of the nearby chat (when the preferences show it,
 //! FSShowChatChannel) and send. The gestures are played from their
 //! window, their keys or their trigger typed in the nearby chat.
@@ -133,16 +131,11 @@ pub(super) fn show(
                         if b.clicked() {
                             st.emoji_open = !st.emoji_open;
                         }
-                        match kind {
-                            // narrow, only its icon
-                            None => volume_button(ui, p, st, roomy),
-                            Some(sidebar::Kind::Private) => {
-                                let tip = aurora_i18n::tr!("ui-chat-give-inventory-tip");
-                                if box_button(ui, p, "paperclip", tip, false).clicked() {
-                                    actions.push(ConvAction::OpenInventory);
-                                }
-                            }
-                            Some(_) => {}
+                        // narrow, only its icon. An IM has no attach button:
+                        // inventory is given by dropping it on the
+                        // conversation, which says so during the drag (#627)
+                        if kind.is_none() {
+                            volume_button(ui, p, st, roomy);
                         }
                         // the right end first: what it takes fixes the field's width
                         let (channel, _) = parse_channel(&draft);

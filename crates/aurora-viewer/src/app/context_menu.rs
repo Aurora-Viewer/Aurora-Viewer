@@ -28,9 +28,14 @@ impl App {
         }
         let picked = self.click_pick()?;
         let (ray, depth) = (picked.ray, picked.depth);
-        let (hit, target) = self
-            .scene
-            .selection_pick(&self.world, ray, depth, self.build.open, self.settings.draw_distance);
+        let (hit, target) = self.scene.selection_pick(
+            &self.world,
+            ray,
+            depth,
+            self.build.open,
+            self.settings.build.select_probes,
+            self.settings.draw_distance,
+        );
         match self.pick_name_tag(hit, ray) {
             Some((idx, p)) => Some((
                 Some(idx),
@@ -484,6 +489,11 @@ impl App {
                     if matches!(c, NetCommand::AcceptLure { .. }) {
                         self.begin_teleport(String::new(), false);
                     }
+                    self.send(c);
+                }
+            }
+            CtxAction::AnswerInventoryOffer { offer, keep } => {
+                for c in self.world.answer_inventory_offer(offer, keep) {
                     self.send(c);
                 }
             }

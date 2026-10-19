@@ -1670,6 +1670,38 @@ pub fn seed_contact_sets(world: &mut crate::world::World) {
 /// Item of the notification center's sample inventory offer.
 pub const DEMO_OFFER: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000_0000_0001);
 
+/// Who sends the notification center's samples, the giver of `DEMO_OFFER`
+/// (Violet Wolf in the offers, Orion Example in the demo's names).
+pub const DEMO_GIVER: Uuid = Uuid::from_u128(2);
+
+/// AURORA_DEMO_INVENTORY=offer-card[-legacy][-keep|-reject]: the sample
+/// offer's card in Violet Wolf's conversation, opened in sight (no toast),
+/// with the bubbles or the legacy lines; `-keep` keeps it from the card at
+/// frame 700, `-reject` rejects it from its notification.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OfferCardScene {
+    pub legacy: bool,
+    pub keep: bool,
+    pub reject: bool,
+}
+
+pub fn offer_card_scene() -> Option<OfferCardScene> {
+    let mode = std::env::var("AURORA_DEMO_INVENTORY").ok()?;
+    let rest = mode.strip_prefix("offer-card")?;
+    let (legacy, rest) = match rest.strip_prefix("-legacy") {
+        Some(rest) => (true, rest),
+        None => (false, rest),
+    };
+    match rest {
+        "" | "-keep" | "-reject" => Some(OfferCardScene {
+            legacy,
+            keep: rest == "-keep",
+            reject: rest == "-reject",
+        }),
+        _ => None,
+    }
+}
+
 /// What fetching `DEMO_OFFER` by id returns: the offered object, filed by
 /// the "server" in `parent`.
 pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem {
@@ -4203,7 +4235,8 @@ pub fn events() -> Vec<NetEvent> {
         }
     }
     let dialog = std::env::var("AURORA_DEMO_DIALOG").ok().filter(|mode| !mode.is_empty());
-    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject"));
+    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject"))
+        || offer_card_scene().is_some();
     ev.extend(notification_samples(
         std::env::var_os("AURORA_DEMO_NOTIF").is_some(),
         inventory_offer,
@@ -4239,7 +4272,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
     let mut ev = Vec::new();
     let im = |dialog: u8, message: &str, bucket: Vec<u8>| {
         NetEvent::InstantMessage(aurora_net::InstantMessage {
-            from_agent_id: Uuid::from_u128(2),
+            from_agent_id: DEMO_GIVER,
             from_name: aurora_i18n::tr!("demo-violet-wolf").into(),
             to_agent_id: Uuid::nil(),
             dialog,

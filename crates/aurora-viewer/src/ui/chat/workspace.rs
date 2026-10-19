@@ -239,6 +239,9 @@ fn pane(
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);
+    if give_demo().is_some() {
+        ui.ctx().data_mut(|d| d.insert_temp(give_demo_id(), pane));
+    }
     let members_room = !rail && members_room_now(st.layout_members_room, width);
     st.layout_members_room = Some(members_room);
     // the panel's width eases to its new one when the room comes or goes
@@ -287,9 +290,14 @@ fn pane(
     let lines_w = width - members_w;
     let mut to_field = ToField::Nothing;
     let body_top = ui.cursor().top();
+    let give_to = st.selected.filter(|_| kind == Some(sidebar::Kind::Private));
+    let fade = drop_fade(ui, give_to.is_some());
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(lines_w);
+            if fade > 0.0 {
+                ui.multiply_opacity(1.0 - DROP_DIM * fade);
+            }
             let mut th = thread::Thread {
                 compact,
                 times: st.timestamps,
@@ -313,6 +321,12 @@ fn pane(
     });
     ui.set_min_height(0.0);
     let after_lines = body_top + lines_h;
+    if fade > 0.0
+        && let Some(id) = give_to
+    {
+        let area = egui::Rect::from_min_size(egui::pos2(pane.left(), body_top), egui::vec2(lines_w, lines_h));
+        drop_hint(ui, p, area, pane, &world.session_title(&id), fade);
+    }
     let mut quote = None;
     for a in asked {
         match a {
@@ -361,7 +375,11 @@ fn drops(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, st: &ChatUi, kind: Op
     if zone.dnd_hover_payload::<crate::ui::call_invite::PersonDrag>().is_some() {
         outline(ui);
     }
-    if let Some(person) = zone.dnd_release_payload::<crate::ui::call_invite::PersonDrag>() {
+    // egui's release takes the payload whatever its type: asked only for a
+    // resident, else it threw away the inventory dropped on an IM (#627)
+    if egui::DragAndDrop::has_payload_of_type::<crate::ui::call_invite::PersonDrag>(ui.ctx())
+        && let Some(person) = zone.dnd_release_payload::<crate::ui::call_invite::PersonDrag>()
+    {
         actions.push(ConvAction::AddPeople(conversation, vec![person.0]));
     }
     if kind == Some(sidebar::Kind::Private)
@@ -372,6 +390,135 @@ fn drops(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, st: &ChatUi, kind: Op
             actions.push(ConvAction::GiveItems { to: conversation, items });
         }
     }
+}
+
+/// How much an IM's messages fade behind the drop hint, at most.
+const DROP_DIM: f32 = 0.85;
+/// The time the messages take to fade, and to come back.
+const DROP_FADE: f32 = 0.12;
+/// The size of the hint's gift.
+const DROP_ICON: f32 = 28.0;
+
+fn drop_count_id(ui: &egui::Ui) -> egui::Id {
+    ui.id().with("drop_hint_count")
+}
+
+/// How far an IM's messages have faded behind the drop hint (0 to 1). It
+/// starts with the drag of inventory, wherever the pointer is: the IM says
+/// what a drop on it does before it is reached (#627). The Legacy Viewer
+/// only changes the cursor over it (LLFloaterIMSession::handleDragAndDrop).
+fn drop_fade(ui: &egui::Ui, im: bool) -> f32 {
+    let carried = crate::ui::inventory::drag::carried_count(ui.ctx()).filter(|_| im);
+    if let Some(n) = carried {
+        // kept for the fade back, once the drag is over
+        ui.ctx().data_mut(|d| d.insert_temp(drop_count_id(ui), n));
+    }
+    ui.ctx()
+        .animate_bool_with_time(ui.id().with("drop_hint"), carried.is_some(), DROP_FADE)
+}
+
+/// The hint over the faded messages: to whom a drop gives, and how many
+/// entries when several. Over the pane, where `drops` outlines the zone, it
+/// takes the ink.
+fn drop_hint(ui: &egui::Ui, p: &Palette, area: egui::Rect, pane: egui::Rect, name: &str, fade: f32) {
+    let ctx = ui.ctx();
+    let count = ctx.data(|d| d.get_temp::<usize>(drop_count_id(ui))).unwrap_or(1);
+    let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::carried_count(ctx).is_some();
+    let ink = if over { p.ink } else { p.muted };
+    let mut painter = ui.painter().with_clip_rect(area);
+    painter.multiply_opacity(fade);
+    let centred = |text: String, size: f32, color: egui::Color32| {
+        let mut job = egui::text::LayoutJob::simple(text, egui::FontId::proportional(size), color, (area.width() - 32.0).max(60.0));
+        // centred on x = 0
+        job.halign = egui::Align::Center;
+        painter.layout_job(job)
+    };
+    let title = centred(aurora_i18n::tr!("ui-chat-drop-to-give", name = name), 13.5, ink);
+    let number = aurora_i18n::integer(count as i64);
+    let sub = (count > 1).then(|| {
+        centred(
+            aurora_i18n::tr!("inventory-items-count", count = count, number = number),
+            12.0,
+            p.muted,
+        )
+    });
+    let height = DROP_ICON + 8.0 + title.size().y + sub.as_ref().map_or(0.0, |s| 3.0 + s.size().y);
+    let x = area.center().x;
+    let mut y = area.center().y - height / 2.0;
+    if let Some(icon) = crate::ui::icons::global("gift-filled") {
+        let rect = egui::Rect::from_min_size(egui::pos2(x - DROP_ICON / 2.0, y), egui::Vec2::splat(DROP_ICON));
+        painter.image(
+            icon.id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            ink,
+        );
+    }
+    y += DROP_ICON + 8.0;
+    let title_h = title.size().y;
+    painter.galley(egui::pos2(x, y), title, ink);
+    if let Some(sub) = sub {
+        painter.galley(egui::pos2(x, y + title_h + 3.0), sub, p.muted);
+    }
+}
+
+/// `AURORA_DEMO_CONV_GIVE=away|over|many` (with `AURORA_DEMO_CONV=aurora`).
+fn give_demo() -> Option<&'static str> {
+    static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    MODE.get_or_init(|| {
+        (std::env::var("AURORA_DEMO").as_deref() == Ok("1"))
+            .then(|| std::env::var("AURORA_DEMO_CONV_GIVE").ok())
+            .flatten()
+            .filter(|mode| matches!(mode.as_str(), "away" | "over" | "many" | "drop"))
+    })
+    .as_deref()
+}
+
+fn give_demo_id() -> egui::Id {
+    egui::Id::new("conversation_give_demo")
+}
+
+/// The entries `drop` gives: seven of `AURORA_DEMO_INVENTORY`'s, its no-copy
+/// and no-transfer objects among them (world/inventory/demo.rs).
+const GIVE_DEMO_ITEMS: [u128; 7] = [8100, 8103, 8109, 8110, 8111, 8104, 8105];
+
+/// From frame 700, inventory carried: the pointer left outside the window
+/// (`away`), or on the conversation with one entry (`over`) or three
+/// (`many`), never released; `drop` releases seven entries of the demo
+/// inventory on it at frame 720, which opens the give confirmation. No
+/// button is pressed: the payload alone lasts until a release.
+pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let Some(mode) = give_demo().filter(|_| frame >= 700) else {
+        return Vec::new();
+    };
+    if frame == 700 {
+        let ids = match mode {
+            "drop" => GIVE_DEMO_ITEMS.iter().map(|&n| Uuid::from_u128(n)).collect(),
+            "many" => (1..=3)
+                .map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k))
+                .collect(),
+            _ => vec![Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0001)],
+        };
+        crate::ui::inventory::drag::demo_carry(ctx, ids);
+    }
+    let pane = ctx.data(|d| d.get_temp::<egui::Rect>(give_demo_id()));
+    let pos = match (mode, pane) {
+        ("away", _) | (_, None) => egui::pos2(4.0, 4.0),
+        (_, Some(pane)) => pane.center(),
+    };
+    let mut events = vec![egui::Event::PointerMoved(pos)];
+    if mode == "drop" && frame == 720 {
+        events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        });
+    }
+    if mode == "drop" && frame > 720 {
+        return Vec::new();
+    }
+    events
 }
 
 /// The conversation shown is in sight: its "New" line (`NewLines`).
