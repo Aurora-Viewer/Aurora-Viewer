@@ -95,6 +95,9 @@ pub fn demo_active() -> bool {
     demo_mode().is_some()
 }
 
+/// The folder window of `aurora-folder-window` (its id names its layout).
+pub const DEMO_FOLDER_WINDOW: Uuid = Uuid::from_u128(0xA0F0);
+
 /// The demo's window at the width of its layout, whatever size an earlier
 /// run left in the layout file.
 pub fn demo_place(ctx: &egui::Context, frame: u64) {
@@ -105,6 +108,22 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             "aurora-wide" | "aurora-rights" => egui::vec2(WIDE_SIZE, 720.0),
             _ => egui::vec2(DEFAULT_SIZE.x, 640.0),
         };
+        if let Some(wide) = mode.strip_prefix("aurora-folder-window") {
+            // the main window narrow at the left, the folder window beside it
+            widgets::place_floater(ctx, "inventory", egui::pos2(30.0, 60.0), egui::vec2(DEFAULT_SIZE.x, 640.0));
+            let size = if wide.is_empty() {
+                egui::vec2(420.0, 560.0)
+            } else {
+                egui::vec2(WIDE_SIZE, 720.0)
+            };
+            let pos = if wide.is_empty() {
+                egui::pos2(490.0, 60.0)
+            } else {
+                egui::pos2(300.0, 80.0)
+            };
+            widgets::place_floater(ctx, &format!("inventory_{DEMO_FOLDER_WINDOW}"), pos, size);
+            return;
+        }
         widgets::place_floater(ctx, "inventory", egui::pos2(30.0, 60.0), size);
     }
 }
@@ -208,15 +227,24 @@ pub(super) fn contents(
         explorer: false,
     });
     controls::init_filters(st, prefs);
-    st.counts.update(inv, prefs, facts.worn.len());
-    if st.browse.is_nil() || !inv.folders.contains_key(&st.browse) {
-        st.browse = inv.root;
+    if st.scope.is_nil() {
+        st.counts.update(inv, prefs, facts.worn.len());
+    }
+    // A folder window's explorer stays under its folder.
+    let base = base(inv, st);
+    if st.browse.is_nil() || !inv.folders.contains_key(&st.browse) || (base != inv.root && !rules::under(inv, st.browse, base)) {
+        st.browse = base;
     }
     match layout {
         Layout::Compact => compact(ui, p, icons, inv, st, prefs, facts, images, actions),
         Layout::Medium | Layout::Wide => explorer(ui, p, icons, inv, st, prefs, facts, images, actions, layout),
     }
     row_menu(ui, p, inv, st, prefs, facts, actions);
+}
+
+/// Where the window's folders start: the root, or a folder window's folder.
+pub(super) fn base(inv: &Inventory, st: &InventoryUi) -> Uuid {
+    if st.scope.is_nil() { inv.root } else { st.scope }
 }
 
 /// The menu a row's "more actions" button opened.
@@ -277,8 +305,11 @@ fn compact(
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     actions: &mut Vec<InvAction>,
 ) {
-    toolbar::tabs(ui, p, inv, st, prefs);
-    ui.add_space(6.0);
+    // a folder window has no tabs
+    if st.scope.is_nil() {
+        toolbar::tabs(ui, p, inv, st, prefs);
+        ui.add_space(6.0);
+    }
     toolbar::search_row(ui, p, inv, st, prefs, Layout::Compact, actions);
     ui.add_space(4.0);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
@@ -606,6 +637,46 @@ mod tests {
             h.st.search.clear();
             h.st.hide_details = true;
             h.frames(2);
+        }
+    }
+
+    #[test]
+    fn a_folder_window_stays_under_its_folder_at_every_width() {
+        let folder = Uuid::from_u128(8000);
+        for width in [DEFAULT_SIZE.x, 800.0, WIDE_SIZE] {
+            let mut h = Harness::new(width);
+            h.st.scope = folder;
+            h.frames(4);
+            assert_eq!(h.st.browse, folder, "{width} px: the explorer starts at the folder");
+            // neither the root nor a folder outside it can be shown
+            h.st.browse = h.inv.root;
+            h.frames(2);
+            assert_eq!(h.st.browse, folder, "{width} px");
+            h.st.tab = RECEIVED_TAB;
+            h.frames(2);
+            assert_eq!(h.st.tab, 0, "{width} px: a folder window has no tabs");
+            assert!(
+                h.st.side.rows.iter().all(|row| rules::under(&h.inv, row.id, folder)),
+                "{width} px: the column lists the folder's subfolders only"
+            );
+            let area = |h: &Harness| {
+                h.ctx
+                    .memory(|m| m.area_rect(egui::Id::new("aurora_inventory_test")))
+                    .expect("window")
+            };
+            let before = area(&h).height();
+            h.frames(30);
+            assert!(area(&h).height() <= before + 0.5, "{width} px: the window does not grow");
+            // its rows are the folder's: one is clicked
+            h.frames(40);
+            let row = h.row(8101);
+            h.click(row.center(), Default::default());
+            assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "{width} px");
+            if width >= 800.0 {
+                let sub = h.row(8001).center();
+                h.double_click(sub);
+                assert_eq!(h.st.browse, Uuid::from_u128(8001), "{width} px: going into a subfolder");
+            }
         }
     }
 
