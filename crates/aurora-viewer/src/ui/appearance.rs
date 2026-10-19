@@ -281,22 +281,20 @@ fn gallery(
                     let current = model::base(&world.inventory) == Some(*id);
                     let color = if current { p.violet_light } else { p.ink };
                     let font_id = egui::FontId::proportional(12.0);
-                    let label = outfit_label(ui, &folder.info.name, current, font_id.clone(), color);
-                    let galley =
-                        egui::WidgetText::from(label).into_galley(ui, Some(egui::TextWrapMode::Truncate), width, egui::TextStyle::Body);
+                    let galley = outfit_label(ui, &folder.info.name, current, font_id.clone(), color, width);
                     let response = ui.add(egui::Label::new(galley.clone()));
-                    if current
-                        && let Some(offset) = widgets::faux_bold_offset(ui)
-                        && ui.is_rect_visible(response.rect)
-                    {
-                        let name = egui::WidgetText::from(RichText::new(&folder.info.name).font(font_id).color(color)).into_galley(
-                            ui,
-                            Some(egui::TextWrapMode::Truncate),
-                            galley.size().x,
-                            egui::TextStyle::Body,
-                        );
-                        let clip = response.rect.intersect(ui.clip_rect());
-                        ui.painter().with_clip_rect(clip).galley(response.rect.min + offset, name, color);
+                    if current && ui.is_rect_visible(response.rect) {
+                        if let Some(offset) = widgets::faux_bold_offset(ui) {
+                            let name = egui::WidgetText::from(RichText::new(&folder.info.name).font(font_id).color(color)).into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Truncate),
+                                galley.size().x,
+                                egui::TextStyle::Body,
+                            );
+                            let clip = response.rect.intersect(ui.clip_rect());
+                            ui.painter().with_clip_rect(clip).galley(response.rect.min + offset, name, color);
+                        }
+                        worn_tag(ui, p, response.rect.left() + galley.size().x, response.rect.center().y);
                     }
                 });
             }
@@ -305,16 +303,42 @@ fn gallery(
     }
 }
 
-/// LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD.
-fn outfit_label(ui: &egui::Ui, name: &str, current: bool, font_id: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
-    if !current {
-        return widgets::name_with_suffix(name, "", font_id, color);
+/// The room between an outfit's name and its worn tag.
+const WORN_TAG_GAP: f32 = 6.0;
+
+/// An outfit's name on one line, cut short within `width`.
+/// LLOutfitsList::onHighlightBaseOutfit marks the current title BOLD; it
+/// leaves room for its worn tag (`worn_tag`), the tag of the worn items.
+fn outfit_label(
+    ui: &egui::Ui,
+    name: &str,
+    current: bool,
+    font_id: egui::FontId,
+    color: egui::Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(name.to_owned(), egui::TextFormat::simple(font_id, color));
+    let mut room = 0.0;
+    if current {
+        if let Some(section) = job.sections.first_mut() {
+            widgets::embolden(ui, &mut section.format);
+        }
+        room = WORN_TAG_GAP + widgets::row_tag_width(ui, &aurora_i18n::tr!("ui-appearance-worn"));
     }
-    let mut job = widgets::name_with_suffix(name, &aurora_i18n::tr!("ui-appearance-worn", value0 = ""), font_id, color);
-    if let Some(section) = job.sections.first_mut() {
-        widgets::embolden(ui, &mut section.format);
-    }
-    job
+    job.wrap = egui::text::TextWrapping::truncate_at_width((width - room).max(1.0));
+    ui.painter().layout_job(job)
+}
+
+/// The worn tag after the current outfit's name, which ends at `name_end`.
+fn worn_tag(ui: &egui::Ui, p: &Palette, name_end: f32, center_y: f32) {
+    widgets::paint_row_tag(
+        ui,
+        p,
+        &aurora_i18n::tr!("ui-appearance-worn"),
+        true,
+        name_end + WORN_TAG_GAP,
+        center_y,
+    );
 }
 
 fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
@@ -326,13 +350,9 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
         };
         let is_current = current == Some(*id);
         let font_id = egui::TextStyle::Button.resolve(ui.style());
-        let label = outfit_label(ui, &f.info.name, is_current, font_id.clone(), p.ink);
-        let galley = egui::WidgetText::from(label).into_galley(
-            ui,
-            Some(egui::TextWrapMode::Extend),
-            ui.available_width() - ui.spacing().indent,
-            egui::TextStyle::Button,
-        );
+        // the header's own room for its title: past the caret, 4 px short of the end
+        let width = ui.available_width() - ui.spacing().indent - 4.0;
+        let galley = outfit_label(ui, &f.info.name, is_current, font_id.clone(), p.ink, width);
         let reveal = st.reveal_outfit == Some(*id);
         let (selected, forced) = (st.selected_outfit == Some(*id), reveal.then_some(true));
         let response = widgets::collapsing_forced(ui, p, ("outfit", id), galley.clone(), selected, forced, |ui| {
@@ -393,14 +413,15 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             st.selected_outfit = Some(*id);
         }
         gallery::context_menu(&response.header, p, world, st, *id, actions, false);
-        if is_current
-            && let Some(offset) = widgets::faux_bold_offset(ui)
-            && ui.is_rect_visible(response.header.rect)
-        {
+        if is_current && ui.is_rect_visible(response.header.rect) {
             let rect = response.header.rect;
-            let pos = egui::pos2(rect.left() + ui.spacing().indent, rect.center().y - galley.size().y * 0.5);
-            let name = ui.painter().layout_no_wrap(f.info.name.clone(), font_id, p.ink);
-            ui.painter().galley(pos + offset, name, p.ink);
+            let left = rect.left() + ui.spacing().indent;
+            if let Some(offset) = widgets::faux_bold_offset(ui) {
+                let pos = egui::pos2(left, rect.center().y - galley.size().y * 0.5);
+                let name = outfit_label(ui, &f.info.name, false, font_id, p.ink, galley.size().x);
+                ui.painter().galley(pos + offset, name, p.ink);
+            }
+            worn_tag(ui, p, left + galley.size().x, rect.center().y);
         }
         if reveal && response.body.is_some() {
             response.header.scroll_to_me(Some(egui::Align::Min));
