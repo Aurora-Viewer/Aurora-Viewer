@@ -59,7 +59,13 @@ fn im(n: u128, owner: Uuid, agent: Uuid, location: &str, text: &str) -> NetEvent
 pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     let here = aurora_i18n::tr!("common-aurora-demo");
     let ev = match frame {
-        700 => im(1, STRANGER, agent, "Far Away/128/128/25", aurora_i18n::tr!("demo-object-im-other-region")),
+        700 => im(
+            1,
+            STRANGER,
+            agent,
+            "Far Away/128/128/25",
+            aurora_i18n::tr!("demo-object-im-other-region"),
+        ),
         730 => im(2, agent, agent, "Far Away/30/40/25", aurora_i18n::tr!("demo-object-im-own")),
         760 => im(
             3,
@@ -68,8 +74,20 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             "Far Away/60/90/25",
             aurora_i18n::tr!("demo-object-im-friend"),
         ),
-        790 => im(4, STRANGER, agent, &format!("{here}/20/20/21"), aurora_i18n::tr!("demo-object-im-other-parcel")),
-        820 => im(5, STRANGER, agent, &format!("{here}/128/128/21"), aurora_i18n::tr!("demo-object-im-this-parcel")),
+        790 => im(
+            4,
+            STRANGER,
+            agent,
+            &format!("{here}/20/20/21"),
+            aurora_i18n::tr!("demo-object-im-other-parcel"),
+        ),
+        820 => im(
+            5,
+            STRANGER,
+            agent,
+            &format!("{here}/128/128/21"),
+            aurora_i18n::tr!("demo-object-im-this-parcel"),
+        ),
         // llRegionSayTo from outside the parcel
         850 => NetEvent::Chat(ChatMessage {
             from_name: name(6),

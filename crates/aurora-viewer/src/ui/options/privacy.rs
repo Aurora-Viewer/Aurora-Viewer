@@ -21,13 +21,7 @@ fn name_formats() -> [&'static str; 5] {
     ]
 }
 
-pub fn page(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    s: &mut Settings,
-    friends_only: &mut bool,
-    filter: &mut object_im_filter::Settings,
-) -> bool {
+pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, friends_only: &mut bool, filter: &mut object_im_filter::Settings) -> bool {
     let mut c = false;
     // "Only friends and groups can call or IM me" (voice_call_friends_only_check,
     // VoiceCallsFriendsOnly; its hint is the FriendsAndGroupsOnly notice)

@@ -184,10 +184,7 @@ impl World {
     /// never a group: a group-owned object's owner id is the group's, which
     /// is no friend nor us.
     pub(super) fn object_chat_filtered(&self, c: &ChatMessage) -> bool {
-        if !self.object_im_filter.on
-            || c.source_type != ChatSourceType::Object
-            || c.chat_type != ChatType::Other(CHAT_TYPE_DIRECT)
-        {
+        if !self.object_im_filter.on || c.source_type != ChatSourceType::Object || c.chat_type != ChatType::Other(CHAT_TYPE_DIRECT) {
             return false;
         }
         let region = self.region_name();
@@ -280,9 +277,15 @@ mod tests {
         let h = here(&west_half);
         let cfg = on(Scope::Region);
         assert!(drops(&cfg, &h, &sender(STRANGER), Some("Elsewhere"), NEAR));
-        assert!(!drops(&cfg, &h, &sender(STRANGER), Some("Bay City"), FAR), "same region, other parcel");
+        assert!(
+            !drops(&cfg, &h, &sender(STRANGER), Some("Bay City"), FAR),
+            "same region, other parcel"
+        );
         assert!(!drops(&cfg, &h, &sender(STRANGER), Some("bay city"), NEAR), "case of the name");
-        assert!(!drops(&cfg, &h, &sender(STRANGER), None, FAR), "llRegionSayTo comes from our region");
+        assert!(
+            !drops(&cfg, &h, &sender(STRANGER), None, FAR),
+            "llRegionSayTo comes from our region"
+        );
     }
 
     #[test]
@@ -297,7 +300,10 @@ mod tests {
         assert!(!drops(&cfg, &h, &sender(STRANGER), Some("Bay City"), None), "position unknown");
         let h = here(&unknown);
         assert!(!drops(&cfg, &h, &sender(STRANGER), Some("Bay City"), FAR), "parcel unknown");
-        assert!(drops(&cfg, &h, &sender(STRANGER), Some("Elsewhere"), FAR), "the region is still known");
+        assert!(
+            drops(&cfg, &h, &sender(STRANGER), Some("Elsewhere"), FAR),
+            "the region is still known"
+        );
     }
 
     #[test]
