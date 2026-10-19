@@ -20,10 +20,14 @@ impl Cargo {
         if !ui.rect_contains_pointer(r.rect) {
             return None;
         }
-        egui::DragAndDrop::payload::<SelectionDrag>(ui.ctx())
+        Self::carried(ui.ctx())
+    }
+    /// The inventory a drag in progress carries, wherever the pointer is.
+    fn carried(ctx: &egui::Context) -> Option<Self> {
+        egui::DragAndDrop::payload::<SelectionDrag>(ctx)
             .map(Self::Selection)
-            .or_else(|| egui::DragAndDrop::payload::<InvDrag>(ui.ctx()).map(Self::Item))
-            .or_else(|| egui::DragAndDrop::payload::<FolderDrag>(ui.ctx()).map(Self::Folder))
+            .or_else(|| egui::DragAndDrop::payload::<InvDrag>(ctx).map(Self::Item))
+            .or_else(|| egui::DragAndDrop::payload::<FolderDrag>(ctx).map(Self::Folder))
     }
     fn ids(&self) -> &[Uuid] {
         match self {
@@ -112,6 +116,13 @@ fn feedback_id() -> egui::Id {
     egui::Id::new("inventory_move_drag_feedback")
 }
 
+/// How many entries a drag of inventory carries while one is in progress (a
+/// folder counts as one): a conversation says what a drop would do before
+/// the pointer reaches it.
+pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
+    Cargo::carried(ctx).map(|c| c.ids().len())
+}
+
 /// Inventory dragged over a conversation with a resident, which gives it
 /// (LLFloaterIMSession::handleDragAndDrop → LLGiveInventory, Firestorm
 /// indra/newview/llfloaterimsession.cpp): the items carried, and whether
@@ -121,10 +132,7 @@ pub(crate) fn give_target(ui: &egui::Ui, zone: egui::Rect) -> Option<(Vec<Uuid>,
         return None;
     }
     let ctx = ui.ctx();
-    let cargo = egui::DragAndDrop::payload::<SelectionDrag>(ctx)
-        .map(Cargo::Selection)
-        .or_else(|| egui::DragAndDrop::payload::<InvDrag>(ctx).map(Cargo::Item))
-        .or_else(|| egui::DragAndDrop::payload::<FolderDrag>(ctx).map(Cargo::Folder))?;
+    let cargo = Cargo::carried(ctx)?;
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|d| {
         d.insert_temp(

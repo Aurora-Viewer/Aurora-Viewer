@@ -10073,7 +10073,14 @@ impl App {
                         ui::chat::ConvAction::GiveItems { to, items } => {
                             self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
                         }
-                        ui::chat::ConvAction::OpenInventory => self.panels.inventory = true,
+                        // shown and in front even when already open
+                        // (LLAvatarActions::share → showInstance), else the
+                        // menu entry seems to do nothing (#627)
+                        ui::chat::ConvAction::OpenInventory => {
+                            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                            self.egui_ctx
+                                .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("inventory")));
+                        }
                         ui::chat::ConvAction::SetOutputDevice(device) => {
                             self.settings.audio.output_device = device;
                             self.settings.save();
