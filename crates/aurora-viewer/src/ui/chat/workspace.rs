@@ -479,8 +479,8 @@ fn give_demo_id() -> egui::Id {
 }
 
 /// The entries `drop` gives: seven of `AURORA_DEMO_INVENTORY`'s, its no-copy
-/// object among them (world/inventory/demo.rs).
-const GIVE_DEMO_ITEMS: [u128; 7] = [8100, 8103, 8109, 8111, 8104, 8105, 8106];
+/// and no-transfer objects among them (world/inventory/demo.rs).
+const GIVE_DEMO_ITEMS: [u128; 7] = [8100, 8103, 8109, 8110, 8111, 8104, 8105];
 
 /// From frame 700, inventory carried: the pointer left outside the window
 /// (`away`), or on the conversation with one entry (`over`) or three

@@ -2750,8 +2750,9 @@ failure. Grid validation and any paid upload are performed by the human.
   ink. `many` carries three entries: "3 items" under the hint. `drop`,
   with `AURORA_DEMO_INVENTORY=1`, drops seven of its entries on the
   conversation at frame 720: the give confirmation opens, the resident by
-  name, five entries and "and 2 more", the no-copy object tagged and the
-  amber warning, then Cancel / Give. Capture at
+  name, five entries and "and 2 more", the no-copy object tagged with the
+  amber warning, the no-transfer one greyed and tagged with the line
+  saying it is left out (its reason on hover), then Cancel / Give. Capture at
   frame 780 with `AURORA_FPS_LIMIT=60`. The field has no attach button.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),

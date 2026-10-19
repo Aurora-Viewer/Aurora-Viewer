@@ -2780,6 +2780,12 @@ build-ui-floaters-reflection-probes-can-only-be-selected-when-select-reflection 
 ui-options-camera-firestorm-views-camera-presets = Legacy Viewer views (Camera > Presets)
 ui-options-loading-and-teleport-screens-show-your-last-view-blurred = Loading and teleport screens show your last view, blurred (captured while teleporting or quitting)
 ui-inventory-dialogs-no-copy = no copy
+ui-inventory-dialogs-no-transfer = no transfer
+ui-inventory-dialogs-left-out = left out
+ui-inventory-dialogs-not-given = { $count ->
+    [one] { $number } item can't be given and will be left out.
+   *[other] { $number } items can't be given and will be left out.
+}
 ui-inventory-dialogs-no-copy-will-leave = { $count ->
     [one] { $number } no-copy item will leave your inventory.
    *[other] { $number } no-copy items will leave your inventory.
