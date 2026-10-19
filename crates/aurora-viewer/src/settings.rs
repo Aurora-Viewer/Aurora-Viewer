@@ -658,8 +658,12 @@ pub struct Settings {
     /// pixel, so they stop shimmering as the camera moves. An Aurora
     /// improvement, on by default.
     pub specular_aa: bool,
-    /// 0 Khronos PBR Neutral, 1 ACES
+    /// 0 Khronos PBR Neutral, 1 ACES (RenderTonemapType: ACES by default,
+    /// like the Legacy Viewer)
     pub tonemapper: u8,
+    /// Share of the tone mapped color over the exposed linear one, on skies
+    /// that are not classic (RenderTonemapMix, 0.7 like the Legacy Viewer).
+    pub tonemap_mix: f32,
     /// Optional frame rate cap (on by default at 120 images per second).
     pub fps_cap: bool,
     pub fps_limit: u32,
@@ -789,7 +793,10 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 24;
+/// RenderTonemapMix's default (settings.xml).
+pub(crate) const TONEMAP_MIX: f32 = 0.7;
+
+const SETTINGS_VERSION: u32 = 25;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1217,7 +1224,8 @@ impl Default for Settings {
             contact_shadows: false,
             antialiasing: 6,
             specular_aa: true,
-            tonemapper: 0,
+            tonemapper: 1,
+            tonemap_mix: TONEMAP_MIX,
             fps_cap: true,
             fps_limit: 120,
             background_fps_cap: true,
@@ -1642,6 +1650,13 @@ impl Settings {
             // exactly on Potato or Low takes theirs, any other keeps 1
             crate::graphics_presets::upgrade_physics_detail(&mut self);
         }
+        if self.settings_version < 25 {
+            // ACES is the default tone mapper, as RenderTonemapType in the
+            // Legacy Viewer: every earlier file wrote the former default,
+            // Khronos PBR Neutral, which looked the same while skies were
+            // not tone mapped (no automatic exposure nor mix either)
+            self.tonemapper = 1;
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1725,6 +1740,11 @@ impl Settings {
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 64);
         self.tonemapper = self.tonemapper.min(1);
+        self.tonemap_mix = if self.tonemap_mix.is_finite() {
+            self.tonemap_mix.clamp(0.0, 1.0)
+        } else {
+            TONEMAP_MIX
+        };
         self.chat_toast_seconds = self.chat_toast_seconds.clamp(0.0, 60.0);
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
@@ -2328,6 +2348,28 @@ mod tests {
             ..Settings::default()
         };
         assert!(chosen.sanitized().arrow_keys_always_move);
+    }
+
+    /// ACES and a mix of 0.7 are the defaults, like RenderTonemapType and
+    /// RenderTonemapMix; earlier files all held Khronos PBR Neutral, a later
+    /// choice of it stays.
+    #[test]
+    fn aces_is_the_default_tone_mapper_and_once_for_earlier_files() {
+        let s = Settings::default().sanitized();
+        assert_eq!((s.tonemapper, s.tonemap_mix), (1, 0.7));
+        let old = Settings {
+            settings_version: 24,
+            tonemapper: 0,
+            ..Settings::default()
+        };
+        assert_eq!(old.sanitized().tonemapper, 1);
+        let chosen = Settings {
+            tonemapper: 0,
+            tonemap_mix: f32::NAN,
+            ..Settings::default()
+        };
+        let chosen = chosen.sanitized();
+        assert_eq!((chosen.tonemapper, chosen.tonemap_mix), (0, 0.7));
     }
 
     /// The rez effect is the default; earlier files all held the former

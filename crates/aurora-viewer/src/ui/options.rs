@@ -1857,7 +1857,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ui,
                     p,
                     aurora_i18n::tr!("ui-options-tone-mapping"),
-                    aurora_i18n::tr!("ui-options-khronos-pbr-neutral-is-used-by-second-life"),
+                    aurora_i18n::tr!("ui-options-tone-mapping-help"),
                     |ui| {
                         let names = [aurora_i18n::tr!("ui-options-khronos-pbr-neutral"), "ACES"];
                         let mut changed = false;
@@ -1878,6 +1878,28 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         .response
                         .on_disabled_hover_text(aurora_i18n::tr!("ui-options-tone-mapping-classic-sky"));
                         changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-tone-mapping-mix"),
+                    aurora_i18n::tr!("ui-options-tone-mapping-mix-help"),
+                    |ui| {
+                        let r = ui.add_enabled_ui(st.sky_tone_mapped, |ui| {
+                            ui.spacing_mut().slider_width = SLIDER_W;
+                            ui.add(
+                                egui::Slider::new(&mut s.tonemap_mix, 0.0..=1.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .step_by(0.1)
+                                    .fixed_decimals(1)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        });
+                        r.response
+                            .on_disabled_hover_text(aurora_i18n::tr!("ui-options-tone-mapping-classic-sky"));
+                        r.inner
                     },
                 );
             });

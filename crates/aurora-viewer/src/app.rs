@@ -6542,6 +6542,7 @@ impl App {
             fog_color: env.fog_color,
             fog_density: env.fog_density,
             exposure: self.photo_exposure(),
+            tonemap_mix: self.settings.tonemap_mix,
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
             bloom: if self.settings.bloom { self.settings.bloom_strength } else { 0.0 },
