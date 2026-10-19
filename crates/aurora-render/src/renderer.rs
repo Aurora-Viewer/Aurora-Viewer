@@ -2074,7 +2074,11 @@ fn shadow_anchor(center: Vec3, radius: f32) -> Vec3 {
 /// photo's when the frame draws one of its tiles (`FrameParams::photo_tile`),
 /// `proj` itself otherwise.
 fn whole_proj(proj: Mat4, photo_tile: Mat4) -> Mat4 {
-    if photo_tile == Mat4::IDENTITY { proj } else { photo_tile.inverse() * proj }
+    if photo_tile == Mat4::IDENTITY {
+        proj
+    } else {
+        photo_tile.inverse() * proj
+    }
 }
 
 /// Whether this frame uses the receiver bias of before
