@@ -395,7 +395,8 @@ pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<TilePass> {
     let max_pixels = max_pixels.max(u64::from(MIN_SIDE) * u64::from(MIN_SIDE));
     // at most an eighth of the side a pass can draw, so that the tiles keep
     // most of what they draw (and always fit, down to the smallest limits)
-    let guard = TILE_GUARD.min(max_side / 8).min(max_pixels.isqrt() as u32 / 8);    // the side a pass draws when `side` is split in `n`: the tile, a band on
+    let guard = TILE_GUARD.min(max_side / 8).min(max_pixels.isqrt() as u32 / 8);
+    // the side a pass draws when `side` is split in `n`: the tile, a band on
     // each side and the pixel that puts its origin on an even one
     let drawn = |side: u32, n: u32| if n > 1 { side.div_ceil(n) + 2 * guard + 1 } else { side };
     let mut nx = w.div_ceil(max_side);

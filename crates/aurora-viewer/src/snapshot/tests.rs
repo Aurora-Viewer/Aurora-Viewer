@@ -78,7 +78,11 @@ fn one_pass_while_the_card_holds_it_tiles_otherwise() {
     // too many pixels for the memory
     let tiles = plan((7680, 4320), 16384, 10_000_000);
     assert!(tiles.len() >= 4);
-    assert!(tiles.iter().all(|t| u64::from(t.draw.width) * u64::from(t.draw.height) <= 10_000_000));
+    assert!(
+        tiles
+            .iter()
+            .all(|t| u64::from(t.draw.width) * u64::from(t.draw.height) <= 10_000_000)
+    );
     // the tiles kept cover the photo exactly once
     let mut covered = vec![0u8; 7680 * 4320];
     for t in &tiles {
