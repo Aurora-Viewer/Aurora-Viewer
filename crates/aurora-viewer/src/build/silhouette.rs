@@ -139,6 +139,10 @@ impl Cache {
             }
             let c = color(root);
             let scale = world.visual_scale(idx).max(Vec3::splat(0.001));
+            if let Some((center, r, half)) = o.is_tree().then(|| scene.plant_box(world, idx, pos, rot)).flatten() {
+                obb(p, center, r, half, c);
+                continue;
+            }
             if o.is_tree() || (hud && o.volume.sculpt.is_some()) {
                 obb(p, pos, rot, scale * 0.5, c);
                 continue;

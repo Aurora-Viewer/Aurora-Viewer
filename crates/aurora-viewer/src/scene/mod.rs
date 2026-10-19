@@ -33,6 +33,7 @@ pub mod morph;
 pub mod particles;
 mod pick_accel;
 pub mod picking;
+mod plants;
 pub mod probes;
 pub mod rez;
 mod sculpt_watch;
@@ -95,6 +96,18 @@ pub enum GeomKey {
     Mesh {
         id: Uuid,
         lod: u8,
+    },
+    /// A Linden tree of a species (`aurora_prim::tree`), shared by every
+    /// tree of it at this detail level (0 the coarsest, like the others).
+    Tree {
+        species: u8,
+        lod: u8,
+    },
+    /// A Linden grass tuft (`aurora_prim::grass`): its own, standing on the
+    /// ground under it; `hash` covers its species, size and position.
+    Grass {
+        id: Uuid,
+        hash: u64,
     },
     AvatarPart(u8),
     /// A system body part morphed by a set of visual parameter weights
@@ -612,6 +625,8 @@ pub struct Scene {
     job_rx: crossbeam_channel::Receiver<JobResult>,
     geoms: HashMap<GeomKey, GeomEntry>,
     flexibles: HashMap<usize, flexible::State>,
+    /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
+    grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
     pub meshes: MeshStreamer,
     pub materials: MaterialStreamer,
@@ -1095,6 +1110,7 @@ impl Scene {
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
             geoms: HashMap::new(),
             flexibles: HashMap::new(),
+            grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
             materials: MaterialStreamer::new(cache_dir),
@@ -1354,6 +1370,16 @@ impl Scene {
                 self.meshes.want(id, lod);
                 self.meshes.need(id, need.px, need.own);
             }
+            GeomKey::Tree { species, lod } => {
+                let pool = self.staging.clone();
+                self.jobs.spawn(move || {
+                    let s = aurora_prim::tree::tree_species(Some(species));
+                    let mesh = aurora_prim::tree::generate_tree(s, plants::tree_lod(lod));
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), 1.0, pool.as_deref())
+                });
+            }
+            // (built at once by `request_grass`, which needs the ground)
+            GeomKey::Grass { .. } => return false,
             // (uploaded by `ensure_avatar_parts`, built by `avatar_morph`)
             GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => {}
         }
@@ -1816,6 +1842,25 @@ impl Scene {
     }
 
     fn object_geom_key(o: &Object, lod: u8) -> Option<GeomKey> {
+        use aurora_prim::params::{LL_PCODE_LEGACY_GRASS, LL_PCODE_LEGACY_TREE};
+        // (LL_PCODE_TREE_NEW objects are never created by the Legacy
+        // Viewer: LLViewerObject::createObject returns none for them)
+        match o.pcode {
+            LL_PCODE_LEGACY_TREE => {
+                let species = o
+                    .tree_species
+                    .filter(|&s| (s as usize) < aurora_prim::tree::TREE_SPECIES.len())
+                    .unwrap_or(0);
+                return Some(GeomKey::Tree { species, lod: lod.min(3) });
+            }
+            LL_PCODE_LEGACY_GRASS => {
+                return Some(GeomKey::Grass {
+                    id: o.full_id,
+                    hash: plants::grass_hash(o),
+                });
+            }
+            _ => {}
+        }
         if o.is_avatar() || o.is_tree() || o.pcode != aurora_prim::params::LL_PCODE_VOLUME {
             return None;
         }
@@ -2241,6 +2286,7 @@ impl Scene {
         let t_part = self.parts.lap(Part::SyncAnchors, t_part);
         step(&mut slow, "anchors");
         self.sync_flexibles(renderer, world, &synced, now, view);
+        self.sync_grass_ground(renderer, world, now, &mut synced);
         step(&mut slow, "flexibles");
         // GPU object table: bounds and flags of what was synced (unchanged
         // entries are not uploaded); the same bounds for the hover search,
@@ -2699,6 +2745,9 @@ impl Scene {
         }
         let previous_geom = self.gpu[idx].geom;
         let mut bind_new = None;
+        if let Some(k @ GeomKey::Grass { .. }) = wanted {
+            self.request_grass(renderer, world, idx, k, pos);
+        }
         if let Some(k) = wanted {
             // need an Object reference for building: re-borrow
             let obj = world.objects.get(idx);
@@ -2914,11 +2963,14 @@ impl Scene {
         };
         let hud_zoom = if g.hud { world.hud_scale(idx) } else { 1.0 };
         let selected_faces = self.selection_faces.get(&idx).copied().unwrap_or(0);
+        // a Linden plant: its species texture, alpha-tested at 0.5, whatever
+        // its texture entry says
+        let plant = plants::plant_face(o);
         for (fi, face) in geom.faces.iter().enumerate() {
             let Some(alloc) = face else {
                 continue;
             };
-            let tf = o.visual_texture_face(fi);
+            let tf = plant.unwrap_or_else(|| o.visual_texture_face(fi));
             let invisible = tf.color[3] < 0.004;
             if invisible && self.debug_alpha.is_none() && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0 {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
@@ -2938,7 +2990,7 @@ impl Scene {
             let repeats = tf.scale_s.abs().min(tf.scale_t.abs());
             let mut two_sided = false;
             // GLTF material?
-            let mat_id = o.visual_material(fi);
+            let mat_id = o.visual_material(fi).filter(|_| plant.is_none());
             let mut base_tex = tf.texture;
             if let Some(mid) = mat_id {
                 g.material_ids.push(mid);
@@ -3002,7 +3054,7 @@ impl Scene {
                 }
             }
             // legacy material (LLMaterial) of the texture entry
-            let mut legacy_alpha = None;
+            let mut legacy_alpha = plant.map(|_| legacy_mat::alpha_mode::MASK);
             if mat_id.is_none() && !tf.material_id.is_nil() {
                 g.material_ids.push(tf.material_id);
                 let cap = world.regions.get(&o.key.region).and_then(|r| {
@@ -3076,7 +3128,9 @@ impl Scene {
             }
             // texture animation: written once, evaluated by the vertex shaders
             let pbr = rec.flags[0] & flags::PBR != 0;
-            if let Some(a) = tex_anim_record(o, fi, geom.faces.len(), &tf, pbr, renderer.anim_clock()) {
+            if plant.is_none()
+                && let Some(a) = tex_anim_record(o, fi, geom.faces.len(), &tf, pbr, renderer.anim_clock())
+            {
                 rec.flags[0] |= flags::TEX_ANIM;
                 rec.flags[3] = a.packed;
                 rec.anim = a.anim;

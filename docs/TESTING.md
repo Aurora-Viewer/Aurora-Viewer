@@ -1847,6 +1847,7 @@ tests do not establish that this report uses an invalid joint or index.
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
+| `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
@@ -1936,6 +1937,19 @@ tests do not establish that this report uses an invalid joint or index.
   the sun draws across a low-poly ball.
 - **`AURORA_DEMO_FOLIAGE=1`**: a 2.5 m panel of thin blades and small
   `AURORA_ALPHA_COVERAGE=0` the 10 and 20 m panels thin out; with the
+- **`AURORA_DEMO_PLANTS=1|near|far|dense`**: Linden trees and grass
+  (`scene/plants.rs`), best from `AURORA_DEMO_POS="80,100"`. `1` (or
+  `near`): the 21 tree species in three rows 26, 42 and 58 m along the
+  start view, species 0 to 6 in the nearest row from left to right (the
+  palm, species 3, straight ahead), and the 6 grass species in a row 8 m
+  ahead; `far`: the same rows 30 m further and 30 m to the right, 56 to 88 m
+  away (within the 96 m draw distance); `dense`: about 580 trees of every
+  species, turned and sized at random, and 390 grass tufts over the land
+  ahead (the cost of a forest, with `AURORA_PROFILE=1`). The species
+  textures are not fetched: stand-ins drawn under their ids (bark on the
+  left half, leaves in the top right quarter, grass blades from the bottom
+  edge), only with this scenario. Close-ups: `AURORA_DEMO_CAMERA=close,790,185,80`
+  on the tree behind the palm, capture at frame 760.
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
   `AURORA_DEMO_CROWD` wear a box on each foot's attachment point, opaque or
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces

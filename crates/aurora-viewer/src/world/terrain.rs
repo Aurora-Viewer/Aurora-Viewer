@@ -1,133 +1,10 @@
 //! Region heightmaps, terrain composition (port of the noise logic in
 //! `llvlcomposition.cpp`) and chunk mesh generation.
 
+use aurora_prim::noise;
 use aurora_render::Vertex;
 
 pub const CHUNK_CELLS: u32 = 32;
-
-/// Port of the Second Life viewer's lattice noise (indra/newview/noise.h,
-/// noise.cpp, originally LGPL 2.1), used by the terrain composition. The
-/// gradient and permutation tables come from `srand(42)` + `rand()`, so the
-/// texture blend only matches Firestorm's if the same pseudo-random sequence
-/// is reproduced: Firestorm for Windows (the reference) is built with MSVC,
-/// whose `rand()` is a 32-bit LCG returning bits 16..30. All arithmetic is in
-/// f32 in the same order as the C code (built with /fp:precise, no FMA).
-mod noise {
-    use std::sync::OnceLock;
-
-    const B: usize = 0x100;
-    const BM: i32 = 0xff;
-    const NF32: f32 = 4096.0;
-
-    struct Tables {
-        p: [usize; B + B + 2],
-        g2: [[f32; 2]; B + B + 2],
-    }
-
-    /// MSVC CRT `rand()`: holdrand = holdrand * 214013 + 2531011,
-    /// result (holdrand >> 16) & 0x7fff.
-    pub(super) struct MsvcRand(u32);
-
-    impl MsvcRand {
-        pub(super) fn new(seed: u32) -> MsvcRand {
-            MsvcRand(seed)
-        }
-
-        pub(super) fn next(&mut self) -> i32 {
-            self.0 = self.0.wrapping_mul(214_013).wrapping_add(2_531_011);
-            ((self.0 >> 16) & 0x7fff) as i32
-        }
-    }
-
-    /// noise.h `init`: g1, g2 and g3 are drawn interleaved for each lattice
-    /// point (1 + 2 + 3 calls), then the permutation is shuffled. Only `p`
-    /// and `g2` are used (noise2), but g1 / g3 still consume their draws.
-    fn init() -> Tables {
-        let mut r = MsvcRand::new(42);
-        let mut t = Tables {
-            p: [0; B + B + 2],
-            g2: [[0.0; 2]; B + B + 2],
-        };
-        let draw = |r: &mut MsvcRand| ((r.next() % (B + B) as i32) - B as i32) as f32 / B as f32;
-        for i in 0..B {
-            t.p[i] = i;
-            let _g1 = draw(&mut r);
-            let v = [draw(&mut r), draw(&mut r)];
-            // normalize2 (never a zero vector with this seed, see tests)
-            let s = 1.0 / (v[0] * v[0] + v[1] * v[1]).sqrt();
-            t.g2[i] = [v[0] * s, v[1] * s];
-            for _ in 0..3 {
-                let _g3 = draw(&mut r);
-            }
-        }
-        // while (--i) { k = p[i]; p[i] = p[j = rand() % B]; p[j] = k; }
-        for i in (1..B).rev() {
-            let j = (r.next() % B as i32) as usize;
-            t.p.swap(i, j);
-        }
-        for i in 0..B + 2 {
-            t.p[B + i] = t.p[i];
-            t.g2[B + i] = t.g2[i];
-        }
-        t
-    }
-
-    fn tables() -> &'static Tables {
-        static T: OnceLock<Tables> = OnceLock::new();
-        T.get_or_init(init)
-    }
-
-    /// noise.h `fast_setup`: lattice cell (wrapped to 8 bits) and offsets.
-    #[inline]
-    fn fast_setup(v: f32) -> (usize, usize, f32, f32) {
-        let r1 = v + NF32;
-        let t = r1 as i32;
-        let b0 = (t & BM) as u8;
-        let b1 = b0.wrapping_add(1);
-        let r0 = r1 - t as f32;
-        (b0 as usize, b1 as usize, r0, r0 - 1.0)
-    }
-
-    #[inline]
-    fn s_curve(t: f32) -> f32 {
-        t * t * (3.0 - 2.0 * t)
-    }
-
-    #[inline]
-    fn lerp(t: f32, a: f32, b: f32) -> f32 {
-        a + t * (b - a)
-    }
-
-    /// noise.cpp `noise2`: signed 2-D gradient noise, about [-0.7, 0.7].
-    pub fn noise2(x: f32, y: f32) -> f32 {
-        let t = tables();
-        let (bx0, bx1, rx0, rx1) = fast_setup(x);
-        let (by0, by1, ry0, ry1) = fast_setup(y);
-        let i = t.p[bx0];
-        let j = t.p[bx1];
-        let b00 = t.p[i + by0];
-        let b10 = t.p[j + by0];
-        let b01 = t.p[i + by1];
-        let b11 = t.p[j + by1];
-        let sx = s_curve(rx0);
-        let sy = s_curve(ry0);
-        let at2 = |rx: f32, ry: f32, q: [f32; 2]| rx * q[0] + ry * q[1];
-        let a = lerp(sx, at2(rx0, ry0, t.g2[b00]), at2(rx1, ry0, t.g2[b10]));
-        let b = lerp(sx, at2(rx0, ry1, t.g2[b01]), at2(rx1, ry1, t.g2[b11]));
-        lerp(sy, a, b)
-    }
-
-    /// noise.h `turbulence2`: signed octaves from `freq` down to 1, each
-    /// weighted by 1/freq (zero mean, unlike a classic |noise| turbulence).
-    pub fn turbulence2(x: f32, y: f32, mut freq: f32) -> f32 {
-        let mut t = 0.0;
-        while freq >= 1.0 {
-            t += noise2(freq * x, freq * y) / freq;
-            freq *= 0.5;
-        }
-        t
-    }
-}
 
 /// Terrain heights for one region; patches are written as they arrive.
 pub struct Heightmap {
@@ -333,34 +210,6 @@ mod tests {
         assert_eq!(v.len(), 33 * 33);
         assert_eq!(i.len(), 32 * 32 * 6);
         assert!(i.iter().all(|&x| (x as usize) < v.len()));
-    }
-
-    /// Reference values from Firestorm's noise.cpp / noise.h compiled with
-    /// MSVC 2022 (/O2 /fp:precise /arch:AVX2, the CRT's rand()), the same
-    /// toolchain as Firestorm for Windows.
-    #[test]
-    fn noise_matches_firestorm() {
-        let close = |a: f32, b: f32| (a - b).abs() <= 1e-6;
-        for (x, y, n, t) in [
-            (0.0, 0.0, 0.0, 0.0),
-            (0.5, 0.25, -0.356_576_26, -0.409_460_78),
-            (1.37, 2.11, 0.197_173_73, 0.061_257_884),
-            (10.3, -4.7, 0.099_117_63, -0.060_509_764),
-            (123.456, 78.9, 0.125_369_07, 0.200_200_22),
-            (52012.2, 52043.7, -0.132_383_69, -0.441_523_5),
-        ] {
-            let got = noise::noise2(x, y);
-            assert!(close(got, n), "noise2({x}, {y}) = {got}, Firestorm {n}");
-            let got = noise::turbulence2(x, y, 2.0);
-            assert!(close(got, t), "turbulence2({x}, {y}) = {got}, Firestorm {t}");
-        }
-    }
-
-    #[test]
-    fn msvc_rand_sequence() {
-        // srand(42); rand() x 3 with the MSVC CRT
-        let mut r = noise::MsvcRand::new(42);
-        assert_eq!([r.next(), r.next(), r.next()], [175, 400, 17869]);
     }
 
     #[test]

@@ -227,6 +227,9 @@ impl SyncCtx<'_> {
     pub(super) fn lod_metrics(&self, idx: usize, o: &Object, pos: Vec3) -> (f32, f32) {
         let world = self.world;
         let eye = self.eye;
+        if let Some(radius) = super::plants::tree_lod_radius(o) {
+            return (radius, pos.distance(eye));
+        }
         if o.visual_volume().is_mesh() {
             let rigged = o
                 .visual_volume()
@@ -262,10 +265,12 @@ impl SyncCtx<'_> {
         let (pos, _, _) = self.transform(idx)?;
         let (radius, distance) = self.lod_metrics(idx, o, pos);
         let level = |key: Option<GeomKey>| match key? {
-            GeomKey::Prim { lod, .. } | GeomKey::Flexible { lod, .. } | GeomKey::Sculpt { lod, .. } | GeomKey::Mesh { lod, .. } => {
-                Some(lod)
-            }
-            GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => None,
+            GeomKey::Prim { lod, .. }
+            | GeomKey::Flexible { lod, .. }
+            | GeomKey::Sculpt { lod, .. }
+            | GeomKey::Mesh { lod, .. }
+            | GeomKey::Tree { lod, .. } => Some(lod),
+            GeomKey::Grass { .. } | GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => None,
         };
         Some(LodInfo {
             at: g.center,
@@ -318,16 +323,19 @@ impl SyncCtx<'_> {
         });
         // a worn object that only follows its attachment point: placed
         // relative to it once, the GPU does the rest
-        let point_anchor = (!rigged && on_gpu)
+        // (a Linden plant keeps its own placement, worn or not)
+        let plant = super::plants::plant_model(geom_key, o, pos, rot);
+        let point_anchor = (!rigged && on_gpu && plant.is_none())
             .then(|| {
                 anchors::anchored(world, o, |wearer, slot| {
                     Scene::anchor_matrix(self.palette_slots, self.palettes.len(), wearer, slot)
                 })
             })
             .flatten();
-        let world_model = match skeleton {
-            Some((_, _, model)) => model,
-            None => Mat4::from_scale_rotation_translation(scale, rot, pos),
+        let world_model = match (skeleton, plant) {
+            (Some((_, _, model)), _) => model,
+            (None, Some(model)) => model,
+            (None, None) => Mat4::from_scale_rotation_translation(scale, rot, pos),
         };
         let model = match (skeleton_anchor, point_anchor) {
             (Some(_), _) => Mat4::IDENTITY,
