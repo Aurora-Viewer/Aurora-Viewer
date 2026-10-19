@@ -226,6 +226,8 @@ pub struct World {
     parked: HashMap<RegionHandle, parked::Parked>,
     appearances: HashMap<Uuid, (AvatarAppearance, u64)>,
     appearance_counter: u64,
+    /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
+    bake_refreshes: HashMap<Uuid, u64>,
     shape_preview: Option<Vec<u8>>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
@@ -496,6 +498,7 @@ impl World {
             look_at: lookat::LookAts::default(),
             object_im_filter: object_im_filter::Settings::default(),
             appearance_counter: 1,
+            bake_refreshes: HashMap::new(),
             shape_preview: None,
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
@@ -1477,11 +1480,30 @@ impl World {
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
+            + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
             + if *avatar == self.agent_id {
                 self.shape_preview_generation
             } else {
                 0
             }
+    }
+
+    /// A bake the scene held back while it loaded shows now
+    /// (scene/shown_bakes.rs): the avatar and what shows its bakes are
+    /// built again, as when an appearance comes.
+    pub fn refresh_bakes(&mut self, avatar: &Uuid) {
+        *self.bake_refreshes.entry(*avatar).or_default() += 1;
+        if let Some(idx) = self.objects.index_of_uuid(avatar) {
+            if let Some(o) = self.objects.get(idx) {
+                let kids: Vec<usize> = self.objects.children_of(&o.key).to_vec();
+                for k in kids {
+                    self.mark_tree_material_dirty(k);
+                }
+            }
+            if let Some(o) = self.objects.get_mut(idx) {
+                o.material_dirty = true;
+            }
+        }
     }
 
     /// Baked texture id for an avatar (by object index) and TE slot.

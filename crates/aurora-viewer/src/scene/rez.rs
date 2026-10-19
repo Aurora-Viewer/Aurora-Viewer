@@ -16,7 +16,11 @@
 //! avatar's appearance and what it wears load, then one line goes over it
 //! and what it wears, from its feet. After `AVATAR_GRID_LIMIT` it shows
 //! anyway, never as a cloud again. Ours gets the line when the loading or
-//! teleport screen lifts and when its own appearance changes. Leaving
+//! teleport screen lifts. An avatar already shown never goes back to the
+//! grid: when its appearance changes (its bakes, or several worn items at
+//! once) it stays as it is (a new bake waits behind the last good one,
+//! `shown_bakes.rs`) until the new look is complete, then the line goes
+//! over it (`Unit::outfit`). Leaving
 //! (KillObject), an avatar or a deleted object gets the reverse, a derez:
 //! the line comes down and leaves the grid, then it goes; its last frame
 //! stays drawn that long (`Scene::collect_garbage` waits for it), never
@@ -31,6 +35,17 @@
 //! it is ready at once. A linkset or an avatar with what it wears is one
 //! effect, driven from its root; whatever path syncs a new object
 //! (`Scene::after_full_sync`) tells it.
+//!
+//! An object streaming in (a region arriving) waits for nothing: its faces
+//! leave the grid one by one as their textures come. The biggest on the
+//! screen get a glint (`rez_mode::GLINT`): the line passing over it as soon
+//! as its geometry is there, hiding nothing, on `GLINT_LINES` of the
+//! lines so that the events always find one.
+//!
+//! A line is only for what the camera sees: in view, near and big enough
+//! on the screen, and not behind a wall (`Scene::segment_blocked`, a few
+//! rays from the eye when the line would start); otherwise a fade, or
+//! nothing.
 //!
 //! Nothing for: what loaded behind the loading or teleport screen, a
 //! second visit of the same object (LOD switches, texture reloads),
@@ -90,6 +105,19 @@ const OUTFIT_WINDOW: Duration = Duration::from_millis(1500);
 const OBJECT_LIMIT: Duration = Duration::from_secs(8);
 const AVATAR_GRID_LIMIT: Duration = Duration::from_secs(20);
 const AVATAR_LIMIT: Duration = Duration::from_secs(30);
+/// An avatar's new look still incomplete after this long: no line for it.
+const OUTFIT_LIMIT: Duration = Duration::from_secs(10);
+/// Glints: lines they may take at once (the others stay for the events),
+/// how big on the screen an arriving object must be, how long after its
+/// arrival it may get one, and how many arrivals are kept for it.
+const GLINT_LINES: usize = MAX_SWEEPS - 2;
+const GLINT_PIXELS: f32 = 64.0;
+const GLINT_WINDOW: Duration = Duration::from_secs(4);
+const GLINT_CANDIDATES: usize = 4096;
+/// Candidates tried behind walls a frame (rays: `SEEN_POINTS` each at most).
+const GLINT_TRIES: usize = 4;
+/// Points of a unit a ray is cast to (`Scene::rez_seen`).
+const SEEN_POINTS: usize = 6;
 /// A new object is taken for a rez once its region and our view have been
 /// there this long (what comes before is the region streaming in), and
 /// within this distance of the camera.
@@ -122,6 +150,11 @@ struct Unit {
     avatar: bool,
     /// Just rezzed in the world (ours or someone else's).
     rezzed: bool,
+    /// An avatar already shown whose appearance changed: never the grid,
+    /// the line once its new look is complete.
+    outfit: bool,
+    /// A glint over an object arriving (no grid, nothing hidden).
+    glint: bool,
     /// Arrived, or came into view (the later).
     since: Instant,
     /// Length of its line or fade, once started.
@@ -142,6 +175,10 @@ struct Unit {
 pub struct RezStats {
     pub holograms: u32,
     pub sweeps: u32,
+    /// Glints over objects arriving.
+    pub glints: u32,
+    /// Lines not started: the unit was behind a wall.
+    pub hidden: u32,
     /// From the grid to the textures without a line.
     pub fades: u32,
     /// Loaded with every line busy: a fade instead.
@@ -167,6 +204,8 @@ pub struct Rez {
     pub stats: RezStats,
     /// Objects synced for the first time since the last update.
     arrivals: Vec<usize>,
+    /// Objects arriving that may get a glint: slot, id, arrival.
+    glint_candidates: VecDeque<(usize, Uuid, Instant)>,
     /// Units to look at now: one of their textures showed its first
     /// pixels or their geometry was built.
     ready: Vec<usize>,
@@ -223,6 +262,18 @@ fn with_style(mut value: [u32; 4], style: u32) -> [u32; 4] {
 pub fn sweep_for(height: f32) -> Duration {
     let ms = 520.0 + 60.0 * height.max(0.0);
     Duration::from_millis(ms as u64).clamp(SWEEP_MIN, SWEEP_MAX)
+}
+
+/// How well the camera sees an object `pixels` wide on the screen whose
+/// direction makes `cos_axis` with the view's axis: its size, down to 40 %
+/// at the edge of the view (`cos_half_fov`), where a line is barely seen.
+pub fn view_score(pixels: f32, cos_axis: f32, cos_half_fov: f32) -> f32 {
+    let centre = if cos_half_fov < 1.0 {
+        ((cos_axis - cos_half_fov) / (1.0 - cos_half_fov)).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    pixels * (0.4 + 0.6 * centre)
 }
 
 /// Whether a new object (a root, not worn) is a rez in the world rather
@@ -282,13 +333,15 @@ enum Step {
     Drop,
 }
 
-/// The decision for a unit not sweeping yet. `near`: in view, near and
-/// big enough for a line; `age`: since it arrived or we started watching;
-/// `in_phase`: since its grid showed.
+/// The decision for a unit not sweeping yet. `outfit`: an avatar already
+/// shown whose look changed; `near`: in view, near and big enough for a
+/// line; `age`: since it arrived or we started watching; `in_phase`:
+/// since its grid showed.
 #[allow(clippy::too_many_arguments)]
 fn next_step(
     phase: Phase,
     avatar: bool,
+    outfit: bool,
     rezzed: bool,
     loaded: bool,
     near: bool,
@@ -298,9 +351,21 @@ fn next_step(
 ) -> Step {
     if !watching {
         // behind a loading screen: what is ready simply shows
-        return if loaded && !avatar { Step::Drop } else { Step::Stay };
+        return if loaded && !avatar || outfit { Step::Drop } else { Step::Stay };
     }
     match phase {
+        Phase::Waiting if outfit => {
+            // drawn as it is meanwhile (its old bakes, what has come of
+            // its new items): the line over the new look once complete,
+            // when it is seen
+            if loaded && near {
+                Step::Sweep
+            } else if loaded || age > OUTFIT_LIMIT {
+                Step::Drop
+            } else {
+                Step::Stay
+            }
+        }
         Phase::Waiting if avatar => {
             // (out of view or far: the cloud, as before)
             if !near {
@@ -587,12 +652,15 @@ impl Scene {
         h.finish()
     }
 
-    /// An avatar to follow from now.
-    fn avatar_unit(id: Uuid, idx: usize, now: Instant) -> Unit {
+    /// An avatar to follow from now: arriving, or already shown with a new
+    /// look (`outfit`).
+    fn avatar_unit(id: Uuid, idx: usize, now: Instant, outfit: bool) -> Unit {
         Unit {
             id,
             avatar: true,
             rezzed: false,
+            outfit,
+            glint: false,
             since: now,
             sweep: Duration::ZERO,
             phase: Phase::Waiting,
@@ -651,7 +719,7 @@ impl Scene {
     /// (`Scene::collect_garbage`). Several worn items taken off one avatar
     /// at once are an outfit change: no derez, its line comes once the new
     /// outfit is there.
-    pub(super) fn note_kills(&mut self, renderer: &mut Renderer, kills: Vec<Vec<usize>>, now: Instant) {
+    pub(super) fn note_kills(&mut self, renderer: &mut Renderer, world: &crate::world::World, kills: Vec<Vec<usize>>, now: Instant) {
         if !self.rez.enabled || self.rez.watching_since.is_none() || kills.len() > MAX_KILLS {
             return;
         }
@@ -681,6 +749,10 @@ impl Scene {
             if !visible || self.gpu.get(root).is_none_or(|g| g.faces.is_empty() && !g.is_avatar) {
                 continue;
             }
+            if !self.rez_seen(world, view.eye, &members, now) {
+                self.rez.stats.hidden += 1;
+                continue;
+            }
             // (its own effect, if one ran, gives way)
             if let Some(old) = self.rez.remove_unit(root) {
                 self.rez.queue.retain(|&r| r != root);
@@ -705,6 +777,8 @@ impl Scene {
                 id: Uuid::nil(),
                 avatar,
                 rezzed: false,
+                outfit: false,
+                glint: false,
                 since: now,
                 sweep: DEREZ,
                 phase: Phase::Derez(now),
@@ -820,10 +894,11 @@ impl Scene {
             return false;
         }
         let loaded = if u.avatar {
-            let own = u.id == f.world.agent_id;
+            // (ours, and a new look: its bakes downloaded and shown too)
+            let complete = u.id == f.world.agent_id || u.outfit;
             !self.loading.indices.contains(&root)
                 && self.gpu.get(root).is_some_and(|g| !g.faces.is_empty())
-                && (!own || self.avatar_complete(f.world, root))
+                && (!complete || self.avatar_complete(f.world, root) && !self.holds_bake(&u.id))
                 && self.members_loaded(u.members.get(1..).unwrap_or_default())
         } else {
             self.members_loaded(&u.members)
@@ -834,7 +909,7 @@ impl Scene {
             Phase::Hologram(t) => f.now.duration_since(t),
             _ => Duration::ZERO,
         };
-        let mut step = next_step(u.phase, u.avatar, u.rezzed, loaded, near, f.watching, age, in_phase);
+        let mut step = next_step(u.phase, u.avatar, u.outfit, u.rezzed, loaded, near, f.watching, age, in_phase);
         let quick = step == Step::Quick;
         if quick {
             step = Step::Sweep;
@@ -846,14 +921,25 @@ impl Scene {
             };
             let waited = *u.waiting_line.get_or_insert(f.now);
             let wait = if u.avatar { AVATAR_SLOT_WAIT } else { SLOT_WAIT };
-            step = if u.phase == Phase::Waiting {
+            let waited_enough = f.now.duration_since(waited) >= wait;
+            step = if u.phase == Phase::Waiting && !u.outfit {
                 // (a quick line for what was ready at once, or nothing)
                 if u.avatar { Step::Hologram } else { Step::Drop }
-            } else if f.now.duration_since(waited) >= wait {
+            } else if waited_enough {
                 rez.stats.no_line += 1;
-                Step::Fade
+                // (a new look is drawn already: nothing to fade from)
+                if u.outfit { Step::Drop } else { Step::Fade }
             } else {
                 Step::Stay
+            };
+        }
+        if step == Step::Sweep && !self.rez_seen(f.world, f.view.eye, &rez.units[&root].members, f.now) {
+            // behind a wall: no line nobody sees
+            rez.stats.hidden += 1;
+            step = if rez.units[&root].phase == Phase::Waiting {
+                Step::Drop
+            } else {
+                Step::Fade
             };
         }
         let avatar = u_avatar(rez, root);
@@ -927,7 +1013,9 @@ impl Scene {
                 };
                 u.phase = Phase::Sweep(f.now);
                 u.sweep = if quick { QUICK_SWEEP } else { sweep_for(height) };
-                u.value = with_style(record_value(rez_mode::SWEEP, f.ms, u.sweep, bottom, height), style);
+                // (a new look is drawn already: the line hides nothing of it)
+                let mode = if u.outfit { rez_mode::GLINT } else { rez_mode::SWEEP };
+                u.value = with_style(record_value(mode, f.ms, u.sweep, bottom, height), style);
                 u.glow = true;
                 rez.stats.sweeps += 1;
                 if rez.log {
@@ -986,6 +1074,7 @@ impl Scene {
             rez.sweeping.clear();
             rez.fading.clear();
             rez.arrivals.clear();
+            rez.glint_candidates.clear();
             rez.ready.clear();
             rez.revealed.clear();
             rez.watching_since = None;
@@ -1018,25 +1107,27 @@ impl Scene {
             present.insert(o.full_id);
             let look = Self::own_look(world, idx);
             let ours = o.full_id == world.agent_id;
-            let start = match rez.avatars_seen.get_mut(&o.full_id) {
+            let (start, outfit) = match rez.avatars_seen.get_mut(&o.full_id) {
                 None => {
                     rez.avatars_seen.insert(o.full_id, (now, look));
-                    true
+                    (true, false)
                 }
                 Some((since, seen)) => {
                     // an outfit change (its bakes), once it has been there
-                    // a while: one line over it; ours also when the
-                    // loading or teleport screen lifts
+                    // a while: one line over it once its new look is
+                    // there; ours also when the loading or teleport screen
+                    // lifts (as an arrival)
                     let changed = *seen != look && watching && now.duration_since(*since) >= WORN_AFTER;
                     *seen = look;
                     if changed {
                         rez.stats.outfits += 1;
                     }
-                    changed || ours && lifted
+                    let arrival = ours && lifted;
+                    (changed || arrival, changed && !arrival)
                 }
             };
             if start && !rez.units.contains_key(&idx) {
-                rez.add_unit(idx, Self::avatar_unit(o.full_id, idx, now));
+                rez.add_unit(idx, Self::avatar_unit(o.full_id, idx, now, outfit));
             }
         }
         rez.avatars_seen.retain(|id, _| present.contains(id));
@@ -1117,7 +1208,7 @@ impl Scene {
                     fading.retain(|r| units.contains_key(r));
                     if let Some(a) = world.objects.get(avatar) {
                         rez.stats.outfits += 1;
-                        rez.add_unit(avatar, Self::avatar_unit(a.full_id, avatar, now));
+                        rez.add_unit(avatar, Self::avatar_unit(a.full_id, avatar, now, true));
                     }
                     continue;
                 }
@@ -1133,9 +1224,16 @@ impl Scene {
             let distance = Self::object_transform(world, idx, now, 0).map_or(f32::MAX, |(pos, _, _)| pos.distance(view.eye));
             let settled_for = watched_for.map(|w| w.min(now.duration_since(region_since)));
             let rezzed = is_fresh_rez(o.update_flags, settled_for, distance, o.velocity.length());
-            // (an object streaming in needs nothing here: its faces still
-            // grey are the grid on their own)
+            // (an object streaming in waits for nothing: its faces still
+            // grey are the grid on their own; the biggest on the screen
+            // get a glint, `start_glints`)
             if !rezzed {
+                if watching && !o.is_avatar() && o.update_flags & FLAGS_TEMPORARY_ON_REZ == 0 {
+                    if rez.glint_candidates.len() >= GLINT_CANDIDATES {
+                        rez.glint_candidates.pop_front();
+                    }
+                    rez.glint_candidates.push_back((idx, o.full_id, now));
+                }
                 continue;
             }
             let members = Self::rez_members(world, idx);
@@ -1200,18 +1298,25 @@ impl Scene {
                 rez.queue.push_back(root);
             }
         }
+        if watching {
+            self.start_glints(renderer, &mut rez, &f);
+        } else {
+            rez.glint_candidates.clear();
+        }
         rez.stats.units = rez.units.len();
         // (what it did, every half minute, for the grid tests)
         if rez.logged_at.is_none_or(|t| now.duration_since(t) >= Duration::from_secs(30)) {
             rez.logged_at = Some(now);
             let s = rez.stats;
             log::info!(
-                "rez effect: {} faces out of the grid, {} grids, {} lines, {} fades ({} with every line busy), {} derez, {} worn, {} outfits, {} followed now, {} avatars shown by the time limit",
+                "rez effect: {} faces out of the grid, {} grids, {} lines, {} glints, {} fades ({} with every line busy), {} behind a wall, {} derez, {} worn, {} outfits, {} followed now, {} avatars shown by the time limit",
                 s.face_fades,
                 s.holograms,
                 s.sweeps,
+                s.glints,
                 s.fades,
                 s.no_line,
+                s.hidden,
                 s.derezzed,
                 s.worn,
                 s.outfits,
@@ -1224,12 +1329,129 @@ impl Scene {
         self.rez = rez;
     }
 
+    /// Whether the camera sees something of the prims `members` (the root
+    /// first): a ray from `eye` to the centre of the root, above or below
+    /// it, or to one of its biggest other prims meets no surface of the
+    /// world on its way (`segment_blocked`, its own prims aside).
+    fn rez_seen(&self, world: &crate::world::World, eye: Vec3, members: &[usize], now: Instant) -> bool {
+        let mut points: Vec<Vec3> = Vec::with_capacity(SEEN_POINTS);
+        if let Some(g) = members.first().and_then(|&r| self.gpu.get(r)) {
+            let up = Vec3::Z * g.radius * 0.5;
+            points.extend([g.center, g.center + up, g.center - up]);
+        }
+        let mut others: Vec<(f32, Vec3)> = members
+            .iter()
+            .skip(1)
+            .filter_map(|&m| self.gpu.get(m))
+            .filter(|g| !g.faces.is_empty())
+            .map(|g| (g.radius, g.center))
+            .collect();
+        others.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        let room = SEEN_POINTS.saturating_sub(points.len());
+        points.extend(others.iter().take(room).map(|o| o.1));
+        points.is_empty() || points.iter().any(|&p| !self.segment_blocked(world, eye, p, members, now))
+    }
+
+    /// Glints over the objects arriving that the camera sees best, on the
+    /// lines `GLINT_LINES` leaves them: once their geometry is there, the
+    /// biggest on the screen first (`view_score`), and not behind a wall;
+    /// the others simply show.
+    fn start_glints(&mut self, renderer: &mut Renderer, rez: &mut Rez, f: &Frame) {
+        rez.glint_candidates
+            .retain(|&(idx, id, at)| f.now.duration_since(at) < GLINT_WINDOW && f.world.objects.get(idx).is_some_and(|o| o.full_id == id));
+        let running = rez.sweeping.iter().filter(|r| rez.units.get(r).is_some_and(|u| u.glint)).count();
+        let free = GLINT_LINES
+            .saturating_sub(running)
+            .min(MAX_SWEEPS.saturating_sub(rez.sweeping.len()));
+        if free == 0 || rez.glint_candidates.is_empty() {
+            return;
+        }
+        let mut scored: Vec<(f32, usize)> = rez
+            .glint_candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(k, &(idx, _, _))| {
+                if rez.units.contains_key(&idx) || rez.member_of.contains_key(&idx) {
+                    return None;
+                }
+                let g = self.gpu.get(idx)?;
+                let built = !g.faces.is_empty() && g.wanted_geom.is_none_or(|w| g.geom == Some(w)) && g.sculpt_wait.is_none();
+                if !built || g.hud || g.owner_avatar.is_some() {
+                    return None;
+                }
+                if g.center.distance(f.view.eye) > MAX_DISTANCE || !f.view.sphere_visible(g.center, g.radius) {
+                    return None;
+                }
+                let pixels = f.view.pixel_size(g.center, g.radius);
+                if pixels < GLINT_PIXELS {
+                    return None;
+                }
+                let axis = f.view.forward.dot((g.center - f.view.eye).normalize_or_zero());
+                Some((view_score(pixels, axis, f.view.cos_half_fov), k))
+            })
+            .collect();
+        scored.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        let mut started = 0;
+        let mut tried = Vec::new();
+        for &(_, k) in scored.iter().take(GLINT_TRIES) {
+            if started == free {
+                break;
+            }
+            tried.push(k);
+            let (root, id, _) = rez.glint_candidates[k];
+            let members = Self::rez_members(f.world, root);
+            if !self.rez_seen(f.world, f.view.eye, &members, f.now) {
+                rez.stats.hidden += 1;
+                continue;
+            }
+            let Some((bottom, height)) = Self::rez_bounds(f.world, &members, false, f.now) else {
+                continue;
+            };
+            let sweep = sweep_for(height);
+            let value = with_style(record_value(rez_mode::GLINT, f.ms, sweep, bottom, height), rez.style_of(root));
+            for &m in &members {
+                rez.member_of.insert(m, root);
+            }
+            if rez.log {
+                log::info!("rez effect: glint over {id} ({} prims, {height:.2} m high)", members.len());
+            }
+            self.write_rez(renderer, &members, value, true);
+            rez.units.insert(
+                root,
+                Unit {
+                    id,
+                    avatar: false,
+                    rezzed: false,
+                    outfit: false,
+                    glint: true,
+                    since: f.now,
+                    sweep,
+                    phase: Phase::Sweep(f.now),
+                    members,
+                    value,
+                    glow: true,
+                    waiting_line: None,
+                },
+            );
+            rez.sweeping.push(root);
+            rez.stats.glints += 1;
+            started += 1;
+        }
+        // (one try each: one behind a wall now stays there for its moment)
+        tried.sort_unstable();
+        for k in tried.into_iter().rev() {
+            rez.glint_candidates.remove(k);
+        }
+    }
+
     /// A unit for an object (a root) arriving or put on.
     fn object_unit(&self, world: &crate::world::World, idx: usize, id: Uuid, rezzed: bool, now: Instant) -> Unit {
         Unit {
             id,
             avatar: false,
             rezzed,
+            outfit: false,
+            glint: false,
             since: now,
             sweep: Duration::ZERO,
             phase: Phase::Waiting,
@@ -1286,51 +1508,51 @@ mod tests {
     #[test]
     fn behind_the_loading_screen_what_is_ready_just_shows() {
         let h = Phase::Hologram(Instant::now());
-        assert_eq!(next_step(h, false, false, true, true, false, S, S), Step::Drop);
-        assert_eq!(next_step(h, false, false, false, true, false, S, S), Step::Stay);
+        assert_eq!(next_step(h, false, false, false, true, true, false, S, S), Step::Drop);
+        assert_eq!(next_step(h, false, false, false, false, true, false, S, S), Step::Stay);
         // (an avatar waits for the screen to lift)
-        assert_eq!(next_step(Phase::Waiting, true, false, true, true, false, S, S), Step::Stay);
+        assert_eq!(next_step(Phase::Waiting, true, false, false, true, true, false, S, S), Step::Stay);
     }
 
     #[test]
     fn the_grid_fades_or_gets_the_line_once_loaded() {
         let h = Phase::Hologram(Instant::now());
         // still loading: the grid stays, far or near
-        assert_eq!(next_step(h, false, false, false, true, true, S, S), Step::Stay);
-        assert_eq!(next_step(h, false, false, false, false, true, S, S), Step::Stay);
+        assert_eq!(next_step(h, false, false, false, false, true, true, S, S), Step::Stay);
+        assert_eq!(next_step(h, false, false, false, false, false, true, S, S), Step::Stay);
         // from the caches, within a moment: a fade, no line
-        assert_eq!(next_step(h, false, false, true, true, true, MS100, MS100), Step::Fade);
+        assert_eq!(next_step(h, false, false, false, true, true, true, MS100, MS100), Step::Fade);
         // loaded later: the line when near, else a fade
-        assert_eq!(next_step(h, false, false, true, true, true, S, S), Step::Sweep);
-        assert_eq!(next_step(h, false, false, true, false, true, S, S), Step::Fade);
+        assert_eq!(next_step(h, false, false, false, true, true, true, S, S), Step::Sweep);
+        assert_eq!(next_step(h, false, false, false, true, false, true, S, S), Step::Fade);
         // still loading at the limit: shown anyway
         assert_eq!(
-            next_step(h, false, false, false, true, true, OBJECT_LIMIT, OBJECT_LIMIT),
+            next_step(h, false, false, false, false, true, true, OBJECT_LIMIT, OBJECT_LIMIT),
             Step::Sweep
         );
         assert_eq!(
-            next_step(h, false, false, false, false, true, OBJECT_LIMIT, OBJECT_LIMIT),
+            next_step(h, false, false, false, false, false, true, OBJECT_LIMIT, OBJECT_LIMIT),
             Step::Fade
         );
         // a rezzed object shows its grid a moment, then its line
-        assert_eq!(next_step(h, false, true, true, true, true, S, MS100), Step::Stay);
-        assert_eq!(next_step(h, false, true, true, true, true, S, MIN_HOLOGRAM), Step::Sweep);
+        assert_eq!(next_step(h, false, false, true, true, true, true, S, MS100), Step::Stay);
+        assert_eq!(next_step(h, false, false, true, true, true, true, S, MIN_HOLOGRAM), Step::Sweep);
     }
 
     #[test]
     fn a_rezzed_object_ready_at_once_gets_a_quick_line() {
         let w = Phase::Waiting;
         assert_eq!(
-            next_step(w, false, true, true, true, true, Duration::ZERO, Duration::ZERO),
+            next_step(w, false, false, true, true, true, true, Duration::ZERO, Duration::ZERO),
             Step::Quick
         );
         // far: nothing (it is ready: no grey to hide)
         assert_eq!(
-            next_step(w, false, true, true, false, true, Duration::ZERO, Duration::ZERO),
+            next_step(w, false, false, true, true, false, true, Duration::ZERO, Duration::ZERO),
             Step::Drop
         );
         assert_eq!(
-            next_step(w, false, true, false, true, true, Duration::ZERO, Duration::ZERO),
+            next_step(w, false, false, true, false, true, true, Duration::ZERO, Duration::ZERO),
             Step::Hologram
         );
     }
@@ -1339,24 +1561,60 @@ mod tests {
     fn an_avatar_loads_in_the_grid_then_gets_the_line() {
         let w = Phase::Waiting;
         // loading in view: the grid instead of the cloud
-        assert_eq!(next_step(w, true, false, false, true, true, S, Duration::ZERO), Step::Hologram);
         assert_eq!(
-            next_step(w, true, false, true, true, true, Duration::ZERO, Duration::ZERO),
+            next_step(w, true, false, false, false, true, true, S, Duration::ZERO),
+            Step::Hologram
+        );
+        assert_eq!(
+            next_step(w, true, false, false, true, true, true, Duration::ZERO, Duration::ZERO),
             Step::Sweep
         );
         // out of view: the cloud as before, until it comes into view
-        assert_eq!(next_step(w, true, false, true, false, true, S, Duration::ZERO), Step::Stay);
+        assert_eq!(next_step(w, true, false, false, true, false, true, S, Duration::ZERO), Step::Stay);
         assert_eq!(
-            next_step(w, true, false, false, false, true, AVATAR_LIMIT + S, Duration::ZERO),
+            next_step(w, true, false, false, false, false, true, AVATAR_LIMIT + S, Duration::ZERO),
             Step::Drop
         );
         let h = Phase::Hologram(Instant::now());
-        assert_eq!(next_step(h, true, false, false, true, true, S, S), Step::Stay);
-        assert_eq!(next_step(h, true, false, true, true, true, S, S), Step::Sweep);
-        assert_eq!(next_step(h, true, false, true, false, true, S, S), Step::Fade);
+        assert_eq!(next_step(h, true, false, false, false, true, true, S, S), Step::Stay);
+        assert_eq!(next_step(h, true, false, false, true, true, true, S, S), Step::Sweep);
+        assert_eq!(next_step(h, true, false, false, true, false, true, S, S), Step::Fade);
         // still loading at the grid's limit: shown anyway
         let long = AVATAR_GRID_LIMIT;
-        assert_eq!(next_step(h, true, false, false, true, true, long, long), Step::Sweep);
+        assert_eq!(next_step(h, true, false, false, false, true, true, long, long), Step::Sweep);
+    }
+
+    #[test]
+    fn an_avatar_with_a_new_look_never_goes_back_to_the_grid() {
+        let w = Phase::Waiting;
+        // still loading its new look, seen or not: drawn as it is, no grid
+        for near in [true, false] {
+            assert_eq!(next_step(w, true, true, false, false, near, true, S, Duration::ZERO), Step::Stay);
+        }
+        // complete: the line when seen, else nothing
+        assert_eq!(next_step(w, true, true, false, true, true, true, S, Duration::ZERO), Step::Sweep);
+        assert_eq!(next_step(w, true, true, false, true, false, true, S, Duration::ZERO), Step::Drop);
+        // never complete: given up
+        assert_eq!(
+            next_step(w, true, true, false, false, true, true, OUTFIT_LIMIT + S, Duration::ZERO),
+            Step::Drop
+        );
+        // behind a loading screen: nothing to show
+        assert_eq!(next_step(w, true, true, false, false, true, false, S, Duration::ZERO), Step::Drop);
+    }
+
+    #[test]
+    fn the_biggest_in_the_middle_of_the_view_comes_first() {
+        let cos_half = 0.6;
+        // straight ahead: its size
+        assert_eq!(view_score(100.0, 1.0, cos_half), 100.0);
+        // at the edge of the view: 40 % of it, past it no less
+        assert!((view_score(100.0, cos_half, cos_half) - 40.0).abs() < 1e-4);
+        assert!((view_score(100.0, 0.0, cos_half) - 40.0).abs() < 1e-4);
+        // a big one at the edge still beats a small one ahead
+        assert!(view_score(300.0, cos_half, cos_half) > view_score(100.0, 1.0, cos_half));
+        // no view axis known: the size alone
+        assert_eq!(view_score(80.0, 0.0, 1.0), 80.0);
     }
 
     #[test]
@@ -1387,6 +1645,8 @@ mod tests {
                 id: Uuid::from_u128(1),
                 avatar: false,
                 rezzed: true,
+                outfit: false,
+                glint: false,
                 since: Instant::now(),
                 sweep: Duration::ZERO,
                 phase: Phase::Waiting,

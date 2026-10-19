@@ -771,6 +771,7 @@ const REZ_HOLOGRAM: u32 = 1u;
 const REZ_SWEEP: u32 = 2u;
 const REZ_DEREZ: u32 = 3u;
 const REZ_FADE: u32 = 4u;
+const REZ_GLINT: u32 = 5u;
 // the grid's lines trace in over this long (s); a derez's line comes down
 // in this part of its time, its grid fades out in the rest
 const REZ_INTRO: f32 = 0.2;
@@ -950,6 +951,21 @@ fn rez_apply(rec: DrawRecord, in: VsOut, n: vec3<f32>, col: vec3<f32>) -> vec3<f
     let lb = rez_line(rec, elapsed);
     let above = in.world_pos.z - lb.x;
     let band = lb.y;
+    if (mode == REZ_GLINT) {
+        // an object arriving: the line passes over what is there and
+        // hides nothing; a face still loading stays the grid (on the clock,
+        // as without the glint), the others show their surface, with a
+        // short trail under the line
+        var base = col;
+        if (frame.rez_gradient[1].w >= 0.5 && rez_still_grey(rec)) {
+            base = rez_hologram(col, in, n, h, h, f32(frame.anim_clock.x) * 0.001, style);
+        }
+        let below = 1.0 - smoothstep(-band * 0.5, band * 0.5, above);
+        let trail = rez_gradient(1.0) * exp(min(above, 0.0) / (band * 8.0)) * 0.5 * below;
+        let core = exp(-pow(above / (band * 0.45), 2.0)) * level;
+        let halo = exp(-pow(above / (band * 1.6), 2.0)) * level;
+        return base + trail + mix(rez_gradient(0.0), vec3<f32>(1.0), 0.65) * core * 4.0 + rez_gradient(0.15) * halo * 1.4;
+    }
     // above: still the grid, its color running from the edge's to the
     // trail's with the distance to the line, brighter near it
     let ahead = clamp(above / (height * 0.7), 0.0, 1.0);
@@ -996,6 +1012,10 @@ fn rez_glow(rec: DrawRecord, in: VsOut) -> f32 {
     let lb = rez_line(rec, elapsed);
     let above = in.world_pos.z - lb.x;
     let line = exp(-pow(above / (lb.y * 1.2), 2.0)) * rez_level(n);
+    if (mode == REZ_GLINT) {
+        // (the line only: no grid hidden above it)
+        return line * 0.8;
+    }
     return max(line * 0.9, select(0.0, grid, above > 0.0));
 }
 
