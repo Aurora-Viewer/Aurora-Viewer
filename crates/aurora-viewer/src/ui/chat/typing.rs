@@ -83,6 +83,75 @@ impl MeTyping {
     }
 }
 
+/// Our typing in the nearby chat, seen by those in range: the typing chat
+/// notices and animation. Port of FSNearbyChat::handleChatBarKeystroke
+/// (indra/newview/fsnearbychathub.cpp) and LLAgent::startTyping /
+/// stopTyping / getRenderState (indra/newview/llagent.cpp, originally LGPL
+/// 2.1): a key that leaves text to say starts it at once, and only once; it
+/// stops when the line is sent, when the text is emptied or turns into a
+/// command, when the field loses the keyboard, or after five seconds
+/// without a key.
+#[derive(Debug, Default)]
+pub struct LocalTyping {
+    /// The last key while typing (None: not typing).
+    last_key: Option<Instant>,
+}
+
+/// One frame of the nearby chat's fields (the chat bar or island, the
+/// Conversations' nearby tab), gathered while they are drawn.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LocalField {
+    /// One of them has the keyboard.
+    pub focused: bool,
+    /// Its text changed by a key: whether what is left is said aloud.
+    pub typed: Option<bool>,
+    /// A line left.
+    pub sent: bool,
+}
+
+impl LocalTyping {
+    /// We are typing (AGENT_STATE_TYPING).
+    pub fn typing(&self) -> bool {
+        self.last_key.is_some()
+    }
+
+    /// The change due this frame: Some(true) to start, Some(false) to stop.
+    pub fn update(&mut self, now: Instant, field: LocalField) -> Option<bool> {
+        if field.focused && field.typed == Some(true) && !field.sent {
+            let start = !self.typing();
+            self.last_key = Some(now);
+            return start.then_some(true);
+        }
+        let idle = self.last_key.is_some_and(|k| now.duration_since(k) > IDLE);
+        if field.sent || !field.focused || field.typed == Some(false) || idle {
+            return self.stop().then_some(false);
+        }
+        None
+    }
+
+    /// Stop typing (a teleport, LLAgent::stopTyping); true when we were.
+    pub fn stop(&mut self) -> bool {
+        self.last_key.take().is_some()
+    }
+}
+
+/// A text of the nearby chat that shows us typing: something to say on
+/// channel 0, not a `/` command or channel, nor an emote unless
+/// `during_emote` ("/me " or "/me'", FSTypeDuringEmote).
+pub fn says_aloud(text: &str, during_emote: bool) -> bool {
+    let text = text.trim_start();
+    match text.strip_prefix('/') {
+        None => !text.is_empty(),
+        Some(rest) => {
+            during_emote
+                && rest.len() > 2
+                && rest.is_char_boundary(2)
+                && rest[..2].eq_ignore_ascii_case("me")
+                && matches!(rest.as_bytes()[2], b' ' | b'\'')
+        }
+    }
+}
+
 /// "Nova is typing…", "Nova and Tess are typing…", "Several people are
 /// typing…" for the names of those who type.
 pub fn text(names: &[String]) -> Option<String> {
@@ -142,5 +211,64 @@ mod tests {
         let out = me.update(at(t0, 1200), field(Some(b), true, false, false));
         assert_eq!(out, vec![(a, false)]);
         assert_eq!(me.update(at(t0, 2300), field(Some(b), false, false, false)), vec![(b, true)]);
+    }
+
+    fn local(focused: bool, typed: Option<bool>, sent: bool) -> LocalField {
+        LocalField { focused, typed, sent }
+    }
+
+    /// The nearby chat starts at the first key, once, keeps going while
+    /// keys come and stops with the line sent; the next key starts again.
+    #[test]
+    fn nearby_typing_starts_once_and_stops_with_the_line() {
+        let t0 = Instant::now();
+        let mut me = LocalTyping::default();
+        assert_eq!(me.update(t0, local(true, Some(true), false)), Some(true));
+        assert!(me.typing());
+        assert_eq!(me.update(at(t0, 3000), local(true, Some(true), false)), None);
+        // eight seconds after the start, but three after the last key
+        assert_eq!(me.update(at(t0, 6000), local(true, None, false)), None);
+        assert_eq!(me.update(at(t0, 6500), local(true, None, true)), Some(false));
+        assert!(!me.typing());
+        assert_eq!(me.update(at(t0, 7000), local(true, None, false)), None);
+        assert_eq!(me.update(at(t0, 7500), local(true, Some(true), false)), Some(true));
+    }
+
+    /// Five seconds without a key, the keyboard taken elsewhere, the text
+    /// emptied or turned into a command, or a teleport stop it.
+    #[test]
+    fn nearby_typing_stops_when_idle_unfocused_or_emptied() {
+        let t0 = Instant::now();
+        let mut me = LocalTyping::default();
+        me.update(t0, local(true, Some(true), false));
+        assert_eq!(me.update(at(t0, 5000), local(true, None, false)), None);
+        assert_eq!(me.update(at(t0, 5001), local(true, None, false)), Some(false));
+        me.update(t0, local(true, Some(true), false));
+        assert_eq!(me.update(at(t0, 100), local(false, None, false)), Some(false));
+        me.update(t0, local(true, Some(true), false));
+        assert_eq!(me.update(at(t0, 100), local(true, Some(false), false)), Some(false));
+        // nothing to stop: nothing sent
+        assert_eq!(me.update(at(t0, 200), local(true, Some(false), false)), None);
+        assert_eq!(me.update(at(t0, 300), local(false, Some(true), false)), None);
+        me.update(t0, local(true, Some(true), false));
+        assert!(me.stop());
+        assert!(!me.stop());
+    }
+
+    /// What shows us typing: words on channel 0; "/me" only with the
+    /// emote setting; never a channel or a command.
+    #[test]
+    fn says_aloud_follows_the_chat_bar_keystroke_rule() {
+        assert!(says_aloud("hello", false));
+        assert!(says_aloud("  hi", false));
+        assert!(!says_aloud("", false));
+        assert!(!says_aloud("   ", false));
+        assert!(!says_aloud("/5 open", true));
+        assert!(!says_aloud("/me waves", false));
+        assert!(says_aloud("/me waves", true));
+        assert!(says_aloud("/ME's here", true));
+        assert!(!says_aloud("/me", true));
+        assert!(!says_aloud("/mesh", true));
+        assert!(!says_aloud("/é", true));
     }
 }

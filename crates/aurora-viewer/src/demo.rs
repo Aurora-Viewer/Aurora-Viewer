@@ -2147,6 +2147,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 entered: false,
             }],
         }],
+        // the typing notices are no lines
+        aurora_net::NetCommand::Chat {
+            chat_type: aurora_net::ChatType::StartTyping | aurora_net::ChatType::StopTyping,
+            ..
+        } => Vec::new(),
+        // the simulator plays our typing animation (and the stand again
+        // once it stops), as for anyone in range
+        aurora_net::NetCommand::AgentAnimation { anim, start } if *anim == crate::world::radar::ANIM_AGENT_TYPE => {
+            let mut anims = vec![(IDLE_ANIM, 1)];
+            if *start {
+                anims.push((*anim, 2));
+            }
+            vec![NetEvent::AvatarAnimations {
+                avatar: DEMO_AGENT,
+                anims,
+                sources: Vec::new(),
+            }]
+        }
         // local chat echoes back like the simulator does
         aurora_net::NetCommand::Chat { message, chat_type, .. } => vec![NetEvent::Chat(aurora_net::ChatMessage {
             from_name: "Aurora Demo".into(),
