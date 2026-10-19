@@ -839,6 +839,14 @@ moves.
 
 ### Window surfaces
 
+`ui/widgets.rs::window_dragging` identifies a move or resize of any floater or
+bare window from its active move ID or the grips of `ui/widgets/resize.rs`.
+The shared `ui/menu.rs` entry points dismiss context menus and their popup
+state during that gesture, regardless of their owner or drawing order.
+`ui/context.rs` applies the same rule to the world pie. Native main-window
+move/resize events also clear popup and world-menu state. Click tolerance
+still distinguishes a deliberate move from pointer jitter or a child control.
+
 `world/radar.rs` holds the radar of the People window (sweep of the avatars once per second, first
 appearance, crossings reported, regions left behind by a teleport), `ui/people/radar.rs`
 its table (Firestorm's look), its rows, its settings and its options menu; `ui/people/nearby.rs`

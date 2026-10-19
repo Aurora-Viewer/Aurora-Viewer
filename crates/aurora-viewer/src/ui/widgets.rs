@@ -44,6 +44,18 @@ pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
     ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
 }
 
+/// Any floater/bare window is moving or resizing, independently of drawing
+/// order. The move ID starts dragging only after the window's click tolerance,
+/// so pointer jitter, child controls and text selection keep their behavior.
+pub(crate) fn window_dragging(ctx: &egui::Context) -> bool {
+    let Some(dragged) = ctx.dragged_id() else { return false };
+    resize::active(ctx)
+        || ctx
+            .memory(|memory| memory.areas().visible_layer_ids())
+            .into_iter()
+            .any(|layer| layer.id.with("move") == dragged)
+}
+
 /// Wait for egui's click tolerance before moving a window. Area's drag-only
 /// background otherwise starts moving even while a button above it is clicked.
 /// Keep its move ID and hit-test plane: children and resize handles stay on top,

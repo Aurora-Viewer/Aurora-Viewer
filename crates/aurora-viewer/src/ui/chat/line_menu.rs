@@ -57,12 +57,6 @@ pub(super) fn message<'l>(response: &Response, id: Id, drawn: &[super::select::R
 
 pub(super) fn show(ui: &Ui, id: Id, p: &Palette, body: impl FnOnce(&mut Ui, &Target)) {
     let ctx = ui.ctx();
-    // egui's window movement response is available before its body is
-    // drawn. Dismiss on the drag itself, without waiting for a click on
-    // release; movement of a message or the pointer alone closes nothing.
-    if ctx.read_response(ui.layer_id().id.with("move")).is_some_and(|r| r.dragged()) {
-        egui::Popup::close_id(ctx, id);
-    }
     if !egui::Popup::is_id_open(ctx, id) {
         ctx.data_mut(|d| d.remove::<Open>(id));
         return;
