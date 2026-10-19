@@ -1097,6 +1097,10 @@ stays enabled while its status reports free movement. Capture after frame
 620. The bridge modes below remain available and the bridge stays the default
 for existing/new accounts. The choice is saved per avatar; right-click the
 toolbar lock to open these options.
+The optional lock indicator is off by default. Enable it in the options,
+drag its body to another position, hide/show it and restart: the saved UI
+layout must retain its position. A click without dragging still opens the
+options; shrinking the viewer keeps the indicator inside the work area.
 
 Offline checks exercise control edges, bounded retries/late replies, manual
 seat ownership, region changes, per-channel priorities, complete standing
