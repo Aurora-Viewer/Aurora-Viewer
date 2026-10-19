@@ -32,11 +32,14 @@ const CAPTURE_MIPS: u32 = PROBE_MIPS + 1;
 /// LL_IRRADIANCE_MAP_RESOLUTION.
 pub const IRRADIANCE_RES: u32 = 16;
 /// The irradiance capture of a sky with a probe ambiance (its own pass, as
-/// LLReflectionMapManager's irradiance pass): irradianceGenF only reads
-/// the smallest mips of a capture (its level is clamped at 2 x 2), so it is
-/// drawn at an eighth of the radiance capture, mips 32 .. 2.
-pub const IRR_CAPTURE_RES: u32 = CAPTURE_RES >> 3;
-const IRR_CAPTURE_MIPS: u32 = CAPTURE_MIPS - 3;
+/// LLReflectionMapManager's irradiance pass). irradianceGenF only reads
+/// the smallest mip of a capture (its level is clamped at 2 x 2), but each
+/// mip stored the way the Legacy Viewer stores them darkens and yellows it a
+/// little (LEGACY_FORMAT of probe_filter.wgsl): drawn at 128 x 128, its
+/// chain has as many steps down to 2 x 2 as the Legacy Viewer's (a capture
+/// at 512 filtered into mips 128 .. 2).
+pub const IRR_CAPTURE_RES: u32 = CAPTURE_RES >> 1;
+const IRR_CAPTURE_MIPS: u32 = CAPTURE_MIPS - 1;
 /// `@workgroup_size` of the filter shader, in x and y.
 const WORKGROUP: u32 = 8;
 
@@ -184,8 +187,10 @@ pub(crate) struct Probes {
     pub buffer: wgpu::Buffer,
     /// Trilinear sampler of the probe array (scene shaders, binding 11).
     pub sampler: wgpu::Sampler,
-    mip_pipeline: wgpu::ComputePipeline,
-    radiance_pipeline: wgpu::ComputePipeline,
+    /// [plain, as the Legacy Viewer stores its probes] (LEGACY_FORMAT of
+    /// probe_filter.wgsl)
+    mip_pipeline: [wgpu::ComputePipeline; 2],
+    radiance_pipeline: [wgpu::ComputePipeline; 2],
     irradiance_pipeline: wgpu::ComputePipeline,
     /// Scratch mip `i` into scratch mip `i + 1`.
     mip_bgs: Vec<wgpu::BindGroup>,
@@ -195,6 +200,7 @@ pub(crate) struct Probes {
     irradiance_bgs: Vec<wgpu::BindGroup>,
     /// Irradiance capture mip `i` into mip `i + 1`.
     irr_mip_bgs: Vec<wgpu::BindGroup>,
+    /// (stored as the Legacy Viewer does)
     irr_source_pipeline: wgpu::ComputePipeline,
     /// The irradiance capture into a slot's irradiance: [slot].
     irr_source_bgs: Vec<wgpu::BindGroup>,
@@ -337,7 +343,7 @@ impl Probes {
             label: Some("probe filter"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/probe_filter.wgsl").into()),
         });
-        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str| {
+        let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str, legacy_format: bool| {
             let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(entry),
                 bind_group_layouts: &[Some(layout)],
@@ -348,14 +354,17 @@ impl Probes {
                 layout: Some(&pl),
                 module: &module,
                 entry_point: Some(entry),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("LEGACY_FORMAT", if legacy_format { 1.0 } else { 0.0 })],
+                    ..Default::default()
+                },
                 cache: None,
             })
         };
-        let mip_pipeline = pipeline(&mip_layout, "cs_mip");
-        let radiance_pipeline = pipeline(&radiance_layout, "cs_radiance");
-        let irradiance_pipeline = pipeline(&radiance_layout, "cs_irradiance");
-        let irr_source_pipeline = pipeline(&radiance_layout, "cs_irradiance_capture");
+        let mip_pipeline = [false, true].map(|legacy| pipeline(&mip_layout, "cs_mip", legacy));
+        let radiance_pipeline = [false, true].map(|legacy| pipeline(&radiance_layout, "cs_radiance", legacy));
+        let irradiance_pipeline = pipeline(&radiance_layout, "cs_irradiance", false);
+        let irr_source_pipeline = pipeline(&radiance_layout, "cs_irradiance_capture", true);
         // the six faces of one mip of a cube, `first` being its first layer
         let faces = |texture: &wgpu::Texture, label: &str, mip: u32, first: u32| {
             texture.create_view(&wgpu::TextureViewDescriptor {
@@ -489,8 +498,10 @@ impl Probes {
 
     /// After the six faces are captured: mip chain of the scratch cube
     /// (reflectionmipF), then the GGX prefiltered radiance and the
-    /// irradiance into `slot`; with `irr_capture` (its six faces were drawn
-    /// too), the irradiance comes from the irradiance capture.
+    /// irradiance into `slot`; with `irr_capture` (a sky with a probe
+    /// ambiance, the six faces of the irradiance capture drawn too), the
+    /// irradiance comes from the irradiance capture and every stage is
+    /// stored as the Legacy Viewer stores its probes.
     ///
     /// One compute pass, a dispatch per mip for its six faces. As render
     /// passes, one per face and mip, there were 90 of them, and wgpu pays
@@ -507,16 +518,17 @@ impl Probes {
             pass.set_bind_group(0, bg, &[]);
             pass.dispatch_workgroups(groups, groups, 6);
         };
-        pass.set_pipeline(&self.mip_pipeline);
+        let legacy = usize::from(irr_capture);
+        pass.set_pipeline(&self.mip_pipeline[legacy]);
         for (mip, bg) in (1..CAPTURE_MIPS).zip(&self.mip_bgs) {
             dispatch(&mut pass, bg, CAPTURE_RES >> mip);
         }
-        pass.set_pipeline(&self.radiance_pipeline);
+        pass.set_pipeline(&self.radiance_pipeline[legacy]);
         for (mip, bg) in (0..PROBE_MIPS).zip(&self.radiance_bgs[slot]) {
             dispatch(&mut pass, bg, PROBE_RES >> mip);
         }
         if irr_capture {
-            pass.set_pipeline(&self.mip_pipeline);
+            pass.set_pipeline(&self.mip_pipeline[legacy]);
             for (mip, bg) in (1..IRR_CAPTURE_MIPS).zip(&self.irr_mip_bgs) {
                 dispatch(&mut pass, bg, IRR_CAPTURE_RES >> mip);
             }
@@ -792,8 +804,8 @@ mod tests {
         assert!(src.contains(&format!("const MAX_PROBE_LOD: f32 = {}.0;", PROBE_MIPS - 1)));
         // CAPTURE_LOD_OFFSET: mip 1 of the capture is mip 0 of the probe
         assert_eq!(CAPTURE_RES, PROBE_RES * 2);
-        // IRR_CAPTURE_LOD_OFFSET: mip m of the irradiance capture is mip m + 3 of the capture
-        assert_eq!(IRR_CAPTURE_RES, CAPTURE_RES >> 3);
+        // IRR_CAPTURE_LOD_OFFSET: mip m of the irradiance capture is mip m + 1 of the capture
+        assert_eq!(IRR_CAPTURE_RES, CAPTURE_RES >> 1);
         assert_eq!(src.matches(&format!("@workgroup_size({WORKGROUP}, {WORKGROUP}, 1)")).count(), 4);
     }
 
@@ -966,8 +978,11 @@ mod tests {
             assert!(!close(rough, color), "face {face} at full roughness: {rough:?}");
         }
         // with its irradiance capture, a probe's irradiance comes from it and
-        // its radiance from the radiance capture
-        let grey = [0.75, 0.75, 0.75];
+        // its radiance from the radiance capture, both stored as the Legacy
+        // Viewer stores its probes: 0.7 truncated to 6 bits of mantissa in
+        // red and green, 5 in blue
+        let grey = [0.7, 0.7, 0.7];
+        let stored = [0.6953125, 0.6953125, 0.6875];
         let mut encoder = device.create_command_encoder(&Default::default());
         capture(&probes, &mut encoder, [plain; 6]);
         capture_into(&mut encoder, [grey; 6], |face| probes.irr_capture_target(face));
@@ -977,7 +992,7 @@ mod tests {
             let radiance = read(&device, &queue, &probes.array, 0, 5 * 6 + face);
             assert!(radiance.iter().all(|t| close(*t, plain)), "radiance face {face}");
             let irradiance = read(&device, &queue, &probes.irradiance, 0, 5 * 6 + face);
-            let off = irradiance.iter().position(|t| !close(*t, grey));
+            let off = irradiance.iter().position(|t| !close(*t, stored));
             assert_eq!(off, None, "irradiance face {face}: {:?}", off.map(|i| irradiance[i]));
         }
     }
