@@ -5148,6 +5148,7 @@ impl Backend {
                 (occl, frame_flags::OCCLUSION),
                 (profile(), frame_flags::SHADOW_STATS),
                 (!shadow_depth_only, frame_flags::SHADOW_ALPHA_ALL),
+                (crate::shadow_cull::blend_casts(), frame_flags::BLEND_CASTS),
             ] {
                 if on {
                     flags |= bit;

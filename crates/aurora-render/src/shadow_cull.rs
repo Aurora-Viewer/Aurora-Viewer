@@ -65,6 +65,16 @@ fn cycle() -> &'static [u32] {
     })
 }
 
+/// Alpha-blended faces that are not rigged cast sun and projector shadows,
+/// as in LLPipeline::renderShadow (indra/newview/pipeline.cpp, originally
+/// LGPL 2.1), whose renderAlphaObjects draws rigged and static blended faces
+/// alike: glass with opaque frames, blended foliage. AURORA_BLEND_SHADOWS=0
+/// leaves them out as before (only rigged ones cast), to compare.
+pub fn blend_casts() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_BLEND_SHADOWS").as_deref() != Ok("0"))
+}
+
 static STEP: AtomicUsize = AtomicUsize::new(0);
 
 /// The `path` bits frames are drawn with now.

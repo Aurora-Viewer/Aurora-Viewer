@@ -3762,6 +3762,7 @@ impl Scene {
         };
 
         // objects in parallel
+        let blend_casts = aurora_render::shadow_cull::blend_casts();
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         struct Local {
@@ -3909,9 +3910,10 @@ impl Scene {
                     continue;
                 }
                 if full {
-                    // LLDrawPoolAvatar::renderShadow includes alpha-blended
-                    // rigged faces (fur, hair, etc.) with an alpha-tested shadow.
-                    if casts && (pass != Pass::Blend || g.rigged || g.is_avatar) {
+                    // LLPipeline::renderShadow includes alpha-blended faces,
+                    // rigged (fur, hair) or not (glass, foliage), with an
+                    // alpha-tested shadow (fs_shadow)
+                    if casts && (pass != Pass::Blend || g.rigged || g.is_avatar || blend_casts) {
                         l.casters.push(ShadowCaster {
                             cmd,
                             center: sc,
@@ -6104,7 +6106,7 @@ mod tests {
         // cascades and reflection views that hold everything: the bins then
         // show the CPU's casts / reflects decisions
         let all = Mat4::from_scale(Vec3::splat(1e-5));
-        let flags = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE;
+        let flags = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::PROBE | frame_flags::BLEND_CASTS;
         let mut frame = CullFrame::new(
             &gview,
             &[all; 3],
@@ -6137,7 +6139,7 @@ mod tests {
             let (main, casts, refl, probe, in_view) = match &vis {
                 Some(v) => (
                     v.in_view && solid,
-                    v.casts && f.pass != Pass::Hidden && (f.pass != Pass::Blend || g.rigged || g.is_avatar),
+                    v.casts && f.pass != Pass::Hidden,
                     v.reflects && solid,
                     v.reflects && solid && g.avatar(i).is_none() && g.skeleton_owner.is_none(),
                     v.in_view,

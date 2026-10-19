@@ -165,11 +165,13 @@ impl super::Scene {
                 .and_then(|slot| self.palettes.get(*slot as usize * super::anim::PALETTE_JOINTS + head))
                 .map(|p| Mat4::from_cols_array_2d(p).to_scale_rotation_translation().1);
             // faces that cast (the GPU lists keep the casters on the GPU):
-            // blended ones only when rigged (LLDrawPoolAvatar::renderShadow)
+            // blended ones too (LLPipeline::renderShadow), unless
+            // AURORA_BLEND_SHADOWS=0 leaves out those that are not rigged
+            let blend_casts = aurora_render::shadow_cull::blend_casts();
             let casters = g
                 .faces
                 .iter()
-                .filter(|f| f.pass != super::Pass::Hidden && (f.pass != super::Pass::Blend || g.rigged || g.is_avatar))
+                .filter(|f| f.pass != super::Pass::Hidden && (f.pass != super::Pass::Blend || g.rigged || g.is_avatar || blend_casts))
                 .count();
             log::info!(
                 "demo animesh {local}: owner {:?}, head {:?}, shadow faces {casters}, center {:.3?}, radius {:.3}",
