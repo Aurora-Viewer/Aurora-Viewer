@@ -1395,7 +1395,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
-| `AURORA_DEMO_PHYSICS=1\|still\|off` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
+| `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
 | `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
@@ -1589,8 +1589,11 @@ tests do not establish that this report uses an invalid joint or index.
   frames from frame 230 to 1200 (`demo physics: frame …`). `still`: the
   same turn without the hops, the offsets stay constant (the layer's gravity
   sag). `off`: the same hops with Preferences › Graphics › Avatar physics
-  off, no offsets logged and the balls follow the body rigidly. Compare the frame-rate independence with `AURORA_FPS_LIMIT=30`,
-  `60` and `144`: the offsets at the same frame time match.
+  off, no offsets logged and the balls follow the body rigidly. `classic`:
+  the same hops without the balls, the system body's own breasts, belly and
+  butt bounce (its vertex morphs of the driven parameters). Compare the
+  frame-rate independence with `AURORA_FPS_LIMIT=30`, `60` and `144`: the
+  offsets at the same frame time match.
 - **`AURORA_DEMO_DEFORM`** (issue #272): at frame 240, a one-second pose
   that moves the neck up and the shoulders out plays once on the avatar in
   front of the start position ("Orion"), then stops. As on the grid, the

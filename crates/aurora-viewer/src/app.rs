@@ -12832,11 +12832,11 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_PHYSICS: a physics layer and balls on the body of
             // our avatar and of the one in front of it
-            if crate::demo::physics::mode().is_some() {
+            if let Some(mode) = crate::demo::physics::mode() {
                 if let Some(g) = &mut self.gfx {
                     self.scene.install_demo_physics_body(&mut g.renderer);
                 }
-                for ev in crate::demo::physics::events(&self.scene.avatar_lib.shape_params) {
+                for ev in crate::demo::physics::events(&self.scene.avatar_lib.shape_params, mode) {
                     self.world.apply(ev);
                 }
             }

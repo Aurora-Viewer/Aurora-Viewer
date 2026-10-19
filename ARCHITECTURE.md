@@ -603,11 +603,15 @@ and metering; preferences apply live without running DSP on the UI thread.
 `ui/options/audio.rs` owns Sound and voice preferences and the shared ear/noise
 controls in the microphone popup. `AudioSettings` persists the processing,
 camera/avatar listening and visualizer options with the Legacy Viewer defaults.
-`scene/lipsync.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble curves.
-Static deltas are shared in a reserved prefix of the GPU palette buffer; the
-extra matrix after each skeleton's anchors stores two live weights. Object,
-shadow and picking vertex passes apply the deltas before skinning, including
-shape-morphed system heads, without rebuilding meshes per speech frame.
+`scene/lipsync.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble curves
+and holds the system body's other live morphs, the body physics' driven
+parameters (`scene/body_physics.rs`). Static deltas are shared in a reserved
+prefix of the GPU palette buffer, two matrices per vertex (position and
+normal deltas of up to four morphs); the extra matrix after each skeleton's
+anchors stores one row of four live weights per body part. Object, shadow and
+picking vertex passes apply the deltas before skinning, including
+shape-morphed system parts, without rebuilding meshes per speech or physics
+frame.
 
 The voice indicators of the classic name tags are drawn by
 `ui/voice_tag.rs` (the name plates have their own outline and halo,

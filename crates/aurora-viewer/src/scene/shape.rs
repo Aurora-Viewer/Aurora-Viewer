@@ -241,6 +241,11 @@ impl ShapeParams {
         self.params.get(&id).map(|p| (p.min, p.max, p.default))
     }
 
+    /// Whether a parameter applies to (female, male) avatars.
+    pub fn sexes(&self, id: i32) -> Option<(bool, bool)> {
+        self.params.get(&id).map(|p| (p.sex & SEX_FEMALE != 0, p.sex & SEX_MALE != 0))
+    }
+
     /// The collision volume moves of a body morph (its volume morphs), for
     /// the driven parameters that avatar physics animates locally.
     pub fn volume_morph(&self, id: i32) -> Option<VolumeMorph> {
