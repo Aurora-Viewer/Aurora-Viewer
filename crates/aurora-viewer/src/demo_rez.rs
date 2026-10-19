@@ -21,8 +21,9 @@
 //! - frame 1640: the avatar puts on a hat: it rezzes on its head;
 //! - frame 1700: the table is deleted: its derez;
 //! - frame 1760: the avatar takes the hat off: its derez;
-//! - frame 1820: the avatar changes outfit (three items at once): the grid
-//!   over it, then one line;
+//! - frame 1820: the avatar changes outfit (three items at once and new
+//!   bakes, all coming 50 frames later): it stays as it is (its old bakes
+//!   while the new ones download, never the grid), then one line;
 //! - frame 1960: the avatar leaves: its derez;
 //! - frame 2060: what the effect counted, in the log (`demo rez:`).
 //!
@@ -35,7 +36,9 @@
 //! far (up to 60 m), in four waves; their textures come from 0.1 s to 4 s
 //! later, one in eight at once (from the caches). With the effect on no
 //! face is ever grey: each is the grid, then fades into its texture when
-//! it comes, as soon as without the effect;
+//! it comes, as soon as without the effect; the biggest on the screen get
+//! a glint (the line hiding nothing) as soon as they are built. A wall
+//! stands in the field's left half: nothing behind it gets a glint;
 //! with Grey (Legacy) they are grey until their textures come, as before.
 //! Each round's objects go at once when the next one starts (a burst: no
 //! derez).
@@ -114,6 +117,11 @@ const COLD_ROUND: u64 = 600;
 const COLD_WAVE: u32 = 100;
 const COLD_WAVE_EVERY: u64 = 8;
 const COLD_FIRST_ID: u32 = 150_000;
+/// `cold`: the wall hiding part of the field.
+const COLD_WALL_ID: u32 = 149_900;
+/// The avatar's bakes before and after its outfit change (texture numbers).
+const BAKES_BEFORE: u32 = 95;
+const BAKES_AFTER: u32 = 96;
 
 /// `cold`: frames after its object's arrival that texture `i` comes: one in
 /// eight at once (from the caches), the others within 4 s.
@@ -199,6 +207,27 @@ impl RezDemo {
         o.parent_id = self.avatar_id();
         o.state = attach_state(point);
         o
+    }
+
+    /// The avatar's bakes (head, upper and lower body) on texture `tex`, as
+    /// the appearance service sends them.
+    fn bakes(&self, avatar: uuid::Uuid, tex: u32) -> NetEvent {
+        let mut t = (*super::te([1.0; 4], 0, false, 0.0)).clone();
+        for (te, _, _) in crate::scene::avatar::BAKES.iter().take(3) {
+            t.faces[*te].texture = self.texture(tex);
+        }
+        NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: avatar,
+            texture_entry: Some(Arc::new(t)),
+            visual_params: Vec::new(),
+            cof_version: 1,
+            hover_height: 0.0,
+            attachments: 0,
+        })
+    }
+
+    fn avatar_uuid(&self) -> Uuid {
+        Uuid::from_u128(0xA0E0_4E2E_0000_0000_0000_0000_0000_0001 + self.round as u128)
     }
 
     /// `styles`: column `k`'s cube, the avatar behind it as the camera
@@ -325,6 +354,26 @@ impl RezDemo {
             let local_ids = (0..COLD_OBJECTS).map(|i| id(round - 1, i)).collect();
             world.apply(NetEvent::ObjectsKilled { handle: HANDLE, local_ids });
         }
+        if frame == LOADING {
+            // a wall across the field's left half (north of the camera's
+            // axis), 16 m ahead: what stands behind it is never seen
+            let (x, y) = (145.0, 146.0);
+            let mut wall = prim(
+                COLD_WALL_ID,
+                Vec3::new(x, y, floor_at(x, y) + 4.0),
+                Quat::IDENTITY,
+                Vec3::new(0.4, 24.0, 8.0),
+                shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0),
+                super::te([0.55, 0.55, 0.6, 1.0], 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            wall.update_flags = 0;
+            world.apply(NetEvent::ObjectUpdates {
+                handle: HANDLE,
+                objects: vec![wall],
+            });
+        }
         if t.is_multiple_of(COLD_WAVE_EVERY) && t / COLD_WAVE_EVERY < (COLD_OBJECTS / COLD_WAVE) as u64 {
             let first = (t / COLD_WAVE_EVERY) as u32 * COLD_WAVE;
             let shapes = [
@@ -366,13 +415,15 @@ impl RezDemo {
         if t == COLD_ROUND - 1 {
             let s = scene.rez.stats;
             log::info!(
-                "demo rez: round {} done: {} faces out of the grid, {} grids, {} lines, {} fades ({} with every line busy), {} followed now",
+                "demo rez: round {} done: {} faces out of the grid, {} grids, {} lines, {} glints, {} fades ({} with every line busy), {} behind a wall, {} followed now",
                 round + 1,
                 s.face_fades,
                 s.holograms,
                 s.sweeps,
+                s.glints,
                 s.fades,
                 s.no_line,
+                s.hidden,
                 s.units
             );
         }
@@ -487,9 +538,11 @@ impl RezDemo {
                     "",
                 );
                 o.pcode = LL_PCODE_LEGACY_AVATAR;
-                o.full_id = Uuid::from_u128(0xA0E0_4E2E_0000_0000_0000_0000_0000_0001 + self.round as u128);
+                o.full_id = self.avatar_uuid();
                 o.name_values = "FirstName STRING RW SV Rez\nLastName STRING RW SV Visitor".into();
                 objects.push(o);
+                self.texture_now(&mut scene.textures, renderer, jobs, BAKES_BEFORE, false);
+                world.apply(self.bakes(self.avatar_uuid(), BAKES_BEFORE));
                 log::info!("demo rez: an avatar comes into view");
             }
             STORM => {
@@ -558,9 +611,11 @@ impl RezDemo {
                     self.texture_now(&mut scene.textures, renderer, jobs, 91 + k as u32, true);
                     objects.push(self.worn(91 + k as u32, point, at, size, volume, 91 + k as u32));
                 }
-                log::info!("demo rez: the avatar changes outfit (3 items), their textures {OUTFIT_TEXTURES} frames later");
+                self.texture_now(&mut scene.textures, renderer, jobs, BAKES_AFTER, true);
+                world.apply(self.bakes(self.avatar_uuid(), BAKES_AFTER));
+                log::info!("demo rez: the avatar changes outfit (3 items and its bakes), their textures {OUTFIT_TEXTURES} frames later");
             }
-            f if f == OUTFIT + OUTFIT_TEXTURES => self.decode(&scene.textures, jobs, vec![91, 92, 93]),
+            f if f == OUTFIT + OUTFIT_TEXTURES => self.decode(&scene.textures, jobs, vec![91, 92, 93, BAKES_AFTER]),
             AVATAR_GONE => {
                 killed.push(self.avatar_id());
                 log::info!("demo rez: the avatar leaves");
@@ -568,14 +623,16 @@ impl RezDemo {
             REPORT => {
                 let s = scene.rez.stats;
                 log::info!(
-                    "demo rez: {} grids, {} lines, {} rezzed, {} derezzed, {} worn, {} outfits, {} shown without a line (all busy), {} running",
+                    "demo rez: {} grids, {} lines, {} glints, {} rezzed, {} derezzed, {} worn, {} outfits, {} shown without a line (all busy), {} behind a wall, {} running",
                     s.holograms,
                     s.sweeps,
+                    s.glints,
                     s.rezzed,
                     s.derezzed,
                     s.worn,
                     s.outfits,
                     s.no_line,
+                    s.hidden,
                     scene.rez.sweeping()
                 );
             }

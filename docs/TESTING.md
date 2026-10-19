@@ -2064,8 +2064,9 @@ tests do not establish that this report uses an invalid joint or index.
   replaces) and `AURORA_FPS_LIMIT=60` for frame-numbered captures
   (`demo_rez.rs`). Our avatar loads in the grid, then the line rises from
   its feet (frames 60–150). Four prims arrive at 300 whose textures come 150
-  frames later: each face is the grid until its own texture comes,
-  then fades into it (455–480). Someone rezzes a four-prim table at 840, its
+  frames later: a glint passes over them at once (the line hiding nothing),
+  each face is the grid until its own texture comes, then fades into it
+  (455–480). Someone rezzes a four-prim table at 840, its
   texture a second later: the grid, then one line for the linkset. We rez a
   cube at 960 (FLAGS_CREATE_SELECTED) and copy it at 1020, both ready at
   once: a quick line, no grid. An avatar comes into view at 1080: the grid
@@ -2075,7 +2076,9 @@ tests do not establish that this report uses an invalid joint or index.
   puts on a hat at 1640 (it rezzes on its head) and takes it off at 1760
   (its derez); the table is deleted at 1700 (the derez: the line comes down,
   then the grid fades out from the top, 1700–1742). The avatar changes
-  outfit at 1820 (three items at once): the grid over it, then one line. It
+  outfit at 1820 (three items at once and new bakes, all 50 frames later):
+  it keeps its old bakes meanwhile (only the new items are the grid), never
+  the grid over it, then a glint around 1870 (capture 1830, 1868, 1892). It
   leaves at 1960 (its derez). The counts in the log at 2060 (`demo rez:`).
   `loop`: everything goes at once at 2160 (a burst: no derez) and the
   scenario starts again from 300, to watch it in one window.
@@ -2092,9 +2095,12 @@ tests do not establish that this report uses an invalid joint or index.
   face is ever grey: each face is the grid at once and fades into its
   texture (0.15 s) when it comes, at the same moment as without the
   effect; with `AURORA_REZ_EFFECT=0` (or Grey (Legacy))
-  they are grey until their textures come, as before. Capture frames
-  312, 340, 380 and 450 with each. The log tells each round's grids,
-  faces out of the grid (`demo rez: round`).
+  they are grey until their textures come, as before. The biggest on the
+  screen get a glint as soon as they are built; a wall stands across the
+  field's left half and nothing behind it gets one (`glint over` lines in
+  the log, `behind a wall` in the counts). Capture frames 312, 330, 350,
+  380 and 450 with each. The log tells each round's grids, lines, glints
+  and faces out of the grid (`demo rez: round`).
 - **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per

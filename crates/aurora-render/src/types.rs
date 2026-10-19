@@ -198,6 +198,9 @@ pub mod rez_mode {
     pub const DEREZ: u32 = 3;
     /// Loaded with no line for it: from the grid to the textures.
     pub const FADE: u32 = 4;
+    /// Arriving: the line passes over it and hides nothing (a face still
+    /// loading stays the grid, the others show their surface).
+    pub const GLINT: u32 = 5;
 }
 
 impl Default for DrawRecord {

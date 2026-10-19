@@ -41,6 +41,7 @@ mod sculpt_watch;
 mod selection_demo;
 pub mod settings;
 pub mod shape;
+mod shown_bakes;
 mod skin_binds;
 pub mod sounds;
 pub mod still_check;
@@ -759,6 +760,8 @@ pub struct Scene {
     loading: loading::Loading,
     /// The rez effect of objects and avatars appearing (rez.rs).
     pub rez: rez::Rez,
+    /// The bakes drawn: the last good one while a new one loads.
+    shown_bakes: shown_bakes::ShownBakes,
     /// Hide loading avatars (shown as clouds) until they are complete.
     pub hide_loading: bool,
     /// Progress bars under the names of loading avatars.
@@ -1188,6 +1191,7 @@ impl Scene {
             picture_check: (0, 0, None),
             loading: Default::default(),
             rez: Default::default(),
+            shown_bakes: Default::default(),
             hide_loading: true,
             loading_bars: true,
             attached_lights: true,
@@ -1651,10 +1655,8 @@ impl Scene {
     pub fn collect_garbage(&mut self, renderer: &mut Renderer, store: &mut ObjectStore, budget: std::time::Duration) {
         store.graveyard.clear();
         let now = Instant::now();
-        let kills = std::mem::take(&mut store.killed);
-        if !kills.is_empty() {
-            self.note_kills(renderer, kills, now);
-        }
+        // (`sync` gave the derez its kills already; no derez without the world)
+        store.killed.clear();
         for i in std::mem::take(&mut store.removed_slots) {
             if self.removal_pending.len() <= i {
                 self.removal_pending.resize(i + 1, false);
@@ -2030,8 +2032,14 @@ impl Scene {
         self.frame = self.frame.wrapping_add(1);
         self.ensure_avatar_parts(renderer);
         step(&mut slow, "parts");
+        // (the derez of what was killed first: it looks for walls in the world)
+        let kills = std::mem::take(&mut world.objects.killed);
+        if !kills.is_empty() {
+            self.note_kills(renderer, world, kills, Instant::now());
+        }
         self.collect_garbage(renderer, &mut world.objects, self.sync_budget / 2);
         step(&mut slow, "garbage");
+        self.update_shown_bakes(world);
         // settings assets the environment waits for (the default day, the
         // environment selector's items)
         for id in world.eep.wanted_settings() {
@@ -3125,7 +3133,7 @@ impl Scene {
             // texture (with bake-on-mesh redirection)
             let mut source = TexSource::Asset;
             if let Some((bake_te, bake)) = avatar::bake_slot_for(&base_tex) {
-                match wearer.and_then(|(aid, a)| world.bake_texture(a, bake_te).map(|t| (aid, t))) {
+                match wearer.and_then(|(aid, a)| self.shown_bake(renderer, world, a, bake_te).map(|t| (aid, t))) {
                     Some((aid, tid)) => {
                         base_tex = tid;
                         source = world.bake_source(aid, bake, tid);
@@ -3284,7 +3292,7 @@ impl Scene {
             let held = std::mem::take(&mut g.morph_geoms);
             g.morph_pending = false;
             for (pi, part) in lib.parts.iter().enumerate() {
-                let tex = world.bake_texture(idx, part.bake_te);
+                let tex = self.shown_bake(renderer, world, idx, part.bake_te);
                 // Skirt only when a skirt bake exists; invisible bakes hide parts.
                 let hidden = match tex {
                     Some(t) => t == avatar::IMG_INVISIBLE || (part.name == "skirt" && t == avatar::IMG_DEFAULT_AVATAR),
