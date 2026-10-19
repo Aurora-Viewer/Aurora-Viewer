@@ -106,13 +106,13 @@ pub mod presence;
 /// Region / Estate answers (AURORA_DEMO_REGION).
 #[path = "demo_region.rs"]
 pub mod region;
+/// The rez effect of objects and avatars appearing (AURORA_DEMO_REZ_EFFECT).
+#[path = "demo_rez.rs"]
+pub mod rez;
 /// A rigged mesh rezzed on a cube and the same one worn
 /// (AURORA_DEMO_RIGGED_PROP).
 #[path = "demo_rigged_prop.rs"]
 pub mod rigged_prop;
-/// The rez effect of objects and avatars appearing (AURORA_DEMO_REZ_EFFECT).
-#[path = "demo_rez.rs"]
-pub mod rez;
 #[path = "demo_sculpt.rs"]
 pub mod sculpt;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).

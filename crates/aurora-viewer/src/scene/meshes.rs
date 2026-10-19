@@ -1436,7 +1436,10 @@ mod tests {
             let drawn = unbind.transform_point3(built);
             (lo, hi) = (lo.min(drawn), hi.max(drawn));
         }
-        assert!(lo.cmpge(Vec3::splat(-0.501)).all() && hi.cmple(Vec3::splat(0.501)).all(), "{lo} {hi}");
+        assert!(
+            lo.cmpge(Vec3::splat(-0.501)).all() && hi.cmple(Vec3::splat(0.501)).all(),
+            "{lo} {hi}"
+        );
         assert!((hi - lo).cmpgt(Vec3::splat(0.99)).all(), "{lo} {hi}");
         assert!(bind.transform_point3(Vec3::ZERO).length() > 0.5);
     }
