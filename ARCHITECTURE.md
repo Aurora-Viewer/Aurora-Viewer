@@ -125,6 +125,12 @@ Preferences measures its page header before allocating the remaining scroll
 viewport. The categories have their own bounded viewport above the fixed
 reset button, so larger fonts and shorter windows cannot drive height growth.
 
+`ui/hud.rs::NameTagVisibility` shares self/friend/other visibility and the
+Legacy Viewer temporary clock between classic tags and Aurora plates. A
+continuous visible interval ends with a one-second fade; leaving the view
+prunes the clock so returning starts again. Filtering precedes both painting
+and hit rectangles; object floating text keeps its independent lifetime.
+
 Preferences › Aurora › Animations selects the playback clock for both avatars
 and animesh. Legacy is the persisted default, including older settings files:
 activate at asset loading and suspend playback during editing, following

@@ -489,6 +489,12 @@ pub struct Settings {
     /// Commands).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
     pub name_tag_distance: f32,
+    pub show_own_name_tag: bool,
+    pub show_friend_name_tags: bool,
+    pub show_other_name_tags: bool,
+    /// LLVOAvatar::idleUpdateNameTag: fade after a continuous visible interval.
+    pub temporary_name_tags: bool,
+    pub name_tag_show_seconds: f32,
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
     pub classic_name_tags: bool,
@@ -1144,6 +1150,11 @@ impl Default for Settings {
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             name_tag_distance: 64.0,
+            show_own_name_tag: true,
+            show_friend_name_tags: true,
+            show_other_name_tags: true,
+            temporary_name_tags: false,
+            name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
@@ -1688,6 +1699,11 @@ impl Settings {
         self.chat_toast_seconds = self.chat_toast_seconds.clamp(0.0, 60.0);
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
+        self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {
+            self.name_tag_show_seconds.clamp(1.0, 60.0)
+        } else {
+            10.0
+        };
         if uuid::Uuid::parse_str(&self.machine_id).is_err() {
             self.machine_id = uuid::Uuid::new_v4().to_string();
         }
@@ -1943,6 +1959,36 @@ impl Default for MapSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_tag_preferences_preserve_old_defaults_and_saved_choices() {
+        let old: Settings = serde_json::from_str("{}").expect("synthetic old settings");
+        assert!(old.show_own_name_tag && old.show_friend_name_tags && old.show_other_name_tags);
+        assert!(!old.temporary_name_tags);
+        assert_eq!(old.name_tag_show_seconds, 10.0);
+        let original = Settings {
+            show_own_name_tag: false,
+            show_friend_name_tags: false,
+            show_other_name_tags: false,
+            temporary_name_tags: true,
+            name_tag_show_seconds: 27.0,
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec(&original).expect("serialize synthetic settings");
+        let saved: Settings = serde_json::from_slice(&bytes).expect("read synthetic settings");
+        let saved = saved.sanitized();
+        assert!(!saved.show_own_name_tag && !saved.show_friend_name_tags && !saved.show_other_name_tags);
+        assert!(saved.temporary_name_tags);
+        assert_eq!(saved.name_tag_show_seconds, 27.0);
+        for (value, expected) in [(-1.0, 1.0), (100.0, 60.0), (f32::NAN, 10.0), (f32::INFINITY, 10.0)] {
+            let bounded = Settings {
+                name_tag_show_seconds: value,
+                ..Default::default()
+            }
+            .sanitized();
+            assert_eq!(bounded.name_tag_show_seconds, expected);
+        }
+    }
 
     /// The views that replace the image: the last one turned on stays.
     #[test]

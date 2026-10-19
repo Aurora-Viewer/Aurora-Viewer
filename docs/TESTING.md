@@ -4050,6 +4050,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
+| `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
 
@@ -4142,6 +4143,14 @@ What the inventory must show with these scenarios:
     "Full plates for friends only" for this run, not saved): only Orion, the
     friend, and our own plate are complete; Nova, Tess, Lune and La Brume are
     compact pills however near; the far pills do not change.
+  - `AURORA_DEMO_NAME_TAGS=all|self-off|friends-off|others-off|off|temporary|classic-temporary`
+    selects the visibility scenario at startup. Combine with `AURORA_DEMO_TAGS=voice`
+    for a row containing a friend and other residents. Temporary modes use
+    ten seconds and the final one-second fade; turn away and return to check
+    a fresh interval. `AURORA_DEMO_OPTIONS=1:name-tags` opens the new controls.
+    These explicit scenarios use a 64 m tag distance and close the AO panel
+    so earlier demo preferences cannot hide the fixture. Only the isolated
+    demo preferences are affected.
   - `AURORA_DEMO_PLATE_HOVER=x,y` holds the pointer at x, y (points) for
     the plates only: the plate there shows full ("Expand a plate on hover",
     on by default), a pill or a far name included; with `,click` the plate
