@@ -488,7 +488,9 @@ pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Eve
     };
     if frame == 700 {
         let n = if mode == "many" { 3 } else { 1 };
-        let ids = (1..=n).map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k)).collect();
+        let ids = (1..=n)
+            .map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k))
+            .collect();
         crate::ui::inventory::drag::demo_carry(ctx, ids);
     }
     let pane = ctx.data(|d| d.get_temp::<egui::Rect>(give_demo_id()));
