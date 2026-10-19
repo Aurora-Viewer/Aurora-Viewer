@@ -815,6 +815,45 @@ impl Search {
         self.out.push(cmd);
     }
 
+    /// A classified or an event opened from a link (LLClassifiedHandler,
+    /// LLEventHandler show it in a window of its own): the tab's list holds
+    /// it alone, selected, its details asked; its name comes with them
+    /// (`name_row`). Replies of the tab's former query no longer apply.
+    pub fn show_one(&mut self, tab: Tab, key: Key) {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
+            return;
+        };
+        list.query = None;
+        list.query_id = Uuid::nil();
+        list.start = 0;
+        list.has_next = false;
+        list.key_lookup = None;
+        list.rows = vec![Row {
+            key,
+            icon: if tab == Tab::Events {
+                RowIcon::EventGeneral
+            } else {
+                RowIcon::Classified
+            },
+            name: String::new(),
+            values: Vec::new(),
+        }];
+        list.status = Status::Found;
+        self.select(tab, key);
+    }
+
+    /// The details of a row answered: a row shown without its name
+    /// (`show_one`) takes it, and its columns (an event's date).
+    pub fn name_row(&mut self, tab: Tab, key: Key, name: &str, values: Vec<Value>) {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
+            return;
+        };
+        for row in list.rows.iter_mut().filter(|r| r.key == key && r.name.is_empty()) {
+            row.name = name.to_owned();
+            row.values = values.clone();
+        }
+    }
+
     /// A Dir*Reply: applied to the list whose query it answers. The first
     /// rows of a page select the first one shown (selectFirstItem).
     pub fn apply_reply(&mut self, reply: &DirReply) {
@@ -1573,5 +1612,28 @@ mod tests {
         for tab in Tab::ALL.into_iter().skip(1) {
             assert_eq!(s.list(tab).map(|l| l.tab), Some(tab));
         }
+    }
+
+    #[test]
+    fn a_classified_or_an_event_shown_alone() {
+        let mut s = Search::default();
+        let id = Uuid::from_u128(5);
+        s.show_one(Tab::Classifieds, Key::Id(id));
+        assert!(matches!(&s.take_commands()[..], [NetCommand::ClassifiedInfoRequest(a)] if *a == id));
+        let list = s.list(Tab::Classifieds).expect("classifieds");
+        assert_eq!(list.selected, Some(Key::Id(id)));
+        assert_eq!(list.status, Status::Found);
+        assert!(list.query_id.is_nil(), "an older query's replies no longer apply");
+        s.name_row(Tab::Classifieds, Key::Id(id), "Atelier", Vec::new());
+        assert_eq!(s.list(Tab::Classifieds).map(|l| l.rows[0].name.as_str()), Some("Atelier"));
+        s.show_one(Tab::Events, Key::Event(5001));
+        assert!(matches!(&s.take_commands()[..], [NetCommand::EventInfoRequest(5001)]));
+        let date = Value::Dated {
+            text: "10/08 09:00".into(),
+            unix: 1_791_475_200,
+        };
+        s.name_row(Tab::Events, Key::Event(5001), "Jazz", vec![date.clone()]);
+        let row = &s.list(Tab::Events).expect("events").rows[0];
+        assert_eq!((row.name.as_str(), &row.values[..]), ("Jazz", &[date][..]));
     }
 }

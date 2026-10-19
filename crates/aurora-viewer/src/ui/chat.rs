@@ -1,5 +1,7 @@
 //! Local chat window (nearby chat + instant messages).
 
+mod app_links;
+pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
 mod call;
 mod completion;
@@ -136,6 +138,9 @@ pub struct ChatUi {
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
+    /// "> " before the "… is typing" of a tab (FSTypingChevronPrefix,
+    /// Preferences › Chat), given every frame by the app.
+    pub typing_chevron: bool,
     /// The entries of conversations with news flash (Preferences › Chat),
     /// given every frame by the app; and where each flash stands.
     pub flash_unread: bool,
@@ -162,6 +167,12 @@ pub struct ChatUi {
     /// Our typing notices, and what the field did this frame.
     me_typing: typing::MeTyping,
     typing_field: Option<typing::Field>,
+    /// An emote shows us typing in the nearby chat too (FSTypeDuringEmote,
+    /// Preferences › Chat), given every frame by the app.
+    pub type_during_emote: bool,
+    /// Our typing in the nearby chat, and what its fields did this frame.
+    local_typing: typing::LocalTyping,
+    local_field: typing::LocalField,
     /// The resident picker of the column's "+", and what it starts.
     picker: super::avatar_picker::AvatarPicker,
     start: Start,
@@ -247,6 +258,41 @@ impl ChatUi {
     fn nearby_typing_names(&self, world: &World) -> Vec<String> {
         self.nearby_typing.iter().map(|id| world.social.display_name_of(id)).collect()
     }
+
+    /// A nearby chat field drawn this frame: its keyboard, its text after
+    /// a key, a line sent (FSNearbyChat::handleChatBarKeystroke).
+    /// `said`: its text, after this frame's key, says something aloud
+    /// (`typing::says_aloud`).
+    fn local_field(&mut self, resp: &egui::Response, said: bool, sent: bool) {
+        self.local_field.focused |= resp.has_focus();
+        if resp.changed() {
+            self.local_field.typed = Some(said);
+        }
+        self.local_field.sent |= sent;
+    }
+
+    /// Once per frame, after the fields are drawn: our typing in the nearby
+    /// chat starts (Some(true)) or stops (Some(false)).
+    pub fn local_typing_update(&mut self, now: std::time::Instant) -> Option<bool> {
+        self.local_typing.update(now, std::mem::take(&mut self.local_field))
+    }
+
+    /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
+    /// it starts.
+    pub fn hold_local_typing(&mut self, now: std::time::Instant) -> bool {
+        self.local_field = typing::LocalField::default();
+        self.local_typing.hold(now)
+    }
+
+    /// We type in the nearby chat (AGENT_STATE_TYPING).
+    pub fn local_typing(&self) -> bool {
+        self.local_typing.typing()
+    }
+
+    /// Stop typing in the nearby chat (after a teleport); true when we were.
+    pub fn stop_local_typing(&mut self) -> bool {
+        self.local_typing.stop()
+    }
 }
 
 pub struct OutgoingChat {
@@ -323,26 +369,36 @@ enum Link {
     Url(String),
     Place(String, crate::slurl::PlaceLink),
     Agent(uuid::Uuid),
+    /// A `secondlife:///app/...` command (`app_links.rs`).
+    App(String, crate::slapp::AppLink),
 }
 
 /// A line's text cut into pieces, links replaced by their labels as
 /// Firestorm's chat console does (LLConsole::Paragraph with parse_urls,
 /// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
-/// avatar's name, mentions "@name" like the conversation window.
-fn pieces(text: &str, mut name_of: impl FnMut(uuid::Uuid) -> String) -> Vec<(String, Option<Link>)> {
+/// avatar's name, mentions "@name" like the conversation window, app
+/// commands their label. `label_of` gives the label of an agent link, a
+/// mention (without its "@") or an app command.
+fn pieces(text: &str, mut label_of: impl FnMut(&Seg) -> String) -> Vec<(String, Option<Link>)> {
     segments(text)
         .into_iter()
         .map(|s| match s {
             Seg::Text(t) | Seg::Slurl(t) => (t.to_owned(), None),
             Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
-            Seg::Agent(id) => (name_of(id), Some(Link::Agent(id))),
-            Seg::Mention(id) => (format!("@{}", name_of(id)), Some(Link::Agent(id))),
+            Seg::Agent(id) => (label_of(&s), Some(Link::Agent(id))),
+            Seg::Mention(id) => (format!("@{}", label_of(&s)), Some(Link::Agent(id))),
+            Seg::App(..) => {
+                let label = label_of(&s);
+                let Seg::App(u, link) = s else { unreachable!() };
+                (label, Some(Link::App(u.to_owned(), link)))
+            }
             Seg::Labelled(label, inner) => (
                 label.into_owned(),
                 match *inner {
                     Seg::Url(u) => Some(Link::Url(u.to_owned())),
                     Seg::Agent(id) | Seg::Mention(id) => Some(Link::Agent(id)),
+                    Seg::App(u, link) => Some(Link::App(u.to_owned(), link)),
                     _ => None,
                 },
             ),
@@ -602,9 +658,13 @@ fn line_job(
     let mut links = Vec::new();
     let mut badges = Vec::new();
     let mut at = job.text.chars().count();
-    let name_of = |id| {
-        want_names.insert(id);
-        world.social.name_of(&id)
+    let name_of = |s: &Seg| match s {
+        Seg::Agent(id) | Seg::Mention(id) => {
+            want_names.insert(*id);
+            world.social.name_of(id)
+        }
+        Seg::App(u, link) => app_links::label(world, want_names, u, link),
+        _ => String::new(),
     };
     // the badge of a web link takes the place of an invisible glyph glued to
     // the link (no space between them), so both wrap to the next row
@@ -783,6 +843,8 @@ enum Seg<'a> {
     /// shown as the text, it acts as the link inside (a web link, an agent
     /// link or another SL link; a place takes the text as its label).
     Labelled(Cow<'a, str>, Box<Seg<'a>>),
+    /// Another `secondlife:///app/...` command (`slapp.rs`).
+    App(&'a str, crate::slapp::AppLink),
 }
 
 /// The text mentions `agent` (LLUrlRegistry::containsAgentMention).
@@ -928,10 +990,12 @@ fn link_seg(link: &str) -> Seg<'_> {
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
-            _ => Seg::Slurl(link),
+            _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
     } else if let Some(place) = crate::slurl::place_link(link) {
         Seg::Place(link, place)
+    } else if let Some(app) = crate::slapp::parse(link) {
+        Seg::App(link, app)
     } else if link.starts_with("secondlife://") {
         Seg::Slurl(link)
     } else {
@@ -1116,8 +1180,13 @@ pub(crate) fn chat_text_marked(
                     Seg::Slurl(u) => {
                         select::label(ui, RichText::new(label.as_ref()).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
                     }
+                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
                     _ => marked_run(ui, emoji, &label, size, color, italics, mark),
                 },
+                Seg::App(u, link) => {
+                    let label = app_links::label(world, want_names, u, &link);
+                    app_links::link(ui, p, world, u, &link, &label, size);
+                }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Mention(id) => {
                     want_names.insert(id);
@@ -1314,6 +1383,7 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
             Seg::Place(_, place) => place.label,
             Seg::Mention(id) => format!(" @{} ", world.social.name_of(&id)),
             Seg::Agent(id) => world.social.name_of(&id),
+            Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
         .collect()
 }
@@ -2157,10 +2227,11 @@ pub fn show(
                         // FSFloaterIM::addTypingIndicator: the tab of a
                         // resident typing to us reads "Nova is typing…", by
                         // their display name alone, so that it shows in a
-                        // narrow tab
+                        // narrow tab; "> " first with FSTypingChevronPrefix
                         let typing = (sidebar::kind(world, &other) == sidebar::Kind::Private && world.social.is_typing(&other))
                             .then(|| typing::text(&[world.social.display_name_of(&other)]))
-                            .flatten();
+                            .flatten()
+                            .map(|t| if st.typing_chevron { format!("> {t}") } else { t });
                         let entry = list_entry(
                             ui,
                             p,
@@ -2437,6 +2508,10 @@ pub fn show(
                     empty: draft.trim().is_empty(),
                     sent,
                 });
+                if st.selected.is_none() {
+                    let said = typing::says_aloud(&draft, st.type_during_emote);
+                    st.local_field(&resp, said, sent);
+                }
                 if !draft.is_empty() {
                     *st.draft_mut(st.selected) = draft;
                 } else {
@@ -2881,6 +2956,14 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                         super::profile::request_open(ui.ctx(), *id);
                     }
                 }
+                Link::App(u, app) => {
+                    // the bubble's label is the menu's "copy name"
+                    let label = app_links::label(world, &mut HashSet::new(), u, app);
+                    app_links::menu(&resp, p, world, u, app, &label);
+                    if resp.on_hover_text(format!("{}\n{u}", app_links::tooltip(app))).clicked() {
+                        super::context::request(ui.ctx(), CtxAction::AppLink(app.clone()));
+                    }
+                }
             }
         });
 }
@@ -2954,6 +3037,9 @@ pub(crate) fn bar_input(
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
     let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
+    // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
+    let said = typing::says_aloud(&st.input, st.type_during_emote);
+    st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
     }
@@ -3018,8 +3104,13 @@ mod tests {
         let segs = segments(&t);
         assert_eq!(segs[1], Seg::Agent(id));
         assert_eq!(segs[3], Seg::Mention(id));
+        // not an agent link: the generic SLapp (LLUrlEntrySL), whose click
+        // says the command is not supported
         let bad = segments("secondlife:///app/agent/nope/about");
-        assert!(matches!(bad[0], Seg::Slurl(_)));
+        assert!(matches!(bad[0], Seg::App(_, crate::slapp::AppLink::Unsupported)));
+        // another verb acts (LLAgentHandler) and shows the name
+        let im = format!("secondlife:///app/agent/{id}/im");
+        assert!(matches!(segments(&im)[0], Seg::App(_, crate::slapp::AppLink::Agent { .. })));
     }
 
     #[test]

@@ -1310,6 +1310,62 @@ pub fn slurls_text() -> String {
     .join(" · ")
 }
 
+/// AURORA_DEMO_APPLINKS: a message with a `secondlife:///app/...` link of
+/// each kind (`slapp.rs`), in a conversation with Nova and in the bubbles.
+pub fn applinks_scene() -> bool {
+    std::env::var_os("AURORA_DEMO_APPLINKS").is_some()
+}
+
+/// The text of `applinks_scene`; `item` is an item of the demo inventory
+/// (its id and name) for the inventory link.
+pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
+    let app = "secondlife:///app";
+    let classified = Uuid::from_u128(0x5EA2_C1A5_0000_0000_0000_0000_0000_0001);
+    // the region's treasure hunt (its name only) and the experience of
+    // AURORA_DEMO_EXPERIENCE (its profile)
+    let experience = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0007);
+    let profiled = experience::EXPERIENCE;
+    let mut links = vec![
+        format!("{app}/group/{DEMO_GROUP2}/about"),
+        format!("[{app}/group/{DEMO_GROUP1}/about our group]"),
+        format!("{app}/parcel/{}/about", land::PARCEL_UUID),
+        format!(
+            "{app}/objectim/{}?name=Welcome%20Sign&owner={DEMO_LOUP}&slurl=Aurora%20Demo/140/120/25",
+            Uuid::from_u128(0x5106)
+        ),
+        format!("{app}/experience/{experience}/profile"),
+        format!("{app}/experience/{profiled}/profile"),
+        format!("{app}/classified/{classified}/about"),
+        format!("{app}/event/5001/details"),
+        format!("{app}/worldmap/Pine%20Grove/40/80/22"),
+        format!("{app}/chat/42/Hello%20from%20a%20link"),
+        format!("{app}/search/places/beach"),
+        format!("{app}/agent/{DEMO_LOUP}/im"),
+        format!("{app}/wear_folder/?folder_id={}", Uuid::from_u128(0xF01D)),
+        format!("{app}/frobnicate/1"),
+    ];
+    // the demo inventory may not be loaded yet: a made-up item then
+    let (id, name) = item.unwrap_or_else(|| (Uuid::from_u128(0x17E3), "Demo notecard".into()));
+    let name: String = name
+        .chars()
+        .map(|c| if c == ' ' { "%20".to_owned() } else { c.to_string() })
+        .collect();
+    links.insert(4, format!("{app}/inventory/{id}/select?name={name}"));
+    links.join(" · ")
+}
+
+/// `AURORA_DEMO_APPLINKS=<command>` (group, parcel, objectim, inventory,
+/// experience, classified, event, worldmap, chat, search, agent,
+/// wear_folder, frobnicate): the first link of that command in `text` is
+/// clicked once the scene is set.
+pub fn applinks_click(text: &str) -> Option<crate::slapp::AppLink> {
+    let kind = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
+    let needle = format!("secondlife:///app/{}/", kind.trim());
+    let at = text.find(&needle)?;
+    let url = text[at..].split([' ', ']']).next()?;
+    crate::slapp::parse(url)
+}
+
 /// What the map would have taught before `slurls_scene`: the lagoon and
 /// Nordheim, not the pine grove.
 pub fn slurls_events() -> Vec<NetEvent> {
@@ -2151,6 +2207,24 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 entered: false,
             }],
         }],
+        // the typing notices are no lines
+        aurora_net::NetCommand::Chat {
+            chat_type: aurora_net::ChatType::StartTyping | aurora_net::ChatType::StopTyping,
+            ..
+        } => Vec::new(),
+        // the simulator plays our typing animation (and the stand again
+        // once it stops), as for anyone in range
+        aurora_net::NetCommand::AgentAnimation { anim, start } if *anim == crate::world::radar::ANIM_AGENT_TYPE => {
+            let mut anims = vec![(IDLE_ANIM, 1)];
+            if *start {
+                anims.push((*anim, 2));
+            }
+            vec![NetEvent::AvatarAnimations {
+                avatar: DEMO_AGENT,
+                anims,
+                sources: Vec::new(),
+            }]
+        }
         // local chat echoes back like the simulator does
         aurora_net::NetCommand::Chat { message, chat_type, .. } => vec![NetEvent::Chat(aurora_net::ChatMessage {
             from_name: "Aurora Demo".into(),
@@ -4574,6 +4648,58 @@ pub fn idle_animation() -> aurora_assets::Animation {
                     k(4.0, Quat::from_rotation_z(0.0)),
                 ],
             ),
+        ],
+    }
+}
+
+/// `AURORA_DEMO_TYPING=1`: we type in the nearby chat from our arrival on,
+/// without a key (our typing animation and our plate's dots).
+pub fn typing_scenario() -> bool {
+    std::env::var_os("AURORA_DEMO_TYPING").is_some()
+}
+
+/// The typing animation (ANIM_AGENT_TYPE), a grid asset the demo has no
+/// server for: the arms only, over the stand, forearms forward and the
+/// wrists tapping, for our typing in the nearby chat and the crowd's.
+pub fn typing_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, RotKey};
+    let joint = |name: &str, keys: Vec<(f32, Quat)>| JointMotion {
+        joint_name: name.into(),
+        priority: -1,
+        rot_keys: keys.into_iter().map(|(time, rotation)| RotKey { time, rotation }).collect(),
+        pos_keys: Vec::new(),
+    };
+    // the upper arms hang (as the stand's), the elbows bend forward about
+    // the same lateral axis: -Z for the left arm, +Z for the right
+    let (down, bend) = (1.3f32, 1.45f32);
+    // a wrist up every other quarter second, the two hands in turn
+    let tap = |side: f32, phase: usize| {
+        (0..=4usize)
+            .map(|i| {
+                (
+                    i as f32 * 0.25,
+                    Quat::from_rotation_z(if (i + phase).is_multiple_of(2) { 0.0 } else { side * 0.25 }),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    aurora_assets::Animation {
+        base_priority: 3,
+        duration: 1.0,
+        emote_name: String::new(),
+        loop_in: 0.0,
+        loop_out: 1.0,
+        looping: true,
+        ease_in: 0.3,
+        ease_out: 0.3,
+        hand_pose: 0,
+        joints: vec![
+            joint("mShoulderLeft", vec![(0.0, Quat::from_rotation_x(-down))]),
+            joint("mShoulderRight", vec![(0.0, Quat::from_rotation_x(down))]),
+            joint("mElbowLeft", vec![(0.0, Quat::from_rotation_z(-bend))]),
+            joint("mElbowRight", vec![(0.0, Quat::from_rotation_z(bend))]),
+            joint("mWristLeft", tap(1.0, 0)),
+            joint("mWristRight", tap(-1.0, 1)),
         ],
     }
 }
