@@ -1,6 +1,9 @@
 //! Native Movelock orchestration; protocol ownership lives in movement/movelock.
 use super::*;
-use crate::{movement::movelock::Frame, world::bridge::LockMode};
+use crate::{
+    movement::movelock::{self, Frame, Travel},
+    world::bridge::LockMode,
+};
 
 impl App {
     pub(super) fn release_native_movelock(&mut self) {
@@ -14,8 +17,11 @@ impl App {
             self.native_anchor = Default::default();
             return;
         }
-        if self.demo && std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|m| m == "native-cycle") {
-            crate::ao::demo::native_anchor_cycle(&mut self.world, &mut self.input, self.frame_count);
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_MOVELOCK")
+            && matches!(mode.as_str(), "native-cycle" | "native-rearm")
+        {
+            crate::ao::demo::native_anchor_cycle(&mut self.world, &mut self.input, self.frame_count, mode == "native-rearm");
         }
         let prefs = self.settings.bridge.get(&self.world.agent_id).copied().unwrap_or_default();
         let requested = prefs.enabled && prefs.mode == LockMode::NativeSit;
@@ -54,32 +60,85 @@ impl App {
             .movements
             .get(&self.world.agent_id)
             .is_some_and(|p| p.swimming || p.water_walk);
-        let near_water = water_modes && self.world.agent.position.z - self.movement_height() * 0.5 < self.world.main_water_height() + 0.8;
-        let transient = !self.world.agent.flying
-            && self.world.own_signals().iter().any(|a| {
-                matches!(
-                    crate::ao::State::from_motion(a.id),
-                    Some(crate::ao::State::PreJumping | crate::ao::State::Jumping | crate::ao::State::Falling | crate::ao::State::Landing)
-                )
-            });
+        let now = Instant::now();
+        let height = self.movement_height();
+        let position = self.world.agent.server_pos;
+        let water = self.world.main_water_height();
+        let near_water = water_modes && position.z - height * 0.5 < water + 0.8;
+        let raw = self.world.own_signals();
+        // Use physical contact, not the AO pose or visual prediction. A dry
+        // platform near water is not swimming, and a stale fall is not travel.
+        let needs_support = requested
+            && !(self.native_anchor.owns_sit() && self.world.agent.ground_sit)
+            && (near_water
+                || raw.iter().any(|a| {
+                    matches!(
+                        crate::ao::State::from_motion(a.id),
+                        Some(
+                            crate::ao::State::PreJumping
+                                | crate::ao::State::Jumping
+                                | crate::ao::State::Falling
+                                | crate::ao::State::Landing
+                                | crate::ao::State::SoftLanding
+                        )
+                    )
+                }));
+        let supported = needs_support
+            && (crate::movement::run::on_ground(
+                position,
+                height,
+                self.world
+                    .objects
+                    .index_of_uuid(&self.world.agent_id)
+                    .and_then(|i| self.world.objects.get(i))
+                    .filter(|o| Some(o.key.region) == self.world.main_region)
+                    .and_then(|o| o.foot_plane),
+                self.world.ground_height(position),
+                false,
+            ) || self.scene.movement_support(&self.world, position, height));
+        let transient = movelock::airborne(raw, self.world.agent.flying, supported, self.world.agent.velocity.z, now, |id| {
+            self.scene.anims.get(id).map(|a| Duration::from_secs_f32(a.anim.duration))
+        });
+        let travel = if !self.movement_runtime.allows_idle_anchor() || self.autopilot.is_some() {
+            Travel::Other
+        } else if near_water && !(supported && position.z - height * 0.5 >= water - 0.1) {
+            Travel::Water
+        } else if transient {
+            Travel::Airborne
+        } else {
+            Travel::Ready
+        };
         let frame = Frame {
             requested,
             region: self.world.main_region,
             available: !self.world.teleporting && self.world.movement_complete,
             voluntary,
             moving: self.world.own_motion_moving(),
-            eligible: !near_water && !transient && self.movement_runtime.allows_idle_anchor() && self.autopilot.is_none(),
+            travel,
             pose_ready,
             pose_warm: self.ao_runtime.anchor_prepared(self.world.main_region),
             ground_sit: self.world.agent.ground_sit,
             on_object: self.world.agent.seated,
         };
-        if let Some(flags) = self.native_anchor.update(frame, Instant::now()) {
+        let previous = self.native_anchor.status;
+        if let Some(flags) = self.native_anchor.update(frame, now) {
             if flags == control::SIT_ON_GROUND {
                 self.anchor_pose = set.cloned().map(|set| (revision, set));
             }
             let command = self.native_anchor.command(flags);
             self.send(command);
+        }
+        if self.native_anchor.status != previous {
+            log::info!(
+                "native movelock: {:?} -> {:?} (available {}, input {}, moving {}, ground sit {}, object seat {})",
+                previous,
+                self.native_anchor.status,
+                frame.available,
+                frame.voluntary,
+                frame.moving,
+                frame.ground_sit,
+                frame.on_object
+            );
         }
     }
 }

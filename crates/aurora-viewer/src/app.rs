@@ -5684,6 +5684,7 @@ impl App {
         self.update_avatar_health();
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
+            crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {

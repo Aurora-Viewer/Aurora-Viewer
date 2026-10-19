@@ -1097,6 +1097,11 @@ stays enabled while its status reports free movement. Capture after frame
 620. The bridge modes below remain available and the bridge stays the default
 for existing/new accounts. The choice is saved per avatar; right-click the
 toolbar lock to open these options.
+The optional lock indicator is off by default. Enable it in the options,
+drag its body to another position, hide/show it and restart: the saved UI
+layout must retain its position. A click without dragging still opens the
+options; shrinking the viewer keeps the indicator inside the work area.
+The indicator uses compact state labels; hover it for the full status.
 
 Offline checks exercise control edges, bounded retries/late replies, manual
 seat ownership, region changes, per-channel priorities, complete standing
@@ -1112,6 +1117,21 @@ pause for these water controllers. It requires an active AO whose looping
 standing selections override every constrained-sit channel at a higher joint
 priority; incomplete, downloading or lower-priority sets leave it waiting.
 No animation is imported/uploaded, and no seat object is rezzed.
+
+**Native rearming (#632):** `AURORA_DEMO_MOVELOCK=native-rearm` repeats the
+native walk/stop cycle with a stale Falling signal at rest from initial
+activation onward. Capture at 550/900/1300: all three stops must be anchored.
+On the grid, enable native sitting at rest, then repeat short
+walk/run taps, jumps/landings, and water-to-land transitions. Include a dry
+platform near the waterline with swimming enabled. A stale falling/finished
+landing signal must not prevent anchoring on physical support. Once the
+simulator confirms sitting, its height change or old airborne signals must
+not release it. Deliberate movement, active swimming/water walking, manual seats
+and region arrival still have priority. The options distinguish waiting for
+region arrival, water movement, airborne motion and another movement controller;
+`native movelock:` log lines record each status change without identifiers.
+Compare push resistance and observer standing cycles on the grid; offline
+controller tests do not simulate Havok.
 
 **Native observer transitions:** `AURORA_DEMO_MOVELOCK=native-cycle` uses
 the same options and complete standing fixture, walks during frames 600–799
@@ -1909,6 +1929,7 @@ tests do not establish that this report uses an invalid joint or index.
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -1999,6 +2020,16 @@ tests do not establish that this report uses an invalid joint or index.
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
+  back of the default skeleton, bound to the chest, and encoded as an
+  upload does it (vertices normalized, the bind shape bringing them back
+  onto the skeleton,
+  `demo_rigged_prop.rs`), at frame 120. Rezzed on the dark cube 3 m ahead
+  of the start position, it is a static mesh standing on the cube and
+  filling its object box, as the Legacy Viewer draws a skinned mesh that is
+  neither worn nor a playing animated object; a chain much smaller,
+  floating above the cube, is its bind shape applied without a skeleton.
+  The same mesh worn by our avatar hangs down its back.
 - **`AURORA_BLEND_SHADOWS=0`**: alpha-blended faces cast sun and projector
   shadows only when rigged, as before. By default every blended face casts,
   as in LLPipeline::renderShadow (renderAlphaObjects): glass whose texture

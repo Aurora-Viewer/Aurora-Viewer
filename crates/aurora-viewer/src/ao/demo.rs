@@ -450,8 +450,8 @@ pub fn native_anchor_assets(scene: &mut crate::scene::Scene) {
 }
 
 /// Walk/stop twice through the real native-anchor and AO orchestration.
-pub fn native_anchor_cycle(world: &mut crate::world::World, input: &mut crate::agent::MoveInput, frame: u64) {
-    if frame < 360 {
+pub fn native_anchor_cycle(world: &mut crate::world::World, input: &mut crate::agent::MoveInput, frame: u64, stale_fall: bool) {
+    if frame < if stale_fall { 301 } else { 360 } {
         return;
     }
     let moving = (600..800).contains(&frame) || (1000..1200).contains(&frame);
@@ -459,7 +459,13 @@ pub fn native_anchor_cycle(world: &mut crate::world::World, input: &mut crate::a
     if world.agent.ground_sit {
         return;
     }
-    let state = if moving { State::Walking } else { State::Standing };
+    let state = if moving {
+        State::Walking
+    } else if stale_fall {
+        State::Falling
+    } else {
+        State::Standing
+    };
     let raw = world.animations.get(&world.agent_id).map(Vec::as_slice).unwrap_or_default();
     if raw.iter().any(|a| a.id == state.motion()) {
         return;

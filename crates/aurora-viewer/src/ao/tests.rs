@@ -81,7 +81,7 @@ fn native_movelock_idle_waits_for_coasting_then_prepares_before_sitting() {
                     available: true,
                     voluntary: ms == 0,
                     moving,
-                    eligible: true,
+                    travel: crate::movement::movelock::Travel::Ready,
                     pose_ready: true,
                     pose_warm: ao.anchor_prepared(Some(1)),
                     ground_sit: seated,
