@@ -13351,6 +13351,7 @@ impl ApplicationHandler for App {
                 self.request_exit();
             }
             WindowEvent::Resized(s) => {
+                ui::menu::window_resized(&self.egui_ctx);
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
             }

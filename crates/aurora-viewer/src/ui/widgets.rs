@@ -23,6 +23,7 @@ pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 pub(crate) mod pills;
 mod resize;
+pub(crate) use resize::active as window_resizing;
 mod unread;
 mod workspace;
 pub use color::color_button;

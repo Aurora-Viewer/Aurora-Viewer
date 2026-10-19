@@ -835,6 +835,12 @@ moves.
 
 ### Window surfaces
 
+`ui/widgets/resize.rs` identifies a resize from the active edge/corner of any
+floater or bare window. The shared `ui/menu.rs` entry points dismiss context
+menus and their popup state during that gesture, regardless of their owner
+or drawing order. `ui/context.rs` applies the same rule to the world pie.
+Native main-window resize events also clear popup and world-menu state.
+
 `world/radar.rs` holds the radar of the People window (sweep of the avatars once per second, first
 appearance, crossings reported, regions left behind by a teleport), `ui/people/radar.rs`
 its table (Firestorm's look), its rows, its settings and its options menu; `ui/people/nearby.rs`

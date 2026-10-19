@@ -3258,7 +3258,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   four styles. New messages must appear immediately with the menu open,
   following the live end or retaining the normal manual-scroll position.
   Escape, a click outside or choosing an action closes it normally; dragging
-  the conversation window closes it before the mouse is released. The
+  the conversation window closes it before the mouse is released. Resizing
+  any window must dismiss open context menus immediately (#589), even when
+  the menu belongs to another window. Check all edges/corners, the mini-map,
+  and the world's list and pie menus; hovering a grip must keep the menu open.
+  Resizing the main viewer window must dismiss menus too. The
   original target must remain available when the 2,000-message live buffer
   evicts its line; only the menu's original target is retained.
   Check that following the live end, manual scrolling, find and text selection still
