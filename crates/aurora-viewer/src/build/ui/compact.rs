@@ -36,7 +36,7 @@ pub(super) fn window_heading(tool: &BuildTool) -> (&'static str, &'static str) {
     }
 }
 
-pub(super) fn object_status(tool: &BuildTool, world: &World, p: &Palette) -> Vec<(&'static str, String, egui::Color32)> {
+pub(super) fn object_status(tool: &BuildTool, world: &mut World, p: &Palette) -> Vec<(&'static str, String, egui::Color32)> {
     use aurora_net::build::perm;
     let roots = tool.roots(world);
     if roots.is_empty() {
@@ -50,24 +50,41 @@ pub(super) fn object_status(tool: &BuildTool, world: &World, p: &Palette) -> Vec
             .is_some_and(|pr| pr.owner_mask & perm::MOVE == 0)
     });
     let no_mod = tool.sel_prims(world).iter().any(|&idx| !tool.can_modify(world, idx));
-    let other = roots.iter().any(|&idx| {
-        world
-            .objects
-            .get(idx)
-            .is_some_and(|o| tool.props.get(&o.full_id).map_or(o.owner_id, |pr| pr.owner_id) != world.agent_id)
-    });
-    let mut states = Vec::new();
+    // LLSelectMgr::selectGetOwner (indra/newview/llselectmgr.cpp): a common
+    // avatar/group owner, or Multiple. Keep ownership first for every state.
+    let owners: Vec<_> = roots
+        .iter()
+        .filter_map(|&idx| {
+            world.objects.get(idx).map(|o| {
+                tool.props.get(&o.full_id).map_or((o.owner_id, false), |pr| {
+                    (pr.owner_id, !pr.group_id.is_nil() && pr.owner_id == pr.group_id)
+                })
+            })
+        })
+        .collect();
+    let Some(&(owner, group_owned)) = owners.first() else {
+        return Vec::new();
+    };
+    let ownership = if owners.iter().any(|&value| value != (owner, group_owned)) {
+        ("users-group", aurora_i18n::tr!("status-multiple").into(), p.violet_pale)
+    } else if group_owned {
+        let name = world.land.group_name(&owner, &world.groups.groups).unwrap_or_else(|| "…".into());
+        ("users-group", name, p.violet_pale)
+    } else if owner == world.agent_id {
+        ("user", aurora_i18n::tr!("build-status-self").into(), p.muted)
+    } else if owner.is_nil() {
+        ("user", aurora_i18n::tr!("status-public").into(), p.muted)
+    } else {
+        world.social.want_name(owner);
+        ("user", world.social.name_of(&owner), p.violet_pale)
+    };
+    let mut states = vec![ownership];
     if locked {
         states.push(("lock-filled", aurora_i18n::tr!("build-ui-object-locked").into(), p.danger));
     }
     if no_mod {
         states.push(("pencil-off", aurora_i18n::tr!("build-status-no-mod").into(), p.warn));
     }
-    states.push(if other {
-        ("users-group", aurora_i18n::tr!("build-status-other-owner").into(), p.violet_pale)
-    } else {
-        ("user", aurora_i18n::tr!("build-status-self").into(), p.muted)
-    });
     if !locked && !no_mod {
         states.push(("check", aurora_i18n::tr!("build-status-editable").into(), p.success));
     }

@@ -33,6 +33,77 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
 }
 
 #[test]
+fn ownership_stays_left_of_every_build_permission_state() {
+    let mut inspector = Inspector::new();
+    let p = crate::theme::Theme::default().palette();
+    let idx = inspector.tool.sel_prims(&inspector.world)[0];
+    let id = inspector.world.objects.get(idx).unwrap().full_id;
+    let other = uuid::Uuid::from_u128(0x1234);
+    inspector.world.social.names.insert(other, "Status Owner".into());
+    for owner in [inspector.world.agent_id, other] {
+        inspector.tool.props.get_mut(&id).unwrap().owner_id = owner;
+        let name = if owner == other {
+            "Status Owner"
+        } else {
+            aurora_i18n::tr!("build-status-self")
+        };
+        for (modifiable, locked) in [(true, false), (false, false), (true, true), (false, true)] {
+            let flags = &mut inspector.world.objects.get_mut(idx).unwrap().update_flags;
+            *flags &= !crate::ui::context::flags::OBJECT_MODIFY;
+            if modifiable {
+                *flags |= crate::ui::context::flags::OBJECT_MODIFY;
+            }
+            inspector.tool.props.get_mut(&id).unwrap().owner_mask = if locked { !perm::MOVE } else { u32::MAX };
+            let states = object_status(&inspector.tool, &mut inspector.world, &p);
+            assert_eq!(states[0].1, name);
+            assert_eq!(states.iter().any(|(icon, _, _)| *icon == "check"), modifiable && !locked);
+            for _ in 0..3 {
+                inspector.show(Vec::new());
+            }
+            let (window, texts) = inspector.show(Vec::new());
+            let owner_rect = texts.iter().find(|(text, _)| text == name).unwrap().1;
+            for (_, status, _) in &states[1..] {
+                let status_rect = texts.iter().find(|(text, _)| text == status).unwrap().1;
+                assert!(owner_rect.right() < status_rect.left(), "Owner must precede {status}");
+                assert!((owner_rect.center().y - status_rect.center().y).abs() < 1.0);
+                assert!(window.contains_rect(status_rect));
+            }
+        }
+    }
+}
+
+#[test]
+fn build_ownership_resolves_names_and_distinguishes_groups_and_multiple_owners() {
+    let (mut world, mut tool, settings) = fixture();
+    let p = crate::theme::Theme::default().palette();
+    let idx = tool.sel_prims(&world)[0];
+    let id = world.objects.get(idx).unwrap().full_id;
+    let owner = uuid::Uuid::from_u128(0x1234);
+    world.objects.get_mut(idx).unwrap().owner_id = owner;
+    tool.props.remove(&id);
+    assert_eq!(object_status(&tool, &mut world, &p)[0].1, "…");
+    assert!(world.social.avatar_names.take_asks().contains(&owner));
+    world.social.names.insert(owner, "Resolved Owner".into());
+    assert_eq!(object_status(&tool, &mut world, &p)[0].1, "Resolved Owner");
+    tool.props.insert(
+        id,
+        ObjectProps {
+            owner_id: owner,
+            group_id: owner,
+            ..Default::default()
+        },
+    );
+    world.land.group_names.insert(owner, "Owner Group".into());
+    let status = object_status(&tool, &mut world, &p);
+    assert_eq!((status[0].0, status[0].1.as_str()), ("users-group", "Owner Group"));
+    let second = world.objects.index_of_uuid(&crate::demo::action_id(119)).unwrap();
+    tool.click_select(&mut world, &settings, Some(second), true);
+    assert_eq!(object_status(&tool, &mut world, &p)[0].1, aurora_i18n::tr!("status-multiple"));
+    tool.deselect_all(&world);
+    assert!(object_status(&tool, &mut world, &p).is_empty());
+}
+
+#[test]
 fn reflection_probe_selection_toggle_is_available_without_selection_in_every_inspector_section() {
     let mut inspector = Inspector::new();
     inspector.tool.deselect_all(&inspector.world);

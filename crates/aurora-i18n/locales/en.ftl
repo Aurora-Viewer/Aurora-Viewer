@@ -9070,8 +9070,7 @@ ao-combine-track-choice = Add an independent cycle
 # Construction inspector and resource picker
 numeric-increase = Increase
 numeric-decrease = Decrease
-build-status-no-mod = No-mod
-build-status-other-owner = Other owner
+build-status-no-mod = Not modifiable
 build-status-self = Yours
 build-status-editable = Modifiable
 build-linked-next = Next linked prim
