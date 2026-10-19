@@ -65,6 +65,10 @@ impl HudDrag {
     /// False means the HUD was detached, replaced or can no longer be moved.
     pub fn update(&self, world: &mut World, view: HudView, cursor: (f32, f32)) -> bool {
         let Some(idx) = self.index(world) else { return false };
+        // The accessibility offset of a zoomed HUD lives for the session
+        // only: the position the user drops it at is the one saved, or the
+        // HUD comes back displaced by that offset after a relog (#626).
+        world.hud_scales.set_offset(self.id, Vec3::ZERO);
         let mut desired = view.ray(cursor.0, cursor.1).0 + self.grab_offset;
         desired.x = self.depth;
         let Some((anchor, rotation)) = edit_parent(world, idx, Instant::now()) else {
@@ -162,21 +166,28 @@ mod tests {
     }
 
     #[test]
-    fn zoomed_hud_drag_keeps_local_zoom_out_of_the_server_update() {
+    fn zoomed_hud_drag_saves_the_visible_place_and_keeps_local_zoom_out_of_the_update() {
         let (mut world, root, child) = fixture();
         let o = world.objects.get(root).unwrap();
-        let (id, before, size) = (o.full_id, o.position, o.scale);
+        let (id, size) = (o.full_id, o.scale);
         world.hud_scales.set(id, 2.0);
         world.hud_scales.set_offset(id, Vec3::new(0.0, 0.1, 0.1));
+        let shown = Scene::object_transform(&world, root, Instant::now(), 0).unwrap().0;
         let view = HudView::new([1280, 720], 1.0, -1.0, 1.0);
         let drag = HudDrag::start(&world, child, view, (500.0, 350.0)).unwrap();
         assert!(drag.update(&mut world, view, (644.0, 278.0)));
+        // No jump under the pointer, and with the session offset folded into
+        // the position, a relog (offset zero) shows the HUD at the same place.
+        assert_eq!(world.hud_scales.offset(id), Vec3::ZERO);
+        let moved = Scene::object_transform(&world, root, Instant::now(), 0).unwrap().0;
+        assert!(moved.abs_diff_eq(shown + Vec3::new(0.0, -0.2, 0.1), 1e-5));
         let o = world.objects.get(root).unwrap();
-        assert!(o.position.abs_diff_eq(before + Vec3::new(0.0, -0.2, 0.1), 1e-5));
         assert_eq!(o.scale, size);
+        let saved = o.position;
         let BuildCmd::Transform { updates, .. } = drag.release(&world).unwrap() else {
             panic!("position update")
         };
+        assert_eq!(updates[0].position, Some(saved));
         assert!(updates[0].scale.is_none());
         assert_eq!(world.hud_scales.scale(id), 2.0);
     }
