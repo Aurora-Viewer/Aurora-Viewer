@@ -506,6 +506,7 @@ pub struct App {
     /// Avatar name tags on screen last frame, far first: a click on one
     /// counts as one on its avatar.
     name_tags: Vec<ui::hud::NameTag>,
+    name_tag_visibility: ui::hud::NameTagVisibility,
     /// Clickable destination marker last painted under the HUDs and UI.
     beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
@@ -1013,6 +1014,7 @@ impl App {
             voice_tags: Default::default(),
             plates: Default::default(),
             name_tags: Vec::new(),
+            name_tag_visibility: Default::default(),
             beacon_hit: None,
             plate_hover: None,
             sound_blocks: Default::default(),
@@ -9465,6 +9467,7 @@ impl App {
                 self.plates.probe = ui::nameplate::level_log().then_some(self.world.agent_id);
                 self.update_plate_hover(&ctx);
                 self.name_tags = if held {
+                    self.name_tag_visibility.clear();
                     Vec::new()
                 } else {
                     ui::hud::draw(
@@ -9476,7 +9479,8 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
-                        self.settings.name_tag_distance,
+                        &self.settings,
+                        &mut self.name_tag_visibility,
                         &voice_levels,
                         &self.settings.audio,
                         &mut self.voice_tags,
@@ -11393,6 +11397,7 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
+                    self.options_ui.scroll_to_name_tags = filter == "name-tags";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
@@ -11634,6 +11639,9 @@ impl ApplicationHandler for App {
                 if p.len() >= 2 {
                     self.camera.demo_orbit(p[0], p[1], p.get(2).copied(), &self.settings.camera);
                 }
+            }
+            if crate::demo::tags::apply_name_tag_preferences(&mut self.settings) {
+                self.panels.ao = false;
             }
             // AURORA_DEMO_TAGS: residents whose name plates show every
             // state, at the three distance levels

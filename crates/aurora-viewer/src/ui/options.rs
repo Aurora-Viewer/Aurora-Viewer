@@ -82,6 +82,7 @@ pub struct OptionsUi {
     /// (`0:bloom`): the rows the Deluxe level turns on.
     pub scroll_to_occlusion: bool,
     pub scroll_to_bloom: bool,
+    pub scroll_to_name_tags: bool,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -248,6 +249,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard-filled",
         value if value == aurora_i18n::text("ui-options-color-blindness") => "eye-filled",
         value if value == aurora_i18n::text("ui-options-name-tag-color") => "tag-filled",
+        value if value == aurora_i18n::text("ui-options-name-tags") => "tag-filled",
         value if value == aurora_i18n::text("ui-options-mini-map-markers") => "map",
         value if value == aurora_i18n::text("ui-options-disk-cache") => "database-filled",
         value if value == aurora_i18n::text("ui-options-devices") => "device-speaker-filled",
@@ -2090,6 +2092,43 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-reduce-motion-help"),
                     |ui| toggle(ui, p, &mut s.reduce_motion),
                 );
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-performance-at-startup"), "", |ui| {
+                    toggle(ui, p, &mut s.show_perf)
+                });
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-mini-map-at-startup"), "", |ui| {
+                    toggle(ui, p, &mut s.show_minimap)
+                });
+            });
+            // The name tag style and the plates' settings: Preferences › Aurora.
+            if std::mem::take(&mut st.scroll_to_name_tags) {
+                ui.scroll_to_cursor(Some(egui::Align::TOP));
+            }
+            group(ui, p, aurora_i18n::tr!("ui-options-name-tags"), |ui| {
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-show-own-tag"), "", |ui| {
+                    toggle(ui, p, &mut s.show_own_name_tag)
+                });
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-show-friend-tags"), "", |ui| {
+                    toggle(ui, p, &mut s.show_friend_name_tags)
+                });
+                c |= row(ui, p, aurora_i18n::tr!("ui-options-show-other-tags"), "", |ui| {
+                    toggle(ui, p, &mut s.show_other_name_tags)
+                });
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-temporary-tags"),
+                    aurora_i18n::tr!("ui-options-temporary-tags-help"),
+                    |ui| toggle(ui, p, &mut s.temporary_name_tags),
+                );
+                if s.temporary_name_tags {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-tag-show-time"),
+                        aurora_i18n::tr!("ui-options-tag-show-time-help"),
+                        |ui| slider_whole(ui, &mut s.name_tag_show_seconds, 1.0..=60.0, " s"),
+                    );
+                }
                 c |= row(
                     ui,
                     p,
@@ -2097,7 +2136,6 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-0-hide-avatar-names"),
                     |ui| slider(ui, &mut s.name_tag_distance, 0.0..=128.0, " m"),
                 );
-                // the name tag style and the plates' settings: Preferences › Aurora
                 c |= row(
                     ui,
                     p,
@@ -2121,12 +2159,6 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         |ui| toggle(ui, p, &mut s.tag_complexity_own),
                     );
                 }
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-performance-at-startup"), "", |ui| {
-                    toggle(ui, p, &mut s.show_perf)
-                });
-                c |= row(ui, p, aurora_i18n::tr!("ui-options-mini-map-at-startup"), "", |ui| {
-                    toggle(ui, p, &mut s.show_minimap)
-                });
             });
             // panel_preferences_UI.xml "Use stand-alone windows for:"
             group(ui, p, aurora_i18n::tr!("common-windows"), |ui| {

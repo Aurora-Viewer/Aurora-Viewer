@@ -130,6 +130,64 @@ impl NameTag {
     }
 }
 
+/// Port of LLVOAvatar::idleUpdateNameTag/updateCharacter
+/// (indra/newview/llvoavatar.cpp, originally LGPL 2.1): ten seconds by
+/// default, fading over the final second, and a fresh interval after the
+/// avatar leaves the view. Both tag styles share the clock and hit rules.
+#[derive(Default)]
+pub struct NameTagVisibility {
+    visible: HashMap<uuid::Uuid, (f64, bool)>,
+    config: Option<(uuid::Uuid, bool, bool, bool, bool, u32)>,
+}
+
+impl NameTagVisibility {
+    pub fn clear(&mut self) {
+        self.visible.clear();
+    }
+
+    fn begin(&mut self, settings: &crate::settings::Settings, agent: uuid::Uuid) {
+        let config = (
+            agent,
+            settings.show_own_name_tag,
+            settings.show_friend_name_tags,
+            settings.show_other_name_tags,
+            settings.temporary_name_tags,
+            settings.name_tag_show_seconds.to_bits(),
+        );
+        if self.config != Some(config) {
+            self.clear();
+            self.config = Some(config);
+        }
+        for (_, seen) in self.visible.values_mut() {
+            *seen = false;
+        }
+    }
+
+    fn alpha(&mut self, id: uuid::Uuid, now: f64, settings: &crate::settings::Settings) -> f32 {
+        if !settings.temporary_name_tags {
+            return 1.0;
+        }
+        let (since, seen) = self.visible.entry(id).or_insert((now, true));
+        *seen = true;
+        let remaining = f64::from(settings.name_tag_show_seconds) - (now - *since).max(0.0);
+        remaining.clamp(0.0, 1.0) as f32
+    }
+
+    fn finish(&mut self) {
+        self.visible.retain(|_, (_, seen)| *seen);
+    }
+}
+
+fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: bool) -> bool {
+    if own {
+        settings.show_own_name_tag
+    } else if friend {
+        settings.show_friend_name_tags
+    } else {
+        settings.show_other_name_tags
+    }
+}
+
 /// Painter of what belongs to the world (name tags, floating texts, the
 /// tracking beacon). Nothing of it may pass in front of an element of the
 /// interface: it is painted on the layer egui draws first, before the bars
@@ -275,7 +333,8 @@ pub fn draw(
     proj: &Projector,
     eye: Vec3,
     show_own: bool,
-    tag_distance: f32,
+    settings: &crate::settings::Settings,
+    visibility: &mut NameTagVisibility,
     voice: &HashMap<uuid::Uuid, (f32, bool)>,
     audio: &crate::settings::AudioSettings,
     voice_tags: &mut super::voice_tag::VoiceTags,
@@ -285,6 +344,8 @@ pub fn draw(
 ) -> Vec<NameTag> {
     let painter = world_painter(ctx);
     let now = Instant::now();
+    let now_s = ctx.input(|i| i.time);
+    visibility.begin(settings, world.agent_id);
     // (distance, anchor, lines, voice: (level, speaking), loading, avatar,
     // where it stands in the world)
     #[allow(clippy::type_complexity)]
@@ -296,6 +357,7 @@ pub fn draw(
         Option<f32>,
         Option<uuid::Uuid>,
         Vec3,
+        f32,
     )> = Vec::new();
     let mut name_tags = Vec::new();
     let (plates, plate_frame) = match plates {
@@ -307,20 +369,25 @@ pub fn draw(
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
         if o.is_avatar() {
-            if o.full_id == world.agent_id && !show_own {
+            let own = o.full_id == world.agent_id;
+            if (own && !show_own) || !name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) {
                 continue;
             }
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
             let d = pos.distance(eye);
-            if d > tag_distance {
+            if d > settings.name_tag_distance {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
             let Some(sp) = proj.project_name_tag(pos, head) else {
                 continue;
             };
+            let alpha = visibility.alpha(o.full_id, now_s, settings);
+            if alpha <= 0.0 {
+                continue;
+            }
             let at = tag_point(head, eye);
             if let Some((pictures, too_complex, demo_too_complex)) = plate_frame {
                 use super::nameplate::Picture;
@@ -339,7 +406,7 @@ pub fn draw(
                     at,
                     distance: d,
                     // the distance fade of the classic tags
-                    fade: (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0),
+                    fade: (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0) * alpha,
                     content: plate_content(
                         world,
                         idx,
@@ -443,7 +510,7 @@ pub fn draw(
             }
             let in_voice = voice.get(&o.full_id).copied();
             let progress = loading.and_then(|l| l.get(&o.full_id).copied());
-            tags.push((d, sp, lines, in_voice, progress, Some(o.full_id), at));
+            tags.push((d, sp, lines, in_voice, progress, Some(o.full_id), at, alpha));
         } else {
             let Some((pos, _, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
@@ -481,20 +548,20 @@ pub fn draw(
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let lines = o.text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
-            tags.push((d + 1000.0, sp, lines, None, None, None, anchor));
+            tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0));
         }
     }
-    let now_s = ctx.input(|i| i.time);
+    visibility.finish();
     // the classic tag is a small card of the theme
     let tag_radius = ctx.global_style().visuals.window_corner_radius;
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
-    for (d, sp, lines, in_voice, progress, avatar, at) in tags {
+    for (d, sp, lines, in_voice, progress, avatar, at, alpha) in tags {
         // the scene hides what it has in front of this point
         aurora_render::world_label_at(ctx, Some(at));
         let is_avatar = d < 1000.0;
         let fade = if is_avatar {
-            (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0)
+            (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0) * alpha
         } else {
             1.0
         };
@@ -595,6 +662,174 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_tag_categories_are_independent_and_self_takes_priority() {
+        for own in [false, true] {
+            for friends in [false, true] {
+                for others in [false, true] {
+                    let settings = crate::settings::Settings {
+                        show_own_name_tag: own,
+                        show_friend_name_tags: friends,
+                        show_other_name_tags: others,
+                        ..Default::default()
+                    };
+                    assert_eq!(name_tag_enabled(&settings, true, false), own);
+                    assert_eq!(name_tag_enabled(&settings, true, true), own);
+                    assert_eq!(name_tag_enabled(&settings, false, true), friends);
+                    assert_eq!(name_tag_enabled(&settings, false, false), others);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_name_tags_fade_once_and_restart_only_after_leaving_view() {
+        let settings = crate::settings::Settings {
+            temporary_name_tags: true,
+            ..Default::default()
+        };
+        let agent = uuid::Uuid::from_u128(1);
+        let avatar = uuid::Uuid::from_u128(2);
+        let mut visibility = NameTagVisibility::default();
+        for (now, expected) in [(100.0, 1.0), (109.0, 1.0), (109.5, 0.5), (110.0, 0.0), (130.0, 0.0)] {
+            visibility.begin(&settings, agent);
+            assert_eq!(visibility.alpha(avatar, now, &settings), expected);
+            visibility.finish();
+        }
+        visibility.begin(&settings, agent);
+        visibility.finish();
+        assert!(visibility.visible.is_empty(), "off-screen and departed avatars are pruned");
+        visibility.begin(&settings, agent);
+        assert_eq!(visibility.alpha(avatar, 140.0, &settings), 1.0);
+        visibility.finish();
+    }
+
+    #[test]
+    fn temporary_name_tags_have_individual_clocks_and_live_setting_changes_restart_them() {
+        let mut settings = crate::settings::Settings {
+            temporary_name_tags: true,
+            name_tag_show_seconds: 1.0,
+            ..Default::default()
+        };
+        let agent = uuid::Uuid::from_u128(1);
+        let a = uuid::Uuid::from_u128(2);
+        let b = uuid::Uuid::from_u128(3);
+        let mut visibility = NameTagVisibility::default();
+        visibility.begin(&settings, agent);
+        assert_eq!(visibility.alpha(a, 0.0, &settings), 1.0);
+        visibility.finish();
+        visibility.begin(&settings, agent);
+        assert_eq!(visibility.alpha(a, 0.5, &settings), 0.5);
+        assert_eq!(visibility.alpha(b, 0.5, &settings), 1.0);
+        visibility.finish();
+        settings.name_tag_show_seconds = 60.0;
+        visibility.begin(&settings, agent);
+        assert_eq!(visibility.alpha(a, 20.0, &settings), 1.0);
+        visibility.finish();
+        settings.temporary_name_tags = false;
+        visibility.begin(&settings, agent);
+        assert_eq!(visibility.alpha(a, 1000.0, &settings), 1.0);
+        visibility.finish();
+        assert!(visibility.visible.is_empty());
+    }
+
+    #[test]
+    fn hidden_and_expired_name_tags_have_no_hit_rectangles_in_either_style() {
+        use std::collections::HashSet;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = super::super::icons::Icons::default();
+        let proj = Projector {
+            view_proj: Mat4::from_scale(Vec3::splat(1.0 / 512.0)),
+            width: 1600.0,
+            height: 900.0,
+            ppp: 1.0,
+        };
+        let empty = HashMap::new();
+        let pictures = HashMap::new();
+        let too_complex = HashSet::new();
+        for classic in [false, true] {
+            let mut visibility = NameTagVisibility::default();
+            let mut plates = super::super::nameplate::Plates::default();
+            let mut voice_tags = super::super::voice_tag::VoiceTags::default();
+            let mut frame = |settings: &crate::settings::Settings, time| {
+                let mut hits = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        time: Some(time),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        hits = draw(
+                            ui.ctx(),
+                            &p,
+                            &icons,
+                            &world,
+                            &scene,
+                            &proj,
+                            Vec3::new(128.0, 128.0, 5.0),
+                            true,
+                            settings,
+                            &mut visibility,
+                            &empty,
+                            &settings.audio,
+                            &mut voice_tags,
+                            None,
+                            None,
+                            (!classic).then_some(PlateFrame {
+                                plates: &mut plates,
+                                pictures: &pictures,
+                                too_complex: &too_complex,
+                                demo_too_complex: None,
+                            }),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                hits.into_iter().map(|tag| tag.id).collect::<HashSet<_>>()
+            };
+            let mut settings = crate::settings::Settings {
+                name_tag_distance: 128.0,
+                ..Default::default()
+            };
+            let all = frame(&settings, 0.0);
+            assert!(all.contains(&world.agent_id), "fixture includes our tag");
+            assert!(
+                all.iter().any(|id| *id != world.agent_id && world.social.is_friend(id)),
+                "fixture includes a friend"
+            );
+            assert!(
+                all.iter().any(|id| *id != world.agent_id && !world.social.is_friend(id)),
+                "fixture includes another resident"
+            );
+            for (own, friends, others) in [(false, true, true), (true, false, true), (true, true, false), (false, false, false)] {
+                settings.show_own_name_tag = own;
+                settings.show_friend_name_tags = friends;
+                settings.show_other_name_tags = others;
+                let expected: HashSet<_> = all
+                    .iter()
+                    .copied()
+                    .filter(|id| name_tag_enabled(&settings, *id == world.agent_id, world.social.is_friend(id)))
+                    .collect();
+                assert_eq!(frame(&settings, 1.0), expected, "classic={classic}");
+            }
+            settings.show_own_name_tag = true;
+            settings.show_friend_name_tags = true;
+            settings.show_other_name_tags = true;
+            settings.temporary_name_tags = true;
+            assert_eq!(frame(&settings, 2.0), all);
+            assert!(
+                frame(&settings, 12.0).is_empty(),
+                "expired tags cannot receive clicks, classic={classic}"
+            );
+        }
+    }
 
     #[test]
     fn pending_ui_zoom_keeps_world_text_and_avatar_anchors_at_the_same_physical_pixels() {
