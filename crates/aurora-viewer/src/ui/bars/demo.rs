@@ -8,7 +8,8 @@
 //! shown; `voice`: talking on the Speak button, its level at 62 %;
 //! `chatwide`: the chat island 560 px wide; `read`: no unread conversation
 //! counted. The favourites: `fav12` (the mockup's twelve), `nofav` (none),
-//! `added` (the twelve, the last one just added from the star), and where
+//! `added` (the twelve, the last one just added from the star), `favsnap`
+//! (the twelve without item thumbnails: their parcels' snapshots), and where
 //! they live: `row` (the row under the islands, `folded`: folded to its
 //! tab, `rowdrag`: a pill dragged at frame 650), `dock` (the dock's
 //! button; `favorites` then opens its grid); `chatname`: a resident's name
@@ -93,6 +94,8 @@ pub enum Favorites {
     Empty,
     /// The twelve, the last one just added from the star.
     Added,
+    /// The twelve without item thumbnails: their parcels' snapshots.
+    Snapshots,
 }
 
 pub fn parse(value: &str) -> DemoBars {
@@ -122,6 +125,7 @@ pub fn parse(value: &str) -> DemoBars {
             "fav12" => d.favorites = Some(Favorites::Twelve),
             "nofav" => d.favorites = Some(Favorites::Empty),
             "added" => d.favorites = Some(Favorites::Added),
+            "favsnap" => d.favorites = Some(Favorites::Snapshots),
             "row" => d.access = Some(crate::settings::FavoritesAccess::Row),
             "dock" => d.access = Some(crate::settings::FavoritesAccess::Dock),
             "folded" => {

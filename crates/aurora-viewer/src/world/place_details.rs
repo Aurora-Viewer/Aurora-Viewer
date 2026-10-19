@@ -121,6 +121,11 @@ pub fn remote_request(origin: (u32, u32), pos: Vec3) -> (RegionHandle, Vec3) {
     (slot_handle(gx, gy), pos)
 }
 
+/// The same for a global point (displayParcelInfo without a region handle).
+pub fn remote_request_at(global: DVec3) -> (RegionHandle, Vec3) {
+    (slot_handle(global.x, global.y), region_pos_of(global))
+}
+
 fn slot_handle(gx: f64, gy: f64) -> RegionHandle {
     let slot = |g: f64| ((g.max(0.0) / 256.0).floor() as u32) * 256;
     aurora_net::origin_to_handle(slot(gx), slot(gy))
@@ -221,8 +226,7 @@ impl PlaceDetails {
     /// RemoteParcelRequest for a known global position (history entries and
     /// landmarks, displayParcelInfo without a region handle).
     fn request_at(place: &mut Place, global: DVec3, region_id: Uuid, out: &mut Vec<NetCommand>) {
-        let handle = slot_handle(global.x, global.y);
-        let position = region_pos_of(global);
+        let (handle, position) = remote_request_at(global);
         place.global = Some(global);
         place.region_pos = position;
         place.stage = Stage::ParcelId { handle, position };

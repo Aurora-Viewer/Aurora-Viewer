@@ -31,7 +31,7 @@ pub struct Favorite {
     pub rating: &'static str,
     pub global: Option<DVec3>,
     pub slurl: Option<String>,
-    /// The item's thumbnail, once loaded.
+    /// The item's thumbnail, else its parcel's snapshot, once loaded.
     pub thumbnail: Option<egui::TextureId>,
 }
 
