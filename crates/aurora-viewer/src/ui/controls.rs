@@ -1580,9 +1580,7 @@ mod tests {
                 .shapes
                 .iter()
                 .find_map(|s| match &s.shape {
-                    egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("controls-shots") => {
-                        Some(t.pos + t.galley.size() * 0.5)
-                    }
+                    egui::Shape::Text(t) if t.galley.text() == aurora_i18n::tr!("controls-shots") => Some(t.pos + t.galley.size() * 0.5),
                     _ => None,
                 })
                 .expect("the saved positions' field");
