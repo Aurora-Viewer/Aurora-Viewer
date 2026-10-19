@@ -1621,9 +1621,9 @@ fn bound_for(last_live: Option<usize>, page_capacity: u32, partial: bool) -> u32
 /// Every channel is the plain average of its four texels, as the Legacy
 /// Viewer's mips (glGenerateMipmap, or LLImageBase::generateMip,
 /// indra/llimage/llimage.cpp, originally LGPL 2.1): the colour of the empty
-/// texels around a cut-out blends into it down the levels. Creators pick
-/// that colour (often a dark one around grass and leaves) knowing their
-/// foliage darkens with the distance; averaged by the alpha, as before, a
+/// texels around a cut-out blends into it down the levels, and content is
+/// made against that look (that colour is often a dark one around grass
+/// and leaves, which darkens them with the distance); averaged by the alpha, as before, a
 /// grass bed stayed the colour of its blades and came out much brighter
 /// than in the Legacy Viewer.
 pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Vec<(u32, u32, Vec<u8>)> {
