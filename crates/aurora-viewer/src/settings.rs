@@ -789,7 +789,7 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 23;
+const SETTINGS_VERSION: u32 = 24;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1636,6 +1636,11 @@ impl Settings {
             // new default: the rez effect instead of grey objects (every
             // earlier file wrote the old grey default)
             self.classic_rez_effect = false;
+        }
+        if self.settings_version < 24 {
+            // the levels now set the avatar physics detail: a profile still
+            // exactly on Potato or Low takes theirs, any other keeps 1
+            crate::graphics_presets::upgrade_physics_detail(&mut self);
         }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;

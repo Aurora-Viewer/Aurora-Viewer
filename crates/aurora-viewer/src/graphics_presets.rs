@@ -21,6 +21,9 @@
 //! Potato and Low have none of these; outside the levels they are all off by
 //! default.
 //!
+//! The avatar physics detail follows the Legacy Viewer's lists too (0 in
+//! Potato, 0.75 in Low, 1 above); the physics switch itself is not a level's.
+//!
 //! What a level does not touch: the texture memory (sized from the video
 //! memory), the frame rate limits and vertical sync (comfort, not quality),
 //! occlusion culling (only a gain), the environment and the image tuning
@@ -89,6 +92,7 @@ impl Preset {
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: false,
+                avatar_physics_detail: 0.0,
                 effects: Effects::OFF,
             },
             // "LowMid": 96 m, LOD 2, 5 avatars at 100 k, 2,048 particles,
@@ -113,6 +117,7 @@ impl Preset {
                 anisotropy: 1,
                 sharpen: 0.0,
                 glow: true,
+                avatar_physics_detail: 0.75,
                 effects: Effects::OFF,
             },
             // "Mid": 128 m, 7 avatars at 200 k, 4,096 particles, FXAA,
@@ -138,6 +143,7 @@ impl Preset {
                 anisotropy: 8,
                 sharpen: 0.0,
                 glow: true,
+                avatar_physics_detail: 1.0,
                 effects: Effects::OFF,
             },
             // "High": 11 avatars at 300 k, sun and moon shadows (detail 1:
@@ -165,6 +171,7 @@ impl Preset {
                 anisotropy: 8,
                 sharpen: 0.4,
                 glow: true,
+                avatar_physics_detail: 1.0,
                 effects: Effects::HIGH,
             },
             // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
@@ -198,6 +205,7 @@ impl Preset {
                 anisotropy: 16,
                 sharpen: 0.4,
                 glow: true,
+                avatar_physics_detail: 1.0,
                 effects: Effects::DELUXE,
             },
         }
@@ -378,6 +386,24 @@ pub(crate) fn upgrade_levels_v21(s: &mut Settings) {
     }
 }
 
+/// Settings files written before the levels set the avatar physics detail
+/// (version 24), all at 1: a profile exactly on Potato or Low apart from it
+/// takes the level's detail (0 and 0.75, the Legacy Viewer's Low and
+/// LowMid); any other keeps its value.
+pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
+    for preset in [Preset::Potato, Preset::Low] {
+        let level = preset.values();
+        let current = Values {
+            avatar_physics_detail: level.avatar_physics_detail,
+            ..Values::read(s)
+        };
+        if current.as_shown() == level.as_shown() {
+            s.avatar_physics_detail = level.avatar_physics_detail;
+            return;
+        }
+    }
+}
+
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and
 /// Deluxe turn on.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -435,6 +461,8 @@ pub struct Values {
     pub anisotropy: u16,
     pub sharpen: f32,
     pub glow: bool,
+    /// RenderAvatarPhysicsLODFactor: 0 in Low, 0.75 in LowMid, 1 above.
+    pub avatar_physics_detail: f32,
     pub effects: Effects,
 }
 
@@ -473,6 +501,7 @@ impl Values {
             lod_factor: round(self.lod_factor, 0.125),
             max_complexity: slider::to_limit(slider::from_limit(self.max_complexity)),
             sharpen: round(self.sharpen, 0.05),
+            avatar_physics_detail: round(self.avatar_physics_detail, 0.05),
             ao_method,
             gtao_quality: if ao_method == 1 { self.gtao_quality } else { 2 },
             effects,
@@ -501,6 +530,7 @@ impl Values {
             anisotropy: s.anisotropy,
             sharpen: s.sharpen,
             glow: s.glow,
+            avatar_physics_detail: s.avatar_physics_detail,
             effects: Effects {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
@@ -532,6 +562,7 @@ impl Values {
         s.anisotropy = self.anisotropy;
         s.sharpen = self.sharpen;
         s.glow = self.glow;
+        s.avatar_physics_detail = self.avatar_physics_detail;
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
@@ -603,6 +634,39 @@ mod tests {
     }
 
     #[test]
+    fn the_low_levels_lower_the_avatar_physics_like_the_legacy_viewer() {
+        let detail = |p: Preset| p.values().avatar_physics_detail;
+        assert_eq!(detail(Preset::Potato), 0.0);
+        assert_eq!(detail(Preset::Low), 0.75);
+        for p in [Preset::Medium, Preset::High, Preset::Deluxe] {
+            assert_eq!(detail(p), 1.0, "{p:?}");
+        }
+        // a hand-moved detail reads as custom
+        let mut s = Settings::default();
+        Preset::Low.apply(&mut s);
+        s.avatar_physics_detail = 0.5;
+        assert_eq!(Preset::matching(&s), None);
+        // an older file exactly on Potato or Low (detail 1 then) takes the
+        // level's detail; a custom profile keeps 1
+        for preset in [Preset::Potato, Preset::Low] {
+            let mut s = Settings::default();
+            preset.apply(&mut s);
+            s.avatar_physics_detail = 1.0;
+            upgrade_physics_detail(&mut s);
+            assert_eq!(Preset::matching(&s), Some(preset));
+        }
+        let mut s = Settings::default();
+        Preset::Low.apply(&mut s);
+        s.avatar_physics_detail = 1.0;
+        s.draw_distance = 300.0;
+        upgrade_physics_detail(&mut s);
+        assert_eq!(s.avatar_physics_detail, 1.0);
+        Preset::High.apply(&mut s);
+        upgrade_physics_detail(&mut s);
+        assert_eq!(s.avatar_physics_detail, 1.0);
+    }
+
+    #[test]
     fn levels_rise_from_potato_to_deluxe() {
         let v: Vec<Values> = Preset::ALL.iter().map(|p| p.values()).collect();
         for w in v.windows(2) {
@@ -617,6 +681,7 @@ mod tests {
             assert!(a.reflection_probes <= b.reflection_probes);
             assert!(a.probe_count <= b.probe_count);
             assert!(a.anisotropy <= b.anisotropy);
+            assert!(a.avatar_physics_detail <= b.avatar_physics_detail);
         }
     }
 
