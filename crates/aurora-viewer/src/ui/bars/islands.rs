@@ -1011,6 +1011,7 @@ mod tests {
             camera_preset: Default::default(),
             interface_hidden: false,
             interface_keys: String::new(),
+            health: Default::default(),
         }
     }
 
