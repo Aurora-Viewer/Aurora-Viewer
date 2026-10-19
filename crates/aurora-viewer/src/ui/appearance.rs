@@ -840,7 +840,14 @@ pub fn show(
             );
         }
         ui.add_space(5.0);
-        let reserved = if st.editing || st.tab == 2 { 172.0 } else { 182.0 };
+        // The list fills what the rows beneath it leave, measured last pass:
+        // a guess too small (buttons wrapped in a narrow window, a long
+        // message) made the window grow to fit them, the list take the new
+        // room, and the window grow again at every frame.
+        let below_id = ui.id().with("appearance_below_list");
+        let estimate = if st.editing || st.tab == 2 { 130.0 } else { 154.0 };
+        let reserved = ui.ctx().data(|d| d.get_temp::<f32>(below_id)).unwrap_or(estimate);
+        let list_top = ui.cursor().top();
         let height = (ui.available_height() - reserved).max(100.0);
         egui::Frame::new()
             .fill(p.field.gamma_multiply(0.65))
@@ -967,7 +974,7 @@ pub fn show(
             ui.add(egui::Label::new(RichText::new(&st.message).size(11.0).color(p.warn)).wrap());
         }
         widgets::divider(ui, p);
-        ui.horizontal_wrapped(|ui| {
+        let buttons = ui.horizontal_wrapped(|ui| {
             let available = st.pending.is_none() && model::cof(&world.inventory).is_some_and(|id| model::complete(&world.inventory, id));
             use widgets::{ActionKind, action_button, action_button_if};
             let size = Vec2::new(0.0, 26.0);
@@ -1001,6 +1008,12 @@ pub fn show(
                 }
             }
         });
+        let below = buttons.response.rect.bottom() - list_top - height;
+        // egui's sizing pass of a new window measures them 2 points short
+        if !ui.is_sizing_pass() && (below - reserved).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(below_id, below));
+            ui.ctx().request_discard("appearance rows below the list changed height");
+        }
     });
     if let Some(mut name) = st.save_as.clone() {
         let mut close = false;
@@ -1238,6 +1251,59 @@ mod tests {
         let actions = draw(&ctx, &mut world, &mut st, Some(egui::Key::Enter));
         assert!(matches!(&actions[..],[Action::Save(Some(name))] if name=="Tenue de test"));
         assert!(st.save_as.is_none());
+    }
+
+    /// The list used to take the window's height minus a fixed guess of the
+    /// rows beneath it; once those rows wrapped (a narrow window, French
+    /// labels) the window grew to fit them, the list took the new room, and
+    /// the window grew again at every frame, while dragging and after.
+    #[test]
+    fn narrow_window_keeps_its_height_with_an_empty_gallery() {
+        for (edge, delta) in [((1.0, 0.5), Vec2::new(-250.0, 0.0)), ((1.0, 1.0), Vec2::new(-250.0, -300.0))] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+            let mut st = AppearanceUi {
+                search: "no outfit has this name".into(),
+                ..Default::default()
+            };
+            let area = || ctx.memory(|m| m.area_rect(egui::Id::new("appearance"))).expect("floater");
+            for _ in 0..10 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let rect = area();
+            assert_eq!(rect.height(), 650.0, "opens at its default height");
+            // just inside the grabbed edge or corner
+            let grab = rect.min + rect.size() * Vec2::new(edge.0, edge.1) - Vec2::new(1.0, if edge.1 == 1.0 { 1.0 } else { 0.0 });
+            let input = |pos: egui::Pos2, pressed: Option<bool>| egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                events: std::iter::once(egui::Event::PointerMoved(pos))
+                    .chain(pressed.map(|pressed| egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    }))
+                    .collect(),
+                ..Default::default()
+            };
+            draw_input(&ctx, &mut world, &mut st, input(grab, None));
+            draw_input(&ctx, &mut world, &mut st, input(grab, Some(true)));
+            for i in 1..=40 {
+                draw_input(&ctx, &mut world, &mut st, input(grab + delta * (i as f32 / 20.0).min(1.0), None));
+            }
+            let dragged = area();
+            assert_eq!(dragged.width(), 390.0, "down to its minimum width");
+            draw_input(&ctx, &mut world, &mut st, input(grab + delta, Some(false)));
+            for _ in 0..20 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            let rest = area();
+            assert_eq!(rest.size(), dragged.size(), "the window stops where it was released");
+            assert!(rest.height() <= rect.height() + 0.5, "{edge:?}: {rect:?} -> {rest:?}");
+        }
     }
 
     #[test]
