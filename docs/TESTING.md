@@ -2855,6 +2855,11 @@ failure. Grid validation and any paid upload are performed by the human.
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
+  `<n>:new` and `<n>:new2` open a page on its first or second marked row
+  (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
+  version alerts, `1:new2` the group titles, `3:new` the reopened
+  conversations, `3:new2` the invitations to joined groups, `7:new` the music
+  title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
   700, 880, 1060 and 1240 to compare the preview, navigation, window titles,

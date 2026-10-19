@@ -88,6 +88,9 @@ pub struct OptionsUi {
     pub scroll_to_occlusion: bool,
     pub scroll_to_bloom: bool,
     pub scroll_to_name_tags: bool,
+    /// The page opens on the first (1) or second (2) of its marked rows
+    /// (`AURORA_DEMO_OPTIONS=<n>:new` / `:new2`, captures).
+    pub scroll_to_new: u8,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -177,6 +180,18 @@ pub enum FolderChoice {
     Pick,
     /// Back to the default folder.
     Default,
+}
+
+/// A row the demo can open the page on (`scroll_to_new`): the marks of a
+/// page count down in the order they are drawn.
+fn scroll_mark(ui: &mut egui::Ui, st: &mut OptionsUi) {
+    if st.scroll_to_new == 0 {
+        return;
+    }
+    st.scroll_to_new -= 1;
+    if st.scroll_to_new == 0 {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
 }
 
 /// A path as shown in the preferences: elided to the width, whole on hover.
@@ -1090,6 +1105,7 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
             |ui| toggle(ui, p, &mut s.log_show_history),
         );
         // Legacy Viewer › Chat (FSRestoreOpenIMs)
+        scroll_mark(ui, st);
         c |= row(
             ui,
             p,
@@ -2339,6 +2355,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 );
                 // Legacy Viewer › Alerts: FSShowServerVersionChangeNotice,
                 // FSReportTotalScriptCountChanges and its threshold
+                scroll_mark(ui, st);
                 c |= row(
                     ui,
                     p,
@@ -2496,6 +2513,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.trim_resident),
                 );
                 // Legacy Viewer › General: GroupTitlesTagMode, RenderHideGroupTitle
+                scroll_mark(ui, st);
                 c |= row(
                     ui,
                     p,
@@ -2610,6 +2628,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     |ui| toggle(ui, p, &mut s.report_blocks),
                 );
                 // Legacy Viewer › Privacy (FSShowJoinedGroupInvitations)
+                scroll_mark(ui, st);
                 c |= row(
                     ui,
                     p,

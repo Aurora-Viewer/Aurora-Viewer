@@ -127,6 +127,7 @@ pub(super) fn page(
         );
         // Legacy Viewer › Sound & Media: ShowStreamMetadata,
         // StreamMetadataAnnounceToChat / StreamMetadataAnnounceChannel
+        scroll_mark(ui, st);
         c |= row(
             ui,
             p,

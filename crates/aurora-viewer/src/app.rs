@@ -11648,6 +11648,11 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
                     self.options_ui.scroll_to_name_tags = filter == "name-tags";
+                    self.options_ui.scroll_to_new = match filter {
+                        "new" => 1,
+                        "new2" => 2,
+                        _ => 0,
+                    };
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
