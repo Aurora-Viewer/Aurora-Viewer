@@ -25,7 +25,7 @@ pub fn seed_queries(world: &mut World) {
 
 #[derive(Default)]
 pub struct Demo {
-    script: Option<TaskItem>,
+    scripts: Vec<TaskItem>,
     pub installed: bool,
     pub startup_stalled: bool,
     pub invalid_endpoint: bool,
@@ -143,7 +143,13 @@ impl Demo {
                 && *index == 0
                 && *label == format!("auroraHello|{}", bridge.object) =>
             {
-                Some(self.handshake(bridge, world).into_iter().collect())
+                // Both scripts hear the same probe and answer it.
+                Some(
+                    self.handshake(bridge, world)
+                        .into_iter()
+                        .chain(self.query_handshake(bridge, world))
+                        .collect(),
+                )
             }
             NetCommand::AgentAnimationChanges { changes } if !world.agent_id.is_nil() => {
                 let mut anims: Vec<_> = world
@@ -252,15 +258,17 @@ impl Demo {
             NetCommand::RequestTaskInventory { object, .. } if *object == bridge.object => Some(vec![NetEvent::TaskInventory {
                 object: *object,
                 serial: Some(1),
-                result: Ok(self.script.iter().cloned().collect()),
+                result: Ok(self.scripts.clone()),
             }]),
-            NetCommand::Build(BuildCmd::RezScript { item, .. }) if item.name == NAME => {
+            NetCommand::Build(BuildCmd::RezScript { item, .. })
+                if [NAME, QUERY_NAME].contains(&item.name.as_str()) && self.scripts.iter().all(|s| s.name != item.name) =>
+            {
                 let mut script = (**item).clone();
                 script.item_id = Uuid::new_v4();
-                self.script = Some(script);
+                self.scripts.push(script);
                 Some(Vec::new())
             }
-            NetCommand::SaveScript { request, target, .. } if bridge.upload == Some(*request) => {
+            NetCommand::SaveScript { request, target, .. } if [bridge.upload, bridge.query_upload].contains(&Some(*request)) => {
                 self.installed = !failed;
                 Some(vec![NetEvent::ScriptSaved {
                     request: *request,
@@ -355,6 +363,23 @@ impl Demo {
             }
             _ => None,
         }
+    }
+    /// A bridge object made by an older viewer lacks the newer scripts.
+    #[cfg(test)]
+    pub fn forget_script(&mut self, name: &str) {
+        self.scripts.retain(|s| s.name != name);
+    }
+    pub fn query_handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
+        let NetEvent::Chat(mut chat) = self.handshake(bridge, world)? else {
+            return None;
+        };
+        chat.message = chat
+            .message
+            .replace("<auroraBridge>", "<auroraBridgeQuery>")
+            .replace("</auroraBridge>", "</auroraBridgeQuery>")
+            .replace("/cap/11111111-", "/cap/22222222-")
+            .replace(&Uuid::from_u128(42).to_string(), &Uuid::from_u128(43).to_string());
+        Some(NetEvent::Chat(chat))
     }
     pub fn handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
         if !self.installed || self.startup_stalled || !matches!(bridge.phase, Phase::Starting | Phase::Handshake | Phase::Ready) {

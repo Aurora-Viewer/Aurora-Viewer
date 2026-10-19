@@ -9,6 +9,7 @@ struct Simulator {
     now: Instant,
     copies: usize,
     uploads: usize,
+    query_uploads: usize,
     attaches: usize,
     unready_edits: usize,
 }
@@ -32,6 +33,7 @@ impl Simulator {
             now: Instant::now(),
             copies: 0,
             uploads: 0,
+            query_uploads: 0,
             attaches: 0,
             unready_edits: 0,
         }
@@ -107,8 +109,12 @@ impl Simulator {
                         });
                     }
                     _ => {
-                        if matches!(command, NetCommand::SaveScript { .. }) {
-                            self.uploads += 1;
+                        if let NetCommand::SaveScript { target, .. } = &command {
+                            if target.item == self.bridge.query_script {
+                                self.query_uploads += 1;
+                            } else {
+                                self.uploads += 1;
+                            }
                         }
                         let events = self
                             .demo
@@ -198,7 +204,8 @@ fn discovery_simulator_rejects_negative_chatfromviewer_and_misaddressed_dialog_r
             .reply(&sim.bridge, &sim.world, &valid, false, false, false)
             .expect("valid transport")
             .len(),
-        1
+        2,
+        "the controller and the query script both answer the probe"
     );
 }
 
@@ -511,14 +518,14 @@ fn a_halted_script_is_detected_and_reinstalled_without_disabling_movelock() {
     // the script stopped: a slow region is not a run-time error.
     silent_for(&mut sim, 8);
     assert_eq!(sim.uploads, uploads);
-    assert!(sim.bridge.silent_since.is_some());
+    assert!(sim.bridge.watch.silent_since.is_some());
     silent_for(&mut sim, 4);
     assert_eq!(sim.bridge.reinstalls.len(), 1, "a stopped script is found within the check delay");
     assert!(sim.prefs.enabled);
     sim.bridge.motion = Motion::default();
     sim.ready();
     assert_eq!(sim.uploads, uploads + 1, "the halted script is recompiled");
-    assert!(sim.bridge.available() && sim.bridge.silent_since.is_none());
+    assert!(sim.bridge.available() && sim.bridge.watch.silent_since.is_none());
     assert!(
         sim.world
             .chat
@@ -534,16 +541,16 @@ fn http_replies_prove_the_script_alive_and_a_silent_running_script_is_reinstalle
     let uploads = sim.uploads;
     let timeout = aurora_i18n::tr!("bridge-request-timeout");
     sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
-    assert!(sim.bridge.silent_since.is_some());
+    assert!(sim.bridge.query_watch.silent_since.is_some());
     // A 404 for a vanished object comes from the script itself.
     sim.bridge
         .query_reply(&sim.world, Some(aurora_i18n::tr!("bridge-script-info-missing")), sim.now);
-    assert!(sim.bridge.silent_since.is_none());
+    assert!(sim.bridge.query_watch.silent_since.is_none());
     sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
     sim.bridge.query_reply(&sim.world, None, sim.now);
-    assert!(sim.bridge.silent_since.is_none());
+    assert!(sim.bridge.query_watch.silent_since.is_none());
     // The script still reports running but nothing answers for 90 s.
-    sim.bridge.silent_since = Some(sim.now);
+    sim.bridge.watch.silent_since = Some(sim.now);
     sim.now += SILENCE_LIMIT;
     sim.bridge.commands.clear();
     sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
@@ -554,13 +561,95 @@ fn http_replies_prove_the_script_alive_and_a_silent_running_script_is_reinstalle
 }
 
 #[test]
+fn queries_use_their_own_script_endpoint_installed_beside_the_controller() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    assert_eq!((sim.uploads, sim.query_uploads), (1, 1));
+    assert!(!sim.bridge.query_script.is_nil() && sim.bridge.query_script != sim.bridge.script);
+    // The query hello arrives with the controller's, from the same probe.
+    for _ in 0..4 {
+        sim.step();
+    }
+    let query = sim.bridge.query_endpoint().expect("query endpoint");
+    let controller = sim.bridge.endpoint.clone().expect("controller endpoint");
+    assert_ne!(query.token, controller.token);
+    assert_ne!(query.url, controller.url);
+    // A query hello from any other object is never accepted.
+    let NetEvent::Chat(mut stranger) = sim.demo.query_handshake(&sim.bridge, &sim.world).expect("hello") else {
+        panic!("query hello is chat");
+    };
+    stranger.source_id = Uuid::new_v4();
+    stranger.message = stranger
+        .message
+        .replace(&Uuid::from_u128(43).to_string(), &Uuid::from_u128(44).to_string());
+    sim.event(NetEvent::Chat(stranger));
+    sim.step();
+    assert_eq!(sim.bridge.query_endpoint().map(|e| e.token), Some(query.token));
+}
+
+#[test]
+fn an_older_bridge_gets_only_the_missing_query_script() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let controller = sim.bridge.script;
+    // A bridge made before the query service: only its controller remains.
+    sim.demo.forget_script(QUERY_NAME);
+    sim.bridge.retry(sim.now);
+    sim.ready();
+    assert_eq!(sim.bridge.script, controller, "the controller item is reused");
+    assert!(!sim.bridge.query_script.is_nil());
+    assert_eq!((sim.uploads, sim.query_uploads), (2, 2));
+}
+
+#[test]
+fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    for _ in 0..4 {
+        sim.step();
+    }
+    assert!(sim.bridge.query_endpoint().is_some());
+    let timeout = aurora_i18n::tr!("bridge-request-timeout");
+    sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
+    let stopped = NetEvent::ScriptRunning {
+        object_id: sim.bridge.object,
+        item_id: sim.bridge.query_script,
+        running: false,
+        mono: Some(true),
+    };
+    sim.event(stopped.clone());
+    assert_eq!(sim.bridge.reinstalls.len(), 1);
+    assert_eq!(sim.bridge.phase, Phase::Inventory);
+    sim.ready();
+    // At the limit, a stopped query script leaves the controller working.
+    for _ in 1..REINSTALL_LIMIT {
+        sim.bridge.reinstalls.push(sim.now);
+    }
+    sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
+    let stopped = NetEvent::ScriptRunning {
+        object_id: sim.bridge.object,
+        item_id: sim.bridge.query_script,
+        running: false,
+        mono: Some(true),
+    };
+    sim.event(stopped);
+    assert_eq!(sim.bridge.phase, Phase::Ready);
+    assert!(sim.bridge.error.is_none() && sim.bridge.locked());
+    // A silent but running query script is only probed, never reinstalled.
+    sim.bridge.query_watch.silent_since = Some(sim.now);
+    sim.now += SILENCE_LIMIT;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(sim.bridge.phase, Phase::Ready);
+}
+
+#[test]
 fn automatic_reinstalls_are_bounded_and_leave_repair_to_the_user() {
     let mut sim = Simulator::new();
     sim.ready();
     for _ in 0..REINSTALL_LIMIT {
         sim.bridge.reinstalls.push(sim.now);
     }
-    sim.bridge.silent_since = Some(sim.now);
+    sim.bridge.watch.silent_since = Some(sim.now);
     sim.now += SILENCE_LIMIT;
     sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
     assert_eq!(sim.bridge.phase, Phase::Failed);
@@ -569,7 +658,7 @@ fn automatic_reinstalls_are_bounded_and_leave_repair_to_the_user() {
     // Older reinstalls leave the window: a later stop is repaired again.
     sim.bridge.retry(sim.now);
     sim.ready();
-    sim.bridge.silent_since = Some(sim.now);
+    sim.bridge.watch.silent_since = Some(sim.now);
     sim.now += REINSTALL_WINDOW;
     sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
     assert_eq!(sim.bridge.phase, Phase::Inventory);

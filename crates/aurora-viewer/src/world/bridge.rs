@@ -23,6 +23,10 @@ const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
 const SOURCE: &str = include_str!("bridge/bridge.lsl");
+// Read-only services (radar heights, script and object information) run in a
+// second script: Mono gives each script 64 KB, and the controller has little left.
+pub const QUERY_NAME: &str = "#Aurora Bridge Query";
+const QUERY_SOURCE: &str = include_str!("bridge/query.lsl");
 
 pub mod services;
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -115,6 +119,39 @@ impl HandshakeError {
     }
 }
 
+/// One installed script's watchdog state (see SILENCE_CHECK).
+#[derive(Default)]
+struct Watch {
+    silent_since: Option<Instant>,
+    running_check: Option<Instant>,
+}
+impl Watch {
+    /// Any HTTP reply proves the script alive; no reply at all starts the clock.
+    fn heard(&mut self, error: Option<&str>, now: Instant) {
+        if error.is_some_and(aurora_net::bridge::unreachable) {
+            self.silent_since.get_or_insert(now);
+        } else {
+            self.silent_since = None;
+        }
+    }
+    /// Ask whether a script silent for SILENCE_CHECK still runs, every STORE_DELAY.
+    fn check(&mut self, object: Option<(u64, Uuid)>, script: Uuid, now: Instant) -> Option<NetCommand> {
+        let (handle, object_id) = object?;
+        if script.is_nil()
+            || self.silent_since.is_none_or(|since| now.duration_since(since) < SILENCE_CHECK)
+            || self.running_check.is_some_and(|at| now.duration_since(at) < STORE_DELAY)
+        {
+            return None;
+        }
+        self.running_check = Some(now);
+        Some(NetCommand::Build(BuildCmd::GetScriptRunning {
+            handle,
+            object_id,
+            item_id: script,
+        }))
+    }
+}
+
 #[derive(Default)]
 pub struct Bridge {
     agent: Uuid,
@@ -133,6 +170,11 @@ pub struct Bridge {
     upload: Option<Uuid>,
     script: Uuid,
     restarted: bool,
+    query_upload: Option<Uuid>,
+    query_script: Uuid,
+    query_restarted: bool,
+    query: Option<Endpoint>,
+    query_candidate: Option<(ChatMessage, Instant)>,
     checked_script: Option<Instant>,
     detached: Option<Instant>,
     boot: Option<(bool, bool)>,
@@ -149,8 +191,8 @@ pub struct Bridge {
     firestorm_poll: Option<Instant>,
     firestorm_detached: HashSet<Uuid>,
     ack: Ack,
-    silent_since: Option<Instant>,
-    running_check: Option<Instant>,
+    watch: Watch,
+    query_watch: Watch,
     reinstalls: Vec<Instant>,
     memory_low: Option<u32>,
     pub error: Option<String>,
@@ -180,59 +222,51 @@ impl Bridge {
         self.ready() && self.error.is_none()
     }
     pub fn query_endpoint(&self) -> Option<Endpoint> {
-        self.available().then(|| self.endpoint.clone()).flatten()
+        self.available().then(|| self.query.clone()).flatten()
     }
     /// A failed read can reveal a replaced HTTP-in URL while movement is idle.
     /// Rediscovery is throttled and must not reset the motor or its pending ack.
-    /// Any HTTP reply proves the script alive; no reply feeds the watchdog.
     pub fn query_reply(&mut self, world: &World, error: Option<&str>, now: Instant) {
-        let Some(error) = error else {
-            self.silent_since = None;
-            return;
-        };
-        if self.available() {
-            self.heard(Some(error), now);
+        if error.is_none() || self.available() {
+            self.query_watch.heard(error, now);
+        }
+        if error.is_some() && self.available() {
             self.discover(world, now);
         }
     }
-    fn heard(&mut self, error: Option<&str>, now: Instant) {
-        if error.is_some_and(aurora_net::bridge::unreachable) {
-            self.silent_since.get_or_insert(now);
-        } else {
-            self.silent_since = None;
-        }
-    }
-    /// Ask the simulator whether a silent bridge still runs (see SILENCE_CHECK).
-    /// Return true when the bridge was handed to reinstallation.
+    /// Return true when the controller was handed to reinstallation.
     fn watch_silence(&mut self, world: &mut World, now: Instant) -> bool {
-        let Some(since) = self.silent_since else { return false };
-        let silent = now.duration_since(since);
-        if silent >= SILENCE_LIMIT {
-            log::warn!("Aurora bridge: no reply for {} s", silent.as_secs());
-            self.reinstall(world, now);
+        if let Some(since) = self.watch.silent_since
+            && now.duration_since(since) >= SILENCE_LIMIT
+        {
+            log::warn!("Aurora bridge: no reply for {} s", now.duration_since(since).as_secs());
+            self.reinstall(world, true, now);
             return true;
         }
-        if silent >= SILENCE_CHECK
-            && !self.script.is_nil()
-            && self.running_check.is_none_or(|at| now.duration_since(at) >= STORE_DELAY)
-            && let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i))
-        {
-            self.running_check = Some(now);
-            self.commands.push(NetCommand::Build(BuildCmd::GetScriptRunning {
-                handle: object.key.region,
-                object_id: self.object,
-                item_id: self.script,
-            }));
-        }
+        let object = world
+            .objects
+            .index_of_uuid(&self.object)
+            .and_then(|i| world.objects.get(i))
+            .map(|o| (o.key.region, o.full_id));
+        let checks = [
+            self.watch.check(object, self.script, now),
+            self.query_watch.check(object, self.query_script, now),
+        ];
+        self.commands.extend(checks.into_iter().flatten());
         false
     }
     /// Recompile and restart the worn bridge through the Repair path: the
-    /// upload resets the halted script, then it is saved by detach/reattach.
-    fn reinstall(&mut self, world: &mut World, now: Instant) {
+    /// upload resets a halted script, then it is saved by detach/reattach.
+    /// Only the controller's silence alone counts; the query service is
+    /// reinstalled once the simulator says it stopped, never at Movelock's cost.
+    fn reinstall(&mut self, world: &mut World, controller: bool, now: Instant) {
         self.reinstalls.retain(|at| now.duration_since(*at) < REINSTALL_WINDOW);
-        self.silent_since = None;
+        self.watch = Watch::default();
+        self.query_watch = Watch::default();
         if self.reinstalls.len() >= REINSTALL_LIMIT {
-            self.fail(aurora_i18n::tr!("bridge-stopped").into());
+            if controller {
+                self.fail(aurora_i18n::tr!("bridge-stopped").into());
+            }
             return;
         }
         log::warn!("Aurora bridge: reinstalling a bridge that stopped responding");
@@ -314,8 +348,13 @@ impl Bridge {
         self.poll = None;
         self.checked_script = None;
         self.restarted = false;
-        self.silent_since = None;
-        self.running_check = None;
+        self.query_restarted = false;
+        self.watch = Watch::default();
+        self.query_watch = Watch::default();
+        // A query hello is valid from compilation until the next save or move.
+        if !matches!(phase, Phase::Starting | Phase::Handshake | Phase::Ready) {
+            self.query = None;
+        }
         if phase == Phase::Upload {
             // A recompiled script starts with all of its memory again.
             self.memory_low = None;
@@ -335,6 +374,8 @@ impl Bridge {
         self.user_detached = false;
         self.mutation = None;
         self.upload = None;
+        self.query_upload = None;
+        self.query_candidate = None;
         self.commands.clear();
         self.refresh_inventory = true;
         self.probe = None;
@@ -501,6 +542,25 @@ impl Bridge {
             label: format!("auroraHello|{}", self.object),
         });
     }
+    /// Accept the query service's hello only from the exact root we wear in
+    /// the current region, with this bridge's folder and version.
+    fn accept_query(&mut self, world: &World) {
+        let Some((chat, _)) = self.query_candidate.as_ref() else { return };
+        if !world
+            .worn_attachment(&self.item)
+            .and_then(|i| world.objects.get(i))
+            .is_some_and(|o| o.full_id == chat.source_id && Some(o.key.region) == world.main_region)
+        {
+            return;
+        }
+        if let Ok((folder, endpoint)) = query_handshake(&chat.message)
+            && folder == self.folder
+        {
+            self.query = Some(endpoint);
+            self.query_watch = Watch::default();
+        }
+        self.query_candidate = None;
+    }
     fn accept_candidate(&mut self, world: &World, now: Instant) -> bool {
         let Some(chat) = self.candidate.as_ref() else { return false };
         // An inventory name or OwnerSay on its own is insufficient: this
@@ -590,7 +650,14 @@ impl Bridge {
                     .filter(|(_, at)| now.duration_since(*at) < Duration::from_secs(3))
                     .map(|(chat, _)| chat.clone());
             }
+            // The query script renews its URL too; a hello that came with the
+            // crossing may precede the region change, as the controller's can.
+            self.query_candidate = self
+                .query_candidate
+                .take()
+                .filter(|(_, at)| now.duration_since(*at) < Duration::from_secs(3));
             self.upload = None;
+            self.query_upload = None;
             // An explicit resume/repair must still discover and rez an absent
             // inventory item, even when the region changed while paused.
             self.enter(
@@ -613,6 +680,12 @@ impl Bridge {
             }
             self.refresh_inventory = false;
         }
+        if matches!(
+            self.phase,
+            Phase::Attach | Phase::Listing | Phase::Starting | Phase::Handshake | Phase::Ready
+        ) {
+            self.accept_query(world);
+        }
         // Ready mode only walks our attachment list; provisioning polls at
         // most four times a second, never scanning the entire inventory per frame.
         if matches!(
@@ -633,7 +706,12 @@ impl Bridge {
                 self.capture_sent = None;
                 self.attach(world, Phase::Attach, now);
             } else {
-                if self.error.is_some() {
+                if self.query.is_none() {
+                    // A query script that never answers the probe is checked
+                    // like a silent one: the simulator may report it stopped.
+                    self.query_watch.silent_since.get_or_insert(now);
+                }
+                if self.error.is_some() || self.query.is_none() {
                     self.discover(world, now);
                 }
                 if !self.watch_silence(world, now) {
@@ -918,11 +996,15 @@ impl Bridge {
                     && let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i))
                 {
                     self.checked_script = Some(now);
-                    self.commands.push(NetCommand::Build(BuildCmd::GetScriptRunning {
-                        handle: object.key.region,
-                        object_id: self.object,
-                        item_id: self.script,
-                    }));
+                    for item_id in [self.script, self.query_script] {
+                        if !item_id.is_nil() {
+                            self.commands.push(NetCommand::Build(BuildCmd::GetScriptRunning {
+                                handle: object.key.region,
+                                object_id: self.object,
+                                item_id,
+                            }));
+                        }
+                    }
                 }
             }
             Phase::Store if world.worn_attachment(&self.item).is_none() => {
@@ -1016,12 +1098,23 @@ impl Bridge {
             NetEvent::Chat(chat)
                 if chat.source_type == ChatSourceType::Object
                     && chat.chat_type == ChatType::OwnerSay
-                    && ["<auroraBridge>", "<auroraMoveLock>", "<auroraBridgeError>", "<auroraBridgeStatus>"]
-                        .iter()
-                        .any(|tag| chat.message.starts_with(tag)) =>
+                    && [
+                        "<auroraBridge>",
+                        "<auroraBridgeQuery>",
+                        "<auroraMoveLock>",
+                        "<auroraBridgeError>",
+                        "<auroraBridgeStatus>",
+                    ]
+                    .iter()
+                    .any(|tag| chat.message.starts_with(tag)) =>
             {
                 if chat.owner_id == world.agent_id && chat.message.len() <= 1200 {
-                    if chat.message.starts_with("<auroraBridge>") {
+                    if chat.message.starts_with("<auroraBridgeQuery>") {
+                        // Validated against the exact worn root in update().
+                        if query_handshake(&chat.message).is_ok() {
+                            self.query_candidate = Some((chat.clone(), now));
+                        }
+                    } else if chat.message.starts_with("<auroraBridge>") {
                         match handshake(&chat.message) {
                             Ok(_) => self.candidate = Some(chat.clone()),
                             Err(rejection) if chat.source_id == self.object && self.rejection != Some(rejection) => {
@@ -1092,56 +1185,76 @@ impl Bridge {
                 let Some(root) = world.objects.index_of_uuid(object).and_then(|i| world.objects.get(i)) else {
                     return true;
                 };
-                if let Some(script) = items.iter().find(|i| i.asset_type == 10 && i.name == NAME) {
-                    self.script = script.item_id;
-                    let request = Uuid::new_v4();
-                    self.upload = Some(request);
-                    self.commands.push(NetCommand::SaveScript {
-                        request,
-                        target: ScriptTarget {
-                            object: *object,
-                            item: script.item_id,
-                        },
-                        handle: root.key.region,
-                        options: ScriptOptions {
-                            mono: true,
-                            running: true,
-                            experience: Uuid::nil(),
-                        },
-                        source: SOURCE.replace("__FOLDER__", &self.folder.to_string()),
-                    });
+                let find = |name: &str| items.iter().find(|i| i.asset_type == 10 && i.name == name).map(|i| i.item_id);
+                if let (Some(script), Some(query)) = (find(NAME), find(QUERY_NAME)) {
+                    self.script = script;
+                    self.query_script = query;
+                    let folder = self.folder.to_string();
+                    let mut upload = |item: Uuid, source: &str| {
+                        let request = Uuid::new_v4();
+                        self.commands.push(NetCommand::SaveScript {
+                            request,
+                            target: ScriptTarget { object: *object, item },
+                            handle: root.key.region,
+                            options: ScriptOptions {
+                                mono: true,
+                                running: true,
+                                experience: Uuid::nil(),
+                            },
+                            source: source.replace("__FOLDER__", &folder),
+                        });
+                        request
+                    };
+                    let controller = upload(script, SOURCE);
+                    let query = upload(query, QUERY_SOURCE);
+                    self.upload = Some(controller);
+                    self.query_upload = Some(query);
                     self.enter(Phase::Upload, now);
                 } else if self.phase == Phase::Listing {
-                    self.commands.push(NetCommand::Build(BuildCmd::RezScript {
-                        handle: root.key.region,
-                        local_id: root.key.local_id,
-                        enabled: false,
-                        group_id: Uuid::nil(),
-                        item: Box::new(TaskItem {
-                            parent_id: *object,
-                            creator_id: world.agent_id,
-                            owner_id: world.agent_id,
-                            base_mask: 0x7fff_ffff,
-                            owner_mask: 0x7fff_ffff,
-                            next_owner_mask: perm::COPY | perm::MODIFY | perm::MOVE,
-                            asset_type: 10,
-                            inv_type: 10,
-                            name: NAME.into(),
-                            description: "Aurora's private bridge".into(),
-                            ..Default::default()
-                        }),
-                    }));
+                    // A bridge made before the query service gets only the
+                    // missing script; the controller keeps its item.
+                    for name in [NAME, QUERY_NAME] {
+                        if find(name).is_none() {
+                            self.commands.push(NetCommand::Build(BuildCmd::RezScript {
+                                handle: root.key.region,
+                                local_id: root.key.local_id,
+                                enabled: false,
+                                group_id: Uuid::nil(),
+                                item: Box::new(TaskItem {
+                                    parent_id: *object,
+                                    creator_id: world.agent_id,
+                                    owner_id: world.agent_id,
+                                    base_mask: 0x7fff_ffff,
+                                    owner_mask: 0x7fff_ffff,
+                                    next_owner_mask: perm::COPY | perm::MODIFY | perm::MOVE,
+                                    asset_type: 10,
+                                    inv_type: 10,
+                                    name: name.into(),
+                                    description: "Aurora's private bridge".into(),
+                                    ..Default::default()
+                                }),
+                            }));
+                        }
+                    }
                     self.enter(Phase::Script, now);
                 }
                 true
             }
-            NetEvent::ScriptSaved { request, result, .. } if self.upload == Some(*request) => {
-                self.upload = None;
+            NetEvent::ScriptSaved { request, result, .. }
+                if self.phase == Phase::Upload && [self.upload, self.query_upload].contains(&Some(*request)) =>
+            {
+                if self.upload == Some(*request) {
+                    self.upload = None;
+                } else {
+                    self.query_upload = None;
+                }
                 if result.as_ref().is_ok_and(|r| r.compiled) {
                     // An early hello can arrive before the HTTP upload reply.
                     // Keep it; Starting validates it against the exact object.
-                    self.endpoint = None;
-                    self.enter(Phase::Starting, now);
+                    if self.upload.is_none() && self.query_upload.is_none() {
+                        self.endpoint = None;
+                        self.enter(Phase::Starting, now);
+                    }
                 } else {
                     self.fail(aurora_i18n::tr!("bridge-script-failed").into());
                 }
@@ -1153,16 +1266,19 @@ impl Bridge {
                 running: false,
                 ..
             } if *object_id == self.object
-                && *item_id == self.script
                 && matches!(self.phase, Phase::Starting | Phase::Handshake)
-                && !self.restarted =>
+                && ((*item_id == self.script && !self.restarted) || (*item_id == self.query_script && !self.query_restarted)) =>
             {
                 if let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i)) {
-                    self.restarted = true;
+                    if *item_id == self.script {
+                        self.restarted = true;
+                    } else {
+                        self.query_restarted = true;
+                    }
                     self.commands.push(NetCommand::Build(BuildCmd::SetScriptRunning {
                         handle: object.key.region,
                         object_id: self.object,
-                        item_id: self.script,
+                        item_id: *item_id,
                         running: true,
                     }));
                 }
@@ -1173,10 +1289,18 @@ impl Bridge {
                 item_id,
                 running: false,
                 ..
-            } if *object_id == self.object && *item_id == self.script && self.phase == Phase::Ready && self.silent_since.is_some() => {
+            } if *object_id == self.object
+                && self.phase == Phase::Ready
+                && ((*item_id == self.script && self.watch.silent_since.is_some())
+                    || (*item_id == self.query_script && self.query_watch.silent_since.is_some())) =>
+            {
                 // A run-time error halts the script; only a recompile resets it.
-                log::warn!("Aurora bridge: the script is not running");
-                self.reinstall(world, now);
+                let controller = *item_id == self.script;
+                log::warn!(
+                    "Aurora bridge: the {} script is not running",
+                    if controller { "controller" } else { "query" }
+                );
+                self.reinstall(world, controller, now);
                 true
             }
             NetEvent::BridgeReply { request, result } => {
@@ -1184,7 +1308,7 @@ impl Bridge {
                     && *request == pending
                 {
                     self.pending = None;
-                    self.heard(result.as_ref().err().map(String::as_str), now);
+                    self.watch.heard(result.as_ref().err().map(String::as_str), now);
                     match result {
                         Ok(ack) if ack.sequence == sequence && ack.enabled == mode.0 => {
                             self.acknowledge(*ack);
@@ -1229,9 +1353,17 @@ fn boot_status(text: &str, folder: Uuid) -> Option<(bool, bool)> {
 }
 
 fn handshake(text: &str) -> Result<(Uuid, Endpoint), HandshakeError> {
+    parse_hello(text, "<auroraBridge>", "</auroraBridge>")
+}
+
+fn query_handshake(text: &str) -> Result<(Uuid, Endpoint), HandshakeError> {
+    parse_hello(text, "<auroraBridgeQuery>", "</auroraBridgeQuery>")
+}
+
+fn parse_hello(text: &str, open: &str, close: &str) -> Result<(Uuid, Endpoint), HandshakeError> {
     let body = text
-        .strip_prefix("<auroraBridge>")
-        .and_then(|text| text.strip_suffix("</auroraBridge>"))
+        .strip_prefix(open)
+        .and_then(|text| text.strip_suffix(close))
         .ok_or(HandshakeError::Format)?;
     let parts: Vec<_> = body.split('|').collect();
     if parts.len() != 4 {
