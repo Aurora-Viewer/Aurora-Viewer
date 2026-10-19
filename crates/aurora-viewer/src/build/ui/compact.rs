@@ -270,7 +270,6 @@ fn transform_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, s: &m
         for (value, title) in [
             (&mut s.scale_stretch_textures, aurora_i18n::tr!("build-compact-stretch-textures")),
             (&mut s.show_highlight, aurora_i18n::tr!("build-compact-highlight")),
-            (&mut s.select_probes, aurora_i18n::tr!("build-compact-probes")),
             (&mut s.follow_edit_object, aurora_i18n::tr!("build-ui-tools-follow-edit-object")),
         ] {
             if let Some(v) = common::check(ui, p, *value, false, title, true) {
@@ -361,7 +360,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.allocate_ui_with_layout(
-                Vec2::new((width - 42.0).max(180.0), 124.0),
+                Vec2::new((width - 42.0).max(180.0), 149.0),
                 egui::Layout::top_down(egui::Align::Min),
                 |ui| {
                     ui.set_min_width((width - 42.0).max(180.0));
@@ -439,6 +438,12 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
                             });
                         }
                     });
+                    widgets::checkbox(
+                        ui,
+                        p,
+                        &mut s.select_probes,
+                        RichText::new(aurora_i18n::tr!("build-compact-probes")).size(10.5),
+                    );
                     widgets::checkbox(
                         ui,
                         p,
@@ -575,7 +580,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             .into_galley(ui, Some(egui::TextWrapMode::Wrap), (width - 24.0).max(1.0), egui::TextStyle::Body)
         });
         let footer_height = if shared_options {
-            169.0 + if tool.status.is_empty() { 0.0 } else { 20.0 }
+            194.0 + if tool.status.is_empty() { 0.0 } else { 20.0 }
         } else {
             // Measure the same galley that is displayed below. A fixed 40 px
             // estimate made Grab's wrapped hint overflow by 4 px, growing the

@@ -1869,6 +1869,14 @@ tests do not establish that this report uses an invalid joint or index.
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
   `AURORA_LIGHT_TILES`.
+- **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
+  `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
+  selected, every inspector section must show "Select reflection probes"
+  in the footer. Turn it on to select an invisible probe; turn it off to
+  select the ordinary objects behind it. Check left/right clicks, face
+  selection, a selection rectangle and Ctrl + wheel. The option starts off
+  again in a new viewer session. Unit regressions use actual invisible CPU
+  geometry and pointer clicks on the native inspector in all seven sections.
 - **`AURORA_DEMO_PROBES=1`**: two manual reflection probes, as invisible
   prims on the plaza: a box of 10 × 8 × 6 m turned on itself, which the
   camera of `AURORA_DEMO_POS="135,134"` stands in, and a sphere of 12 m east
