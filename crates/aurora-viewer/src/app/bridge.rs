@@ -238,7 +238,12 @@ impl App {
         self.toolbar_ui.movelock_active = prefs.enabled;
         self.toolbar_ui.movelock_status = format!("{} ({shortcut})\n{status}", aurora_i18n::tr!("movelock-title"));
         if prefs.enabled && prefs.indicator {
-            self.movelock_ui.indicator(ctx, p, status);
+            let label = if prefs.mode == crate::world::bridge::LockMode::NativeSit {
+                self.native_anchor.status.short_label()
+            } else {
+                aurora_i18n::tr!("movelock-short-on")
+            };
+            self.movelock_ui.indicator(ctx, p, label, status);
         }
         let diagnostic = (prefs.mode == crate::world::bridge::LockMode::Bridge)
             .then(|| self.bridge_runtime.error.as_deref().or(self.bridge_runtime.progress()))

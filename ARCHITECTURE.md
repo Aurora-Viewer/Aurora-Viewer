@@ -711,6 +711,17 @@ below the ordinary 0.5 m/s walk-stop threshold, including vertical flight.
 The legacy interpolation residual and Aurora's drawn glide both count; key
 release alone cannot force the idle animation during deceleration. Residual
 motion cannot release an already owned anchor; voluntary input still can.
+Native acquisition uses physical contact and the newest stock animation signal;
+completed jump/landing transitions and a supported stale fall cannot suspend it
+forever. Dry support near water is distinct from swimming. Water proximity and
+jump/fall signals cannot release a confirmed ground sit; active water/travel
+controllers, user input, region changes and AO compatibility still take priority.
+Localized status and transition logs distinguish region arrival, water movement,
+airborne transitions and other travel controllers.
+The optional position-lock indicator starts disabled. When enabled, its area
+can be dragged within the work area and its position uses the shared saved UI
+layout; a simple click still opens the lock options. Compact state labels keep
+the indicator short; its tooltip and the options retain the full diagnostic.
 Acquisition waits at least 250 ms at rest, releases immediately for movement or mode
 changes, bounds retries, handles cancelled requests' late echoes and drops
 ownership across regions. Water movement, jumps/falls and autopilot pause it.

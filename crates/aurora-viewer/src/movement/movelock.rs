@@ -17,6 +17,9 @@ pub enum Status {
     Moving,
     Seated,
     Suspended,
+    Water,
+    Airborne,
+    Travel,
     NeedsStand,
     Anchoring,
     Anchored,
@@ -24,6 +27,19 @@ pub enum Status {
     Timeout,
 }
 impl Status {
+    pub fn short_label(self) -> &'static str {
+        aurora_i18n::text(match self {
+            Self::Off => "movelock-short-off",
+            Self::Waiting => "movelock-short-waiting",
+            Self::Moving => "movelock-short-moving",
+            Self::Seated | Self::Suspended | Self::Water | Self::Airborne | Self::Travel => "movelock-short-paused",
+            Self::NeedsStand => "movelock-short-ao",
+            Self::Anchoring => "movelock-short-anchoring",
+            Self::Anchored => "movelock-short-anchored",
+            Self::Releasing => "movelock-short-releasing",
+            Self::Timeout => "movelock-short-timeout",
+        })
+    }
     pub fn label(self) -> &'static str {
         aurora_i18n::text(match self {
             Self::Off => "movelock-off",
@@ -31,12 +47,68 @@ impl Status {
             Self::Moving => "movelock-sit-moving",
             Self::Seated => "movelock-sit-seated",
             Self::Suspended => "movelock-sit-suspended",
+            Self::Water => "movelock-sit-water",
+            Self::Airborne => "movelock-sit-airborne",
+            Self::Travel => "movelock-sit-travel",
             Self::NeedsStand => "movelock-sit-needs-stand",
             Self::Anchoring => "movelock-sit-anchoring",
             Self::Anchored => "movelock-sit-anchored",
             Self::Releasing => "movelock-sit-releasing",
             Self::Timeout => "movelock-sit-timeout",
         })
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Travel {
+    #[default]
+    Ready,
+    Water,
+    Airborne,
+    Other,
+}
+impl Travel {
+    fn status(self, anchored: bool) -> Status {
+        match self {
+            // A confirmed ground sit is authoritative. Its changed physical
+            // height or an old jump/fall animation cannot release the anchor.
+            Self::Ready => Status::Waiting,
+            Self::Water | Self::Airborne if anchored => Status::Waiting,
+            Self::Water => Status::Water,
+            Self::Airborne => Status::Airborne,
+            Self::Other => Status::Travel,
+        }
+    }
+}
+
+/// Animation signals can outlive physical landing (or accompany a newer
+/// standing signal). Use contact and completed transition duration to avoid
+/// waiting forever on a stale fall/landing, without sitting during a jump.
+pub fn airborne(
+    raw: &[crate::world::PlayingAnimation],
+    flying: bool,
+    supported: bool,
+    vertical_speed: f32,
+    now: Instant,
+    mut duration: impl FnMut(&uuid::Uuid) -> Option<Duration>,
+) -> bool {
+    use crate::ao::State;
+    if flying {
+        return false;
+    }
+    let primary = raw
+        .iter()
+        .filter(|a| !crate::ao::STAND_VARIANTS.contains(&a.id))
+        .filter_map(|a| State::from_motion(a.id).filter(|s| *s != State::Typing).map(|s| (s, a)))
+        .max_by_key(|(s, a)| (a.continuous_start, *s as usize));
+    match primary {
+        Some((State::Falling | State::Jumping, _)) => !supported || vertical_speed.abs() > 0.5,
+        Some((State::PreJumping | State::Landing | State::SoftLanding, a)) => {
+            !supported
+                || vertical_speed.abs() > 0.5
+                || now.saturating_duration_since(a.continuous_start) < duration(&a.id).unwrap_or(RESPONSE)
+        }
+        _ => false,
     }
 }
 
@@ -48,8 +120,7 @@ pub struct Frame {
     pub voluntary: bool,
     /// Residual simulator/drawn motion after input release, before acquiring.
     pub moving: bool,
-    /// No jumps/falls, water controllers, autopilot or other scripted travel.
-    pub eligible: bool,
+    pub travel: Travel,
     pub pose_ready: bool,
     /// The standing group was echoed by the simulator and fully eased in.
     pub pose_warm: bool,
@@ -67,7 +138,7 @@ mod tests {
             available: true,
             voluntary: false,
             moving: false,
-            eligible: true,
+            travel: Travel::Ready,
             pose_ready: true,
             pose_warm: true,
             ground_sit: false,
@@ -175,6 +246,111 @@ mod tests {
         );
     }
     #[test]
+    fn movelock_sit_acquisition_checks_cannot_release_a_confirmed_sit() {
+        for travel in [Travel::Water, Travel::Airborne] {
+            let (mut c, mut f, now) = anchored();
+            f.travel = travel;
+            for i in 0..600 {
+                assert_eq!(c.update(f, now + Duration::from_millis(i * 16)), None);
+                assert_eq!(c.status, Status::Anchored);
+                assert!(c.owns_sit());
+            }
+            f.voluntary = true;
+            assert_eq!(c.update(f, now + RESPONSE * 3), Some(control::STAND_UP));
+        }
+    }
+    #[test]
+    fn movelock_sit_landed_animation_rearms_at_activation_and_after_walking() {
+        use crate::{ao::State, world::PlayingAnimation};
+        let now = Instant::now();
+        for state in [
+            State::Falling,
+            State::Jumping,
+            State::PreJumping,
+            State::Landing,
+            State::SoftLanding,
+        ] {
+            let raw = [PlayingAnimation::from_signal(state.motion(), 1, now, None)];
+            let duration = |_: &uuid::Uuid| Some(Duration::from_millis(400));
+            let rest = now + Duration::from_secs(1);
+            assert!(
+                airborne(&raw, false, false, -2.0, rest, duration),
+                "real airborne motion must pause"
+            );
+            assert!(
+                !airborne(&raw, false, true, 0.0, rest, duration),
+                "physical landing ends stale signals"
+            );
+            let mut f = frame();
+            f.travel = if airborne(&raw, false, true, 0.0, rest, duration) {
+                Travel::Airborne
+            } else {
+                Travel::Ready
+            };
+            let mut c = Controller::default();
+            assert_eq!(c.update(f, rest), None);
+            assert_eq!(c.status, Status::Waiting);
+            assert_eq!(c.update(f, rest + SETTLE), Some(control::SIT_ON_GROUND));
+            f.ground_sit = true;
+            c.update(f, rest + SETTLE);
+            f.voluntary = true;
+            assert_eq!(c.update(f, rest + SETTLE * 2), Some(control::STAND_UP));
+            f.ground_sit = false;
+            c.update(f, rest + SETTLE * 3);
+            f.voluntary = false;
+            c.update(f, rest + SETTLE * 4);
+            assert_eq!(c.update(f, rest + SETTLE * 5), Some(control::SIT_ON_GROUND));
+        }
+    }
+    #[test]
+    fn movelock_sit_preserves_fresh_jump_and_landing_transitions() {
+        use crate::{ao::State, world::PlayingAnimation};
+        let now = Instant::now();
+        for state in [State::PreJumping, State::Landing, State::SoftLanding] {
+            let raw = [PlayingAnimation::from_signal(state.motion(), 1, now, None)];
+            assert!(airborne(&raw, false, true, 0.0, now + SETTLE, |_| Some(Duration::from_millis(400))));
+            assert!(airborne(&raw, false, true, 0.0, now + SETTLE, |_| None));
+        }
+        let old = PlayingAnimation::from_signal(State::Falling.motion(), 1, now, None);
+        let standing = PlayingAnimation::from_signal(State::Standing.motion(), 1, now + SETTLE, None);
+        let variant = PlayingAnimation::from_signal(crate::ao::STAND_VARIANTS[0], 1, now + SETTLE, None);
+        assert!(
+            airborne(&[old, variant], false, false, 0.0, now + SETTLE, |_| None),
+            "a secondary standing variant cannot hide airborne motion at the jump apex"
+        );
+        assert!(
+            !airborne(&[standing, old], false, false, 0.0, now + SETTLE, |_| None),
+            "a newer standing signal supersedes an old falling signal regardless of packet order"
+        );
+        assert!(
+            airborne(&[old], false, true, -3.0, now + SETTLE, |_| None),
+            "contact must not hide a real jump/fall"
+        );
+        assert!(
+            !airborne(&[old], true, false, 0.0, now + SETTLE, |_| None),
+            "hovering remains eligible"
+        );
+    }
+    #[test]
+    fn movelock_sit_reports_the_actual_suspension_and_resumes_after_travel() {
+        for (travel, status) in [
+            (Travel::Water, Status::Water),
+            (Travel::Airborne, Status::Airborne),
+            (Travel::Other, Status::Travel),
+        ] {
+            let mut c = Controller::default();
+            let mut f = frame();
+            let now = Instant::now();
+            f.travel = travel;
+            assert_eq!(c.update(f, now), None);
+            assert_eq!(c.status, status);
+            assert_eq!(c.update(f, now + RESPONSE), None);
+            f.travel = Travel::Ready;
+            c.update(f, now + RESPONSE);
+            assert_eq!(c.update(f, now + RESPONSE + SETTLE), Some(control::SIT_ON_GROUND));
+        }
+    }
+    #[test]
     fn movelock_sit_releases_before_movement_and_reanchors_after_rest() {
         let (mut c, mut f, now) = anchored();
         f.voluntary = true;
@@ -193,7 +369,7 @@ mod tests {
             let (mut c, mut f, now) = anchored();
             match field {
                 0 => f.pose_ready = false,
-                1 => f.eligible = false,
+                1 => f.travel = Travel::Other,
                 2 => f.available = false,
                 3 => f.requested = false,
                 _ => f.voluntary = true,
@@ -465,8 +641,10 @@ impl Controller {
             Status::Seated
         } else if frame.voluntary || (frame.moving && !self.owns_sit()) {
             Status::Moving
-        } else if !frame.available || !frame.eligible {
+        } else if !frame.available {
             Status::Suspended
+        } else if frame.travel.status(self.owns_sit() && frame.ground_sit) != Status::Waiting {
+            frame.travel.status(self.owns_sit() && frame.ground_sit)
         } else if !frame.pose_ready {
             Status::NeedsStand
         } else {

@@ -83,14 +83,20 @@ impl MoveLockUi {
         });
         (*prefs != before, repair)
     }
-    pub fn indicator(&mut self, ctx: &egui::Context, p: &Palette, status: &str) {
+    pub fn indicator(&mut self, ctx: &egui::Context, p: &Palette, label: &str, status: &str) {
         let room = super::layout::work_area(ctx);
         egui::Area::new(egui::Id::new("movelock_indicator"))
-            .fixed_pos(egui::pos2(room.left() + 12.0, room.bottom() - 40.0))
+            .default_pos(egui::pos2(room.left() + 12.0, room.bottom() - 40.0))
+            .default_size(egui::Vec2::ZERO)
+            .movable(true)
+            .constrain_to(room)
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 widgets::overlay(ui, p, egui::Margin::same(4), |ui| {
-                    if widgets::action_button(ui, p, "lock-filled", status, ActionKind::Flat, egui::vec2(0.0, 26.0)).clicked() {
+                    if widgets::action_button(ui, p, "lock-filled", label, ActionKind::Flat, egui::vec2(0.0, 26.0))
+                        .on_hover_text(status)
+                        .clicked()
+                    {
                         self.open = true;
                     }
                 });
@@ -106,6 +112,78 @@ fn remember(ctx: &egui::Context, index: usize, rect: egui::Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn indicator_drags_without_opening_options_and_restores_its_position() {
+        let ctx = egui::Context::default();
+        let mut panel = MoveLockUi::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+        let id = egui::Id::new("movelock_indicator");
+        let frame = |ctx: &egui::Context, panel: &mut MoveLockUi, screen, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    panel.indicator(
+                        ui.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        aurora_i18n::tr!("movelock-short-on"),
+                        aurora_i18n::tr!("movelock-on"),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            egui::AreaState::load(ctx, id).expect("indicator area").rect()
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        let mut before = egui::Rect::NOTHING;
+        for _ in 0..4 {
+            before = frame(&ctx, &mut panel, screen, Vec::new());
+        }
+        let room = super::super::layout::work_area(&ctx);
+        assert!((before.min - egui::pos2(room.left() + 12.0, room.bottom() - 40.0)).length() < 2.0);
+        let from = before.center();
+        let delta = egui::vec2(320.0, -180.0);
+        frame(&ctx, &mut panel, screen, vec![egui::Event::PointerMoved(from), button(from, true)]);
+        frame(&ctx, &mut panel, screen, vec![egui::Event::PointerMoved(from + delta)]);
+        frame(&ctx, &mut panel, screen, vec![button(from + delta, false)]);
+        let moved = frame(&ctx, &mut panel, screen, Vec::new());
+        assert!(
+            (moved.min - before.min - delta).length() < 2.0,
+            "drag the indicator from its button, not only its margin"
+        );
+        assert!(!panel.open, "a drag must not activate the options click");
+        let saved = ron::to_string(&ctx.memory(|m| m.clone())).expect("save layout");
+        let restored = egui::Context::default();
+        restored.memory_mut(|m| *m = ron::from_str(&saved).expect("restore layout"));
+        for _ in 0..4 {
+            frame(&restored, &mut panel, screen, Vec::new());
+        }
+        let after = frame(&restored, &mut panel, screen, Vec::new());
+        assert!(
+            (after.min - moved.min).length() < 2.0,
+            "the normal saved layout retains the indicator position"
+        );
+        let small = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 480.0));
+        let clamped = frame(&restored, &mut panel, small, Vec::new());
+        assert!(super::super::layout::work_area(&restored).expand(1.0).contains_rect(clamped));
+        let click = clamped.center();
+        frame(
+            &restored,
+            &mut panel,
+            small,
+            vec![egui::Event::PointerMoved(click), button(click, true)],
+        );
+        frame(&restored, &mut panel, small, vec![button(click, false)]);
+        assert!(panel.open, "a simple click still opens options after dragging");
+    }
     #[test]
     fn options_clicks_toggle_the_selected_preference_and_repair_keeps_requested_mode() {
         let ctx = egui::Context::default();
