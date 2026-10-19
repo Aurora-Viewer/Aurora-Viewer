@@ -84,6 +84,9 @@ impl Spring {
 #[derive(Clone, Copy)]
 struct Leg {
     joints: [usize; 3],
+    /// Rest-pose knee bias and forward direction, in the hip's frame.
+    neutral_pole: Vec3,
+    forward: Vec3,
     /// Sole corners in ankle-rotation space, already scaled for this shape.
     sole: [Vec3; 4],
     neutral: [Vec3; 4],
@@ -97,7 +100,6 @@ struct Foot {
     anchor: Option<Vec3>,
     tilt: Quat,
     offset: Spring,
-    pole: Option<Vec3>,
 }
 
 #[derive(Default)]
@@ -142,9 +144,22 @@ fn lift(corners: [Vec3; 4], supports: [Option<Surface>; 4], up: Vec3) -> Option<
         .reduce(f32::max)
 }
 
-/// Preserve the authored bend plane; only a genuinely straight knee needs a
-/// fallback pole. The solve changes rotations, never segment lengths.
-fn solve(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, fallback: Vec3) -> Option<(Quat, Quat, Vec3)> {
+fn projected(vector: Vec3, axis: Vec3) -> Vec3 {
+    vector - axis * vector.dot(axis)
+}
+
+struct BendGuide {
+    neutral: Vec3,
+    forward: Vec3,
+    /// Outward half-space containing the source hip, knee and ankle target.
+    side: Option<(Vec3, f32)>,
+}
+
+/// Rest legs taper inward, which is not an authored knee flexion. Subtract
+/// that bias before reading the bend plane; near extension use the anatomical
+/// forward direction. Bound added medial bending on the knee circle itself,
+/// retaining exact ankle reach and segment lengths.
+fn solve(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, guide: BendGuide) -> Option<(Quat, Quat, Vec3)> {
     let upper = knee - hip;
     let lower = ankle - knee;
     let (a, b) = (upper.length(), lower.length());
@@ -156,17 +171,45 @@ fn solve(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, fallback: Vec3) -> Op
     let axis = delta / distance;
     let distance = distance.clamp((a - b).abs() + 1e-6, a + b - 1e-6);
     let source_axis = (ankle - hip).normalize_or(-Vec3::Z);
-    let source_pole = upper - source_axis * upper.dot(source_axis);
-    let pole = if source_pole.length_squared() > 0.000025 {
-        source_pole
-    } else {
-        fallback
-    };
-    let pole = (pole - axis * pole.dot(axis))
+    let authored = projected(upper - guide.neutral, source_axis);
+    let forward = projected(guide.forward, source_axis)
         .try_normalize()
-        .unwrap_or_else(|| axis.any_orthonormal_vector());
+        .unwrap_or_else(|| source_axis.any_orthonormal_vector());
+    let mut pole = forward;
+    if let Some(authored_direction) = authored.try_normalize() {
+        let confidence = cubic_step((authored.length() / (a + b) - 0.005) / 0.025);
+        let sin = source_axis.dot(forward.cross(authored_direction));
+        let cos = forward.dot(authored_direction);
+        let angle = if sin.abs() < 0.001 && cos < 0.0 {
+            // Choose the outward route when a deliberate backwards bend is
+            // opposite to the neutral guide, avoiding an ambiguous half-turn.
+            let outward = guide.side.map_or(Vec3::Y, |(normal, _)| normal);
+            std::f32::consts::PI * source_axis.dot(forward.cross(outward)).signum()
+        } else {
+            sin.atan2(cos)
+        };
+        pole = Quat::from_axis_angle(source_axis, angle * confidence) * forward;
+    }
+    // Transport the bend plane when retargeting the ankle, instead of
+    // projecting a near-parallel hint into an unstable new direction.
+    pole = Quat::from_rotation_arc(source_axis, axis) * pole;
     let along = (a * a - b * b + distance * distance) / (2.0 * distance);
-    let bend = hip + axis * along + pole * (a * a - along * along).max(0.0).sqrt();
+    let center = hip + axis * along;
+    let radius = (a * a - along * along).max(0.0).sqrt();
+    if let Some((normal, minimum)) = guide.side {
+        let tangent = projected(normal, axis);
+        let extent = radius * tangent.length();
+        if extent > 1e-6 {
+            let outward = tangent.normalize();
+            let limit = ((minimum - center.dot(normal)) / extent).clamp(-1.0, 1.0);
+            if pole.dot(outward) < limit {
+                let forward = projected(guide.forward, axis).normalize_or(pole);
+                let tangent = projected(pole, outward).normalize_or(projected(forward, outward).normalize_or(axis.cross(outward)));
+                pole = outward * limit + tangent * (1.0 - limit * limit).max(0.0).sqrt();
+            }
+        }
+    }
+    let bend = center + pole * radius;
     let hip_delta = Quat::from_rotation_arc(upper / a, (bend - hip).normalize());
     let knee_delta = Quat::from_rotation_arc((hip_delta * lower).normalize(), (hip + axis * distance - bend).normalize());
     Some((hip_delta, knee_delta, pole))
@@ -193,6 +236,9 @@ impl Placement {
             let toe = rig.names.get(&format!("mToe{side}")).copied().unwrap_or(ball);
             let ankle_position = rest[ankle].w_axis.truncate();
             let ankle_rotation = rotation(&rest, ankle);
+            let hip_rotation = rotation(&rest, hip);
+            let upper = rest[knee].w_axis.truncate() - rest[hip].w_axis.truncate();
+            let axis = (ankle_position - rest[hip].w_axis.truncate()).normalize_or(-Vec3::Z);
             let ball_offset = ankle_rotation.inverse() * (rest[ball].w_axis.truncate() - ankle_position);
             let toe_offset = ankle_rotation.inverse() * (rest[toe].w_axis.truncate() - ankle_position);
             let depth = reference.map_or(-ball_offset.z, |z| (ankle_position.z - z).clamp(0.01, 0.5));
@@ -205,6 +251,8 @@ impl Placement {
             ];
             legs.push(Leg {
                 joints,
+                neutral_pole: hip_rotation.inverse() * projected(upper, axis),
+                forward: hip_rotation.inverse() * rotation(&rest, rig.pelvis) * Vec3::X,
                 sole,
                 neutral: points(ankle_position, ankle_rotation, sole),
             });
@@ -259,6 +307,9 @@ impl Placement {
         let root_rotation = transform.to_world.to_scale_rotation_translation().1;
         let legs = self.legs?;
         let source = rig.world_with(pose.rotations, pose.pelvis, pose.positions, &base.scale);
+        let hip_position = legs.map(|leg| source[leg.joints[0]].w_axis.truncate());
+        let hip_center = (hip_position[0] + hip_position[1]) * 0.5;
+        let left = projected(hip_position[0] - hip_position[1], up).normalize_or(Vec3::Y);
         let mut targets = [Vec3::ZERO; 2];
         let mut orientations = [Quat::IDENTITY; 2];
         let mut supported = [false; 2];
@@ -271,6 +322,8 @@ impl Placement {
             let center = corners.into_iter().sum::<Vec3>() * 0.25;
             let world_center = transform.to_world.transform_point3(center);
             let foot = &mut self.feet[side];
+            let outward = left * if side == 0 { 1.0 } else { -1.0 };
+            let source_side = (ankle - hip_center).dot(outward);
             let was_planted = foot.planted;
             let height = corners
                 .into_iter()
@@ -365,6 +418,21 @@ impl Placement {
                 if foot.planted { 25.0 } else { 45.0 },
             );
             targets[side] = ankle + inverse.transform_vector3(foot.offset.position);
+            if enabled && source_side > 0.0 {
+                // A slow turn can carry a world-space plant through the body
+                // before its distance limit expires. Release it at the stance
+                // envelope and keep a fading anchor from crossing the legs.
+                // Deliberately crossed source ankles retain their own pose.
+                let minimum = source_side * 0.5;
+                if (wanted - hip_center).dot(outward) < minimum {
+                    foot.anchor = None;
+                }
+                let excess = minimum - (targets[side] - hip_center).dot(outward);
+                if excess > 0.0 {
+                    foot.anchor = None;
+                    targets[side] += outward * excess;
+                }
+            }
             if enabled && foot.planted {
                 // Stance targets are absolute. Swing collision is projected
                 // below, after applying the current pelvic displacement.
@@ -441,11 +509,21 @@ impl Placement {
             if targets[side].distance_squared(p(ankle)) < 1e-10 && orientations[side].abs_diff_eq(rotation(&source, ankle), 1e-6) {
                 continue;
             }
-            let fallback = self.feet[side].pole.unwrap_or_else(|| rotation(&source, hip) * Vec3::X);
-            let Some((a, b, pole)) = solve(p(hip), p(knee), p(ankle), targets[side], fallback) else {
+            let outward = left * if side == 0 { 1.0 } else { -1.0 };
+            let minimum = [p(hip), p(knee), targets[side]]
+                .map(|point| point.dot(outward))
+                .into_iter()
+                .fold(f32::INFINITY, f32::min)
+                - 0.005;
+            let hip_orientation = rotation(&source, hip);
+            let guide = BendGuide {
+                neutral: hip_orientation * leg.neutral_pole,
+                forward: hip_orientation * leg.forward,
+                side: Some((outward, minimum)),
+            };
+            let Some((a, b, _)) = solve(p(hip), p(knee), p(ankle), targets[side], guide) else {
                 continue;
             };
-            self.feet[side].pole = Some(pole);
             let parent = rig.parent[hip].map_or(Quat::IDENTITY, |joint| rotation(&source, joint));
             let hip_rotation = (a * rotation(&source, hip)).normalize();
             let knee_rotation = (b * a * rotation(&source, knee)).normalize();
@@ -618,6 +696,121 @@ mod tests {
         }
         assert!(pose.pelvis.z < -0.15);
         f.check_contacts(&placement, &pose, frame, &ground, [true; 2]);
+        let solved = f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+        let left = solved[f.rig.names["mKneeLeft"]].w_axis.truncate();
+        let right = solved[f.rig.names["mKneeRight"]].w_axis.truncate();
+        assert!(left.y > 0.02 && right.y < -0.02, "demo knees crossed: {left:?}, {right:?}");
+    }
+
+    #[test]
+    fn grounding_neutral_knees_bend_forward_without_crossing_on_either_step() {
+        let mut f = Fixture::new();
+        for scale in [0.7, 1.0, 1.3] {
+            for side in ["Left", "Right"] {
+                for bone in ["Hip", "Knee"] {
+                    f.base.scale[f.rig.names[&format!("m{bone}{side}")]] = Vec3::splat(scale);
+                }
+            }
+            let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+            f.floor = rest[f.rig.names["mFootLeft"]].w_axis.z;
+            for height in [0.1, 0.22, 0.35] {
+                for high_side in [-1.0, 1.0] {
+                    let ground = |p: Vec3| {
+                        Some(Surface {
+                            position: p.with_z(f.floor + if p.y * high_side > 0.0 { height } else { 0.0 }),
+                            normal: Vec3::Z,
+                        })
+                    };
+                    let mut placement = Placement::default();
+                    let frame = f.frame(height + 0.03);
+                    let pose = f.sample(&mut placement, &f.rig.local_rot, Some(frame), Instant::now(), &ground);
+                    f.check_contacts(&placement, &pose, frame, &ground, [true; 2]);
+                    let solved = f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+                    for (side, sign) in [("Left", 1.0), ("Right", -1.0)] {
+                        let hip = solved[f.rig.names[&format!("mHip{side}")]].w_axis.truncate();
+                        let knee = solved[f.rig.names[&format!("mKnee{side}")]].w_axis.truncate();
+                        assert!(
+                            knee.y * sign > 0.02,
+                            "{side} knee crossed at scale {scale}, step {height}: {knee:?}"
+                        );
+                        if high_side == sign {
+                            assert!(knee.x - hip.x > 0.03, "the high leg must bend forwards: hip={hip:?}, knee={knee:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_limits_added_medial_bending_without_moving_the_ankle_or_stretching() {
+        for sign in [-1.0, 1.0] {
+            let hip = Vec3::new(0.0, sign * 0.13, 1.0);
+            let knee = Vec3::new(0.05, sign * 0.07, 0.5);
+            let ankle = Vec3::new(0.0, sign * 0.08, 0.0);
+            let target = ankle + Vec3::Z * 0.3;
+            let guide = BendGuide {
+                neutral: Vec3::ZERO,
+                forward: Vec3::X,
+                side: Some((Vec3::Y * sign, 0.065)),
+            };
+            let (a, b, _) = solve(hip, knee, ankle, target, guide).expect("valid leg");
+            let solved_knee = hip + a * (knee - hip);
+            let solved_ankle = solved_knee + b * a * (ankle - knee);
+            assert!(solved_knee.y * sign >= 0.065 - 1e-5, "medial limit failed: {solved_knee:?}");
+            assert!(
+                solved_ankle.distance(target) < 1e-5,
+                "knee constraint moved the foot: {solved_ankle:?}"
+            );
+            assert!((hip.distance(solved_knee) - hip.distance(knee)).abs() < 1e-5);
+            assert!((solved_knee.distance(solved_ankle) - knee.distance(ankle)).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn grounding_near_extension_does_not_turn_small_pose_noise_into_crossed_knees() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(f.floor + if p.y > 0.0 { 0.22 } else { 0.0 }),
+                normal: Vec3::Z,
+            })
+        };
+        let frame = f.frame(0.25);
+        for fps in [30, 60, 144] {
+            let mut placement = Placement::default();
+            let mut previous: Option<[Vec3; 2]> = None;
+            for i in 0..=fps * 2 {
+                let phase = i as f32 / fps as f32 * std::f32::consts::TAU;
+                let mut rotations = f.rig.local_rot.clone();
+                for (side, sign) in [("Left", 1.0), ("Right", -1.0)] {
+                    rotations[f.rig.names[&format!("mKnee{side}")]] = Quat::from_euler(
+                        glam::EulerRot::XYZ,
+                        0.004 * phase.sin() * sign,
+                        0.008 * phase.cos(),
+                        0.003 * phase.sin(),
+                    );
+                }
+                let pose = f.sample(
+                    &mut placement,
+                    &rotations,
+                    Some(frame),
+                    now + Duration::from_secs_f32(i as f32 / fps as f32),
+                    &ground,
+                );
+                f.check_contacts(&placement, &pose, frame, &ground, [true; 2]);
+                let world = f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+                let knees = ["mKneeLeft", "mKneeRight"].map(|name| world[f.rig.names[name]].w_axis.truncate());
+                assert!(knees[0].y > 0.02 && knees[1].y < -0.02, "knees crossed near extension: {knees:?}");
+                if let Some(previous) = previous {
+                    for side in 0..2 {
+                        assert!(knees[side].distance(previous[side]) < 0.01, "knee direction flipped at {fps} fps");
+                    }
+                }
+                previous = Some(knees);
+            }
+        }
     }
 
     #[test]
@@ -713,7 +906,12 @@ mod tests {
     #[test]
     fn grounding_preserves_the_animated_knee_plane_and_ankle_roll() {
         let (hip, knee, ankle) = (Vec3::Z, Vec3::new(-0.2, 0.0, 0.5), Vec3::ZERO);
-        let (a, _, pole) = solve(hip, knee, ankle, Vec3::new(0.0, 0.0, 0.15), Vec3::X).expect("valid chain");
+        let guide = BendGuide {
+            neutral: Vec3::ZERO,
+            forward: Vec3::X,
+            side: None,
+        };
+        let (a, _, pole) = solve(hip, knee, ankle, Vec3::new(0.0, 0.0, 0.15), guide).expect("valid chain");
         assert!(
             pole.x < 0.0 && (hip + a * (knee - hip)).x < 0.0,
             "authored backwards bend was forced forwards"
@@ -939,6 +1137,12 @@ mod tests {
                 );
                 let planted = [placement.feet[0].planted, placement.feet[1].planted];
                 f.check_contacts(&placement, &pose, frame, &ground, planted);
+                let world = f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+                let knees = ["mKneeLeft", "mKneeRight"].map(|name| world[f.rig.names[name]].w_axis.y);
+                assert!(
+                    knees[0] > 0.02 && knees[1] < -0.02,
+                    "knees crossed at toe-off/replanting: {knees:?}"
+                );
                 if i > fps {
                     assert!(
                         pose.pelvis.distance(previous_pelvis) < 0.8 / fps as f32,
@@ -1010,6 +1214,47 @@ mod tests {
                         .map(|point| point.z - f.floor)
                         .fold(f32::INFINITY, f32::min);
                     assert!(gap > height * 0.7, "the slow lift lost its clearance: {gap} at {fps} fps");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_turning_in_place_releases_anchors_before_crossing_ankles_and_knees() {
+        let f = Fixture::new();
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        let now = Instant::now();
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(f.floor),
+                normal: Vec3::Z,
+            })
+        };
+        for fps in [30, 60, 144] {
+            for sign in [-1.0, 1.0] {
+                let mut placement = Placement::default();
+                for i in 0..=fps * 4 {
+                    let angle = sign * i as f32 / (fps * 4) as f32 * std::f32::consts::TAU;
+                    let mut frame = f.frame(0.25);
+                    frame.to_world = Mat4::from_rotation_translation(Quat::from_rotation_z(angle), Vec3::Z * 0.25);
+                    let pose = f.sample(
+                        &mut placement,
+                        &f.rig.local_rot,
+                        Some(frame),
+                        now + Duration::from_secs_f32(i as f32 / fps as f32),
+                        &ground,
+                    );
+                    f.check_contacts(&placement, &pose, frame, &ground, [true; 2]);
+                    let world = f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+                    for (side, sign) in [("Left", 1.0), ("Right", -1.0)] {
+                        let ankle = f.rig.names[&format!("mAnkle{side}")];
+                        let knee = f.rig.names[&format!("mKnee{side}")];
+                        assert!(
+                            world[ankle].w_axis.y * sign >= rest[ankle].w_axis.y * sign * 0.5 - 1e-4,
+                            "a planted ankle crossed during a {angle} radian turn at {fps} fps"
+                        );
+                        assert!(world[knee].w_axis.y * sign > 0.015, "a knee crossed during a turn at {fps} fps");
+                    }
                 }
             }
         }

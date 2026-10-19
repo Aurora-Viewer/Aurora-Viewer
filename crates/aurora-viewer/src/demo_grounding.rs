@@ -83,12 +83,18 @@ pub fn lifting_animation() -> aurora_assets::Animation {
     anim
 }
 
+fn origin(mode: &str) -> Vec3 {
+    // A frontal camera east of the usual fixture sits inside the plaza deck.
+    let x = if mode.contains("-front") { 122.0 } else { 128.0 };
+    Vec3::new(x, 128.0, super::floor_at(x, 128.0))
+}
+
 pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode: &str) {
     if frame != 600 {
         return;
     }
     let landing = mode.starts_with("landing");
-    let p = Vec3::new(128.0, 128.0, super::floor_at(128.0, 128.0));
+    let p = origin(mode);
     if frame == 600 {
         let rig = scene.avatar_lib.rig.clone();
         for (id, mut clip) in super::link::animations() {
@@ -181,7 +187,7 @@ fn half_height(world: &crate::world::World, scene: &Scene) -> f32 {
 /// Exact top planes of this fixture's two boxes or rotated box. Movement
 /// samples the same geometry as IK; the rest of the demo keeps its own floor.
 pub fn surface_height(mode: &str, position: Vec3) -> f32 {
-    let origin = Vec3::new(128.0, 128.0, super::floor_at(128.0, 128.0));
+    let origin = origin(mode);
     let d = position - origin;
     let terrain = super::floor_at(position.x, position.y);
     if d.x.abs() > 1.5 {
@@ -337,6 +343,32 @@ mod tests {
         let top = at.with_z(surface_height("slope", at));
         let normal = Quat::from_rotation_x(0.3) * Vec3::Z;
         assert!(((top - p - Vec3::Z * 0.15).dot(normal) - 0.15).abs() < 1e-4);
+    }
+
+    #[test]
+    fn grounding_demo_front_camera_fixture_matches_its_rendered_platforms_and_physics() {
+        let (mut world, mut scene) = fixture();
+        let mode = "steps-reach-front";
+        tick(&mut world, &mut scene, 600, mode);
+        assert!(
+            (world.agent.position.x - 122.0).abs() < 1e-4,
+            "frontal camera must stay clear of the plaza deck"
+        );
+        for local_id in [9380, 9381] {
+            let platform = world
+                .objects
+                .iter()
+                .find(|(_, object)| object.key.local_id == local_id)
+                .map(|(_, object)| object)
+                .expect("step");
+            let top = platform.position.z + platform.scale.z * 0.5;
+            assert!(
+                (surface_height(mode, platform.position) - top).abs() < 1e-4,
+                "local physics missed the moved platform"
+            );
+        }
+        let floor = surface_height(mode, world.agent.position) + half_height(&world, &scene);
+        assert!((world.agent.position.z - floor).abs() < 1e-4);
     }
 
     #[test]

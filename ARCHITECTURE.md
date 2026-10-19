@@ -158,7 +158,8 @@ human's request. It analyses the authored pose after animation priority
 blending; corrected rotations never feed back into the next authored pose.
 Per-foot height, vertical velocity and contact hysteresis distinguish stance
 from swing. Slow contacts acquire a bounded world-space anchor; moving feet
-retain their source motion. Four sole corners account for heels, toes and
+retain their source motion. A turn releases a plant before it crosses the
+source stance envelope, also constraining any fading offset. Four sole corners account for heels, toes and
 foot width, using the existing neutral shoe/hover calibration when available.
 Free feet retain authored clearance and heel/toe roll over the terrain;
 an 80 ms swing look-ahead anticipates stair edges. Stance targets use world
@@ -170,7 +171,13 @@ collision projection, so smoothing cannot blend a foot back through a floor.
 Both leg reach spheres constrain the smallest necessary pelvis displacement
 (bounded to 45 cm), anticipating the support beneath a swing foot so the
 body does not rise at toe-off and snap down on replanting. Analytic two-bone IK
-preserves segment lengths and the authored knee bend plane. Sole orientation preserves authored heel/toe rolls
+preserves segment lengths. Its bend guide subtracts the shaped neutral knee
+bias (the rest legs taper inward) before reading authored articulation; near
+extension it uses anatomical forward with a continuous confidence transition.
+An outward half-space bounds added medial bending to the source hip, knee and
+ankle target envelope. This constraint acts on the two-bone knee circle, so
+avoiding new knee crossings cannot move the ankle off its support or stretch
+the leg. Sole orientation preserves authored heel/toe rolls
 while adapting the support slope. Priority 5/6 legs or pelvis, control avatars,
 seating, flight, airborne motions and import previews keep control. Editing
 pauses the placement clock, resets/teleports discard anchors, and disabling

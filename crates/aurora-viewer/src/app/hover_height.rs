@@ -10,7 +10,8 @@ impl App {
                     self.panels.chat = false;
                     self.panels.people = false;
                     self.panels.perf = false;
-                    self.camera.demo_orbit(1.0, 0.45, Some(5.0), &self.settings.camera);
+                    let yaw = if mode.contains("-front") { std::f32::consts::PI } else { 1.0 };
+                    self.camera.demo_orbit(yaw, 0.45, Some(5.0), &self.settings.camera);
                 }
             }
             let mode = std::env::var("AURORA_DEMO_HOVER_HEIGHT").ok();

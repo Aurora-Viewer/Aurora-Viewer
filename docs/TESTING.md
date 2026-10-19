@@ -1456,6 +1456,10 @@ without stretching the legs. Compare `steps-reach-off`, then walk across the
 seam and jump with the normal controls. In `steps-reach-lift`, the pelvis must
 stay prepared for the lower foot's return rather than popping up and down
 with each swing. Inspect
+from the front with `steps-reach-front` and `steps-reach-front-lift` (the
+fixture moves west to keep the frontal camera outside the plaza deck): each
+knee must bend forward on its own side, including when either step is higher,
+and must not turn a nearly straight leg inward across the other knee. Inspect
 each foot's height and orientation, knee bending, and the recovery's return
 upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
 without restarting: corrections enter and leave smoothly, and should behave
