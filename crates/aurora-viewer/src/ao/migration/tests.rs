@@ -56,7 +56,30 @@ fn manual_migration_adds_only_the_chosen_set_and_never_restarts_automatic_copyin
     assert_eq!((new.sits, new.smart, new.mouselook), (old.sits, old.smart, old.mouselook));
     assert!(!new.default, "the native default is not replaced");
     assert!(native.sets.iter().any(|s| s.id == selected && s.default));
-    assert!(new.states.keys().all(|state| !state.swimming()));
+    assert_eq!(new.swimming_slots(), State::SWIMMING.len());
+    assert!(
+        State::LEGACY_VIEWER_SWIMMING
+            .into_iter()
+            .all(|state| new.swimming_animation(state).is_some())
+    );
+    assert!(new.swimming_ready());
+    for (target, donor) in [
+        (State::UnderwaterFloating, State::Floating),
+        (State::UnderwaterSwimming, State::SwimmingForward),
+        (State::WaterFlightExit, State::FlyingUp),
+        (State::WaterShoreExit, State::Jumping),
+        (State::WaterDiveJump, State::Flying),
+        (State::WaterDiveEntry, State::SwimmingDown),
+        (State::WaterCannonball, State::Crouching),
+        (State::WaterEntry, State::Falling),
+    ] {
+        assert_eq!(new.states[&target].cycle, old.states[&donor].cycle);
+        assert_eq!(
+            new.swimming_animation(target).expect("completed").original,
+            old.states[&donor].steps[0].members[0].original
+        );
+        assert_ne!(new.states[&target].folder, old.states[&donor].folder);
+    }
     for (state, config) in &old.states {
         let after = &new.states[state];
         assert_eq!(after.cycle, config.cycle);
@@ -82,6 +105,31 @@ fn manual_migration_adds_only_the_chosen_set_and_never_restarts_automatic_copyin
     }
     assert_eq!(snapshot(&inv, fs), untouched_fs);
     assert_eq!(native.sets.len(), 2);
+}
+
+#[test]
+fn missing_flight_ascent_keeps_the_migrated_swimming_gate_locked() {
+    let (mut inv, mut native, mut migration, owner, _) = fixture();
+    let source = migration.selected;
+    let folder = migration.source.sets.iter().find(|s| s.id == source).expect("source").states[&State::FlyingUp].folder;
+    inv.folders
+        .get_mut(&source)
+        .expect("source set")
+        .children
+        .retain(|id| *id != folder);
+    inv.generation = inv.generation.wrapping_add(1);
+    migration.refresh(&mut inv, true);
+    migration.name = "Partial migration".into();
+    let (change, id) = migration.plan(&inv, &native).expect("partial sets can migrate");
+    let reply = actions::demo_mutate(&mut inv, owner, change).expect("acknowledgement");
+    let id = reply.created.get(&id).copied().unwrap_or(id);
+    native.invalidate();
+    native.refresh(&mut inv);
+    let set = native.selected(id).expect("migrated");
+    assert_eq!(set.core_swimming_slots(), 7);
+    assert!(set.swimming_animation(State::SwimmingUp).is_some());
+    assert!(set.swimming_animation(State::WaterFlightExit).is_none());
+    assert!(!native.swimming_ready(id));
 }
 
 #[test]
@@ -118,16 +166,18 @@ fn a_missing_selected_source_never_falls_back_to_a_different_firestorm_set() {
 
 #[test]
 fn unresolved_source_originals_block_manual_copy_until_fetched() {
-    let (mut inv, native, mut migration, _, _) = fixture();
-    let item = migration.source.sets[0].states[&State::Standing].steps[0].members[0].original;
-    let original = inv.items.remove(&item).expect("original");
-    inv.generation = inv.generation.wrapping_add(1);
-    migration.refresh(&mut inv, true);
-    migration.name = "Complete copy".into();
-    assert!(migration.source.missing.contains(&item));
-    assert!(migration.plan(&inv, &native).is_err());
-    inv.add_items(vec![original]);
-    migration.refresh(&mut inv, true);
-    assert!(migration.source.missing.is_empty());
-    assert!(migration.plan(&inv, &native).is_ok());
+    for state in [State::Standing, State::SwimmingForward] {
+        let (mut inv, native, mut migration, _, _) = fixture();
+        let item = migration.source.sets[0].states[&state].steps[0].members[0].original;
+        let original = inv.items.remove(&item).expect("original");
+        inv.generation = inv.generation.wrapping_add(1);
+        migration.refresh(&mut inv, true);
+        migration.name = "Complete copy".into();
+        assert!(migration.source.missing.contains(&item));
+        assert!(migration.plan(&inv, &native).is_err());
+        inv.add_items(vec![original]);
+        migration.refresh(&mut inv, true);
+        assert!(migration.source.missing.is_empty());
+        assert!(migration.plan(&inv, &native).is_ok());
+    }
 }

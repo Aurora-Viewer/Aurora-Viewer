@@ -97,13 +97,18 @@ pub fn preferences(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferen
 }
 
 pub fn toolbar(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences) {
+    init_filters(st, prefs);
+    ui.horizontal_wrapped(|ui| {
+        filter_actions(ui, p, st);
+    });
+}
+
+/// A window starts with the filters kept by default.
+pub fn init_filters(st: &mut InventoryUi, prefs: &InventoryPreferences) {
     if !st.filters_initialized {
         st.filters.clone_from(&prefs.filter_defaults);
         st.filters_initialized = true;
     }
-    ui.horizontal_wrapped(|ui| {
-        filter_actions(ui, p, st);
-    });
 }
 
 fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
@@ -143,25 +148,7 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inventor
     ui.horizontal(|ui| {
         let selector_width = 112.0_f32.min(ui.available_width() * 0.4);
         let field_width = (ui.available_width() - selector_width - ui.spacing().item_spacing.x).max(40.0);
-        let clear_shown = !st.search.is_empty() || st.filters.active() || st.links_filter.is_some();
-        let tip = if st.links_filter.is_some() {
-            aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
-        } else {
-            aurora_i18n::tr!("common-clear")
-        };
-        let (field, cleared) = super::tree::search_field(ui, p, &mut st.search, hint, field_width, clear_shown, tip);
-        super::clipboard::demo_search(&field, st);
-        if cleared {
-            if st.links_filter.take().is_some() {
-                if let Some(filters) = st.saved_filters.take() {
-                    st.filters = filters;
-                }
-            } else {
-                st.search.clear();
-                st.filters = Filters::default();
-                st.saved_filters = None;
-            }
-        }
+        search_input(ui, p, st, hint, field_width);
         egui::ComboBox::from_id_salt("inventory_search_field")
             .width(selector_width)
             .truncate()
@@ -188,6 +175,37 @@ pub fn search(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inventor
                 "ui-inventory-controls-case-insensitive-search-combines-terms-quotes-search-for-an"
             ));
     });
+    after_search(inv, st, searching);
+}
+
+/// The filter field and its clear action: a search, the filters, or the
+/// mode listing an item's links. Returns the field.
+pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: &str, width: f32) -> egui::Response {
+    let clear_shown = !st.search.is_empty() || st.filters.active() || st.links_filter.is_some();
+    let tip = if st.links_filter.is_some() {
+        aurora_i18n::tr!("ui-inventory-controls-exit-linked-mode")
+    } else {
+        aurora_i18n::tr!("common-clear")
+    };
+    let (field, cleared) = super::tree::search_field(ui, p, &mut st.search, hint, width, clear_shown, tip);
+    super::clipboard::demo_search(&field, st);
+    if cleared {
+        if st.links_filter.take().is_some() {
+            if let Some(filters) = st.saved_filters.take() {
+                st.filters = filters;
+            }
+        } else {
+            st.search.clear();
+            st.filters = Filters::default();
+            st.saved_filters = None;
+        }
+    }
+    field
+}
+
+/// Once a search is emptied (`searching` it was before the field), the
+/// plain list goes back to where it was, and to the selection.
+pub fn after_search(inv: &Inventory, st: &mut InventoryUi, searching: bool) {
     if searching && st.search.trim().is_empty() {
         // The plain list shares its scroll area with the results: it goes back
         // to its place from before the search, unless a selection it shows is

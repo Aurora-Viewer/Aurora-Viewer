@@ -37,6 +37,20 @@ impl Scene {
         bounds.iter().all(|v| v.is_finite()).then_some(bounds)
     }
 
+    /// Every prim of the linkset has its final geometry (or gave up on it).
+    /// At login the first prims to arrive can be panels the HUD parks off
+    /// screen: their bounds alone would push the whole HUD aside (#626).
+    pub fn hud_loaded(&self, world: &World, idx: usize) -> bool {
+        world.hud_root(idx).is_some_and(|root| {
+            crate::build::family(world, root).into_iter().all(|idx| {
+                self.gpu
+                    .get(idx)
+                    .and_then(|g| g.geom)
+                    .is_some_and(|key| self.geom_ready(&key).is_some() || self.geom_failed(&key))
+            })
+        })
+    }
+
     pub fn build_huds(&mut self, world: &World, size: [u32; 2], visible: bool) {
         self.lists.hud_view = None;
         self.lists.hud_opaque.clear();
@@ -201,6 +215,50 @@ mod tests {
         assert_eq!(world.hud_scale(world.objects.index_of_uuid(&world.agent_id).unwrap()), 1.0);
         let foreign = world.objects.iter().find(|(_, o)| o.key.local_id == 8241).unwrap().0;
         assert_eq!(world.hud_scale(foreign), 1.0);
+    }
+
+    #[test]
+    fn a_hud_is_measured_for_the_accessibility_offset_only_once_every_prim_has_geometry() {
+        let (_, mut scene, ..) = crate::scene::picking::tests::scene_with_two_objects();
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        for ev in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(ev);
+        }
+        let root = world.objects.index_of_uuid(&crate::demo::hud::object(31, false).full_id).unwrap();
+        let family = crate::build::family(&world, root);
+        let child = family[1];
+        let (ready, pending, failed) = (
+            GeomKey::Prim { hash: 0, lod: 0 },
+            GeomKey::Prim { hash: 1, lod: 0 },
+            GeomKey::Prim { hash: 2, lod: 0 },
+        );
+        for (key, state) in [(pending, GeomState::Pending), (failed, GeomState::Failed)] {
+            scene.geoms.insert(
+                key,
+                GeomEntry {
+                    refs: 1,
+                    zero_since: 0,
+                    state,
+                },
+            );
+        }
+        scene.gpu.resize_with(scene.gpu.len().max(root.max(child) + 1), Default::default);
+        scene.gpu[root].geom = Some(ready);
+        scene.gpu[child].geom = None;
+        // The child is not synced yet, then waits for its geometry: the
+        // root alone is not the HUD.
+        assert!(!scene.hud_loaded(&world, root));
+        scene.gpu[child].geom = Some(pending);
+        assert!(!scene.hud_loaded(&world, child));
+        scene.gpu[child].geom = Some(failed);
+        assert!(
+            scene.hud_loaded(&world, root),
+            "a prim that will never load does not hold the HUD back"
+        );
+        scene.gpu[child].geom = Some(ready);
+        assert!(scene.hud_loaded(&world, child));
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        assert!(!scene.hud_loaded(&world, avatar));
     }
 
     #[test]

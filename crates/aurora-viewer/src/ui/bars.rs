@@ -40,6 +40,8 @@ pub enum BarAction {
     TeleportHome,
     ToggleFly,
     ToggleMoveLock,
+    ToggleWaterWalk,
+    ToggleSwimming,
     MoveLockOptions,
     MovementEnhancer,
     ToggleMouselook,
@@ -1405,7 +1407,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "view" => panels.camera_controls = !panels.camera_controls,
         "fly" => return BarAction::ToggleFly,
         "movelock" | "move_lock" => return BarAction::ToggleMoveLock,
-        "movement" => return BarAction::MovementEnhancer,
+        "water_walk" => return BarAction::ToggleWaterWalk,
+        "movement" => return BarAction::ToggleSwimming,
         "mouselook" => return BarAction::ToggleMouselook,
         "sit" => return BarAction::SitGround,
         "home" => return BarAction::TeleportHome,
@@ -2129,11 +2132,13 @@ pub(crate) fn toolbar_row(
             continue;
         }
         let active = if b.command == "ao" {
-            row.ao_active
+            row.ao_active || toolbar.ao_quick.open
         } else if matches!(b.command.as_str(), "movelock" | "move_lock") {
             toolbar.movelock_active
         } else if b.command == "movement" {
             toolbar.movement_active
+        } else if b.command == "water_walk" {
+            toolbar.water_walk_active
         } else {
             command_active(&b.command, panels, row.flying, row.seated, row.mouselook)
         };
@@ -2194,6 +2199,10 @@ pub(crate) fn toolbar_row(
             if let Some(a) = fav {
                 *action = BarAction::Favorite(a);
             }
+            continue;
+        }
+        if b.command == "ao" {
+            toolbar.ao_quick.anchor(&response, look(b).opens);
             continue;
         }
         if response.clicked() {
@@ -2699,6 +2708,16 @@ mod tests {
         ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("conversations", "minimized")), false));
         run_command(&ctx, "conversations", &mut panels);
         assert!(!panels.chat);
+    }
+
+    #[test]
+    fn water_toolbar_buttons_dispatch_mode_toggles_without_opening_the_ao() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        panels.ao = false;
+        assert!(matches!(run_command(&ctx, "movement", &mut panels), BarAction::ToggleSwimming));
+        assert!(matches!(run_command(&ctx, "water_walk", &mut panels), BarAction::ToggleWaterWalk));
+        assert!(!panels.ao);
     }
 
     /// The texts and filled circles a button paints with its unread count.

@@ -1,7 +1,7 @@
-// Aurora LSL Bridge v1.21. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.27. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 string FOLDER = "__FOLDER__";
-string VERSION = "1.21";
+string VERSION = "1.27";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -22,6 +22,7 @@ integer gMode;
 vector gParameters;
 float gDepth;
 float gSurfaceSpeed;
+float gNativeDiveUntil;
 vector gEntryDrift;
 integer gHovering;
 vector gHoverAnchor;
@@ -62,6 +63,9 @@ float gRunPower;
 integer gRunRestarts;
 integer gRunState;
 integer gRunPushes;
+integer gWaterJumpAction;
+integer gWaterJumpFinished;
+float gWaterJumpStarted;
 
 clearRun(integer reason) {
     if (gRunSpeed > 0.0 && gRunRestarts < 2147483647) ++gRunRestarts;
@@ -104,7 +108,8 @@ syncControls() {
     // Only swimming intercepts native translation. Run/flight keep the
     // normal controls and animations, as in the supplied movement script.
     // Movelock observes them with llTakeControls(..., TRUE, TRUE), as Firestorm.
-    integer capture = !gSeated && (gMode == 3 || gMode == 4 || gMode == 6 || gMode >= 7);
+    integer capture = !gSeated && (gMode == 3 || gMode == 4 || gMode == 6
+        || gMode == 7 || gMode == 8 || gMode == 9 || gMode == 10 || gMode == 13);
     if (capture != gCaptured && (llGetPermissions() & PERMISSION_TAKE_CONTROLS)) {
         // One motor owns swimming/flight. Still receive control events, so
         // releasing keys stops a delayed HTTP command immediately.
@@ -180,6 +185,7 @@ releasePass() {
     }
 }
 releaseMotion() {
+    if (gMode == 11 || gMode == 12) gWaterJumpFinished = TRUE;
     clearRun(0);
     integer finishedPass = gMode == 5 && !gPassFinished;
     if (gMode == 5) {
@@ -196,6 +202,7 @@ releaseMotion() {
     gEntryDrift = ZERO_VECTOR;
     gSurfaceSpeed = 0.0;
     gHovering = FALSE;
+    gNativeDiveUntil = 0.0;
     llSetForce(ZERO_VECTOR, FALSE);
     if (!gLocked) llStopMoveToTarget();
     // Publish the final result even when no subsequent HTTP poll is due.
@@ -239,15 +246,33 @@ steer(vector position, vector target, float tau) {
     }
     llMoveToTarget(target, tau);
 }
+// The already captured control edge reaches the simulator before an HTTP
+// command round trip. Retain the same bounded goal and command watchdog.
+surfaceDive(integer level, integer edge) {
+    if (gMode != 3 || !(level & edge & CONTROL_DOWN) || (level & CONTROL_UP)
+        || (llGetAgentInfo(gOwner) & AGENT_SITTING) || llGetTime() - gMotionCommand >= 1.5) return;
+    if (llWater(ZERO_VECTOR) - llGround(ZERO_VECTOR) <= gParameters.y * 0.55) return;
+    float depth = gParameters.y * 0.5 + 1.1;
+    if (depth < 1.8) depth = 1.8;
+    gMode = 7;
+    gParameters.z = -depth;
+    gSurfaceSpeed = 0.0;
+    gEntryDrift = ZERO_VECTOR;
+    gHovering = FALSE;
+    gNativeDiveUntil = llGetTime() + 1.0;
+    gTick = llGetTime() - 0.1;
+    llStopMoveToTarget();
+    syncMotionLock();
+}
 applyMotion() {
     if (gMode != 1) clearRun(0);
-    if (gMode != 8 || gLocked) gSurfaceSpeed = 0.0;
+    if ((gMode != 7 && gMode != 8) || gLocked) gSurfaceSpeed = 0.0;
     if (!gMode) return;
     integer agentInfo = llGetAgentInfo(gOwner);
     if ((agentInfo & AGENT_SITTING) || llGetTime() - gMotionCommand >= 1.5
-        || (gMode == 4 && llGetTime() - gExitStarted >= 0.35)
+        || (gMode == 4 && llGetTime() - gExitStarted >= 0.65)
         || (gMode == 5 && llGetTime() - gPassStarted >= 1.2)
-        || (gMode == 9 && llGetTime() - gJumpStarted >= 1.2)) {
+        || (gMode == 9 && llGetTime() - gJumpStarted >= 2.4)) {
         if (gMode == 5 && !(agentInfo & AGENT_SITTING)) {
             // A delayed callback may find the avatar already across. Report
             // the observed result, even if the motor deadline elapsed first.
@@ -266,11 +291,32 @@ applyMotion() {
         clearRun(3); return;
     }
     vector position = llGetPos();
+    if (gMode == 11 || gMode == 12) {
+        // Viewer predicts intention; LSL observes the actual native jump.
+        // No force, target, flight flag or captured control in these modes.
+        float lifetime = 5.0;
+        if (gMode == 12) lifetime = 120.0;
+        if ((gMode == 11 && (agentInfo & AGENT_FLYING)) || llGetTime() - gWaterJumpStarted >= lifetime) {
+            gWaterJumpFinished = TRUE;
+            releaseMotion(); return;
+        }
+        gRunState = 12;
+        if (agentInfo & AGENT_IN_AIR) gRunState = 13;
+        if (position.z - gParameters.y * 0.35 <= llWater(ZERO_VECTOR) + 0.03) gRunState = 14;
+        return;
+    }
     if (gMode == 9) {
         if (llVecDist(position, gJumpTarget) < 0.2) { releaseMotion(); return; }
-        if (position.z >= gJumpPeak - 0.1 || llGetTime() - gJumpStarted >= 0.65) gJumpRisen = TRUE;
+        // Do not begin crossing until the feet have cleared the actual lip.
+        // A blocked ascent expires rather than steering into the platform.
+        if (position.z >= gJumpPeak - 0.1) gJumpRisen = TRUE;
         vector goal = gJumpTarget;
         if (!gJumpRisen) goal = <position.x, position.y, gJumpPeak>;
+        else {
+            vector across = gJumpTarget - position;
+            across.z = 0.0;
+            if (llVecMag(across) > 0.2) goal.z = gJumpPeak;
+        }
         steer(position, position + bounded(goal - position, 1.2), 0.16);
         return;
     }
@@ -403,22 +449,28 @@ applyMotion() {
         return;
     }
     if (gMode == 7 || gMode == 8 || gMode == 10) {
-        vector goal = position + direction * speed * 0.2;
+        float response = 0.2;
+        if (gMode == 7) response = 0.12;
+        vector goal = position + direction * speed * response;
         goal.z = llWater(ZERO_VECTOR) + gParameters.z;
-        if (gMode == 8) {
-            // Surface return is gentler than horizontal swimming: ramp its
-            // vertical command and ease off before reaching flotation.
+        float maximum = speed * response;
+        if (gMode == 7 || gMode == 8) {
+            // Descend promptly and brake near the goal. Returning to the
+            // surface also ramps speed to avoid a sudden vertical launch.
             float error = goal.z - position.z;
             float limit = speed;
-            if (limit > 2.0) limit = 2.0;
-            float wanted = error * 1.2;
+            if (limit < 4.0) limit = 4.0;
+            if (limit > 6.0) limit = 6.0;
+            float wanted = error * 5.0;
             if (wanted > limit) wanted = limit;
             if (wanted < -limit) wanted = -limit;
-            float change = 1.5 * dt;
-            if (wanted > gSurfaceSpeed + change) wanted = gSurfaceSpeed + change;
-            if (wanted < gSurfaceSpeed - change) wanted = gSurfaceSpeed - change;
+            float change = 8.0 * dt;
+            if (gMode == 8) {
+                if (wanted > gSurfaceSpeed + change) wanted = gSurfaceSpeed + change;
+                if (wanted < gSurfaceSpeed - change) wanted = gSurfaceSpeed - change;
+            }
             gSurfaceSpeed = wanted;
-            float stepZ = wanted * 0.2;
+            float stepZ = wanted * response;
             // Entry momentum can carry the body past the goal. Never place
             // the next vertical target beyond it while the ramp catches up.
             if (error >= 0.0) {
@@ -429,10 +481,22 @@ applyMotion() {
                 if (stepZ < error) stepZ = error;
             }
             goal.z = position.z + stepZ;
+            // Preserve vertical authority while swimming horizontally too.
+            maximum = llSqrt(speed * speed + limit * limit) * response;
         }
-        float maximum = speed * 0.2;
         if (maximum > 1.6) maximum = 1.6;
-        steer(position, position + bounded(goal - position, maximum), 0.2);
+        steer(position, position + bounded(goal - position, maximum), response);
+        return;
+    }
+    if (gMode == 13) {
+        float water = llWater(ZERO_VECTOR);
+        if (llGround(ZERO_VECTOR) >= water - 0.06 || (agentInfo & AGENT_FLYING)) { releaseMotion(); return; }
+        // Crouching retains the same waterline support. React to captured
+        // controls before the next viewer command, including always-run.
+        if ((gLevel & CONTROL_DOWN) && speed > 1.2) speed = 1.2;
+        vector target = position + direction * speed * 0.2;
+        target.z = water + gParameters.y * 0.5;
+        steer(position, position + bounded(target - position, 1.6), 0.2);
         return;
     }
     if (gMode == 3 || gMode == 6 || gMode == 4) {
@@ -667,6 +731,7 @@ default {
             gMoving = moving;
             if (gEnabled) { syncMotionLock(); report(); }
         }
+        surfaceDive(level, edge);
         if (gMode) applyMotion();
         syncControls();
     }
@@ -751,6 +816,22 @@ default {
                 vector parameters = <llList2Float(parts, 6), llList2Float(parts, 7), llList2Float(parts, 8)>;
                 integer action = llList2Integer(parts, 9);
                 integer previousMode = gMode;
+                // An older in-flight surface refresh cannot undo the key edge.
+                // Explicit return/release commands always take precedence.
+                if (mode == 3 && gMode == 7 && llGetTime() < gNativeDiveUntil) {
+                    mode = 7;
+                    parameters.z = gParameters.z;
+                } else gNativeDiveUntil = 0.0;
+                if (mode == 11 || mode == 12) {
+                    if (action != gWaterJumpAction) {
+                        gWaterJumpAction = action;
+                        gWaterJumpStarted = llGetTime();
+                        gWaterJumpFinished = FALSE;
+                    }
+                    if (action <= 0 || gWaterJumpFinished || parameters.x != 0.0 || parameters.z != 0.0
+                        || parameters.y < 0.6 || parameters.y > 3.0) mode = 0;
+                }
+                if ((previousMode == 11 || previousMode == 12) && mode != 11 && mode != 12) gWaterJumpFinished = TRUE;
                 if (mode == 9) {
                     if (action != gJumpAction) {
                         gJumpAction = action;
@@ -782,7 +863,7 @@ default {
                 }
                 gMode = mode;
                 gParameters = parameters;
-                if (gMode < 0 || gMode > 10) releaseMotion();
+                if (gMode < 0 || gMode > 13) releaseMotion();
                 gMotionCommand = llGetTime();
                 syncMotionLock();
                 if (gMode) applyMotion();

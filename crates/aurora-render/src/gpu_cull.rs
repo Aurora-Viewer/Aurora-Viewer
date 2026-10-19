@@ -123,6 +123,8 @@ pub mod frame_flags {
     pub const SHADOW_ALPHA_ALL: u32 = 128;
     /// Projector shadow map 0 is drawn (map 1: the next bit).
     pub const SPOT: u32 = 256;
+    /// Exterior refraction shares the water bin, with a union of frustums.
+    pub const WATER_AIR: u32 = 1024;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -292,6 +294,7 @@ pub fn world_spheres(objects: &[CullObject], palettes: &[[[f32; 4]; 4]], binds: 
 pub struct CullFrame {
     pub planes: [[f32; 4]; 6],
     pub water: [[f32; 4]; 6],
+    pub water_air: [[f32; 4]; 6],
     pub mirror: [[f32; 4]; 6],
     pub probe: [[f32; 4]; 6],
     /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
@@ -338,6 +341,7 @@ impl CullFrame {
         CullFrame {
             planes: view.planes.map(|p| p.to_array()),
             water: planes(water),
+            water_air: planes(Mat4::IDENTITY),
             mirror: planes(mirror),
             probe: planes(probe),
             // (a depth of 0 to 1: the fifth plane is the far one, and
@@ -462,7 +466,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     }
     let solid = (pass::OPAQUE..=pass::MASK_2S).contains(&p);
     if reflects && solid {
-        if fl & frame_flags::WATER != 0 && sphere_in(&frame.water, c, r) {
+        if (fl & frame_flags::WATER != 0 && sphere_in(&frame.water, c, r))
+            || (fl & frame_flags::WATER_AIR != 0 && sphere_in(&frame.water_air, c, r))
+        {
             m |= 1 << BIN_REFL_WATER;
         }
         if fl & frame_flags::MIRROR != 0 && sphere_in(&frame.mirror, c, r) {
@@ -1249,16 +1255,18 @@ mod tests {
         assert_eq!(wgsl_fields(src, "SkinBind"), ["inverse_bind", "joint"]);
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
-        // uniform layout: (4 + 2) x 6 planes, 3 matrices, 3 x 12 planes, 4 vectors
+        // Main, water reflection/exterior, mirror, probe and spot frusta;
+        // then 3 matrices, 3 x 12 shadow planes and 4 vectors.
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            (4 + SPOT_SHADOWS) * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (5 + SPOT_SHADOWS) * 6 * 16 + 3 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
             [
                 "planes",
                 "water",
+                "water_air",
                 "mirror",
                 "probe",
                 "spots",
@@ -1341,6 +1349,7 @@ mod tests {
             ("F_SHADOWS", frame_flags::SHADOWS),
             ("F_REFLECTIONS", frame_flags::REFLECTIONS),
             ("F_WATER", frame_flags::WATER),
+            ("F_WATER_AIR", frame_flags::WATER_AIR),
             ("F_MIRROR", frame_flags::MIRROR),
             ("F_PROBE", frame_flags::PROBE),
         ] {
@@ -1456,6 +1465,7 @@ mod tests {
         CullFrame {
             planes,
             water: planes,
+            water_air: planes,
             mirror: planes,
             probe: planes,
             spots: [planes; SPOT_SHADOWS],
@@ -1466,6 +1476,31 @@ mod tests {
             sizes: [0, 4, 0, frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER],
             groups: [0; 4],
         }
+    }
+
+    #[test]
+    fn water_bin_includes_the_exterior_frustum_without_main_visibility() {
+        let mut frame = frame_for_tests();
+        let objects = [CullObject {
+            sphere: [-10.0, 0.0, 0.0, 1.0],
+            flags: object_flags::ACTIVE,
+            ..CullObject::NONE
+        }];
+        let faces = [CullFace {
+            index_count: 30,
+            object: 0,
+            bits: pass::OPAQUE | FACE_FIRST,
+            ..CullFace::NONE
+        }];
+        let spheres = world_spheres(&objects, &[], &[], &[]);
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 0).0 & (1 << BIN_REFL_WATER), 0);
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, -Vec3::X, Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.5, 0.1);
+        frame.water_air = view_planes(proj * view).map(|p| p.to_array());
+        frame.sizes[3] |= frame_flags::WATER_AIR;
+        let (mask, visible) = face_bins(&frame, &faces, &objects, &spheres, 0);
+        assert_ne!(mask & (1 << BIN_REFL_WATER), 0, "offscreen exterior must reach its render pass");
+        assert!(!visible, "exterior visibility must not make the object visible in the main view");
     }
 
     #[test]
@@ -1799,6 +1834,7 @@ mod tests {
         frame.sizes[3] = frame_flags::SHADOWS
             | frame_flags::REFLECTIONS
             | frame_flags::WATER
+            | frame_flags::WATER_AIR
             | frame_flags::PROBE
             | frame_flags::OCCLUSION
             | frame_flags::SHADOW_STATS;
@@ -1810,6 +1846,13 @@ mod tests {
         // of a finer one left out of the next
         frame.cascades = [0.1, 0.04, 0.02].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
         frame.dist[3] = 2048.0;
+        // Exterior and reflection share one draw bin but retain independent
+        // frusta. Include objects behind the main/reflection camera as well.
+        frame.water_air = view_planes(
+            glam::camera::rh::proj::directx::perspective_infinite_reverse(1.8, 1.6, 0.01)
+                * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, -Vec3::Y, Vec3::Z),
+        )
+        .map(|p| p.to_array());
         frame.probe = view_planes(
             glam::camera::rh::proj::directx::perspective_infinite_reverse(1.5, 1.0, 0.1)
                 * glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Y, Vec3::Z),

@@ -54,6 +54,8 @@ pub mod texture_importance;
 mod texture_load;
 pub mod textures;
 pub mod water;
+mod water_contacts;
+mod water_effects;
 
 use crate::frame_par::{self, Grain};
 use crate::world::World;
@@ -619,6 +621,7 @@ pub struct Scene {
     pub gpu: Vec<ObjGpu>,
     regions: HashMap<u64, RegionGpu>,
     water: water::WaterGpu,
+    water_effects: water_effects::Effects,
     /// Ban lines of the parcel we may not enter.
     pub banlines: banlines::BanLines,
     pub particles: particles::ParticleManager,
@@ -1102,6 +1105,7 @@ impl Scene {
             gpu: prefaulted_table(32_768),
             regions: HashMap::new(),
             water: water::WaterGpu::default(),
+            water_effects: Default::default(),
             banlines: banlines::BanLines::default(),
             particles: particles::ParticleManager::default(),
             movement_preview: None,
@@ -1868,7 +1872,9 @@ impl Scene {
         let (p, r, hud) = Self::object_transform_raw(world, idx, now, depth, cache)?;
         let o = world.objects.get(idx)?;
         let dz = if o.is_avatar() {
-            world.avatar_shape_dz.get(&o.full_id).copied().unwrap_or(0.0) + world.appearance_hover(&o.full_id)
+            world.avatar_shape_dz.get(&o.full_id).copied().unwrap_or(0.0)
+                + world.appearance_hover(&o.full_id)
+                + world.water_visual_dz(&o.full_id)
         } else {
             0.0
         };
@@ -3494,7 +3500,7 @@ impl Scene {
                 }
             }
         }
-        self.lists.water.extend(self.water.draws());
+        self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
 
         // nearest avatars in full (own avatar always), the others as
         // impostors (RenderAvatarMaxNonImpostors)
@@ -5362,6 +5368,52 @@ mod tests {
         let pose = Mat4::from_rotation_translation(Quat::from_rotation_z(0.3), Vec3::new(0.02, 0.0, 0.05));
         world.avatar_poses.insert(avatar_id, vec![pose; lib.rig.len()]);
         (world, [avatar, hat, child])
+    }
+
+    #[test]
+    fn surface_float_moves_the_drawn_root_and_linked_attachments_without_moving_simulator_positions() {
+        let (mut world, ids) = posed_attachment();
+        let now = Instant::now();
+        let root = Scene::object_transform_unshifted(&world, ids[0], now).expect("avatar").0;
+        world.agent_id = world.objects.get(ids[0]).expect("avatar").full_id;
+        world.agent.position = root;
+        world.movement_complete = true;
+        let physical = (
+            world.agent.position,
+            world.agent.server_pos,
+            world.objects.get(ids[0]).expect("avatar").position,
+        );
+        let before: Vec<_> = ids
+            .iter()
+            .map(|&id| Scene::object_transform(&world, id, now, 0).expect("transform"))
+            .collect();
+        for frame in 0..60 {
+            world.water_float.update(1, root, frame as f32 / 60.0, 0.25, false);
+        }
+        let dz = world.water_float.offset();
+        assert!(dz > 0.249);
+        for (id, (position, rotation, hud)) in ids.into_iter().zip(before) {
+            let after = Scene::object_transform(&world, id, now, 0).expect("shifted transform");
+            assert!(after.0.abs_diff_eq(position + Vec3::Z * dz, 1e-4));
+            assert_eq!((after.1, after.2), (rotation, hud));
+        }
+        assert!(
+            Scene::object_transform_unshifted(&world, ids[0], now)
+                .expect("physical root")
+                .0
+                .abs_diff_eq(root, 1e-4)
+        );
+        assert_eq!(
+            (
+                world.agent.position,
+                world.agent.server_pos,
+                world.objects.get(ids[0]).expect("avatar").position
+            ),
+            physical
+        );
+        assert_eq!(world.water_visual_dz(&Uuid::nil()), 0.0);
+        world.agent.seated = true;
+        assert_eq!(world.water_visual_dz(&world.agent_id), 0.0);
     }
 
     /// HUD attachments are not placed again at each frame: what moves

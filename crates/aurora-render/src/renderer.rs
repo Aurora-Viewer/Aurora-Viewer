@@ -94,6 +94,9 @@ struct FrameU {
     water_params: [f32; 4],
     water_waves: [f32; 4],
     water_normal: [f32; 4],
+    water_air_vp: [[f32; 4]; 4],
+    water_air_inv_vp: [[f32; 4]; 4],
+    water_air: [f32; 4],
     mirror_plane: [f32; 4],
     mirror_box: [[f32; 4]; 4],
     sky_light: [f32; 4],
@@ -283,6 +286,7 @@ impl Smaa {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            unclipped_depth: false,
         };
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("smaa"),
@@ -516,6 +520,7 @@ impl Glow {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            unclipped_depth: false,
         };
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("glow extract"),
@@ -685,6 +690,8 @@ struct Targets {
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
+    /// Nearest actual wave interface, ordered by view distance even inside near.
+    water_interface: wgpu::TextureView,
     scene_copy_tex: wgpu::Texture,
     scene_copy: wgpu::TextureView,
     /// G-buffer (normal, roughness, metallic) for SSR.
@@ -701,6 +708,7 @@ struct Targets {
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
     water_refl: Option<ReflTarget>,
+    water_air: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
     post_bind_group: wgpu::BindGroup,
 }
@@ -715,6 +723,8 @@ struct Pipelines {
     mask: wgpu::RenderPipeline,
     mask_2s: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
+    water_unclipped: Option<wgpu::RenderPipeline>,
+    water_interface: wgpu::RenderPipeline,
     blend: wgpu::RenderPipeline,
     /// Blended faces lit before their invisible fragments are dropped, for
     /// frames that ask for it ([`BlendDiscard::Alternate`] only).
@@ -727,6 +737,8 @@ struct Pipelines {
     blend_depth_mask: wgpu::RenderPipeline,
     blend_depth_color: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
+    water_particles: wgpu::RenderPipeline,
+    water_particles_under: wgpu::RenderPipeline,
     glow: wgpu::RenderPipeline,
     glow_max: wgpu::RenderPipeline,
     glow_suppress: wgpu::RenderPipeline,
@@ -857,7 +869,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 22;
+const GPU_MARKS: u32 = 25;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -916,6 +928,9 @@ const GPU_DEPTH: [(u32, u32); 2] = [(MARK_SHADOWS_END, MARK_DEPTH_END), (MARK_SC
 /// when they are off): inside the effects' range from `MARK_SSAO_END` to
 /// `MARK_REFL_END`.
 const MARK_CONTACT_END: u32 = 23;
+const MARK_WATER_INTERFACE_END: u32 = 24;
+const MARK_WATER_AIR_BEGIN: u32 = 25;
+const MARK_WATER_AIR_END: u32 = 26;
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
 const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
@@ -924,9 +939,10 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
     // effects: SSAO, planar reflections, probes, scene copy, SSR
     &[
         (MARK_DEPTH_END, MARK_SSAO_END),
-        (MARK_SSAO_END, MARK_REFL_END),
+        (MARK_SSAO_END, MARK_WATER_AIR_BEGIN),
+        (MARK_WATER_AIR_END, MARK_REFL_END),
         (MARK_SCENE_A_END, MARK_COPY_END),
-        (MARK_COPY_END, MARK_SSR_END),
+        (MARK_WATER_INTERFACE_END, MARK_SSR_END),
     ],
     // terrain and sky
     &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
@@ -937,7 +953,11 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_OBJECTS_END, MARK_SCENE_A_END),
     ],
     // water
-    &[(MARK_SSR_END, MARK_WATER_END)],
+    &[
+        (MARK_WATER_AIR_BEGIN, MARK_WATER_AIR_END),
+        (MARK_COPY_END, MARK_WATER_INTERFACE_END),
+        (MARK_SSR_END, MARK_WATER_END),
+    ],
     // blended faces and particles
     &[(MARK_GLOW_END, MARK_BLEND_END), (MARK_BLEND_END, MARK_SCENE_END)],
     // post: glow, TAA, tonemap, SMAA and screen-space HUDs
@@ -1246,10 +1266,9 @@ struct FrameGroups {
     a: wgpu::BindGroup,
     /// Scene pass B: everything.
     b: wgpu::BindGroup,
-    /// Water and mirror reflection passes (own uniform buffers).
-    /// Water reflection, mirror and reflection probe capture passes.
-    /// [3], [4]: impostor pictures.
-    refl: [wgpu::BindGroup; 7],
+    /// Own uniforms: [0] water reflection, [1] mirror, [2] probe,
+    /// [3]/[4] impostor pictures, [5] HUD, [6] drawn pick, [7] water exterior.
+    refl: [wgpu::BindGroup; 8],
 }
 
 /// What a frame draws into: the swapchain image, presented, or a photo's
@@ -1294,13 +1313,14 @@ pub(crate) struct Backend {
     pipelines: Pipelines,
     ssao: Ssao,
     gtao: crate::gtao::Gtao,
+    water_effects: crate::water_effects::WaterGpu,
     contact: crate::contact_shadows::ContactShadows,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
     bloom: crate::bloom::Bloom,
     frame_buffer: wgpu::Buffer,
-    refl_buffers: [wgpu::Buffer; 7],
+    refl_buffers: [wgpu::Buffer; 8],
     hud_depth: Option<(u32, u32, wgpu::TextureView)>,
     probes: crate::probes::Probes,
     groups: FrameGroups,
@@ -1537,6 +1557,8 @@ struct PipeDesc<'a> {
     constants: &'a [(&'a str, f64)],
     /// Draw triangle edges only (POLYGON_MODE_LINE).
     polygon_line: bool,
+    /// Preserve water geometry in front of the near plane.
+    unclipped_depth: bool,
 }
 
 /// Draws of `list` whose bounding sphere touches the view of `view_proj`
@@ -1647,7 +1669,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: d.cull,
-            unclipped_depth: false,
+            unclipped_depth: d.unclipped_depth,
             polygon_mode: if d.polygon_line {
                 wgpu::PolygonMode::Line
             } else {
@@ -1931,9 +1953,9 @@ impl Impostors {
     ) {
         let src = format!(
             "{}\n{}\n{}",
-            include_str!("shaders/common.wgsl"),
-            include_str!("shaders/object.wgsl"),
-            include_str!("shaders/env.wgsl")
+            crate::common_shader_source(),
+            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
@@ -1968,6 +1990,7 @@ impl Impostors {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            unclipped_depth: false,
         };
         // pictures: alpha 1 where the avatar covers the tile
         let capture_opaque = make_pipeline(
@@ -2076,6 +2099,8 @@ struct Ranges {
     select_child: (u64, u32),
     select_faces: (u64, u32),
     refl_water: (u64, u32),
+    water_air: (u64, u32),
+    water_air_terrain: (u64, u32),
     refl_mirror: (u64, u32),
     refl_terrain_water: (u64, u32),
     refl_terrain_mirror: (u64, u32),
@@ -2163,10 +2188,63 @@ impl Backend {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                uniform_entry(17, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 18,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                float_tex(19),
+                float_tex(21),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 22,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 20,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 float_tex(3),
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
@@ -2291,6 +2369,7 @@ impl Backend {
             mk_frame_buffer("impostor uniforms 1"),
             mk_frame_buffer("HUD uniforms"),
             mk_frame_buffer("drawn pick uniforms"),
+            mk_frame_buffer("water exterior uniforms"),
         ];
         let probes = crate::probes::Probes::new(&device, RenderSettings::default().probe_slots);
 
@@ -2420,6 +2499,7 @@ impl Backend {
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
+        let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device);
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
@@ -2447,6 +2527,7 @@ impl Backend {
             &dummies,
             &targets,
             &probes,
+            &water_effects,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -2490,6 +2571,7 @@ impl Backend {
             pipelines,
             ssao,
             gtao,
+            water_effects,
             contact,
             contact_now: false,
             bloom,
@@ -2605,9 +2687,9 @@ impl Backend {
     ) -> Pipelines {
         let src = format!(
             "{}\n{}\n{}",
-            include_str!("shaders/common.wgsl"),
-            include_str!("shaders/object.wgsl"),
-            include_str!("shaders/env.wgsl")
+            crate::common_shader_source(),
+            crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene"),
@@ -2645,6 +2727,7 @@ impl Backend {
             depth_bias: Default::default(),
             constants: &[],
             polygon_line: false,
+            unclipped_depth: false,
         };
         let g = |fs: &'static str, fs_g: &'static str| if ssr { fs_g } else { fs };
         let pipe = |d: PipeDesc| make_pipeline(device, &module, &scene_layout, d);
@@ -2697,12 +2780,35 @@ impl Backend {
             ..base("mask 2s", "vs_main", g("fs_mask", "fs_mask_g"))
         });
         // pass B
+        let hardware_water_depth = device.features().contains(wgpu::Features::DEPTH_CLIP_CONTROL);
+        log::info!(
+            "water interface depth clamp: {}",
+            if hardware_water_depth { "hardware" } else { "portable" }
+        );
         let water = pipe(PipeDesc {
             cull: None,
             blend: Some(premultiplied()),
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
+            unclipped_depth: hardware_water_depth,
             ..base("water", "vs_water", "fs_water")
+        });
+        let water_unclipped = (!hardware_water_depth).then(|| {
+            pipe(PipeDesc {
+                cull: None,
+                blend: Some(premultiplied()),
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base("portable water depth clamp", "vs_water_unclipped", "fs_water_unclipped")
+            })
+        });
+        let water_interface = pipe(PipeDesc {
+            format: None,
+            samples: 1,
+            cull: None,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("nearest water interface", "vs_water_unclipped", "fs_water_interface")
         });
         // LLDrawPoolAlpha "glow suppression": blended faces scale the glow
         // behind them by (1 - alpha)
@@ -2763,6 +2869,24 @@ impl Backend {
             depth_write: false,
             depth_compare: wgpu::CompareFunction::Greater,
             ..base("particles", "vs_particle", "fs_particle")
+        });
+        let water_particles = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("water droplets and bubbles", "vs_water_particle", "fs_water_particle")
+        });
+        let water_particles_under = pipe(PipeDesc {
+            vb: Vb::None,
+            cull: None,
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("submerged water particles", "vs_water_particle", "fs_water_particle_under")
         });
         // LLDrawPoolGlow: glow faces again, adding texture alpha x glow to
         // the scene alpha only (depth tested, pulled toward the camera)
@@ -2846,6 +2970,7 @@ impl Backend {
                 depth_compare: wgpu::CompareFunction::GreaterEqual,
                 constants,
                 polygon_line: line,
+                unclipped_depth: false,
                 ..base(label, "vs_main", "fs_debug_flat")
             })
         };
@@ -2897,7 +3022,7 @@ impl Backend {
             ..base("selected face coverage", "vs_main", "fs_selection_mask")
         });
         let ssr_pipe = ssr.then(|| {
-            let src = format!("{}\n{}", include_str!("shaders/common.wgsl"), include_str!("shaders/ssr.wgsl"));
+            let src = format!("{}\n{}", crate::common_shader_source(), include_str!("shaders/ssr.wgsl"));
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ssr"),
                 source: wgpu::ShaderSource::Wgsl(src.into()),
@@ -3011,6 +3136,7 @@ impl Backend {
             },
             constants: &[],
             polygon_line: false,
+            unclipped_depth: false,
         };
         let shadow = make_pipeline(device, &module, &shadow_pl, shadow_desc("shadow", Some("fs_shadow")));
         // opaque casters: `fs_shadow` discards nothing of them, so the same
@@ -3048,6 +3174,7 @@ impl Backend {
                 depth_bias: Default::default(),
                 constants: &[],
                 polygon_line: false,
+                unclipped_depth: false,
             },
         );
         Pipelines {
@@ -3060,12 +3187,16 @@ impl Backend {
             mask,
             mask_2s,
             water,
+            water_unclipped,
+            water_interface,
             blend,
             blend_late,
             blend_depth,
             blend_depth_mask,
             blend_depth_color,
             particles,
+            water_particles,
+            water_particles_under,
             glow,
             glow_max,
             glow_suppress,
@@ -3135,6 +3266,7 @@ impl Backend {
                     depth_bias: Default::default(),
                     constants: &[],
                     polygon_line: false,
+                    unclipped_depth: false,
                 },
             )
         };
@@ -3191,6 +3323,7 @@ impl Backend {
             1,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
+        let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
         let (gbuf_msaa, gbuf) = if s.ssr {
             (
                 (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
@@ -3210,13 +3343,13 @@ impl Backend {
                 hh,
             )
         });
-        let refl = |label: &str, scale: f32| {
+        let refl = |label: &str, scale: f32, sample_depth: bool| {
             (scale > 0.0).then(|| {
                 let rw = ((w as f32 * scale.min(1.0)) as u32).max(16);
                 let rh = ((h as f32 * scale.min(1.0)) as u32).max(16);
                 ReflTarget {
                     color: make_view(device, label, rw, rh, HDR_FORMAT, 1, sampled).1,
-                    depth: make_view(device, label, rw, rh, DEPTH_FORMAT, 1, att).1,
+                    depth: make_view(device, label, rw, rh, DEPTH_FORMAT, 1, if sample_depth { sampled } else { att }).1,
                     width: rw,
                     height: rh,
                 }
@@ -3234,8 +3367,9 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
-        let water_refl = refl("water reflection", s.water_reflection_scale);
-        let mirror = refl("mirror", s.mirror_scale);
+        let water_refl = refl("water reflection", s.water_reflection_scale, false);
+        let water_air = refl("water exterior", crate::water_optics::scale(s.water_effects), true);
+        let mirror = refl("mirror", s.mirror_scale, false);
         let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("post"),
             layout: post_layout,
@@ -3264,6 +3398,7 @@ impl Backend {
             color,
             depth_msaa,
             depth_ss,
+            water_interface,
             scene_copy_tex,
             scene_copy,
             gbuf_msaa,
@@ -3274,6 +3409,7 @@ impl Backend {
             contact,
             depth_ss_tex,
             water_refl,
+            water_air,
             mirror,
             post_bind_group,
         }
@@ -3284,13 +3420,14 @@ impl Backend {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         frame_buffer: &wgpu::Buffer,
-        refl_buffers: &[wgpu::Buffer; 7],
+        refl_buffers: &[wgpu::Buffer; 8],
         shadow_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
         lin_clamp: &wgpu::Sampler,
         dummies: &Dummies,
         t: &Targets,
         probes: &crate::probes::Probes,
+        water_effects: &crate::water_effects::WaterGpu,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -3300,7 +3437,8 @@ impl Backend {
                   scene: &wgpu::TextureView,
                   depth: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
-                  il: &wgpu::TextureView| {
+                  il: &wgpu::TextureView,
+                  sample_water: bool| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
@@ -3365,6 +3503,46 @@ impl Backend {
                         binding: 14,
                         resource: wgpu::BindingResource::TextureView(il),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 15,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 16,
+                        resource: water_effects.events.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 17,
+                        resource: water_effects.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 18,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.ground_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 19,
+                        resource: wgpu::BindingResource::TextureView(&water_effects.caustics_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 20,
+                        resource: wgpu::BindingResource::TextureView(if sample_water { &t.water_interface } else { &dummies.depth }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 21,
+                        resource: wgpu::BindingResource::TextureView(if sample_water {
+                            t.water_air.as_ref().map_or(&dummies.black, |t| &t.color)
+                        } else {
+                            &dummies.black
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 22,
+                        resource: wgpu::BindingResource::TextureView(if sample_water {
+                            t.water_air.as_ref().map_or(&dummies.depth, |t| &t.depth)
+                        } else {
+                            &dummies.depth
+                        }),
+                    },
                 ],
             })
         };
@@ -3394,8 +3572,20 @@ impl Backend {
                 &dummies.depth,
                 contact,
                 il,
+                false,
             ),
-            b: mk("frame b", frame_buffer, ao, water, mirror, &t.scene_copy, &t.depth_ss, contact, il),
+            b: mk(
+                "frame b",
+                frame_buffer,
+                ao,
+                water,
+                mirror,
+                &t.scene_copy,
+                &t.depth_ss,
+                contact,
+                il,
+                true,
+            ),
             refl: [
                 mk(
                     "frame water reflection",
@@ -3407,6 +3597,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                 ),
                 mk(
                     "frame mirror",
@@ -3418,6 +3609,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                 ),
                 mk(
                     "frame probe capture",
@@ -3429,6 +3621,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                 ),
                 mk(
                     "frame impostor 0",
@@ -3440,6 +3633,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                 ),
                 mk(
                     "frame impostor 1",
@@ -3451,6 +3645,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                 ),
                 mk(
                     "frame HUD",
@@ -3462,6 +3657,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                 ),
                 mk(
                     "frame drawn pick",
@@ -3473,6 +3669,19 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
+                ),
+                mk(
+                    "frame water exterior",
+                    &refl_buffers[7],
+                    &dummies.white,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.black,
+                    &dummies.depth,
+                    &dummies.black,
+                    &dummies.black,
+                    false,
                 ),
             ],
         }
@@ -3509,6 +3718,7 @@ impl Backend {
                 &self.dummies,
                 &self.targets,
                 &self.probes,
+                &self.water_effects,
             );
         }
     }
@@ -3526,6 +3736,7 @@ impl Backend {
             &self.dummies,
             &self.targets,
             &self.probes,
+            &self.water_effects,
         );
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -3636,6 +3847,7 @@ impl Backend {
             || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
             || s.water_reflection_scale != self.settings.water_reflection_scale
+            || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
         let taa_was = self.taa.is_some();
         self.msaa_samples = samples;
@@ -3741,6 +3953,7 @@ impl Backend {
                 depth_bias: Default::default(),
                 constants: &[],
                 polygon_line: false,
+                unclipped_depth: false,
             },
         );
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -3947,7 +4160,7 @@ impl Backend {
         let right = inv_view.transform_vector3(Vec3::X).normalize_or(Vec3::X);
         let up = inv_view.transform_vector3(Vec3::Y).normalize_or(Vec3::Z);
         u.cam_right = right.extend(0.5).to_array();
-        u.cam_up = up.extend(0.0).to_array();
+        u.cam_up = up.extend(f.water_height).to_array();
         // water
         let w = &f.water;
         let lin = |c: Vec3| {
@@ -4302,13 +4515,53 @@ impl Backend {
         self.frame_index = self.frame_index.wrapping_add(1);
 
         // ---- planar reflections this frame
-        let underwater = f.camera_pos.z < f.water_height;
-        let do_water_refl = self.targets.water_refl.is_some() && !lists.water.is_empty() && !underwater;
+        // LLViewerCamera::cameraUnderWater uses a flat region plane. Our
+        // displaced surface needs the camera's actual wave height instead.
+        let camera_water_level =
+            lists
+                .water_ground
+                .camera_level(f.camera_pos.truncate(), f.time, self.settings.water_effects, f.water_height);
+        // Fine interaction height stays on the GPU. Keep both eligible paths
+        // within its bounded displacement; their fragments select the side.
+        let wake_margin = if self.settings.water_effects.enabled && self.settings.water_effects.interactions {
+            0.16
+        } else {
+            0.0
+        };
+        let above_water_possible = f.camera_pos.z >= camera_water_level - wake_margin;
+        // Only the portable path needs late fragment depth at the waterline.
+        // Hardware clamp keeps ordinary early depth testing for the same mesh.
+        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+        let near_radius = f.near * (1.0 + (f.fov_y * 0.5).tan().powi(2) * (1.0 + aspect * aspect)).sqrt();
+        let water_near = (f.camera_pos.z - camera_water_level).abs() <= near_radius * 1.3 + wake_margin;
+        let water_layers = !lists.water.is_empty()
+            && self.settings.water_effects.enabled
+            && (self.settings.water_effects.waves || self.settings.water_effects.interactions);
+        let do_water_refl = self.targets.water_refl.is_some() && !lists.water.is_empty() && above_water_possible;
+        let air_view =
+            self.targets.water_air.as_ref().filter(|_| !lists.water.is_empty()).and_then(|t| {
+                crate::water_optics::view(f, camera_water_level, self.settings.water_effects, t.width as f32 / t.height as f32)
+            });
+        let do_water_air = air_view.is_some();
+        let air_vp = air_view.map_or(Mat4::IDENTITY, |(v, p)| p * v);
         let mirror = f.mirror.filter(|_| self.targets.mirror.is_some());
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
+        main.cam_up[3] = camera_water_level;
+        if let Some((view, proj)) = air_view {
+            main.water_air_vp = air_vp.to_cols_array_2d();
+            main.water_air_inv_vp = air_vp.inverse().to_cols_array_2d();
+            main.water_air[0] = 1.0;
+            let mut rf = f.clone();
+            rf.proj = proj;
+            rf.shadows = false;
+            let mut air = self.frame_uniforms(&rf, view, None, &cascades, &splits);
+            air.misc = [0.0, 0.0, 0.0, 1.0];
+            air.clip_plane = [0.0, 0.0, 1.0, -f.water_height];
+            self.queue.write_buffer(&self.refl_buffers[7], 0, bytemuck::bytes_of(&air));
+        }
         if self.contact_now {
             main.contact[0] = 1.0;
             // the blended faces opaque enough are in the depth it read
@@ -4820,8 +5073,9 @@ impl Backend {
             let mut flags = 0;
             for (on, bit) in [
                 (g.shadows && f.shadows, frame_flags::SHADOWS),
-                (g.reflections, frame_flags::REFLECTIONS),
+                (g.reflections || do_water_air, frame_flags::REFLECTIONS),
                 (do_water_refl, frame_flags::WATER),
+                (do_water_air, frame_flags::WATER_AIR),
                 (mirror.is_some(), frame_flags::MIRROR),
                 (probe.is_some(), frame_flags::PROBE),
                 (occl, frame_flags::OCCLUSION),
@@ -4832,7 +5086,7 @@ impl Backend {
                     flags |= bit;
                 }
             }
-            let frame = CullFrame::new(
+            let mut frame = CullFrame::new(
                 g,
                 &cascades,
                 &caster_planes,
@@ -4841,6 +5095,10 @@ impl Backend {
                 spot_vp,
                 flags,
             );
+            if do_water_air {
+                frame.water_air = crate::gpu_cull::view_planes(air_vp).map(|p| p.to_array());
+                frame.dist[1] = frame.dist[1].max(g.draw_distance.min(200.0));
+            }
             self.cull
                 .prepare(&self.device, &self.queue, scene.face_count, scene.object_count, frame);
         }
@@ -4860,6 +5118,10 @@ impl Backend {
         }
         if do_water_refl {
             rg.refl_water = push(cpu, &cull_to_view(water_vp, &lists.reflection));
+        }
+        if do_water_air {
+            rg.water_air = push(cpu, &cull_to_view(air_vp, &lists.reflection));
+            rg.water_air_terrain = push(cpu, &cull_cmds_to_view(air_vp, &lists.reflection_terrain));
         }
         if mirror.is_some() {
             rg.refl_mirror = push(cpu, &cull_to_view(mirror_vp, &lists.reflection));
@@ -4901,6 +5163,10 @@ impl Backend {
             stats.triangles += d.index_count as u64 / 3;
         }
         stats.draws = lists.total() as u32;
+        if water_layers {
+            stats.draws += lists.water.len() as u32;
+            stats.triangles += lists.water.iter().map(|d| d.index_count as u64 / 3).sum::<u64>();
+        }
         let cpu_casters: [u32; CASCADES] = std::array::from_fn(|i| (shadow_lists[i].len() + shadow_alpha_lists[i].len()) as u32);
         stats.shadow_draws = cpu_casters.iter().sum();
         stats.shadow.draws = cpu_casters;
@@ -4932,6 +5198,21 @@ impl Backend {
             stats.gpu_cull = true;
         }
 
+        let mut water_settings = self.settings.water_effects;
+        water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
+        if self.water_effects.prepare(
+            &self.device,
+            &self.queue,
+            water_settings,
+            f.time,
+            f.camera_pos.truncate(),
+            &lists.water_ground,
+            &lists.water_events,
+            &lists.water_contacts,
+        ) {
+            self.rebuild_bind_groups();
+        }
+        stats.particles += self.water_effects.particles;
         prof.mark("lists");
         let mut encoder = self
             .device
@@ -5315,6 +5596,7 @@ impl Backend {
             self.contact.encode(&mut encoder, t, more);
         }
         mark(&mut encoder, MARK_CONTACT_END);
+        self.water_effects.encode(&mut encoder);
         // ---- planar reflections
         let refl_passes = [
             (
@@ -5371,6 +5653,41 @@ impl Backend {
             draw(&mut pass, &self.pipelines.refl_obj, objects);
             draw_bin(&mut pass, Some(&self.pipelines.refl_obj), bin, bin);
         }
+
+        mark(&mut encoder, MARK_WATER_AIR_BEGIN);
+        if let (true, Some(t)) = (do_water_air, &self.targets.water_air) {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("water exterior"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &t.color,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &t.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_viewport(0.0, 0.0, t.width as f32, t.height as f32, 0.0, 1.0);
+            bind_mesh(&mut pass, &self.groups.refl[7]);
+            pass.set_pipeline(&self.pipelines.refl_sky);
+            pass.draw(0..3, 0..1);
+            draw(&mut pass, &self.pipelines.refl_terrain, rg.water_air_terrain);
+            draw(&mut pass, &self.pipelines.refl_obj, rg.water_air);
+            draw_bin(&mut pass, Some(&self.pipelines.refl_obj), BIN_REFL_WATER, BIN_REFL_WATER);
+        }
+        mark(&mut encoder, MARK_WATER_AIR_END);
 
         // ---- reflection probe: one cube face (LLReflectionMap::update ->
         // cubeSnapshot), then the radiance filtering after the sixth
@@ -5629,6 +5946,30 @@ impl Backend {
 
         prof.mark("scene_a");
         mark(&mut encoder, MARK_SCENE_A_END);
+        if self.water_effects.particles > 0 && above_water_possible {
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
+            bind_mesh(&mut pass, &self.groups.a);
+            pass.set_pipeline(&self.pipelines.water_particles_under);
+            pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..self.water_effects.particles);
+        }
+        if self.water_effects.particles > 0 && self.targets.color_msaa.is_some() && above_water_possible {
+            let _resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("resolve submerged particles"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: self.targets.color_msaa.as_ref().unwrap_or(&self.targets.color),
+                    depth_slice: None,
+                    resolve_target: Some(&self.targets.color),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
         // ---- scene copy (refraction / SSR source)
         let size = wgpu::Extent3d {
             width: self.config.width.max(1),
@@ -5652,6 +5993,28 @@ impl Backend {
         );
 
         mark(&mut encoder, MARK_COPY_END);
+        // Keep the closest displaced interface independently of opaque depth.
+        // Water cannot write scene depth: submerged blended faces must survive.
+        if water_layers {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("nearest water interface"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.targets.water_interface,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw(&mut pass, &self.pipelines.water_interface, rg.water);
+        }
+        mark(&mut encoder, MARK_WATER_INTERFACE_END);
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
         // (`DrawLists::blend_depth`, LLDrawPoolAlpha::forwardRender(true)):
@@ -5701,6 +6064,10 @@ impl Backend {
                 }
             }
             pass_mark(pass, MARK_BLEND_END);
+            if self.water_effects.particles > 0 {
+                pass.set_pipeline(&self.pipelines.water_particles);
+                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..self.water_effects.particles);
+            }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
                 pass.set_pipeline(&self.pipelines.particles);
@@ -5717,7 +6084,13 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             pass_mark(&mut pass, MARK_SSR_END);
-            draw(&mut pass, &self.pipelines.water, rg.water);
+            let water_pipe = self
+                .pipelines
+                .water_unclipped
+                .as_ref()
+                .filter(|_| water_near)
+                .unwrap_or(&self.pipelines.water);
+            draw(&mut pass, water_pipe, rg.water);
             pass_mark(&mut pass, MARK_WATER_END);
             if glow_on {
                 if glow_skip & 2 == 0 {
@@ -6563,9 +6936,9 @@ mod tests {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    include_str!("shaders/common.wgsl"),
-                    include_str!("shaders/object.wgsl"),
-                    include_str!("shaders/env.wgsl")
+                    crate::common_shader_source(),
+                    crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+                    crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
                 )
                 .into(),
             ),

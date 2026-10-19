@@ -47,7 +47,7 @@ pub const COMMANDS: &[Command] = commands![
     "performance", "Command_Performance_Icon", "common-performance", true;
     "sit", "groundsit", "extra-sit-on-ground-stand-up", true;
     "ao", "AO", "ao-title", true;
-    "movement", "swimming", "movement-title", true;
+    "movement", "swimming", "movement-swimming", true;
     "preferences", "Command_Preferences_Icon", "common-preferences", true;
     "fly", "plane-tilt-filled", "extra-fly-land-f", true;
     "home", "home-filled", "common-go-home", true;
@@ -91,6 +91,7 @@ pub const COMMANDS: &[Command] = commands![
     "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", false;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
     "movelock", "lock-filled", "movelock-title", true;
+    "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", false;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", false;
     "group_titles", "tags-filled", "toolbar-command-group-titles", false;

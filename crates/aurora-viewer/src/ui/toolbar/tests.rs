@@ -140,6 +140,46 @@ fn toolbar_layout_and_lock_are_shared_across_accounts_after_restart() {
 }
 
 #[test]
+fn water_mode_toolbar_buttons_are_opt_in_and_preserve_saved_placements() {
+    let layout = Layout::default();
+    let mut toolbar = ToolbarSettings::default();
+    let mut state = ToolbarUi::default();
+    for command in ["movement", "water_walk"] {
+        assert!(toolbar.location(command, &layout).is_none(), "absent from defaults: {command}");
+        assert!(
+            catalogue(&layout).iter().any(|b| b.command == command),
+            "available to add: {command}"
+        );
+    }
+    for (command, bar) in [("movement", Bar::Bottom), ("water_walk", Bar::Right)] {
+        state.pending = Some(Edit::Insert(bar, button(command), 0));
+        assert!(state.commit(&layout, &mut toolbar));
+    }
+    let mut saved = serde_json::to_value(crate::settings::Settings {
+        toolbar: Some(toolbar),
+        ..Default::default()
+    })
+    .expect("custom toolbar");
+    saved["toolbar_common"]["water_walk_button_added"] = true.into();
+    let mut restored: crate::settings::Settings = serde_json::from_value(saved).expect("retired upgrade flag is accepted");
+    assert!(
+        !restored.migrate_toolbar(uuid::Uuid::from_u128(101)),
+        "login keeps custom placements"
+    );
+    let toolbar = restored.toolbar.as_mut().expect("common toolbar");
+    assert_eq!(toolbar.location("movement", &layout), Some(Bar::Bottom));
+    assert_eq!(toolbar.location("water_walk", &layout), Some(Bar::Right));
+    state.pending = Some(Edit::Restore);
+    assert!(state.commit(&layout, toolbar));
+    for command in ["movement", "water_walk"] {
+        assert!(
+            toolbar.location(command, &layout).is_none(),
+            "restore keeps water controls optional: {command}"
+        );
+    }
+}
+
+#[test]
 fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accounts() {
     let first = uuid::Uuid::from_u128(101);
     let second = uuid::Uuid::from_u128(102);
@@ -168,7 +208,10 @@ fn toolbar_migration_uses_the_first_connected_accounts_layout_not_another_accoun
     let mut restored: crate::settings::Settings = serde_json::from_str(&before_login).expect("pre-login restart");
     assert!(restored.migrate_toolbar(second));
     let common = restored.toolbar.as_ref().expect("migrated toolbar");
-    assert_eq!(common.buttons(&layout()), [button("inventory")]);
+    assert_eq!(
+        common.buttons(&layout()).iter().map(|b| b.command.as_str()).collect::<Vec<_>>(),
+        ["inventory"]
+    );
     assert!(common.locked);
     assert!(!restored.migrate_toolbar(first));
     let saved = serde_json::to_value(&restored).expect("common settings");
@@ -683,14 +726,14 @@ fn toolbar_sanitize_keeps_each_command_once_over_the_three_toolbars() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 71);
-    assert_eq!(COMMANDS.len(), 71);
+    assert_eq!(all.len(), 72);
+    assert_eq!(COMMANDS.len(), 72);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 71, "each command once");
+    assert_eq!(ids.len(), 72, "each command once");
     assert!(ready("texture_library"));
-    assert!(ready("movelock") && ready("move_lock") && ready("movement"));
+    assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
     assert_eq!(all.iter().filter(|b| b.command == "movelock").count(), 1);
     assert!(!all.iter().any(|b| b.command == "move_lock"));

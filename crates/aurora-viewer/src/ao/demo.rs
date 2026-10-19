@@ -157,13 +157,21 @@ pub fn seed_folder_names(inv: &mut Inventory, owner: Uuid) -> Uuid {
 
 /// Explicit offline fixtures only; never add sample entries to a user's AO.
 pub fn seed_interface(inv: &mut Inventory, owner: Uuid, mode: &str) -> Uuid {
-    let id = if mode == "interface-swim" {
+    let id = if mode.starts_with("interface-swim") {
         seed_movement_design(inv, owner)
     } else {
         seed(inv, owner)
     };
     let mut catalog = inventory::Catalog::default();
     catalog.refresh(inv);
+    if mode == "interface-swim-missing"
+        && let Some(state) = catalog.selected(id).and_then(|s| s.states.get(&State::Floating))
+        && let Ok(change) = inventory::remove(inv, state.folder)
+    {
+        let _ = crate::world::inventory::actions::demo_mutate(inv, owner, change);
+        catalog.invalidate();
+        catalog.refresh(inv);
+    }
     let original = inv
         .items
         .values()
@@ -396,6 +404,93 @@ pub fn assets(scene: &mut crate::scene::Scene) {
             ],
         });
         scene.anims.insert(id, Arc::new(crate::scene::anim::BoundAnim::bind(a, &rig)));
+    }
+}
+
+/// Offline fixture only: full-body P4 standing cycles above a P3 ground sit.
+pub fn native_anchor_assets(scene: &mut crate::scene::Scene) {
+    use aurora_assets::anim::{PosKey, RotKey};
+    let rig = scene.avatar_lib.rig.clone();
+    let mut sit = crate::demo::seat_animation();
+    sit.base_priority = 3;
+    let mut stand = crate::demo::idle_animation();
+    stand.base_priority = 4;
+    for joint in &sit.joints {
+        if let Some(existing) = stand.joints.iter_mut().find(|j| j.joint_name == joint.joint_name) {
+            if !joint.pos_keys.is_empty() && existing.pos_keys.is_empty() {
+                existing.pos_keys.push(PosKey {
+                    time: 0.0,
+                    position: glam::Vec3::ZERO,
+                });
+            }
+        } else {
+            let mut upright = joint.clone();
+            let rotation = rig.names.get(&joint.joint_name).map_or(glam::Quat::IDENTITY, |i| rig.local_rot[*i]);
+            upright.rot_keys = vec![RotKey { time: 0.0, rotation }];
+            upright.pos_keys = joint
+                .pos_keys
+                .first()
+                .map(|_| PosKey {
+                    time: 0.0,
+                    position: glam::Vec3::ZERO,
+                })
+                .into_iter()
+                .collect();
+            stand.joints.push(upright);
+        }
+    }
+    for id in [ASSETS[0], ASSETS[1]] {
+        scene
+            .anims
+            .insert(id, Arc::new(crate::scene::anim::BoundAnim::bind(stand.clone(), &rig)));
+    }
+    scene
+        .anims
+        .insert(State::GroundSit.motion(), Arc::new(crate::scene::anim::BoundAnim::bind(sit, &rig)));
+}
+
+/// Walk/stop twice through the real native-anchor and AO orchestration.
+pub fn native_anchor_cycle(world: &mut crate::world::World, input: &mut crate::agent::MoveInput, frame: u64) {
+    if frame < 360 {
+        return;
+    }
+    let moving = (600..800).contains(&frame) || (1000..1200).contains(&frame);
+    input.forward = moving;
+    if world.agent.ground_sit {
+        return;
+    }
+    let state = if moving { State::Walking } else { State::Standing };
+    let raw = world.animations.get(&world.agent_id).map(Vec::as_slice).unwrap_or_default();
+    if raw.iter().any(|a| a.id == state.motion()) {
+        return;
+    }
+    let mut anims: Vec<_> = raw
+        .iter()
+        .filter(|a| State::from_motion(a.id).is_none() && a.id != crate::demo::IDLE_ANIM)
+        .map(|a| (a.id, a.sequence))
+        .collect();
+    anims.push((state.motion(), 1));
+    world.apply(aurora_net::NetEvent::AvatarAnimations {
+        avatar: world.agent_id,
+        anims,
+        sources: Vec::new(),
+    });
+}
+
+/// A native system-state change does not stop separately started AO clips.
+pub fn preserve_custom_motions(world: &crate::world::World, command: &aurora_net::NetCommand, event: &mut aurora_net::NetEvent) {
+    if !matches!(command, aurora_net::NetCommand::OneShotControl(flags) if flags & (aurora_net::control::SIT_ON_GROUND | aurora_net::control::STAND_UP) != 0)
+    {
+        return;
+    }
+    if let aurora_net::NetEvent::AvatarAnimations { avatar, anims, .. } = event
+        && *avatar == world.agent_id
+    {
+        for a in world.animations.get(avatar).into_iter().flatten() {
+            if State::from_motion(a.id).is_none() && a.id != crate::demo::IDLE_ANIM && !anims.iter().any(|(id, _)| *id == a.id) {
+                anims.push((a.id, a.sequence));
+            }
+        }
     }
 }
 

@@ -10,6 +10,9 @@ struct Fixture {
     state: AoUi,
     movement: super::super::movement::MovementUi,
     movement_prefs: crate::movement::Preferences,
+    keys: crate::keybinds::KeyBindings,
+    quick: Option<quick::Quick>,
+    manager_open: bool,
 }
 
 impl Fixture {
@@ -33,6 +36,9 @@ impl Fixture {
             state: AoUi::default(),
             movement: Default::default(),
             movement_prefs: Default::default(),
+            keys: Default::default(),
+            quick: None,
+            manager_open: true,
         };
         fixture.settle();
         fixture
@@ -46,7 +52,25 @@ impl Fixture {
         };
         let mut actions = Vec::new();
         let mut output = self.ctx.run_ui(input, |ui| {
-            actions = show(
+            if let Some(quick) = &mut self.quick {
+                egui::Area::new(egui::Id::new("test_ao_toolbar"))
+                    .fixed_pos(egui::pos2(1200.0, 850.0))
+                    .show(ui.ctx(), |ui| {
+                        let response = ui.button("AO");
+                        quick.anchor(&response, egui::RectAlign::TOP);
+                    });
+                actions.extend(quick.show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &self.catalog,
+                    &mut self.runtime,
+                    &mut self.account,
+                    &mut self.movement_prefs,
+                    &mut self.manager_open,
+                    false,
+                ));
+            }
+            actions.extend(show(
                 ui.ctx(),
                 &crate::theme::Theme::default().palette(),
                 &mut self.inv,
@@ -54,12 +78,12 @@ impl Fixture {
                 &mut self.runtime,
                 &mut self.account,
                 &mut self.state,
-                &mut true,
+                &mut self.manager_open,
                 &mut self.movement,
                 &mut self.movement_prefs,
-                &Default::default(),
+                &self.keys,
                 "",
-            );
+            ));
         });
         output.textures_delta.clear();
         (actions, output.shapes)
@@ -341,27 +365,435 @@ fn native_animation_rows_choose_on_single_click_and_drag_through_inventory_ack()
 }
 
 #[test]
-fn opening_swimming_from_movement_reveals_its_selected_state_in_the_rail() {
-    let mut f = Fixture::new();
-    f.click(aurora_i18n::tr!("ao-tab-movement"));
-    f.click(aurora_i18n::tr!("ao-swim-animations"));
-    // The native rail scrolls smoothly; advance beyond its animation.
-    for _ in 0..45 {
-        f.draw(Vec::new());
-    }
-
-    assert_eq!(f.state.state, State::SwimmingForward);
-    fn visible(shape: &egui::Shape, clip: egui::Rect, label: &str) -> bool {
+fn water_control_hints_follow_rebound_secondary_modified_mouse_and_unassigned_keys() {
+    use crate::keybinds::{Action as KeyAction, Binding, Input, Mods};
+    use winit::keyboard::KeyCode;
+    fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
         match shape {
-            egui::Shape::Text(t) => t.galley.text() == label && t.pos.x < 400.0 && clip.contains(t.pos + egui::vec2(3.0, 3.0)),
-            egui::Shape::Vec(shapes) => shapes.iter().any(|s| visible(s, clip, label)),
-            _ => false,
+            egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
         }
     }
+    let contents = |f: &mut Fixture| {
+        let mut out = Vec::new();
+        for shape in f.draw(Vec::new()).1 {
+            texts(&shape.shape, &mut out);
+        }
+        out
+    };
+    let mut f = Fixture::new();
+    f.click(aurora_i18n::tr!("ao-tab-movement"));
+    f.settle();
+    let initial = contents(&mut f);
+    assert!(initial.contains(&Input::key(KeyCode::PageUp).label()));
     assert!(
-        f.draw(Vec::new())
-            .1
-            .iter()
-            .any(|s| visible(&s.shape, s.clip_rect, State::SwimmingForward.label()))
+        initial.contains(&"Ctrl".to_owned()),
+        "passage modifiers use the same keycaps as water gestures"
     );
+    let first = Binding::captured(
+        Input::key(KeyCode::F10),
+        Mods {
+            ctrl: true,
+            ..Default::default()
+        },
+    );
+    let mouse = Binding::captured(
+        Input::Mouse("Other9".into()),
+        Mods {
+            alt: true,
+            ..Default::default()
+        },
+    );
+    f.keys.set(KeyAction::Up, 0, Some(first));
+    f.keys.set(KeyAction::Up, 1, Some(mouse.clone()));
+    f.keys.set(
+        KeyAction::Down,
+        0,
+        Some(Binding::captured(Input::key(KeyCode::F11), Default::default())),
+    );
+    f.keys.set(KeyAction::Down, 1, None);
+    f.settle();
+    let shown = contents(&mut f);
+    for key in [
+        "F10".to_owned(),
+        "F11".to_owned(),
+        mouse.input.label(),
+        "Ctrl".to_owned(),
+        "Alt".to_owned(),
+    ] {
+        assert!(shown.contains(&key), "live keycap {key} is visible");
+    }
+    assert!(!shown.contains(&Input::key(KeyCode::PageUp).label()));
+    assert!(!shown.contains(&Input::key(KeyCode::PageDown).label()));
+    f.keys.set(
+        KeyAction::Up,
+        0,
+        Some(Binding::captured(Input::key(KeyCode::F12), Default::default())),
+    );
+    f.keys.set(KeyAction::Up, 1, None);
+    f.keys.set(KeyAction::Down, 0, None);
+    f.settle();
+    let shown = contents(&mut f);
+    assert!(shown.contains(&"F12".to_owned()));
+    assert!(shown.contains(&aurora_i18n::tr!("movement-key-unbound").to_owned()));
+    for old in ["F10".to_owned(), "F11".to_owned(), mouse.input.label()] {
+        assert!(!shown.contains(&old), "old binding {old} is no longer shown");
+    }
+}
+
+#[test]
+fn both_water_states_use_the_normal_list_and_combination_editor() {
+    let mut f = Fixture::new();
+    for state in [State::SwimmingForward, State::UnderwaterSwimming] {
+        f.state.state = state;
+        f.state.combination = None;
+        f.state.container = None;
+        f.settle();
+        assert!(f.click(aurora_i18n::tr!("ao-combine")).is_empty());
+        assert_eq!(f.state.combination.as_ref().expect("ordinary combination editor").state, state);
+    }
+}
+
+#[test]
+fn swimming_rail_marks_only_required_slots_and_clears_the_warning_when_ready() {
+    fn text_rect(shape: &egui::Shape, label: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::Shape::Text(t) if t.galley.text() == label => Some(egui::Rect::from_min_size(t.pos, t.galley.size())),
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| text_rect(s, label)),
+            _ => None,
+        }
+    }
+    fn icon_rects(shape: &egui::Shape, color: egui::Color32, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::Shape::Mesh(mesh) if !mesh.vertices.is_empty() && mesh.vertices.iter().all(|v| v.color == color) => {
+                out.push(mesh.calc_bounds());
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| icon_rects(s, color, out)),
+            _ => {}
+        }
+    }
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_movement_design(&mut f.inv, Uuid::from_u128(1));
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    let set = f.catalog.sets.first_mut().expect("set");
+    let floating = set.states.remove(&State::Floating).expect("required slot");
+    set.states.remove(&State::UnderwaterSwimming).expect("optional slot");
+    f.state.state = State::SwimmingForward;
+    f.settle();
+    let palette = crate::theme::Theme::default().palette();
+    let shapes = f.draw(Vec::new()).1;
+    let row = |state: State| {
+        shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, state.label()))
+            .expect("visible state")
+    };
+    let mut warning_icons = Vec::new();
+    let mut ready_icons = Vec::new();
+    for s in &shapes {
+        icon_rects(&s.shape, palette.warn, &mut warning_icons);
+        icon_rects(&s.shape, palette.success, &mut ready_icons);
+    }
+    let beside = |icon: &egui::Rect, row: egui::Rect| {
+        (icon.center().y - row.center().y).abs() < 1.0 && icon.left() > row.right() && icon.left() < row.right() + 150.0
+    };
+    assert!(warning_icons.iter().any(|icon| beside(icon, row(State::Floating))));
+    assert!(ready_icons.iter().any(|icon| beside(icon, row(State::SwimmingForward))));
+    assert!(
+        !warning_icons
+            .iter()
+            .chain(&ready_icons)
+            .any(|icon| beside(icon, row(State::UnderwaterSwimming)))
+    );
+    assert!(
+        shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, aurora_i18n::tr!("ao-swim-required")).is_some())
+    );
+    f.catalog.sets[0].states.insert(State::Floating, floating);
+    f.settle();
+    let shapes = f.draw(Vec::new()).1;
+    assert!(
+        f.catalog.swimming_ready(f.account.selected),
+        "the optional underwater clip cannot block swimming"
+    );
+    assert!(
+        !shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, aurora_i18n::tr!("ao-swim-required")).is_some())
+    );
+    assert!(
+        shapes
+            .iter()
+            .any(|s| text_rect(&s.shape, aurora_i18n::tr!("ao-swim-ready")).is_some())
+    );
+}
+
+#[test]
+fn categories_keep_every_state_and_restore_the_previous_selection() {
+    use super::category::Category;
+    let states: Vec<_> = Category::ALL.into_iter().flat_map(Category::states).collect();
+    assert_eq!(states.len(), State::ALL.len());
+    assert!(
+        State::ALL
+            .into_iter()
+            .all(|s| states.iter().filter(|item| **item == s).count() == 1)
+    );
+    for state in [
+        State::Standing,
+        State::Sitting,
+        State::GroundSit,
+        State::StandingUp,
+        State::Typing,
+        State::Always,
+    ] {
+        assert_eq!(Category::of(state), Category::General);
+    }
+    assert_eq!(
+        Category::General.states().take(4).collect::<Vec<_>>(),
+        [State::Standing, State::Sitting, State::GroundSit, State::StandingUp],
+        "sitting states follow Standing immediately"
+    );
+    assert_eq!(Category::of(State::Running), Category::Ground);
+    assert_eq!(
+        Category::Ground.states().collect::<Vec<_>>(),
+        [
+            State::Walking,
+            State::TurningRight,
+            State::TurningLeft,
+            State::Running,
+            State::Crouching,
+            State::CrouchWalk
+        ]
+    );
+    assert_eq!(Category::ALL.last(), Some(&Category::Water), "swimming is the last category");
+    assert_eq!(Category::ALL[Category::ALL.len() - 2], Category::Flight, "flying is penultimate");
+    for state in [
+        State::PreJumping,
+        State::Jumping,
+        State::Falling,
+        State::SoftLanding,
+        State::Landing,
+    ] {
+        assert_eq!(Category::of(state), Category::Jumping);
+    }
+    assert_eq!(
+        Category::Jumping.states().collect::<Vec<_>>(),
+        [
+            State::PreJumping,
+            State::Jumping,
+            State::Falling,
+            State::SoftLanding,
+            State::Landing
+        ],
+        "jump states follow preparation, jump, fall, soft landing and hard landing"
+    );
+    assert_eq!(
+        Category::Flight.states().collect::<Vec<_>>(),
+        [
+            State::Hovering,
+            State::FlyingSlow,
+            State::Flying,
+            State::FlyingDown,
+            State::FlyingUp
+        ],
+        "flight states follow hovering, slow flight, flight, descent and ascent"
+    );
+    assert_eq!(Category::of(State::UnderwaterSwimming), Category::Water);
+    let water: Vec<_> = Category::Water.states().collect();
+    assert!(water.windows(2).any(|pair| pair == [State::WaterFlightExit, State::WaterShoreExit]));
+    assert!(water.windows(2).any(|pair| pair == [State::WaterCannonball, State::WaterEntry]));
+    assert!(
+        Category::Water
+            .states()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| { pair == [State::UnderwaterFloating, State::UnderwaterSwimming] }),
+        "underwater floating immediately precedes underwater swimming"
+    );
+    let mut f = Fixture::new();
+    f.state.state = State::Walking;
+    f.settle();
+    f.click(aurora_i18n::tr!("ao-category-water"));
+    assert_eq!(f.state.state, State::Floating);
+    f.click(State::UnderwaterSwimming.label());
+    f.click(Category::Ground.label());
+    assert_eq!(f.state.state, State::Walking);
+    f.click(aurora_i18n::tr!("ao-category-water"));
+    assert_eq!(f.state.state, State::UnderwaterSwimming);
+    assert!(f.state.container.is_none());
+    f.click(Category::Jumping.label());
+    assert_eq!(f.state.state, State::Jumping);
+    f.click(State::Falling.label());
+    f.click(Category::Ground.label());
+    f.click(State::Running.label());
+    assert_eq!(f.state.state, State::Running);
+    f.click(Category::General.label());
+    f.click(State::Always.label());
+    f.click(Category::Ground.label());
+    assert_eq!(f.state.state, State::Running, "walking and running share one category");
+    f.click(Category::General.label());
+    assert_eq!(
+        f.state.state,
+        State::Always,
+        "always has its own remembered selection outside ground movement"
+    );
+    for state in [State::Sitting, State::GroundSit, State::StandingUp] {
+        f.click(state.label());
+        assert_eq!(f.state.state, state);
+        f.click(Category::Ground.label());
+        f.click(Category::General.label());
+        assert_eq!(f.state.state, state, "General remembers its selected sitting state");
+    }
+    f.click(Category::Jumping.label());
+    assert_eq!(f.state.state, State::Falling, "jumping retains its own selected state");
+    f.state.state = State::Flying;
+    f.settle();
+    assert_eq!(
+        Category::of(f.state.state),
+        Category::Flight,
+        "external state links select their category"
+    );
+}
+
+#[test]
+fn category_keyboard_navigation_wraps_inside_its_own_states() {
+    use super::category::Category;
+    let key = |key| {
+        vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]
+    };
+    for category in Category::ALL {
+        let mut f = Fixture::new();
+        f.click(category.label());
+        assert_eq!(f.state.state, category.initial_state());
+        let first = category.states().next().expect("nonempty category");
+        let last = category.states().last().expect("nonempty category");
+        f.state.state = first;
+        f.state.state_focus = Some(first);
+        f.settle();
+        f.draw(key(egui::Key::ArrowUp));
+        assert_eq!(f.state.state, last, "wrap inside {category:?}");
+        f.settle();
+        f.draw(key(egui::Key::ArrowDown));
+        assert_eq!(f.state.state, first);
+    }
+}
+
+fn quick_fixture(ready: bool) -> Fixture {
+    let mut f = Fixture::new();
+    if ready {
+        f.inv = Inventory::default();
+        f.account.selected = crate::ao::demo::seed_movement_design(&mut f.inv, Uuid::from_u128(1));
+        f.catalog = Default::default();
+        f.catalog.refresh(&mut f.inv);
+    }
+    f.manager_open = false;
+    f.quick = Some(Default::default());
+    f.settle();
+    assert!(f.click("AO").is_empty());
+    f.settle();
+    assert!(f.quick.as_ref().is_some_and(|q| q.open));
+    assert!(!f.manager_open, "toolbar opens only the compact controls");
+    f
+}
+
+#[test]
+fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
+    let mut f = quick_fixture(true);
+    let generation = f.inv.generation;
+    f.runtime.paused = true;
+    f.runtime.stands = false;
+    assert!(matches!(f.click(aurora_i18n::tr!("ao-enabled")).as_slice(), [Action::Preferences]));
+    assert!(f.account.enabled && !f.runtime.paused && f.runtime.stands);
+    assert!(matches!(
+        f.click(aurora_i18n::tr!("ao-quick-run")).as_slice(),
+        [Action::MovementPreferences]
+    ));
+    assert!(f.movement_prefs.running);
+    assert!(matches!(
+        f.click(aurora_i18n::tr!("ao-quick-fly")).as_slice(),
+        [Action::MovementPreferences]
+    ));
+    assert!(f.movement_prefs.fly_assist);
+    f.click(aurora_i18n::tr!("movement-swimming"));
+    assert!(f.movement_prefs.swimming && !f.movement_prefs.water_walk);
+    f.click(aurora_i18n::tr!("movement-water-walk"));
+    assert!(f.movement_prefs.water_walk && !f.movement_prefs.swimming);
+    f.click(aurora_i18n::tr!("movement-water-walk"));
+    assert!(!f.movement_prefs.water_walk && !f.movement_prefs.swimming);
+    f.click(aurora_i18n::tr!("ao-quick-manager"));
+    assert!(f.manager_open);
+    assert!(!f.quick.as_ref().expect("quick").open);
+    assert_eq!(f.inv.generation, generation, "quick controls must not mutate inventory");
+}
+
+#[test]
+fn quick_set_combo_stays_open_and_invalid_swimming_is_disabled() {
+    let mut f = quick_fixture(true);
+    f.click(aurora_i18n::tr!("movement-swimming"));
+    assert!(f.movement_prefs.swimming);
+    let old_name = f.catalog.selected(f.account.selected).expect("set").name.clone();
+    let other = Set::new("Other set".into());
+    let other_id = other.id;
+    f.catalog.sets.push(other);
+    f.click(&old_name);
+    f.settle();
+    let actions = f.click("Other set");
+    assert!(actions.iter().any(|a| matches!(a, Action::Preferences)));
+    assert!(actions.iter().any(|a| matches!(a, Action::MovementPreferences)));
+    assert_eq!(f.account.selected, other_id);
+    f.settle();
+    assert!(f.quick.as_ref().expect("quick").open, "child combo selection keeps its parent");
+    assert!(!f.movement_prefs.swimming);
+    assert!(f.click(aurora_i18n::tr!("movement-swimming")).is_empty());
+    assert!(!f.movement_prefs.swimming);
+    f.click("AO");
+    assert!(!f.quick.as_ref().expect("quick").open, "second toolbar click dismisses the panel");
+}
+
+#[test]
+fn quick_panel_dismisses_on_escape_and_outside_click_without_changing_preferences() {
+    let mut f = quick_fixture(false);
+    let before = f.movement_prefs.clone();
+    assert!(
+        f.draw(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default()
+        }])
+        .0
+        .is_empty()
+    );
+    assert!(!f.quick.as_ref().expect("quick").open);
+    f.click("AO");
+    f.settle();
+    let pos = egui::pos2(30.0, 50.0);
+    for pressed in [true, false] {
+        assert!(
+            f.draw(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default()
+                }
+            ])
+            .0
+            .is_empty()
+        );
+    }
+    assert!(!f.quick.as_ref().expect("quick").open);
+    assert_eq!(f.movement_prefs, before);
 }

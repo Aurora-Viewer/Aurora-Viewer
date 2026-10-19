@@ -8,10 +8,12 @@ use aurora_net::inventory::operations::Mutation;
 use egui::{RichText, Vec2};
 use uuid::Uuid;
 
+mod category;
 mod combinations;
 mod editor;
 mod migration;
 pub mod prototype;
+pub mod quick;
 #[cfg(test)]
 mod tests;
 
@@ -68,6 +70,7 @@ pub struct AoUi {
     selected_set: Uuid,
     state_focus: Option<State>,
     rail_state: Option<State>,
+    category_states: [Option<State>; category::Category::ALL.len()],
 }
 
 #[derive(Clone, Copy)]
@@ -92,10 +95,13 @@ impl AoUi {
 
     pub fn interface_demo(&mut self, mode: &str, catalog: &inventory::Catalog) {
         let Some(set) = catalog.selected(self.selected_set) else { return };
-        self.state = if mode == "interface-swim" {
-            State::SwimmingForward
-        } else {
-            State::Standing
+        self.state = match mode {
+            "interface-running" => State::Running,
+            "interface-jumping" => State::Jumping,
+            "interface-swim" | "interface-swim-missing" => State::SwimmingForward,
+            "interface-flight" => State::Flying,
+            "interface-sitting" => State::Sitting,
+            _ => State::Standing,
         };
         self.container = set.states.get(&self.state).and_then(|c| {
             if mode == "interface-group" {
@@ -145,6 +151,15 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -
     .inner
 }
 
+fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, account: &mut Account) -> bool {
+    let changed = toggle(ui, p, "ao-enabled", &mut account.enabled);
+    if changed && account.enabled {
+        runtime.stands = true;
+        runtime.paused = false;
+    }
+    changed
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ctx: &egui::Context,
@@ -163,7 +178,7 @@ pub fn show(
     let mut out = Vec::new();
     let selected = catalog.selected(account.selected);
     movement.swim_ready = catalog.swimming_ready(account.selected);
-    movement.swim_slots = selected.map_or(0, Set::swimming_slots);
+    movement.swim_slots = selected.map_or(0, Set::core_swimming_slots);
     let selected_id = selected.map_or(Uuid::nil(), |s| s.id);
     if state.selected_set != selected_id {
         state.selected_set = selected_id;
@@ -199,21 +214,11 @@ pub fn show(
                     if actions.changed {
                         out.push(Action::MovementPreferences);
                     }
-                    if actions.animations {
-                        state.tab = 0;
-                        state.state = State::SwimmingForward;
-                        state.container = None;
-                        state.cycle_edit = None;
-                    }
                     return;
                 }
             }
             ui.horizontal(|ui| {
-                if toggle(ui, p, "ao-enabled", &mut account.enabled) {
-                    if account.enabled {
-                        runtime.stands = true;
-                        runtime.paused = false;
-                    }
+                if enabled(ui, p, runtime, account) {
                     out.push(Action::Preferences);
                 }
                 ui.add_enabled_ui(account.enabled, |ui| {
@@ -347,47 +352,38 @@ fn set_options(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, state
     });
 }
 
-fn swimming_slot(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, set: &Set, state: &mut AoUi, out: &mut Vec<Action>) {
-    let count = set.swimming_slots();
-    let progress = if count == State::SWIMMING.len() {
-        aurora_i18n::tr!("ao-swim-ready", count = count, total = State::SWIMMING.len())
+fn swimming_status(ui: &mut egui::Ui, p: &Palette, set: &Set, slot: State) {
+    if set.swimming_ready() {
+        ui.label(RichText::new(aurora_i18n::tr!("ao-swim-ready")).color(p.muted));
     } else {
-        aurora_i18n::tr!("ao-swim-required", count = count, total = State::SWIMMING.len())
-    };
-    ui.label(RichText::new(progress).color(p.muted));
-    let slot = state.state;
-    let animation = set.swimming_animation(slot);
-    let label = animation.map_or(aurora_i18n::tr!("ao-swim-choose"), |a| a.name.as_str());
-    ui.horizontal(|ui| {
-        let response = ui
-            .add_enabled(
-                !state.busy(),
-                egui::Button::new(label)
-                    .truncate()
-                    .min_size(Vec2::new((ui.available_width() - 28.0).max(40.0), 30.0)),
-            )
-            .on_hover_text(label);
-        if response.clicked() {
-            state.container = None;
-            state.picker = Some(false);
-            state.folder = crate::world::inventory::actions::system(inv, 20).unwrap_or(inv.root);
-        }
-        if let Some(payload) = response.dnd_release_payload::<super::inventory::InvDrag>()
-            && !state.busy()
-        {
-            push(out, state, inventory::set_swimming(inv, set, slot, payload.0));
-        }
-        if widgets::icon_button(
-            ui,
-            p,
-            "trash-filled",
-            aurora_i18n::tr!("common-remove"),
-            set.states.contains_key(&slot) && !state.busy(),
-        ) && let Some(config) = set.states.get(&slot)
-        {
-            push(out, state, inventory::remove(inv, config.folder));
-        }
+        swimming_warning(ui, p);
+    }
+    if !State::CORE_SWIMMING.contains(&slot) {
+        ui.label(RichText::new(aurora_i18n::tr!("ao-swim-optional")).color(p.muted));
+    }
+    if slot == State::UnderwaterSwimming && set.swimming_animation(slot).is_none() {
+        ui.label(RichText::new(aurora_i18n::tr!("ao-underwater-swimming-fallback")).color(p.muted));
+    }
+}
+
+pub(super) fn swimming_warning(ui: &mut egui::Ui, p: &Palette) {
+    ui.horizontal_top(|ui| {
+        widgets::glyph(ui, "alert-triangle-filled", p.warn, 14.0);
+        ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("ao-swim-required")).color(p.warn)).wrap());
     });
+}
+
+fn swimming_marker(ui: &mut egui::Ui, p: &Palette, set: &Set, slot: State) {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(16.0, 28.0), egui::Sense::hover());
+    if State::CORE_SWIMMING.contains(&slot) {
+        let (icon, color, tip) = if set.swimming_animation(slot).is_some() {
+            ("circle-check-filled", p.success, aurora_i18n::tr!("ao-swim-required-present"))
+        } else {
+            ("alert-triangle-filled", p.warn, aurora_i18n::tr!("ao-swim-required-missing"))
+        };
+        widgets::paint_glyph(ui.painter(), icon, rect.center(), 14.0, color);
+        response.on_hover_text(tip);
+    }
 }
 
 fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inventory::Catalog, state: &mut AoUi, out: &mut Vec<Action>) {

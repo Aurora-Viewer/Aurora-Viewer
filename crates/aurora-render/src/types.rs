@@ -338,6 +338,9 @@ pub struct DrawLists {
     pub mask: Vec<DrawCmd>,
     pub mask_two_sided: Vec<DrawCmd>,
     pub water: Vec<DrawCmd>,
+    pub water_events: Vec<crate::WaterEvent>,
+    pub water_contacts: Vec<crate::WaterEvent>,
+    pub water_ground: crate::WaterGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
     /// The first `blend_depth` entries of `blend` are rigged faces (worn
@@ -457,6 +460,9 @@ impl DrawLists {
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
         self.particles.clone_from(&src.particles);
+        self.water_events.clone_from(&src.water_events);
+        self.water_contacts.clone_from(&src.water_contacts);
+        self.water_ground.clone_from(&src.water_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
@@ -488,6 +494,9 @@ impl DrawLists {
         self.probe.clear();
         self.reflection_terrain.clear();
         self.particles.clear();
+        self.water_events.clear();
+        self.water_contacts.clear();
+        self.water_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
         self.glow_alpha.clear();
@@ -690,6 +699,7 @@ pub enum AoMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
+    pub water_effects: crate::WaterEffects,
     pub aa: AntiAliasing,
     pub tonemapper: Tonemapper,
     /// Shadow map resolution per cascade (0 = shadows off).
@@ -728,6 +738,7 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
             // for, not the viewer's default (SMAA, in its own settings)
             aa: AntiAliasing::Msaa(4),

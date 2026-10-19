@@ -67,7 +67,6 @@ impl Default for Layout {
                 tb("Command_Performance_Icon", "performance", aurora_i18n::tr!("common-performance")),
                 tb("groundsit", "sit", aurora_i18n::tr!("extra-sit-on-ground-stand-up")),
                 tb("lock-filled", "movelock", aurora_i18n::tr!("movelock-title")),
-                tb("swimming", "movement", aurora_i18n::tr!("movement-title")),
                 tb("AO", "ao", aurora_i18n::tr!("ao-title")),
                 tb("Command_Preferences_Icon", "preferences", aurora_i18n::tr!("common-preferences")),
             ],

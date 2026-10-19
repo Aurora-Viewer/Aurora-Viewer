@@ -83,7 +83,8 @@ impl App {
         for root in roots {
             let Some(o) = self.world.objects.get(root) else { continue };
             let id = o.full_id;
-            if !self.world.hud_scales.needs_clamp(id) {
+            // (a partly loaded linkset is measured again once it is complete)
+            if !self.world.hud_scales.needs_clamp(id) || !self.scene.hud_loaded(&self.world, root) {
                 continue;
             }
             let Some(rect) = self.scene.hud_rect(&self.world, root, view) else {

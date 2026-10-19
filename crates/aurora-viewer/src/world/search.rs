@@ -134,6 +134,9 @@ pub struct SearchSettings {
     /// FSLegacySearchActionOnTeleport: 0 nothing, 1 close the window,
     /// 2 minimize it.
     pub teleport_action: u8,
+    /// The G / M / A toggles of Aurora's window, one set for every type
+    /// (the Legacy Viewer's defaults: General only).
+    pub aurora_ratings: RatingBoxes,
 }
 
 impl Default for SearchSettings {
@@ -149,6 +152,7 @@ impl Default for SearchSettings {
             land_limit_area: false,
             land_type: 0,
             teleport_action: 1,
+            aurora_ratings: RatingBoxes::default(),
         }
     }
 }
@@ -944,8 +948,9 @@ pub struct WebHome {
 /// grid the address derived is still the main grid's site, so the page is
 /// opened anonymously. This is a deliberate deviation from Firestorm, asked
 /// by the human: Firestorm sends the beta session id (and gives the beta
-/// OpenID cookie to the browser) to search.secondlife.com.
-pub fn web_home(grid: SearchGrid, access: search::AgentAccess, language: &str, session: Option<Uuid>) -> Option<WebHome> {
+/// OpenID cookie to the browser) to search.secondlife.com. `query` is the
+/// text of Aurora's field (the Legacy tab opens the page without one).
+pub fn web_home(grid: SearchGrid, query: &str, access: search::AgentAccess, language: &str, session: Option<Uuid>) -> Option<WebHome> {
     // LLWeb::expandURLSubstitutions: [GRID] is "secondlife.com" for every
     // grid but Linden Lab's staging one
     let domain = match grid {
@@ -953,7 +958,7 @@ pub fn web_home(grid: SearchGrid, access: search::AgentAccess, language: &str, s
         SearchGrid::Other => return None,
     };
     let session = session.filter(|_| grid == SearchGrid::Main);
-    let url = web_url(domain, "", access, language, session);
+    let url = web_url(domain, query, access, language, session);
     let identified = session.is_some_and(|id| url.contains(&id.to_string()));
     Some(WebHome { url, identified })
 }
@@ -1476,20 +1481,23 @@ mod tests {
     fn the_session_stays_on_the_grid_it_was_opened_on() {
         let session = Uuid::from_u128(0x5E55_1011_0000_4000_8000_0000_0000_00A1);
         // main grid: as Firestorm, the page is opened with the session
-        let main = web_home(SearchGrid::Main, ACCESS, "fr", Some(session)).expect("search page");
+        let main = web_home(SearchGrid::Main, "", ACCESS, "fr", Some(session)).expect("search page");
         assert!(main.identified);
         assert_eq!(main.url, web_url("secondlife.com", "", ACCESS, "fr", Some(session)));
         assert!(main.url.contains(&format!("&sid={session}&")));
         // beta grid: the same site, but neither sid nor cookie
-        let beta = web_home(SearchGrid::Beta, ACCESS, "fr", Some(session)).expect("search page");
+        let beta = web_home(SearchGrid::Beta, "", ACCESS, "fr", Some(session)).expect("search page");
         assert!(!beta.identified, "the browser gets no OpenID cookie");
         assert_eq!(beta.url, web_url("secondlife.com", "", ACCESS, "fr", None));
         assert!(!beta.url.contains("sid") && !beta.url.contains(&session.to_string()));
         // without a session the main grid's page is anonymous too
-        let none = web_home(SearchGrid::Main, ACCESS, "fr", None).expect("search page");
+        let none = web_home(SearchGrid::Main, "", ACCESS, "fr", None).expect("search page");
         assert!(!none.identified && !none.url.contains("sid"));
         // any other grid: no page, as before
-        assert_eq!(web_home(SearchGrid::Other, ACCESS, "fr", Some(session)), None);
+        assert_eq!(web_home(SearchGrid::Other, "", ACCESS, "fr", Some(session)), None);
+        // the text of Aurora's field goes to the page, escaped
+        let asked = web_home(SearchGrid::Main, "lune rousse", ACCESS, "fr", None).expect("search page");
+        assert!(asked.url.contains("query_term=lune%20rousse&"), "{}", asked.url);
     }
 
     #[test]

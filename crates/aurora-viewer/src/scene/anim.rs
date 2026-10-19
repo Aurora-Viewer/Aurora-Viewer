@@ -258,9 +258,23 @@ impl Motion {
 
     fn stop_at(&mut self, now: Instant) {
         if self.stop.is_none() {
-            self.residual = self.ease_in_weight(now);
             self.stop = Some(now);
+            self.residual = self.ease_in_weight(self.fade_start(now));
         }
+    }
+
+    /// LLKeyframeMotion::setStopTime: preserve an authored post-loop tail,
+    /// including a single held pose (loop_in == loop_out == 0).
+    fn fade_start(&self, stop: Instant) -> Instant {
+        let a = &self.anim.anim;
+        if !a.looping || a.loop_out == a.duration {
+            return stop;
+        }
+        let elapsed = stop.saturating_duration_since(self.continuous_activation).as_secs_f64();
+        let span = f64::from(a.loop_out - a.loop_in);
+        let fraction = if span > 0.0 { (elapsed - f64::from(a.loop_in)) % span } else { 0.0 };
+        let delay = (f64::from(a.duration - a.loop_in - a.ease_out) - fraction).max(0.0);
+        stop.checked_add(Duration::from_secs_f64(delay)).unwrap_or(stop)
     }
 
     /// LLKeyframeMotion::onUpdate: a stopped loop advances from its current
@@ -800,7 +814,12 @@ impl Controller {
             match m.stop {
                 Some(stop) if now >= stop => {
                     let a = &m.anim.anim;
-                    let out = now.duration_since(stop).as_secs_f64();
+                    let fade = m.fade_start(stop);
+                    if now < fade {
+                        m.weight = m.ease_in_weight(now);
+                        return true;
+                    }
+                    let out = now.duration_since(fade).as_secs_f64();
                     if out >= f64::from(a.ease_out) {
                         return false;
                     }
@@ -1823,6 +1842,35 @@ mod tests {
         assert_eq!(c.motions[0].local_time(at(2.75)), 1.75);
         assert!((c.motions[0].weight - residual * 0.84375).abs() < 1e-6);
         assert_eq!(c.motions[0].local_time(at(4.0)), 3.0);
+    }
+
+    #[test]
+    fn a_stopped_single_pose_loop_plays_its_authored_recovery_before_easing_out() {
+        let rig = rig();
+        let id = Uuid::from_u128(22);
+        let mut bound = BoundAnim::bind(bend(&rig, 0.7, 0.1).anim.clone(), &rig);
+        bound.anim.duration = 2.4;
+        bound.anim.loop_in = 0.0;
+        bound.anim.loop_out = 0.0;
+        bound.anim.ease_out = 0.25;
+        let anim = Arc::new(bound);
+        let t0 = Instant::now();
+        let at = |s| t0 + Duration::from_secs_f64(s);
+        let mut c = Controller::default();
+        c.sync(&[signal(id, 1, t0)], t0, |_| Some(anim.clone()));
+        c.sync(&[signal(id, 1, t0)], at(3.0), |_| Some(anim.clone()));
+        assert_eq!(c.motions[0].local_time(at(3.0)), 0.0);
+        c.sync(&[], at(3.0), |_| Some(anim.clone()));
+        c.sync(&[], at(4.5), |_| Some(anim.clone()));
+        assert_eq!(c.motions[0].local_time(at(4.5)), 1.5);
+        assert_eq!(
+            c.motions[0].weight, 1.0,
+            "the two-second recovery must not disappear after a quarter second"
+        );
+        c.sync(&[], at(5.3), |_| Some(anim.clone()));
+        assert!(c.motions[0].weight > 0.0 && c.motions[0].weight < 1.0);
+        c.sync(&[], at(5.401), |_| Some(anim.clone()));
+        assert!(c.motions.is_empty());
     }
 
     #[test]

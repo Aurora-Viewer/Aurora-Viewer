@@ -247,6 +247,13 @@ impl Renderer {
         if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
             features |= wgpu::Features::POLYGON_MODE_LINE;
         }
+        // Keep the actual water triangles across the near plane. The portable
+        // shader path restores their real depth when hardware clamp is absent.
+        let portable_water = std::env::var_os("AURORA_DEMO").is_some()
+            && std::env::var("AURORA_DEMO_WATER").is_ok_and(|mode| mode.contains("portable-depth"));
+        if afeat.contains(wgpu::Features::DEPTH_CLIP_CONTROL) && !portable_water {
+            features |= wgpu::Features::DEPTH_CLIP_CONTROL;
+        }
         if afeat.contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY) {
             features |= wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY;
         }

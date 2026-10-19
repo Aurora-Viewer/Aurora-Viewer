@@ -19,6 +19,20 @@ pub(super) fn show(
     state: &mut AoUi,
     out: &mut Vec<Action>,
 ) {
+    let category = super::category::Category::of(state.state);
+    state.category_states[category.index()] = Some(state.state);
+    let mut selected_category = category.index();
+    if widgets::tabs(
+        ui,
+        p,
+        &mut selected_category,
+        &super::category::Category::ALL.map(|c| (c.label(), true)),
+    ) {
+        let category = super::category::Category::ALL[selected_category];
+        let target = state.category_states[selected_category].unwrap_or_else(|| category.initial_state());
+        select_state(state, target);
+    }
+    let category = super::category::Category::of(state.state);
     let height = ui.available_height().clamp(230.0, 386.0);
     let reveal = state.rail_state != Some(state.state);
     state.rail_state = Some(state.state);
@@ -29,23 +43,47 @@ pub(super) fn show(
                 .id_salt("ao_state_rail")
                 .max_height(height - 24.0)
                 .show(ui, |ui| {
-                    for item in State::ALL {
-                        let response = ui.add_sized(
-                            [ui.available_width(), 28.0],
-                            egui::Button::selectable(state.state == item, item.label()).wrap(),
-                        );
+                    for item in category.states() {
+                        let response = ui
+                            .horizontal(|ui| {
+                                let marker_width = if item.swimming() { 16.0 + ui.spacing().item_spacing.x } else { 0.0 };
+                                let response = ui.add_sized(
+                                    [ui.available_width() - marker_width, 28.0],
+                                    egui::Button::selectable(state.state == item, item.label()).wrap(),
+                                );
+                                if item.swimming() {
+                                    super::swimming_marker(ui, p, set, item);
+                                }
+                                response
+                            })
+                            .inner;
                         if reveal && state.state == item {
                             response.scroll_to_me(Some(egui::Align::Center));
                         }
-                        if state.state_focus == Some(item) {
+                        let pending_focus = state.state_focus == Some(item);
+                        if pending_focus {
                             response.request_focus();
                             response.scroll_to_me(Some(egui::Align::Center));
-                            state.state_focus = None;
+                            if response.has_focus() && ui.is_rect_visible(response.rect) {
+                                state.state_focus = None;
+                            }
                         }
                         if response.clicked() && state.state != item {
                             select_state(state, item);
                         }
-                        if response.has_focus() {
+                        // A wrapped target can still be clipped while the
+                        // scroll animates. Keep its focus request and accept
+                        // the next key rather than losing keyboard navigation.
+                        if response.has_focus() || pending_focus {
+                            ui.memory_mut(|m| {
+                                m.set_focus_lock_filter(
+                                    response.id,
+                                    egui::EventFilter {
+                                        vertical_arrows: true,
+                                        ..Default::default()
+                                    },
+                                );
+                            });
                             let next = ui.input_mut(|i| {
                                 if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
                                     Some(1)
@@ -56,10 +94,12 @@ pub(super) fn show(
                                 }
                             });
                             if let Some(delta) = next {
-                                let index = State::ALL.iter().position(|s| *s == item).unwrap_or(0);
-                                let index = (index as isize + delta).rem_euclid(State::ALL.len() as isize) as usize;
-                                select_state(state, State::ALL[index]);
-                                state.state_focus = Some(State::ALL[index]);
+                                let index = category.states().position(|s| s == item).unwrap_or(0);
+                                let index = (index as isize + delta).rem_euclid(category.states().count() as isize) as usize;
+                                if let Some(next) = category.states().nth(index) {
+                                    select_state(state, next);
+                                    state.state_focus = Some(next);
+                                }
                             }
                         }
                     }
@@ -74,8 +114,7 @@ pub(super) fn show(
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     if state.state.swimming() {
-                        super::swimming_slot(ui, p, inv, set, state, out);
-                        return;
+                        super::swimming_status(ui, p, set, state.state);
                     }
                     let empty = StateConfig::default();
                     let config = set.states.get(&state.state).unwrap_or(&empty);
@@ -95,6 +134,7 @@ pub(super) fn show(
 
 fn select_state(state: &mut AoUi, item: State) {
     state.state = item;
+    state.state_focus = None;
     state.container = None;
     state.cycle_edit = None;
     state.picker = None;

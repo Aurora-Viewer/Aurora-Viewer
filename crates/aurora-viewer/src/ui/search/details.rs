@@ -29,7 +29,7 @@ const BUTTON_GAP: f32 = 4.0;
 const LABEL_W: f32 = 118.0;
 
 /// A button under the details.
-struct Btn<'a> {
+pub(super) struct Btn<'a> {
     icon: &'a str,
     label: &'a str,
     kind: ActionKind,
@@ -41,7 +41,7 @@ struct Btn<'a> {
 }
 
 impl<'a> Btn<'a> {
-    fn new(icon: &'a str, label: &'a str) -> Btn<'a> {
+    pub(super) fn new(icon: &'a str, label: &'a str) -> Btn<'a> {
         Btn {
             icon,
             label,
@@ -52,25 +52,25 @@ impl<'a> Btn<'a> {
         }
     }
 
-    fn primary(mut self) -> Self {
+    pub(super) fn primary(mut self) -> Self {
         self.kind = ActionKind::Primary;
         self
     }
 
-    fn enabled(mut self, on: bool) -> Self {
+    pub(super) fn enabled(mut self, on: bool) -> Self {
         self.enabled = on;
         self
     }
 
     /// A Firestorm action Aurora does not do yet: greyed, with the tooltip
     /// of the menus.
-    fn not_yet(mut self) -> Self {
+    pub(super) fn not_yet(mut self) -> Self {
         self.enabled = false;
         self.tip = Some(menu::not_yet());
         self
     }
 
-    fn menu(mut self, body: &'a dyn Fn(&mut egui::Ui)) -> Self {
+    pub(super) fn menu(mut self, body: &'a dyn Fn(&mut egui::Ui)) -> Self {
         self.menu = Some(body);
         self
     }
@@ -105,7 +105,7 @@ fn button_rows(ui: &egui::Ui, buttons: &[Btn], width: f32) -> Vec<Vec<usize>> {
 
 /// The details in a scrolling area over the buttons, which stay in view.
 /// Returns the index of the button clicked.
-fn pane(ui: &mut egui::Ui, p: &Palette, salt: (&str, Key), buttons: &[Btn], body: impl FnOnce(&mut egui::Ui)) -> Option<usize> {
+pub(super) fn pane(ui: &mut egui::Ui, p: &Palette, salt: (&str, Key), buttons: &[Btn], body: impl FnOnce(&mut egui::Ui)) -> Option<usize> {
     let rows = button_rows(ui, buttons, ui.available_width());
     let buttons_h = rows.len() as f32 * BUTTON_H + rows.len().saturating_sub(1) as f32 * BUTTON_GAP;
     // the layout also puts its spacing around the gap before the buttons
@@ -138,12 +138,12 @@ fn pane(ui: &mut egui::Ui, p: &Palette, salt: (&str, Key), buttons: &[Btn], body
     clicked
 }
 
-fn muted(ui: &mut egui::Ui, p: &Palette, text: &str) {
+pub(super) fn muted(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(p.muted));
 }
 
 /// A labelled value: the label in a fixed column, the value wrapping.
-fn field(ui: &mut egui::Ui, p: &Palette, label: &str, value: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn field(ui: &mut egui::Ui, p: &Palette, label: &str, value: impl FnOnce(&mut egui::Ui)) {
     ui.horizontal_top(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 16.0), egui::Sense::hover());
         ui.painter().text(
@@ -157,14 +157,14 @@ fn field(ui: &mut egui::Ui, p: &Palette, label: &str, value: impl FnOnce(&mut eg
     });
 }
 
-fn text_field(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
+pub(super) fn text_field(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str) {
     field(ui, p, label, |ui| {
         ui.add(egui::Label::new(RichText::new(value).size(12.0).color(p.ink)).wrap());
     });
 }
 
 /// A resident's name as a link to the profile (LLSLURL "agent" "inspect").
-fn agent_link(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid) {
+pub(super) fn agent_link(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid) {
     if id.is_nil() {
         ui.label(RichText::new(aurora_i18n::tr!("common-none")).size(12.0).color(c.p.ink));
         return;
@@ -181,7 +181,7 @@ fn agent_link(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid) {
 
 /// A text with emoji and clickable links in a sunken box at least `height`
 /// high.
-fn text_box(ui: &mut egui::Ui, c: &mut Ctx, text: &str, height: f32) {
+pub(super) fn text_box(ui: &mut egui::Ui, c: &mut Ctx, text: &str, height: f32) {
     let p = c.p;
     let width = ui.available_width();
     egui::Frame::new()
@@ -217,7 +217,7 @@ fn key_row(ui: &mut egui::Ui, p: &Palette, id: Uuid) {
 }
 
 /// The rating badge and its name.
-fn rating(ui: &mut egui::Ui, p: &Palette, name: &str) {
+pub(super) fn rating(ui: &mut egui::Ui, p: &Palette, name: &str) {
     let size = Vec2::new(ui.available_width(), 16.0);
     ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;

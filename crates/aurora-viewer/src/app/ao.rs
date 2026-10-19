@@ -36,6 +36,10 @@ impl App {
         }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
+                Some(mode) if mode.starts_with("quick") => {
+                    self.panels.ao = false;
+                    self.toolbar_ui.ao_quick.open = true;
+                }
                 Some("folder-names" | "folder-names-wait") => {
                     self.panels.inventory = true;
                     let inv = &self.world.inventory;
@@ -47,11 +51,37 @@ impl App {
                         .open_folders([Some(inv.root), brand, bridge].into_iter().flatten());
                     crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
                 }
-                Some("migrate" | "migrate-done") => {
+                Some("migrate" | "migrate-done" | "migrate-swim") => {
                     self.panels.ao = true;
                     self.ao_ui.migration = Some(Default::default());
                 }
                 Some("movement" | "swim-missing") => self.open_movement(),
+                Some("movement-rebound") => {
+                    use crate::keybinds::{Action as KeyAction, Binding, Input, Mods};
+                    use winit::keyboard::KeyCode;
+                    self.settings
+                        .keybinds
+                        .set(KeyAction::Up, 0, Some(Binding::captured(Input::key(KeyCode::F10), Mods::default())));
+                    self.settings.keybinds.set(
+                        KeyAction::Up,
+                        1,
+                        Some(Binding::captured(
+                            Input::Mouse("Back".into()),
+                            Mods {
+                                alt: true,
+                                ..Default::default()
+                            },
+                        )),
+                    );
+                    self.settings.keybinds.set(
+                        KeyAction::Down,
+                        0,
+                        Some(Binding::captured(Input::key(KeyCode::F11), Mods::default())),
+                    );
+                    self.settings.keybinds.set(KeyAction::Down, 1, None);
+                    self.open_movement();
+                    crate::ui::widgets::size_floater(&self.egui_ctx, "ao", egui::vec2(520.0, 760.0));
+                }
                 Some(mode) if mode.starts_with("interface") => {
                     self.panels.ao = true;
                     self.ao_ui.interface_demo(mode, &self.ao_catalog);
@@ -81,6 +111,57 @@ impl App {
             }
         }
         self.ao_catalog.refresh(&mut self.world.inventory);
+        if self.demo
+            && crate::ao::water_demo::mode().is_some()
+            && let Some(selected) = crate::ao::water_demo::install(&mut self.scene, &mut self.ao_catalog)
+        {
+            self.settings
+                .ao
+                .accounts
+                .insert(self.world.agent_id, crate::ao::Account { enabled: true, selected });
+            if self.frame_count <= 720 {
+                let walking = crate::ao::water_demo::mode().is_some_and(|m| m.starts_with("water-"));
+                self.settings
+                    .movements
+                    .entry(self.world.agent_id)
+                    .or_default()
+                    .set_water_mode(walking, true, true);
+            }
+            // Inventory polling need not visit the exact rendered frame 720.
+            if matches!(crate::ao::water_demo::mode(), Some("water-walk-ui" | "swim-ui")) && (720..780).contains(&self.frame_count) {
+                self.open_movement();
+                crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
+                crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(60.0, 80.0), egui::vec2(600.0, 740.0));
+            }
+            if self.frame_count == 720 {
+                if let Some(index) = match crate::ao::water_demo::mode() {
+                    Some("swim-crawl") => Some(1),
+                    Some("swim-back") => Some(2),
+                    _ => None,
+                } {
+                    self.ao_runtime
+                        .choose(crate::ao::State::SwimmingForward, crate::ao::water_demo::asset(1), index);
+                }
+                self.settings.name_tag_distance = 0.0;
+                self.panels.chat = false;
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.movelock_ui.open = false;
+                if crate::ao::water_demo::mode().is_some_and(|m| m.starts_with("slots")) {
+                    self.ao_ui.tab = 0;
+                    crate::ui::widgets::open_floater(&self.egui_ctx, "ao", &mut self.panels.ao);
+                    crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(100.0, 80.0), egui::vec2(720.0, 760.0));
+                    self.ao_ui.state = match crate::ao::water_demo::mode() {
+                        Some("slots-surface") => crate::ao::State::SwimmingForward,
+                        Some("slots-underwater") => crate::ao::State::UnderwaterSwimming,
+                        _ => crate::ao::State::WaterCannonball,
+                    };
+                    log::debug!("offline water editor: {:?}", self.ao_ui.state);
+                }
+            }
+        }
+
         let selected = self
             .settings
             .ao
@@ -89,6 +170,7 @@ impl App {
             .map_or(Uuid::nil(), |a| a.selected);
         let writable = crate::ao::bootstrap::Bootstrap::writable(&self.world);
         if !self.ao_ui.busy()
+            && !(self.demo && crate::ao::water_demo::mode().is_some())
             && let Some(result) = self
                 .ao_bootstrap
                 .poll(&mut self.world.inventory, &self.ao_catalog, selected, writable)
@@ -102,13 +184,16 @@ impl App {
         if let Some(migration) = self.ao_ui.migration.as_mut() {
             migration.refresh(&mut self.world.inventory, writable);
         }
-        if self.demo && self.ao_demo.as_deref() == Some("migrate-done") && self.frame_count == 720 {
+        if self.demo && matches!(self.ao_demo.as_deref(), Some("migrate-done" | "migrate-swim")) && self.frame_count == 720 {
             if let Some(migration) = self.ao_ui.migration.as_mut()
                 && let Some(id) = migration.source.sets.iter().find(|s| s.name == "Firestorm Walk Set").map(|s| s.id)
             {
                 migration.select(id);
             }
             self.apply_ao_action(Action::Migrate);
+        }
+        if self.demo && self.ao_demo.as_deref() == Some("migrate-swim") && self.frame_count == 900 {
+            self.ao_ui.state = crate::ao::State::UnderwaterFloating;
         }
         if !self.ao_default_applied && self.ao_catalog.root.is_some() && !self.ao_catalog.loading {
             if !self.ao_catalog.sets.iter().any(|s| s.id == selected)
@@ -170,7 +255,13 @@ impl App {
             .flatten()
             .map(|signal| [signal]);
         let raw = preview.as_ref().map_or(raw, |signals| signals.as_slice());
-        let set = self.ao_catalog.selected(account.selected);
+        let anchor_hold = self.native_anchor.standing_since(self.world.agent.ground_sit);
+        // Preference/set changes release physics first. Retain the verified
+        // set until stand-up is acknowledged, including with the AO disabled.
+        let set = anchor_hold
+            .filter(|_| self.native_anchor.owns_sit())
+            .and(self.anchor_pose.as_ref().map(|(_, set)| set))
+            .or_else(|| self.ao_catalog.selected(account.selected));
         let on_object = self
             .world
             .objects
@@ -179,6 +270,12 @@ impl App {
             .is_some_and(|o| o.parent_id != 0);
         let water = self.world.main_water_height();
         let mut swim_input = self.input;
+        swim_input.run |= self.always_run;
+        if self.demo
+            && let Some(sample) = crate::ao::water_demo::trajectory_input(self.frame_count)
+        {
+            swim_input = sample;
+        }
         if self.camera.mouselook() {
             swim_input.strafe_left |= swim_input.turn_left;
             swim_input.strafe_right |= swim_input.turn_right;
@@ -201,6 +298,14 @@ impl App {
             native_running: self.movement_runtime.native_running,
             enabled: account.enabled,
             swim_hold: preview_swim.or_else(|| self.movement_runtime.swim_signal(now, &swim_input)),
+            water_walk_hold: self
+                .movement_runtime
+                .water_walk
+                .signal(now)
+                .filter(|_| !self.world.agent.is_sitting() && !on_object),
+            anchor_hold: anchor_hold
+                .map(|start| crate::world::PlayingAnimation::from_signal(crate::ao::State::Standing.motion(), 0, start, None)),
+            swim_outro: self.movement_runtime.water_jump.outro(),
             mouselook: self.camera.mouselook(),
             on_object,
             seat_animations: self.world.seat_has_animations(),
@@ -212,17 +317,41 @@ impl App {
             region: self.world.main_region,
         };
         let anims = &mut self.scene.anims;
-        let (pose, commands) = self.ao_runtime.update(
-            set,
-            frame,
-            now,
-            |id| anims.get(id).is_some(),
-            |len| ((Uuid::new_v4().as_u128() >> 64) as usize) % len.max(1),
+        self.ao_runtime.prefetch(
+            set.filter(|_| account.enabled || frame.swim_hold.is_some()),
+            self.world.inventory.generation,
+            |id| {
+                anims.get(id);
+            },
+        );
+        let (pose, mut commands) = {
+            // The callbacks run sequentially. Borrow only around each streamer
+            // lookup; easing is queried only while an anchor handover is active.
+            let stream = std::cell::RefCell::new(&mut *anims);
+            self.ao_runtime.update_with_easing(
+                set,
+                frame,
+                now,
+                |id| stream.borrow_mut().get(id).is_some(),
+                |id| {
+                    stream
+                        .borrow_mut()
+                        .get(id)
+                        .and_then(|a| std::time::Duration::try_from_secs_f32(a.anim.ease_in.clamp(0.0, 60.0)).ok())
+                },
+                |len| ((Uuid::new_v4().as_u128() >> 64) as usize) % len.max(1),
+            )
+        };
+        commands.extend(
+            self.ao_runtime
+                .reconcile_loops(raw, now, |id| anims.get(id).is_some_and(|a| a.anim.loop_range().is_some())),
         );
         self.world.ao_pose = Some(pose);
-        for (anim, start) in commands {
-            log::debug!("AO animation {} {anim}", if start { "start" } else { "stop" });
-            self.send(NetCommand::AgentAnimation { anim, start });
+        for (anim, start) in &commands {
+            log::debug!("AO animation {} {anim}", if *start { "start" } else { "stop" });
+        }
+        if !commands.is_empty() {
+            self.send(NetCommand::AgentAnimationChanges { changes: commands });
         }
     }
 
