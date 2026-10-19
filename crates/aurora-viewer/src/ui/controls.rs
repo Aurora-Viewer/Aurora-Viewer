@@ -1538,6 +1538,8 @@ mod tests {
             camera_offset: [-3.0, 0.0, 1.0],
             focus_offset: [0.0, 0.0, 0.5],
         };
+        // one clock for both menus: egui's time never goes back
+        let mut time = 0.0;
         for shots in [
             vec![shot("Close up"), shot("Wide")],
             vec![shot("Close up"), shot("A rather long name for a saved camera position")],
@@ -1555,7 +1557,6 @@ mod tests {
                 keys: &keys,
                 free: None,
             };
-            let mut time = 0.0;
             let mut frame = |events| {
                 time += 0.1;
                 let mut out = Output::default();
