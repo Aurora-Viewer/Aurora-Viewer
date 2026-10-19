@@ -2419,6 +2419,7 @@ impl World {
                 None
             }
             NetEvent::ClassifiedInfo(c) => {
+                self.search.name_row(search::Tab::Classifieds, search::Key::Id(c.id), &c.name);
                 self.profiles.classifieds.insert(c.id, *c);
                 None
             }
@@ -2427,6 +2428,7 @@ impl World {
                 None
             }
             NetEvent::ParcelInfo(p) => {
+                self.place_details.parcel_known(p.id, p.global);
                 self.profiles.parcels.insert(p.id, *p);
                 None
             }
@@ -2435,6 +2437,7 @@ impl World {
                 None
             }
             NetEvent::EventInfo(e) => {
+                self.search.name_row(search::Tab::Events, search::Key::Event(e.id), &e.name);
                 self.search.events.insert(e.id, *e);
                 None
             }

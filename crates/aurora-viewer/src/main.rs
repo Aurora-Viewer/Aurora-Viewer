@@ -49,6 +49,7 @@ mod scene;
 mod screen_rate;
 mod settings;
 mod shape_editor;
+mod slapp;
 mod slurl;
 mod snapshot;
 mod sys_probe;

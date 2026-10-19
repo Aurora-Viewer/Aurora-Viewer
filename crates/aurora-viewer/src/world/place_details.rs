@@ -35,6 +35,10 @@ pub enum Source {
     History { title: String, global: DVec3 },
     /// "landmark": an inventory landmark (item, asset).
     Landmark { item: Uuid, asset: Uuid },
+    /// "remote_place" by its parcel (`secondlife:///app/parcel/<id>/about`,
+    /// LLParcelHandler): ParcelInfoRequest at once, the position comes with
+    /// the answer.
+    Parcel(Uuid),
 }
 
 impl Source {
@@ -216,6 +220,10 @@ impl PlaceDetails {
                 }
             }
             Source::History { global, .. } => Self::request_at(place, global, Uuid::nil(), out),
+            Source::Parcel(id) => {
+                place.stage = Stage::Info(id);
+                out.push(NetCommand::ParcelInfoRequest(id));
+            }
             Source::Landmark { asset, .. } => {
                 place.stage = Stage::Landmark;
                 Self::resolve_landmark(place, asset, landmarks, out);
@@ -311,6 +319,17 @@ impl PlaceDetails {
             }
         }
         self.out = out;
+    }
+
+    /// ParcelInfoReply: a profile opened by its parcel learns where it is
+    /// (Teleport, Map, its SLURL), as displayParcelInfo would have known.
+    pub fn parcel_known(&mut self, id: Uuid, global: DVec3) {
+        for place in self.all() {
+            if matches!(place.source, Source::Parcel(p) if p == id) && place.global.is_none() {
+                place.global = Some(global);
+                place.region_pos = region_pos_of(global);
+            }
+        }
     }
 
     pub fn take_commands(&mut self) -> Vec<NetCommand> {

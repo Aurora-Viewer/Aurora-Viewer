@@ -1,5 +1,6 @@
 //! Local chat window (nearby chat + instant messages).
 
+mod app_links;
 mod bubbles;
 mod call;
 mod completion;

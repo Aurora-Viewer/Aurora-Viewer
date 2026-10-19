@@ -815,6 +815,44 @@ impl Search {
         self.out.push(cmd);
     }
 
+    /// A classified or an event opened from a link (LLClassifiedHandler,
+    /// LLEventHandler show it in a window of its own): the tab's list holds
+    /// it alone, selected, its details asked; its name comes with them
+    /// (`name_row`). Replies of the tab's former query no longer apply.
+    pub fn show_one(&mut self, tab: Tab, key: Key) {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
+            return;
+        };
+        list.query = None;
+        list.query_id = Uuid::nil();
+        list.start = 0;
+        list.has_next = false;
+        list.key_lookup = None;
+        list.rows = vec![Row {
+            key,
+            icon: if tab == Tab::Events {
+                RowIcon::EventGeneral
+            } else {
+                RowIcon::Classified
+            },
+            name: String::new(),
+            values: Vec::new(),
+        }];
+        list.status = Status::Found;
+        self.select(tab, key);
+    }
+
+    /// The details of a row answered: a row shown without its name
+    /// (`show_one`) takes it.
+    pub fn name_row(&mut self, tab: Tab, key: Key, name: &str) {
+        let Some(list) = tab.list_index().and_then(|i| self.lists.get_mut(i)) else {
+            return;
+        };
+        for row in list.rows.iter_mut().filter(|r| r.key == key && r.name.is_empty()) {
+            row.name = name.to_owned();
+        }
+    }
+
     /// A Dir*Reply: applied to the list whose query it answers. The first
     /// rows of a page select the first one shown (selectFirstItem).
     pub fn apply_reply(&mut self, reply: &DirReply) {

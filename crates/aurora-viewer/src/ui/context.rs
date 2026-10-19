@@ -384,6 +384,8 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
+    AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),
     TeleportToPlaceConfirmed(String, glam::Vec3),
     /// Rights given to a friend (GrantUserRights).
