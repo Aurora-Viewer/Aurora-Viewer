@@ -3854,10 +3854,7 @@ impl App {
     /// frame and when the window's size changes, frames being rare while it
     /// is minimised.
     fn sync_minimized_mute(&mut self) {
-        let minimized = self
-            .gfx
-            .as_ref()
-            .is_some_and(|g| g.window.is_minimized().unwrap_or(false));
+        let minimized = self.gfx.as_ref().is_some_and(|g| g.window.is_minimized().unwrap_or(false));
         let mute = self.settings.audio.mute_when_minimized && minimized;
         if mute == self.minimized_mute {
             return;

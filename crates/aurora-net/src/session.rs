@@ -2969,7 +2969,12 @@ impl Session<'_> {
                     // process_enable_simulator (llworld.cpp): no circuit to a
                     // neighbour; the simulator keeps its child agent
                     if self.refuse_neighbours && self.main.is_some_and(|main| main != addr) {
-                        transition::link(|| format!("EnableSimulator region {} ({addr}) ignored: neighbours off", transition::grid(handle)));
+                        transition::link(|| {
+                            format!(
+                                "EnableSimulator region {} ({addr}) ignored: neighbours off",
+                                transition::grid(handle)
+                            )
+                        });
                         continue;
                     }
                     transition::link(|| {

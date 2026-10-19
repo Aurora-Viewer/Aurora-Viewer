@@ -302,7 +302,10 @@ fn relocate(from: &Path, to: &Path) -> std::io::Result<usize> {
         };
         let target = to.join(name);
         let result = if target.exists() {
-            Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "a transcript of the same name is there"))
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "a transcript of the same name is there",
+            ))
         } else {
             move_file(&source, &target)
         };
