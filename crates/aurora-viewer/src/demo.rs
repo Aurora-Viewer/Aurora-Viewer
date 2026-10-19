@@ -2919,6 +2919,8 @@ pub fn face_selection_events(invisible: bool) -> Vec<NetEvent> {
 }
 
 pub const FACE_SELECTION_MESH: Uuid = Uuid::from_u128(0xa0e0_fa00_0000_0000_0000_0000_0000_0001);
+/// AURORA_DEMO_WORLD_CLICKS=worn-other-mesh: a worn cube mesh, no skin.
+pub const WORN_UNRIGGED_MESH: Uuid = Uuid::from_u128(0xa0e0_fa00_0000_0000_0000_0000_0000_0002);
 
 /// Closed curved face, three disconnected islands of one mesh TE, and a
 /// hollow cut cylinder, all in the ordinary build selection event path.

@@ -641,7 +641,7 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|mouselook-gun|mouselook-touch|ground`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|worn-other-mesh|worn-other-hidden|worn-other-hidden-under|worn-other-hidden-mesh|worn-other-hidden-mesh-under|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
@@ -661,6 +661,11 @@ adds a scriptless child above it and presses the child (`ObjectGrab 988`).
 without a script, over a smaller scripted prim on that chest, blended or
 opaque: the press goes through the rigged mesh to the prim (`ObjectGrab
 975`), as the Legacy Viewer's left click ignores rigged meshes.
+`worn-other-mesh` replaces that prim with a cube mesh without a skin;
+`worn-other-hidden` and `worn-other-hidden-mesh` make the prim or the mesh
+invisible (every face at alpha 0, an invisible clicker), and the `-under`
+variants of both put it under the opaque rigged mesh: every press must touch
+it (`ObjectGrab 975`).
 `mouselook-gun` makes a script take the mouselook button
 (ScriptControlChange) and enters mouselook: the press and release send only
 `demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`
