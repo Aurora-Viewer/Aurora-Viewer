@@ -363,14 +363,7 @@ struct GtaoU {
 /// `reproj` takes its view space (z in front) to the clip space of the
 /// previous frame; `intensity` scales the indirect light; `temporal` is the
 /// accumulation's frame, if it accumulates, and whether a history is there.
-fn uniforms(
-    proj: Mat4,
-    reproj: Mat4,
-    intensity: f32,
-    size: (u32, u32),
-    q: Quality,
-    temporal: Option<(u64, bool)>,
-) -> GtaoU {
+fn uniforms(proj: Mat4, reproj: Mat4, intensity: f32, size: (u32, u32), q: Quality, temporal: Option<(u64, bool)>) -> GtaoU {
     let (noise, history) = match temporal {
         Some((index, history)) => ((index % NOISE_FRAMES) as f32, history),
         None => (0.0, false),
@@ -385,15 +378,15 @@ fn uniforms(
         depth: [proj.w_axis.z, proj.z_axis.z, size.0 as f32, size.1 as f32],
         radius: [EFFECT_RADIUS, FALLOFF_RANGE, SAMPLE_DISTRIBUTION_POWER, THIN_OCCLUDER_COMPENSATION],
         quality: [FINAL_VALUE_POWER, DEPTH_MIP_SAMPLING_OFFSET, q.slices as f32, q.steps as f32],
-        misc: [DENOISE_BLUR_BETA, if q.half_res { 2.0 } else { 1.0 }, (q.slices * slices) as f32, 0.0],
+        misc: [
+            DENOISE_BLUR_BETA,
+            if q.half_res { 2.0 } else { 1.0 },
+            (q.slices * slices) as f32,
+            0.0,
+        ],
         reproj: reproj.to_cols_array_2d(),
         il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
-        temporal: [
-            noise,
-            if history { 0.0 } else { 1.0 },
-            TEMPORAL_MIN_WEIGHT,
-            TEMPORAL_CLIP,
-        ],
+        temporal: [noise, if history { 0.0 } else { 1.0 }, TEMPORAL_MIN_WEIGHT, TEMPORAL_CLIP],
     }
 }
 
@@ -811,15 +804,7 @@ impl Gtao {
     /// The constants of this frame (before the encoder runs): `proj` its
     /// projection, `reproj` from [`reprojection`], `intensity` the indirect
     /// light's strength, `frame` what it knows of the frames before.
-    pub(crate) fn write(
-        &self,
-        queue: &wgpu::Queue,
-        t: &mut Targets,
-        proj: Mat4,
-        reproj: Mat4,
-        intensity: f32,
-        frame: Frame,
-    ) {
+    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &mut Targets, proj: Mat4, reproj: Mat4, intensity: f32, frame: Frame) {
         let next = t.history.next(frame);
         t.accumulate = next.map(|(target, _)| target);
         let temporal = next.map(|(_, history)| (frame.index, history));
