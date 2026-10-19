@@ -993,6 +993,7 @@ mod tests {
             double_click: Default::default(),
             marketplace: false,
             parcel_landmark: None,
+            can_set_home: false,
             classic_bars: false,
             islands: IslandsLook {
                 stretch,

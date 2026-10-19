@@ -57,6 +57,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "GroupAPIv1",
     "GroupExperiences",
     "GroupMemberData",
+    // World › Set Home to Here (LLAgent::setStartPosition)
+    "HomeLocation",
     // rebake (LLAppearanceMgr::syncCofVersionAndRefresh, Firestorm's
     // buildCapabilityNames)
     "IncrementCOFVersion",
@@ -108,6 +110,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // environment settings items (LLEnvironment::isInventoryEnabled needs both)
     "UpdateSettingsAgentInventory",
     "UpdateSettingsTaskInventory",
+    // Preferences › Privacy: online visibility, offline IMs by e-mail
+    // (LLAgent::sendAgentUserInfoRequest / sendAgentUpdateUserInfo)
+    "UserInfo",
     "ViewerAsset",
     "ViewerStats",
     "VoiceSignalingRequest",
@@ -175,6 +180,13 @@ mod language_tests {
             "RegionExperiences",
             "RegionSchedule",
         ] {
+            assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
+        }
+    }
+
+    #[test]
+    fn the_home_and_user_info_capabilities_are_requested() {
+        for cap in ["HomeLocation", "UserInfo"] {
             assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
         }
     }
