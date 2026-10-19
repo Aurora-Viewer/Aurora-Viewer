@@ -1,5 +1,5 @@
 //! The place card shared by the windows that list places (Aurora's Search
-//! today, Aurora's Places next): a row with the parcel's snapshot, its name
+//! and Aurora's Places, whose favourites are dragged into the bar's order): a row with the parcel's snapshot, its name
 //! and a second line (region and position, a date…), the G / M / A badge at
 //! the right end, and room before it for what the window adds (traffic, a
 //! sale pill, a favourite star). The snapshot covers its frame, its middle
