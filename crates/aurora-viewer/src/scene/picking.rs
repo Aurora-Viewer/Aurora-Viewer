@@ -47,6 +47,19 @@ fn nearest_hit<H>(hits: Vec<H>, key: impl Fn(&H) -> (f32, usize)) -> Option<H> {
     })
 }
 
+/// The box around the box `min`..`max` brought by `m`.
+fn transformed_box(m: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
+    (0..8).fold((Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)), |(lo, hi), i| {
+        let corner = Vec3::new(
+            if i & 1 == 0 { min.x } else { max.x },
+            if i & 2 == 0 { min.y } else { max.y },
+            if i & 4 == 0 { min.z } else { max.z },
+        );
+        let p = m.transform_point3(corner);
+        (lo.min(p), hi.max(p))
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FacePick {
     Surface,
@@ -568,10 +581,30 @@ impl Scene {
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
         let (pos, rot, _) = Self::object_transform(world, idx, Instant::now(), 0)?;
-        let geom = self.gpu.get(idx).and_then(|g| g.geom).and_then(|key| self.geom_ready(&key));
-        let (min, max) = geom.map_or((-Vec3::splat(0.5), Vec3::splat(0.5)), |g| (g.min, g.max));
+        let g = self.gpu.get(idx);
+        let geom = g.and_then(|g| g.geom).and_then(|key| self.geom_ready(&key));
+        let (mut min, mut max) = geom.map_or((-Vec3::splat(0.5), Vec3::splat(0.5)), |g| (g.min, g.max));
+        if let Some(unbind) = g.and_then(|g| self.unbind_of(g)) {
+            (min, max) = transformed_box(unbind, min, max);
+        }
         let scale = world.visual_scale(idx);
         Some((pos + rot * ((min + max) * 0.5 * scale), (max - min) * scale))
+    }
+
+    /// What undoes the bind shape of the geometry `g` draws: a skinned mesh
+    /// drawn without a skeleton (`sync_plan`'s placement).
+    fn unbind_of(&self, g: &ObjGpu) -> Option<Mat4> {
+        match g.geom? {
+            GeomKey::Mesh { id, .. } if !g.rigged => self.meshes.unbind(&id),
+            _ => None,
+        }
+    }
+
+    /// The model matrix of the geometry `g` draws for object `o`
+    /// (`plants::geometry_model`, then `unbind_of`).
+    fn drawn_model(&self, g: &ObjGpu, o: &Object, scale: Vec3, key: Option<GeomKey>, pos: Vec3, rot: Quat) -> Mat4 {
+        let model = super::plants::geometry_model(scale, o, key, pos, rot);
+        self.unbind_of(g).map_or(model, |unbind| model * unbind)
     }
 
     pub(super) fn face_hit(
@@ -608,7 +641,7 @@ impl Scene {
         }
         let geom = self.geom_ready(&g.geom?)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = super::plants::geometry_model(world.visual_scale(idx), o, g.geom, pos, rot);
+        let model = self.drawn_model(g, o, world.visual_scale(idx), g.geom, pos, rot);
         let inv = model.inverse();
         let counts = &self.exact_tests;
         counts.objects.fetch_add(1, Relaxed);
@@ -798,7 +831,7 @@ impl Scene {
         let key = g.geom?;
         let geom = self.geom_ready(&key)?;
         let (pos, rot, _) = Self::object_transform(world, idx, now, 0)?;
-        let model = super::plants::geometry_model(world.visual_scale(idx), o, Some(key), pos, rot);
+        let model = self.drawn_model(g, o, world.visual_scale(idx), Some(key), pos, rot);
         let inv = model.inverse();
         // (the ray in object space, as `pick::ray_faces` takes it there)
         let (origin, dir) = (inv.transform_point3(ray.0), inv.transform_vector3(ray.1));
@@ -1340,7 +1373,7 @@ impl Scene {
             let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0) else {
                 continue;
             };
-            let inv = super::plants::geometry_model(o.visual_scale(), o, g.geom, pos, rot).inverse();
+            let inv = self.drawn_model(g, o, o.visual_scale(), g.geom, pos, rot).inverse();
             if !ray_box(inv.transform_point3(ray.0), inv.transform_vector3(ray.1), geom.min, geom.max).is_some_and(|t| t < nearest) {
                 continue;
             }

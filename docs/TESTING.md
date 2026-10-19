@@ -1888,6 +1888,7 @@ tests do not establish that this report uses an invalid joint or index.
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
@@ -1978,6 +1979,16 @@ tests do not establish that this report uses an invalid joint or index.
   from the start position: `AURORA_DEMO_CAMERA=close,652,455,30`, capture
   at frame 720; `AURORA_GRAPHICS_PRESET=low` leaves out the self-shadow line
   the sun draws across a low-poly ball.
+- **`AURORA_DEMO_RIGGED_PROP=1`**: a five-link chain modelled down the
+  back of the default skeleton, bound to the chest, and encoded as an
+  upload does it (vertices normalized, the bind shape bringing them back
+  onto the skeleton,
+  `demo_rigged_prop.rs`), at frame 120. Rezzed on the dark cube 3 m ahead
+  of the start position, it is a static mesh standing on the cube and
+  filling its object box, as the Legacy Viewer draws a skinned mesh that is
+  neither worn nor a playing animated object; a chain much smaller,
+  floating above the cube, is its bind shape applied without a skeleton.
+  The same mesh worn by our avatar hangs down its back.
 - **`AURORA_BLEND_SHADOWS=0`**: alpha-blended faces cast sun and projector
   shadows only when rigged, as before. By default every blended face casts,
   as in LLPipeline::renderShadow (renderAlphaObjects): glass whose texture

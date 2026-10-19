@@ -293,8 +293,17 @@ impl SyncCtx<'_> {
         let world = self.world;
         let (pos, rot, _) = xf;
         let scale = (o.visual_scale() * if xf.2 { world.hud_scale(idx) } else { 1.0 }).max(Vec3::splat(0.001));
-        let rigged = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
-        let skeleton_owner = rigged.then(|| Scene::skeleton_owner(world, idx)).flatten();
+        let skinned = matches!(geom_key, GeomKey::Mesh { id, .. } if self.meshes.meta(&id).is_some_and(|m| m.skin.is_some()));
+        let skeleton_owner = skinned.then(|| Scene::skeleton_owner(world, idx)).flatten();
+        // A skinned mesh is drawn rigged only on a skeleton (worn, or an
+        // animated object); rezzed in the world, it is a static mesh
+        // (LLVolumeGeometryManager::rebuildGeom, indra/newview/llvovolume.cpp):
+        // its geometry's bind shape is undone.
+        let rigged = skeleton_owner.is_some();
+        let unbind = match geom_key {
+            GeomKey::Mesh { id, .. } if skinned && !rigged => self.meshes.unbind(&id),
+            _ => None,
+        };
         let owner_xf = skeleton_owner.and_then(|(_, owner_idx)| self.transform(owner_idx));
         let on_gpu = !xf.2 && anchors::enabled();
         // Rigged meshes are already in avatar skeleton space (bind pose):
@@ -332,14 +341,15 @@ impl SyncCtx<'_> {
                 })
             })
             .flatten();
+        let unbind = unbind.unwrap_or(Mat4::IDENTITY);
         let world_model = match (skeleton, plant) {
             (Some((_, _, model)), _) => model,
             (None, Some(model)) => model,
-            (None, None) => Mat4::from_scale_rotation_translation(scale, rot, pos),
+            (None, None) => Mat4::from_scale_rotation_translation(scale, rot, pos) * unbind,
         };
         let model = match (skeleton_anchor, point_anchor) {
             (Some(_), _) => Mat4::IDENTITY,
-            (None, Some((_, local_pos, local_rot))) => Mat4::from_scale_rotation_translation(scale, local_rot, local_pos),
+            (None, Some((_, local_pos, local_rot))) => Mat4::from_scale_rotation_translation(scale, local_rot, local_pos) * unbind,
             (None, None) => world_model,
         };
         let center_local = (geom.min + geom.max) * 0.5;

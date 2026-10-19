@@ -401,6 +401,16 @@ impl MeshStreamer {
         })
     }
 
+    /// What undoes the bind shape a skinned mesh's geometry holds
+    /// (`build_mesh_lod`), for an object that draws it without a skeleton;
+    /// None for a mesh without a skin (or not known yet) and for a bind
+    /// shape that cannot be undone.
+    pub fn unbind(&self, id: &Uuid) -> Option<glam::Mat4> {
+        let e = self.entries.get(id).filter(|e| e.ready())?;
+        let bind = e.skin.as_ref()?.bind_shape;
+        (bind.determinant().abs() > 1e-12).then(|| bind.inverse())
+    }
+
     /// In-memory meshes for local previews and offline fixtures; no asset fetch.
     pub fn insert_local(&mut self, id: Uuid, data: Arc<Vec<u8>>, header: MeshHeader, skin: Option<Arc<SkinInfo>>) {
         self.entries.insert(
@@ -1381,6 +1391,54 @@ mod tests {
         s.on_cache(near, None);
         s.update(&jobs, &fetcher, CAP, &rig);
         assert_eq!(s.entries[&near].inflight[0].1, None);
+    }
+
+    /// A skinned mesh rezzed in the world: its geometry is built with the
+    /// bind shape (`build_mesh_lod`), and `unbind` brings it back into the
+    /// unit box its object's scale fills, as the Legacy Viewer draws it.
+    #[test]
+    fn unbind_brings_a_skinned_mesh_back_into_its_object_box() {
+        use glam::Vec3;
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let mut model = crate::demo::auto_hover::rigged_model(&lib);
+        model.normalize().expect("model");
+        let encode = |skin| {
+            aurora_assets::import_mesh::encode::asset(
+                &[None, None, None, Some(model.clone())],
+                None,
+                &aurora_assets::import_mesh::process::Physics::default(),
+                aurora_assets::import_mesh::encode::Options {
+                    skin,
+                    ..Default::default()
+                },
+            )
+            .expect("asset")
+        };
+        let (asset, plain) = (encode(true), encode(false));
+        let header = aurora_assets::parse_mesh_header(&asset).expect("header");
+        let skin = aurora_assets::decode_skin(aurora_assets::mesh::section_bytes(&asset, header.skin.expect("skin")).expect("skin"))
+            .expect("skin");
+        let bind = skin.bind_shape;
+        let mut s = mesh_streamer();
+        let (rigged, still) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        s.insert_local(rigged, Arc::new(asset.clone()), header.clone(), Some(Arc::new(skin)));
+        let plain_header = aurora_assets::parse_mesh_header(&plain).expect("header");
+        s.insert_local(still, Arc::new(plain), plain_header, None);
+        assert!(s.unbind(&still).is_none());
+        let unbind = s.unbind(&rigged).expect("unbind");
+
+        let high = aurora_assets::mesh::section_bytes(&asset, header.lods[3].expect("high")).expect("high");
+        let faces = aurora_assets::decode_mesh_lod(high).expect("faces");
+        let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for p in faces.iter().flat_map(|f| &f.positions) {
+            let built = bind.transform_point3(Vec3::from_array(*p));
+            // the geometry as built lies on the skeleton, metres away
+            let drawn = unbind.transform_point3(built);
+            (lo, hi) = (lo.min(drawn), hi.max(drawn));
+        }
+        assert!(lo.cmpge(Vec3::splat(-0.501)).all() && hi.cmple(Vec3::splat(0.501)).all(), "{lo} {hi}");
+        assert!((hi - lo).cmpgt(Vec3::splat(0.99)).all(), "{lo} {hi}");
+        assert!(bind.transform_point3(Vec3::ZERO).length() > 0.5);
     }
 
     /// Without a cache folder (the tests' streamers) a mesh is neither read
