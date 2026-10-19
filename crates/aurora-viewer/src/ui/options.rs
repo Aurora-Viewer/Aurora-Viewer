@@ -1396,6 +1396,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                                 egui::Slider::new(&mut s.avatar_physics_detail, 0.0..=1.0)
                                     .custom_parser(aurora_i18n::parse_number)
                                     .step_by(0.05)
+                                    .fixed_decimals(2)
                                     .trailing_fill(true),
                             )
                             .changed()
