@@ -291,6 +291,10 @@ pub struct World {
     pub balance_changes: Vec<(Option<i32>, i32)>,
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
     pub typing_started: Vec<Uuid>,
+    /// Avatars whose viewer said they type in the nearby chat
+    /// (`NetEvent::NearbyTyping`, LLVOAvatar::mTyping), until their stop,
+    /// their line, or their leaving.
+    nearby_typing: HashSet<Uuid>,
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
@@ -489,6 +493,7 @@ impl World {
             attention: Vec::new(),
             balance_changes: Vec::new(),
             typing_started: Vec::new(),
+            nearby_typing: HashSet::new(),
             login: None,
             agent_id: Uuid::nil(),
             regions: HashMap::new(),
@@ -683,10 +688,20 @@ impl World {
     }
 
     /// The look-ats of the avatars and toward the objects that just left
-    /// the store (`lookat::LookAts::forget`).
+    /// the store (`lookat::LookAts::forget`), and the typing of those
+    /// avatars (gone with their LLVOAvatar).
     pub(crate) fn forget_gone_look_ats(&mut self) {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
+    }
+
+    /// The avatar types in the nearby chat: its viewer said so, or it plays
+    /// the typing animation (what the demo's crowd shows). The Legacy
+    /// Viewer reads only the former (LLVOAvatar::isTyping), which a viewer
+    /// sends even with its typing animation turned off.
+    pub fn is_typing_nearby(&self, avatar: &Uuid) -> bool {
+        self.nearby_typing.contains(avatar) || self.animations_of(avatar).iter().any(|a| a.id == radar::ANIM_AGENT_TYPE)
     }
 
     /// What is stored by object key follows the objects that changed key
@@ -1933,6 +1948,16 @@ impl World {
                 self.on_chat(c);
                 None
             }
+            // process_chat_from_simulator: an avatar not built yet (the
+            // login) is skipped; never our own, echoed back
+            NetEvent::NearbyTyping { avatar, typing } => {
+                if !typing {
+                    self.nearby_typing.remove(&avatar);
+                } else if avatar != self.agent_id && self.objects.index_of_uuid(&avatar).is_some() {
+                    self.nearby_typing.insert(avatar);
+                }
+                None
+            }
             NetEvent::MuteList(src) => {
                 self.on_mute_list(src);
                 None
@@ -2794,6 +2819,8 @@ impl World {
                 if c.source_id == self.agent_id {
                     ChatKind::Own
                 } else {
+                    // "We have a real utterance now": no more typing
+                    self.nearby_typing.remove(&c.source_id);
                     // LLNearbyChatHandler::processChat: the speaker joins
                     // the recent people
                     self.met(c.source_id);
@@ -5003,6 +5030,55 @@ mod motion_tests {
         let there = here + (256u64 << 32);
         world.ensure_region(there, (256, 256));
         (world, avatar, worn, here, there)
+    }
+
+    /// Another viewer's typing notices make the avatar type, without its
+    /// typing animation (PlayTypingAnim off), until its stop, its line or
+    /// its leaving (process_chat_from_simulator); ours echoed back and an
+    /// avatar not built yet are skipped.
+    #[test]
+    fn typing_notices_make_an_avatar_type_without_its_animation() {
+        let (mut world, avatar, here) = fixture();
+        let mut other = avatar.clone();
+        other.local_id = 950;
+        other.full_id = Uuid::from_u128(0xD00D);
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![avatar.clone(), other.clone()],
+        });
+        let notice = |avatar, typing| NetEvent::NearbyTyping { avatar, typing };
+        let id = other.full_id;
+        world.apply(notice(Uuid::from_u128(0xFEED), true));
+        assert!(!world.is_typing_nearby(&Uuid::from_u128(0xFEED)), "not built yet");
+        world.apply(notice(world.agent_id, true));
+        assert!(!world.is_typing_nearby(&world.agent_id), "our own echo");
+        world.apply(notice(id, true));
+        assert!(world.is_typing_nearby(&id));
+        world.apply(notice(id, false));
+        assert!(!world.is_typing_nearby(&id));
+        // the line said ends it
+        world.apply(notice(id, true));
+        world.apply(NetEvent::Chat(ChatMessage {
+            from_name: "Other".into(),
+            source_id: id,
+            owner_id: id,
+            source_type: ChatSourceType::Agent,
+            chat_type: ChatType::Normal,
+            position: Vec3::new(10.0, 10.0, 20.0),
+            message: "hello".into(),
+        }));
+        assert!(!world.is_typing_nearby(&id));
+        // gone with the avatar, not back with it
+        world.apply(notice(id, true));
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![other.local_id],
+        });
+        world.apply(NetEvent::ObjectUpdates {
+            handle: here,
+            objects: vec![other],
+        });
+        assert!(!world.is_typing_nearby(&id));
     }
 
     #[test]

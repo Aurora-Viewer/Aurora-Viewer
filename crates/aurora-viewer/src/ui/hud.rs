@@ -264,8 +264,6 @@ fn plate_content(
     use super::presence::Status;
     let id = o.full_id;
     let own = id == world.agent_id;
-    let anims = world.animations_of(&id);
-    let playing = |anim: uuid::Uuid| anims.iter().any(|a| a.id == anim);
     // the source of the Conversations window's dot too (ui/presence.rs)
     let presence = match super::presence::of_avatar(world, &id) {
         Status::Busy => Presence::Busy,
@@ -317,12 +315,7 @@ fn plate_content(
         // rather than the animation (it may be off), like its microphone:
         // the Legacy Viewer's tag never shows ours (the human's choice,
         // 2026-10-19)
-        typing: typing_shown
-            && if own {
-                own_typing
-            } else {
-                playing(crate::world::radar::ANIM_AGENT_TYPE)
-            },
+        typing: typing_shown && if own { own_typing } else { world.is_typing_nearby(&id) },
         friend,
         too_complex: !own && too_complex,
         blocked,
@@ -454,7 +447,7 @@ pub fn draw(
                     status.push(aurora_i18n::tr!("ui-hud-blocked"));
                 }
                 // FSShowTypingStateInNameTag, last, never on our own tag
-                if settings.typing_in_name_tags && o.full_id != world.agent_id && playing(crate::world::radar::ANIM_AGENT_TYPE) {
+                if settings.typing_in_name_tags && o.full_id != world.agent_id && world.is_typing_nearby(&o.full_id) {
                     status.push(aurora_i18n::tr!("radar-col-typing"));
                 }
                 if !status.is_empty() {

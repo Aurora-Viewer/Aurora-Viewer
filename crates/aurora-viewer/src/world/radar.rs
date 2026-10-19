@@ -361,7 +361,7 @@ pub fn sightings(world: &World) -> Vec<Sighting> {
             altitude_known: true,
             loaded: true,
             sitting: o.parent_id != 0 || playing(ANIM_AGENT_SIT_GROUND) || playing(super::body::ANIM_SIT_GROUND_CONSTRAINED),
-            typing: playing(ANIM_AGENT_TYPE),
+            typing: world.is_typing_nearby(&o.full_id),
         });
     }
     for (region, list) in &world.coarse {

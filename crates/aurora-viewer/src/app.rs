@@ -10412,7 +10412,7 @@ impl App {
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 // who hears the nearby chat, and who of them types (the
-                // radar's avatars in chat range, their typing animation)
+                // radar's avatars in chat range, `World::is_typing_nearby`)
                 self.chat_ui.nearby_count = 0;
                 self.chat_ui.nearby_typing.clear();
                 for e in self.radar.entries() {
