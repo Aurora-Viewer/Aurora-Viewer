@@ -25,6 +25,37 @@ fn now() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
+/// Which group titles the name tags show (the Legacy Viewer's
+/// GroupTitlesTagMode, LLVOAvatar::sRenderGroupTitles): all by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum GroupTitles {
+    None,
+    Mine,
+    #[default]
+    All,
+}
+
+impl GroupTitles {
+    pub const ALL: [GroupTitles; 3] = [GroupTitles::None, GroupTitles::Mine, GroupTitles::All];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GroupTitles::None => aurora_i18n::tr!("ui-options-group-titles-none"),
+            GroupTitles::Mine => aurora_i18n::tr!("ui-options-group-titles-mine"),
+            GroupTitles::All => aurora_i18n::tr!("ui-options-group-titles-all"),
+        }
+    }
+
+    /// The tag of an avatar shows its group title.
+    pub fn shows(self, own: bool) -> bool {
+        match self {
+            GroupTitles::None => false,
+            GroupTitles::Mine => own,
+            GroupTitles::All => true,
+        }
+    }
+}
+
 /// How names are written (Firestorm defaults).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NameOptions {
@@ -590,6 +621,13 @@ mod tests {
         assert_eq!(b.complete(&off), "Bob Smith");
         let untrimmed = NameOptions { trim_resident: false, ..o };
         assert_eq!(a.complete(&untrimmed), "Jane Doe (janedoe Resident)");
+    }
+
+    #[test]
+    fn group_titles_show_on_the_tags_the_mode_names() {
+        assert!(GroupTitles::default().shows(false));
+        assert!(GroupTitles::Mine.shows(true) && !GroupTitles::Mine.shows(false));
+        assert!(!GroupTitles::None.shows(true));
     }
 
     #[test]

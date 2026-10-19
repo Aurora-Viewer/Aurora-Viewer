@@ -340,6 +340,7 @@ mod tests {
             one_shot: 0,
             cam_warned: false,
             far: 128.0,
+            refuse_neighbours: false,
             fov: DEFAULT_FOV,
             logout_started: None,
             finished: false,

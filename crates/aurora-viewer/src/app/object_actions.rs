@@ -19,6 +19,16 @@ impl App {
         shown: Option<aurora_net::TouchSurface>,
     ) {
         let now = Instant::now();
+        // FSBlockClickSit (LLToolPie::handleLeftClickPick): a sit click goes
+        // on as a touch; the menu's Sit is not a click action and still sits
+        let target = if target.action == Action::Sit && self.settings.block_click_sit {
+            Target {
+                action: Action::Touch,
+                ..target
+            }
+        } else {
+            target
+        };
         match target.action {
             Action::Disabled => {}
             Action::Sit => {

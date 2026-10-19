@@ -308,7 +308,7 @@ fn plate_content(
     Content {
         name,
         username,
-        title: o.group_title(),
+        title: o.group_title().filter(|_| world.group_titles.shows(own)),
         detail,
         role: Role::of(own, blocked, super::colors::is_linden(&legacy), friend),
         presence,
@@ -461,7 +461,7 @@ pub fn draw(
                     lines.push((format!("({})", status.join(", ")), p.muted, 11.0));
                 }
             }
-            if let Some(t) = o.group_title() {
+            if let Some(t) = o.group_title().filter(|_| world.group_titles.shows(o.full_id == world.agent_id)) {
                 lines.push((t, p.muted, 11.0));
             }
             // LLVOAvatar::idleUpdateNameTagText: the display name, then the

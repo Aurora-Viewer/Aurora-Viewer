@@ -74,6 +74,8 @@ pub struct OptionsUi {
     pub chat_log_dir: Option<std::path::PathBuf>,
     /// What the last erasing of the transcripts did (set by the app).
     pub chat_log_status: String,
+    /// The transcripts are in a folder the user chose (set by the app).
+    pub chat_log_custom: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     /// The page opens scrolled to its end (`AURORA_DEMO_OPTIONS=<n>:end`).
@@ -86,6 +88,9 @@ pub struct OptionsUi {
     pub scroll_to_occlusion: bool,
     pub scroll_to_bloom: bool,
     pub scroll_to_name_tags: bool,
+    /// The page opens on the first (1) or second (2) of its marked rows
+    /// (`AURORA_DEMO_OPTIONS=<n>:new` / `:new2`, captures).
+    pub scroll_to_new: u8,
     /// Chat opens on the taskbar and system notifications (`3:attention`).
     pub scroll_to_attention: bool,
     pub audio_section: Option<AudioSection>,
@@ -153,12 +158,55 @@ pub struct OptionsResult {
     pub reset_camera: bool,
     /// Show the folder of the conversation transcripts.
     pub open_chat_logs: bool,
+    /// Choose another folder for the cache or the transcripts, or go back
+    /// to the default one (the app asks for the folder and moves the files).
+    pub folder: Option<(Folder, FolderChoice)>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
     /// An account setting of Privacy changed, to send to the server.
     pub account: Option<crate::world::user_info::Change>,
+}
+
+/// A folder the user can choose (Preferences › Network and cache, Chat).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Folder {
+    Cache,
+    ChatLogs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FolderChoice {
+    /// Ask for a folder.
+    Pick,
+    /// Back to the default folder.
+    Default,
+}
+
+/// A row the demo can open the page on (`scroll_to_new`): the marks of a
+/// page count down in the order they are drawn.
+fn scroll_mark(ui: &mut egui::Ui, st: &mut OptionsUi) {
+    if st.scroll_to_new == 0 {
+        return;
+    }
+    st.scroll_to_new -= 1;
+    if st.scroll_to_new == 0 {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
+}
+
+/// A path as shown in the preferences: elided to the width, whole on hover.
+fn path_label(ui: &mut egui::Ui, p: &Palette, dir: &std::path::Path) {
+    // without the verbatim prefix Windows gives a canonical path
+    let path = dir.display().to_string();
+    let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
+    ui.add(super::widgets::elided_label(
+        ui,
+        RichText::new(&path).size(11.5).color(p.muted_dim),
+        ui.available_width(),
+    ))
+    .on_hover_text(&path);
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
@@ -1059,6 +1107,15 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
             aurora_i18n::tr!("ui-options-chat-logs-show-help"),
             |ui| toggle(ui, p, &mut s.log_show_history),
         );
+        // Legacy Viewer › Chat (FSRestoreOpenIMs)
+        scroll_mark(ui, st);
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-reopen-ims"),
+            aurora_i18n::tr!("ui-options-reopen-ims-help"),
+            |ui| toggle(ui, p, &mut s.reopen_ims),
+        );
         c |= row(
             ui,
             p,
@@ -1073,15 +1130,7 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
         );
         match &st.chat_log_dir {
             Some(dir) => {
-                // without the verbatim prefix Windows gives a canonical path
-                let path = dir.display().to_string();
-                let path = path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned();
-                ui.add(super::widgets::elided_label(
-                    ui,
-                    RichText::new(&path).size(11.5).color(p.muted_dim),
-                    ui.available_width(),
-                ))
-                .on_hover_text(&path);
+                path_label(ui, p, dir);
                 ui.horizontal(|ui| {
                     use super::widgets::{ActionKind, action_button};
                     let size = Vec2::new(0.0, 24.0);
@@ -1096,6 +1145,34 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
                     .clicked()
                     {
                         r.open_chat_logs = true;
+                    }
+                    // Legacy Viewer › Network & Files (InstantMessageLogPath):
+                    // the files move with the folder
+                    if action_button(
+                        ui,
+                        p,
+                        "folder-filled",
+                        aurora_i18n::tr!("ui-options-change-folder"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                    .on_hover_text(aurora_i18n::tr!("ui-options-chat-logs-folder-help"))
+                    .clicked()
+                    {
+                        r.folder = Some((Folder::ChatLogs, FolderChoice::Pick));
+                    }
+                    if st.chat_log_custom
+                        && action_button(
+                            ui,
+                            p,
+                            "restore",
+                            aurora_i18n::tr!("ui-options-default-folder"),
+                            ActionKind::Flat,
+                            size,
+                        )
+                        .clicked()
+                    {
+                        r.folder = Some((Folder::ChatLogs, FolderChoice::Default));
                     }
                     if action_button(
                         ui,
@@ -1931,7 +2008,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     ui,
                     p,
                     aurora_i18n::tr!("ui-options-tone-mapping"),
-                    aurora_i18n::tr!("ui-options-khronos-pbr-neutral-is-used-by-second-life"),
+                    aurora_i18n::tr!("ui-options-tone-mapping-help"),
                     |ui| {
                         let names = [aurora_i18n::tr!("ui-options-khronos-pbr-neutral"), "ACES"];
                         let mut changed = false;
@@ -1952,6 +2029,28 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         .response
                         .on_disabled_hover_text(aurora_i18n::tr!("ui-options-tone-mapping-classic-sky"));
                         changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-tone-mapping-mix"),
+                    aurora_i18n::tr!("ui-options-tone-mapping-mix-help"),
+                    |ui| {
+                        let r = ui.add_enabled_ui(st.sky_tone_mapped, |ui| {
+                            ui.spacing_mut().slider_width = SLIDER_W;
+                            ui.add(
+                                egui::Slider::new(&mut s.tonemap_mix, 0.0..=1.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .step_by(0.1)
+                                    .fixed_decimals(1)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        });
+                        r.response
+                            .on_disabled_hover_text(aurora_i18n::tr!("ui-options-tone-mapping-classic-sky"));
+                        r.inner
                     },
                 );
             });
@@ -2350,6 +2449,37 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-check-texture-heights-help"),
                     |ui| toggle(ui, p, &mut s.region_check_texture_heights),
                 );
+                // Legacy Viewer › Alerts: FSShowServerVersionChangeNotice,
+                // FSReportTotalScriptCountChanges and its threshold
+                scroll_mark(ui, st);
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-sim-version-alert"),
+                    aurora_i18n::tr!("ui-options-sim-version-alert-help"),
+                    |ui| toggle(ui, p, &mut s.sim_version_alert),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-script-count-alert"),
+                    aurora_i18n::tr!("ui-options-script-count-alert-help"),
+                    |ui| {
+                        let mut changed = toggle(ui, p, &mut s.script_count_alert);
+                        ui.add_enabled_ui(s.script_count_alert, |ui| {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut s.script_count_threshold)
+                                        .custom_parser(aurora_i18n::parse_number)
+                                        .range(0..=10000)
+                                        .speed(10.0),
+                                )
+                                .on_hover_text(aurora_i18n::tr!("ui-options-script-count-threshold"))
+                                .changed();
+                        });
+                        changed
+                    },
+                );
             });
             // FSUseNewRegionRestartNotification, FSNoScreenShakeOnRegionRestart,
             // FSReportRegionRestartToChat / FSRegionRestartAnnounceChannel
@@ -2478,6 +2608,32 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-last-name-for-recent-accounts"),
                     |ui| toggle(ui, p, &mut s.trim_resident),
                 );
+                // Legacy Viewer › General: GroupTitlesTagMode, RenderHideGroupTitle
+                scroll_mark(ui, st);
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-group-titles"),
+                    aurora_i18n::tr!("ui-options-group-titles-help"),
+                    |ui| {
+                        let mut changed = false;
+                        egui::ComboBox::from_id_salt("group-titles")
+                            .selected_text(s.group_titles.label())
+                            .show_ui(ui, |ui| {
+                                for mode in crate::world::names::GroupTitles::ALL {
+                                    changed |= ui.selectable_value(&mut s.group_titles, mode, mode.label()).changed();
+                                }
+                            });
+                        changed
+                    },
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-hide-own-group-title"),
+                    aurora_i18n::tr!("ui-options-hide-own-group-title-help"),
+                    |ui| toggle(ui, p, &mut s.hide_own_group_title),
+                );
             });
             group(ui, p, aurora_i18n::tr!("extra-skin"), |ui| {
                 ui.label(
@@ -2567,6 +2723,15 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-announce-additions-to-and-removals-from-the-block-list"),
                     |ui| toggle(ui, p, &mut s.report_blocks),
                 );
+                // Legacy Viewer › Privacy (FSShowJoinedGroupInvitations)
+                scroll_mark(ui, st);
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-joined-group-invitations"),
+                    aurora_i18n::tr!("ui-options-joined-group-invitations-help"),
+                    |ui| toggle(ui, p, &mut s.show_joined_group_invitations),
+                );
             });
             // Firestorm: Preferences > Privacy > Autoresponse 1 and 2
             let a = &mut s.autoresponse;
@@ -2611,6 +2776,21 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-away-after"),
                     aurora_i18n::tr!("ui-options-become-away-after-this-time-without-keyboard-or-mouse"),
                     |ui| slider(ui, &mut a.away_after_minutes, 0..=60, " min"),
+                );
+                // Legacy Viewer › General (AvatarSitOnAway, QuitAfterSecondsOfAFK)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-sit-when-away"),
+                    aurora_i18n::tr!("ui-options-sit-when-away-help"),
+                    |ui| toggle(ui, p, &mut a.sit_when_away),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-quit-after-away"),
+                    aurora_i18n::tr!("ui-options-quit-after-away-help"),
+                    |ui| slider(ui, &mut a.quit_after_away_minutes, 0..=60, " min"),
                 );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-automatic-rejections"), |ui| {
@@ -2662,6 +2842,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         changed
                     },
                 );
+                // Legacy Viewer › Protection (FSBlockClickSit)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-block-click-sit"),
+                    aurora_i18n::tr!("ui-options-block-click-sit-help"),
+                    |ui| toggle(ui, p, &mut s.block_click_sit),
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-keyboard"), |ui| {
                 c |= row(
@@ -2694,6 +2882,21 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-walk-backwards-without-turning"),
                     aurora_i18n::tr!("ui-options-walk-backwards-without-turning-help"),
                     |ui| toggle(ui, p, &mut s.walk_backwards_without_turning),
+                );
+                // Legacy Viewer › Move & View: FSCrouchToggle, FSFlyAfterTeleport
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-crouch-toggle"),
+                    aurora_i18n::tr!("ui-options-crouch-toggle-help"),
+                    |ui| toggle(ui, p, &mut s.crouch_toggle),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-fly-after-teleport"),
+                    aurora_i18n::tr!("ui-options-fly-after-teleport-help"),
+                    |ui| toggle(ui, p, &mut s.fly_after_teleport),
                 );
                 row(
                     ui,
@@ -2866,6 +3069,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         .changed()
                     },
                 );
+                // Legacy Viewer › Move & View (FSDisableNeighbourRegionConnections)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-no-neighbour-regions"),
+                    aurora_i18n::tr!("ui-options-no-neighbour-regions-help"),
+                    |ui| toggle(ui, p, &mut s.no_neighbour_regions),
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-disk-cache"), |ui| {
                 c |= row(
@@ -2897,6 +3108,64 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         let text = format!("{} / {}", format_bytes(used), format_bytes(limit));
                         super::widgets::progress(ui, p, "cache_usage", frac, SLIDER_W, &text, None);
                         false
+                    },
+                );
+                // Legacy Viewer › Network & Files: CacheLocation, applied at
+                // the next start (cache_location.rs)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-cache-folder"),
+                    aurora_i18n::tr!("ui-options-cache-folder-help"),
+                    |ui| {
+                        use super::widgets::{ActionKind, action_button};
+                        let mut changed = false;
+                        ui.vertical(|ui| {
+                            ui.set_max_width(SLIDER_W + 60.0);
+                            let next = crate::cache_location::root_for(&s.cache_location);
+                            path_label(ui, p, &crate::settings::cache_dir());
+                            ui.horizontal(|ui| {
+                                let size = Vec2::new(0.0, 24.0);
+                                if action_button(
+                                    ui,
+                                    p,
+                                    "folder-filled",
+                                    aurora_i18n::tr!("ui-options-change-folder"),
+                                    ActionKind::Flat,
+                                    size,
+                                )
+                                .clicked()
+                                {
+                                    r.folder = Some((Folder::Cache, FolderChoice::Pick));
+                                }
+                                if !s.cache_location.is_empty()
+                                    && action_button(
+                                        ui,
+                                        p,
+                                        "restore",
+                                        aurora_i18n::tr!("ui-options-default-folder"),
+                                        ActionKind::Flat,
+                                        size,
+                                    )
+                                    .clicked()
+                                {
+                                    s.cache_location.clear();
+                                    changed = true;
+                                }
+                            });
+                            if next.as_deref() != crate::cache_location::chosen() {
+                                let shown = next.unwrap_or_else(crate::settings::default_cache_root);
+                                ui.label(
+                                    RichText::new(aurora_i18n::tr!(
+                                        "ui-options-cache-folder-next-start",
+                                        path = shown.display().to_string()
+                                    ))
+                                    .size(11.5)
+                                    .color(p.muted),
+                                );
+                            }
+                        });
+                        changed
                     },
                 );
                 row(

@@ -2064,8 +2064,9 @@ tests do not establish that this report uses an invalid joint or index.
   replaces) and `AURORA_FPS_LIMIT=60` for frame-numbered captures
   (`demo_rez.rs`). Our avatar loads in the grid, then the line rises from
   its feet (frames 60–150). Four prims arrive at 300 whose textures come 150
-  frames later: each face is the grid until its own texture comes,
-  then fades into it (455–480). Someone rezzes a four-prim table at 840, its
+  frames later: a glint passes over them at once (the line hiding nothing),
+  each face is the grid until its own texture comes, then fades into it
+  (455–480). Someone rezzes a four-prim table at 840, its
   texture a second later: the grid, then one line for the linkset. We rez a
   cube at 960 (FLAGS_CREATE_SELECTED) and copy it at 1020, both ready at
   once: a quick line, no grid. An avatar comes into view at 1080: the grid
@@ -2075,7 +2076,9 @@ tests do not establish that this report uses an invalid joint or index.
   puts on a hat at 1640 (it rezzes on its head) and takes it off at 1760
   (its derez); the table is deleted at 1700 (the derez: the line comes down,
   then the grid fades out from the top, 1700–1742). The avatar changes
-  outfit at 1820 (three items at once): the grid over it, then one line. It
+  outfit at 1820 (three items at once and new bakes, all 50 frames later):
+  it keeps its old bakes meanwhile (only the new items are the grid), never
+  the grid over it, then a glint around 1870 (capture 1830, 1868, 1892). It
   leaves at 1960 (its derez). The counts in the log at 2060 (`demo rez:`).
   `loop`: everything goes at once at 2160 (a burst: no derez) and the
   scenario starts again from 300, to watch it in one window.
@@ -2092,9 +2095,12 @@ tests do not establish that this report uses an invalid joint or index.
   face is ever grey: each face is the grid at once and fades into its
   texture (0.15 s) when it comes, at the same moment as without the
   effect; with `AURORA_REZ_EFFECT=0` (or Grey (Legacy))
-  they are grey until their textures come, as before. Capture frames
-  312, 340, 380 and 450 with each. The log tells each round's grids,
-  faces out of the grid (`demo rez: round`).
+  they are grey until their textures come, as before. The biggest on the
+  screen get a glint as soon as they are built; a wall stands across the
+  field's left half and nothing behind it gets one (`glint over` lines in
+  the log, `behind a wall` in the counts). Capture frames 312, 330, 350,
+  380 and 450 with each. The log tells each round's grids, lines, glints
+  and faces out of the grid (`demo rez: round`).
 - **`AURORA_DEMO_STREAM=<n>[,<wave>][,leave][,j2k=<folder>][,net=<ms>][,size=<m>]`**: n textured
   objects (2000 if the value is not a number) that arrive in waves after the
   loading fade, `wave` objects every 250 ms (100 by default, that is ~400 per
@@ -2881,6 +2887,11 @@ failure. Grid validation and any paid upload are performed by the human.
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
+  `<n>:new` and `<n>:new2` open a page on its first or second marked row
+  (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
+  version alerts, `1:new2` the group titles, `3:new` the reopened
+  conversations, `3:new2` the invitations to joined groups, `7:new` the music
+  title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
   700, 880, 1060 and 1240 to compare the preview, navigation, window titles,
@@ -4631,6 +4642,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
+| `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
 | `AURORA_BLEND_AO=old`, `new` or `alt` | Blended faces with the screen-space occlusion and indirect light of what is behind them, as before |
@@ -4817,6 +4829,19 @@ What the inventory must show with these scenarios:
   captures off differ by the demo's run-to-run noise only). `g_bloom` of
   `perf summary` is its GPU time (demo, 2560 × 1369, RTX 4090: about
   0.07 ms on the plaza, 0.09 ms in a crowd of 40).
+- **`AURORA_AUTO_EXPOSURE=0|1|alt`**: the automatic exposure of skies that
+  are not classic (reflection probe ambiance above 0), like the Legacy
+  Viewer's dynamic exposure, for this launch: `0` off (exposure 1 on every
+  sky, as before), `1` on (the default), `alt` on one second in two, switched
+  at once without the easing. The middle of the image (the luminance of the
+  ground counted at half) sets an exposure between `1 / (sqrt(gamma) x 2)`
+  and `sqrt(gamma) x 2` of the sky, eased towards over about two seconds:
+  a dark scene opens up, a bright one closes down; a classic sky keeps 1.
+  The log gives the value every 30 s and 4 s after a change of sky:
+  `auto exposure: 1.538 (target 1.546, average luminance 0.275, range 0.500
+  to 2.000)`. Demo: `AURORA_DEMO_SKY=1,0.8,0,1` (a non-classic sky of gamma
+  1, like the library Midday) gives that line; `AURORA_DEMO_SKY=1,0.8,1,1`
+  (ambient 1) a brighter scene and an exposure under 1.
 - **`AURORA_PROBE_WALK=list|0|alt|check`**: by default a fragment of the
   main view only walks the reflection probes that cover at once its screen
   column, its row and its depth slice (the sets of the lights,

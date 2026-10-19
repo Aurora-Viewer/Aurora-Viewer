@@ -78,6 +78,11 @@ enum Job {
         dir: PathBuf,
         done: Sender<std::io::Result<usize>>,
     },
+    Move {
+        from: PathBuf,
+        to: PathBuf,
+        done: Sender<std::io::Result<usize>>,
+    },
     Sync(Sender<()>),
 }
 
@@ -139,6 +144,14 @@ impl Worker {
     pub fn erase(&self, dir: PathBuf) -> Receiver<std::io::Result<usize>> {
         let (done, rx) = crossbeam_channel::bounded(1);
         self.send(Job::Erase { dir, done });
+        rx
+    }
+
+    /// Move the transcripts of a folder to another, after the lines already
+    /// queued; the answer is the number of files moved.
+    pub fn relocate(&self, from: PathBuf, to: PathBuf) -> Receiver<std::io::Result<usize>> {
+        let (done, rx) = crossbeam_channel::bounded(1);
+        self.send(Job::Move { from, to, done });
         rx
     }
 
@@ -204,6 +217,9 @@ fn run(jobs: Receiver<Job>, loaded: Sender<Loaded>) {
             Job::Erase { dir, done } => {
                 let _ = done.send(erase(&dir));
             }
+            Job::Move { from, to, done } => {
+                let _ = done.send(relocate(&from, &to));
+            }
             Job::Sync(done) => {
                 let _ = done.send(());
             }
@@ -260,6 +276,61 @@ fn erase(dir: &Path) -> std::io::Result<usize> {
         Some(e) => Err(e),
         None => Ok(removed),
     }
+}
+
+/// The transcripts of `from` moved into `to` (LLFloaterPreference::
+/// moveTranscriptsAndLog): every `.txt` file directly in it, renamed, or
+/// copied then removed when the folders are on different disks. A file
+/// already in `to`, or any failure, puts back what was moved and fails:
+/// the transcripts are never split between two folders.
+fn relocate(from: &Path, to: &Path) -> std::io::Result<usize> {
+    let files: Vec<PathBuf> = match std::fs::read_dir(from) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case(super::names::EXTENSION)))
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    std::fs::create_dir_all(to)?;
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for source in files {
+        let Some(name) = source.file_name() else {
+            continue;
+        };
+        let target = to.join(name);
+        let result = if target.exists() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "a transcript of the same name is there",
+            ))
+        } else {
+            move_file(&source, &target)
+        };
+        if let Err(e) = result {
+            for (source, target) in moved.iter().rev() {
+                let _ = move_file(target, source);
+            }
+            return Err(e);
+        }
+        moved.push((source, target));
+    }
+    let _ = std::fs::remove_dir(from);
+    Ok(moved.len())
+}
+
+fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(from, to)?;
+    if let Err(e) = std::fs::remove_file(from) {
+        let _ = std::fs::remove_file(to);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// The messages at the end of a transcript, like loadChatHistory: the last
@@ -522,6 +593,31 @@ mod tests {
         assert!(logs.join("sub").join("deep.txt").exists());
         // nothing there: nothing to do
         assert_eq!(w.erase(dir.join("none")).recv_timeout(Duration::from_secs(10)).unwrap().unwrap(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn moving_takes_the_queued_lines_and_never_splits_the_transcripts() {
+        let dir = temp();
+        let (old, new) = (dir.join("old"), dir.join("new"));
+        let w = Worker::start().unwrap();
+        w.append(old.join("Jane Doe.txt"), "a\n".into());
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("keep.json"), b"c").unwrap();
+        // the line queued before the move goes with it
+        let moved = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(moved.unwrap(), 1);
+        assert_eq!(std::fs::read(new.join("Jane Doe.txt")).unwrap(), b"a\n");
+        assert!(old.join("keep.json").exists(), "only transcripts move");
+        // a transcript of the same name in the target: nothing moves
+        std::fs::write(old.join("Jane Doe.txt"), b"b\n").unwrap();
+        std::fs::write(old.join("Bob.txt"), b"d\n").unwrap();
+        let refused = w.relocate(old.clone(), new.clone()).recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(refused.is_err());
+        assert_eq!(std::fs::read(old.join("Jane Doe.txt")).unwrap(), b"b\n");
+        assert_eq!(std::fs::read(old.join("Bob.txt")).unwrap(), b"d\n");
+        assert!(!new.join("Bob.txt").exists());
+        assert_eq!(std::fs::read(new.join("Jane Doe.txt")).unwrap(), b"a\n");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

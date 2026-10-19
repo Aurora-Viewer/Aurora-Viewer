@@ -17,6 +17,7 @@ mod autopilot;
 // mod bug_report;
 mod build;
 mod cache;
+mod cache_location;
 mod camera;
 mod cli;
 mod cmdline;
@@ -113,6 +114,8 @@ fn run_viewer() -> anyhow::Result<()> {
 
     let event_loop = winit::event_loop::EventLoop::new()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    // the cache folder of this run, before anything uses it
+    cache_location::init();
     // private browser profiles a crash left behind (search web tab)
     let private_profiles = settings::cache_dir().join(media::private_profile::ROOT);
     let _ = std::thread::Builder::new()

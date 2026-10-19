@@ -1,5 +1,6 @@
 //! Native movement decisions. The bridge receives bounded motor settings;
 //! AgentAnimation broadcasts strokes just like AOEngine (Firestorm aoengine.cpp).
+pub mod crouch_toggle;
 pub mod movelock;
 pub mod passage;
 pub mod run;

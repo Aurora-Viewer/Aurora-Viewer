@@ -1173,6 +1173,32 @@ impl Scene {
         })
     }
 
+    /// Whether a surface of the world stands between `from` and `to`: the
+    /// triangles of the objects the pick index finds along the way, apart
+    /// from `skip` and from objects with a face that can be seen through
+    /// (blended or hidden). Terrain, avatars and rigged meshes do not
+    /// count. The rez effect's lines are only for what is seen (rez.rs).
+    pub(super) fn segment_blocked(&self, world: &World, from: Vec3, to: Vec3, skip: &[usize], now: Instant) -> bool {
+        let d = to - from;
+        let len = d.length();
+        if len < 0.1 {
+            return false;
+        }
+        let ray = (from, d / len);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        candidates.iter().any(|&idx| {
+            !skip.contains(&idx)
+                && self
+                    .gpu
+                    .get(idx)
+                    .is_some_and(|g| !g.hud && ray_may_hit(g, ray) && !self.see_through_face(g, true))
+                && self
+                    .face_distance(world, idx, ray, now, false, FacePick::Surface)
+                    .is_some_and(|t| t < len - 0.05)
+        })
+    }
+
     pub fn action_point(&self, world: &World, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, build: bool, far: f32) -> Option<Vec3> {
         let point = self.interaction_point(world, ray, depth, build, far);
         if build {

@@ -69,6 +69,9 @@ pub struct GroupChats {
     pub mute_when_notices_off: bool,
     /// FSReportBlockToNearbyChat: say in nearby chat when the list changes.
     pub report_blocks: bool,
+    /// FSShowJoinedGroupInvitations: show the invitations to a group we are
+    /// already in (from the settings).
+    pub show_joined_invitations: bool,
     /// Group list asked (AgentDataUpdateRequest).
     requested: bool,
     /// Our active group (AgentDataUpdate; nil = none) and its title.
