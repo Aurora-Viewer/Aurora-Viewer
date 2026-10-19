@@ -125,6 +125,51 @@ pub(super) fn page(
             aurora_i18n::tr!("ui-options-play-parcel-music-when-entering"),
             |ui| toggle(ui, p, &mut a.music_autoplay),
         );
+        // Legacy Viewer › Sound & Media: ShowStreamMetadata,
+        // StreamMetadataAnnounceToChat / StreamMetadataAnnounceChannel
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-stream-title"),
+            aurora_i18n::tr!("ui-options-stream-title-help"),
+            |ui| {
+                use crate::settings::StreamTitleShow;
+                let options = [
+                    (aurora_i18n::tr!("ui-options-stream-title-off"), false),
+                    (aurora_i18n::tr!("ui-options-stream-title-toast"), false),
+                    (aurora_i18n::tr!("ui-options-stream-title-chat"), false),
+                ];
+                let mut i = match a.stream_title {
+                    StreamTitleShow::Off => 0,
+                    StreamTitleShow::Toast => 1,
+                    StreamTitleShow::Chat => 2,
+                };
+                let changed = widgets::segmented(ui, p, &mut i, &options);
+                a.stream_title = [StreamTitleShow::Off, StreamTitleShow::Toast, StreamTitleShow::Chat][i.min(2)];
+                changed
+            },
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-stream-title-announce"),
+            aurora_i18n::tr!("ui-options-stream-title-announce-help"),
+            |ui| {
+                let mut changed = toggle(ui, p, &mut a.stream_title_announce);
+                ui.add_enabled_ui(a.stream_title_announce, |ui| {
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(&mut a.stream_title_channel)
+                                .custom_parser(aurora_i18n::parse_number)
+                                .range(1..=16_777_216)
+                                .speed(1.0),
+                        )
+                        .on_hover_text(aurora_i18n::tr!("ui-options-stream-title-channel"))
+                        .changed();
+                });
+                changed
+            },
+        );
         c |= row(
             ui,
             p,

@@ -491,6 +491,8 @@ pub struct App {
     /// Settings last applied to the engine, stream URL playing, parcel music URL seen.
     applied_audio: Option<crate::settings::AudioSettings>,
     stream_url: String,
+    /// The parcel music's title last told (ShowStreamMetadata).
+    stream_title_said: Option<String>,
     music_parcel_url: String,
     /// `/music` chat command: a stream played instead of the parcel's until
     /// the parcel stream changes.
@@ -1013,6 +1015,7 @@ impl App {
             },
             applied_audio: None,
             stream_url: String::new(),
+            stream_title_said: None,
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
@@ -3738,6 +3741,35 @@ impl App {
         sounds.update(engine, &self.world, &listener, Instant::now());
     }
 
+    /// StreamTitleDisplay::checkMetadata (streamtitledisplay.cpp): the title
+    /// in nearby chat or in a notice, and on a script channel when asked.
+    fn tell_stream_title(&mut self, title: &str) {
+        let a = &self.settings.audio;
+        match a.stream_title {
+            crate::settings::StreamTitleShow::Off => {}
+            crate::settings::StreamTitleShow::Chat => self
+                .world
+                .system_message(aurora_i18n::tr!("app-stream-title-now-playing", title = title.to_owned())),
+            crate::settings::StreamTitleShow::Toast => {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("app-stream-title-toast"),
+                    title.to_owned(),
+                    crate::world::notifications::Data::None,
+                );
+            }
+        }
+        // FSCommon::send_message_to_script_channel: a whisper
+        if a.stream_title_announce && a.stream_title_channel != 0 {
+            let channel = a.stream_title_channel;
+            self.send(NetCommand::Chat {
+                message: title.to_owned(),
+                channel,
+                chat_type: aurora_net::ChatType::Whisper,
+            });
+        }
+    }
+
     fn update_audio(&mut self) {
         let in_world = self.in_world();
         let url = if in_world {
@@ -3779,6 +3811,20 @@ impl App {
             }
             self.stream_url = want;
         }
+        // StreamTitleDisplay: the station's title, told when it changes
+        let title = match engine.stream_status() {
+            aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
+            _ => None,
+        };
+        if self.stream_url.is_empty() {
+            self.stream_title_said = None;
+        } else if let Some(title) = title.filter(|t| self.stream_title_said.as_ref() != Some(t)) {
+            self.stream_title_said = Some(title.clone());
+            self.tell_stream_title(&title);
+        }
+        let Some(engine) = &self.audio_engine else {
+            return;
+        };
         if self.applied_audio.as_ref() != Some(&self.settings.audio) {
             let a = &self.settings.audio;
             if self.applied_audio.as_ref().map(|p| p.output_device.as_str()) != Some(a.output_device.as_str())

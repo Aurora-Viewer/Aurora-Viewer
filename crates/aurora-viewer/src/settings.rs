@@ -954,6 +954,15 @@ pub fn audio_channels() -> [&'static str; 7] {
     ]
 }
 
+/// ShowStreamMetadata: 0 off, 1 toast, 2 nearby chat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum StreamTitleShow {
+    Off,
+    Toast,
+    #[default]
+    Chat,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -979,6 +988,13 @@ pub struct AudioSettings {
     pub music_autoplay: bool,
     /// Play parcel media automatically.
     pub media_autoplay: bool,
+    /// Where the parcel music's title is told when it changes (the Legacy
+    /// Viewer's ShowStreamMetadata: nearby chat).
+    pub stream_title: StreamTitleShow,
+    /// Also say it on a script channel (StreamMetadataAnnounceToChat, off;
+    /// StreamMetadataAnnounceChannel, 362394).
+    pub stream_title_announce: bool,
+    pub stream_title_channel: i32,
     /// Output device name (empty = system default).
     pub output_device: String,
     /// Microphone name (empty = system default).
@@ -1027,6 +1043,9 @@ impl Default for AudioSettings {
             enabled: [true; 7],
             music_autoplay: false,
             media_autoplay: false,
+            stream_title: StreamTitleShow::Chat,
+            stream_title_announce: false,
+            stream_title_channel: 362394,
             output_device: String::new(),
             input_device: String::new(),
             voice_enabled: true,
