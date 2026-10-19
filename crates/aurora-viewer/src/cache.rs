@@ -1,9 +1,10 @@
 //! Rolling disk cache: textures, meshes, materials, animations, sounds and
 //! environment settings (shared by every region, keyed by asset id),
-//! per-region object caches and the inventory cache. A background thread keeps the total under the size
-//! limit by evicting the least recently used files. The directories are
-//! only walked at startup, when the bytes written since push the estimate
-//! over the limit, and every 30 minutes (cheap even for a 20 GB cache).
+//! per-region object caches and the inventory cache. A background thread
+//! keeps the total under the size limit by evicting the least recently used
+//! files. The directories are only walked at startup, when the bytes written
+//! since push the estimate over the limit, and every 30 minutes (cheap even
+//! for a 20 GB cache).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
