@@ -29,6 +29,7 @@ mod bridge;
 mod movelock;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
+mod avatar_health;
 mod buy_currency;
 mod buy_land;
 mod chat_commands;
@@ -66,7 +67,6 @@ mod region_restart;
 mod region_window;
 mod report_abuse;
 mod reset_skeleton;
-mod avatar_health;
 mod script_clicks;
 mod scripts;
 mod shape_editor;

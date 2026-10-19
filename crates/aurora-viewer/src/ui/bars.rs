@@ -885,7 +885,12 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
         ) {
             request(ui.ctx(), CtxAction::StopAnimationsKeepPermissions);
         }
-        if menu::item(ui, p, "player-stop-filled", aurora_i18n::tr!("avatar-health-stop-animations-revoke")) {
+        if menu::item(
+            ui,
+            p,
+            "player-stop-filled",
+            aurora_i18n::tr!("avatar-health-stop-animations-revoke"),
+        ) {
             request(ui.ctx(), CtxAction::StopAnimations);
         }
         if menu::item(ui, p, "stretching", aurora_i18n::tr!("avatar-health-undeform")) {
