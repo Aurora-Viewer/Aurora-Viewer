@@ -1455,7 +1455,12 @@ the pelvis must compensate enough for both soles to reach their surfaces,
 without stretching the legs. Compare `steps-reach-off`, then walk across the
 seam and jump with the normal controls. In `steps-reach-lift`, the pelvis must
 stay prepared for the lower foot's return rather than popping up and down
-with each swing. Inspect
+with each swing. `steps-rise-front` places both soles on raised supports over
+a narrow groove beneath the physical centre. The body must rise smoothly
+instead of leaving both knees compressed; compare `steps-rise-front-off`.
+`steps-rise-front-lift` must retain this height while either foot lifts and
+replants. An intentional crouch (normal downward control) must retain its
+authored flexion. Inspect
 from the front with `steps-reach-front` and `steps-reach-front-lift` (the
 fixture moves west to keep the frontal camera outside the plaza deck): each
 knee must bend forward on its own side, including when either step is higher,

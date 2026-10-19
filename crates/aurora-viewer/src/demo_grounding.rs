@@ -137,7 +137,17 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
                 "",
             )
         };
-        let objects = if mode.starts_with("steps") {
+        let objects = if mode.starts_with("steps") && mode.contains("-rise") {
+            // A narrow groove leaves the physical centre lower while both
+            // complete soles have higher supports: both knees need a body lift.
+            let mut base = top(9380, 0.0, 0.18, Quat::IDENTITY);
+            base.scale.y = 3.0;
+            let mut sides = [-0.76, 0.76].map(|y| top(if y < 0.0 { 9381 } else { 9382 }, y, 0.4, Quat::IDENTITY));
+            for side in &mut sides {
+                side.scale.y = 1.48;
+            }
+            vec![base, sides[0].clone(), sides[1].clone()]
+        } else if mode.starts_with("steps") {
             vec![top(9380, -0.75, 0.18, Quat::IDENTITY), top(9381, 0.75, 0.4, Quat::IDENTITY)]
         } else {
             let mut slope = top(9380, 0.0, 0.3, Quat::from_rotation_x(0.3));
@@ -195,7 +205,8 @@ pub fn surface_height(mode: &str, position: Vec3) -> f32 {
     }
     if mode.starts_with("steps") {
         if d.y.abs() <= 1.5 {
-            terrain.max(origin.z + if d.y < 0.0 { 0.18 } else { 0.4 })
+            let low = if mode.contains("-rise") { d.y.abs() < 0.02 } else { d.y < 0.0 };
+            terrain.max(origin.z + if low { 0.18 } else { 0.4 })
         } else {
             terrain
         }
@@ -348,27 +359,33 @@ mod tests {
     #[test]
     fn grounding_demo_front_camera_fixture_matches_its_rendered_platforms_and_physics() {
         let (mut world, mut scene) = fixture();
-        let mode = "steps-reach-front";
-        tick(&mut world, &mut scene, 600, mode);
-        assert!(
-            (world.agent.position.x - 122.0).abs() < 1e-4,
-            "frontal camera must stay clear of the plaza deck"
-        );
-        for local_id in [9380, 9381] {
-            let platform = world
-                .objects
-                .iter()
-                .find(|(_, object)| object.key.local_id == local_id)
-                .map(|(_, object)| object)
-                .expect("step");
-            let top = platform.position.z + platform.scale.z * 0.5;
+        for mode in ["steps-reach-front", "steps-rise-front"] {
+            tick(&mut world, &mut scene, 600, mode);
             assert!(
-                (surface_height(mode, platform.position) - top).abs() < 1e-4,
-                "local physics missed the moved platform"
+                (world.agent.position.x - 122.0).abs() < 1e-4,
+                "frontal camera must stay clear of the plaza deck"
             );
+            let ids: &[u32] = if mode.contains("-rise") {
+                &[9380, 9381, 9382]
+            } else {
+                &[9380, 9381]
+            };
+            for local_id in ids {
+                let platform = world
+                    .objects
+                    .iter()
+                    .find(|(_, object)| object.key.local_id == *local_id)
+                    .map(|(_, object)| object)
+                    .expect("step");
+                let top = platform.position.z + platform.scale.z * 0.5;
+                assert!(
+                    (surface_height(mode, platform.position) - top).abs() < 1e-4,
+                    "local physics missed the moved platform"
+                );
+            }
+            let floor = surface_height(mode, world.agent.position) + half_height(&world, &scene);
+            assert!((world.agent.position.z - floor).abs() < 1e-4);
         }
-        let floor = surface_height(mode, world.agent.position) + half_height(&world, &scene);
-        assert!((world.agent.position.z - floor).abs() < 1e-4);
     }
 
     #[test]

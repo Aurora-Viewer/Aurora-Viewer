@@ -168,9 +168,12 @@ converts those coordinates to avoid applying pelvic movement twice.
 
 Critically damped positional targets and eased support tilt precede hard contact and
 collision projection, so smoothing cannot blend a foot back through a floor.
-Both leg reach spheres constrain the smallest necessary pelvis displacement
-(bounded to 45 cm), anticipating the support beneath a swing foot so the
-body does not rise at toe-off and snap down on replanting. Analytic two-bone IK
+Both leg reach spheres constrain the pelvis displacement (bounded to 45 cm).
+Within that interval, the lower of both legs' preferred heights preserves
+authored extension: two raised supports lift the body instead of compressing
+both knees, while a source crouch keeps its flexion. Virtual contact beneath
+a swing foot removes authored clearance from both spans, so toe-off/replanting
+does not make the pelvis bob. Analytic two-bone IK
 preserves segment lengths. Its bend guide subtracts the shaped neutral knee
 bias (the rest legs taper inward) before reading authored articulation; near
 extension it uses anatomical forward with a continuous confidence transition.

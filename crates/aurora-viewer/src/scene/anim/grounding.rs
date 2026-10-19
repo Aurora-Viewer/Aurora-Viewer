@@ -440,11 +440,13 @@ impl Placement {
                 targets[side] += up * if foot.planted { required } else { required.max(0.0) };
             }
         }
-        // Feasible pelvis interval from both leg reach spheres. Choose the
-        // nearest valid height, rather than lowering the body to bend both
-        // knees. Projection prevents a smoothing lag from leaving a foot up.
+        // Both reach spheres bound the pelvis. Within that interval preserve
+        // the authored leg extension: raised supports should lift the body,
+        // not unnecessarily compress both knees. The lower preferred height
+        // keeps the other leg within its source extension on uneven ground.
         let mut lower = -MAX_PELVIS;
         let mut upper = MAX_PELVIS;
+        let mut preferred: Option<f32> = None;
         if pose.allowed.iter().all(|allowed| *allowed) {
             for side in 0..2 {
                 if !supported[side] {
@@ -470,6 +472,12 @@ impl Placement {
                 let reach = (length * length - horizontal).max(0.0).sqrt();
                 lower = lower.max(-reach - along);
                 upper = upper.min(reach - along);
+                // Remove authored swing clearance from both sides of the
+                // comparison. A lifting foot must not make the pelvis bob;
+                // an authored crouch, however, keeps its shorter leg span.
+                let span = (p(hip) - p(ankle) + up * clearances[side]).length().min(length);
+                let height = (span * span - horizontal).max(0.0).sqrt() - along;
+                preferred = Some(preferred.map_or(height, |other| other.min(height)));
             }
         } else {
             lower = 0.0;
@@ -477,7 +485,7 @@ impl Placement {
         }
         let feasible = lower <= upper;
         let desired = if frame.is_some() && feasible {
-            0.0_f32.clamp(lower, upper)
+            preferred.unwrap_or(0.0).clamp(lower, upper)
         } else {
             0.0
         };
@@ -655,6 +663,118 @@ mod tests {
             "a solver that only rotates the legs cannot reach this lower step"
         );
         f.check_contacts(&placement, &pose, frame, &ground, [true; 2]);
+    }
+
+    #[test]
+    fn grounding_raises_the_body_when_both_supports_compress_the_legs() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let frame = f.frame(0.03);
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        for fps in [30, 60, 144] {
+            for heights in [[0.18, 0.18], [0.18, 0.30], [0.30, 0.18]] {
+                let ground = |p: Vec3| {
+                    Some(Surface {
+                        position: p.with_z(f.floor + heights[usize::from(p.y < 0.0)]),
+                        normal: Vec3::Z,
+                    })
+                };
+                let mut placement = Placement::default();
+                let mut previous = 0.0;
+                for i in 0..=fps * 2 {
+                    let pose = f.sample(
+                        &mut placement,
+                        &f.rig.local_rot,
+                        Some(frame),
+                        now + Duration::from_secs_f32(i as f32 / fps as f32),
+                        &ground,
+                    );
+                    f.check_contacts(&placement, &pose, frame, &ground, [true; 2]);
+                    assert!(pose.pelvis.z >= previous - 1e-5, "the rise reversed at {fps} fps");
+                    assert!(pose.pelvis.z - previous < 2.0 / fps as f32, "the body snapped upwards at {fps} fps");
+                    previous = pose.pelvis.z;
+                    if i == fps * 2 {
+                        assert!(
+                            (pose.pelvis.z - 0.151).abs() < 0.002,
+                            "both legs stayed compressed: {:?}",
+                            pose.pelvis
+                        );
+                        let world = f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+                        for (side, height) in heights.into_iter().enumerate() {
+                            let [hip, _, ankle] = placement.legs.unwrap()[side].joints;
+                            let span = world[hip].w_axis.distance(world[ankle].w_axis);
+                            let source_span = rest[hip].w_axis.distance(rest[ankle].w_axis);
+                            assert!(span <= source_span + 0.001, "the lower support overextended a leg");
+                            if height == 0.18 {
+                                assert!((span - source_span).abs() < 0.002, "the limiting leg stayed unnecessarily bent");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_raising_the_body_preserves_authored_crouching_and_recovery() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(f.floor + 0.18),
+                normal: Vec3::Z,
+            })
+        };
+        let frame = f.frame(0.0);
+        for angle in [0.2, 0.45, 0.7] {
+            let mut rotations = f.rig.local_rot.clone();
+            for side in ["Left", "Right"] {
+                for (bone, bend) in [("Hip", -angle), ("Knee", angle * 2.0), ("Ankle", -angle)] {
+                    rotations[f.rig.names[&format!("m{bone}{side}")]] = Quat::from_rotation_y(bend);
+                }
+            }
+            let bent = f.rig.world_with(&rotations, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+            let authored_pelvis = Vec3::Z * (f.floor - bent[f.rig.names["mFootLeft"]].w_axis.z);
+            let source = f.rig.world_with(&rotations, authored_pelvis, &f.base.local_pos, &f.base.scale);
+            let mut placement = Placement::default();
+            for i in 0..=120 {
+                let placed = placement
+                    .apply(
+                        &f.rig,
+                        &f.base,
+                        Pose {
+                            rotations: &rotations,
+                            positions: &f.base.local_pos,
+                            pelvis: authored_pelvis,
+                            allowed: [true; 2],
+                        },
+                        Some(frame),
+                        now + Duration::from_secs_f32(i as f32 / 60.0),
+                        &ground,
+                    )
+                    .expect("supported pose");
+                let total = Placed {
+                    rotations: placed.rotations,
+                    pelvis: authored_pelvis + placed.pelvis,
+                };
+                f.check_contacts(&placement, &total, frame, &ground, [true; 2]);
+                if i == 120 {
+                    assert!(
+                        (placed.pelvis.z - 0.181).abs() < 0.002,
+                        "the body did not follow both raised supports"
+                    );
+                    let world = f.rig.world_with(&total.rotations, total.pelvis, &f.base.local_pos, &f.base.scale);
+                    for leg in placement.legs.unwrap() {
+                        let [hip, _, ankle] = leg.joints;
+                        assert!(
+                            (world[hip].w_axis.distance(world[ankle].w_axis) - source[hip].w_axis.distance(source[ankle].w_axis)).abs()
+                                < 0.002,
+                            "the authored {angle} radian crouch was straightened"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
