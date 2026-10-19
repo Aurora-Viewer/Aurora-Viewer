@@ -323,7 +323,7 @@ fn outfit_label(
         if let Some(section) = job.sections.first_mut() {
             widgets::embolden(ui, &mut section.format);
         }
-        room = WORN_TAG_GAP + widgets::row_tag_width(ui, &aurora_i18n::tr!("ui-appearance-worn"));
+        room = WORN_TAG_GAP + widgets::row_tag_width(ui, aurora_i18n::tr!("ui-appearance-worn"));
     }
     job.wrap = egui::text::TextWrapping::truncate_at_width((width - room).max(1.0));
     ui.painter().layout_job(job)
@@ -334,7 +334,7 @@ fn worn_tag(ui: &egui::Ui, p: &Palette, name_end: f32, center_y: f32) {
     widgets::paint_row_tag(
         ui,
         p,
-        &aurora_i18n::tr!("ui-appearance-worn"),
+        aurora_i18n::tr!("ui-appearance-worn"),
         true,
         name_end + WORN_TAG_GAP,
         center_y,
