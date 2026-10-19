@@ -50,6 +50,9 @@ pub mod classifieds;
 pub mod deform;
 #[path = "demo_eep.rs"]
 pub mod eep;
+/// A facial expression and a hand pose (AURORA_DEMO_EMOTE).
+#[path = "demo_emote.rs"]
+pub mod emote;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
 #[path = "demo_env.rs"]
 pub mod env;
@@ -4671,7 +4674,8 @@ pub fn idle_animation() -> aurora_assets::Animation {
         looping: true,
         ease_in: 0.3,
         ease_out: 0.3,
-        hand_pose: 0,
+        // relaxed, the upload window's default (hands at rest)
+        hand_pose: 1,
         joints: vec![
             joint(
                 "mShoulderLeft",

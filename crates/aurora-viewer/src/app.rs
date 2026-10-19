@@ -7417,6 +7417,13 @@ impl App {
             }
         }
         if self.demo
+            && let Some(mode) = crate::demo::emote::mode()
+        {
+            for event in crate::demo::emote::events(self.frame_count, mode) {
+                self.world.apply(event);
+            }
+        }
+        if self.demo
             && let Some(mode) = crate::demo::notifs::mode()
         {
             let agent = self.world.agent_id;
@@ -9835,7 +9842,7 @@ impl App {
                 self.world.calls.voice_peers.clear();
                 self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
                 let audio = &self.settings.audio;
-                self.scene.lips.set_levels(
+                self.scene.live_morphs.set_levels(
                     &voice_levels,
                     audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
                     Instant::now(),
@@ -11950,6 +11957,12 @@ impl ApplicationHandler for App {
                 self.scene.anims.insert(
                     crate::demo::deform::DEFORM_ANIM,
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::deform::animation(&rig), &rig)),
+                );
+            }
+            if let Some(mode) = crate::demo::emote::mode() {
+                self.scene.anims.insert(
+                    crate::demo::emote::EMOTE_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::emote::animation(mode), &rig)),
                 );
             }
             let demo_anim = if std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {

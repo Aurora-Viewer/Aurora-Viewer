@@ -139,7 +139,8 @@ pub mod flags {
     /// placed by its own anchor, `palettes[flags[1] + SKELETON_ANCHOR]`,
     /// and `model` (the identity) is not read.
     pub const ANCHORED: u32 = 4096;
-    /// System avatar Aah/Ooh morphs, evaluated before skinning.
+    /// System avatar live morphs (lip sync, body physics, facial
+    /// expressions, hand poses), evaluated before skinning.
     pub const LIP_SYNC: u32 = 8192;
 }
 
@@ -147,6 +148,10 @@ pub mod flags {
 /// its anchors. The first anchor places the skeleton itself (skeleton space
 /// to world); the scene gives the others to the attachment points.
 pub const SKELETON_ANCHOR: u32 = 160;
+
+/// First matrix of the weights of a skeleton's live morphs, after its
+/// anchors: column `k` is `palettes[base + LIVE_MORPH_WEIGHTS + k / 16][k / 4 % 4][k % 4]`.
+pub const LIVE_MORPH_WEIGHTS: u32 = 208;
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
 #[repr(C)]
@@ -1508,6 +1513,7 @@ mod tests {
         // a skinned record keeps its palette base: its anchor is its
         // skeleton's
         assert!(wgsl.contains(&format!("const SKELETON_ANCHOR: u32 = {SKELETON_ANCHOR}u;")));
+        assert!(wgsl.contains(&format!("const LIVE_MORPH_WEIGHTS: u32 = {LIVE_MORPH_WEIGHTS}u;")));
         let mut skinned = DrawRecord {
             flags: [flags::SKINNED, 208, 7, 0],
             ..Default::default()

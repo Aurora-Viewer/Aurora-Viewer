@@ -2,6 +2,7 @@
 //! bones), animation asset streaming and per-avatar pose evaluation into
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
+use super::default_motions;
 use super::fetch_priority::urgent;
 use super::jobs::Jobs;
 use crate::world::PlayingAnimation;
@@ -16,16 +17,17 @@ use uuid::Uuid;
 
 pub const FETCH_KIND_ANIM: u64 = 4 << 60;
 
-/// Palette entries reserved per skeleton instance: its joints, then the
-/// anchors of the objects it wears (anchors.rs).
-pub const PALETTE_JOINTS: usize = 209;
+/// Palette entries reserved per skeleton instance: its joints, the anchors
+/// of the objects it wears (anchors.rs), then the weights of its live
+/// morphs (live_morphs.rs).
+pub const PALETTE_JOINTS: usize = super::live_morphs::WEIGHTS + super::live_morphs::WEIGHT_MATRICES;
 
 /// First anchor matrix of a palette; the joints are below it.
 pub const ANCHOR_BASE: usize = aurora_render::SKELETON_ANCHOR as usize;
 
 /// Anchor matrices per palette: the wearer's root, then one per attachment
 /// point of the body (47 in avatar_lad.xml).
-pub const ANCHORS: usize = super::lipsync::WEIGHTS - ANCHOR_BASE;
+pub const ANCHORS: usize = super::live_morphs::WEIGHTS - ANCHOR_BASE;
 
 pub struct Rig {
     pub parent: Vec<Option<usize>>,
@@ -202,11 +204,15 @@ pub struct BoundAnim {
     /// Upper translation over the entire track, computed once when loading.
     /// Name tags use this envelope, never the current animation sample.
     position_top: Vec<Option<f32>>,
+    /// The highest priority of its joints and itself (mMaxPriority): the
+    /// strongest animation gives the hand pose.
+    max_priority: i32,
 }
 
 impl BoundAnim {
     pub fn bind(anim: Animation, rig: &Rig) -> BoundAnim {
         let joints = anim.joints.iter().map(|j| rig.names.get(&j.joint_name).copied()).collect();
+        let max_priority = anim.joints.iter().map(|j| j.priority).fold(anim.base_priority, i32::max);
         let position_top = anim
             .joints
             .iter()
@@ -222,6 +228,7 @@ impl BoundAnim {
             anim,
             joints,
             position_top,
+            max_priority,
         }
     }
 }
@@ -260,6 +267,9 @@ struct Motion {
     /// Weight when the ease out began (mResidualWeight).
     residual: f32,
     weight: f32,
+    /// Started by another motion (the expression an animation names), not
+    /// by the simulator: it ends on its own.
+    internal: bool,
 }
 
 impl Motion {
@@ -345,10 +355,22 @@ pub struct Controller {
     last_eval: Option<Instant>,
     /// Pose frozen since then (LLCharacter::requestPause).
     paused_at: Option<Instant>,
-    /// Head and eye joint states of the last frame, held during a pause
+    /// Default motion joint states of the last frame, held during a pause
     /// (LLMotionController::updateIdleActiveMotions does not run them).
-    held_procedural: Vec<(usize, f32, Quat)>,
+    held_procedural: Vec<ProceduralState>,
+    /// Sitting on an object: no body noise (LLVOAvatar::sitOnObject).
+    pub sitting: bool,
+    /// An aiming animation is signalled: no body noise either.
+    aiming: bool,
+    hands: default_motions::HandMotion,
+    /// The live morph weights of the last frame (live_morphs.rs):
+    /// expressions and hand poses.
+    live_morphs: Vec<(i32, f32)>,
 }
+
+/// A joint state of a default motion: (joint, priority, weight, local
+/// rotation, additive).
+type ProceduralState = (usize, i32, f32, Quat, bool);
 
 /// Joints of LLHeadRotMotion and LLEyeMotion.
 #[derive(Default, Clone, Copy)]
@@ -422,6 +444,10 @@ struct Procedural {
     look_away_yaw: f32,
     look_away_pitch: f32,
     rng: u32,
+    /// Start of LLBreatheMotionRot (the avatar's first frame).
+    breathe_start: Option<Instant>,
+    /// Start of LLBodyNoiseMotion, None while it is stopped.
+    noise_start: Option<Instant>,
 }
 
 impl Default for Procedural {
@@ -441,6 +467,8 @@ impl Default for Procedural {
             look_away_yaw: 0.0,
             look_away_pitch: 0.0,
             rng: seed | 1,
+            breathe_start: None,
+            noise_start: None,
         }
     }
 }
@@ -505,6 +533,8 @@ const EYE_ROT_LIMIT_ANGLE: f32 = 0.3 * std::f32::consts::FRAC_PI_2;
 const HEAD_ROT_EASE: f32 = 1.0;
 const EYE_EASE: f32 = 0.5;
 const MEDIUM_PRIORITY: i32 = 1;
+/// LLBodyNoiseMotion's priority.
+const HIGH_PRIORITY: i32 = 2;
 
 /// LLSmoothInterpolation::getInterpolant.
 fn interpolant(dt: f32, half_life: f32) -> f32 {
@@ -558,7 +588,7 @@ impl Controller {
     pub fn set_synchronized(&mut self, synchronized: bool) {
         if synchronized && !self.synchronized {
             for m in &mut self.motions {
-                if m.stop.is_none() && !self.preview_start.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                if m.stop.is_none() && !m.internal && !self.preview_start.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
                     m.activation = m.signal.sequence_start;
                     m.continuous_activation = m.signal.continuous_start;
                 }
@@ -633,6 +663,8 @@ impl Controller {
             fade.change = fade.change.map(|c| c + d);
         }
         pr.jitter_at = pr.jitter_at.map(|t| t + d);
+        pr.breathe_start = pr.breathe_start.map(|t| t + d);
+        pr.noise_start = pr.noise_start.map(|t| t + d);
         self.last_eval = self.last_eval.map(|t| t + d);
     }
 
@@ -649,9 +681,15 @@ impl Controller {
         eyes_between(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r), p.head)
     }
 
-    /// Joint states of the head and eye motions for this frame:
-    /// (joint, weight, local rotation).
-    fn procedural(&mut self, j: &LookJoints<usize>, now: Instant) -> Vec<(usize, f32, Quat)> {
+    /// The live morph weights of the last frame: the expressions and hand
+    /// poses, as differences from the weights baked into the shape.
+    pub fn live_morphs(&self) -> &[(i32, f32)] {
+        &self.live_morphs
+    }
+
+    /// Joint states of the default motions for this frame: head and eyes,
+    /// breathing and body noise.
+    fn procedural(&mut self, j: &LookJoints<usize>, now: Instant) -> Vec<ProceduralState> {
         let dt = self.last_eval.map(|t| now.duration_since(t).as_secs_f32()).unwrap_or(0.0).min(1.0);
         self.last_eval = Some(now);
         let mut out = Vec::new();
@@ -682,14 +720,14 @@ impl Controller {
             pr.torso = nlerp(interpolant(dt, TORSO_LOOKAT_LAG_HALF_LIFE), pr.torso, torso_target);
             pr.last_head = nlerp(interpolant(dt, HEAD_LOOKAT_LAG_HALF_LIFE), pr.last_head, head_local);
             if let Some(t) = j.torso {
-                out.push((t, head_w, pr.torso));
+                out.push((t, MEDIUM_PRIORITY, head_w, pr.torso, false));
             }
             if let (Some(neck), Some(head), Some(chest)) = (j.neck, j.head, p.chest) {
                 // what is left after the chest, half to the neck, half to the head
                 let h = chest.0.inverse() * pr.last_head;
                 let half = nlerp(NECK_LAG, Quat::IDENTITY, h);
-                out.push((neck, head_w, half));
-                out.push((head, head_w, half));
+                out.push((neck, MEDIUM_PRIORITY, head_w, half, false));
+                out.push((head, MEDIUM_PRIORITY, head_w, half, false));
             }
         }
         // LLEyeMotion::onUpdate
@@ -731,9 +769,26 @@ impl Controller {
                 } else {
                     Quat::IDENTITY
                 };
-                out.push((l, eye_w, rot * jitter * vq));
-                out.push((r, eye_w, rot * jitter * vq.inverse()));
+                out.push((l, MEDIUM_PRIORITY, eye_w, rot * jitter * vq, false));
+                out.push((r, MEDIUM_PRIORITY, eye_w, rot * jitter * vq.inverse(), false));
             }
+        }
+        // LLBreatheMotionRot (MEDIUM_PRIORITY, normal blend), from the
+        // avatar's first frame. Deliberate difference: it never stops for a
+        // small avatar on screen (MIN_REQUIRED_PIXEL_AREA_BREATHE), a cost
+        // the GPU skinning does not have.
+        let breathe = now.saturating_duration_since(*pr.breathe_start.get_or_insert(now)).as_secs_f32();
+        if let Some(chest) = j.chest {
+            out.push((chest, MEDIUM_PRIORITY, 1.0, default_motions::breathe(breathe), false));
+        }
+        // LLBodyNoiseMotion (HIGH_PRIORITY, additive), stopped while
+        // sitting on an object or aiming (LLVOAvatar::sitOnObject,
+        // processAnimationStateChanges); it starts again from its beginning
+        if self.sitting || self.aiming {
+            pr.noise_start = None;
+        } else if let Some(torso) = j.torso {
+            let t = now.saturating_duration_since(*pr.noise_start.get_or_insert(now)).as_secs_f32();
+            out.push((torso, HIGH_PRIORITY, 1.0, default_motions::body_noise(t), true));
         }
         out
     }
@@ -765,8 +820,9 @@ impl Controller {
                 .filter(|(target, _)| target.is_none_or(|target| target == id))
                 .map_or(if self.synchronized { start } else { now }, |(_, start)| start)
         };
+        self.aiming = playing.iter().any(|p| default_motions::GUN_AIM_ANIMS.contains(&p.id));
         // stop the motions the server no longer plays
-        for m in self.motions.iter_mut() {
+        for m in self.motions.iter_mut().filter(|m| !m.internal) {
             if !playing
                 .iter()
                 .any(|p| p.id == m.id && p.continuous_start == m.signal.continuous_start)
@@ -799,20 +855,44 @@ impl Controller {
                 m.stop_at(now);
             }
             if let Some(anim) = get(&signal.id) {
+                let emote = default_motions::emote_named(&anim.anim.emote_name);
+                let start = activation(signal.id, signal.sequence_start);
                 self.motions.insert(
                     0,
                     Motion {
                         id: signal.id,
                         anim,
-                        activation: activation(signal.id, signal.sequence_start),
+                        activation: start,
                         continuous_activation: activation(signal.id, signal.continuous_start),
                         signal: *signal,
                         stop: None,
                         residual: 0.0,
                         weight: 0.0,
+                        internal: false,
                     },
                 );
                 self.signals.insert(signal.id, *signal);
+                // LLKeyframeMotion::onActivate: the expression the animation
+                // names starts with it, unless it is already playing
+                if let Some(emote) = emote
+                    && !self.motions.iter().any(|m| m.id == emote)
+                    && let Some(anim) = get(&emote)
+                {
+                    self.motions.insert(
+                        0,
+                        Motion {
+                            id: emote,
+                            anim,
+                            activation: start,
+                            continuous_activation: start,
+                            signal: *signal,
+                            stop: None,
+                            residual: 0.0,
+                            weight: 0.0,
+                            internal: true,
+                        },
+                    );
+                }
             }
         }
         // weights (LLMotionController::updateMotionsByType)
@@ -824,7 +904,7 @@ impl Controller {
                 let end = m.activation + Duration::from_secs_f64((f64::from(a.duration) - f64::from(a.ease_out)).max(0.0));
                 if now >= end {
                     m.stop_at(end);
-                    if !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
+                    if !m.internal && !preview.is_some_and(|(target, _)| target.is_none_or(|id| id == m.id)) {
                         completed.push(m.id);
                     }
                 }
@@ -874,7 +954,7 @@ impl Controller {
         // joint states per joint: (priority, weight, rotation, position),
         // highest priority first, newer motions first among equals
         // (LLJointStateBlender::addJointState)
-        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>);
+        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
         for m in self.motions.iter().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
@@ -901,12 +981,13 @@ impl Controller {
                 let s = &mut states[j];
                 let at = s.iter().position(|o| prio > o.0).unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (prio, m.weight, rot, pos));
+                    s.insert(at, (prio, m.weight, rot, pos, false));
                     s.truncate(JOINT_STATES);
                 }
             }
         }
-        // head and eye motions, started with the avatar (startDefaultMotions)
+        // head, eye, breathing and body noise motions, started with the
+        // avatar (startDefaultMotions)
         let lj = LookJoints::of(rig);
         let procedural = if self.control || hold_pose {
             Vec::new()
@@ -917,23 +998,42 @@ impl Controller {
             self.held_procedural.clone_from(&p);
             p
         };
-        for (j, w, r) in procedural {
+        for (j, prio, w, r, additive) in procedural {
             if let Some(s) = states.get_mut(j) {
-                let at = s.iter().position(|o| MEDIUM_PRIORITY > o.0).unwrap_or(s.len());
+                // the additive motions are blended first
+                // (LLMotionController::updateMotions), so they come before
+                // the regular states of their priority
+                let at = s
+                    .iter()
+                    .position(|o| if additive { prio >= o.0 } else { prio > o.0 })
+                    .unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (MEDIUM_PRIORITY, w, Some(r), None));
+                    s.insert(at, (prio, w, Some(r), None, additive));
                     s.truncate(JOINT_STATES);
                 }
             }
         }
         let mut local_pos: Vec<Vec3> = rest_pos.to_vec();
+        // joints turned by an additive motion: the held pose stays without it
+        let mut added_rot: Vec<(usize, Quat)> = Vec::new();
         for (j, s) in states.iter().enumerate() {
             let mut rot_sum = 0.0f32;
             let mut rot = self.rot[j];
             let mut pos_sum = 0.0f32;
             let mut pos = Vec3::ZERO;
             let mut top = 0.0f32;
-            for &(_, w, r, p) in s {
+            let mut added: Option<Quat> = None;
+            for &(_, w, r, p, additive) in s {
+                if additive {
+                    // LLJointStateBlender::blendJointStates: what the
+                    // stronger regular states leave of its weight
+                    if let Some(r) = r.filter(|_| w > 0.0) {
+                        let a = added.unwrap_or(Quat::IDENTITY);
+                        let sum = (rot_sum + w).min(1.0);
+                        added = Some((nlerp(sum - rot_sum, a, r) * a).normalize());
+                    }
+                    continue;
+                }
                 if let Some(r) = r {
                     if rot_sum > 0.0 {
                         let sum = (rot_sum + w).min(1.0);
@@ -958,6 +1058,9 @@ impl Controller {
                 }
             }
             self.rot[j] = rot;
+            if let Some(a) = added {
+                added_rot.push((j, (a * rot).normalize()));
+            }
             if pos_sum > 0.0 {
                 if j == rig.pelvis {
                     // the pelvis is animated relative to the avatar root
@@ -984,7 +1087,18 @@ impl Controller {
         let pelvis_rest =
             rest_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO) - rig.local_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO);
         let pelvis_offset = self.pelvis_offset.map_or(Vec3::ZERO, |position| position - pelvis_rest);
-        let world = rig.world_with(&self.rot, pelvis_offset, &local_pos, scale);
+        let world = if added_rot.is_empty() {
+            rig.world_with(&self.rot, pelvis_offset, &local_pos, scale)
+        } else {
+            let mut rot = self.rot.clone();
+            for (j, r) in added_rot {
+                rot[j] = r;
+            }
+            rig.world_with(&rot, pelvis_offset, &local_pos, scale)
+        };
+        if !hold_pose {
+            self.update_live_morphs(now);
+        }
         // Deliberate difference from LLVOAvatar::idleCalcNameTagPosition:
         // the human requested a stable tag, not one following the posed head.
         // Keep shape / mesh offsets and translation deformers, but measure
@@ -1015,6 +1129,43 @@ impl Controller {
             alt_l: pose(lj.alt_l),
             alt_r: pose(lj.alt_r),
         };
+    }
+
+    /// The expression and hand pose morph weights of this frame
+    /// (default_motions.rs).
+    fn update_live_morphs(&mut self, now: Instant) {
+        self.live_morphs.clear();
+        // LLEmote::onUpdate: the expression's morph follows the motion's
+        // weight, Express_Closed_Mouth (1 by default) the opposite way.
+        // With several at once the strongest closes the mouth least (the
+        // Legacy Viewer keeps whichever updated last).
+        let mut strongest = 0.0f32;
+        for m in &self.motions {
+            if let Some(param) = default_motions::emote_param(&m.id) {
+                let w = m.weight.clamp(0.0, 1.0);
+                strongest = strongest.max(w);
+                match self.live_morphs.iter_mut().find(|l| l.0 == param) {
+                    Some(l) => l.1 = l.1.max(w),
+                    None => self.live_morphs.push((param, w)),
+                }
+            }
+        }
+        if strongest > 0.0 {
+            self.live_morphs.push((default_motions::CLOSED_MOUTH, -strongest));
+        }
+        // LLKeyframeMotion::onUpdate's "Hand Pose": that of the animation of
+        // highest priority; among equals the last one updated, the oldest
+        if self.control {
+            return;
+        }
+        let mut request: Option<(i32, u32)> = None;
+        for m in self.motions.iter().filter(|m| default_motions::emote_param(&m.id).is_none()) {
+            if request.is_none_or(|(p, _)| m.anim.max_priority >= p) {
+                request = Some((m.anim.max_priority, m.anim.anim.hand_pose));
+            }
+        }
+        self.hands.update(request.map(|r| r.1), now);
+        self.live_morphs.extend(self.hands.weights());
     }
 }
 
@@ -2077,5 +2228,174 @@ mod tests {
         c.evaluate(&rig, t0 + Duration::from_secs(1), None, &mut out);
         assert_eq!(c.pos_delta[elbow], Vec3::ZERO);
         assert!((c.rot[elbow] * Vec3::X - Quat::from_rotation_z(-0.7) * Vec3::X).length() < 1e-5);
+    }
+
+    /// A looping animation that names an expression and a hand pose.
+    fn carrier(rig: &Rig, emote: &str, hand_pose: u32, priority: i32) -> Arc<BoundAnim> {
+        let anim = Animation {
+            base_priority: priority,
+            duration: 1.0,
+            emote_name: emote.into(),
+            loop_in: 0.0,
+            loop_out: 1.0,
+            looping: true,
+            ease_in: 0.0,
+            ease_out: 0.0,
+            hand_pose,
+            joints: Vec::new(),
+        };
+        Arc::new(BoundAnim::bind(anim, rig))
+    }
+
+    fn morph(c: &Controller, param: i32) -> f32 {
+        c.live_morphs().iter().find(|l| l.0 == param).map_or(0.0, |l| l.1)
+    }
+
+    /// LLKeyframeMotion::onActivate starts the expression an animation
+    /// names: its morph eases in for 0.3 s, holds, then eases out by 2.8 s,
+    /// the closed mouth going the other way; the animation keeps looping
+    /// without starting it again. Its hand pose blends in.
+    #[test]
+    fn an_animation_header_plays_its_expression_once_and_its_hand_pose() {
+        let rig = rig();
+        let mut streamer = AnimStreamer::new(PathBuf::new());
+        default_motions::register(&mut streamer, &rig);
+        let id = Uuid::from_u128(9);
+        let anim = carrier(&rig, "Express_Smile", 3, 4);
+        let mut get = |m: &Uuid| if *m == id { Some(anim.clone()) } else { streamer.get(m) };
+        let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let t0 = Instant::now();
+        let mut step = |c: &mut Controller, s: f32| {
+            let now = t0 + Duration::from_secs_f32(s);
+            let stopped = c.sync(&[signal(id, 1, t0)], now, &mut get);
+            assert!(stopped.is_empty(), "the expression never reaches the simulator");
+            c.evaluate(&rig, now, None, &mut out);
+        };
+        step(&mut c, 0.0);
+        step(&mut c, 0.15);
+        let w = morph(&c, 318);
+        assert!(w > 0.2 && w < 0.8, "{w}");
+        assert_eq!(morph(&c, default_motions::CLOSED_MOUTH), -w);
+        step(&mut c, 1.0);
+        assert_eq!(morph(&c, 318), 1.0);
+        // the fist (Hands_Fist, 103) is there; relaxed (101, baked) has gone
+        assert_eq!(morph(&c, 103), 1.0);
+        assert_eq!(morph(&c, 101), -1.0);
+        step(&mut c, 2.1);
+        let w = morph(&c, 318);
+        assert!(w > 0.2 && w < 0.8, "{w}");
+        step(&mut c, 3.0);
+        step(&mut c, 4.5);
+        assert_eq!(morph(&c, 318), 0.0);
+        assert_eq!(morph(&c, default_motions::CLOSED_MOUTH), 0.0);
+        assert_eq!(morph(&c, 103), 1.0);
+    }
+
+    /// A gesture's expression: the simulator signals its built-in UUID,
+    /// played without any asset; a stop eases it out.
+    #[test]
+    fn a_signalled_expression_plays_without_an_asset() {
+        let rig = rig();
+        let mut streamer = AnimStreamer::new(PathBuf::new());
+        default_motions::register(&mut streamer, &rig);
+        let wink = default_motions::emote_named("express_wink_emote").expect("wink");
+        assert!(streamer.asset_settled(&wink));
+        let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        c.sync(&[signal(wink, 1, t0)], at(0.0), |m| streamer.get(m));
+        c.sync(&[signal(wink, 1, t0)], at(0.5), |m| streamer.get(m));
+        c.evaluate(&rig, at(0.5), None, &mut out);
+        assert_eq!(morph(&c, 303), 1.0);
+        // without animations the hands stay relaxed, as baked
+        assert_eq!(morph(&c, 101), 0.0);
+        assert_eq!(c.live_morphs().len(), 2);
+        c.sync(&[], at(0.6), |m| streamer.get(m));
+        c.sync(&[], at(1.3), |m| streamer.get(m));
+        c.evaluate(&rig, at(1.3), None, &mut out);
+        let w = morph(&c, 303);
+        assert!(w > 0.2 && w < 0.8, "{w}");
+    }
+
+    /// The hand pose of the strongest animation wins; among equals the
+    /// oldest one (the last updated in mActiveMotions).
+    #[test]
+    fn the_strongest_animation_gives_the_hand_pose() {
+        let rig = rig();
+        let (a, b, d) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let (fist, point, peace) = (carrier(&rig, "", 3, 2), carrier(&rig, "", 2, 4), carrier(&rig, "", 12, 4));
+        let get = |m: &Uuid| {
+            Some(match m.as_u128() {
+                1 => fist.clone(),
+                2 => point.clone(),
+                _ => peace.clone(),
+            })
+        };
+        let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        for s in [0.0, 0.5] {
+            c.sync(&[signal(a, 1, t0), signal(b, 2, t0)], at(s), get);
+            c.evaluate(&rig, at(s), None, &mut out);
+        }
+        assert_eq!((morph(&c, 102), morph(&c, 103)), (1.0, 0.0));
+        // a newer animation of the same priority does not take it
+        for s in [1.0, 1.5] {
+            c.sync(&[signal(a, 1, t0), signal(b, 2, t0), signal(d, 3, at(1.0))], at(s), get);
+            c.evaluate(&rig, at(s), None, &mut out);
+        }
+        assert_eq!((morph(&c, 102), morph(&c, 791)), (1.0, 0.0));
+    }
+
+    /// LLBreatheMotionRot turns the chest when no stronger animation does;
+    /// LLBodyNoiseMotion adds its sway to the torso, except when sitting.
+    #[test]
+    fn the_chest_breathes_and_the_torso_sways_unless_sitting() {
+        let rig = rig();
+        let chest = LookJoints::of(&rig).chest.expect("chest");
+        let torso = rig.names["mTorso"];
+        let mut c = Controller::default();
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        c.evaluate(&rig, at(0.0), None, &mut out);
+        let t = std::f32::consts::FRAC_PI_2;
+        c.evaluate(&rig, at(t), None, &mut out);
+        assert!((c.rot[chest].angle_between(Quat::IDENTITY) - 0.05).abs() < 1e-3);
+        let sway = |c: &Controller| c.held_procedural.iter().find(|s| s.0 == torso && s.4).map(|s| (s.1, s.3));
+        let (prio, q) = sway(&c).expect("body noise");
+        assert_eq!(prio, HIGH_PRIORITY);
+        assert!(q.angle_between(default_motions::body_noise(t)) < 1e-4);
+        c.sitting = true;
+        c.evaluate(&rig, at(t + 0.1), None, &mut out);
+        assert!(sway(&c).is_none());
+        // a chest animation of higher priority hides the breath
+        let lean = Animation {
+            base_priority: 3,
+            duration: 1.0,
+            emote_name: String::new(),
+            loop_in: 0.0,
+            loop_out: 1.0,
+            looping: true,
+            ease_in: 0.0,
+            ease_out: 0.0,
+            hand_pose: 1,
+            joints: vec![aurora_assets::JointMotion {
+                joint_name: "mChest".into(),
+                priority: -1,
+                rot_keys: vec![aurora_assets::anim::RotKey {
+                    time: 0.0,
+                    rotation: Quat::from_rotation_x(0.3),
+                }],
+                pos_keys: Vec::new(),
+            }],
+        };
+        let lean = Arc::new(BoundAnim::bind(lean, &rig));
+        c.sync(&[signal(Uuid::from_u128(5), 1, t0)], at(3.0), |_| Some(lean.clone()));
+        c.evaluate(&rig, at(3.0), None, &mut out);
+        assert!(c.rot[chest].angle_between(Quat::from_rotation_x(0.3)) < 1e-4);
     }
 }

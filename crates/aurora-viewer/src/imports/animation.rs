@@ -74,18 +74,11 @@ impl Player {
             3 => Uuid::from_u128(0xaec4610c_757f_bc4e_c092_c6e9caf18daf),
             _ => Uuid::from_u128(0x2408fe9e_df1d_1d7d_f4ff_1384fa7b350f),
         };
-        let mut playing = vec![
+        // (the expression the header names starts with it, in the controller)
+        let playing = [
             crate::world::PlayingAnimation::from_signal(base, 0, self.epoch, None),
             crate::world::PlayingAnimation::from_signal(id, 1, self.epoch, None),
         ];
-        if let Some(emote) = emotes()
-            .iter()
-            .find(|(name, _, _)| *name == bound.anim.emote_name)
-            .map(|(_, uuid, _)| *uuid)
-            && !emote.is_nil()
-        {
-            playing.push(crate::world::PlayingAnimation::from_signal(emote, 2, self.epoch, None));
-        }
         self.controller.sync(&playing, sample, |motion| {
             if *motion == id { Some(bound.clone()) } else { streamer.get(motion) }
         });

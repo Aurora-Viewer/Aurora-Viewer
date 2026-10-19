@@ -1428,6 +1428,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
+| `AURORA_DEMO_EMOTE=<expression>[,<hand pose>][,signal][,self]` | A facial expression and a hand pose from an animation (system body) |
 | `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
 | `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
@@ -1638,6 +1639,26 @@ tests do not establish that this report uses an invalid joint or index.
   at frame 700 (the log shows `skeleton reset: <id>`). Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=650` (deformed) or
   `780` (reset).
+- **`AURORA_DEMO_EMOTE`** (issue #661), with `AURORA_DEMO_CLASSIC=1`: from
+  frame 240 the avatar in front of the start position plays a looping
+  animation without joints whose header names an expression and a hand
+  pose, as uploaded animations do. Every 240 frames it is off for one frame
+  and starts again, which plays its expression again: it eases in for
+  0.3 s, holds, then eases out by 2.8 s, while the hands keep the pose. The
+  expression is the animation state without `express_` (`smile`,
+  `toothsmile`, `wink`, `open_mouth`, `kiss`…; `_emote` may be left out,
+  `toothsmile` by default), the hand pose its index in the upload window's
+  list (0 spread, 1 relaxed, 3 fist by default … 13 spread right).
+  `signal` signals the expression's built-in UUID beside the animation, as a
+  gesture does; `self` plays it on our own avatar, which
+  `AURORA_DEMO_SHAPE=mouth` (face) or `torso` (hands) frames from the front:
+  with `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=760` the face smiles
+  (eyes narrowed, teeth showing) and the fists are closed; without the
+  variable the same frame shows the face at rest and the hands relaxed (the
+  demo idle animation asks for them, as LLHandMotion does when no animation
+  asks for a pose). The log shows `demo emote: round <n> on <avatar>`.
+  Breathing turns the chest and the body noise sways the torso by about a
+  degree whenever no stronger animation drives them.
 - **`AURORA_DEMO_DERENDER`**: the avatar in front of the start position
   (Violet Wolf, unblocked for the scenario) wears a hat and an orb. At
   frame 700 its menu opens (`menu`: Inspect, Derender temporarily and
