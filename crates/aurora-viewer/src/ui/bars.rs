@@ -38,6 +38,9 @@ pub enum BarAction {
     Logout,
     Quit,
     TeleportHome,
+    /// World › Set Home to Here, or the home buttons' right click
+    /// (World.SetHomeLocation).
+    SetHome,
     ToggleFly,
     ToggleMoveLock,
     ToggleWaterWalk,
@@ -163,6 +166,9 @@ pub struct StatusInfo<'a> {
     /// The landmark lying on the agent's parcel (hasParcelLandmark): the
     /// star is lit and World › Landmark this place greyed out.
     pub parcel_landmark: Option<super::landmark_create::ParcelLandmark>,
+    /// The agent's region allows setting home there
+    /// (World.EnableSetHomeLocation).
+    pub can_set_home: bool,
     /// Firestorm's full-width bars (Preferences › Aurora) instead of the
     /// islands.
     pub classic_bars: bool,
@@ -236,6 +242,10 @@ const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
 const TOP_ICON: f32 = 16.0;
 
 fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> bool {
+    icon_button_response(ui, p, icons, icon, tip, size).clicked()
+}
+
+fn icon_button_response(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
@@ -250,7 +260,17 @@ fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &
             tint,
         );
     }
-    resp.on_hover_text(tip).clicked()
+    resp.on_hover_text(tip)
+}
+
+/// The right click of a home button: World › Set Home to Here, offered by
+/// the same rule; true when chosen.
+pub(super) fn home_menu(resp: &egui::Response, p: &Palette, can_set_home: bool) -> bool {
+    let mut set = false;
+    menu::context_menu(resp, p, |ui| {
+        set = menu::item_if(ui, p, "home-check", aurora_i18n::tr!("world-set-home-here"), can_set_home);
+    });
+    set
 }
 
 /// Local time of day choices (index = `Panels::time_of_day`; shown in the
@@ -663,6 +683,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item_keys(ui, p, "building-castle", aurora_i18n::tr!("region-title"), "Alt+R") {
             super::widgets::toggle_floater(ui.ctx(), super::region::WINDOW, &mut panels.region_estate);
+        }
+        // menu_viewer.xml: Set Home to Here, after Region Details
+        if menu::item_if(ui, p, "home-check", aurora_i18n::tr!("world-set-home-here"), st.can_set_home) {
+            *action = BarAction::SetHome;
         }
         // menu_viewer.xml: Search (Ctrl+F)
         if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
@@ -1226,8 +1250,12 @@ pub fn top_bars(
                 if nav_arrow(ui, p, icons, false, st.tp_forward.as_deref()) {
                     action = BarAction::TeleportForward;
                 }
-                if icon_button(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON) {
+                let home = icon_button_response(ui, p, icons, "Home_Off", aurora_i18n::tr!("common-go-home"), TOP_ICON);
+                if home.clicked() {
                     action = BarAction::TeleportHome;
+                }
+                if home_menu(&home, p, st.can_set_home) {
+                    action = BarAction::SetHome;
                 }
                 ui.add_space(6.0);
 

@@ -4,6 +4,7 @@
 //! Message flow follows `newview/llstartup.cpp` and `llviewermessage.cpp`.
 
 mod abuse_reports;
+mod account;
 mod asset_imports;
 mod build_cmds;
 mod currency;
@@ -1169,6 +1170,12 @@ impl Session<'_> {
             NetCommand::UpdateAgentLanguage => self.update_agent_language(),
             NetCommand::SetHoverHeight { region, request, value } => self.set_hover_height(region, request, value),
             NetCommand::SetMaturityPreference(maturity) => self.set_maturity_preference(maturity),
+            NetCommand::SetHomeLocation { position, look_at } => self.set_home_location(position, look_at),
+            NetCommand::RequestUserInfo => self.request_user_info(),
+            NetCommand::UpdateUserInfo {
+                directory_visibility,
+                im_via_email,
+            } => self.update_user_info(directory_visibility, im_via_email),
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
@@ -3792,20 +3799,34 @@ impl Session<'_> {
                 .alert_info
                 .first()
                 .and_then(|info| region_restart::from_alert_info(&field_str(&info.message), &info.extra_params));
-            match named.map(Restart::Notice).or_else(|| region_restart::from_text(&msg)) {
-                Some(Restart::Notice(notice)) => emit(self.sh, NetEvent::RegionRestart(notice)),
-                Some(Restart::Cancelled) => emit(self.sh, NetEvent::RegionRestartCancelled),
-                None if !msg.is_empty() => emit(self.sh, NetEvent::Alert { message: msg }),
-                None => {}
+            // the home location's answers (process_special_alert_messages,
+            // the HomePositionSet notifications)
+            let home = m
+                .alert_info
+                .first()
+                .and_then(|info| crate::home::from_alert_info(&field_str(&info.message)))
+                .or_else(|| crate::home::from_text(&msg));
+            if let Some(alert) = home {
+                emit(self.sh, NetEvent::HomeAlert(alert));
+            } else {
+                match named.map(Restart::Notice).or_else(|| region_restart::from_text(&msg)) {
+                    Some(Restart::Notice(notice)) => emit(self.sh, NetEvent::RegionRestart(notice)),
+                    Some(Restart::Cancelled) => emit(self.sh, NetEvent::RegionRestartCancelled),
+                    None if !msg.is_empty() => emit(self.sh, NetEvent::Alert { message: msg }),
+                    None => {}
+                }
             }
         } else if id == AgentAlertMessage::ID {
             let m: AgentAlertMessage = pkt.decode()?;
-            emit(
-                self.sh,
-                NetEvent::Alert {
-                    message: field_str(&m.alert_data.message),
-                },
-            );
+            let message = field_str(&m.alert_data.message);
+            match crate::home::from_text(&message) {
+                Some(alert) => emit(self.sh, NetEvent::HomeAlert(alert)),
+                None => emit(self.sh, NetEvent::Alert { message }),
+            }
+        } else if id == UserInfoReply::ID {
+            // process_user_info_reply: the UDP answer to UserInfoRequest
+            let m: UserInfoReply = pkt.decode()?;
+            emit(self.sh, NetEvent::UserInfo(Ok(crate::user_info::from_udp(&m))));
         } else if id == ScriptControlChange::ID {
             // LLAgent::processScriptControlChange: the counts are the viewer's
             let m: ScriptControlChange = pkt.decode()?;

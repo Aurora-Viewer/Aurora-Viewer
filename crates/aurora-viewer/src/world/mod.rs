@@ -24,6 +24,7 @@ pub mod flying_at_exit;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
+pub mod home;
 pub mod hover_height;
 pub mod hud_scale;
 pub mod inventory;
@@ -58,6 +59,7 @@ pub mod teleport_invites;
 pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
+pub mod user_info;
 pub mod windlight_presets;
 pub mod worldmap;
 
@@ -356,6 +358,10 @@ pub struct World {
     /// The content rating chosen during the session and its sync with the
     /// server.
     pub maturity: maturity::MaturityPreference,
+    /// World › Set Home to Here waiting for the simulator's answer.
+    pub set_home: home::SetHome,
+    /// Preferences › Privacy's account settings kept by the grid.
+    pub user_info: user_info::UserInfoState,
     /// Experiences: details, questions waiting for them, permissions.
     pub experiences: experiences::Experiences,
     /// Teleport history (navigation bar back / forward).
@@ -561,6 +567,8 @@ impl World {
             teleport_invites: teleport_invites::TeleportInvites::default(),
             inventory_offers: inventory_offers::InventoryOffers::default(),
             maturity: maturity::MaturityPreference::default(),
+            set_home: home::SetHome::default(),
+            user_info: user_info::UserInfoState::default(),
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -1597,6 +1605,22 @@ impl World {
             }
             NetEvent::MaturityPreference(result) => {
                 self.on_maturity_answer(result);
+                None
+            }
+            NetEvent::HomeLocation(reply) => {
+                self.on_home_location(reply);
+                None
+            }
+            NetEvent::HomeAlert(alert) => {
+                self.on_home_alert(alert);
+                None
+            }
+            NetEvent::UserInfo(result) => {
+                self.user_info.answer(result);
+                None
+            }
+            NetEvent::UserInfoUpdateFailed(error) => {
+                self.on_user_info_update_failed(error);
                 None
             }
             NetEvent::AgentMovementComplete { handle, position, look_at } => {

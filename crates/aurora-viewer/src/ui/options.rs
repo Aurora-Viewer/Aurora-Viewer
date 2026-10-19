@@ -9,7 +9,7 @@ mod aurora;
 mod camera;
 mod commands;
 mod dof;
-mod privacy;
+pub mod privacy;
 mod scale;
 pub(crate) mod sections;
 
@@ -32,6 +32,9 @@ pub struct OptionsUi {
     /// The account's content ceiling and the rating it wants, while logged
     /// in (set by the app).
     pub maturity: Option<aurora_net::search::AgentAccess>,
+    /// The account settings the grid keeps (Privacy), while logged in (set
+    /// by the app).
+    pub account: Option<privacy::Account>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     pub shortcut_filter: String,
@@ -152,6 +155,8 @@ pub struct OptionsResult {
     pub erase_chat_logs: bool,
     /// The content rating chosen (SIM_ACCESS_*), to send to the server.
     pub maturity: Option<u8>,
+    /// An account setting of Privacy changed, to send to the server.
+    pub account: Option<crate::world::user_info::Change>,
 }
 
 /// Category tabs (index = `OptionsUi::tab`).
@@ -877,7 +882,15 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                             9 => debug_page(ui, p, s),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
-                            TAB_PRIVACY => privacy::page(ui, p, &mut s.lookat, &mut s.autoresponse.friends_only, &mut s.object_im_filter),
+                            TAB_PRIVACY => privacy::page(
+                                ui,
+                                p,
+                                &mut s.lookat,
+                                &mut s.autoresponse.friends_only,
+                                &mut s.object_im_filter,
+                                st.account.as_ref(),
+                                &mut r.account,
+                            ),
                             TAB_ACCESSIBILITY => accessibility::page(ui, p, s),
                             TAB_AURORA => {
                                 let mut reset = false;

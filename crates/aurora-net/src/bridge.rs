@@ -190,12 +190,14 @@ pub struct Ack {
     pub seated: bool,
     pub motor: Option<MotorReport>,
     pub passage: Option<PassageReport>,
+    /// llGetFreeMemory: Mono's lowest free memory since the script started.
+    pub free_memory: Option<u32>,
 }
 
 impl Ack {
     pub fn parse(value: &str) -> Option<Self> {
         let fields: Vec<_> = value.trim().split('|').collect();
-        if !matches!(fields.len(), 5 | 10 | 13 | 19) {
+        if !matches!(fields.len(), 5 | 10 | 13 | 19 | 20) {
             return None;
         }
         let flag = |text| match text {
@@ -229,7 +231,7 @@ impl Ack {
             } else {
                 None
             },
-            passage: if fields.len() == 19 {
+            passage: if fields.len() >= 19 {
                 let action = fields[13].parse::<u32>().ok().filter(|n| *n <= i32::MAX as u32)?;
                 let state = fields[14].parse::<u8>().ok().filter(|state| *state <= 7)?;
                 let distance = |field: &str| field.parse::<u32>().ok().filter(|n| *n <= 1_000_000);
@@ -258,6 +260,11 @@ impl Ack {
             } else {
                 None
             },
+            // A script's whole memory is 65536 bytes in Mono.
+            free_memory: match fields.get(19) {
+                Some(field) => Some(field.parse::<u32>().ok().filter(|n| *n <= 65_536)?),
+                None => None,
+            },
         })
     }
 }
@@ -272,6 +279,12 @@ fn transport_failure(error: reqwest::Error) -> String {
     } else {
         aurora_i18n::tr!("bridge-request-connection").into()
     }
+}
+
+/// True for the failures transport_failure reports: no HTTP reply at all.
+/// Any HTTP status or body came from a live script (or its simulator).
+pub fn unreachable(error: &str) -> bool {
+    error == aurora_i18n::tr!("bridge-request-timeout") || error == aurora_i18n::tr!("bridge-request-connection")
 }
 
 fn decode_ack(bytes: &[u8], sequence: u32) -> Result<Ack, String> {
@@ -485,6 +498,17 @@ mod tests {
         }
         assert!(Ack::parse(&format!("{base}|123|2|10|140|50|13")).is_none());
         assert!(Ack::parse(&format!("{base}|0|0|0|0|0|1")).is_none());
+    }
+    #[test]
+    fn script_memory_margin_is_an_optional_bounded_last_field() {
+        let base = "42|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0";
+        assert_eq!(Ack::parse(base).expect("v1.27 status").free_memory, None);
+        let ack = Ack::parse(&format!("{base}|9216")).expect("v1.28 status");
+        assert_eq!(ack.free_memory, Some(9216));
+        assert_eq!(ack.passage, None);
+        for bad in ["65537", "-1", "", "x"] {
+            assert!(Ack::parse(&format!("{base}|{bad}")).is_none(), "{bad}");
+        }
     }
     #[test]
     fn motor_settings_and_physical_passage_have_distinct_bounded_payloads() {

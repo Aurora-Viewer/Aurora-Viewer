@@ -13,6 +13,7 @@ pub mod experience;
 pub mod fetch;
 pub mod group_money;
 pub mod groups;
+pub mod home;
 pub mod inventory;
 pub mod land;
 pub mod land_tool;
@@ -36,6 +37,7 @@ pub mod terrain;
 pub mod throttle;
 pub mod transition;
 pub mod types;
+pub mod user_info;
 pub mod xmlrpc;
 
 pub use fetch::{FetchRequest, FetchResult, Fetcher, Lane};
