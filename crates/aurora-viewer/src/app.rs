@@ -8597,6 +8597,7 @@ impl App {
         }
         let ids = self.world.favorites.list(&self.world.inventory).to_vec();
         let mut list = Vec::with_capacity(ids.len());
+        let now = std::time::Instant::now();
         for id in ids {
             let Some(item) = self.world.inventory.items.get(&id) else {
                 continue;
@@ -8621,7 +8622,7 @@ impl App {
             // the item's thumbnail, else the snapshot of the landmark's parcel
             let picture = if thumb.is_nil() {
                 if shown && let Some(g) = global {
-                    self.world.place_snapshots.want(asset, g, region_id);
+                    self.world.place_snapshots.want(asset, g, region_id, now);
                 }
                 self.world.place_snapshots.snapshot(asset, &self.world.profiles.parcels)
             } else {
