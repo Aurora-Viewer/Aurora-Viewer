@@ -10,7 +10,8 @@ folder" give the technical details to paste or attach, after reviewing them
 (the full trace may contain personal paths).
 
 The issue templates are in `.github/ISSUE_TEMPLATE/`; they set the issue
-type (Bug or Feature), and issues carry no labels. The disabled form below
+type (Bug or Feature); the area labels (`chat`, `ui`, `avatar`…) are added
+during triage. The disabled form below
 still sends the former `bug` and `alpha` labels (`bug_report/github.rs`):
 switch it to the Bug type when it is brought back.
 
