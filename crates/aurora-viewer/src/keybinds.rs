@@ -335,6 +335,12 @@ pub enum Action {
     ShowTransparency,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
+    /// Avatar health's "Stop avatar animations", the scripts keeping their
+    /// permissions (menu_viewer.xml, shortcut="alt|shift|A").
+    StopAnimations,
+    /// Avatar health's "Refresh attachments" (menu_viewer.xml,
+    /// shortcut="alt|shift|R").
+    RefreshAttachments,
     /// The photo window ("Snapshot", Firestorm Ctrl+Shift+S).
     PhotoWindow,
     /// "Snapshot to Disk" (Firestorm Ctrl+`): a photo with the settings of
@@ -443,7 +449,11 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             ),
             (
                 aurora_i18n::tr!("common-appearance"),
-                vec![(Action::Rebake, aurora_i18n::tr!("ui-context-rebake"))],
+                vec![
+                    (Action::Rebake, aurora_i18n::tr!("ui-context-rebake")),
+                    (Action::StopAnimations, aurora_i18n::tr!("avatar-health-stop-animations")),
+                    (Action::RefreshAttachments, aurora_i18n::tr!("avatar-health-refresh-attachments")),
+                ],
             ),
             (
                 aurora_i18n::tr!("photo-title"),
@@ -655,6 +665,9 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // menu_viewer.xml: Avatar Health
+            (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
+            (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
             (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
             (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
         ];
@@ -1489,6 +1502,8 @@ mod tests {
             (Action::Import, (true, false, false), [K::KeyU; 4]),
             (Action::ShowTransparency, (true, false, true), [K::KeyT; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
+            (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
+            (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
         ];
         for (i, layout) in [&us, &fr, &be, &de].into_iter().enumerate() {

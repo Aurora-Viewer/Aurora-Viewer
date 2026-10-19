@@ -29,6 +29,7 @@ mod bridge;
 mod movelock;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
+mod avatar_health;
 mod buy_currency;
 mod buy_land;
 mod chat_commands;
@@ -633,6 +634,8 @@ pub struct App {
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
     physics_ui: crate::physics_editor::State,
+    /// Me › Avatar health and the customise animation.
+    avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -1096,6 +1099,7 @@ impl App {
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
+            avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -1935,6 +1939,7 @@ impl App {
         self.shape_ui = Default::default();
         self.shape_camera = None;
         self.physics_ui = Default::default();
+        self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -2928,6 +2933,8 @@ impl App {
                 });
             }
             Action::Rebake => self.rebake(),
+            Action::StopAnimations => self.stop_animations(false),
+            Action::RefreshAttachments => self.refresh_attachments(),
             Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
             Action::PhotoToDisk => self.photo_to_disk(),
             // held actions are read every frame
@@ -5556,6 +5563,7 @@ impl App {
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
         self.update_hover_height();
+        self.update_avatar_health();
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
         }
@@ -8607,6 +8615,22 @@ impl App {
             .unwrap_or_default()
     }
 
+    /// Me › Avatar health: our avatar and the keys of its shortcuts.
+    fn health_menu(&self) -> ui::bars::HealthMenu {
+        let keys = |action| {
+            self.settings.keybinds.get(action)[0]
+                .as_ref()
+                .map(|b| b.label())
+                .unwrap_or_default()
+        };
+        ui::bars::HealthMenu {
+            me: self.world.agent_id,
+            stop_keys: keys(Action::StopAnimations),
+            rebake_keys: keys(Action::Rebake),
+            refresh_keys: keys(Action::RefreshAttachments),
+        }
+    }
+
     /// Places › Favorites, the first tab.
     fn open_places_favorites(&mut self) {
         self.places_ui.tab = 0;
@@ -9724,6 +9748,7 @@ impl App {
                     camera_preset: self.settings.camera.preset,
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),
+                    health: self.health_menu(),
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
