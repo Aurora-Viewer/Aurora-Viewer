@@ -3,7 +3,7 @@ use crate::world::{PlayingAnimation, inventory::Inventory};
 use runtime::{Frame, Runtime};
 use std::time::{Duration, Instant};
 
-fn fixture() -> (Inventory, Set) {
+pub(super) fn fixture() -> (Inventory, Set) {
     let mut inv = Inventory::default();
     let id = demo::seed(&mut inv, Uuid::from_u128(1));
     let mut catalog = inventory::Catalog::default();
@@ -11,11 +11,14 @@ fn fixture() -> (Inventory, Set) {
     let set = catalog.selected(id).expect("demo AO set").clone();
     (inv, set)
 }
-fn frame(raw: &[PlayingAnimation]) -> Frame<'_> {
+pub(super) fn frame(raw: &[PlayingAnimation]) -> Frame<'_> {
     Frame {
         raw,
         run_hold: None,
         swim_hold: None,
+        water_walk_hold: None,
+        anchor_hold: None,
+        swim_outro: false,
         native_running: false,
         enabled: true,
         mouselook: false,
@@ -25,11 +28,275 @@ fn frame(raw: &[PlayingAnimation]) -> Frame<'_> {
         region: Some(1),
     }
 }
-fn signal(state: State, now: Instant) -> PlayingAnimation {
+pub(super) fn signal(state: State, now: Instant) -> PlayingAnimation {
     PlayingAnimation::from_signal(state.motion(), 1, now, None)
 }
-fn step(set: &Set, state: State, index: usize) -> Uuid {
+pub(super) fn step(set: &Set, state: State, index: usize) -> Uuid {
     set.states[&state].steps[index].members[0].asset
+}
+
+#[test]
+fn native_movelock_uses_standing_cycles_without_stopping_the_constrained_sit() {
+    let (_, set) = fixture();
+    let mut r = Runtime::default();
+    let now = Instant::now();
+    let raw = [signal(State::GroundSit, now)];
+    for elapsed in [0, 7, 14] {
+        let mut f = frame(&raw);
+        f.anchor_hold = Some(signal(State::Standing, now));
+        let (pose, changes) = r.update(Some(&set), f, now + Duration::from_secs(elapsed), |_| true, |_| 0);
+        assert_eq!(r.current, Some(State::Standing));
+        assert!(pose.iter().any(|a| {
+            set.states[&State::Standing]
+                .steps
+                .iter()
+                .any(|s| s.members.iter().any(|m| m.asset == a.id))
+        }));
+        assert!(!pose.contains(&raw[0]));
+        assert!(!changes.iter().any(|(id, _)| *id == State::GroundSit.motion()));
+    }
+    let raw = [signal(State::Walking, now + Duration::from_secs(15))];
+    let (_, changes) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(15), |_| true, |_| 0);
+    assert_eq!(r.current, Some(State::Walking));
+    assert!(changes.contains(&(step(&set, State::Walking, 0), true)));
+}
+
+#[test]
+fn native_movelock_idle_waits_for_coasting_then_prepares_before_sitting() {
+    use crate::movement::movelock::{Controller, Frame as LockFrame};
+    for state in [State::Walking, State::Running] {
+        let (_, set) = fixture();
+        let t = Instant::now();
+        let mut lock = Controller::default();
+        let mut ao = Runtime::default();
+        let mut echoes: Vec<PlayingAnimation> = Vec::new();
+        let mut seated = false;
+        for ms in [0, 100, 300, 700, 950, 1000, 1100, 1400, 1600, 1800, 2000] {
+            let now = t + Duration::from_millis(ms);
+            let moving = ms < 1000;
+            let command = lock.update(
+                LockFrame {
+                    requested: true,
+                    region: Some(1),
+                    available: true,
+                    voluntary: ms == 0,
+                    moving,
+                    eligible: true,
+                    pose_ready: true,
+                    pose_warm: ao.anchor_prepared(Some(1)),
+                    ground_sit: seated,
+                    on_object: false,
+                },
+                now,
+            );
+            if command == Some(aurora_net::control::SIT_ON_GROUND) {
+                assert!(ms >= 1800, "sitting still waits for echoed/eased standing coverage");
+                seated = true;
+            }
+            // Even a late locomotion signal cannot preempt the prepared sit.
+            let mut raw = vec![signal(if seated { State::GroundSit } else { state }, t)];
+            raw.extend_from_slice(&echoes);
+            let mut f = frame(&raw);
+            f.anchor_hold = lock.standing_since(seated).map(|since| signal(State::Standing, since));
+            let (pose, changes) = ao.update_with_easing(Some(&set), f, now, |_| true, |_| Some(Duration::from_millis(400)), |_| 0);
+            if moving {
+                assert_eq!(ao.current, Some(state), "retain locomotion after key release at {ms} ms");
+                assert!(pose.iter().any(|a| a.id == step(&set, state, 0)));
+                assert!(
+                    !set.states[&State::Standing]
+                        .steps
+                        .iter()
+                        .any(|s| { s.members.iter().any(|m| changes.contains(&(m.asset, true))) }),
+                    "no premature standing broadcast to observers"
+                );
+                assert!(!seated);
+            } else {
+                assert_eq!(ao.current, Some(State::Standing));
+            }
+            for (id, start) in changes {
+                if State::from_motion(id).is_some() {
+                    continue;
+                }
+                if start && !echoes.iter().any(|a| a.id == id) {
+                    echoes.push(PlayingAnimation::from_signal(id, 1, now, None));
+                } else if !start {
+                    echoes.retain(|a| a.id != id);
+                }
+            }
+        }
+        assert!(seated);
+    }
+}
+
+#[test]
+fn native_movelock_keeps_verified_standing_until_stand_up_is_acknowledged() {
+    let (_, mut set) = fixture();
+    set.mouselook = true;
+    let now = Instant::now();
+    let raw = [signal(State::GroundSit, now)];
+    let mut r = Runtime::default();
+    let mut f = frame(&raw);
+    f.anchor_hold = Some(signal(State::Standing, now));
+    r.update(Some(&set), f, now, |_| true, |_| 0);
+    r.paused = true;
+    r.stands = false;
+    let mut f = frame(&raw);
+    f.anchor_hold = Some(signal(State::Standing, now));
+    f.enabled = false;
+    f.mouselook = true;
+    let (pose, changes) = r.update(Some(&set), f, now + Duration::from_millis(50), |_| true, |_| 0);
+    assert!(pose.iter().any(|a| {
+        set.states[&State::Standing]
+            .steps
+            .iter()
+            .any(|s| s.members.iter().any(|m| m.asset == a.id))
+    }));
+    assert!(!pose.contains(&raw[0]));
+    assert!(changes.is_empty(), "no restart or system sit stop while waiting for stand-up");
+    let mut f = frame(&[]);
+    f.enabled = false;
+    let (pose, changes) = r.update(Some(&set), f, now + Duration::from_millis(100), |_| true, |_| 0);
+    assert!(pose.is_empty());
+    assert!(changes.iter().any(|(_, start)| !start));
+}
+
+#[test]
+fn native_movelock_preserves_the_stand_cycle_and_broadcasts_walk_before_stopping_its_cover() {
+    let (_, set) = fixture();
+    let t = Instant::now();
+    let at = |ms| t + Duration::from_millis(ms);
+    let mut r = Runtime::default();
+    let stock = signal(State::Standing, t);
+    let (_, changes) = r.update_with_easing(
+        Some(&set),
+        frame(&[stock]),
+        t,
+        |_| true,
+        |_| Some(Duration::from_millis(400)),
+        |_| 0,
+    );
+    let stand = changes.iter().find(|(_, start)| *start).expect("stand start").0;
+    let echo = PlayingAnimation::from_signal(stand, 1, at(100), None);
+    let raw = [stock, echo];
+    let mut f = frame(&raw);
+    f.anchor_hold = Some(signal(State::Standing, at(1000)));
+    let (_, changes) = r.update_with_easing(Some(&set), f, at(1000), |_| true, |_| Some(Duration::from_millis(400)), |_| 0);
+    assert!(r.anchor_prepared(Some(1)));
+    assert!(!r.anchor_prepared(Some(2)), "a different region cannot reuse the old preparation");
+    assert!(changes.is_empty(), "taking ownership must not cycle or restart the existing stand");
+    let sit = signal(State::GroundSit, at(1250));
+    let raw = [sit, echo];
+    let mut f = frame(&raw);
+    f.anchor_hold = Some(signal(State::Standing, at(1000)));
+    let (_, changes) = r.update_with_easing(Some(&set), f, at(1250), |_| true, |_| Some(Duration::from_millis(400)), |_| 0);
+    assert!(changes.is_empty(), "the native sit echo must not change the standing group");
+    let walking = signal(State::Walking, at(2000));
+    let (pose, changes) = r.update_with_easing(
+        Some(&set),
+        frame(&[walking, echo]),
+        at(2000),
+        |_| true,
+        |_| Some(Duration::from_millis(800)),
+        |_| 0,
+    );
+    let walk = step(&set, State::Walking, 0);
+    assert!(changes.contains(&(walk, true)));
+    assert!(!changes.contains(&(stand, false)));
+    assert!(
+        pose.iter().any(|a| a.id == stand),
+        "the observer and owner retain the same full cover"
+    );
+    let walk_echo = PlayingAnimation::from_signal(walk, 1, at(2100), None);
+    let (_, changes) = r.update_with_easing(
+        Some(&set),
+        frame(&[walking, echo, walk_echo]),
+        at(3049),
+        |_| true,
+        |_| Some(Duration::from_millis(800)),
+        |_| 0,
+    );
+    assert!(
+        !changes.contains(&(stand, false)),
+        "wait for the incoming clip's complete easing after its echo"
+    );
+    let (pose, changes) = r.update_with_easing(
+        Some(&set),
+        frame(&[walking, echo, walk_echo]),
+        at(3050),
+        |_| true,
+        |_| Some(Duration::from_millis(800)),
+        |_| 0,
+    );
+    assert!(changes.contains(&(stand, false)));
+    assert!(!pose.iter().any(|a| a.id == stand));
+    assert!(pose.iter().any(|a| a.id == walk));
+}
+
+#[test]
+fn water_walk_uses_ordinary_ao_states_and_broadcasts_their_replacements() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let mut r = Runtime::default();
+    for state in [State::Standing, State::Walking, State::Running, State::Crouching, State::CrouchWalk] {
+        let fall = signal(State::Falling, now);
+        let mut f = frame(std::slice::from_ref(&fall));
+        f.water_walk_hold = Some((state, signal(state, now)));
+        let (pose, commands) = r.update(Some(&set), f, now, |_| true, |_| 0);
+        // The demo stand list cycles on entry, just like an ordinary stand.
+        let asset = step(&set, state, if state == State::Standing { 1 } else { 0 });
+        assert_eq!(r.current, Some(state));
+        assert!(pose.iter().any(|a| a.id == asset));
+        assert!(!pose.contains(&fall));
+        assert!(commands.contains(&(asset, true)));
+    }
+}
+
+#[test]
+fn water_walk_without_ao_owns_stock_states_then_releases_them_immediately() {
+    let now = Instant::now();
+    for state in [
+        State::Standing,
+        State::Walking,
+        State::Running,
+        State::Crouching,
+        State::CrouchWalk,
+        State::Jumping,
+    ] {
+        let mut r = Runtime::default();
+        let fall = signal(State::Falling, now);
+        let stock = signal(state, now);
+        let mut f = frame(std::slice::from_ref(&fall));
+        f.enabled = false;
+        f.water_walk_hold = Some((state, stock));
+        let (pose, commands) = r.update(None, f, now, |_| true, |_| 0);
+        assert!(pose.iter().any(|a| a.id == stock.id));
+        assert!(!pose.contains(&fall));
+        assert!(commands.contains(&(stock.id, true)));
+        let mut f = frame(std::slice::from_ref(&stock));
+        f.enabled = false;
+        let (pose, commands) = r.update(None, f, now + Duration::from_millis(50), |_| true, |_| 0);
+        assert!(pose.contains(&stock), "normal simulator locomotion resumes immediately");
+        assert!(commands.contains(&(stock.id, false)));
+    }
+}
+
+#[test]
+fn a_standalone_cannonball_slot_works_with_regular_ao_and_swimming_disabled() {
+    let (_, mut set) = fixture();
+    let config = set.states[&State::Running].clone();
+    let asset = config.steps[0].members[0].asset;
+    set.states.clear();
+    set.states.insert(State::WaterCannonball, config);
+    assert!(!set.swimming_ready());
+    let now = Instant::now();
+    let fall = signal(State::Falling, now);
+    let mut f = frame(std::slice::from_ref(&fall));
+    f.enabled = false;
+    f.swim_hold = Some((State::WaterCannonball, signal(State::WaterCannonball, now)));
+    let (pose, commands) = Runtime::default().update(Some(&set), f, now, |_| true, |_| 0);
+    assert!(pose.iter().any(|a| a.id == asset));
+    assert!(!pose.contains(&fall));
+    assert!(commands.contains(&(asset, true)));
 }
 
 #[test]
@@ -224,7 +491,7 @@ fn cloned_groups_tracks_and_order_round_trip_through_inventory() {
 }
 
 #[test]
-fn locomotion_changes_stop_only_owned_animations_and_preserve_gestures() {
+fn locomotion_changes_stop_owned_and_replaced_system_animations_and_preserve_gestures() {
     let (_, set) = fixture();
     let mut runtime = Runtime::default();
     let now = Instant::now();
@@ -233,7 +500,7 @@ fn locomotion_changes_stop_only_owned_animations_and_preserve_gestures() {
     let raw = [stand, gesture];
     let (pose, cmd) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
     let standing = step(&set, State::Standing, 1);
-    assert_eq!(cmd, vec![(standing, true)]);
+    assert_eq!(cmd, vec![(stand.id, false), (standing, true)]);
     assert!(pose.contains(&gesture));
     assert!(!pose.contains(&stand));
     let old = *pose.iter().find(|a| a.id == standing).expect("stand");
@@ -245,11 +512,18 @@ fn locomotion_changes_stop_only_owned_animations_and_preserve_gestures() {
     );
     let raw = [signal(State::Walking, now + Duration::from_secs(2)), gesture];
     let (_, cmd) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(2), |_| true, |_| 0);
-    assert_eq!(cmd, vec![(old.id, false), (step(&set, State::Walking, 0), true)]);
+    assert_eq!(
+        cmd,
+        vec![
+            (old.id, false),
+            (State::Walking.motion(), false),
+            (step(&set, State::Walking, 0), true)
+        ]
+    );
     runtime.paused = true;
     let (pose, cmd) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(3), |_| true, |_| 0);
     assert_eq!(pose, raw);
-    assert_eq!(cmd, vec![(step(&set, State::Walking, 0), false)]);
+    assert_eq!(cmd, vec![(step(&set, State::Walking, 0), false), (State::Walking.motion(), true)]);
 }
 
 #[test]
@@ -261,13 +535,17 @@ fn timers_sequences_and_region_reassertion_keep_continuous_clocks() {
     let (pose, _) = r.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
     raw[0] = PlayingAnimation::from_signal(raw[0].id, 2, now + Duration::from_secs(1), Some(&raw[0]));
     let (same, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);
-    assert!(cmd.is_empty());
+    assert_eq!(
+        cmd,
+        vec![(State::Standing.motion(), false)],
+        "a reasserted default is stopped without restarting the AO"
+    );
     assert_eq!(same, pose);
     let mut f = frame(&raw);
     f.region = Some(2);
     let (same, cmd) = r.update(Some(&set), f, now + Duration::from_secs(2), |_| true, |_| 0);
     assert_eq!(same, pose);
-    assert_eq!(cmd, vec![(pose[0].id, true)]);
+    assert_eq!(cmd, vec![(State::Standing.motion(), false), (pose[0].id, true)]);
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(6), |_| true, |_| 0);
     assert!(cmd.contains(&(step(&set, State::Standing, 0), true)));
 }
@@ -301,7 +579,7 @@ fn sits_mouselook_swimming_and_transient_controls_follow_firestorm() {
     let mut f = frame(&raw);
     f.underwater = true;
     r.update(Some(&set), f, now, |_| true, |_| 0);
-    assert_eq!(r.current, Some(State::SwimmingForward));
+    assert_eq!(r.current, Some(State::UnderwaterSwimming));
 }
 
 #[test]
@@ -328,7 +606,7 @@ fn typing_is_concurrent_and_completed_nonloops_do_not_restart() {
     r.finished(walk);
     let raw = [raw[0], signal(State::Typing, now + Duration::from_secs(1))];
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);
-    assert_eq!(cmd, vec![(step(&set, State::Typing, 0), true)]);
+    assert_eq!(cmd, vec![(step(&set, State::Typing, 0), true), (State::Walking.motion(), true)]);
     let (pose, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(2), |_| true, |_| 0);
     assert!(cmd.is_empty());
     assert!(!pose.iter().any(|a| a.id == walk));
@@ -362,7 +640,7 @@ fn changing_cycle_options_arms_the_timer_and_pausing_resets_it() {
         r.update(Some(&set), frame(&raw), now + Duration::from_secs(3), |_| true, |_| 0)
             .1
             .iter()
-            .all(|(_, s)| !s)
+            .all(|(id, s)| !s || *id == State::Standing.motion())
     );
     r.stands = true;
     assert!(
@@ -411,7 +689,8 @@ fn animation_groups_and_tracks_cycle_independently_of_locomotion() {
     let mut r = Runtime::default();
     let raw = [signal(State::Walking, now)];
     let (pose, cmd) = r.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
-    assert_eq!(cmd.len(), 4);
+    assert_eq!(cmd.iter().filter(|(_, start)| *start).count(), 4);
+    assert!(cmd.contains(&(State::Walking.motion(), false)));
     assert!(pose.iter().any(|p| p.id == a));
     assert!(pose.iter().any(|p| p.id == b));
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);
@@ -426,7 +705,7 @@ fn swimming_cycles_follow_the_remapped_state_without_reentering_each_frame() {
     let (_, mut set) = fixture();
     let mut swim = set.states[&State::Standing].clone();
     swim.cycle.seconds = 1.0;
-    set.states.insert(State::SwimmingForward, swim);
+    set.states.insert(State::UnderwaterSwimming, swim);
     let now = Instant::now();
     let raw = [signal(State::Flying, now)];
     let mut r = Runtime::default();
@@ -442,7 +721,7 @@ fn swimming_cycles_follow_the_remapped_state_without_reentering_each_frame() {
     f.underwater = true;
     let (_, commands) = r.update(Some(&set), f, now + Duration::from_secs(1), |_| true, |_| 0);
     assert!(commands.contains(&(first[0].id, false)));
-    assert!(commands.contains(&(step(&set, State::SwimmingForward, 0), true)));
+    assert!(commands.contains(&(step(&set, State::UnderwaterSwimming, 0), true)));
 }
 
 #[test]
@@ -518,18 +797,18 @@ fn swim_motor_uses_ao_selection_and_broadcasts_it_without_changing_raw_signals()
 }
 
 #[test]
-fn swimming_requires_all_eight_resolved_single_slots_in_the_selected_aurora_set() {
+fn swimming_requires_all_eight_resolved_lists_in_the_selected_aurora_set() {
     let (mut inv, set) = fixture();
     let mut catalog = inventory::Catalog::default();
     catalog.refresh(&mut inv);
     assert!(catalog.swimming_ready(set.id));
-    for state in State::SWIMMING {
+    for state in State::CORE_SWIMMING {
         let mut incomplete = set.clone();
         incomplete.states.remove(&state);
-        assert_eq!(incomplete.swimming_slots(), State::SWIMMING.len() - 1);
+        assert_eq!(incomplete.core_swimming_slots(), State::CORE_SWIMMING.len() - 1);
         let mut broken = set.clone();
         broken.states.get_mut(&state).expect("slot").steps[0].members[0].asset = Uuid::nil();
-        assert_eq!(broken.swimming_slots(), State::SWIMMING.len() - 1);
+        assert_eq!(broken.core_swimming_slots(), State::CORE_SWIMMING.len() - 1);
     }
     let empty = Set::new("No swimming".into());
     let id = empty.id;
@@ -543,28 +822,23 @@ fn swimming_requires_all_eight_resolved_single_slots_in_the_selected_aurora_set(
 }
 
 #[test]
-fn replacing_a_swimming_slot_keeps_only_one_link_and_preserves_originals_and_other_slots() {
+fn adding_to_a_swimming_list_appends_without_replacing_links_or_originals() {
     use crate::world::inventory::actions;
     let (mut inv, set) = fixture();
-    let original = set.swimming_animation(State::SwimmingDown).expect("other animation").original;
-    let old = set.states[&State::Floating].folder;
-    let unchanged = set.states[&State::SwimmingDown].clone();
+    let original = set.swimming_animation(State::SwimmingDown).expect("animation").original;
+    let old = set.states[&State::Floating].clone();
     let before = format!("{:?}", inv.items[&original]);
-    let change = inventory::set_swimming(&inv, &set, State::Floating, original).expect("replace");
+    let change = inventory::add(&inv, &set, State::Floating, original, None).expect("append");
     assert!(inventory::editable(&inv, &change, &Default::default()));
     actions::demo_mutate(&mut inv, Uuid::from_u128(1), change).expect("saved");
     let mut catalog = inventory::Catalog::default();
     catalog.refresh(&mut inv);
     let after = catalog.selected(set.id).expect("set");
-    assert_eq!(after.swimming_animation(State::Floating).expect("one slot").original, original);
-    assert_ne!(after.states[&State::Floating].folder, old);
-    assert_eq!(after.states[&State::SwimmingDown], unchanged);
+    assert_eq!(after.states[&State::Floating].folder, old.folder);
+    assert_eq!(after.states[&State::Floating].steps.len(), old.steps.len() + 1);
+    assert_eq!(after.states[&State::Floating].steps[0], old.steps[0]);
     assert_eq!(format!("{:?}", inv.items[&original]), before);
     assert!(catalog.swimming_ready(set.id));
-    let removed = inventory::remove(&inv, after.states[&State::Floating].folder).expect("clear slot");
-    actions::demo_mutate(&mut inv, Uuid::from_u128(1), removed).expect("cleared");
-    catalog.refresh(&mut inv);
-    assert!(!catalog.swimming_ready(set.id));
 }
 
 #[test]
@@ -631,4 +905,46 @@ fn completed_water_transition_does_not_loop_with_regular_ao_off_and_replays_on_a
             .1
             .contains(&(asset, true))
     );
+}
+
+#[test]
+fn optional_water_slots_preserve_old_sets_and_forward_fallbacks() {
+    let (_, mut set) = fixture();
+    for state in State::SWIMMING.into_iter().filter(|s| !State::CORE_SWIMMING.contains(s)) {
+        set.states.remove(&state);
+    }
+    assert!(set.swimming_ready());
+    assert_eq!(set.swimming_slots(), 8);
+    let now = Instant::now();
+    {
+        let state = State::UnderwaterSwimming;
+        let mut runtime = Runtime::default();
+        let mut f = frame(&[]);
+        f.enabled = false;
+        f.swim_hold = Some((state, signal(state, now)));
+        let (pose, commands) = runtime.update(Some(&set), f, now, |_| true, |_| 0);
+        let forward = step(&set, State::SwimmingForward, 0);
+        assert!(pose.iter().any(|a| a.id == forward));
+        assert!(commands.contains(&(forward, true)));
+    }
+    for state in State::SWIMMING.into_iter().chain(State::LEGACY_SWIMMING) {
+        assert_eq!(State::parse(state.name()), Some(state));
+    }
+}
+
+#[test]
+fn an_authored_water_recovery_stops_the_hold_without_starting_priority_six_swimming() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let mut runtime = Runtime::default();
+    let mut f = frame(&[]);
+    f.swim_hold = Some((State::WaterDiveEntry, signal(State::WaterDiveEntry, now)));
+    runtime.update(Some(&set), f, now, |_| true, |_| 0);
+    let held = step(&set, State::WaterDiveEntry, 0);
+    let mut f = frame(&[]);
+    f.swim_outro = true;
+    f.swim_hold = Some((State::UnderwaterFloating, signal(State::UnderwaterFloating, now)));
+    let (_, commands) = runtime.update(Some(&set), f, now + Duration::from_millis(180), |_| true, |_| 0);
+    assert!(commands.contains(&(held, false)));
+    assert!(commands.iter().all(|(_, start)| !start));
 }

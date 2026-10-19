@@ -204,7 +204,8 @@ impl App {
         self.world.agent.step_prediction(intent, rtt, dt, now);
         self.world.constrain_agent_lead();
         // a local start or stop waits this long for the simulator's signal
-        self.world.update_own_locomotion(intent, rtt + 0.6, now);
+        self.world
+            .update_own_locomotion(intent, rtt + 0.6, now, self.ao_runtime.suppressed_locomotion());
         if self.world.agent.prediction.calibration.take_changed()
             && self
                 .own_motion_logged

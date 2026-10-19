@@ -1012,7 +1012,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // what lies behind it
     contact_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || (frame.contact.y > 0.5 && m.color.a >= 0.5);
     var col: vec3<f32>;
-    let classic = is_classic_sky() && !camera_underwater();
+    let classic = is_classic_sky();
     var hazed = false;
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
         col = m.color.rgb + m.emissive;
@@ -1035,7 +1035,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             col = (col + m.emissive) * ll_final_scale() + ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
         }
-        col = ll_haze(col, a);
+        col = ll_haze(col + m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n), a);
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -1046,12 +1046,16 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
                                frame.sun_color.rgb / PI, 1.0 / PI)
                 + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) + m.emissive;
         }
+        col += m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
     }
     if ((rec.flags.x & FLAG_HIGHLIGHT) != 0u) {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
     }
+    if(water_fx_on(256u) && in.world_pos.z<frame.params.y && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+        col = max(col-m.emissive,vec3<f32>(0.0))*water_scene_light(in.world_pos)+m.emissive;
+    }
     col = rez_apply(rec, in, m.n, col);
-    if (!hazed) {
+    if (!hazed || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())) {
         col = apply_fog(col, in.world_pos);
     }
     var s: Shaded;
@@ -1520,13 +1524,13 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
     // full (the haze of a classic sky, which a fullbright face does not
     // take; the fog of the others)
     var col = t.rgb / max(t.a, 1e-3);
-    if (is_classic_sky() && !camera_underwater()) {
+    if (is_classic_sky()) {
         if (in.fullbright == 0u) {
             col = ll_haze(col, ll_atmos(in.world_pos - frame.camera_pos.xyz));
         }
-    } else {
-        col = apply_fog(col, in.world_pos);
     }
+    col*=select(vec3<f32>(1.0),water_scene_light(in.world_pos),in.fullbright==0u);
+    if(!is_classic_sky() || camera_underwater() || (water_fx_on(256u) && in.world_pos.z<camera_water_level())){col=apply_fog(col,in.world_pos);}
     return vec4<f32>(col, 1.0);
 }
 

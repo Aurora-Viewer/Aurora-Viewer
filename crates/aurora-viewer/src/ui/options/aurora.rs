@@ -52,6 +52,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_chat_lines = !aurora;
     s.classic_rez_effect = !aurora;
     s.predict_own_motion = aurora;
+    s.water_effects.enabled = aurora;
     s.synchronize_animations = aurora;
 }
 
@@ -400,6 +401,7 @@ fn animation_clock_choice(ui: &mut egui::Ui, p: &Palette, synchronized: &mut boo
 /// `reset`: "Reset this section…" was clicked in the page's head.
 pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     let mut c = hero(ui, p, s, reset);
+    c |= water_page(ui, p, s);
     ui.add_space(14.0);
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -694,9 +696,89 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
     c
 }
 
+fn water_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    let mut changed = false;
+    group(ui, p, aurora_i18n::tr!("water-effects-title"), |ui| {
+        changed |= super::row_experimental(
+            ui,
+            p,
+            aurora_i18n::tr!("water-effects-enabled"),
+            aurora_i18n::tr!("water-effects-help"),
+            |ui| toggle(ui, p, &mut s.water_effects.enabled),
+        );
+        ui.add_enabled_ui(s.water_effects.enabled, |ui| {
+            changed |= super::row(
+                ui,
+                p,
+                aurora_i18n::tr!("water-effects-quality"),
+                aurora_i18n::tr!("water-effects-quality-help"),
+                |ui| {
+                    super::stepped(
+                        ui,
+                        p,
+                        &mut s.water_effects.quality,
+                        &[
+                            aurora_i18n::tr!("ui-options-low"),
+                            aurora_i18n::tr!("water-effects-medium"),
+                            aurora_i18n::tr!("ui-options-high"),
+                            aurora_i18n::tr!("ui-options-ultra"),
+                        ],
+                    )
+                },
+            );
+            for (key, value) in [
+                ("water-effects-waves", &mut s.water_effects.waves),
+                ("water-effects-absorption", &mut s.water_effects.absorption),
+                ("water-effects-fresnel", &mut s.water_effects.fresnel),
+                ("water-effects-shore", &mut s.water_effects.shore_foam),
+                ("water-effects-wet-ground", &mut s.water_effects.wet_ground),
+                ("water-effects-contact", &mut s.water_effects.contact_foam),
+                ("water-effects-crests", &mut s.water_effects.crest_foam),
+                ("water-effects-interactions", &mut s.water_effects.interactions),
+                ("water-effects-caustics", &mut s.water_effects.caustics),
+                ("water-effects-splashes", &mut s.water_effects.splashes),
+                ("water-effects-bubbles", &mut s.water_effects.bubbles),
+            ] {
+                changed |= super::row(ui, p, aurora_i18n::text(key), "", |ui| toggle(ui, p, value));
+            }
+        });
+    });
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn experimental_water_is_opt_in_saved_and_reset_with_aurora() {
+        for settings in [
+            Settings::default(),
+            serde_json::from_str("{}").expect("missing water preferences"),
+            serde_json::from_str(r#"{"water_effects":{}}"#).expect("partial water preferences"),
+        ] {
+            assert!(!settings.water_effects.enabled);
+            assert_eq!(settings.water_effects.render().flags(), 0);
+        }
+        for enabled in [false, true] {
+            let mut settings = Settings::default();
+            settings.water_effects.enabled = enabled;
+            settings.water_effects.bubbles = false;
+            let json = serde_json::to_string(&settings).expect("saved water preferences");
+            let mut back: Settings = serde_json::from_str(&json).expect("read water preferences");
+            assert_eq!(back.water_effects, settings.water_effects);
+            for preset in crate::graphics_presets::Preset::ALL {
+                preset.apply(&mut back);
+                assert_eq!(
+                    back.water_effects, settings.water_effects,
+                    "graphics presets keep the explicit water choice"
+                );
+            }
+            super::super::sections::reset(super::super::TAB_AURORA, &mut back);
+            assert!(!back.water_effects.enabled, "Aurora reset restores the disabled master");
+            assert_eq!(back.water_effects.render().flags(), 0);
+        }
+    }
 
     #[test]
     fn animation_timing_defaults_to_legacy_is_saved_and_resets_with_aurora() {
@@ -794,6 +876,7 @@ mod tests {
         assert!(s.classic_rez_effect, "grey objects while they load");
         assert!(!s.predict_own_motion, "the avatar waits for the simulator");
         assert!(!s.synchronize_animations);
+        assert!(!s.water_effects.enabled);
         assert!(s.plates_friends_only_full, "a plate setting is not a look");
         set_all(&mut s, Look::Aurora);
         let fresh = Settings::default();
@@ -833,6 +916,8 @@ mod tests {
         assert!(s.predict_own_motion, "Aurora's movement");
         assert!(!fresh.predict_own_motion, "Firestorm's movement until tried on the grid");
         assert!(s.synchronize_animations, "the Aurora bulk choice enables receipt clocks");
+        assert!(s.water_effects.enabled, "the explicit Aurora bulk choice enables water effects");
+        assert!(!fresh.water_effects.enabled, "enhanced water is disabled by default");
         assert!(!fresh.synchronize_animations, "Legacy animation timing is the default");
         assert!(s.plates_friends_only_full);
     }
@@ -895,6 +980,20 @@ mod tests {
         let order = [
             "ui-options-aurora",
             "ui-options-aurora-intro",
+            "water-effects-title",
+            "water-effects-enabled",
+            "water-effects-quality",
+            "water-effects-waves",
+            "water-effects-absorption",
+            "water-effects-fresnel",
+            "water-effects-shore",
+            "water-effects-wet-ground",
+            "water-effects-contact",
+            "water-effects-crests",
+            "water-effects-interactions",
+            "water-effects-caustics",
+            "water-effects-splashes",
+            "water-effects-bubbles",
             "ui-options-aurora-appearance",
             "ui-options-aurora-conversations",
             "ui-options-aurora-name-tags",

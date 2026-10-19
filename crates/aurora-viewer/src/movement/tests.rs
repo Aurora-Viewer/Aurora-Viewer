@@ -58,6 +58,7 @@ fn frame() -> Frame {
         velocity: Vec3::ZERO,
         height: 1.7,
         water: Some(20.0),
+        water_contact: None,
         ground: Some(10.0),
         flying: false,
         can_fly: true,
@@ -72,6 +73,209 @@ fn frame() -> Frame {
         jumping: false,
     }
 }
+
+#[test]
+fn water_walk_descent_keeps_support_and_uses_ground_crouch_states() {
+    let now = Instant::now();
+    let prefs = Preferences {
+        water_walk: true,
+        ..Default::default()
+    };
+    let mut r = Runtime::default();
+    let mut f = frame();
+    f.position.z = 20.85;
+    f.on_ground = false;
+    assert_eq!(r.update(&prefs, &f, &MoveInput::default(), now).motion.mode, 13);
+    assert_eq!(r.state, State::WaterWalking);
+    let input = MoveInput {
+        down: true,
+        ..Default::default()
+    };
+    let step = r.update(&prefs, &f, &input, now + Duration::from_millis(50));
+    assert_eq!(step.motion.mode, 13);
+    assert_eq!(step.motion.parameters[0], 1.2);
+    assert_eq!(r.state, State::WaterWalking);
+    assert!(!r.state.swimming());
+    assert_eq!(r.water_walk.signal(now).unwrap().0, crate::ao::State::Crouching);
+    let moving = MoveInput {
+        forward: true,
+        run: true,
+        ..input
+    };
+    let step = r.update(&prefs, &f, &moving, now + Duration::from_millis(100));
+    assert_eq!(step.motion.mode, 13);
+    assert_eq!(step.motion.parameters[0], 1.2, "crouching takes priority over run");
+    assert_eq!(r.water_walk.signal(now).unwrap().0, crate::ao::State::CrouchWalk);
+    r.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(150));
+    assert_eq!(r.water_walk.signal(now).unwrap().0, crate::ao::State::Standing);
+    let disabled = Preferences {
+        water_walk: false,
+        ..prefs
+    };
+    assert_eq!(r.update(&disabled, &f, &input, now + Duration::from_millis(200)).motion.mode, 0);
+    assert!(r.water_walk.signal(now).is_none(), "the mode switch still releases support");
+}
+
+#[test]
+fn water_walking_follows_visual_waves_only_while_supported() {
+    let mut f = frame();
+    f.position.z = 20.85;
+    let mut follower = water_float::Follower::default();
+    for pose in [
+        crate::ao::State::Standing,
+        crate::ao::State::Walking,
+        crate::ao::State::Running,
+        crate::ao::State::Crouching,
+        crate::ao::State::CrouchWalk,
+    ] {
+        assert!(follower.at_surface(&f, State::WaterWalking, Some(pose), false));
+        assert!(!follower.at_surface(&f, State::Ground, Some(pose), false));
+        assert!(!follower.at_surface(&f, State::WaterWalking, Some(pose), true));
+    }
+}
+
+#[test]
+fn surface_float_accepts_idle_and_all_surface_strokes_without_terrain_bridge_or_speed_requirements() {
+    use crate::ao::State as Pose;
+    for height in [0.6, 1.7, 3.0] {
+        for bias in [-0.4, 0.0, 0.4] {
+            for pose in [Pose::Floating, Pose::SwimmingForward] {
+                for speed in [0.0, 0.3, 2.5, 6.0] {
+                    let mut frame = frame();
+                    frame.height = height;
+                    frame.position.z = 20.0 - (height * 0.5 - 0.4).clamp(0.25, 0.8) + bias;
+                    frame.velocity = Vec3::new(speed, 0.0, 1.1);
+                    frame.ground = None;
+                    frame.bridge_ready = false;
+                    let mut follower = water_float::Follower::default();
+                    for i in 0..60 {
+                        // The resolved AO can remain in a surface swim pose
+                        // while the physical motor is unavailable/suspended.
+                        assert!(
+                            follower.at_surface(&frame, State::Ground, Some(pose), false),
+                            "{height} {bias} {pose:?} {speed}"
+                        );
+                        follower.update(1, frame.position, i as f32 / 60.0, 0.25, false);
+                    }
+                    assert!((follower.offset() - 0.25).abs() < 0.001);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn surface_float_uses_live_surface_intent_after_the_simulator_root_drifts_from_the_flat_target() {
+    use crate::ao::State as Pose;
+    let now = Instant::now();
+    for bias in [-0.4, 0.4] {
+        let mut runtime = Runtime::default();
+        let mut frame = frame();
+        frame.position.z = 20.0 - (frame.height * 0.5 - 0.4).clamp(0.25, 0.8);
+        let mut follower = water_float::Follower::default();
+        let mut input = MoveInput::default();
+        runtime.update(&prefs(), &frame, &input, now);
+        assert_eq!(runtime.state, State::Surface);
+        frame.position.z += bias;
+        for (i, expected) in [Pose::Floating, Pose::SwimmingForward, Pose::SwimmingForward, Pose::SwimmingForward]
+            .into_iter()
+            .enumerate()
+        {
+            input.forward = i == 1 || i == 2;
+            input.back = i == 3;
+            input.run = i == 2;
+            frame.velocity = Vec3::X * i as f32;
+            let now = now + Duration::from_millis(i as u64 * 16 + 16);
+            runtime.update(&prefs(), &frame, &input, now);
+            let (pose, _) = runtime.swim_signal(now, &input).expect("live swim intent");
+            assert_eq!(runtime.state, State::Surface);
+            assert_eq!(pose, expected);
+            assert!(follower.at_surface(&frame, runtime.state, Some(pose), false));
+        }
+    }
+}
+
+#[test]
+fn surface_float_inspection_keeps_an_existing_hold_without_starting_one_for_underwater_hover() {
+    use crate::ao::State as Pose;
+    let mut frame = frame();
+    let mut follower = water_float::Follower::default();
+    assert!(follower.at_surface(&frame, State::Surface, Some(Pose::Floating), false));
+    frame.suspended = true;
+    assert!(follower.at_surface(&frame, State::Ground, Some(Pose::UnderwaterFloating), false));
+    assert!(!water_float::Follower::default().at_surface(&frame, State::Ground, Some(Pose::UnderwaterFloating), false));
+    assert!(!follower.at_surface(&frame, State::Ground, Some(Pose::SwimmingDown), false));
+    assert!(!follower.at_surface(&frame, State::Ground, Some(Pose::UnderwaterFloating), false));
+}
+
+#[test]
+fn surface_float_intent_queries_cannot_restart_the_aos_current_stroke() {
+    let now = Instant::now();
+    let mut runtime = Runtime {
+        state: State::Surface,
+        ..Default::default()
+    };
+    let input = MoveInput {
+        forward: true,
+        run: true,
+        ..Default::default()
+    };
+    let (_, first) = runtime.swim_signal(now, &input).expect("crawl signal");
+    for _ in 0..10 {
+        assert_eq!(runtime.swim_intent(&MoveInput::default()), Some(crate::ao::State::Floating));
+    }
+    let (_, next) = runtime
+        .swim_signal(now + Duration::from_millis(160), &input)
+        .expect("continued crawl signal");
+    assert_eq!(first.continuous_start, next.continuous_start);
+}
+
+#[test]
+fn surface_float_rejects_wading_diving_submerged_strokes_exits_seats_and_missing_water() {
+    use crate::ao::State as Pose;
+    let mut follower = water_float::Follower::default();
+    let mut frame = frame();
+    for pose in [
+        Pose::Standing,
+        Pose::Walking,
+        Pose::Running,
+        Pose::UnderwaterFloating,
+        Pose::UnderwaterSwimming,
+        Pose::SwimmingUp,
+        Pose::SwimmingDown,
+        Pose::WaterEntry,
+        Pose::WaterDiveJump,
+        Pose::WaterDiveEntry,
+        Pose::WaterCannonball,
+        Pose::WaterShoreExit,
+        Pose::WaterFlightExit,
+    ] {
+        assert!(!follower.at_surface(&frame, State::Surface, Some(pose), false), "{pose:?}");
+    }
+    for pose in [
+        Pose::Floating,
+        Pose::SwimmingForward,
+        Pose::LegacySwimmingCrawl,
+        Pose::LegacySwimmingBackward,
+    ] {
+        assert!(!follower.at_surface(&frame, State::Submerged, Some(pose), false));
+        assert!(!follower.at_surface(&frame, State::Surface, Some(pose), true));
+    }
+    frame.seated = true;
+    assert!(!follower.at_surface(&frame, State::Surface, Some(Pose::Floating), false));
+    frame.seated = false;
+    frame.jumping = true;
+    assert!(!follower.at_surface(&frame, State::Surface, Some(Pose::Floating), false));
+    frame.jumping = false;
+    for z in [16.0, 24.0, f32::NAN] {
+        frame.position.z = z;
+        assert!(!follower.at_surface(&frame, State::Surface, Some(Pose::Floating), false));
+    }
+    frame.position.z = 19.55;
+    frame.water = None;
+    assert!(!follower.at_surface(&frame, State::Surface, Some(Pose::Floating), false));
+}
+
 fn prefs() -> Preferences {
     Preferences {
         running: true,
@@ -81,6 +285,35 @@ fn prefs() -> Preferences {
         run_multiplier: 2.0,
         swim_speed: 2.0,
         ..Default::default()
+    }
+}
+
+#[test]
+fn camera_inspection_releases_the_motor_but_preserves_surface_and_underwater_animation_context() {
+    let now = Instant::now();
+    for (depth, z, expected) in [
+        (State::Surface, 19.55, crate::ao::State::SwimmingForward),
+        (State::Submerged, 18.0, crate::ao::State::UnderwaterSwimming),
+    ] {
+        let mut runtime = Runtime {
+            state: depth,
+            ..Default::default()
+        };
+        let mut f = frame();
+        f.position.z = z;
+        f.suspended = true;
+        let input = MoveInput {
+            forward: true,
+            ..Default::default()
+        };
+        for i in 0..5 {
+            let step = runtime.update(&prefs(), &f, &input, now + Duration::from_millis(i * 16));
+            assert_eq!(step.motion.mode, 0);
+            assert_eq!(runtime.swim_intent(&input), Some(expected));
+        }
+        f.seated = true;
+        runtime.update(&prefs(), &f, &input, now + Duration::from_secs(1));
+        assert!(runtime.swim_intent(&input).is_none());
     }
 }
 #[test]
@@ -218,7 +451,11 @@ fn surface_return_survives_crossing_flotation_while_falling_and_a_slow_ascent() 
             f.velocity.z = if f.position.z < 19.55 { 0.6 } else { 0.0 };
         }
         let step = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(tick * 100));
-        assert_eq!(step.motion.mode, if f.position.z < 19.55 { 8 } else { 3 }, "elapsed={elapsed}");
+        assert_eq!(
+            step.motion.mode,
+            if f.position.z < 19.55 - 0.18 { 8 } else { 3 },
+            "elapsed={elapsed}"
+        );
         assert_ne!(step.flying, Some(true));
     }
     assert_eq!(runtime.state, State::Surface);
@@ -257,7 +494,7 @@ fn automatic_surface_return_uses_the_same_goal_as_a_short_underwater_ascent_tap(
 }
 
 #[test]
-fn a_new_vertical_press_interrupts_surface_return_without_restarting_it_on_release() {
+fn descent_cancels_a_surface_return_while_repeated_ascent_keeps_returning() {
     let now = Instant::now();
     let prefs = prefs();
     for manual in [false, true] {
@@ -293,12 +530,16 @@ fn a_new_vertical_press_interrupts_surface_return_without_restarting_it_on_relea
                 ..Default::default()
             };
             let interrupted = runtime.update(&prefs, &f, &input, now + Duration::from_millis(500));
-            assert_eq!(interrupted.motion.mode, 6, "manual={manual}, up={up}");
+            assert_eq!(interrupted.motion.mode, if up { 8 } else { 6 }, "manual={manual}, up={up}");
             let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(590));
-            assert_eq!(released.motion.mode, 6, "release must not replay the interrupted ascent");
+            assert_eq!(
+                released.motion.mode,
+                if up { 8 } else { 6 },
+                "release retains the requested destination"
+            );
             assert_ne!(released.flying, Some(true));
             let idle = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_secs(5));
-            assert_eq!(idle.motion.mode, 6);
+            assert_eq!(idle.motion.mode, if up { 8 } else { 6 });
             let restarted = runtime.update(
                 &prefs,
                 &f,
@@ -403,7 +644,7 @@ fn movement_jumps_only_at_a_stalled_steep_surface_obstacle_with_cooldown() {
         "swimming and exit assistance must not enable native flight"
     );
     assert_eq!(step.motion.mode, 4);
-    assert_eq!(step.motion.parameters[2], 2.5);
+    assert_eq!(step.motion.parameters[2], 4.5);
     assert_eq!(runtime.state, State::Leaving);
     f.position.z = 17.0;
     let returning = runtime.update(&prefs(), &f, &input, now + Duration::from_secs(3));
@@ -676,6 +917,34 @@ fn running_flight_and_swimming_switches_are_independent_in_every_combination() {
 }
 
 #[test]
+fn water_modes_switch_exclusively_and_disable_without_reactivating_the_other() {
+    let mut prefs = Preferences {
+        running: true,
+        fly_assist: true,
+        ..Default::default()
+    };
+    for walking in [true, false, true, false] {
+        prefs.set_water_mode(walking, true, true);
+        assert_eq!((prefs.water_walk, prefs.swimming), (walking, !walking));
+        prefs.set_water_mode(walking, false, true);
+        assert!(!prefs.water_walk && !prefs.swimming);
+        assert!(prefs.running && prefs.fly_assist);
+    }
+    prefs.set_water_mode(true, true, false);
+    prefs.set_water_mode(false, true, false);
+    assert!(
+        prefs.water_walk && !prefs.swimming,
+        "missing AO swim slots must not disable the working mode"
+    );
+    prefs.set_water_mode(true, false, false);
+    assert!(!prefs.water_walk && !prefs.swimming);
+    prefs.swimming = true;
+    prefs.water_walk = true;
+    prefs.sanitize();
+    assert!(prefs.water_walk && !prefs.swimming, "old both-on preferences migrate consistently");
+}
+
+#[test]
 fn running_at_x1_is_native_and_the_multiplier_cannot_request_a_slowdown() {
     let mut prefs = Preferences {
         running: true,
@@ -738,7 +1007,7 @@ fn flotation_offset_preserves_surface_classification_and_is_sent_for_diving_too(
                 now,
             );
             assert_eq!(step.motion.mode, 7);
-            assert_eq!(step.motion.parameters[2], -(height * 0.5 + 0.4).max(1.25));
+            assert_eq!(step.motion.parameters[2], -(height * 0.5 + 1.1).max(1.8));
         }
     }
 }
@@ -950,37 +1219,33 @@ fn movement_arms_swim_capture_while_locked_so_lsl_can_detect_a_voluntary_dive() 
     );
     assert_eq!(step.motion.mode, 7);
     let mut expected = Motion::motor(7, 2.0, 1.7);
-    expected.parameters[2] = -1.25;
+    expected.parameters[2] = -1.95;
     assert_eq!(step.motion, expected);
 }
 
 #[test]
-fn movement_surface_ascent_waits_for_a_tap_or_hold_and_lost_bridge_cancels_it() {
+fn surface_forward_ascent_starts_immediately_and_lost_bridge_releases_the_motor() {
     let now = Instant::now();
     let mut f = frame();
-    f.obstacle = true;
     let input = MoveInput {
         forward: true,
         up: true,
         ..Default::default()
     };
     let mut runtime = Runtime::default();
-    for millis in (0..400).step_by(20) {
-        let step = runtime.update(&prefs(), &f, &input, now + Duration::from_millis(millis));
-        assert_eq!(step.motion.mode, 3, "entry cannot immediately auto-jump");
-        assert!(
-            step.motion.parameters[2] <= 0.0,
-            "an upward key cannot launch us through the surface"
-        );
-    }
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    let jump = runtime.update(&prefs(), &f, &input, now + Duration::from_millis(20));
+    assert_eq!(jump.motion.mode, 4);
+    assert_eq!(jump.flying, Some(false));
+    assert_eq!(jump.motion.parameters[2], 4.5);
     f.bridge_ready = false;
-    let step = runtime.update(&prefs(), &f, &input, now + Duration::from_secs(2));
-    assert_eq!(step.motion, Motion::default());
-    assert_eq!(step.flying, Some(false), "lost bridge restores the pre-swim flight state");
+    let stopped = runtime.update(&prefs(), &f, &input, now + Duration::from_millis(100));
+    assert_eq!(stopped.motion, Motion::default());
+    assert!(!runtime.checking_water_landing());
 }
 
 #[test]
-fn movement_exit_releases_the_climb_after_350ms_and_restores_ground_controls() {
+fn movement_exit_releases_the_climb_after_650ms_and_restores_ground_controls() {
     let now = Instant::now();
     let mut f = frame();
     let mut runtime = Runtime::default();
@@ -995,7 +1260,7 @@ fn movement_exit_releases_the_climb_after_350ms_and_restores_ground_controls() {
     let step = runtime.update(&prefs(), &f, &input, now + Duration::from_secs(2));
     assert_eq!(step.motion.mode, 4);
     f.position.z = 20.5;
-    let end = runtime.update(&prefs(), &f, &input, now + Duration::from_millis(2400));
+    let end = runtime.update(&prefs(), &f, &input, now + Duration::from_millis(2800));
     assert_eq!(end.flying, Some(false));
     assert_eq!(end.motion.mode, 0);
     assert_eq!(runtime.state, State::Ground);
@@ -1157,7 +1422,7 @@ fn short_down_tap_completes_a_dive_after_release_and_keeps_the_new_depth() {
         runtime.swim_signal(now, &MoveInput::default()).expect("dive pose").0,
         crate::ao::State::SwimmingDown
     );
-    f.position.z = 18.75;
+    f.position.z = 18.05;
     let arrived = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(500));
     assert_eq!(arrived.motion.mode, 6);
     assert_eq!(runtime.state, State::Submerged);
@@ -1201,8 +1466,12 @@ fn short_up_tap_underwater_returns_to_flotation_without_starting_flight() {
 }
 
 #[test]
-fn surface_up_tap_takes_off_then_hands_back_native_or_enhanced_flight() {
+fn double_surface_ascent_takes_off_then_hands_back_native_or_enhanced_flight() {
     let now = Instant::now();
+    let up = MoveInput {
+        up: true,
+        ..Default::default()
+    };
     for factor in [1.0, 2.0, 5.0] {
         let prefs = Preferences {
             fly_multiplier: factor,
@@ -1210,29 +1479,20 @@ fn surface_up_tap_takes_off_then_hands_back_native_or_enhanced_flight() {
         };
         let mut runtime = Runtime::default();
         let mut f = frame();
+        f.on_ground = false;
+        f.position.z = 20.0 - (f.height * 0.5 - 0.4);
         runtime.update(&prefs, &f, &MoveInput::default(), now);
-        runtime.update(
-            &prefs,
-            &f,
-            &MoveInput {
-                up: true,
-                ..Default::default()
-            },
-            now + Duration::from_millis(10),
-        );
-        let takeoff = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(90));
+        assert_eq!(runtime.update(&prefs, &f, &up, now + Duration::from_millis(10)).motion.mode, 4);
+        runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(60));
+        let takeoff = runtime.update(&prefs, &f, &up, now + Duration::from_millis(150));
         assert_eq!(takeoff.flying, Some(true));
         assert_eq!(takeoff.motion.mode, 10);
         assert!(takeoff.motion.valid());
         f.flying = true;
-        let waiting = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(250));
-        assert_eq!(waiting.motion.mode, 10, "do not recapture flight as swimming before the exit");
-        f.position.z = 20.0 + f.height * 0.5 + 0.15;
-        let up = MoveInput {
-            up: true,
-            ..Default::default()
-        };
-        let flight = runtime.update(&prefs, &f, &up, now + Duration::from_millis(700));
+        let waiting = runtime.update(&prefs, &f, &up, now + Duration::from_millis(650));
+        assert_eq!(waiting.motion.mode, 10, "holding the second tap must keep the same flight exit");
+        f.position.z = 20.0 + f.height * 0.5 + 1.25;
+        let flight = runtime.update(&prefs, &f, &up, now + Duration::from_millis(900));
         assert_eq!(runtime.state, State::Flight);
         assert_eq!(flight.motion.mode, if factor == 1.0 { 0 } else { 2 });
         assert!(flight.motion.valid());
@@ -1240,40 +1500,38 @@ fn surface_up_tap_takes_off_then_hands_back_native_or_enhanced_flight() {
 }
 
 #[test]
-fn held_up_leaves_water_even_with_an_obstacle_and_does_not_trigger_a_shore_jump() {
+fn forward_surface_press_owns_the_whole_platform_exit_and_clears_late_flight() {
     let now = Instant::now();
-    for depth in [19.8, 17.0] {
-        let mut f = frame();
-        f.position.z = depth;
-        f.obstacle = true;
-        f.landing = Some(Vec3::new(129.0, 128.0, 21.0));
-        let mut runtime = Runtime::default();
-        runtime.update(&prefs(), &f, &MoveInput::default(), now);
-        let up = MoveInput {
-            up: true,
-            ..Default::default()
-        };
-        runtime.update(&prefs(), &f, &up, now + Duration::from_millis(10));
-        let held = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(550));
-        assert_eq!(held.motion.mode, 10);
-        assert_eq!(held.flying, Some(true));
-        assert!(runtime.shore_jump.is_none());
-        let pose = runtime.swim_signal(now, &up).expect("water exit pose").0;
-        assert_eq!(
-            pose,
-            if depth > 19.0 {
-                crate::ao::State::WaterFlightExit
-            } else {
-                crate::ao::State::SwimmingUp
-            }
-        );
-        f.position.z = 19.8;
-        runtime.update(&prefs(), &f, &up, now + Duration::from_millis(650));
-        assert_eq!(
-            runtime.swim_signal(now, &up).expect("surface flight leap").0,
-            crate::ao::State::WaterFlightExit
-        );
+    let mut f = frame();
+    f.obstacle = true;
+    f.landing = Some(Vec3::new(129.0, 128.0, 21.0));
+    let mut runtime = Runtime::default();
+    runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    let up = MoveInput {
+        forward: true,
+        up: true,
+        ..Default::default()
+    };
+    let jump = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(10));
+    assert_eq!(jump.motion.mode, 9);
+    assert_eq!(jump.flying, Some(false));
+    let crossing = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(1500));
+    assert_eq!(crossing.motion, jump.motion, "allow enough time to clear the lip and cross");
+    assert_eq!(runtime.swim_intent(&up), Some(crate::ao::State::WaterShoreExit));
+    f.position = f.landing.unwrap();
+    f.on_ground = true;
+    for millis in [1900, 2300, 2800] {
+        f.flying = true; // delayed/repeated native flag after reaching the top
+        let landed = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(millis));
+        assert_eq!(landed.flying, Some(false));
+        assert_eq!(landed.motion, Motion::default());
+        assert_eq!(runtime.state, State::Ground);
+        assert!(!runtime.native_fly_allowed());
     }
+    runtime.cancel_water_exit(); // an explicit Fly button remains authoritative
+    let flight = runtime.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_secs(3));
+    assert_ne!(flight.flying, Some(false));
+    assert_eq!(runtime.state, State::Flight);
 }
 
 #[test]
@@ -1293,6 +1551,7 @@ fn short_up_at_a_shore_uses_one_bounded_physical_jump_and_never_enables_flight()
         &f,
         &MoveInput {
             up: true,
+            forward: true,
             ..Default::default()
         },
         now + Duration::from_millis(10),
@@ -1320,11 +1579,106 @@ fn short_up_at_a_shore_uses_one_bounded_physical_jump_and_never_enables_flight()
 }
 
 #[test]
+fn an_automatic_water_exit_drops_the_old_flight_preference_before_platform_arrival() {
+    let now = Instant::now();
+    let mut r = Runtime::default();
+    let mut f = frame();
+    f.flying = true;
+    let input = MoveInput {
+        forward: true,
+        ..Default::default()
+    };
+    assert_eq!(r.update(&prefs(), &f, &input, now).flying, Some(false));
+    f.flying = false;
+    f.obstacle = true;
+    r.update(&prefs(), &f, &input, now + Duration::from_secs(1));
+    let jump = r.update(&prefs(), &f, &input, now + Duration::from_millis(1900));
+    assert_eq!(jump.motion.mode, 4);
+    assert_eq!(jump.flying, Some(false));
+    assert_eq!(r.previous_flight, Some(false));
+    f.position.z = 21.2;
+    f.on_ground = true;
+    let landed = r.update(&prefs(), &f, &input, now + Duration::from_millis(2400));
+    assert_ne!(landed.flying, Some(true));
+    assert_eq!(r.state, State::Ground);
+}
+
+#[test]
+fn a_water_origin_up_hold_cannot_become_native_flight_after_reaching_land() {
+    let now = Instant::now();
+    for state in [State::Surface, State::Submerged, State::Leaving, State::WaterWalking] {
+        let mut r = Runtime {
+            state,
+            ..Default::default()
+        };
+        let mut f = frame();
+        let input = MoveInput {
+            up: true,
+            forward: true,
+            ..Default::default()
+        };
+        r.update(&prefs(), &f, &input, now);
+        assert!(!r.native_fly_allowed());
+        f.position.z = 22.0;
+        f.ground = Some(21.15);
+        r.update(&prefs(), &f, &input, now + Duration::from_secs(1));
+        assert!(
+            !r.native_fly_allowed(),
+            "the original press is still owned after arrival from {state:?}"
+        );
+        r.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_millis(1100));
+        assert!(r.native_fly_allowed(), "a fresh ground press keeps ordinary AutomaticFly");
+    }
+}
+
+#[test]
+fn walking_out_of_water_onto_support_never_restores_an_old_flight_flag() {
+    let now = Instant::now();
+    let mut r = Runtime::default();
+    let mut f = frame();
+    f.flying = true;
+    r.update(&prefs(), &f, &MoveInput::default(), now);
+    f.flying = false;
+    f.position.z = 21.0;
+    f.on_ground = true;
+    assert_eq!(r.update(&prefs(), &f, &MoveInput::default(), now).flying, Some(false));
+    assert_eq!(r.state, State::Ground);
+}
+
+#[test]
+fn a_fresh_ground_ascent_after_water_landing_keeps_ordinary_automatic_flight() {
+    let now = Instant::now();
+    let mut runtime = Runtime {
+        state: State::Ground,
+        water_exit_until: Some(now + Duration::from_secs(4)),
+        water_exit_jump: true,
+        ..Default::default()
+    };
+    let mut f = frame();
+    f.position.z = 21.0;
+    f.on_ground = true;
+    f.flying = true;
+    let step = runtime.update(
+        &prefs(),
+        &f,
+        &MoveInput {
+            up: true,
+            ..Default::default()
+        },
+        now,
+    );
+    assert!(!runtime.checking_water_landing());
+    assert!(runtime.native_fly_allowed());
+    assert_ne!(step.flying, Some(false));
+}
+
+#[test]
 fn typing_or_suspension_cancels_a_pending_water_tap_without_starting_flight() {
     let now = Instant::now();
     let mut runtime = Runtime::default();
     let mut f = frame();
     runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    f.suspended = true;
     runtime.update(
         &prefs(),
         &f,
@@ -1369,36 +1723,213 @@ fn an_unreachable_water_target_expires_and_opposite_controls_can_cancel_takeoff(
     assert_eq!(blocked.motion.mode, 6, "a ceiling must not leave a pending ascent forever");
     f.position.z = 19.8;
     runtime.update(&prefs, &f, &up, now + Duration::from_secs(11));
-    let takeoff = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(11080));
+    runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(11060));
+    let takeoff = runtime.update(&prefs, &f, &up, now + Duration::from_millis(11150));
     assert_eq!(takeoff.motion.mode, 10);
     f.flying = true;
     let down = MoveInput {
         down: true,
         ..Default::default()
     };
-    let reversed = runtime.update(&prefs, &f, &down, now + Duration::from_millis(11160));
+    let reversed = runtime.update(&prefs, &f, &down, now + Duration::from_millis(11700));
     assert_eq!(reversed.motion.mode, 7);
     assert_eq!(reversed.flying, Some(false));
 }
 
 #[test]
-fn a_no_fly_parcel_keeps_surface_up_taps_and_holds_in_swimming_mode() {
+fn no_fly_parcels_allow_single_surface_jumps_but_reject_the_second_tap_takeoff() {
+    let now = Instant::now();
+    for forward in [false, true] {
+        let mut runtime = Runtime::default();
+        let mut f = frame();
+        f.can_fly = false;
+        runtime.update(&prefs(), &f, &MoveInput::default(), now);
+        let up = MoveInput {
+            up: true,
+            forward,
+            ..Default::default()
+        };
+        let jump = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(10));
+        assert_eq!(jump.motion.mode, 4);
+        assert_eq!(jump.flying, Some(false));
+        runtime.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_millis(60));
+        let blocked = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(150));
+        assert_eq!(blocked.motion, jump.motion);
+        assert_eq!(blocked.flying, Some(false));
+    }
+}
+
+#[test]
+fn surface_recognition_uses_body_height_and_flotation_with_stable_depth_hysteresis() {
+    use crate::ao::State as Pose;
+    let now = Instant::now();
+    let forward = MoveInput {
+        forward: true,
+        ..Default::default()
+    };
+    for height in [0.6_f32, 1.7, 3.0] {
+        for offset in [-0.5, 0.0, 0.5] {
+            let prefs = Preferences {
+                float_height: offset,
+                ..prefs()
+            };
+            let mut f = frame();
+            f.height = height;
+            let target = 20.0 - (height * 0.5 - 0.4).clamp(0.25, 0.8) + offset;
+            let mut runtime = Runtime {
+                state: State::Submerged,
+                previous_flight: Some(false),
+                ..Default::default()
+            };
+            f.position.z = target;
+            assert_eq!(runtime.update(&prefs, &f, &forward, now).motion.mode, 3);
+            assert_eq!(runtime.swim_intent(&forward), Some(Pose::SwimmingForward));
+            for below in [0.20, 0.35, 0.24, 0.40] {
+                f.position.z = target - below;
+                runtime.update(&prefs, &f, &forward, now);
+                assert_eq!(
+                    runtime.swim_intent(&forward),
+                    Some(Pose::SwimmingForward),
+                    "height={height}, offset={offset}"
+                );
+            }
+            f.position.z = target - 0.5;
+            assert_eq!(runtime.update(&prefs, &f, &forward, now).motion.mode, 6);
+            assert_eq!(runtime.swim_intent(&forward), Some(Pose::UnderwaterSwimming));
+            f.position.z = target - 0.3;
+            runtime.update(&prefs, &f, &forward, now);
+            assert_eq!(runtime.state, State::Submerged);
+            f.position.z = target - 0.15;
+            runtime.update(&prefs, &f, &forward, now);
+            assert_eq!(runtime.swim_intent(&forward), Some(Pose::SwimmingForward));
+        }
+    }
+}
+
+#[test]
+fn an_underwater_up_hold_arrives_in_surface_swimming_without_flight_jump_or_a_second_ascent() {
+    use crate::ao::State as Pose;
     let now = Instant::now();
     let mut runtime = Runtime::default();
     let mut f = frame();
-    f.can_fly = false;
-    let up = MoveInput {
+    f.position.z = 16.0;
+    let prefs = prefs();
+    let held = MoveInput {
         up: true,
+        forward: true,
         ..Default::default()
     };
-    runtime.update(&prefs(), &f, &MoveInput::default(), now);
-    runtime.update(&prefs(), &f, &up, now + Duration::from_millis(10));
-    let held = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(700));
-    assert_eq!(held.motion.mode, 3);
-    assert_ne!(held.flying, Some(true));
-    let released = runtime.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_millis(800));
+    runtime.update(
+        &prefs,
+        &f,
+        &MoveInput {
+            down: true,
+            ..Default::default()
+        },
+        now,
+    );
+    runtime.update(&prefs, &f, &held, now + Duration::from_millis(20));
+    let rising = runtime.update(&prefs, &f, &held, now + Duration::from_secs(1));
+    assert_eq!(rising.motion.mode, 8);
+    assert_ne!(rising.flying, Some(true));
+    f.position.z = 19.4;
+    f.velocity.z = 0.8;
+    let arrived = runtime.update(&prefs, &f, &held, now + Duration::from_secs(2));
+    assert_eq!(arrived.motion.mode, 3);
+    assert_eq!(runtime.swim_intent(&held), Some(Pose::SwimmingForward));
+    assert_ne!(arrived.flying, Some(true));
+    let released = runtime.update(&prefs, &f, &MoveInput::default(), now + Duration::from_millis(2100));
     assert_eq!(released.motion.mode, 3);
-    assert_ne!(released.flying, Some(true));
+    assert_eq!(runtime.swim_intent(&MoveInput::default()), Some(Pose::Floating));
+    runtime.update(&prefs, &f, &held, now + Duration::from_secs(3));
+    let flight = runtime.update(&prefs, &f, &held, now + Duration::from_millis(3550));
+    assert_eq!(flight.motion.mode, 4, "a fresh surface forward press requests a jump");
+    assert_eq!(flight.flying, Some(false));
+
+    // A press coinciding with a falling entry belongs to its automatic
+    // return too, even before mode 8 has been installed in that frame.
+    let mut entering = Runtime::default();
+    f.position.z = 19.55;
+    f.velocity.z = -3.0;
+    f.on_ground = false;
+    assert_eq!(entering.update(&prefs, &f, &held, now).motion.mode, 8);
+    f.velocity.z = 0.0;
+    let arrived = entering.update(&prefs, &f, &held, now + Duration::from_secs(1));
+    assert_eq!(arrived.motion.mode, 3);
+    assert_ne!(arrived.flying, Some(true));
+    assert_eq!(entering.swim_intent(&held), Some(Pose::SwimmingForward));
+}
+
+#[test]
+fn one_stationary_surface_tap_jumps_and_a_second_tap_takes_flight_above_the_ledge() {
+    let now = Instant::now();
+    for height in [0.6, 1.7, 3.0] {
+        let mut f = frame();
+        f.height = height;
+        f.on_ground = false;
+        f.position.z = 20.0 - (height * 0.5 - 0.4).clamp(0.25, 0.8);
+        f.obstacle = true;
+        f.landing = Some(Vec3::new(129.0, 128.0, 21.0));
+        let mut runtime = Runtime::default();
+        runtime.update(&prefs(), &f, &MoveInput::default(), now);
+        let up = MoveInput {
+            up: true,
+            ..Default::default()
+        };
+        let jump = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(20));
+        assert_eq!(jump.motion.mode, 9, "stationary presses use the same safe ledge target");
+        assert_eq!(jump.flying, Some(false));
+        runtime.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_millis(60));
+        let flight = runtime.update(&prefs(), &f, &up, now + Duration::from_millis(150));
+        assert!(runtime.shore_jump.is_none(), "second tap must stop steering toward the ledge");
+        assert_eq!(flight.motion.mode, 10);
+        assert_eq!(flight.flying, Some(true));
+        assert!(flight.motion.valid());
+        assert!((flight.motion.parameters[2] - height * 0.5 - 1.25).abs() < 0.001);
+        f.flying = true;
+        runtime.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_millis(200));
+        f.position.z = 20.0 + height * 0.5 + 0.3;
+        assert_eq!(
+            runtime
+                .update(&prefs(), &f, &MoveInput::default(), now + Duration::from_millis(500))
+                .motion
+                .mode,
+            10,
+            "do not end takeoff with the feet barely above water"
+        );
+        f.position.z = 20.0 + flight.motion.parameters[2];
+        assert_eq!(
+            runtime
+                .update(&prefs(), &f, &MoveInput::default(), now + Duration::from_secs(1))
+                .motion
+                .mode,
+            2
+        );
+        assert_eq!(runtime.state, State::Flight);
+        f.on_ground = true;
+        let landed = runtime.update(&prefs(), &f, &MoveInput::default(), now + Duration::from_secs(2));
+        assert_eq!(landed.flying, Some(false), "water takeoff also stops flying on real support");
+    }
+}
+
+#[test]
+fn a_low_platform_landing_takes_priority_over_surface_hysteresis_for_small_avatars() {
+    let now = Instant::now();
+    let mut runtime = Runtime {
+        water_exit_until: Some(now + Duration::from_secs(2)),
+        water_exit_jump: true,
+        state: State::Leaving,
+        ..Default::default()
+    };
+    let mut f = frame();
+    f.height = 0.6;
+    f.position.z = 20.3;
+    f.on_ground = true;
+    f.flying = true;
+    let landed = runtime.update(&prefs(), &f, &MoveInput::default(), now);
+    assert_eq!(landed.flying, Some(false));
+    assert_eq!(landed.motion, Motion::default());
+    assert_eq!(runtime.state, State::Ground);
 }
 
 #[test]
@@ -1477,4 +2008,66 @@ fn underwater_idle_is_distinct_from_surface_idle_and_exit_types_do_not_mix() {
     );
     runtime.water_target = None;
     assert!(runtime.swim_signal(now, &MoveInput::default()).is_none());
+}
+
+#[test]
+fn surface_double_ascent_requires_two_edges_and_expires_or_cancels_with_context() {
+    use swim::Action;
+    let now = Instant::now();
+    let f = frame();
+    let up = MoveInput {
+        up: true,
+        ..Default::default()
+    };
+    let idle = MoveInput::default();
+    for second_ms in [100, 400, 401, 700] {
+        let mut controls = swim::Controls::default();
+        assert_eq!(controls.update(true, State::Surface, false, &f, &up, now), Some(Action::Jump));
+        assert_eq!(
+            controls.update(true, State::Leaving, false, &f, &up, now + Duration::from_millis(20)),
+            None
+        );
+        controls.update(true, State::Leaving, false, &f, &idle, now + Duration::from_millis(50));
+        let second = controls.update(true, State::Leaving, false, &f, &up, now + Duration::from_millis(second_ms));
+        assert_eq!(second, (second_ms <= 400).then_some(Action::Fly));
+    }
+    for interruption in 0..6 {
+        let mut controls = swim::Controls::default();
+        controls.update(true, State::Surface, false, &f, &up, now);
+        let mut interrupted = frame();
+        interrupted.seated = interruption == 1;
+        interrupted.suspended = interruption == 2;
+        let state = if interruption == 3 {
+            State::Submerged
+        } else if interruption == 4 {
+            State::Ground
+        } else {
+            State::Surface
+        };
+        let input = MoveInput {
+            down: interruption == 5,
+            ..Default::default()
+        };
+        controls.update(
+            interruption != 0,
+            state,
+            false,
+            &interrupted,
+            &input,
+            now + Duration::from_millis(50),
+        );
+        assert_eq!(
+            controls.update(true, State::Surface, false, &f, &up, now + Duration::from_millis(150)),
+            Some(Action::Jump),
+            "interruption {interruption} cannot leave a stale flight gesture"
+        );
+    }
+    let mut controls = swim::Controls::default();
+    assert_eq!(controls.update(true, State::Submerged, true, &f, &up, now), Some(Action::Surface));
+    controls.update(true, State::Surface, false, &f, &idle, now + Duration::from_millis(50));
+    assert_eq!(
+        controls.update(true, State::Surface, false, &f, &up, now + Duration::from_millis(100)),
+        Some(Action::Jump),
+        "an underwater return must not count as the first surface tap"
+    );
 }

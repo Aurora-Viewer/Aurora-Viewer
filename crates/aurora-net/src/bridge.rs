@@ -50,7 +50,8 @@ pub struct Command {
 pub struct Motion {
     /// 0 released, 1 run, 2 flight, 3 surface swim, 4 water exit,
     /// 5 bounded physical passage, 6 underwater swim, 7 dive, 8 surface,
-    /// 9 bounded shore jump, 10 water takeoff.
+    /// 9 bounded shore jump, 10 water takeoff, 11 observed dive jump,
+    /// 12 observed cannonball, 13 water walking. Observer modes leave gravity alone.
     pub mode: u8,
     /// Motors: [speed m/s (run: multiplier 1..5), avatar height m, auxiliary].
     /// Auxiliary: swim float-height offset m (7/8/10: water-relative goal),
@@ -84,6 +85,14 @@ impl Motion {
         };
         motion.valid().then_some(motion)
     }
+    pub fn water_jump(cannonball: bool, height: f32, action: u32) -> Option<Self> {
+        let motion = Self {
+            mode: if cannonball { 12 } else { 11 },
+            parameters: [0.0, height, 0.0],
+            action,
+        };
+        motion.valid().then_some(motion)
+    }
     pub fn valid(self) -> bool {
         let [speed, height, climb] = self.parameters;
         if !self.parameters.iter().all(|v| v.is_finite()) {
@@ -99,7 +108,8 @@ impl Motion {
                 let distance2 = self.parameters.iter().map(|v| v * v).sum::<f32>();
                 (0.25..=16.0).contains(&distance2) && (0.1..=3.5).contains(&climb) && self.action > 0 && self.action <= i32::MAX as u32
             }
-            1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 => {
+            11 | 12 => speed == 0.0 && climb == 0.0 && (0.6..=3.0).contains(&height) && (1..=i32::MAX as u32).contains(&self.action),
+            1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 | 13 => {
                 let range = match self.mode {
                     1 => 1.0..=5.0,
                     // x5 downward flight is 114.35 m/s; leave rounding headroom.
@@ -110,11 +120,13 @@ impl Motion {
                     && range.contains(&speed)
                     && (0.6..=3.0).contains(&height)
                     && if self.mode == 4 {
-                        (0.0..=2.5).contains(&climb)
-                    } else if matches!(self.mode, 7 | 8) {
+                        (0.0..=4.5).contains(&climb)
+                    } else if self.mode == 7 {
+                        (-4.0..=0.5).contains(&climb)
+                    } else if self.mode == 8 {
                         (-2.0..=0.5).contains(&climb)
                     } else if self.mode == 10 {
-                        (0.4..=2.0).contains(&climb)
+                        (0.4..=3.0).contains(&climb)
                     } else if matches!(self.mode, 3 | 6) {
                         (-0.5..=0.5).contains(&climb)
                     } else {
@@ -131,7 +143,8 @@ pub struct MotorReport {
     pub mode: u8,
     /// 0 idle, 1 no controls, 2 airborne, 3 locked, 4 target reached,
     /// 5 force requested, 6 invalid mass, 7 watchdog, 8 vertical input, 9 seated,
-    /// 10 gradual target ramp, 11 thrust limit reached below target.
+    /// 10 gradual target ramp, 11 thrust limit reached below target,
+    /// 12 water jump armed, 13 airborne, 14 water contact observed.
     pub run_state: u8,
     pub speed_cm: u32,
     pub target_cm: u32,
@@ -198,8 +211,8 @@ impl Ack {
             seated: flag(fields[4])?,
             motor: if fields.len() >= 10 {
                 Some(MotorReport {
-                    mode: fields[5].parse::<u8>().ok().filter(|mode| *mode <= 10)?,
-                    run_state: fields[6].parse::<u8>().ok().filter(|state| *state <= 11)?,
+                    mode: fields[5].parse::<u8>().ok().filter(|mode| *mode <= 13)?,
+                    run_state: fields[6].parse::<u8>().ok().filter(|state| *state <= 14)?,
                     speed_cm: fields[7].parse::<u32>().ok().filter(|speed| *speed <= 1_000_000)?,
                     target_cm: fields[8].parse::<u32>().ok().filter(|target| *target <= 2_565)?,
                     pushes: fields[9].parse::<u32>().ok().filter(|count| *count <= i32::MAX as u32)?,
@@ -349,6 +362,30 @@ pub async fn send(command: Command) -> Result<Ack, String> {
 mod tests {
     use super::*;
     #[test]
+    fn water_jump_observers_are_bounded_and_cannot_carry_thrust() {
+        for cannonball in [false, true] {
+            let motion = Motion::water_jump(cannonball, 1.8, 37).expect("observer");
+            assert!(motion.valid());
+            assert_eq!(motion.parameters, [0.0, 1.8, 0.0]);
+            for action in [0, u32::MAX] {
+                assert!(Motion::water_jump(cannonball, 1.8, action).is_none());
+            }
+            for height in [0.0, 3.1, f32::NAN] {
+                assert!(Motion::water_jump(cannonball, height, 37).is_none());
+            }
+            for axis in [0, 2] {
+                let mut invalid = motion;
+                invalid.parameters[axis] = 1.0;
+                assert!(!invalid.valid());
+            }
+            for state in [12, 13, 14] {
+                let ack = Ack::parse(&format!("42|0|0|1|0|{}|{state}|400|0|0", motion.mode)).expect("observer feedback");
+                assert_eq!(ack.motor.unwrap().run_state, state);
+            }
+        }
+    }
+
+    #[test]
     fn command_replies_distinguish_malformed_state_from_a_wrong_sequence() {
         assert_eq!(decode_ack(b"42|1|0|1|0", 42).expect("current command").sequence, 42);
         for bytes in [b"broken".as_slice(), b"42|1|0".as_slice(), b"\xff".as_slice()] {
@@ -451,7 +488,7 @@ mod tests {
     }
     #[test]
     fn motor_settings_and_physical_passage_have_distinct_bounded_payloads() {
-        for mode in [2, 3, 6] {
+        for mode in [2, 3, 6, 13] {
             assert!(Motion::motor(mode, 8.0, 1.7).valid());
         }
         for factor in [1.0, 2.0, 5.0] {
@@ -491,6 +528,14 @@ mod tests {
         let mut takeoff = Motion::motor(10, 5.0, 1.7);
         takeoff.parameters[2] = 1.0;
         assert!(takeoff.valid());
+        let mut deep_dive = Motion::motor(7, 5.0, 3.0);
+        deep_dive.parameters[2] = -2.6;
+        assert!(deep_dive.valid());
+        deep_dive.mode = 8;
+        assert!(!deep_dive.valid(), "the deeper allowance only belongs to descent");
+        for speed in [0.49, 8.01, f32::NAN] {
+            assert!(!Motion::motor(13, speed, 1.7).valid());
+        }
         assert!(Motion::shore_jump([1.0, 0.0, 2.0]).is_some());
         assert!(Motion::shore_jump([4.1, 0.0, 0.5]).is_none());
         assert!(Motion::shore_jump([1.0, 0.0, 3.6]).is_none());
@@ -526,8 +571,8 @@ mod tests {
         for invalid in [
             "42|0|0|1|0|1|5|NaN|2565|17",
             "42|0|0|1|0|1|5|-1|2565|17",
-            "42|0|0|1|0|11|5|540|2565|17",
-            "42|0|0|1|0|1|12|540|2565|17",
+            "42|0|0|1|0|14|5|540|2565|17",
+            "42|0|0|1|0|1|15|540|2565|17",
             "42|0|0|1|0|1|5|540|2566|17",
             "42|0|0|1|0|1|5|540|2565|2147483648",
             "42|0|0|1|0|1|5|540|2565",

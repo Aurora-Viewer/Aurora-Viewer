@@ -663,6 +663,44 @@ creates the object inventory entry with the granted permissions and flags.
 An immediate FetchInventory2 re-read is not a condition of paid-upload success;
 ordinary inventory synchronization can subsequently reconcile the entry.
 
+`movement/movelock.rs` owns the optional native-sit Movelock state machine;
+`app/movelock.rs` samples voluntary input and travel eligibility before the
+movement controllers and dispatches ordinary SIT_ON_GROUND/STAND_UP controls.
+The existing bridge lock remains the per-avatar default. Native mode disables
+only its scripted anchor, retaining other bridge services. Preparation and the
+owned ground sit are mapped to Standing by the AO; manual seats take priority.
+Preparation starts only after simulator travel and local visual settling fall
+below the ordinary 0.5 m/s walk-stop threshold, including vertical flight.
+The legacy interpolation residual and Aurora's drawn glide both count; key
+release alone cannot force the idle animation during deceleration. Residual
+motion cannot release an already owned anchor; voluntary input still can.
+Acquisition waits at least 250 ms at rest, releases immediately for movement or mode
+changes, bounds retries, handles cancelled requests' late echoes and drops
+ownership across regions. Water movement, jumps/falls and autopilot pause it.
+Click-to-walk/run releases an owned ground sit and keeps its autopilot alive
+through stand-up acknowledgement; manual ground/chair seats still block it.
+`ao/anchor.rs` caches per-asset channel coverage against the actual constrained
+sit animation: every possible standing group/parallel-track cycle must loop
+and override all its rotation/translation channels at a higher joint priority.
+The AO broadcasts the ordinary standing selection while retaining the native
+ground-sit system signal for the simulator and observers. A verified set is
+retained through asynchronous stand-up when AO preferences change. No animation is
+uploaded and no seat object is created. Simulator push resistance and observer
+appearance require human grid acceptance.
+
+`ao/anchor_blend.rs` keeps one fully weighted standing group through native
+entry, stand cycles and movement handover. Acquisition additionally waits for
+the simulator's animation echo, the authored ease-in and a 150 ms delivery
+margin. The existing stand clock is retained through preparation/request/echo.
+The regular AO starts the next group before stopping its full cover; a separate
+raw-animation motion-controller regression reproduces the observer's pelvis dip
+without the owner's pose filtering. Standing acknowledgements before walking
+retain coverage too. Missing movement replacements have a bounded timeout;
+manual seats, swimming and explicit AO disable release the handover. Ordinary
+AO playback never queries these easing timings. The offline animation mock
+echoes batched starts/stops and preserves separate custom motions across native
+system-state changes. There is no bridge script change or new render pass.
+
 ## Life of a frame
 
 `build/task_inventory.rs` centralises the permissions and the destinations of
@@ -1201,7 +1239,7 @@ own root. In the offline demo the viewer hands it that root through
 
 The explicit offline `AURORA_DEMO_AO=design-*` study populates `AoUi::prototype` only in demo mode. `ui/ao/prototype.rs` reuses the native AO body and shared widgets, with current/tabs/collapsible-section layouts and transient motor settings. `ao/demo.rs` seeds inventory links for the contributed swim pack; preview states go through the actual AO runtime, with stable animation signals and no motor/persistent movement changes. The maintainer selected the tab layout: normal sessions now embed `ui/movement.rs` in the AO manager, with the same inventory animation editor in the Animations tab. The earlier workbench remains an explicit offline comparison fixture only.
 
-The integrated Movement tab persists physical settings independently of AO activation. `movement::Runtime::swim_signal` supplies a stable swim state to `ao::runtime`, which alone chooses and broadcasts swimming animations through the normal AO lists/cycles. The AO never uploads or automatically seeds the contributed swim pack. Its former import button/uploader and legacy swim-seeding module have been removed; existing inventory swimming choices remain user-owned. Obstacle passage is separately enabled and uses Ctrl plus the current jump bindings, with explicit conflicting bindings winning and nonce-stable physical commands. The native key handler suppresses only the ordinary jump for that active passage chord. The shared toolbar reflects any enabled movement aid.
+The integrated Movement tab persists physical settings independently of AO activation. Water instructions are short gesture rows using the current Up/Down primary and secondary bindings, with modifiers and mouse buttons drawn through shared keycaps. Page Up/Down labels use compact Page arrows. Unbound actions are explicit; the double-tap and jump-then-descend sequences are distinct. Detailed dive timing stays in a dynamically keyed tooltip. Remove the former swimming-animation navigation button and dense AO implementation paragraph; the ordinary Animations tab remains the editor. `movement::Runtime::swim_signal` supplies a stable swim state to `ao::runtime`, which alone chooses and broadcasts swimming animations through the normal AO lists/cycles. The AO never uploads or automatically seeds the contributed swim pack. Its former import button/uploader and legacy swim-seeding module have been removed; existing inventory swimming choices remain user-owned. Obstacle passage is separately enabled and uses Ctrl plus the current jump bindings, with explicit conflicting bindings winning and nonce-stable physical commands. The native key handler suppresses only the ordinary jump for that active passage chord. The shared toolbar reflects any enabled movement aid.
 
 Flight settings use a neutral x1..x5 multiplier. Preferences migrate the legacy absolute `fly_speed` field and no longer serialize it; native x1 releases mode 2, while boosts convert to m/s before using the existing bridge wire contract. Horizontal/ascent and downward nominal speeds are separate. The flight payload validator admits the x5 descent target, with the same collision-aware LSL motor and unchanged run/Movelock behavior.
 
@@ -1223,7 +1261,7 @@ Bridge 1.18 makes the temporary passage anchor slightly firmer by changing only 
 
 Passage selection now adds 0.60 m beyond the inflated far-side box instead of 0.15 m: the goal moves 0.45 m farther along the passage direction, giving 1.00 m clearance for a perpendicular wall (including the 0.40 m box inflation). This is independent of the avatar's approach distance. The existing free-space and region checks validate the farther destination, and total travel remains bounded at 8 m. Detection still reaches 3 m. The compatible 1.18 script, its 0.045 s passage response, 0.10 m completion radius and 1.2 s deadline are unchanged; only its clearance comment is made version-independent.
 
-Water entry and an underwater ascent tap now dispatch the same Surface action, selecting bounded mode 8 and the ordinary AO SwimmingUp state. A fall already in progress starts the return at entry; it cannot complete just by crossing flotation while descending. Completion requires the configured target height within 0.12 m and absolute vertical speed at most 0.5 m/s. Observed changes of at least 0.05 m in remaining distance renew the surface budget using the current depth, including deeper entry inertia and slow continued ascent; a five-second minimum avoids the former short pre-impact estimate. An unchanged blocked destination still expires, and command-loss watchdogs remain unchanged. A fresh ascent press cancels the return and marks that press so its release cannot replay Surface; continued ascent holds retain the existing 0.5 s flight gesture. Descent also cancels the return and preserves deliberate underwater depth. Resuming a paused underwater session does not create a new entry; falling back after an exit does. Disable, sitting, suspension, bridge loss, shallow/no water and passage release the destination. Automatic entry assistance respects normal Movelock ownership. No LSL/protocol or animation-owner change is needed. Firestorm AOEngine::checkBelowWater only maps animation states; the physical entry and tap behaviors are Aurora extensions requested by the maintainer.
+Water entry and an underwater ascent tap dispatch the same Surface action, selecting bounded mode 8 and the ordinary AO SwimmingUp state. A fall in progress starts the return at entry; descending through flotation is not arrival. Completion accepts the height-aware target within 0.18 m and vertical velocity between -0.5 and 1.0 m/s. Depth hysteresis uses that same target: a surface swimmer submerges below it by 0.42 m; a submerged swimmer returns within 0.18 m. The settled previous float offset still protects live height changes. The shared physical root drives classification, so local visual waves cannot toggle AO states. An underwater ascent press remains a return throughout its hold/release, even if it arrives before release; another ascent press continues the destination. Descent cancels it and retains deliberate depth. A fresh surface tap jumps in open water or uses the existing collision-aware shore landing; a fresh 0.5-second surface hold requests flight when permitted. Surface up input alone no longer selects an underwater ascent animation. Observed distance changes of at least 0.05 m renew the surface budget; an unchanged blocked destination still expires. Disable, sitting, suspension, bridge loss, shallow/no water and passage release the destination. Entry assistance respects normal Movelock ownership. Bridge 1.23 bounds ascent to 3-5 m/s, ramps its command at 6 m/s per second, and brakes with a gain of 4 near the goal; its combined horizontal/vertical target remains bounded to 1.6 m. Existing dive, flight, run, lock and passage motors are unchanged. The Legacy AO's checkBelowWater only maps animations; these physical controls are Aurora extensions requested by the maintainer.
 
 Bridge 1.19 softens only the shared mode 8 surface-return motor. Horizontal swim settings and the existing 0.2 s steering response/target envelope remain intact. A separate signed vertical command is capped at min(selected swim speed, 2 m/s), changes by at most 1.5 m/s per second of bounded script tick time and approaches error * 1.2 near flotation. The vertical target is clamped between the current height and flotation, including an overshoot while the command ramp reverses. These are command/target bounds, not measured Havok speed or acceleration guarantees. Release, normal Movelock ownership and mode changes clear the ramp; same-mode command refreshes retain it. Dive, takeoff, ordinary surface/depth swimming, run, passage and normal Movelock parameters are unchanged. The native surface completion, progress budget and vertical interruption rules remain unchanged. The compatible 1.19 source updates through the existing bridge factory with stable inventory names.
 
@@ -1242,17 +1280,17 @@ Radar cleanup (2026-10-16): the reported 2500 m target was actually at 250 m; it
 AO inventory startup ownership (2026-10-16): `Catalog::refresh` reads `#Aurora/Aurora AO`; an existing folder, even empty, prevents fallback. `ao/bootstrap.rs` reads the fully fetched Legacy Viewer catalogue only when that folder is absent, waits for unresolved original items, and reconstructs recognized sets, options, cycles, groups, tracks and ordered animation links without changing the source or uploading assets. It waits for the independent bridge factory to acknowledge the shared `#Aurora` parent, avoiding competing startup parent creation. Reconstruction stages an `Aurora AO (Legacy Viewer import)` folder and renames it to `Aurora AO` only after its preceding AIS operations succeed. Interrupted staging is retained for inspection and never blindly replayed; failures remain local AO status, with Reload resetting the source fetch state. Missing/empty sources produce no AO mutation. Saved valid Aurora selection is preserved; fallback selection is remapped to its newly created set. Bridge creation/version checks already run independently of AO and Movelock activation; the physical/controller source is unchanged.
 
 
-AO swimming ownership (2026-10-16): Aurora never writes to #Firestorm or any descendant during startup, successful reconstruction, interrupted reconstruction or AO edits. Original animation targets may be read and linked under #Aurora/Aurora AO; the AO mutation guard rejects source writes, removals, renames and moves into/out of that tree. The bridge factory issues only a reliable detach for an exactly identified worn Legacy Viewer bridge (owned object, versioned inventory name, source ancestry and Center 2 root), once per worn root; no script or inventory edit, authentication or reattachment of that legacy bridge. Legacy Viewer AO swimming states are excluded before fetching their contents, and are never reconstructed.
+AO swimming ownership (2026-10-16): Aurora never writes to #Firestorm or any descendant during startup, successful reconstruction, interrupted reconstruction or AO edits. Original animation targets may be read and linked under #Aurora/Aurora AO; the AO mutation guard rejects source writes, removals, renames and moves into/out of that tree. The bridge factory issues only a reliable detach for an exactly identified worn Legacy Viewer bridge (owned object, versioned inventory name, source ancestry and Center 2 root), once per worn root; no script or inventory edit, authentication or reattachment of that legacy bridge. The four actual Legacy Viewer swim states (Floating/Swim.H, Swimming Forward/Swim.N, Swimming Up/Swim.U and Swimming Down/Swim.D) are fetched and reconstructed with their original animation links and cycle settings. The source reader ignores Aurora-only folders. Before writing a new migrated set, `ao/completion.rs` fills missing destination water states from the approved real donor configurations: underwater float from surface float, underwater swimming from surface swimming, flight exit from Flying Up, obstacle exit from Jumping, dive jump from Flying, dive entry from Swimming Down, Cannonball from Crouching and cushioned entry from Falling. It preserves existing assigned slots, main lists, simultaneous groups and independent track cycles. Missing/unresolved donors remain missing; no bundled clip or uploaded asset is manufactured.
 
-Each Aurora set has eight single-animation swimming slots: surface idle, swimming, down, up, underwater idle, flight exit, water entry and obstacle exit. The native Animations tab exposes their inventory pickers, link replacement/removal and drag/drop. Resolved assets in all eight slots of the selected, fetched set are required before swimming can be enabled; incomplete selections disable saved swimming, and loading/failure suppresses the effective motor without guessing readiness. No older Bridge-folder stroke discovery supplies missing slots. Active swimming owns its animations through the existing AO runtime and AgentAnimation even while ordinary AO overrides are off/paused. Surface and underwater idle signals are distinct despite sharing the stock hover UUID. Water entry remains selected only during the initial downward fall while buoyancy cushions it, then yields to the existing return-to-surface animation. Flight exit uses the near-surface part of the physical flight-exit action; deeper ascent keeps the up animation. Obstacle exits follow the separate bounded shore-jump state. Cancellation, disable, bridge loss, sitting and suspension release the contexts. Completed non-looping transition clips are not replayed every frame; a new context entry rearms them. Physical motors and LSL protocol 1.20 are unchanged.
+Each Aurora set requires eight core swimming states with at least one resolved inventory animation in each: surface idle, swimming, down, up, underwater idle, flight exit, water entry and obstacle exit; four optional extensions are described below. The native Animations tab exposes their inventory pickers, link replacement/removal and drag/drop. Resolved assets in all eight slots of the selected, fetched set are required before swimming can be enabled; incomplete selections disable saved swimming, and loading/failure suppresses the effective motor without guessing readiness. No older Bridge-folder stroke discovery supplies missing slots. Active swimming owns its animations through the existing AO runtime and AgentAnimation even while ordinary AO overrides are off/paused. Surface and underwater idle signals are distinct despite sharing the stock hover UUID. Water entry remains selected only during the initial downward fall while buoyancy cushions it, then yields to the existing return-to-surface animation. Flight exit uses the near-surface part of the physical flight-exit action; deeper ascent keeps the up animation. Obstacle exits follow the separate bounded shore-jump state. Cancellation, disable, bridge loss, sitting and suspension release the contexts. Completed non-looping transition clips are not replayed every frame; a new context entry rearms them. These core slots retain the established physical swim motors; passive jump observers are described below.
 
 The explicit offline AO design preview carries the chosen swimming context alongside its stock signal UUID, so surface/underwater idle and jump/fall exits cannot alias ordinary hover/jump/fall states. This path is restricted to the synthetic demo and has no grid commands.
 
 AO startup service readiness (2026-10-16): cached source data can be complete before the login seed supplies InventoryAPIv3 and FetchInventoryDescendents2. Bootstrap now waits for both nonempty services in the current region, completed arrival, no teleport and a released inventory-cache hold before consuming its one reconstruction attempt. Read-only source fetching continues while waiting; the existing AO loading label includes this bootstrap state. A native AO arriving during the wait still wins, including an empty one. This pre-send gate does not retry an ambiguous failed AIS mutation or alter interrupted-staging protection. The explicit firestorm-wait demo delays synthetic services until frame 720 and exercises the production gate.
 
-Explicit AO migration (2026-10-16): `AoUi::migration` exists only while the user opens Migrate from Firestorm. Its independent source catalogue never changes the startup fallback decision or native selection; missing originals join the existing bounded item-fetch queue. The modal selects one exact source set and an unused native name; cancellation is read only, disappearance never selects another source implicitly, and the request rechecks inventory/services before planning ordinary native folder/link creation. The existing pending AIS acknowledgement remaps the new selected UUID. No source write/upload occurs, no swimming state is copied, and the existing native default remains intact.
+Explicit AO migration (2026-10-16): `AoUi::migration` exists only while the user opens the Legacy Viewer migration. Its independent source catalogue never changes the startup fallback decision or native selection; missing originals join the existing bounded item-fetch queue. The modal selects one exact source set and an unused native name; cancellation is read only, disappearance never selects another source implicitly, and the request rechecks inventory/services before planning ordinary native folder/link creation. The existing pending AIS acknowledgement remaps the new selected UUID. No source write/upload occurs, the four actual legacy swim mappings are copied when present, and the existing native default remains intact. The shared completion runs for both manual migration and initial reconstruction before ordinary native folder/link creation. It uses the maintainer-approved donor mappings, leaves unavailable donors explicit and never changes the swimming preference or an existing native set.
 
-Approved AO editor integration (2026-10-16): `ui/ao/editor.rs` renders a scrollable state rail and a focused detail pane, with one swimming slot for the selected state. Sit options follow activation; main entries use single-click choice and drag ordering. `ui/ao/combinations.rs` provides a native guided dialog, explicit group/track contexts, add/rename/back/dissociate controls, and independent track cycles. All surfaces, typography and controls retain the shared theme and palette. `ao/inventory/editor.rs` plans bounded native folder/link mutations: destination links precede removal of old Aurora links, originals remain read only, dissolved folders go to Trash, and no ambiguous failure is replayed. Main steps, group/track members and tracks retain their order on reload; tracks use an optional `OR` folder parameter alongside `TR` and their cycle suffix, preserved by renaming and cycle saves. Pending editor selection is bound to its original set/state and remapped only after acknowledged AIS creation; an intervening navigation is respected. Existing AO runtime and AgentAnimation own simultaneous groups and independent tracks without a second animation owner. Independent movement controls use side-by-side run/flight factors, obstacle passage before swimming, and EXPERIMENTAL labels; accepted physics and bridge protocol are unchanged. The extra standing entries and combination examples exist only in explicit offline `interface*` fixtures, never in user inventories.
+Approved AO editor integration (2026-10-16): `ui/ao/editor.rs` renders a scrollable state rail and a focused detail pane, with one swimming slot for the selected state. Sit options follow activation; main entries use single-click choice and drag ordering. `ui/ao/combinations.rs` provides a native guided dialog, explicit group/track contexts, add/rename/back/dissociate controls, and independent track cycles. All surfaces, typography and controls retain the shared theme and palette. `ao/inventory/editor.rs` plans bounded native folder/link mutations: destination links precede removal of old Aurora links, originals remain read only, dissolved folders go to Trash, and no ambiguous failure is replayed. Main steps, group/track members and tracks retain their order on reload; tracks use an optional `OR` folder parameter alongside `TR` and their cycle suffix, preserved by renaming and cycle saves. Pending editor selection is bound to its original set/state and remapped only after acknowledged AIS creation; an intervening navigation is respected. Existing AO runtime and AgentAnimation own simultaneous groups and independent tracks without a second animation owner. Independent movement controls use side-by-side run/flight factors, obstacle passage before swimming, and EXPERIMENTAL labels; accepted physics and bridge protocol are unchanged. The extra standing entries and combination examples exist only in explicit offline `interface*` fixtures, never in user inventories. The water state rail uses the shared amber warning triangle for missing required slots, a green check for assigned required slots and no marker for optional slots. The detail pane and swim switches share the same concise missing-animation warning; the optional-slot count is removed. `interface-swim-missing` provides an offline incomplete-set preview.
 
 Aurora folder naming (2026-10-17): native roots are `#Aurora/Aurora AO` and `#Aurora/Aurora Bridge`. Discovery prefers these names and falls back to previous native `AO` / `Bridge` folders only when the new sibling is absent. Startup renames the old folders in place with acknowledged AIS patches, preserving all descendant IDs, selected AO set, swimming assignments and the bridge folder UUID embedded in its handshake. An old AO, including an empty one, remains authoritative and cannot trigger legacy reconstruction. An existing new sibling wins without merging/deleting the old one. Failed/ambiguous renames are not replayed automatically in the session; ordinary Reload/Repair uses refreshed inventory. Both generations of interrupted reconstruction staging remain guarded. The LSL, movement motors and legacy inventory protection are unchanged.
 
@@ -1264,3 +1302,254 @@ contains the Avatar dependencies/read-only position tables and Journal view;
 `mesh_panel.rs` keeps the metadata/preview header and model/fee footer fixed
 around the scrollable five-tab body. Geometry processing and fee protocol
 remain on their existing worker/session paths.
+
+
+## Local interactive water
+
+AO quick controls (2026-10-18): `ui/ao/quick.rs` opens above the toolbar AO
+button (or beside a relocated side-bar button), using the shared overlay and
+popup behavior. Its set selector and enable switch edit the same account as
+the manager; swim/water-walk and run/flight boosts edit existing movement
+preferences and retain the selected set's swimming-readiness gate. Child set
+menus keep the parent open; Escape/outside clicks dismiss it, and the manager
+button opens the existing floater. `ui/ao/category.rs` partitions every state
+into General, Ground, Jumping, Flying and Swimming, in that order. General
+contains Standing, Sitting, Sitting on ground, Standing up, Typing and Always,
+with the sitting states immediately after Standing. Ground groups walking/running,
+crouching and turns. Jumping orders preparation, jump, fall, soft landing and
+hard landing, and initially selects Jumping. Flying orders hover, slow flight,
+flight, descent and ascent. Underwater floating immediately precedes
+underwater swimming. The editor's
+category tabs remember their selected state, follow external state links, and restrict rail
+keyboard navigation to that category. The rail reserves vertical arrows and
+retains pending focus while scrolling to an offscreen state. Inventory folders
+and runtime states are unchanged.
+
+AO water states (2026-10-17): the canonical `Swimming Forward` inventory folder
+is the single surface swimming list; `Underwater Swimming` is an independent
+list with an explicit surface-list fallback for old sets. Water states share
+the ordinary AO editor, groups, tracks and cycles. `ao/bootstrap.rs` plans one
+acknowledged consolidation per selected set/session from old crawl/backstroke
+folders, moving AO links/containers and preserving source folders and foreign contents.
+Original animation items remain untouched. `ao/swimming_tests.rs` covers depth,
+loading handoff, list selection and local/observer transition consistency.
+The AO prefetches four unique assets per frame after an assignment revision.
+`AgentAnimationChanges` carries stops/starts in the same bounded reliable
+message; the runtime retains the underlying locomotion context when its own
+default-animation stop is echoed. Simulator jump/landing control clips remain
+active. Missing looping-clip echoes can be repaired every two seconds;
+one-shots are never replayed by that repair path.
+
+Local surface flotation (2026-10-17): `movement/water_float.rs` filters the
+rendered macro-wave displacement with a short exponential response and a
+bounded vertical speed. `app/movement.rs` reads the movement controller's pure
+swim intent (or the resolved AO state without a motor): idle surface float,
+surface swimming in any horizontal direction enables it, without flat-target convergence,
+terrain availability or velocity thresholds. A broad body/water intersection
+guard and explicit submersion, seats, dives, entries and departure exclude it.
+Inspecting an established surface hold preserves its visual heave while the
+motor is suspended. Intent queries do not advance AO animation clocks.
+`World::water_visual_dz` supplies this self-avatar-only offset to the common
+draw transform and camera frame. Body geometry, posed anchors, attachments,
+picking and contact positions therefore agree. Simulator positions, raw
+unshifted transforms, saved hover/float settings and bridge targets retain
+their existing values. Teleports, region changes, long gaps and seating clear
+stale state; leaving the surface or disabling waves settles to zero. Carried
+heave is removed from anatomical material velocities so waves alone do not
+create splash/bubble streams. Only the macro spectrum drives the body: its
+own fine interaction ripples cannot feed back into flotation.
+
+
+Anatomical contact revision (2026-10-17): `scene/water_contacts.rs` replaces the
+single avatar-waterline emitter with seventeen independent fitted collision
+ellipsoids: feet, lower/upper legs, hands, lower/upper arms, pelvis, belly,
+chest, neck and head. Current shape-adjusted palette matrices place each one.
+A water-plane cross-section supplies the local contact, size and displaced
+area; shallow submerged motion attenuates with depth. Material velocity uses
+the same local point under successive transforms, so a waterline sliding along
+a stationary tilted limb cannot create a false wake. Fast vertical crossings
+are swept between frames. Each moving part leaves a short fine-atlas trail;
+a downstroke/entry or head emergence produces its own small expanding ring and
+spray. There is no root-level bow emitter. Only the moving submerged head owns
+sparse air, with the existing 1.25 s budget.
+
+Shoreline footfall refinement (2026-10-17): continuous wake pressure uses the
+interval's squared speed with bounded high-speed response and linear displaced
+area, preventing small overlapping parts and brief animation peaks from making
+large furrows at walking speed. Feet use separate lift/contact hysteresis instead
+of repeated submerged downstrokes, including an upward heel lift that only
+partly emerges. Each descending contact emits one shallow
+ring and a low pair of broken water sheets with sparse ballistic rim droplets;
+strength follows landing speed, foot area and available water depth. Dragging,
+idle wave crossings and dry ground produce no foot slap. The footfall flag
+reuses events 7/8, existing draw instances, quality budgets and independent
+spray/displacement switches. This is a visual extension of the independent
+left/right contact transitions in `LLVOAvatar::updateFootstepSounds`
+(`indra/newview/llvoavatar.cpp`), with no sound or movement change.
+
+The CPU contact surface inverts the same Gerstner horizontal displacement as
+the rendered spectrum, using the GPU's bilinear bathymetry and shore damping;
+a production-WGSL GPU comparison guards all four qualities and shallow/deep
+water. Per-avatar sampling is shared across the frame workers, with fine parts
+limited to the local water patch. Visibility is rebuilt on the bounded candidate
+cadence: native head/upper/lower draw records and the nearest anatomical ancestor
+of visible rigged-mesh skin influences select the active parts. Fully hidden
+bakes/meshes and HUDs supply no coverage. These are fitted animated volumes,
+not per-triangle fluid collisions: unusual mesh silhouettes and partial texture
+alpha holes remain approximate. No full mesh skinning, GPU readback, network
+message or physical force is added. Independent strike/spray clocks preserve
+water displacement when particle switches change. The shared event caps are
+64/96/160/192, with two-second part wakes and entry-sheet priority.
+
+Avatar splash refinement (2026-10-17): dives and cannonballs share a radial
+entry sheet, with six smaller dive sectors or ten larger cannonball sectors.
+Each packet uses two curved, subdivided patches and leaves instances for ballistic rim
+droplets even at Low quality. The sheet uses its interpolated normal for
+dielectric reflection/refraction and broken translucent coverage; its foamy rim
+expands as the sheet falls. Limb downstrokes and body translation emit low,
+directed lateral fans instead of radial fountains. Each anatomical contact follows its own posed material motion;
+the furrow follows swept world-space contact intervals instead of stamping a
+foam V along the latest heading. `water_wake.rs` / `water_wake.wgsl` rasterize
+those intervals additively into the lower half of the existing water atlas:
+a 32 m local patch at 128–512 resolution (25–6.25 cm cells). It stores slope,
+height and restrained breaking foam. The central depression refills while
+shoulders and secondary ripples spread outward, staying on the old path after
+a turn or stop. Length-normalized kernels keep the reconstructed ribbon stable
+across emission/frame rates. One small pass touches only segment bounds;
+coarse compute excludes these historical segments. The atlas keeps the existing
+scene bindings/samplers, with no surface-pixel event loop or GPU readback.
+Fine height displaces the denser 64–224 grids in close 64 m patches (within
+24 m of the camera); ordinary distant grids remain 32–96. Fine normals,
+refraction, Fresnel and local micro-wave damping reveal the furrow even with
+spray/bubbles or contact foam disabled. Foam remains independently switchable.
+The same terrain/water-level guards reject dry or mismatched region water.
+Spent displacement events expire after integration; droplets, entry sheets and
+bubbles retain only their respective flight/lifetime windows. At the quality
+event cap, an active dive/cannonball sheet and foam ring take priority over
+ordinary contacts, so Low quality retains a complete entry silhouette.
+
+`aurora-render/src/water_effects.rs` and `shaders/water_sim.wgsl` maintain a bounded, world-anchored GPU height/velocity/foam field (128–512 square, 128–256 m extent). A damped wave equation propagates contact impulses; foam advects and decays. The field scrolls by integer cells, clears on region changes/large jumps, and never reads back to the CPU. Bathymetry is sampled in parallel into a shared 64-square snapshot. The master switch and per-effect choices are in Preferences › Aurora › Water (`WaterEffectsSettings`), independent of GTAO and the existing planar-reflection controls.
+
+`aurora-render/src/water_optics.rs` schedules a reduced-resolution exterior
+colour/depth view only when the submerged camera's field can contain a Snell
+window. Its wider auxiliary frustum contains opaque/masked air geometry missing
+from the main image. Its apparent eye depth follows the central refraction
+angle; two depth reprojections refine parallax in `env.wgsl`.
+Low/Medium/High/Ultra use quarter/three-eighths/half/three-quarters
+linear resolution. The capture reuses reflection pipelines and the existing
+water draw bin, whose GPU candidates are the union of reflection/exterior
+frusta; each pass raster-clips to its own view. It renders neither water nor
+new shadow/GTAO passes and adds no readback or main-scene copy. The source has
+no water fog, so only the true eye-to-interface segment attenuates it. GPU
+Water timing includes this capture and the interface depth prepass. Physical
+Fresnel/total internal reflection remain intact. This single exterior depth
+view improves offscreen coverage but does not resolve transparent layers or
+all disocclusions around nearby geometry.
+
+`scene/water_effects.rs` selects nearby object footprints and displayed avatar joint contacts with bounded counts. It emits local events from actual displayed motion, rejects teleports, and retains events only through their effect lifetime (at most three seconds). The renderer evaluates droplet/bubble trajectories on GPU; submerged particles enter the refraction source before water, airborne particles follow the water. No simulator commands or forces are generated. Terrain, static and moving object foam, crest foam, ripples/wakes, caustics, geometric waves and physical Fresnel/absorption have separate switches. Coarse object footprints approximate arbitrary meshes; custom mesh/prim water is not inferred as a water volume.
+
+The scene's water tiles share quality-dependent grids near the camera and flat quads at distance; all use the same world-space wave phase. Caustics light receiving opaque surfaces before water fog/refraction. The opaque prepass and its GTAO input remain unchanged. `demo_water.rs` is the offline `AURORA_DEMO_WATER` scenario, using ordinary synthetic object updates.
+
+Water realism revision: `water_spectrum.wgsl` shares the metre-scale Gerstner derivatives and periodic capillary spectrum between the visible surface and `water_caustics.wgsl`. Refracted triangles accumulate conserved source-area light into one 256-square HDR map, with the analytic optical Jacobian smoothing triangle density and a finite focus width limiting peaks. RGB encodes three receiving depths; opaque receivers sample it with depth interpolation, sun projection, extinction and shadows. Nearby water tiles subdivide into 64 m patches, preserving shared boundary phase while distant parents stay quads. Sub-grid limb/contact waves affect normals; the finer avatar atlas also displaces close geometry. Zero-volume contact impulses, divergent hull wakes and stern foam feed the bounded simulation. Shore fronts follow bathymetry; actual opaque-depth intersections refine proxy foam, with filtered continuous coverage and wet terrain at the shoreline. Foam uses a world-stable integer hash, four-tap cubic reconstruction and a known-obstacle mask to avoid regular pore lattices, grid contours and false terrain contacts. Displacement events are distinct from short impact/downstroke spray; only a moving submerged head releases a sparse air packet. Particle emitters are packed before particle-free displacement events, with newest-first budget priority. All effects keep their existing independent controls.
+
+Surface-motion/underside revision: an avatar body-waterline contact is derived from its displayed feet/head envelope, so horizontal run/swim motion still drives local part trails and modest spray with flat custom poses. Dry bodies and bodies well below the surface have no such emitter. Horizontal poses include body thickness and near-surface wrists; the sampled submersion attenuates their wake, and submerged bodies cannot throw bow spray from depth. Head air remains bounded and idle-suppressed (2–4 bubbles per packet, minimum 1.25 s interval). Water fog clips rising underwater rays at the water/air exit. The underside retains quality-bounded reflected submerged rays against the existing opaque depth/color (12–30 steps, fixed 200 m range, four hit-refinement steps); source fog is removed before applying the actual surface path once. Transmission uses the reduced exterior capture described above, with screen-space reconstruction as a fallback when that capture is inactive. A blurred bathymetric bottom-radiance projection stabilizes terrain reflection, with water scattering when no submerged source is visible. Reflected sharp geometry remains screen-space limited; the exterior capture is also a single-depth approximation. The Fresnel switch controls Snell/Fresnel behavior; disabling it retains transparent baseline transmission. Refraction and dielectric Fresnel follow [PBRT, Specular Reflection and Transmission](https://pbr-book.org/4ed/Reflection_Models/Specular_Reflection_and_Transmission).
+
+
+Water interface revision (2026-10-18): the actual displaced mesh uses hardware
+near-depth clamping, with a perspective-preserving fragment-depth fallback
+near water on unsupported adapters. A depth-only GPU prepass chooses the
+closest wave interface by monotonic view distance, including inside the
+normal near plane; water shading samples this separate single-sample depth
+while preserving the opaque scene depth for submerged alpha geometry. The
+prepass reuses the indirect water draws, runs only with displacement, and is
+included in GPU Water timing. Opaque optical segments retain immersed
+endpoints from either side of the camera-local boundary; interface hits use
+the actual known water segment and undo source fog before refraction.
+Coloured attenuation follows water distance without a camera-depth fade,
+and submerged lighting stays consistent across camera crossings. Sky/EEP
+parameters and physical swimming remain unchanged.
+
+Water action presentation (2026-10-17): `movement/water_jump.rs` predicts a
+bounded native jump from the current velocity and terrain, with the existing
+scene picking hierarchy rejecting known solid walls, decks and roofs. A jump
+alone retains its ordinary pose. A fresh descent edge within 450 ms of the jump
+signal arms configured dive clips toward a clear deep-water landing; a second
+edge switches to the optional cannonball. A later descent edge can also arm the cannonball directly
+while airborne above water, including flight, without a previous jump or predicted
+landing. This releases native flight; resuming flight after release, teleports,
+bridge loss, seating, lock and suspension cancel it. No fall force or avatar
+relocation is introduced. Bridge protocol 1.25
+adds passive modes 11/12 carrying only height and a bounded action nonce; native
+controls pass through, repeated requests cannot renew an action's deadline,
+and existing acknowledgements report states 12/13/14. Dive observation lasts at
+most five seconds; cannonball observation allows a bounded 120-second long fall.
+Arming permits unknown terrain and shallow water, rejecting known dry terrain;
+the entry burst still requires actual body contact over sufficiently deep water.
+The AO remains the sole
+AgentAnimation owner. Actual posed head/feet/hands/pelvis determine first water
+contact and one bounded local spray/ring event. Recovery temporarily suppresses
+priority-six AO replacements so the supplied priority-five entry can finish.
+The keyframe controller follows LLKeyframeMotion::setStopTime: loop tails play
+before ease-out, including a zero-length held loop with a full authored outro.
+
+The eight original water states still gate the swim motor. Independent
+underwater forward swimming, dive jump, dive entry and cannonball bring the
+visible catalogue to twelve. Horizontal input uses one surface state or the
+underwater state according to depth, with ordinary AO list/cycle selection.
+Old style assignments are consolidated into the surface list. Jump presentation requires its configured, decoded optional clips;
+no bundled asset is used as an online fallback. `ao/water_demo.rs` is an explicit
+offline-only read-only native pack decoder, ephemeral catalogue and trajectory
+fixture. `scripts/author-water-cannonball.py` authors the body-only native clip
+for that fixture and human-controlled import later; it has no upload API.
+
+Cannonball recovery uses the configured native loop phase at actual stop time,
+including the remaining intro if PageDown arrived just before impact. Repeated
+PageDown presses during one airborne action neither renew its deadline nor restart
+the pose. The impact reuses the particle pass: each of six dive or ten cannonball
+radial packets spends two instances on curved, torn crown patches, leaving the
+rest as droplets. Foam/ripple injection stays in the existing bounded compute
+field. The underside floor fallback approximates a rough multiple-bounce lobe
+continuously across grazing ray directions, avoiding alternating blue holes.
+
+Water walking (updated 2026-10-18): `movement/water_walk.rs` supplies a separate,
+per-account opt-in physical support controller. Bridge mode 13 steers toward
+native water height plus half the avatar height, with collision-aware targets
+bounded to 1.6 m; it uses ordinary 3.2/5.13 m/s walk/run speeds. Descend selects
+Crouching at rest or CrouchWalk while moving, with the existing ground crouch
+speed of 1.2 m/s taking priority over run. Bridge 1.27 keeps water support during
+Descend and caps speed directly from captured controls before the next viewer
+command. It releases for dry terrain, flight, seats, suspension or bridge loss.
+Movelock retains its normal anchor ownership. A brief ascent uses the existing
+bounded jump pulse. The bottom-toolbar `water_walk` button and Movement
+switch share this preference. Existing nonempty custom bars receive the button
+once; deliberate empty bars, side placement and later removal are preserved.
+The ordinary AO standing/walking/running/crouching selections, groups and cycles own
+local and AgentAnimation playback. Disabled/paused/missing AO slots use standard
+motions through that same owner, with stock ownership removed immediately on
+release. The visual wave follower accepts these supported ground states too,
+including while Descend is held. Acquiring support counts as grounded for water
+gestures immediately, preventing a crouch from arming a cannonball.
+
+Bridge 1.24 deepens the surface descent goal to `-max(height/2 + 1.1, 1.8)` m
+relative to water. Modes 7/8 share a bounded 4–6 m/s vertical speed limit,
+with proportional braking near the goal and a combined target budget independent
+of horizontal swim speed. Ascent ramps at 8 m/s²; explicit descent responds
+immediately, like the former dive motor. The existing control gestures,
+collision steering and command watchdog remain authoritative.
+
+Water response follow-up (bridge 1.25): a captured surface-mode Down edge
+selects the bounded dive goal directly in `surfaceDive`, before waiting for
+HTTP. It clears the old surface target and executes on the same control event;
+descent uses a 0.12 s target horizon/response with the existing speed and distance
+bounds. A one-second guard prevents an older in-flight surface refresh from
+undoing that edge; explicit return/release commands take precedence. Controls
+do not renew the HTTP watchdog. The viewer preserves recent acknowledged capture
+across compatible motor transitions, including superseded HTTP refreshes, while
+still sending immediate release even when it matches an older idle acknowledgement.
+
+A water-origin ascent hold suppresses native AutomaticFly until release, even
+after reaching land. A reachable platform takes precedence over flight at the
+surface hold threshold; open-water deliberate flight remains available. Water
+jumps retain an explicit nonflying end state, and an old pre-swim flight flag is
+never restored onto measured support. Native jump signals refresh the early
+dive-gesture window so server delay does not consume it before the jump begins.

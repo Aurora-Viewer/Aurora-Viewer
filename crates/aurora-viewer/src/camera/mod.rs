@@ -1644,6 +1644,7 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     let shape = world.avatar_shape_dz.get(&id).copied().unwrap_or(0.0);
     let hover = if s.hover_affects_camera { world.appearance_hover(&id) } else { 0.0 };
     let axis = if seat.is_some() { rotation * Vec3::Z } else { Vec3::Z };
+    let position = position + Vec3::Z * world.water_visual_dz(&id);
     let root = position + axis * (shape + hover);
     AvatarFrame {
         root,
@@ -1742,6 +1743,23 @@ mod tests {
             world.objects.get_mut(parent).unwrap().rotation = Quat::from_rotation_y(0.7) * Quat::from_rotation_z(1.2);
         }
         world
+    }
+
+    #[test]
+    fn surface_float_camera_tracks_the_visual_body_even_with_hover_disabled() {
+        let mut world = hover_world(false);
+        world.movement_complete = true;
+        let now = Instant::now();
+        let settings = CameraSettings::default();
+        let before = avatar_frame(&world, &settings, now);
+        for i in 0..60 {
+            world.water_float.update(1, world.agent.position, i as f32 / 60.0, 0.2, false);
+        }
+        let after = avatar_frame(&world, &settings, now);
+        let shift = Vec3::Z * world.water_float.offset();
+        assert!(after.root.abs_diff_eq(before.root + shift, 1e-5));
+        assert!(after.position.abs_diff_eq(before.position + shift, 1e-5));
+        assert!(after.follow_root.abs_diff_eq(before.follow_root + shift, 1e-5));
     }
 
     #[test]

@@ -111,6 +111,87 @@ impl Scene {
             && o.update_flags & crate::build::edits::FLAGS_PHANTOM == 0
             && self.gpu.get(idx).is_some_and(|g| !g.hud && !g.rigged && g.owner_avatar.is_none())
     }
+    /// Veto cannonballs over a loaded solid deck before releasing native flight.
+    /// Five rays cover the body footprint, stopping at the water surface so
+    /// submerged floors are not mistaken for obstacles above the water.
+    pub fn cannonball_clear(&self, world: &World, frame: &crate::movement::Frame) -> bool {
+        let Some(water) = frame.water.filter(|water| water.is_finite()) else {
+            return false;
+        };
+        if !frame.position.is_finite() || !frame.height.is_finite() || frame.position.z <= water {
+            return false;
+        }
+        let radius = (frame.height * 0.16).clamp(0.18, 0.35);
+        let distance = frame.position.z - water;
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        for offset in [Vec3::ZERO, Vec3::X * radius, -Vec3::X * radius, Vec3::Y * radius, -Vec3::Y * radius] {
+            let ray = (frame.position + offset, -Vec3::Z);
+            candidates.clear();
+            self.pick.ray_candidates(ray, &mut candidates);
+            if candidates.iter().any(|&idx| {
+                self.movement_solid(world, idx) && self.face_hit(world, idx, ray, now, true).is_some_and(|hit| hit.t <= distance)
+            }) {
+                return false;
+            }
+        }
+        true
+    }
+    /// Independent support check for water exits when Falling/foot-plane
+    /// messages lag. Only a nearby upward-facing solid top counts as land.
+    pub fn movement_support(&self, world: &World, position: Vec3, height: f32) -> bool {
+        if !position.is_finite() || !height.is_finite() {
+            return false;
+        }
+        let ray = (position, -Vec3::Z);
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        candidates.iter().any(|&idx| {
+            self.movement_solid(world, idx)
+                && self
+                    .face_hit(world, idx, ray, now, true)
+                    .is_some_and(|hit| hit.normal.z > 0.7 && (height * 0.35..=height * 0.6 + 0.12).contains(&hit.t))
+        })
+    }
+    /// Presentation prediction only: reject known solid decks, walls and roofs
+    /// along the native jump arc. The simulator retains collision authority.
+    pub fn water_jump_clear(
+        &self,
+        world: &World,
+        frame: &crate::movement::Frame,
+        horizontal: Vec3,
+        landing: crate::movement::water_jump::Landing,
+    ) -> bool {
+        let now = Instant::now();
+        let mut candidates = Vec::new();
+        let mut clear_segment = |from: Vec3, to: Vec3| {
+            let delta = to - from;
+            let distance = delta.length();
+            if distance < 0.001 {
+                return true;
+            }
+            let ray = (from, delta / distance);
+            candidates.clear();
+            self.pick.ray_candidates(ray, &mut candidates);
+            !candidates.iter().any(|&idx| {
+                self.movement_solid(world, idx) && self.face_hit(world, idx, ray, now, true).is_some_and(|hit| hit.t <= distance)
+            })
+        };
+        let up = if frame.on_ground { 4.5 } else { frame.velocity.z };
+        let mut previous = frame.position;
+        for i in 1..=8 {
+            let t = landing.seconds * i as f32 / 8.0;
+            let next = frame.position + horizontal.with_z(0.0) * t + Vec3::Z * (up * t - 4.905 * t * t);
+            for offset in [-frame.height * 0.35, 0.0, frame.height * 0.35] {
+                if !clear_segment(previous + Vec3::Z * offset, next + Vec3::Z * offset) {
+                    return false;
+                }
+            }
+            previous = next;
+        }
+        clear_segment(landing.position + Vec3::Z * 0.05, landing.position - Vec3::Z * (frame.height * 0.7))
+    }
     /// A short forward probe for swimming. Uses rendered surface normals,
     /// not height alone, so a shallow beach never triggers the exit jump.
     pub fn movement_obstacle(&self, world: &World, origin: Vec3, direction: Vec3) -> bool {
@@ -170,7 +251,7 @@ impl Scene {
                 self.movement_solid(world, idx)
                     && self
                         .face_hit(world, idx, head_ray, now, true)
-                        .is_some_and(|hit| hit.t < height + 0.1)
+                        .is_some_and(|hit| hit.t < height + 0.4)
             });
             let occupied = self.gpu.iter().enumerate().any(|(idx, gpu)| {
                 gpu.is_avatar
@@ -1435,6 +1516,104 @@ pub(super) mod tests {
             scene.gpu[idx].faces.push(face);
         }
         (world, scene, front, back)
+    }
+
+    #[test]
+    fn cannonball_checks_the_body_footprint_above_water_and_platform_support() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for (idx, position) in [(front, Vec3::new(0.0, 0.0, 22.0)), (back, Vec3::new(10.0, 0.0, 22.0))] {
+            let object = world.objects.get_mut(idx).unwrap();
+            object.position = position;
+            object.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+            object.update_flags = 0;
+            scene.gpu[idx].center = position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let mut frame = crate::movement::Frame {
+            position: Vec3::new(0.0, 0.0, 26.0),
+            velocity: Vec3::ZERO,
+            height: 1.7,
+            water: Some(20.0),
+            water_contact: None,
+            ground: Some(16.0),
+            flying: true,
+            can_fly: true,
+            seated: false,
+            suspended: false,
+            locked: false,
+            bridge_ready: true,
+            running: false,
+            obstacle: false,
+            landing: None,
+            on_ground: false,
+            jumping: false,
+        };
+        assert!(!scene.cannonball_clear(&world, &frame), "solid pontoon below flight");
+        frame.position.x = 0.65;
+        assert!(
+            !scene.cannonball_clear(&world, &frame),
+            "body overlaps the deck edge despite a clear centre ray"
+        );
+        frame.position.x = 1.0;
+        assert!(scene.cannonball_clear(&world, &frame), "open water beside the deck");
+        frame.position = Vec3::new(0.0, 0.0, 23.35);
+        assert!(
+            scene.movement_support(&world, frame.position, frame.height),
+            "support independent of native Falling"
+        );
+        assert!(
+            !scene.movement_support(&world, frame.position + Vec3::Z, frame.height),
+            "hovering above a deck is not contact"
+        );
+        world.objects.get_mut(front).unwrap().update_flags = crate::build::edits::FLAGS_PHANTOM;
+        assert!(scene.cannonball_clear(&world, &frame));
+        assert!(!scene.movement_support(&world, frame.position, frame.height));
+        let object = world.objects.get_mut(front).unwrap();
+        object.update_flags = 0;
+        object.position.z = 18.0;
+        scene.gpu[front].center = object.position;
+        scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+        assert!(scene.cannonball_clear(&world, &frame), "a submerged floor must not prevent entry");
+    }
+
+    #[test]
+    fn predicted_water_jump_rejects_a_solid_wall_but_ignores_phantoms() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            let object = world.objects.get_mut(idx).unwrap();
+            object.update_flags = 0;
+            object.scale = Vec3::new(1.0, 6.0, 12.0);
+            scene.gpu[idx].center = object.position;
+            scene.gpu[idx].radius = 8.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let frame = crate::movement::Frame {
+            position: Vec3::new(0.0, 0.0, 50.0),
+            velocity: Vec3::new(4.0, 0.0, 4.5),
+            height: 1.8,
+            water: Some(46.0),
+            water_contact: None,
+            ground: Some(40.0),
+            flying: false,
+            can_fly: true,
+            seated: false,
+            suspended: false,
+            locked: false,
+            bridge_ready: true,
+            running: false,
+            obstacle: false,
+            landing: None,
+            on_ground: true,
+            jumping: true,
+        };
+        let horizontal = frame.velocity.with_z(0.0);
+        let landing = crate::movement::water_jump::predict(&frame, horizontal, |_| Some(40.0)).expect("deep water");
+        assert!(!scene.water_jump_clear(&world, &frame, horizontal, landing));
+        for idx in [front, back] {
+            world.objects.get_mut(idx).unwrap().update_flags = crate::build::edits::FLAGS_PHANTOM;
+        }
+        assert!(scene.water_jump_clear(&world, &frame, horizontal, landing));
     }
 
     #[test]
