@@ -635,16 +635,16 @@ fn item_row(
         let name = worn
             .filter(|_| super::widgets::faux_bold_offset(ui).is_some())
             .map(|_| ui.painter().layout_no_wrap(it.name.clone(), font_id, p.ink));
+        // The same worn tag as Aurora's rows and Appearance, before the rights.
+        let tag = worn.map(|worn| (p, worn, super::widgets::reserve_row_tag(ui, &mut label, worn, p)));
         let permissions = permissions::Permissions::inventory(inv, *id).map(|permissions| permissions.with_next_owner(st.show_next_owner));
         if let Some(permissions) = permissions {
             // Keep each item's rights next to its name: a very long sibling
             // must not push every row's badges outside the horizontal viewport.
-            permissions.append_suffix(&mut label, p);
+            permissions.append_suffix(ui, &mut label, p);
         }
         let r = ui
             .push_id(("inv_item", it.id), |ui| {
-                // The same worn tag as Aurora's rows and Appearance.
-                let tag = worn.map(|worn| (p, worn));
                 super::widgets::inventory_item_label_tagged(ui, label, st.selection.contains(id), egui::Sense::click_and_drag(), name, tag)
             })
             .inner;
@@ -1115,7 +1115,6 @@ fn row_width(
     show_next_owner: bool,
 ) -> f32 {
     let mut label = rules::name(inv, id);
-    let mut tag_width = 0.0;
     if folder {
         label = folder_name(inv, id);
         match inv.folders.get(&id).map(|folder| folder.state) {
@@ -1123,15 +1122,16 @@ fn row_width(
             Some(FetchState::Failed) => label.push_str(aurora_i18n::tr!("ui-inventory-failed")),
             _ => {}
         }
-    } else if let Some(worn) = facts.worn_label(inv, id) {
-        tag_width = super::widgets::row_tag_width(ui, worn) + 4.0;
     }
     let mut label = super::widgets::name_with_suffix(&label, "", egui::FontId::proportional(13.0), p.ink);
+    if !folder && let Some(worn) = facts.worn_label(inv, id) {
+        super::widgets::reserve_row_tag(ui, &mut label, worn, p);
+    }
     if !folder && let Some(permissions) = permissions::Permissions::inventory(inv, id) {
-        permissions.with_next_owner(show_next_owner).append_suffix(&mut label, p);
+        permissions.with_next_owner(show_next_owner).append_suffix(ui, &mut label, p);
     }
     let label_width = ui.fonts_mut(|fonts| fonts.layout_job(label).size().x);
-    depth.min(24) as f32 * ui.spacing().indent + label_width + tag_width + 40.0
+    depth.min(24) as f32 * ui.spacing().indent + label_width + 40.0
 }
 
 fn rename_row(

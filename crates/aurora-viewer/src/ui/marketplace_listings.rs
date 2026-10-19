@@ -537,7 +537,7 @@ impl ListingsUi {
                 let icon = super::inventory::item_icon(it.asset_type, it.inv_type, it.flags);
                 let mut label = tree::name(&it.name, p);
                 if let Some(permissions) = super::inventory::permissions::Permissions::inventory(inv, item) {
-                    permissions.append_suffix(&mut label, p);
+                    permissions.append_suffix(ui, &mut label, p);
                 }
                 let selected = self.selected == Some(item);
                 let response = ui

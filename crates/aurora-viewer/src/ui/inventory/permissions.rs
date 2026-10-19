@@ -2,12 +2,27 @@
 //! inventory and both object-contents windows. The same C/M/T bits drive
 //! Legacy LLItemBridge::getLabelSuffix and LLTaskInvFVBridge::getDisplayName
 //! (indra/newview, originally LGPL 2.1). Aurora also shows granted rights.
+//! Every list draws the letters alike: those of Aurora's inventory rows.
 
 use crate::theme::Palette;
 use crate::world::inventory::{Inventory, actions};
 use aurora_net::build::perm;
-use egui::{FontId, Stroke, TextFormat, text::LayoutJob};
+use egui::{Color32, FontFamily, FontId, Stroke, TextFormat, text::LayoutJob};
 use uuid::Uuid;
+
+/// The size of the letters, as in Aurora's rights column.
+const LETTER_SIZE: f32 = 11.0;
+/// The room between two letters of the inline suffix.
+const LETTER_GAP: f32 = 5.0;
+
+/// The colour of a letter: allowed, refused or unknown (a broken link).
+pub fn letter_ink(p: &Palette, allowed: Option<bool>) -> Color32 {
+    match allowed {
+        Some(true) => p.muted,
+        Some(false) => p.muted_dim.gamma_multiply(0.45),
+        None => p.muted_dim,
+    }
+}
 
 /// Which rights the rows of Aurora's inventory show (its "CMT" menu): yours
 /// by default, the next owner's (what a resident you give the item to gets),
@@ -80,54 +95,38 @@ impl Permissions {
     #[cfg(test)]
     pub fn indicators(self, p: &Palette) -> LayoutJob {
         let mut job = LayoutJob::default();
-        self.append_to(&mut job, p);
+        self.append_to(&mut job, p, &FontFamily::Proportional);
         job
     }
 
-    pub fn append_to(self, job: &mut LayoutJob, p: &Palette) {
-        Self::append_mask(job, p, self.owner);
+    /// The letters of `aurora::rights`, as text: semi-bold, grey when
+    /// allowed, dimmed and struck through when refused, the next owner's
+    /// after an arrow.
+    pub fn append_to(self, job: &mut LayoutJob, p: &Palette, family: &FontFamily) {
+        Self::append_mask(job, p, family, self.owner);
         if self.show_next {
-            job.append(" → ", 0.0, TextFormat::simple(FontId::proportional(12.0), p.violet_light));
-            Self::append_mask(job, p, self.next);
+            job.append("→", LETTER_GAP, TextFormat::simple(FontId::proportional(LETTER_SIZE), p.muted));
+            Self::append_mask(job, p, family, self.next);
         }
     }
 
-    fn append_mask(job: &mut LayoutJob, p: &Palette, mask: Option<u32>) {
-        let font = FontId::proportional(12.0);
-        for (index, (bit, letter)) in [(perm::COPY, "C"), (perm::MODIFY, "M"), (perm::TRANSFER, "T")]
-            .into_iter()
-            .enumerate()
-        {
-            if index != 0 {
-                job.append("·", 0.0, TextFormat::simple(font.clone(), p.muted_dim));
-            }
+    fn append_mask(job: &mut LayoutJob, p: &Palette, family: &FontFamily, mask: Option<u32>) {
+        for (bit, letter) in [(perm::COPY, "C"), (perm::MODIFY, "M"), (perm::TRANSFER, "T")] {
             let allowed = mask.map(|mask| mask & bit != 0);
-            let color = match allowed {
-                Some(true) => p.success,
-                Some(false) => p.danger,
-                None => p.muted,
-            };
-            job.append(
-                letter,
-                0.0,
-                TextFormat {
-                    strikethrough: if allowed == Some(false) {
-                        Stroke::new(1.0, color)
-                    } else {
-                        Stroke::NONE
-                    },
-                    ..TextFormat::simple(font.clone(), color)
-                },
-            );
-            if allowed.is_none() {
-                job.append("?", 0.0, TextFormat::simple(font.clone(), p.muted));
+            let color = letter_ink(p, allowed);
+            let mut format = crate::ui::fonts::semibold_format(family, LETTER_SIZE, color);
+            if allowed == Some(false) {
+                format.strikethrough = Stroke::new(1.0, color);
             }
+            let gap = if job.is_empty() { 0.0 } else { LETTER_GAP };
+            job.append(letter, gap, format);
         }
     }
 
-    pub fn append_suffix(self, job: &mut LayoutJob, p: &Palette) {
+    pub fn append_suffix(self, ui: &egui::Ui, job: &mut LayoutJob, p: &Palette) {
+        let family = crate::ui::fonts::semibold(ui.ctx());
         job.append(" ", 0.0, TextFormat::simple(FontId::proportional(12.0), p.muted));
-        self.append_to(job, p);
+        self.append_to(job, p, &family);
     }
 
     pub fn tooltip(self) -> String {
@@ -167,7 +166,7 @@ impl Permissions {
     /// enlarge the scrollable list rather than the containing window.
     pub fn row(self, ui: &mut egui::Ui, p: &Palette, name: &str, selected: bool) -> egui::Response {
         let mut label = super::super::widgets::name_with_suffix(name, "", FontId::proportional(13.0), p.ink);
-        self.append_suffix(&mut label, p);
+        self.append_suffix(ui, &mut label, p);
         super::super::widgets::inventory_item_label(ui, label, selected, egui::Sense::click_and_drag(), None)
     }
 }
@@ -217,12 +216,12 @@ mod tests {
                 let permissions = Permissions::new(mask(owner), mask(next));
                 let current = permissions.indicators(&p);
                 let both = permissions.with_next_owner(true).indicators(&p);
-                assert_eq!(current.text, "C·M·T");
-                assert_eq!(both.text, "C·M·T → C·M·T");
+                assert_eq!(current.text, "CMT");
+                assert_eq!(both.text, "CMT→CMT");
                 for index in 0..3 {
-                    assert_eq!(&both.sections[index * 2].format, &current.sections[index * 2].format);
-                    let next_section = &both.sections[6 + index * 2].format;
-                    assert_eq!(next_section.color, if next & (1 << index) != 0 { p.success } else { p.danger });
+                    assert_eq!(&both.sections[index].format, &current.sections[index].format);
+                    let next_section = &both.sections[4 + index].format;
+                    assert_eq!(next_section.color, letter_ink(&p, Some(next & (1 << index) != 0)));
                     assert_eq!(next_section.strikethrough == Stroke::NONE, next & (1 << index) != 0);
                 }
                 assert_eq!(
@@ -232,7 +231,7 @@ mod tests {
             }
         }
         let unknown = Permissions::default().with_next_owner(true).indicators(&p);
-        assert_eq!(unknown.text, "C?·M?·T? → C?·M?·T?");
+        assert_eq!(unknown.text, "CMT→CMT");
         assert!(unknown.sections.iter().all(|section| section.format.strikethrough == Stroke::NONE));
     }
 
@@ -242,13 +241,10 @@ mod tests {
         for rights in 0..8 {
             let mask = ((rights & 1) * perm::COPY) | (((rights >> 1) & 1) * perm::MODIFY) | (((rights >> 2) & 1) * perm::TRANSFER);
             let job = Permissions::new(mask, 0).indicators(&p);
-            assert_eq!(job.text, "C·M·T");
+            assert_eq!(job.text, "CMT");
             for (index, bit) in [perm::COPY, perm::MODIFY, perm::TRANSFER].into_iter().enumerate() {
-                assert_eq!(job.sections[index * 2].format.strikethrough == Stroke::NONE, mask & bit != 0);
-                assert_eq!(
-                    job.sections[index * 2].format.color,
-                    if mask & bit != 0 { p.success } else { p.danger }
-                );
+                assert_eq!(job.sections[index].format.strikethrough == Stroke::NONE, mask & bit != 0);
+                assert_eq!(job.sections[index].format.color, letter_ink(&p, Some(mask & bit != 0)));
             }
         }
     }
@@ -283,16 +279,18 @@ mod tests {
         assert_eq!(rights.next, Some(perm::TRANSFER));
         let p = crate::theme::Theme::default().palette();
         let both = rights.with_next_owner(true).indicators(&p);
-        assert_eq!(both.text, "C·M·T → C·M·T");
-        assert_eq!(both.sections[0].format.color, p.success);
-        assert_eq!(both.sections[6].format.color, p.danger);
-        assert_eq!(both.sections[10].format.color, p.success);
+        assert_eq!(both.text, "CMT→CMT");
+        assert_eq!(both.sections[0].format.color, letter_ink(&p, Some(true)));
+        assert_eq!(both.sections[4].format.color, letter_ink(&p, Some(false)));
+        assert_eq!(both.sections[6].format.color, letter_ink(&p, Some(true)));
         inv.items.remove(&original);
         assert!(Permissions::inventory(&inv, link).expect("broken link").owner.is_none());
         inv.items.get_mut(&link).expect("link").asset_id = link;
         let unknown = Permissions::inventory(&inv, link).expect("cyclic link");
-        let job = unknown.indicators(&crate::theme::Theme::default().palette());
-        assert_eq!(job.text, "C?·M?·T?");
+        let p = crate::theme::Theme::default().palette();
+        let job = unknown.indicators(&p);
+        assert_eq!(job.text, "CMT");
+        assert!(job.sections.iter().all(|s| s.format.color == letter_ink(&p, None)));
         assert!(job.sections.iter().all(|s| s.format.strikethrough == Stroke::NONE));
     }
 }

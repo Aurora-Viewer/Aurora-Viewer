@@ -31,9 +31,7 @@ pub fn width(rights: Rights) -> f32 {
 fn ink(p: &Palette, allowed: Option<bool>, selected: bool) -> Color32 {
     match allowed {
         Some(true) if selected => p.violet_pale,
-        Some(true) => p.muted,
-        Some(false) => p.muted_dim.gamma_multiply(0.45),
-        None => p.muted_dim,
+        _ => super::super::permissions::letter_ink(p, allowed),
     }
 }
 

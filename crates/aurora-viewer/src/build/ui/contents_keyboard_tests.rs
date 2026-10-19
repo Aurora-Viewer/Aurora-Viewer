@@ -123,7 +123,7 @@ fn next_owner_display_toggle_adds_rights_without_editing_or_sending_commands() {
     assert!(
         before
             .iter()
-            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("C·M·T") && !text.contains('→'))
+            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("CMT") && !text.contains('→'))
     );
     click_text(
         &mut inspector,
@@ -136,7 +136,7 @@ fn next_owner_display_toggle_adds_rights_without_editing_or_sending_commands() {
     assert!(
         shown
             .iter()
-            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("C·M·T → C·M·T"))
+            .any(|(text, _)| text.starts_with("Entry 000") && text.contains("CMT→CMT"))
     );
     assert!(
         inspector.tool.out.is_empty(),

@@ -2386,6 +2386,18 @@ pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Gall
 }
 
 const ROW_TAG_PAD: f32 = 6.0;
+/// The room on each side of a tag laid in a text (`reserve_row_tag`).
+const ROW_TAG_GAP: f32 = 6.0;
+
+/// Leave room in `job` for a row tag reading `text`, before what is
+/// appended next; returns where the room ends, for
+/// `inventory_item_label_tagged`.
+pub fn reserve_row_tag(ui: &egui::Ui, job: &mut egui::text::LayoutJob, text: &str, p: &Palette) -> usize {
+    let at = job.text.chars().count();
+    let room = ROW_TAG_GAP + row_tag_width(ui, text);
+    job.append(" ", room, egui::TextFormat::simple(egui::FontId::proportional(12.0), p.muted));
+    at
+}
 
 /// The width of a row's tag (`paint_row_tag`).
 pub fn row_tag_width(ui: &egui::Ui, text: &str) -> f32 {
