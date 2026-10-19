@@ -60,7 +60,7 @@ impl Volume {
 
 /// The names of who types in the conversation shown: the resident of an
 /// IM (IM_TYPING_START), the avatars in chat range in the nearby chat
-/// (their typing animation). A group's session carries no typing.
+/// (their typing notices or animation). A group's session carries no typing.
 fn typing_names(world: &World, st: &ChatUi) -> Vec<String> {
     match st.selected {
         None => st.nearby_typing_names(world),

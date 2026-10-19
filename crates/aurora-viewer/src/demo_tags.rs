@@ -337,6 +337,8 @@ pub fn events() -> Vec<NetEvent> {
 
 /// The animations that carry the states (away, do not disturb, typing),
 /// sent when the set of states changes; `shown` remembers the last one.
+/// Iris types without the typing animation (a viewer with PlayTypingAnim
+/// off): only her typing notices say so.
 pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
     use crate::world::radar::ANIM_AGENT_TYPE;
     use crate::world::status::{ANIM_AWAY, ANIM_DO_NOT_DISTURB};
@@ -358,13 +360,7 @@ pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
             (SOL, &[]),
         ]
     } else {
-        [
-            (NOVA, &[]),
-            (TESS, &[]),
-            (LUNE, &[ANIM_AGENT_TYPE]),
-            (IRIS, &[ANIM_AGENT_TYPE]),
-            (SOL, &[]),
-        ]
+        [(NOVA, &[]), (TESS, &[]), (LUNE, &[ANIM_AGENT_TYPE]), (IRIS, &[]), (SOL, &[])]
     };
     states
         .into_iter()
@@ -373,6 +369,10 @@ pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
             anims: std::iter::once(IDLE_ANIM).chain(playing.iter().copied()).map(|a| (a, 1)).collect(),
             sources: Vec::new(),
         })
+        .chain(std::iter::once(NetEvent::NearbyTyping {
+            avatar: IRIS,
+            typing: !status,
+        }))
         .collect()
 }
 

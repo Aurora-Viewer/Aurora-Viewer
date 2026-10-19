@@ -3719,10 +3719,20 @@ impl Session<'_> {
         } else if id == ChatFromSimulator::ID {
             let m: ChatFromSimulator = pkt.decode()?;
             let c = &m.chat_data;
-            // typing start/stop are no lines (others' typing is their
-            // animation, seen by the radar)
+            // typing start/stop are no lines: the typing state of the
+            // avatar (name tag, radar, nearby chat), as LLVOAvatar::mTyping
             // CHAT_AUDIBLE_FULLY == 1 (faint = 0, inaudible = -1 → 255)
-            let notice = matches!(ChatType::from_u8(c.chat_type), ChatType::StartTyping | ChatType::StopTyping);
+            let chat_type = ChatType::from_u8(c.chat_type);
+            let notice = matches!(chat_type, ChatType::StartTyping | ChatType::StopTyping);
+            if notice && c.audible == 1 && c.source_type == 1 {
+                emit(
+                    self.sh,
+                    NetEvent::NearbyTyping {
+                        avatar: c.source_id,
+                        typing: chat_type == ChatType::StartTyping,
+                    },
+                );
+            }
             if !notice && c.audible == 1 {
                 emit(
                     self.sh,

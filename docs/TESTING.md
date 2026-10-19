@@ -3238,8 +3238,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   held from our arrival on (`nearby chat: typing started` in the log). The
   demo plays its own stand-in for the typing animation (a grid asset it
   cannot download): forearms forward at the waist, wrists tapping in turn;
-  it also plays on the crowd's typing avatars (`AURORA_DEMO_TAGS=1`, Lune
-  and Iris). Our plate shows the typing dots beside its microphone
+  it also plays on the crowd's typing avatar (`AURORA_DEMO_TAGS=1`, Lune;
+  Iris types without it). Our plate shows the typing dots beside its microphone
   (Preferences › Chat › "Show typing in name tags"); seen from behind, the
   forearms are hidden in front of the body. Typing by hand in the chat bar
   does the same, and stops when the line is sent, the field emptied or left,
@@ -4505,7 +4505,8 @@ What the inventory must show with these scenarios:
     is typing (three animated dots) and has no display name (two lines); La
     Brume is blocked (dimmed plate, name in italics, forbidden badge, no
     status dot). Farther away, Sol is speaking (a tighter ring) and Iris is
-    typing; beyond, Vega is in the channel and Atlas is not (the far pill
+    typing, without the typing animation (only her typing notices, as a
+    viewer with the animation off); beyond, Vega is in the channel and Atlas is not (the far pill
     has no badge).
   - `status`: Nova away (amber dot), Tess do not disturb (red dot), Orion
     out of the channel (green heart and triangle), Lune typing

@@ -543,6 +543,14 @@ pub enum NetEvent {
         grid: Box<crate::terrain::WindGrid>,
     },
     Chat(ChatMessage),
+    /// An avatar in earshot starts or stops typing in the nearby chat: the
+    /// empty START_TYPING / STOP_TYPING lines its viewer sends
+    /// (process_chat_from_simulator → LLVOAvatar::startTyping / stopTyping),
+    /// whether or not it plays the typing animation.
+    NearbyTyping {
+        avatar: Uuid,
+        typing: bool,
+    },
     InstantMessage(InstantMessage),
     Appearance(AvatarAppearance),
     Sun(SunInfo),
