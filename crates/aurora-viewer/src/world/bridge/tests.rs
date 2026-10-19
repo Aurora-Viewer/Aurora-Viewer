@@ -465,8 +465,9 @@ fn failed_read_queries_rediscover_quietly_without_resetting_physics_or_pending_m
     let capture = sim.bridge.capture_sent;
     let copies = sim.copies;
     let attaches = sim.attaches;
-    sim.bridge.refresh_queries(&sim.world, sim.now);
-    sim.bridge.refresh_queries(&sim.world, sim.now + Duration::from_secs(1));
+    let timeout = aurora_i18n::tr!("bridge-request-timeout");
+    sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
+    sim.bridge.query_reply(&sim.world, Some(timeout), sim.now + Duration::from_secs(1));
     assert_eq!(
         sim.bridge.commands.len(),
         1,
@@ -489,6 +490,98 @@ fn failed_read_queries_rediscover_quietly_without_resetting_physics_or_pending_m
     assert_eq!(sim.bridge.motion, motion);
     assert_eq!(sim.bridge.capture_sent, capture);
     assert_eq!((sim.copies, sim.attaches), (copies, attaches));
+}
+
+/// Run the simulator for `seconds`, with the ready bridge's requests failing
+/// as the demo's halted script makes them fail.
+fn silent_for(sim: &mut Simulator, seconds: u64) {
+    for _ in 0..seconds * 4 {
+        sim.step();
+    }
+}
+
+#[test]
+fn a_halted_script_is_detected_and_reinstalled_without_disabling_movelock() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let uploads = sim.uploads;
+    sim.demo.halt = true;
+    sim.bridge.motion = Motion::motor(1, 2.0, 1.7);
+    // Timeouts alone must not rebuild the bridge before the simulator says
+    // the script stopped: a slow region is not a run-time error.
+    silent_for(&mut sim, 8);
+    assert_eq!(sim.uploads, uploads);
+    assert!(sim.bridge.silent_since.is_some());
+    silent_for(&mut sim, 4);
+    assert_eq!(sim.bridge.reinstalls.len(), 1, "a stopped script is found within the check delay");
+    assert!(sim.prefs.enabled);
+    sim.bridge.motion = Motion::default();
+    sim.ready();
+    assert_eq!(sim.uploads, uploads + 1, "the halted script is recompiled");
+    assert!(sim.bridge.available() && sim.bridge.silent_since.is_none());
+    assert!(sim.world.chat.iter().any(|line| line.text == aurora_i18n::tr!("bridge-reinstalling")));
+}
+
+#[test]
+fn http_replies_prove_the_script_alive_and_a_silent_running_script_is_reinstalled_late() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let uploads = sim.uploads;
+    let timeout = aurora_i18n::tr!("bridge-request-timeout");
+    sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
+    assert!(sim.bridge.silent_since.is_some());
+    // A 404 for a vanished object comes from the script itself.
+    sim.bridge.query_reply(&sim.world, Some(aurora_i18n::tr!("bridge-script-info-missing")), sim.now);
+    assert!(sim.bridge.silent_since.is_none());
+    sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
+    sim.bridge.query_reply(&sim.world, None, sim.now);
+    assert!(sim.bridge.silent_since.is_none());
+    // The script still reports running but nothing answers for 90 s.
+    sim.bridge.silent_since = Some(sim.now);
+    sim.now += SILENCE_LIMIT;
+    sim.bridge.commands.clear();
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(sim.bridge.reinstalls.len(), 1);
+    assert_eq!(sim.bridge.phase, Phase::Inventory);
+    sim.ready();
+    assert_eq!(sim.uploads, uploads + 1);
+}
+
+#[test]
+fn automatic_reinstalls_are_bounded_and_leave_repair_to_the_user() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    for _ in 0..REINSTALL_LIMIT {
+        sim.bridge.reinstalls.push(sim.now);
+    }
+    sim.bridge.silent_since = Some(sim.now);
+    sim.now += SILENCE_LIMIT;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(sim.bridge.phase, Phase::Failed);
+    assert_eq!(sim.bridge.error.as_deref(), Some(aurora_i18n::tr!("bridge-stopped")));
+    assert!(sim.prefs.enabled);
+    // Older reinstalls leave the window: a later stop is repaired again.
+    sim.bridge.retry(sim.now);
+    sim.ready();
+    sim.bridge.silent_since = Some(sim.now);
+    sim.now += REINSTALL_WINDOW;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(sim.bridge.phase, Phase::Inventory);
+    assert_eq!(sim.bridge.reinstalls.len(), 1);
+}
+
+#[test]
+fn script_memory_low_marks_are_recorded_per_installed_script() {
+    let mut bridge = Bridge::default();
+    for (free, low) in [(20_000, 20_000), (19_500, 20_000), (18_900, 18_900), (30_000, 18_900)] {
+        bridge.acknowledge(Ack {
+            free_memory: Some(free),
+            ..Ack::default()
+        });
+        assert_eq!(bridge.memory_low, Some(low));
+    }
+    bridge.enter(Phase::Upload, Instant::now());
+    assert_eq!(bridge.memory_low, None);
 }
 
 #[test]

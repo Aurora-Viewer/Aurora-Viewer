@@ -65,7 +65,7 @@ fn radar_batches_throttles_refreshes_and_expires_without_fabricating_an_altitude
     let _ = s.reply(request, Ok(Reply::Altitudes(vec![])), now);
     assert!(s.radar(&mut crowd, true, Some(&endpoint), now).is_none());
     assert!(s.radar(&mut crowd, true, Some(&endpoint), now + Duration::from_secs(1)).is_some());
-    assert_eq!(s.attempts.len(), 64);
+    assert_eq!(s.attempts.len(), 2 * MAX_AVATARS);
     let (mut s, endpoint, now) = setup();
     let request = command_request(s.radar(&mut [sighting()], true, Some(&endpoint), now));
     let _ = s.reply(request, Ok(Reply::Altitudes(vec![Altitude { avatar: id(1), z: 2048.0 }])), now);
@@ -82,7 +82,7 @@ fn large_crowds_service_unqueried_avatars_before_refreshing_earlier_batches() {
     let (mut s, endpoint, now) = setup();
     let mut crowd: Vec<_> = (1..=320).map(|n| Sighting { id: id(n), ..sighting() }).collect();
     let mut queried = HashSet::new();
-    for second in 0..10 {
+    for second in 0..(crowd.len() / MAX_AVATARS) as u64 {
         let at = now + Duration::from_secs(second);
         let request = command_request(s.radar(&mut crowd, true, Some(&endpoint), at));
         queried.extend(s.radar.as_ref().expect("pending batch").avatars.keys().copied());

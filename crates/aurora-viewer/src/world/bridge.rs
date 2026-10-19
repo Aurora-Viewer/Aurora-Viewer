@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.27";
+const VERSION: &str = "1.28";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -29,6 +29,14 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 // FSLSLBridge::processDetach and FSLSLBridgeReAttachTimer wait five seconds
 // after detachment. An inventory asset UUID change is not a save receipt.
 const STORE_DELAY: Duration = Duration::from_secs(5);
+// A script halted by a run-time error (Stack-Heap Collision) keeps its worn
+// object and URL, but nothing answers. After this much silence ask whether
+// it still runs; past the limit, reinstall it even if it claims to.
+const SILENCE_CHECK: Duration = Duration::from_secs(10);
+const SILENCE_LIMIT: Duration = Duration::from_secs(90);
+// Automatic reinstalls are bounded; Repair stays available after that.
+const REINSTALL_WINDOW: Duration = Duration::from_secs(600);
+const REINSTALL_LIMIT: usize = 3;
 pub mod demo;
 #[cfg(test)]
 mod tests;
@@ -139,6 +147,10 @@ pub struct Bridge {
     firestorm_poll: Option<Instant>,
     firestorm_detached: HashSet<Uuid>,
     ack: Ack,
+    silent_since: Option<Instant>,
+    running_check: Option<Instant>,
+    reinstalls: Vec<Instant>,
+    memory_low: Option<u32>,
     pub error: Option<String>,
     pub commands: Vec<NetCommand>,
 }
@@ -170,10 +182,61 @@ impl Bridge {
     }
     /// A failed read can reveal a replaced HTTP-in URL while movement is idle.
     /// Rediscovery is throttled and must not reset the motor or its pending ack.
-    pub fn refresh_queries(&mut self, world: &World, now: Instant) {
+    /// Any HTTP reply proves the script alive; no reply feeds the watchdog.
+    pub fn query_reply(&mut self, world: &World, error: Option<&str>, now: Instant) {
+        let Some(error) = error else {
+            self.silent_since = None;
+            return;
+        };
         if self.available() {
+            self.heard(Some(error), now);
             self.discover(world, now);
         }
+    }
+    fn heard(&mut self, error: Option<&str>, now: Instant) {
+        if error.is_some_and(aurora_net::bridge::unreachable) {
+            self.silent_since.get_or_insert(now);
+        } else {
+            self.silent_since = None;
+        }
+    }
+    /// Ask the simulator whether a silent bridge still runs (see SILENCE_CHECK).
+    /// Return true when the bridge was handed to reinstallation.
+    fn watch_silence(&mut self, world: &mut World, now: Instant) -> bool {
+        let Some(since) = self.silent_since else { return false };
+        let silent = now.duration_since(since);
+        if silent >= SILENCE_LIMIT {
+            log::warn!("Aurora bridge: no reply for {} s", silent.as_secs());
+            self.reinstall(world, now);
+            return true;
+        }
+        if silent >= SILENCE_CHECK
+            && !self.script.is_nil()
+            && self.running_check.is_none_or(|at| now.duration_since(at) >= STORE_DELAY)
+            && let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i))
+        {
+            self.running_check = Some(now);
+            self.commands.push(NetCommand::Build(BuildCmd::GetScriptRunning {
+                handle: object.key.region,
+                object_id: self.object,
+                item_id: self.script,
+            }));
+        }
+        false
+    }
+    /// Recompile and restart the worn bridge through the Repair path: the
+    /// upload resets the halted script, then it is saved by detach/reattach.
+    fn reinstall(&mut self, world: &mut World, now: Instant) {
+        self.reinstalls.retain(|at| now.duration_since(*at) < REINSTALL_WINDOW);
+        self.silent_since = None;
+        if self.reinstalls.len() >= REINSTALL_LIMIT {
+            self.fail(aurora_i18n::tr!("bridge-stopped").into());
+            return;
+        }
+        log::warn!("Aurora bridge: reinstalling a bridge that stopped responding");
+        self.reinstalls.push(now);
+        world.system_message(aurora_i18n::tr!("bridge-reinstalling"));
+        self.retry(now);
     }
     pub fn diagnostic(&self) -> Option<&str> {
         self.error.as_deref().or_else(|| self.progress())
@@ -196,6 +259,14 @@ impl Bridge {
                 .is_some_and(|report| report.action == previous.action && !report.finished())
         {
             ack.passage = Some(previous);
+        }
+        // Mono's 64 KB includes the compiled script: record each new low
+        // margin, so a grid log shows how close the bridge came to a collision.
+        if let Some(free) = ack.free_memory
+            && self.memory_low.is_none_or(|low| free + 1024 <= low)
+        {
+            log::info!("Aurora bridge: script memory low mark {free} bytes free");
+            self.memory_low = Some(free);
         }
         self.ack = ack;
     }
@@ -241,7 +312,11 @@ impl Bridge {
         self.poll = None;
         self.checked_script = None;
         self.restarted = false;
+        self.silent_since = None;
+        self.running_check = None;
         if phase == Phase::Upload {
+            // A recompiled script starts with all of its memory again.
+            self.memory_low = None;
             self.boot = None;
             self.rejection = None;
         }
@@ -559,7 +634,9 @@ impl Bridge {
                 if self.error.is_some() {
                     self.discover(world, now);
                 }
-                self.send_mode(prefs, now);
+                if !self.watch_silence(world, now) {
+                    self.send_mode(prefs, now);
+                }
             }
             return;
         }
@@ -1089,11 +1166,27 @@ impl Bridge {
                 }
                 true
             }
+            NetEvent::ScriptRunning {
+                object_id,
+                item_id,
+                running: false,
+                ..
+            } if *object_id == self.object
+                && *item_id == self.script
+                && self.phase == Phase::Ready
+                && self.silent_since.is_some() =>
+            {
+                // A run-time error halts the script; only a recompile resets it.
+                log::warn!("Aurora bridge: the script is not running");
+                self.reinstall(world, now);
+                true
+            }
             NetEvent::BridgeReply { request, result } => {
                 if let Some((pending, sequence, mode)) = self.pending
                     && *request == pending
                 {
                     self.pending = None;
+                    self.heard(result.as_ref().err().map(String::as_str), now);
                     match result {
                         Ok(ack) if ack.sequence == sequence && ack.enabled == mode.0 => {
                             self.acknowledge(*ack);

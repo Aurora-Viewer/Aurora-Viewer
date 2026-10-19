@@ -1,7 +1,9 @@
-// Aurora LSL Bridge v1.27. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.28. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
+// Mono's 64 KB holds this compiled controller too: request handlers must not
+// duplicate their input into lists (Stack-Heap Collision halts the script).
 string FOLDER = "__FOLDER__";
-string VERSION = "1.27";
+string VERSION = "1.28";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -555,9 +557,11 @@ string status() {
         + "|" + (string)llRound(gRunPower * 1000.0) + "|" + (string)llRound(gRunSpeed * 100.0)
         + "|" + (string)gRunRestarts
         + "|" + (string)gPassAction + "|" + (string)gPassState + "|" + (string)gPassProgress
-        // Last field retains the v1.15 impulse counter slot; no impulses in
+        // Field 19 retains the v1.15 impulse counter slot; no impulses in
         // the remote-anchor motor. Keep the bounded status wire-compatible.
-        + "|" + (string)gPassRemaining + "|" + (string)gPassSpeed + "|0";
+        + "|" + (string)gPassRemaining + "|" + (string)gPassSpeed + "|0"
+        // Mono's lowest free memory since start: the viewer logs the margin.
+        + "|" + (string)llGetFreeMemory();
 }
 report() { llOwnerSay("<auroraMoveLock>" + status() + "</auroraMoveLock>"); }
 setLock(integer yes) {
@@ -638,23 +642,29 @@ initialize() {
 // is shared with control requests, but these never touch motor state or timers.
 query(key request, string kind, string targets) {
     if (kind == "altitudes") {
-        list ids = llParseStringKeepNulls(targets, [","], []);
-        integer count = llGetListLength(ids);
-        if (count < 1 || count > 32) { llHTTPResponse(request, 400, "invalid"); return; }
-        list output;
+        // Comma-separated 36-character keys, read in place. A list of keys
+        // plus a list of results and its JSON copy cost several kilobytes.
+        integer length = llStringLength(targets);
+        integer count = (length + 1) / 37;
+        if (count < 1 || count > 16 || length != count * 37 - 1) { llHTTPResponse(request, 400, "invalid"); return; }
+        string output;
         integer i;
         for (i = 0; i < count; ++i) {
-            key avatar = llList2Key(ids, i);
-            if (avatar == NULL_KEY) { llHTTPResponse(request, 400, "invalid"); return; }
-            list details = llGetObjectDetails(avatar, [OBJECT_POS]);
-            // Adjacent avatars can be found within the simulator's documented
-            // neighbouring zone. Empty results remain unknown, never zero.
-            if (llGetListLength(details) == 1) {
-                vector position = llList2Vector(details, 0);
-                output += [(string)avatar, position.z];
-            }
+            integer at = i * 37;
+            if (i && llGetSubString(targets, at - 1, at - 1) != ",") { llHTTPResponse(request, 400, "invalid"); return; }
+            key avatar = llGetSubString(targets, at, at + 35);
+            // A key is true only when it is a valid, non-null UUID.
+            if (avatar) {
+                list details = llGetObjectDetails(avatar, [OBJECT_POS]);
+                // Adjacent avatars can be found within the simulator's documented
+                // neighbouring zone. Empty results remain unknown, never zero.
+                if (llGetListLength(details) == 1) {
+                    vector position = llList2Vector(details, 0);
+                    output += ",\"" + (string)avatar + "\"," + (string)position.z;
+                }
+            } else { llHTTPResponse(request, 400, "invalid"); return; }
         }
-        llHTTPResponse(request, 200, llList2Json(JSON_ARRAY, output));
+        llHTTPResponse(request, 200, "[" + llDeleteSubString(output, 0, 0) + "]");
     } else if (kind == "scripts" || kind == "object") {
         key object = (key)targets;
         if (object == NULL_KEY) { llHTTPResponse(request, 400, "invalid"); return; }
@@ -666,15 +676,19 @@ query(key request, string kind, string targets) {
             OBJECT_CREATOR, OBJECT_OWNER, OBJECT_LAST_OWNER_ID, OBJECT_REZZER_KEY, OBJECT_GROUP,
             OBJECT_CREATION_TIME, OBJECT_REZ_TIME, OBJECT_PATHFINDING_TYPE, OBJECT_ATTACHED_POINT, OBJECT_TEMP_ATTACHED];
         list details = llGetObjectDetails(object, fields);
-        if (llGetListLength(details) != llGetListLength(fields)) { llHTTPResponse(request, 404, "unavailable"); return; }
+        integer expected = llGetListLength(fields);
+        fields = [];
+        if (llGetListLength(details) != expected) { llHTTPResponse(request, 404, "unavailable"); return; }
         // Match the reference's base64 name field: numeric/JSON-shaped names
         // must remain text rather than llList2Json's embedded JSON values.
-        details = llListReplaceList(details, [llStringToBase64(llList2String(details, 0))], 0, 0);
+        details = [(string)object, llStringToBase64(llList2String(details, 0))] + llDeleteSubList(details, 0, 0);
         if (extended) {
-            details = llListReplaceList(details, [llStringToBase64(llList2String(details, 6))], 6, 6);
-            details += [llGetPos(), RAD_TO_DEG * llRot2Euler(llList2Rot(details, 13))];
+            details = llListReplaceList(details, [llStringToBase64(llList2String(details, 7))], 7, 7)
+                + [llGetPos(), RAD_TO_DEG * llRot2Euler(llList2Rot(details, 14))];
         }
-        llHTTPResponse(request, 200, llList2Json(JSON_ARRAY, [(string)object] + details));
+        string reply = llList2Json(JSON_ARRAY, details);
+        details = [];
+        llHTTPResponse(request, 200, reply);
     } else llHTTPResponse(request, 400, "invalid");
 }
 
@@ -788,15 +802,21 @@ default {
         } else if (method == "POST") {
             // llGetHTTPHeader cannot read custom headers: authenticate the
             // bounded POST body instead (wiki.secondlife.com/wiki/LlGetHTTPHeader).
-            list parts = llParseStringKeepNulls(body, ["|"], []);
-            if (llList2String(parts, 0) == "query") {
-                if (llStringLength(body) > 1536 || llGetListLength(parts) != 4
-                    || llList2String(parts, 1) != (string)gToken) {
+            // A query carries up to 16 keys: read its fields in place rather
+            // than splitting the whole body into a list of copies.
+            if (llGetSubString(body, 0, 5) == "query|") {
+                if (llStringLength(body) > 768 || llGetSubString(body, 6, 42) != (string)gToken + "|") {
                     llHTTPResponse(request, 403, "denied"); return;
                 }
-                query(request, llList2String(parts, 2), llList2String(parts, 3));
+                body = llDeleteSubString(body, 0, 42);
+                integer split = llSubStringIndex(body, "|");
+                string targets = llDeleteSubString(body, 0, split);
+                body = llGetSubString(body, 0, split - 1);
+                if (split < 1 || llSubStringIndex(targets, "|") != -1) { llHTTPResponse(request, 400, "invalid"); return; }
+                query(request, body, targets);
                 return;
             }
+            list parts = llParseStringKeepNulls(body, ["|"], []);
             if (llStringLength(body) > 256 || llGetListLength(parts) != 10 || llList2String(parts, 1) != (string)gToken) {
                 llHTTPResponse(request, 403, "denied"); return;
             }

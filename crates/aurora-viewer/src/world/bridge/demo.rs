@@ -29,6 +29,10 @@ pub struct Demo {
     pub installed: bool,
     pub startup_stalled: bool,
     pub invalid_endpoint: bool,
+    /// Halt the ready script once, as a Stack-Heap Collision does: its URL
+    /// stays known but every request times out until a recompile.
+    pub halt: bool,
+    halted: bool,
 }
 
 pub fn seed(world: &mut World) {
@@ -61,6 +65,24 @@ impl Demo {
         failed: bool,
     ) -> Option<Vec<NetEvent>> {
         match command {
+            NetCommand::Bridge { request, .. } | NetCommand::BridgeQuery { request, .. }
+                if (self.halt && !self.halted && bridge.ready()) || (self.halted && !self.installed) =>
+            {
+                self.halted = true;
+                self.installed = false;
+                let error = aurora_i18n::tr!("bridge-request-timeout").to_owned();
+                Some(vec![if matches!(command, NetCommand::Bridge { .. }) {
+                    NetEvent::BridgeReply {
+                        request: *request,
+                        result: Err(error),
+                    }
+                } else {
+                    NetEvent::BridgeQueryReply {
+                        request: *request,
+                        result: Err(error),
+                    }
+                }])
+            }
             NetCommand::BridgeQuery { request, query, .. } => {
                 use aurora_net::bridge::query::{Altitude, ObjectInfo, Query, Reply, ScriptInfo};
                 let scripts = |object| ScriptInfo {
@@ -262,6 +284,7 @@ impl Demo {
                     moving,
                     seated,
                     passage: None,
+                    free_memory: None,
                     // Synthetic protocol state only; demo does not run Havok.
                     motor: Some(aurora_net::bridge::MotorReport {
                         mode: command.motion.mode,
