@@ -83,6 +83,16 @@ pub(super) fn ray_may_hit(g: &super::ObjGpu, ray: (Vec3, Vec3)) -> bool {
     to.length_squared() - along * along <= r * r
 }
 
+/// A mesh without a skin worn by an avatar. It is placed by its attachment
+/// point like a worn prim, but the GPU draws its faces at a newer pose: the
+/// CPU only answers for the faces the GPU does not draw, those at alpha 0
+/// (#416, #419). These are the invisible clickers worn on an avatar, which
+/// the Legacy Viewer picks when they have a touch script or a click action
+/// (LLVOVolume::lineSegmentIntersect, specialHoverCursor) (#488).
+fn worn_unrigged_mesh(o: &Object, g: &super::ObjGpu) -> bool {
+    !g.rigged && !g.is_avatar && g.owner_avatar.is_some() && o.visual_volume().is_mesh()
+}
+
 pub fn ray_box(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
     let mut near = 0.0f32;
     let mut far = f32::INFINITY;
@@ -371,7 +381,7 @@ impl Scene {
                 if g.hud
                     || g.is_avatar
                     || g.rigged
-                    || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                    || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !worn_unrigged_mesh(o, g))
                     || (!select_probes && o.extra.reflection_probe.is_some())
                     || (!build && o.click_action == crate::interaction::code::IGNORE)
                     || !ray_may_hit(g, ray)
@@ -586,9 +596,14 @@ impl Scene {
     ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
-        // The CPU triangles are in the bind pose. They must never divert a
-        // touch from the surface actually drawn by the GPU (#416, #419).
-        if !g.hud && (g.rigged || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())) {
+        // The CPU triangles of a rigged mesh are in the bind pose. They must
+        // never divert a touch from the surface actually drawn by the GPU
+        // (#416, #419).
+        if !g.hud && g.rigged {
+            return None;
+        }
+        let only_hidden = !g.hud && worn_unrigged_mesh(o, g);
+        if only_hidden && !include_hidden {
             return None;
         }
         let geom = self.geom_ready(&g.geom?)?;
@@ -613,7 +628,11 @@ impl Scene {
             if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
                 return None;
             }
-            if !include_hidden && super::plants::plant_face(o).is_none() && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
+            let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
+            if only_hidden && !hidden {
+                return None;
+            }
+            if !include_hidden && super::plants::plant_face(o).is_none() && hidden {
                 return None;
             }
             let f = f.as_ref()?;
@@ -769,7 +788,11 @@ impl Scene {
     ) -> Option<f32> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
-        if g.rigged || (g.owner_avatar.is_some() && o.visual_volume().is_mesh()) {
+        if g.rigged {
+            return None;
+        }
+        let only_hidden = worn_unrigged_mesh(o, g);
+        if only_hidden && !include_hidden {
             return None;
         }
         let key = g.geom?;
@@ -789,7 +812,11 @@ impl Scene {
             if mode == FacePick::Blend && !self.blend_face(world, o, g, face) {
                 continue;
             }
-            if !include_hidden && super::plants::plant_face(o).is_none() && o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004) {
+            let hidden = o.te.as_ref().is_some_and(|te| te.face(face).color[3] < 0.004);
+            if only_hidden && !hidden {
+                continue;
+            }
+            if !include_hidden && super::plants::plant_face(o).is_none() && hidden {
                 continue;
             }
             let Some(f) = f else { continue };
@@ -1139,7 +1166,10 @@ impl Scene {
             if g.hud || g.is_avatar || o.click_action == crate::interaction::code::IGNORE || !ray_may_hit(g, ray) {
                 continue;
             }
-            if !self.see_through_face(g, include_hidden && o.click_action != crate::interaction::code::DISABLED)
+            let hidden = include_hidden && o.click_action != crate::interaction::code::DISABLED;
+            // (a face at alpha 0 has no draw record at all, LL's
+            // PASS_ALPHA_INVISIBLE: the object built fewer records than faces)
+            if !(self.see_through_face(g, hidden) || (hidden && g.faces.len() < g.built_faces))
                 || crate::interaction::target(world, idx, &props).is_none()
             {
                 continue;
@@ -1294,7 +1324,9 @@ impl Scene {
             if (g.faces.is_empty() && g.geom.is_none())
                 || g.hud
                 || g.is_avatar
-                || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                // (of a worn mesh, only the invisible faces of one without a
+                // skin: `worn_unrigged_mesh`)
+                || (g.owner_avatar.is_some() && o.visual_volume().is_mesh() && !(include_hidden && worn_unrigged_mesh(o, g)))
                 || o.click_action == crate::interaction::code::IGNORE
             {
                 continue;
@@ -1421,6 +1453,54 @@ pub(super) mod tests {
         });
         world.objects.get_mut(front).unwrap().render.local_volume = Some(Box::new(volume));
         assert!(scene.drawn_status(&world, front).posed_by_gpu);
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_none());
+    }
+
+    #[test]
+    fn invisible_worn_mesh_without_a_skin_takes_the_touch() {
+        // #488: a clicker worn by another avatar, a mesh without a skin
+        // whose faces are all at alpha 0. The GPU never draws it.
+        let (mut world, mut scene, front, _) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let behind = Vec3::new(6.5, 0.0, 50.0);
+        let o = world.objects.get_mut(front).unwrap();
+        o.update_flags = 1 << 7;
+        o.click_action = crate::interaction::code::TOUCH;
+        let mut volume = o.volume;
+        volume.sculpt = Some(aurora_prim::params::SculptParams {
+            texture: Uuid::from_u128(0x488),
+            sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+        });
+        o.render.local_volume = Some(Box::new(volume));
+        scene.gpu[front].owner_avatar = world.objects.avatars().next().map(|(idx, _)| idx);
+        scene.gpu[front].built_faces = scene.gpu[front].faces.len();
+        // Visible, its surface is the GPU's alone.
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_none());
+        // Invisible: no draw record, the CPU answers for its faces.
+        for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
+            f.color[3] = 0.0;
+        }
+        scene.gpu[front].faces.clear();
+        assert!(scene.face_hit(&world, front, ray, Instant::now(), false).is_none());
+        assert_eq!(scene.action_point(&world, Some(ray), Some(behind), false, 100.0), Some(front_point));
+        assert_eq!(scene.interaction_at_ray(&world, front_point, ray, true), Some(front));
+        // The right-click menu reaches it too (pick_transparent).
+        scene.gpu[front].center = Vec3::new(2.0, 0.0, 50.0);
+        scene.gpu[front].radius = 1.0;
+        scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(behind), false, false, 100.0),
+            (Some(front_point), Some(front))
+        );
+        // Hover does not see it, and with nothing to do it stops nothing.
+        assert_eq!(scene.interaction_point(&world, Some(ray), Some(behind), false, 100.0), Some(behind));
+        let o = world.objects.get_mut(front).unwrap();
+        o.update_flags = 0;
+        o.click_action = crate::interaction::code::NONE;
+        assert_eq!(scene.action_point(&world, Some(ray), Some(behind), false, 100.0), Some(behind));
+        // A rigged mesh stays out of the CPU's reach (bind pose).
+        scene.gpu[front].rigged = true;
         assert!(scene.face_hit(&world, front, ray, Instant::now(), true).is_none());
     }
 

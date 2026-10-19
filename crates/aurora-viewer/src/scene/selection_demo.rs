@@ -26,6 +26,20 @@ impl Scene {
         }
     }
 
+    /// AURORA_DEMO_WORLD_CLICKS=worn-other-mesh: a cube mesh without a skin,
+    /// placed by the attachment point it is worn on.
+    pub fn install_demo_unrigged_cube(&mut self, renderer: &mut Renderer) {
+        let id = crate::demo::WORN_UNRIGGED_MESH;
+        self.meshes.insert_demo_static(id);
+        let cube = aurora_prim::generate_volume(&aurora_prim::VolumeParams::default(), 1.0);
+        for lod in 0..4 {
+            let (faces, min, max) = jobs::volume_to_faces(&cube);
+            let key = GeomKey::Mesh { id, lod };
+            self.upload_geom(renderer, key, jobs::PreparedGeom::new(faces, min, max, true, None));
+            self.geom_ref(key);
+        }
+    }
+
     pub fn install_demo_selection_mesh(&mut self, renderer: &mut Renderer) {
         let id = crate::demo::FACE_SELECTION_MESH;
         self.meshes.insert_demo_static(id);

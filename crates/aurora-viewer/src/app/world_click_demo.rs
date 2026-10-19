@@ -67,7 +67,7 @@ impl App {
                     _ => 971,
                 };
                 self.world.objects.index_of_uuid(&crate::demo::action_id(local)).and_then(|idx| {
-                    let pos = if ["worn-mesh", "worn-own", "worn-other", "worn-other-covered", "worn-other-under"].contains(&mode) {
+                    let pos = if matches!(mode, "worn-mesh" | "worn-own") || (mode.starts_with("worn-other") && mode != "worn-other-link") {
                         // A known point of the synthetic chest mesh, outside
                         // the classic body's silhouette. Its bounds' centre
                         // is inside the wearer and correctly hits the body.
@@ -128,7 +128,18 @@ impl App {
         if mode.starts_with("worn-") {
             // `worn-own`: the prim is ours (issue #488)
             let own = mode == "worn-own";
-            let covered = mode == "worn-other-covered" || mode == "worn-other-under";
+            let covered = matches!(
+                mode,
+                "worn-other-covered" | "worn-other-under" | "worn-other-hidden-under" | "worn-other-hidden-mesh-under"
+            );
+            // `worn-other-hidden*`: every face of the scripted attachment at
+            // alpha 0, the invisible clickers of a headpat or a slapper
+            let hidden = mode.starts_with("worn-other-hidden");
+            let unrigged_mesh = matches!(mode, "worn-other-mesh" | "worn-other-hidden-mesh" | "worn-other-hidden-mesh-under");
+            if unrigged_mesh && let Some(g) = self.gfx.as_mut() {
+                // a mesh without a skin, placed by its attachment point
+                self.scene.install_demo_unrigged_cube(&mut g.renderer);
+            }
             let Some((wearer_idx, wearer, owner)) = self
                 .world
                 .objects
@@ -178,6 +189,19 @@ impl App {
                             o.position = OWN_PRIM;
                             o.scale = Vec3::splat(if covered { 0.25 } else { 0.6 });
                         }
+                        if hidden && let Some(te) = o.texture_entry.as_mut() {
+                            for f in &mut std::sync::Arc::make_mut(te).faces {
+                                f.color[3] = 0.0;
+                            }
+                        }
+                        if unrigged_mesh {
+                            let mesh = aurora_prim::params::SculptParams {
+                                texture: crate::demo::WORN_UNRIGGED_MESH,
+                                sculpt_type: aurora_prim::params::LL_SCULPT_TYPE_MESH,
+                            };
+                            o.volume.sculpt = Some(mesh);
+                            o.extra.sculpt = Some(mesh);
+                        }
                     }
                     if mode == "worn-other-link"
                         && let Some(mut child) = objects.first().cloned()
@@ -205,7 +229,7 @@ impl App {
                         for o in objects.iter_mut() {
                             o.owner_id = owner;
                             o.update_flags = 0;
-                            if mode == "worn-other-under"
+                            if mode != "worn-other-covered"
                                 && let Some(te) = o.texture_entry.as_mut()
                             {
                                 for f in &mut std::sync::Arc::make_mut(te).faces {
