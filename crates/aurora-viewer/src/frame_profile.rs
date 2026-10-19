@@ -718,6 +718,9 @@ pub struct Averages {
     phases: [f32; PHASES],
     /// GPU elements, when the GPU timed them.
     pub gpu: Option<[f32; GPU]>,
+    /// The main thread handing the frame's packet over (inside the
+    /// `render` lap, whose rest waits for the render thread).
+    pub packet_ms: f32,
 }
 
 impl Averages {
@@ -730,6 +733,7 @@ impl Averages {
             parts: p.parts.0.map(|v| v / n),
             phases: p.phases.map(|v| v / n),
             gpu: (p.gpu_frames > 0).then(|| p.gpu.map(|v| v / p.gpu_frames as f32)),
+            packet_ms: p.thread[0] / n,
         }
     }
 
@@ -739,6 +743,32 @@ impl Averages {
 
     pub fn part(&self, part: Part) -> f32 {
         self.parts[part as usize]
+    }
+
+    /// Averages made of the given steps (tests of their readers).
+    #[cfg(test)]
+    pub fn with(laps: &[(Lap, f32)], parts: &[(Part, f32)], phases: &[(&str, f32)], gpu: Option<[f32; GPU]>) -> Averages {
+        let mut a = Averages {
+            fps: 60.0,
+            frame_ms: 1000.0 / 60.0,
+            laps: [0.0; LAPS],
+            parts: [0.0; PARTS],
+            phases: [0.0; PHASES],
+            gpu,
+            packet_ms: 0.0,
+        };
+        for &(lap, ms) in laps {
+            a.laps[lap as usize] = ms;
+        }
+        for &(part, ms) in parts {
+            a.parts[part as usize] = ms;
+        }
+        for &(key, ms) in phases {
+            if let Some(i) = RENDER_PHASES.iter().position(|k| *k == key) {
+                a.phases[i] = ms;
+            }
+        }
+        a
     }
 
     /// A step of the render thread, by its key in [`RENDER_PHASES`]

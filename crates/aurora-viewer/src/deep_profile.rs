@@ -235,8 +235,9 @@ pub struct DeepProfile {
     second: Option<Instant>,
     /// The probes of the 10 s period so far (with AURORA_PROFILE).
     probes: ProbeTotals,
-    /// The probes of the last second.
+    /// The probes of the last second, and its number.
     last_second: Option<ProbeTotals>,
+    serial: u64,
 }
 
 impl Default for DeepProfile {
@@ -262,11 +263,8 @@ impl DeepProfile {
             second: None,
             probes: ProbeTotals::default(),
             last_second: None,
+            serial: 0,
         }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
     }
 
     /// The probes count while the resource monitor is open (they are on
@@ -299,14 +297,15 @@ impl DeepProfile {
                 self.probes.merge(&taken);
             }
             self.last_second = Some(taken);
+            self.serial += 1;
         }
         self.enabled
     }
 
-    /// What the probes counted over the last second (None while they are
-    /// off or before the first second).
-    pub fn last_second(&self) -> Option<&ProbeTotals> {
-        self.last_second.as_ref()
+    /// What the probes counted over the last second, with the second's
+    /// number (None while they are off or before the first second).
+    pub fn last_second(&self) -> Option<(u64, &ProbeTotals)> {
+        self.last_second.as_ref().map(|p| (self.serial, p))
     }
 
     /// End of a frame: adds it to the period, and every 10 s writes the
@@ -522,6 +521,7 @@ mod tests {
             second: None,
             probes: ProbeTotals::default(),
             last_second: None,
+            serial: 0,
         };
         for (decoding, rebuilt) in [(10, 0), (30, 2)] {
             p.add(&FrameSample {

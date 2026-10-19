@@ -263,6 +263,11 @@ pub struct ProfileUi {
 }
 
 impl ProfileUi {
+    /// The browser processes of the profiles' web pages that run.
+    pub fn web_process_ids(&self) -> Vec<u32> {
+        self.windows.iter().filter_map(|w| w.web.process_id()).collect()
+    }
+
     /// LLAvatarActions::showProfile: one window per avatar, raised if open;
     /// each opening reloads the data (LLPanelProfile::updateData).
     pub fn open(&mut self, world: &mut World, id: Uuid) {

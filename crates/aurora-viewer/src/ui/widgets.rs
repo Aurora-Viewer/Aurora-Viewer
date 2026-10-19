@@ -292,16 +292,6 @@ impl<'a> Floater<'a> {
         self
     }
 
-    /// Resizable in height only, `width` wide (outline included) and at
-    /// least `min_height` tall.
-    pub fn height_only(mut self, width: f32, min_height: f32) -> Self {
-        self.resizable = true;
-        self.height_only = true;
-        self.default_size.x = width;
-        self.min_size = Vec2::new(width, min_height);
-        self
-    }
-
     pub fn help(mut self, text: &'a str) -> Self {
         self.help = Some(text);
         self

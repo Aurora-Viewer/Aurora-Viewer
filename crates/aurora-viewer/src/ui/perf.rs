@@ -1,6 +1,6 @@
-//! Performance window. Compact by default: frame rate, frame times and
-//! their graph. The full view adds where the GPU and CPU time of a frame
-//! goes (segmented bars), then scene, streaming and network statistics.
+//! Performance window. The full view by default, the resource monitor
+//! (`ui/monitor`); the compact one shows the frame rate, the frame times and
+//! their graph. A title bar button goes from one to the other.
 
 use crate::scene::SceneStats;
 use crate::theme::Palette;
@@ -25,7 +25,6 @@ pub(crate) const SIDES: f32 = 22.0;
 /// Height of the compact window, as it lays itself out: only to place the
 /// other windows of a first launch around it.
 pub(crate) const COMPACT_H: f32 = 182.0;
-const FULL_W: f32 = 300.0;
 const GRAPH_H: f32 = 64.0;
 /// Lowest top of the graph scale (images/s).
 const GRAPH_MIN_TOP: f32 = 72.0;
@@ -34,7 +33,6 @@ const GRAPH_MIN_TOP: f32 = 72.0;
 const NET_HISTORY: usize = 60;
 /// Lowest top of the network graph scale (kb/s).
 const NET_MIN_TOP: f32 = 10.0;
-const NET_GRAPH_H: f32 = 56.0;
 
 /// CPU parts of a frame, in [`cpu_parts`] order.
 const CPU_PARTS: usize = 7;
@@ -62,10 +60,6 @@ fn frame_stats(frames: &VecDeque<f32>) -> FrameStats {
         min,
         max,
     }
-}
-
-fn fmt_ms(ms: f32) -> String {
-    format!("{ms:.2} ms")
 }
 
 /// A rate in the unit that reads best: kb/s, Mb/s or Gb/s.
@@ -202,6 +196,12 @@ impl Default for PerfData {
 }
 
 impl PerfData {
+    /// The frame's CPU parts and, when the GPU times them, its GPU
+    /// elements (ms), as last refreshed for reading.
+    pub fn frame_parts(&self) -> ([f32; CPU_PARTS], Option<[f32; GpuElement::ALL.len()]>) {
+        (self.cpu_shown, self.gpu_shown)
+    }
+
     pub fn frame(&mut self, dt_ms: f32, net: NetStatsSnapshot, render: &RenderStats, scene: &SceneStats) {
         if self.frame_ms.len() >= HISTORY {
             self.frame_ms.pop_front();
@@ -281,31 +281,24 @@ impl PerfData {
 
 pub struct PerfView<'a> {
     pub data: &'a PerfData,
-    pub render: &'a RenderStats,
     pub gpu: &'a GpuInfo,
-    pub net: &'a NetStatsSnapshot,
-    /// The link over the last second, and the totals of the session.
-    pub link: (&'a crate::net_profile::NetPeriod, &'a crate::net_profile::NetTotals),
-    pub scene: &'a SceneStats,
-    pub tex: &'a crate::scene::textures::TextureStats,
-    pub meshes_fetching: usize,
-    pub regions: usize,
-    pub draw_distance: f32,
-    /// Reflection probes: (known, captured).
-    pub probes: (usize, usize),
-    /// World sounds playing.
-    pub sounds: usize,
-    /// Own avatar complexity, avatars shown as silhouettes.
-    pub complexity: (Option<u32>, usize),
 }
 
-/// Full view shown; persisted with the UI layout (ui_layout.ron).
+/// The full view (the resource monitor) rather than the compact one;
+/// persisted with the UI layout (ui_layout.ron), the full view by default.
 fn full_id() -> egui::Id {
-    egui::Id::new(("perf", "full"))
+    egui::Id::new(("perf", "monitor"))
 }
 
 pub fn set_full(ctx: &egui::Context, full: bool) {
     ctx.data_mut(|d| d.insert_persisted(full_id(), full));
+}
+
+/// The view shown now: the user's choice, or the full view asked for this
+/// opening only (`show_network`).
+pub fn is_full(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(full_once_id())).unwrap_or(false)
+        || ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(true)
 }
 
 /// The full view for this opening only (`show_network`): the saved choice
@@ -314,15 +307,12 @@ fn full_once_id() -> egui::Id {
     egui::Id::new(("perf", "full-once"))
 }
 
-/// The window on its Network section, from the bars (the system island's
-/// right click, its tooltip, the traffic indicator): the full view for this
-/// opening only, the section unfolded once (it can be folded again) and
-/// scrolled to. The caller opens the window.
+/// The window on the monitor's Network section, from the bars (the system
+/// island's right click, its tooltip, the traffic indicator): the full view
+/// for this opening only. The caller opens the window.
 pub fn show_network(ctx: &egui::Context) {
-    ctx.data_mut(|d| {
-        d.insert_temp(full_once_id(), true);
-        d.insert_temp(network_open_id(), true);
-    });
+    ctx.data_mut(|d| d.insert_temp(full_once_id(), true));
+    super::monitor::demo_tab(ctx, super::monitor::Tab::Network);
 }
 
 /// A placement under the system island asked (`place_under`), for the
@@ -341,48 +331,35 @@ fn shown_id() -> egui::Id {
     egui::Id::new(("perf", "shown"))
 }
 
+/// Where the full view stood and its size when last shown (persisted).
+fn monitor_rect_id() -> egui::Id {
+    egui::Id::new(("perf", "monitor-rect"))
+}
+
 /// Performance opened from the system island of Aurora's bars (its frame
 /// rate, its tooltip's network row, the traffic indicator, its right
-/// click): its full view 8 px under the island, its left and right edges on
-/// the island's, for as long as it stays open (moved, it stays where it was
+/// click): the full view 8 px under the island, its right edge on the
+/// island's, for as long as it stays open (moved, it stays where it was
 /// put); the compact view keeps its own size and place. An open window
-/// stays where it is. An island narrower than the compact view (items
-/// hidden from it) gives the full view the compact view's width under its
-/// right edge.
+/// stays where it is.
 pub fn place_under(ctx: &egui::Context, island: Rect) {
     if !ctx.data(|d| d.get_temp::<bool>(shown_id())).unwrap_or(false) {
         ctx.data_mut(|d| d.insert_temp(place_id(), island));
     }
 }
 
-/// The least height of the full view (outline included): its title, the
-/// frame rate's numbers and graph, a few rows of details.
-const FULL_MIN_H: f32 = 280.0;
-
-/// The system island Performance opened from, for this opening: its full
-/// view lines up under it.
+/// The system island Performance opened from, for this opening.
 fn island(ctx: &egui::Context) -> Option<Rect> {
     ctx.data(|d| d.get_temp::<Rect>(island_id()))
 }
 
-/// The body's width: the compact view's own; the full view's, the system
-/// island's less the window's sides when it opened from it (never narrower
-/// than the compact view), else its own.
-fn body_width(ctx: &egui::Context, full: bool) -> f32 {
-    match (full, island(ctx)) {
-        (false, _) => COMPACT_W,
-        (true, Some(island)) => (island.width() - SIDES).max(COMPACT_W),
-        (true, None) => FULL_W,
-    }
-}
-
-/// The full view's place and size before the window is laid out (never
-/// from its body), each time it opens or comes in: under the system island
-/// when Performance opened from it (`place_under`), its edges on the
-/// island's, else where the window stands; down to the bottom of the work
-/// area (above the dock, 8 px off), the user's height afterwards. The
-/// compact view keeps its own size and place: back from a full view, it
-/// returns where it stood.
+/// Each view's place and size before the window is laid out, each time it
+/// opens or changes view. The full view: under the system island when
+/// Performance opened from it (`place_under`), else where it stood when
+/// last shown, else in the middle of the work area; the size it had, the
+/// monitor's own at first, never larger than the work area. The compact
+/// view keeps its own size and place: back from a full view, it returns
+/// where it stood.
 fn place(ctx: &egui::Context, work: Rect, full: bool, open: bool) {
     let was_shown = ctx.data(|d| d.get_temp::<bool>(shown_id())).unwrap_or(false);
     let was_full = ctx.data(|d| d.get_temp::<bool>(shown_id().with("full"))).unwrap_or(false);
@@ -409,8 +386,6 @@ fn place(ctx: &egui::Context, work: Rect, full: bool, open: bool) {
             .map(|s| s.left_top_pos())
     };
     if !full {
-        // back to the compact view (toggled, or opened after a full view):
-        // its own size, where it stood
         if !was_full {
             // where the compact view stands, for its return
             if let Some(pos) = stands() {
@@ -426,16 +401,19 @@ fn place(ctx: &egui::Context, work: Rect, full: bool, open: bool) {
         return;
     }
     if was_shown && was_full {
+        // the full view as it stands, remembered for its next opening
+        if let Some(s) = egui::AreaState::load(ctx, egui::Id::new("perf")).filter(|s| s.size.is_some()) {
+            ctx.data_mut(|d| d.insert_persisted(monitor_rect_id(), s.rect()));
+        }
         return;
     }
-    let width = body_width(ctx, true);
+    let last = ctx.data_mut(|d| d.get_persisted::<Rect>(monitor_rect_id()));
+    let size = last.map_or(super::monitor::DEFAULT_SIZE, |r| r.size()).min(work.size());
     let top_left = match island(ctx) {
-        Some(island) => pos2(island.right() - width - SIDES, island.bottom() + super::bars::islands::MARGIN),
-        // where it stands (or stood when last closed), else its first place
-        None => stands().unwrap_or_else(|| default_pos(work, width)),
+        Some(island) => pos2(island.right() - size.x, island.bottom() + super::bars::islands::MARGIN),
+        None => last.map_or_else(|| work.center() - size / 2.0, |r| r.min),
     };
-    let height = (work.bottom() - top_left.y).max(FULL_MIN_H).min(work.height());
-    super::widgets::place_floater(ctx, "perf", top_left, vec2(width + SIDES, height));
+    super::widgets::place_floater(ctx, "perf", top_left, size);
 }
 
 /// Where the window stands before the user moves it: under the mini-map of
@@ -445,54 +423,99 @@ pub(crate) fn default_pos(work: egui::Rect, width: f32) -> egui::Pos2 {
     pos2(map.right() - width - SIDES, map.bottom() + super::layout::GAP)
 }
 
-pub fn show(ctx: &egui::Context, p: &Palette, v: &PerfView, open: &mut bool) {
-    let once = ctx.data(|d| d.get_temp::<bool>(full_once_id())).unwrap_or(false);
-    let full = once || ctx.data_mut(|d| d.get_persisted::<bool>(full_id())).unwrap_or(false);
-    let (icon, tip) = if full {
-        ("arrows-minimize", aurora_i18n::tr!("ui-perf-compact-version"))
-    } else {
-        ("arrows-maximize", aurora_i18n::tr!("ui-perf-show-details"))
-    };
+/// The window: the compact view (frame rate and its graph), or the full
+/// one, the resource monitor; a title bar button goes from one to the
+/// other. Returns what the monitor asks of the app.
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    v: &PerfView,
+    monitor: &mut super::monitor::Monitor,
+    open: &mut bool,
+) -> Vec<super::monitor::Action> {
+    use super::monitor::Action;
+    let full = is_full(ctx);
     let work = super::layout::work_area(ctx);
     place(ctx, work, full, *open);
-    let width = body_width(ctx, full);
-    let mut toggle = false;
-    let floater = Floater::new(
-        "perf",
-        aurora_i18n::tr!("common-performance"),
-        default_pos(work, width),
-        vec2(width, 0.0),
-    );
-    // the full view: as wide as it opened, its height the user's (its
-    // details scroll); the compact one as large as its content
-    let floater = if full {
-        floater.height_only(width + SIDES, FULL_MIN_H)
+    let mut actions = Vec::new();
+    if full {
+        if let Some(tab) = super::monitor::take_asked_tab(ctx) {
+            monitor.tab = tab;
+        }
+        let (mut compact, mut export, mut pause) = (false, false, false);
+        let (dot, state) = if monitor.paused {
+            (p.muted_dim, aurora_i18n::tr!("monitor-paused"))
+        } else {
+            (p.success, aurora_i18n::tr!("monitor-live"))
+        };
+        let (pause_icon, pause_tip) = if monitor.paused {
+            ("player-play-filled", aurora_i18n::tr!("monitor-resume"))
+        } else {
+            ("player-pause-filled", aurora_i18n::tr!("monitor-pause"))
+        };
+        let device = super::monitor::Device {
+            name: &v.gpu.name,
+            backend: &v.gpu.backend,
+            vram_mb: v.gpu.vram_mb,
+        };
+        let mut floater = Floater::new(
+            "perf",
+            aurora_i18n::tr!("monitor-title"),
+            work.center() - super::monitor::DEFAULT_SIZE / 2.0,
+            super::monitor::DEFAULT_SIZE,
+        )
+        .flush_body()
+        .help(aurora_i18n::tr!("monitor-help"))
+        .title_state(dot, state)
+        .action("arrows-minimize", aurora_i18n::tr!("ui-perf-compact-version"), &mut compact)
+        .action("file-export", aurora_i18n::tr!("monitor-export"), &mut export)
+        .action(pause_icon, pause_tip, &mut pause);
+        floater.min_size = super::monitor::MIN_SIZE;
+        floater.show(ctx, p, open, |ui| {
+            super::monitor::body(ui, p, monitor, &device, &mut actions);
+        });
+        if pause {
+            monitor.paused = !monitor.paused;
+        }
+        if export {
+            actions.push(Action::Export);
+        }
+        if compact {
+            actions.push(Action::Compact);
+        }
+        if actions.contains(&Action::Compact) {
+            actions.retain(|a| *a != Action::Compact);
+            set_full(ctx, false);
+            ctx.data_mut(|d| d.remove_temp::<bool>(full_once_id()));
+        }
     } else {
-        floater.fixed()
-    };
-    floater
+        let mut toggle = false;
+        Floater::new(
+            "perf",
+            aurora_i18n::tr!("common-performance"),
+            default_pos(work, COMPACT_W),
+            vec2(COMPACT_W, 0.0),
+        )
+        .fixed()
         .help(aurora_i18n::tr!("ui-perf-the-graph-shows-fps-over-the-last-few-seconds"))
-        .action(icon, tip, &mut toggle)
+        .action("arrows-maximize", aurora_i18n::tr!("monitor-open-full"), &mut toggle)
         .show(ctx, p, open, |ui| {
-            ui.set_width(width);
+            ui.set_width(COMPACT_W);
             headline(ui, p, v.data);
             ui.add_space(6.0);
             graph(ui, p, v.data);
-            if full {
-                egui::ScrollArea::vertical()
-                    .id_salt("perf-details")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| details(ui, p, v));
-            }
         });
-    if toggle {
-        set_full(ctx, !full);
+        if toggle {
+            set_full(ctx, true);
+        }
     }
-    // the view of one opening ends with it, or with the button
-    if toggle || !*open {
+    // the view of one opening ends with it
+    if !*open {
         ctx.data_mut(|d| d.remove_temp::<bool>(full_once_id()));
     }
+    actions
 }
+
 
 fn fps_color(p: &Palette, fps: f32) -> Color32 {
     if fps >= 55.0 {
@@ -659,325 +682,72 @@ pub fn last_rates(d: &PerfData) -> (f32, f32) {
     d.net_hist.back().copied().unwrap_or_default()
 }
 
-/// Network rates of the last minute: incoming (line over a light area)
-/// and outgoing, marks at round rates, both values under the pointer.
-fn net_graph(ui: &mut egui::Ui, p: &Palette, d: &PerfData) {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), NET_GRAPH_H), Sense::hover());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-    let top = d.net_top.max(1.0);
-    let plot = rect.shrink2(vec2(0.0, 4.0));
-    let y = |kbps: f32| plot.bottom() - (kbps / top).min(1.0) * plot.height();
-
-    let mark_font = egui::FontId::proportional(9.0);
-    let grid = grid_step(top);
-    let mut rate = grid;
-    while rate < top * 0.95 {
-        let ly = y(rate).round() + 0.5;
-        painter.extend(egui::Shape::dashed_line(
-            &[pos2(rect.left() + 4.0, ly), pos2(rect.right() - 52.0, ly)],
-            Stroke::new(1.0, p.raised),
-            3.0,
-            3.0,
-        ));
-        painter.text(
-            pos2(rect.right() - 4.0, ly),
-            egui::Align2::RIGHT_CENTER,
-            fmt_rate(rate),
-            mark_font.clone(),
-            p.muted_dim,
-        );
-        rate += grid;
-    }
-
-    // zero line over the whole width: the history fills it from the right
-    let y0 = y(0.0).round() - 0.5;
-    painter.line_segment([pos2(rect.left(), y0), pos2(rect.right(), y0)], Stroke::new(1.0, p.raised));
-
-    let n = d.net_hist.len();
-    let Some((ins, outs)) = net_curve(&painter, p, rect, 4.0, d) else {
-        return;
-    };
-    let step = rect.width() / (NET_HISTORY - 1) as f32;
-    let x0 = rect.right() - (n - 1) as f32 * step;
-    let x = |i: usize| x0 + i as f32 * step;
-
-    if let Some(pos) = resp.hover_pos() {
-        let i = (((pos.x - x0) / step).round().max(0.0) as usize).min(n - 1);
-        let (rin, rout) = d.net_hist[i];
-        let px = x(i);
-        painter.line_segment([pos2(px, rect.top()), pos2(px, rect.bottom())], Stroke::new(1.0, p.muted_dim));
-        painter.circle(outs[i], 3.5, p.rose, Stroke::new(2.0, p.field));
-        painter.circle(ins[i], 3.5, p.teal, Stroke::new(2.0, p.field));
-        let text = aurora_i18n::tr!(
-            "ui-perf-incoming-outgoing",
-            value0 = fmt_rate(rin).to_string(),
-            value1 = fmt_rate(rout).to_string()
-        );
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), p.ink);
-        let size = galley.size() + vec2(10.0, 4.0);
-        let left = px + 6.0 + size.x > rect.right();
-        let bx = if left { (px - 6.0 - size.x).max(rect.left()) } else { px + 6.0 };
-        let r = Rect::from_min_size(pos2(bx, rect.top() + 3.0), size);
-        painter.rect_filled(r, ui.visuals().window_corner_radius, p.panel);
-        painter.galley(r.min + vec2(5.0, 2.0), galley, p.ink);
-    }
-}
-
-/// One part of a breakdown: name, help, color, smoothed and shown time (ms).
-struct Part {
-    name: &'static str,
-    help: &'static str,
-    color: Color32,
-    live: f32,
-    shown: f32,
-}
-
-/// Colors of the breakdown parts, in a fixed order: neighbours stay apart
-/// for colour-blind readers; the last one (neutral) is the "rest".
-fn part_colors(p: &Palette) -> [Color32; 7] {
-    [p.indigo_light, p.rose, p.amber, p.violet, p.teal, p.violet_pale, p.muted_dim]
-}
-
-fn gpu_parts(p: &Palette, live: &[f32; 7], shown: &[f32; 7]) -> Vec<Part> {
-    let colors = part_colors(p);
-    GpuElement::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, el)| {
-            let (name, help) = match el {
-                GpuElement::ShadowsDepth => (
-                    aurora_i18n::tr!("ui-perf-shadows-and-depth"),
-                    aurora_i18n::tr!("ui-perf-sun-shadows-depth-prepass-occlusion"),
-                ),
-                GpuElement::Effects => (
-                    aurora_i18n::tr!("ui-perf-effects"),
-                    aurora_i18n::tr!("ui-perf-ambient-occlusion-reflections-water-mirrors-probes-screen-space-reflections"),
-                ),
-                GpuElement::TerrainSky => (
-                    aurora_i18n::tr!("ui-perf-terrain-and-sky"),
-                    aurora_i18n::tr!("ui-perf-region-terrain-and-sky"),
-                ),
-                GpuElement::Objects => (
-                    aurora_i18n::tr!("ui-perf-objects-and-avatars"),
-                    aurora_i18n::tr!("ui-perf-opaque-or-masked-prims-meshes-and-avatars-impostors"),
-                ),
-                GpuElement::Water => (
-                    aurora_i18n::tr!("common-water"),
-                    aurora_i18n::tr!("ui-perf-water-surface-refraction-waves"),
-                ),
-                GpuElement::Transparent => (
-                    aurora_i18n::tr!("ui-perf-transparent-objects-and-particles"),
-                    aurora_i18n::tr!("ui-perf-semi-transparent-faces-and-particles"),
-                ),
-                GpuElement::Post => (
-                    aurora_i18n::tr!("ui-perf-post-processing"),
-                    aurora_i18n::tr!("ui-perf-glow-anti-aliasing-taa-smaa-tone-mapping"),
-                ),
-            };
-            Part {
-                name,
-                help,
-                color: colors[i],
-                live: live[i],
-                shown: shown[i],
-            }
-        })
-        .collect()
-}
-
-fn cpu_parts_view(p: &Palette, live: &[f32; CPU_PARTS], shown: &[f32; CPU_PARTS]) -> Vec<Part> {
-    fn names() -> [(&'static str, &'static str); CPU_PARTS] {
-        [
-            (
-                aurora_i18n::tr!("ui-perf-network-to-world"),
-                aurora_i18n::tr!("ui-perf-simulator-messages-applied-to-world"),
-            ),
-            (
-                aurora_i18n::tr!("ui-perf-scene"),
-                aurora_i18n::tr!("ui-perf-geometry-textures-and-objects-sent-to-the-gpu"),
-            ),
-            (
-                aurora_i18n::tr!("ui-perf-culling-and-lists"),
-                aurora_i18n::tr!("ui-perf-visibility-choices-and-draw-lists"),
-            ),
-            (
-                aurora_i18n::tr!("ui-perf-avatars-and-camera"),
-                aurora_i18n::tr!("ui-perf-animations-agent-camera-texture-streaming"),
-            ),
-            (aurora_i18n::tr!("common-interface"), aurora_i18n::tr!("ui-perf-windows-and-bars")),
-            (
-                aurora_i18n::tr!("ui-perf-gpu-encoding"),
-                aurora_i18n::tr!("ui-perf-preparing-rendering-commands-with-the-render-thread-only-the"),
-            ),
-            (
-                aurora_i18n::tr!("ui-perf-waiting"),
-                aurora_i18n::tr!("ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait"),
-            ),
-        ]
-    }
-    let colors = part_colors(p);
-    names()
-        .iter()
-        .enumerate()
-        .map(|(i, &(name, help))| Part {
-            name,
-            help,
-            color: colors[i],
-            live: live[i],
-            shown: shown[i],
-        })
-        .collect()
-}
-
-/// A titled segmented bar and its legend, both in the fixed order of the
-/// parts (nothing jumps around); hovering a segment or a legend row
-/// highlights that part.
-fn breakdown(ui: &mut egui::Ui, p: &Palette, id: &str, title: &str, parts: Vec<Part>, fmt: fn(f32) -> String) {
-    let total_shown: f32 = parts.iter().map(|x| x.shown).sum();
-    let total_live: f32 = parts.iter().map(|x| x.live).sum::<f32>().max(1e-3);
-    let hover_id = ui.id().with(("breakdown_hover", id));
-    let hovered: Option<&'static str> = ui.data(|d| d.get_temp(hover_id)).flatten();
-    let mut hover_now = None;
-
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(title).size(12.0).strong().color(p.ink));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new(fmt(total_shown)).size(12.0).color(p.muted));
-        });
-    });
-    ui.add_space(2.0);
-
-    // the bar: segments laid over the whole width, then inset by 1 px on
-    // their inner sides for the 2 px gaps, so a part growing from nothing
-    // never shifts the others; rounded at the two ends only
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::hover());
-    let painter = ui.painter_at(rect);
-    // the ends are the first and last parts with some width
-    let wide = |x: &Part| x.live / total_live * rect.width() >= 0.5;
-    if !parts.iter().any(wide) {
-        // nothing measured yet (no traffic): the empty track
-        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-    }
-    let first = parts.iter().position(wide).unwrap_or(0);
-    let last = parts.iter().rposition(wide).unwrap_or(parts.len() - 1);
-    let mut x = rect.left();
-    for (i, part) in parts.iter().enumerate() {
-        let w = part.live / total_live * rect.width();
-        let slot = Rect::from_min_max(pos2(x, rect.top()), pos2(x + w, rect.bottom()));
-        x += w;
-        if resp.hover_pos().is_some_and(|pos| slot.x_range().contains(pos.x)) {
-            hover_now = Some(part.name);
-        }
-        let left = if i <= first { slot.left() } else { slot.left() + 1.0 };
-        let right = if i >= last { slot.right() } else { slot.right() - 1.0 };
-        if right - left < 0.5 {
-            continue;
-        }
-        let end = ui.visuals().window_corner_radius;
-        let corners = egui::CornerRadius {
-            nw: if i == first { end.nw } else { 0 },
-            sw: if i == first { end.sw } else { 0 },
-            ne: if i == last { end.ne } else { 0 },
-            se: if i == last { end.se } else { 0 },
-        };
-        let dim = hovered.is_some_and(|h| h != part.name);
-        let col = if dim { part.color.gamma_multiply(0.3) } else { part.color };
-        painter.rect_filled(Rect::from_min_max(pos2(left, slot.top()), pos2(right, slot.bottom())), corners, col);
-    }
-    ui.add_space(4.0);
-
-    // legend: rows touch each other (no gap without a hovered part)
-    let spacing = std::mem::replace(&mut ui.spacing_mut().item_spacing.y, 0.0);
-    let mut bottom = rect.bottom();
-    for part in &parts {
-        let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::hover());
-        bottom = row.bottom();
-        let resp = resp.on_hover_text(part.help);
-        if resp.hovered() {
-            hover_now = Some(part.name);
-        }
-        let on = hovered == Some(part.name);
-        let painter = ui.painter();
-        if on {
-            painter.rect_filled(row, ui.visuals().window_corner_radius, p.raised);
-        }
-        let cy = row.center().y;
-        painter.circle_filled(pos2(row.left() + 7.0, cy), 3.5, part.color);
-        let font = egui::FontId::proportional(11.5);
-        painter.text(
-            pos2(row.left() + 16.0, cy),
-            egui::Align2::LEFT_CENTER,
-            part.name,
-            font.clone(),
-            if on { p.ink } else { p.muted },
-        );
-        let pct = if total_shown > 0.0 { part.shown / total_shown * 100.0 } else { 0.0 };
-        painter.text(
-            pos2(row.right() - 4.0, cy),
-            egui::Align2::RIGHT_CENTER,
-            format!("{pct:.0} %"),
-            font.clone(),
-            p.muted,
-        );
-        painter.text(
-            pos2(row.right() - 48.0, cy),
-            egui::Align2::RIGHT_CENTER,
-            fmt(part.shown),
-            font,
-            p.ink,
-        );
-    }
-    ui.spacing_mut().item_spacing.y = spacing;
-    // between the bar and the legend, or a row edge: keep the part shown
-    let block = Rect::from_min_max(rect.min, pos2(rect.right(), bottom));
-    if hover_now.is_none() && ui.rect_contains_pointer(block) {
-        hover_now = hovered;
-    }
-    ui.data_mut(|d| d.insert_temp(hover_id, hover_now));
-}
-
-/// Thin separator between the sections.
-fn rule(ui: &mut egui::Ui, p: &Palette) {
-    ui.add_space(8.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, p.raised);
-    ui.add_space(8.0);
-}
-
-/// Name on the left, value on the right, on one tight line.
-fn row(ui: &mut egui::Ui, p: &Palette, k: &str, v: String) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
-    let font = egui::FontId::proportional(11.5);
-    let painter = ui.painter();
-    let cy = rect.center().y;
-    painter.text(pos2(rect.left(), cy), egui::Align2::LEFT_CENTER, k, font.clone(), p.muted);
-    painter.text(pos2(rect.right() - 4.0, cy), egui::Align2::RIGHT_CENTER, v, font, p.ink);
-}
-
-fn group(ui: &mut egui::Ui, p: &Palette, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
-    let _ = group_forced(ui, p, title, open, None, body);
-}
-
-/// [`group`] that `forced` can open whatever the user's choice; its header.
-fn group_forced(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    title: &str,
-    open: bool,
-    forced: Option<bool>,
-    body: impl FnOnce(&mut egui::Ui),
-) -> egui::Response {
-    super::widgets::collapsing_forced(ui, p, ("perf", title), title, open, forced, |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        body(ui);
+/// The GPU parts of a frame, in [`GpuElement::ALL`] order: name and help
+/// (the resource monitor's breakdown).
+pub(crate) fn gpu_part_names() -> [(&'static str, &'static str); 7] {
+    GpuElement::ALL.map(|el| match el {
+        GpuElement::ShadowsDepth => (
+            aurora_i18n::tr!("ui-perf-shadows-and-depth"),
+            aurora_i18n::tr!("ui-perf-sun-shadows-depth-prepass-occlusion"),
+        ),
+        GpuElement::Effects => (
+            aurora_i18n::tr!("ui-perf-effects"),
+            aurora_i18n::tr!("ui-perf-ambient-occlusion-reflections-water-mirrors-probes-screen-space-reflections"),
+        ),
+        GpuElement::TerrainSky => (
+            aurora_i18n::tr!("ui-perf-terrain-and-sky"),
+            aurora_i18n::tr!("ui-perf-region-terrain-and-sky"),
+        ),
+        GpuElement::Objects => (
+            aurora_i18n::tr!("ui-perf-objects-and-avatars"),
+            aurora_i18n::tr!("ui-perf-opaque-or-masked-prims-meshes-and-avatars-impostors"),
+        ),
+        GpuElement::Water => (
+            aurora_i18n::tr!("common-water"),
+            aurora_i18n::tr!("ui-perf-water-surface-refraction-waves"),
+        ),
+        GpuElement::Transparent => (
+            aurora_i18n::tr!("ui-perf-transparent-objects-and-particles"),
+            aurora_i18n::tr!("ui-perf-semi-transparent-faces-and-particles"),
+        ),
+        GpuElement::Post => (
+            aurora_i18n::tr!("ui-perf-post-processing"),
+            aurora_i18n::tr!("ui-perf-glow-anti-aliasing-taa-smaa-tone-mapping"),
+        ),
     })
-    .header
 }
 
-fn network_open_id() -> egui::Id {
-    egui::Id::new(("perf", "network-open"))
+/// The CPU parts of a frame, in [`cpu_parts`] order: name and help.
+pub(crate) fn cpu_part_names() -> [(&'static str, &'static str); CPU_PARTS] {
+    [
+        (
+            aurora_i18n::tr!("ui-perf-network-to-world"),
+            aurora_i18n::tr!("ui-perf-simulator-messages-applied-to-world"),
+        ),
+        (
+            aurora_i18n::tr!("ui-perf-scene"),
+            aurora_i18n::tr!("ui-perf-geometry-textures-and-objects-sent-to-the-gpu"),
+        ),
+        (
+            aurora_i18n::tr!("ui-perf-culling-and-lists"),
+            aurora_i18n::tr!("ui-perf-visibility-choices-and-draw-lists"),
+        ),
+        (
+            aurora_i18n::tr!("ui-perf-avatars-and-camera"),
+            aurora_i18n::tr!("ui-perf-animations-agent-camera-texture-streaming"),
+        ),
+        (aurora_i18n::tr!("common-interface"), aurora_i18n::tr!("ui-perf-windows-and-bars")),
+        (
+            aurora_i18n::tr!("ui-perf-gpu-encoding"),
+            aurora_i18n::tr!("ui-perf-preparing-rendering-commands-with-the-render-thread-only-the"),
+        ),
+        (
+            aurora_i18n::tr!("ui-perf-waiting"),
+            aurora_i18n::tr!("ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait"),
+        ),
+    ]
 }
+
 
 /// The demo has no circuit: counters that grow like a session's traffic
 /// (about 1.2 Mb/s in and 100 kb/s out, in waves), added to the network's,
@@ -1009,323 +779,6 @@ impl PerfData {
             self.net_hist.push_back((rate(150_000.0), rate(12_000.0)));
         }
     }
-}
-
-fn details(ui: &mut egui::Ui, p: &Palette, v: &PerfView) {
-    let d = v.data;
-    rule(ui, p);
-    match (d.gpu, d.gpu_shown) {
-        (Some(live), Some(shown)) => breakdown(
-            ui,
-            p,
-            "gpu",
-            aurora_i18n::tr!("ui-perf-gpu-rendering"),
-            gpu_parts(p, &live, &shown),
-            fmt_ms,
-        ),
-        _ => {
-            row(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-perf-gpu-rendering"),
-                v.render.gpu_ms.map(|g| format!("{g:.1} ms")).unwrap_or_else(|| "n/d".into()),
-            );
-            ui.label(
-                RichText::new(aurora_i18n::tr!("ui-perf-per-item-details-unavailable-with-this-graphics-card"))
-                    .size(11.0)
-                    .color(p.muted_dim),
-            );
-        }
-    }
-    rule(ui, p);
-    breakdown(
-        ui,
-        p,
-        "cpu",
-        aurora_i18n::tr!("ui-perf-cpu"),
-        cpu_parts_view(p, &d.cpu, &d.cpu_shown),
-        fmt_ms,
-    );
-    rule(ui, p);
-
-    group(ui, p, aurora_i18n::tr!("common-rendering"), false, |ui| {
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-draw-calls"),
-            aurora_i18n::tr!(
-                "status-shadows",
-                value0 = format!("{}", v.render.draws),
-                value1 = format!("{}", v.render.shadow_draws)
-            ),
-        );
-        if let Some(n) = v.render.occluded {
-            row(ui, p, aurora_i18n::tr!("ui-perf-hidden-occlusion"), format!("{n}"));
-        }
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-culling"),
-            if v.render.gpu_cull {
-                aurora_i18n::tr!("ui-perf-graphics-card-2")
-            } else {
-                "processeur"
-            }
-            .to_string(),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-render-thread"),
-            if v.render.render_thread {
-                aurora_i18n::tr!("ui-perf-per-frame", value0 = fmt_ms(d.render_thread_shown).to_string())
-            } else {
-                aurora_i18n::tr!("ui-perf-disabled").to_string()
-            },
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-triangles"),
-            format!("{:.2} M", v.render.triangles as f64 / 1e6),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-objects"),
-            aurora_i18n::tr!(
-                "status-visible",
-                value0 = format!("{}", v.scene.visible_objects),
-                value1 = format!("{}", v.scene.objects)
-            ),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-geometries"),
-            aurora_i18n::tr!(
-                "ui-perf-in-progress",
-                value0 = format!("{}", v.scene.geometries),
-                value1 = format!("{}", v.scene.geom_pending)
-            ),
-        );
-        row(ui, p, aurora_i18n::tr!("common-distance"), format!("{:.0} m", v.draw_distance));
-        row(ui, p, aurora_i18n::tr!("common-particles"), format!("{}", v.render.particles));
-        if let Some(c) = v.complexity.0 {
-            row(ui, p, aurora_i18n::tr!("ui-perf-your-complexity"), format!("{c}"));
-        }
-        if v.complexity.1 > 0 {
-            row(ui, p, aurora_i18n::tr!("ui-perf-silhouette-avatars"), format!("{}", v.complexity.1));
-        }
-        if v.scene.avatars_hidden > 0 {
-            row(
-                ui,
-                p,
-                aurora_i18n::tr!("ui-perf-impostor-avatars"),
-                format!("{}", v.scene.avatars_hidden),
-            );
-        }
-        let refl = match (v.render.water_reflection, v.render.mirror) {
-            (true, true) => aurora_i18n::tr!("status-water-mirror"),
-            (true, false) => "eau",
-            (false, true) => "miroir",
-            _ => aurora_i18n::tr!("extra-none"),
-        };
-        row(ui, p, aurora_i18n::tr!("ui-perf-planar-reflections"), refl.to_owned());
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-reflection-probes"),
-            aurora_i18n::tr!(
-                "ui-perf-ready",
-                value0 = format!("{}", v.probes.1),
-                value1 = format!("{}", v.probes.0 + 1)
-            ),
-        );
-        row(ui, p, aurora_i18n::tr!("ui-perf-playing-sounds"), format!("{}", v.sounds));
-    });
-    group(ui, p, aurora_i18n::tr!("ui-perf-memory-and-streaming"), false, |ui| {
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-geometry"),
-            aurora_i18n::tr!(
-                "memory-mb",
-                value = aurora_i18n::number(v.render.geometry_bytes as f64 / 1048576.0, 0)
-            ),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-textures"),
-            aurora_i18n::tr!(
-                "perf-texture-memory",
-                loaded = v.tex.loaded.to_string(),
-                total = v.tex.total.to_string(),
-                value = aurora_i18n::number(v.render.texture_bytes as f64 / 1048576.0, 0)
-            ),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-texture-pages"),
-            aurora_i18n::tr!(
-                "perf-page-memory",
-                pages = v.render.texture_pages.to_string(),
-                value = aurora_i18n::number(v.render.texture_page_bytes as f64 / 1048576.0, 0)
-            ),
-        );
-        // what the pages may hold now, and the pressure step when they
-        // hold more (scene/texture_budget.rs)
-        let target = aurora_i18n::number(v.tex.target_bytes as f64 / 1048576.0, 0);
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-texture-budget"),
-            if v.tex.pressure > 0 {
-                aurora_i18n::tr!(
-                    "perf-texture-budget-pressure",
-                    value = target,
-                    step = v.tex.pressure.to_string(),
-                    steps = crate::scene::texture_budget::MAX_PRESSURE.to_string()
-                )
-            } else {
-                aurora_i18n::tr!("memory-mb", value = target)
-            },
-        );
-        row(ui, p, aurora_i18n::tr!("ui-perf-texture-network"), format!("{}", v.tex.fetching));
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-decoding"),
-            aurora_i18n::tr!(
-                "status-upload",
-                value0 = format!("{}", v.tex.decoding),
-                value1 = format!("{}", v.tex.pending_upload)
-            ),
-        );
-        row(ui, p, aurora_i18n::tr!("ui-perf-background-tasks"), format!("{}", v.scene.jobs));
-        row(ui, p, aurora_i18n::tr!("ui-perf-network-meshes"), format!("{}", v.meshes_fetching));
-        row(ui, p, aurora_i18n::tr!("ui-perf-gpu-records"), format!("{}", v.render.records));
-    });
-    // asked once (`show_network`, the demo): unfolded and scrolled to, then
-    // the user's to fold
-    let network_open = ui.ctx().data_mut(|d| d.remove_temp::<bool>(network_open_id())).filter(|open| *open);
-    let header = group_forced(ui, p, aurora_i18n::tr!("ui-perf-network"), false, network_open, |ui| {
-        let last = d.net_hist.back().copied().unwrap_or_default();
-        let parts = vec![
-            Part {
-                name: aurora_i18n::tr!("ui-perf-incoming"),
-                help: aurora_i18n::tr!("ui-perf-received-from-the-simulator-udp-and-downloaded-http-textures"),
-                color: p.teal,
-                live: d.net_live[0],
-                shown: last.0,
-            },
-            Part {
-                name: aurora_i18n::tr!("ui-perf-outgoing"),
-                help: aurora_i18n::tr!("ui-perf-sent-to-simulator-udp"),
-                color: p.rose,
-                live: d.net_live[1],
-                shown: last.1,
-            },
-        ];
-        breakdown(ui, p, "net", aurora_i18n::tr!("ui-perf-throughput"), parts, fmt_rate);
-        ui.add_space(6.0);
-        net_graph(ui, p, d);
-        ui.add_space(6.0);
-        row(ui, p, aurora_i18n::tr!("ui-perf-ping"), format!("{} ms", v.net.ping_ms));
-        // packets that never came, as Firestorm's traffic indicator counts them
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-losses"),
-            format!(
-                "{} %",
-                aurora_i18n::number_text(&format!("{:.1}", crate::net_profile::loss_percent(v.link.0)))
-            ),
-        );
-        let (link, totals) = v.link;
-        // what the user feels beyond the ping: how late a key leaves, how
-        // often the simulator moves the avatar back, how long an update
-        // waits on our side
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-input-delay"),
-            totals.input_delay_ms.map_or_else(
-                || "–".to_string(),
-                |ms| format!("{} ms", aurora_i18n::number_text(&format!("{ms:.0}"))),
-            ),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-avatar-corrections"),
-            aurora_i18n::tr!(
-                "ui-perf-corrections-largest",
-                value0 = format!("{}", totals.corrections.count),
-                value1 = aurora_i18n::number_text(&format!("{:.1}", totals.corrections.largest))
-            ),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-network-loop-pause"),
-            format!("{} ms", aurora_i18n::number_text(&format!("{:.1}", link.loop_busy_ms))),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-event-wait"),
-            format!("{} ms", aurora_i18n::number_text(&format!("{:.1}", link.event_wait_ms))),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-packets"),
-            aurora_i18n::tr!(
-                "status-in-s-out-s",
-                value0 = aurora_i18n::number_text(&format!("{:.0}", d.net_rate.0)),
-                value1 = aurora_i18n::number_text(&format!("{:.0}", d.net_rate.1))
-            ),
-        );
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-lost-and-found"),
-            format!("{} / {}", v.net.resent, v.net.dropped_reliable),
-        );
-        row(ui, p, aurora_i18n::tr!("ui-perf-unacknowledged"), format!("{}", v.net.unacked));
-        row(
-            ui,
-            p,
-            "HTTP",
-            aurora_i18n::tr!(
-                "ui-perf-active-queued",
-                value0 = format!("{}", v.net.http_in_flight),
-                value1 = format!("{}", v.net.http_queued)
-            ),
-        );
-        row(ui, p, aurora_i18n::tr!("ui-perf-http-throughput"), fmt_rate(d.http_rate_kbps));
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-perf-downloaded"),
-            aurora_i18n::tr!(
-                "ui-perf-mb-failures",
-                value0 = aurora_i18n::number_text(&format!("{:.1}", v.net.http_bytes as f64 / 1048576.0)),
-                value1 = format!("{}", v.net.http_failed)
-            ),
-        );
-        row(ui, p, aurora_i18n::tr!("ui-perf-regions"), format!("{}", v.regions));
-    });
-    if network_open.is_some() {
-        header.scroll_to_me(Some(egui::Align::TOP));
-    }
-    group(ui, p, aurora_i18n::tr!("ui-perf-graphics-card"), false, |ui| {
-        row(ui, p, aurora_i18n::tr!("common-map"), v.gpu.name.clone());
-        row(ui, p, "API", format!("{} (wgpu)", v.gpu.backend));
-    });
 }
 
 #[cfg(test)]

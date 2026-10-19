@@ -227,6 +227,12 @@ impl MediaImpl {
     }
 
     /// Time-based media (video / audio through LibVLC): pause / play.
+    /// The system id of the plugin process playing this media, while one
+    /// runs (the resource monitor reads its load).
+    pub fn process_id(&self) -> Option<u32> {
+        self.plugin.as_ref().and_then(MediaPlugin::pid)
+    }
+
     pub fn is_time_media(&self) -> bool {
         self.plugin.as_ref().is_some_and(|p| p.plugin_name == "media_plugin_libvlc")
     }

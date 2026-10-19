@@ -288,8 +288,8 @@ pub struct GroupLoad {
     pub priority: Option<i32>,
 }
 
-/// A process the viewer started (a media plugin) over the last half
-/// second.
+/// A process the viewer started (a media plugin, with the processes it
+/// started in turn: a web page's renderers) over the last half second.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChildLoad {
     pub pid: u32,
@@ -392,7 +392,7 @@ struct Sampler {
     threads: HashMap<u32, u64>,
     process: u64,
     system: Option<(u64, u64)>,
-    /// Children: pid → CPU time (100 ns).
+    /// Processes of the watched trees: pid → CPU time (100 ns).
     children: HashMap<u32, u64>,
     #[cfg(windows)]
     cores: Option<CoreCounters>,
@@ -407,9 +407,12 @@ impl Sampler {
         let (threads, process) = read_threads();
         let system = system_times();
         let per_core = self.cores.get_or_insert_with(CoreCounters::open).read();
-        let child_times: Vec<(u32, u64, u64)> = children
+        // each watched process with its descendants: (root, pid, time, memory)
+        let trees = if children.is_empty() { HashMap::new() } else { process_trees(children) };
+        let child_times: Vec<(u32, u32, u64, u64)> = trees
             .iter()
-            .filter_map(|&pid| child_times(pid).map(|(t, ws)| (pid, t, ws)))
+            .flat_map(|(&root, pids)| pids.iter().map(move |&pid| (root, pid)))
+            .filter_map(|(root, pid)| child_times(pid).map(|(t, ws)| (root, pid, t, ws)))
             .collect();
         let now = Instant::now();
         let out = self.at.map(|at| {
@@ -438,16 +441,24 @@ impl Sampler {
                 machine,
                 per_core,
                 groups,
-                children: child_times
+                children: children
                     .iter()
-                    .map(|&(pid, t, ws)| ChildLoad {
-                        pid,
-                        // 100 ns units
-                        percent: self
-                            .children
-                            .get(&pid)
-                            .map_or(0.0, |&t0| pct(t.saturating_sub(t0) as f64 / 10_000.0)),
-                        working_set: ws,
+                    .filter(|root| trees.contains_key(root))
+                    .map(|&root| {
+                        let mut load = ChildLoad {
+                            pid: root,
+                            percent: 0.0,
+                            working_set: 0,
+                        };
+                        for &(_, pid, t, ws) in child_times.iter().filter(|c| c.0 == root) {
+                            // 100 ns units; a process new since the last sample counts from now
+                            load.percent += self
+                                .children
+                                .get(&pid)
+                                .map_or(0.0, |&t0| pct(t.saturating_sub(t0) as f64 / 10_000.0));
+                            load.working_set += ws;
+                        }
+                        load
                     })
                     .collect(),
             }
@@ -456,7 +467,7 @@ impl Sampler {
         self.threads = threads.iter().map(|t| (t.id, t.cycles)).collect();
         self.process = process;
         self.system = system;
-        self.children = child_times.iter().map(|&(pid, t, _)| (pid, t)).collect();
+        self.children = child_times.iter().map(|&(_, pid, t, _)| (pid, t)).collect();
         out
     }
 
@@ -487,6 +498,59 @@ fn group_priority(threads: &[ThreadTime], group: &str, main: u32) -> Option<i32>
         CloseHandle(handle);
         (p != THREAD_PRIORITY_ERROR_RETURN).then_some(p)
     }
+}
+
+/// Each of `roots` that still runs, with every process it started
+/// (directly or not), itself first.
+#[cfg(windows)]
+fn process_trees(roots: &[u32]) -> HashMap<u32, Vec<u32>> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+    };
+    let mut parents: Vec<(u32, u32)> = Vec::new();
+    // SAFETY: the snapshot is checked and closed; the entry is sized as the
+    // calls expect.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE || snapshot.is_null() {
+            return HashMap::new();
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more {
+            parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            more = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+    }
+    descendants(roots, &parents)
+}
+
+/// From (pid, parent pid) pairs: each root that is listed, with its
+/// descendants (a pid reused by an unrelated process after its parent
+/// ended can slip in: the system does not tell them apart).
+pub fn descendants(roots: &[u32], parents: &[(u32, u32)]) -> HashMap<u32, Vec<u32>> {
+    let mut out = HashMap::new();
+    for &root in roots {
+        if !parents.iter().any(|&(pid, _)| pid == root) {
+            continue;
+        }
+        let mut tree = vec![root];
+        let mut i = 0;
+        while i < tree.len() && tree.len() < 256 {
+            let parent = tree[i];
+            for &(pid, _) in parents.iter().filter(|&&(pid, p)| p == parent && pid != parent) {
+                if !tree.contains(&pid) {
+                    tree.push(pid);
+                }
+            }
+            i += 1;
+        }
+        out.insert(root, tree);
+    }
+    out
 }
 
 /// A child process's CPU time (100 ns) and working set, None once it has
@@ -654,6 +718,15 @@ mod tests {
             "process=170% of one core, 21.2% of 8 cores | machine=40.0% | main=90.0% aurora-jobs=70.0%(2t max=50.0%) aurora-net=10.0% \
              | quiet_groups=1"
         );
+    }
+
+    #[test]
+    fn a_plugin_counts_the_processes_it_started() {
+        // 10 started 11 and 12, 12 started 13; 20 is someone else's
+        let parents = [(10, 1), (11, 10), (12, 10), (13, 12), (20, 1)];
+        let trees = descendants(&[10, 99], &parents);
+        assert_eq!(trees.len(), 1, "a root that ended is left out");
+        assert_eq!(trees[&10], [10, 11, 12, 13]);
     }
 
     #[test]

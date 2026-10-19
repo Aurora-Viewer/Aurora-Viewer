@@ -62,6 +62,7 @@ pub mod options;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
+pub mod monitor;
 pub mod perf;
 pub mod place_card;
 pub mod place_details;

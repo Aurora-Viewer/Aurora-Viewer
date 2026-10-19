@@ -375,6 +375,11 @@ impl MediaPlugin {
         self.process.is_running()
     }
 
+    /// The system id of the plugin process (SLPlugin) while it runs.
+    pub fn pid(&self) -> Option<u32> {
+        self.process.pid()
+    }
+
     pub fn cpu_usage(&self) -> f64 {
         self.process.cpu_usage
     }

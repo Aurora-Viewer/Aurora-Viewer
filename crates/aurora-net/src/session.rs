@@ -567,6 +567,7 @@ impl Session<'_> {
     /// AgentThrottle: what this simulator may send per second on each
     /// channel (LLViewerThrottleGroup::sendToSim).
     fn send_throttle(&mut self, addr: SocketAddr) {
+        self.sh.stats.throttle_asked_kbps.store(self.throttle.asked() as u32, Ordering::Relaxed);
         let mut t = AgentThrottle::default();
         t.agent_data.agent_id = self.agent_id();
         t.agent_data.session_id = self.session_id();
