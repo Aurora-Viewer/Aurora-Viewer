@@ -1171,11 +1171,7 @@ impl Bridge {
                 item_id,
                 running: false,
                 ..
-            } if *object_id == self.object
-                && *item_id == self.script
-                && self.phase == Phase::Ready
-                && self.silent_since.is_some() =>
-            {
+            } if *object_id == self.object && *item_id == self.script && self.phase == Phase::Ready && self.silent_since.is_some() => {
                 // A run-time error halts the script; only a recompile resets it.
                 log::warn!("Aurora bridge: the script is not running");
                 self.reinstall(world, now);

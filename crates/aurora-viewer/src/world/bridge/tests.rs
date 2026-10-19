@@ -519,7 +519,12 @@ fn a_halted_script_is_detected_and_reinstalled_without_disabling_movelock() {
     sim.ready();
     assert_eq!(sim.uploads, uploads + 1, "the halted script is recompiled");
     assert!(sim.bridge.available() && sim.bridge.silent_since.is_none());
-    assert!(sim.world.chat.iter().any(|line| line.text == aurora_i18n::tr!("bridge-reinstalling")));
+    assert!(
+        sim.world
+            .chat
+            .iter()
+            .any(|line| line.text == aurora_i18n::tr!("bridge-reinstalling"))
+    );
 }
 
 #[test]
@@ -531,7 +536,8 @@ fn http_replies_prove_the_script_alive_and_a_silent_running_script_is_reinstalle
     sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
     assert!(sim.bridge.silent_since.is_some());
     // A 404 for a vanished object comes from the script itself.
-    sim.bridge.query_reply(&sim.world, Some(aurora_i18n::tr!("bridge-script-info-missing")), sim.now);
+    sim.bridge
+        .query_reply(&sim.world, Some(aurora_i18n::tr!("bridge-script-info-missing")), sim.now);
     assert!(sim.bridge.silent_since.is_none());
     sim.bridge.query_reply(&sim.world, Some(timeout), sim.now);
     sim.bridge.query_reply(&sim.world, None, sim.now);
