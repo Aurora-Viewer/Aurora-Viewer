@@ -411,6 +411,8 @@ pub struct World {
     pub group_titles: names::GroupTitles,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
+    /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
+    pub fly_after_teleport: bool,
     /// The account's list of open private conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -589,6 +591,7 @@ impl World {
             offline_im_requested: false,
             group_titles: Default::default(),
             region_alerts: Default::default(),
+            fly_after_teleport: false,
             open_ims_path: None,
             reopen_ims: Vec::new(),
             cache_dir: None,
@@ -2036,6 +2039,11 @@ impl World {
                 self.tp_show_progress = remote;
                 self.tp_progress = self.tp_progress.max(0.5);
                 self.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
+                // FSFlyAfterTeleport (process_teleport_finish); a region that
+                // blocks flying lands us on arrival (land_if_fly_blocked)
+                if self.fly_after_teleport {
+                    self.agent.flying = true;
+                }
                 Some(NetEvent::TeleportFinished { handle })
             }
             NetEvent::TeleportLocal { flying } => {
@@ -2044,7 +2052,7 @@ impl World {
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
-                self.agent.flying = flying;
+                self.agent.flying = flying || self.fly_after_teleport;
                 None
             }
             NetEvent::TeleportStarted => {

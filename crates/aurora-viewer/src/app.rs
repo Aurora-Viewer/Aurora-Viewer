@@ -495,6 +495,8 @@ pub struct App {
     stream_title_said: Option<String>,
     /// Every sound is cut because the window is minimised (MuteWhenMinimized).
     minimized_mute: bool,
+    /// The Down key's latch (FSCrouchToggle).
+    crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
     music_parcel_url: String,
     /// `/music` chat command: a stream played instead of the parcel's until
     /// the parcel stream changes.
@@ -1019,6 +1021,7 @@ impl App {
             stream_url: String::new(),
             stream_title_said: None,
             minimized_mute: false,
+            crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
@@ -4905,6 +4908,13 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        i.down = self.crouch_toggle.apply(
+            self.settings.crouch_toggle,
+            self.world.agent.flying,
+            self.world.agent.is_sitting(),
+            i.down,
+            i.up,
+        );
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start)
@@ -5673,6 +5683,7 @@ impl App {
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.group_titles = self.settings.group_titles;
+            self.world.fly_after_teleport = self.settings.fly_after_teleport;
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
                 script_threshold: self.settings.script_count_threshold,

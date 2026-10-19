@@ -640,6 +640,14 @@ pub struct Settings {
     /// Legacy Viewer's `FSDisableTurningAroundWhenWalkingBackwards`, off by
     /// default.
     pub walk_backwards_without_turning: bool,
+    /// Always fly after a teleport (the Legacy Viewer's FSFlyAfterTeleport,
+    /// off); a region that blocks flying still lands the avatar.
+    pub fly_after_teleport: bool,
+    /// The crouch key stays down until pressed again (FSCrouchToggle, off).
+    pub crouch_toggle: bool,
+    /// A left click on an object whose click action is Sit does not sit
+    /// (FSBlockClickSit, off); the menu's Sit still does.
+    pub block_click_sit: bool,
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in Firestorm.
     pub double_click: crate::autopilot::DoubleClick,
@@ -1262,6 +1270,9 @@ impl Default for Settings {
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,
+            fly_after_teleport: false,
+            crouch_toggle: false,
+            block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             lookat: Default::default(),
             former_look_at: None,

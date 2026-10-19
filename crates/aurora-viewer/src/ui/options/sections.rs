@@ -80,6 +80,7 @@ sections! {
     ],
     4 => [
         mouse_sensitivity, invert_mouse, arrows_strafe, arrow_keys_always_move, letter_keys_move, walk_backwards_without_turning, double_click, lookat.head_yaw, lookat.head_pitch,
+        crouch_toggle, fly_after_teleport, block_click_sit,
         lookat.static_eyes,
     ],
     5 => [colors],

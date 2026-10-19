@@ -2727,6 +2727,14 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         changed
                     },
                 );
+                // Legacy Viewer › Protection (FSBlockClickSit)
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-block-click-sit"),
+                    aurora_i18n::tr!("ui-options-block-click-sit-help"),
+                    |ui| toggle(ui, p, &mut s.block_click_sit),
+                );
             });
             group(ui, p, aurora_i18n::tr!("ui-options-keyboard"), |ui| {
                 c |= row(
@@ -2759,6 +2767,21 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-walk-backwards-without-turning"),
                     aurora_i18n::tr!("ui-options-walk-backwards-without-turning-help"),
                     |ui| toggle(ui, p, &mut s.walk_backwards_without_turning),
+                );
+                // Legacy Viewer › Move & View: FSCrouchToggle, FSFlyAfterTeleport
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-crouch-toggle"),
+                    aurora_i18n::tr!("ui-options-crouch-toggle-help"),
+                    |ui| toggle(ui, p, &mut s.crouch_toggle),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-fly-after-teleport"),
+                    aurora_i18n::tr!("ui-options-fly-after-teleport-help"),
+                    |ui| toggle(ui, p, &mut s.fly_after_teleport),
                 );
                 row(
                     ui,
