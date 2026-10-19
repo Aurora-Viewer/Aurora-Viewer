@@ -1157,6 +1157,23 @@ impl App {
             self.apply_experience_demo(reply);
             return;
         }
+        // AURORA_DEMO_HOME / AURORA_DEMO_USERINFO: the region's answers
+        if self.demo
+            && let NetCommand::SetHomeLocation { position, .. } = cmd
+        {
+            for ev in crate::demo::home::reply(position) {
+                self.world.apply(ev);
+            }
+            return;
+        }
+        if self.demo
+            && let Some(events) = crate::demo::home::user_info_reply(&cmd)
+        {
+            for ev in events {
+                self.world.apply(ev);
+            }
+            return;
+        }
         // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
         if self.demo
             && let NetCommand::SetMaturityPreference(maturity) = cmd
@@ -5378,6 +5395,10 @@ impl App {
         for c in self.world.maturity.take_commands() {
             self.send(c);
         }
+        // Preferences › Privacy's account settings
+        for c in self.world.user_info.take_commands() {
+            self.send(c);
+        }
         // experiences' details and permissions (questions, profile)
         for c in self.world.experiences.take_commands() {
             self.send(c);
@@ -5407,6 +5428,14 @@ impl App {
         aurora_render::frame_priority::apply();
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
+        }
+        // AURORA_DEMO_HOME=<outcome>:set: World › Set Home to Here, once settled
+        if self.demo
+            && self.frame_count == 700
+            && crate::demo::home::scene().1
+            && let Some(cmd) = self.world.set_home_here()
+        {
+            self.send(cmd);
         }
         // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
         // the demo's start has settled (it takes it back at the start)
@@ -8427,6 +8456,11 @@ impl App {
                 self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
                 self.send(NetCommand::TeleportHome);
             }
+            BarAction::SetHome => {
+                if let Some(cmd) = self.world.set_home_here() {
+                    self.send(cmd);
+                }
+            }
             BarAction::TeleportBack => self.teleport_history(true),
             BarAction::TeleportForward => self.teleport_history(false),
             BarAction::TeleportTo(text) => self.teleport_to_text(&text),
@@ -9262,6 +9296,16 @@ impl App {
             };
         }
         self.options_ui.maturity = self.world.login.is_some().then(|| self.world.agent_access());
+        // the account settings the grid keeps, asked at each opening
+        // (AURORA_DEMO_USERINFO=opensim: another grid's)
+        let second_life =
+            !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim());
+        self.world.follow_preferences(self.panels.settings, second_life);
+        self.options_ui.account = self.world.login.is_some().then(|| ui::options::privacy::Account {
+            info: self.world.user_info.info.clone(),
+            show_in_search: self.world.show_in_search(),
+            second_life,
+        });
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
         // Repeatable live-scale profiling without taking the native pointer.
         if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale") {
@@ -9283,6 +9327,11 @@ impl App {
                 res.changed = true;
                 log::info!("demo text size: frame={} scale={scale:.1}", self.frame_count);
             }
+        }
+        if let Some(change) = res.account
+            && let Some(cmd) = self.world.change_user_info(change)
+        {
+            self.send(cmd);
         }
         if let Some(maturity) = res.maturity {
             self.world.set_maturity_preference(maturity);
@@ -9634,6 +9683,7 @@ impl App {
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
                     parcel_landmark,
+                    can_set_home: self.world.can_set_home(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
@@ -12849,11 +12899,11 @@ impl ApplicationHandler for App {
             }
             // AURORA_DEMO_PHYSICS: a physics layer and balls on the body of
             // our avatar and of the one in front of it
-            if crate::demo::physics::mode().is_some() {
+            if let Some(mode) = crate::demo::physics::mode() {
                 if let Some(g) = &mut self.gfx {
                     self.scene.install_demo_physics_body(&mut g.renderer);
                 }
-                for ev in crate::demo::physics::events(&self.scene.avatar_lib.shape_params) {
+                for ev in crate::demo::physics::events(&self.scene.avatar_lib.shape_params, mode) {
                     self.world.apply(ev);
                 }
             }

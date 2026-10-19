@@ -139,6 +139,14 @@ struct RigMotion {
     /// so its default).
     user: f32,
     driven: Vec<VolumeMorph>,
+    /// Every driven parameter, with or without a volume (the system body's
+    /// vertex morphs): id, range, sexes it applies to.
+    weights: Vec<(i32, f32, f32, bool, bool)>,
+}
+
+/// The hidden parameters the motions drive.
+pub fn driven_ids() -> impl Iterator<Item = i32> {
+    MOTIONS.iter().flat_map(|m| m.driven.iter().copied())
 }
 
 impl PhysicsRig {
@@ -159,6 +167,15 @@ impl PhysicsRig {
                 RigMotion {
                     user,
                     driven: m.driven.iter().filter_map(|id| shape.volume_morph(*id)).collect(),
+                    weights: m
+                        .driven
+                        .iter()
+                        .filter_map(|&id| {
+                            let (min, max, _) = shape.range(id)?;
+                            let (female, male) = shape.sexes(id)?;
+                            Some((id, min, max, female, male))
+                        })
+                        .collect(),
                 }
             })
             .collect();
@@ -446,6 +463,24 @@ impl BodyPhysics {
     }
 }
 
+impl BodyPhysics {
+    /// The weight of each driven parameter at the frame time (the
+    /// system body's morphs of them), for the avatar's sex.
+    pub fn driven_weights(&self, rig: &PhysicsRig, params: &Params, out: &mut Vec<(i32, f32)>) {
+        out.clear();
+        for ((pos, b), r) in self.positions().into_iter().zip(&params.motions).zip(&rig.motions) {
+            let Some(b) = b else {
+                continue;
+            };
+            for &(id, min, max, female, male) in &r.weights {
+                if if params.male { male } else { female } {
+                    out.push((id, rescale(pos, b.max_effect, min, max)));
+                }
+            }
+        }
+    }
+}
+
 /// One step of LLPhysicsMotion::onUpdate's loop.
 fn step(m: &mut Motion, b: &Behavior, user: f32, dir: Vec3, disp: Vec3, h: f32) {
     let unit = h * JOINT_LOCAL_FACTOR;
@@ -488,9 +523,13 @@ fn step(m: &mut Motion, b: &Behavior, user: f32, dir: Vec3, disp: Vec3, h: f32) 
 /// [0.5 - effect/2, 0.5 + effect/2] of the driven parameter's range, then
 /// clamped to it (LLVisualParam::setWeight).
 fn driven_weight(position: f32, max_effect: f32, d: &VolumeMorph) -> f32 {
+    rescale(position, max_effect, d.min, d.max)
+}
+
+fn rescale(position: f32, max_effect: f32, min: f32, max: f32) -> f32 {
     let lo = 0.5 - max_effect / 2.0;
     let rescaled = lo + max_effect * position;
-    (d.min + (d.max - d.min) * rescaled).clamp(d.min, d.max)
+    (min + (max - min) * rescaled).clamp(min, max)
 }
 
 /// Move the collision volumes of a posed skeleton (joint matrices in
@@ -772,6 +811,39 @@ mod tests {
         moved[pec] += Vec3::new(0.0, 0.0, -0.01);
         let expected = rig.world_with(&rot, Vec3::ZERO, &moved, &scale)[pec];
         assert!(Mat4::from_cols_array_2d(&palette[pec]).abs_diff_eq(expected, 1e-5));
+    }
+
+    #[test]
+    fn the_system_body_morphs_follow_the_motions() {
+        let lib = library();
+        let rig = PhysicsRig::new(&lib.shape_params, &lib.rig).expect("physics rig");
+        let all = Params::with(false, [Some(behavior(1.0)); 6]);
+        let start = Instant::now();
+        let mut physics = BodyPhysics::new(start);
+        physics.update(&rig, &all, start, standing(1.5));
+        let mut weights = Vec::new();
+        physics.driven_weights(&rig, &all, &mut weights);
+        let mut ids: Vec<i32> = weights.iter().map(|w| w.0).collect();
+        ids.sort_unstable();
+        // the belly's legs and skirt morphs have no volume but are driven
+        assert_eq!(ids, (1200..=1207).collect::<Vec<_>>());
+        assert!(weights.iter().all(|w| w.1.abs() < 1e-6), "rest: {weights:?}");
+        for k in 1..60 {
+            physics.update(
+                &rig,
+                &all,
+                start + Duration::from_millis(k * 16),
+                standing(1.5 + hop(0.5 + k as f32 / 60.0)),
+            );
+        }
+        physics.driven_weights(&rig, &all, &mut weights);
+        assert!(weights.iter().any(|w| w.0 == 1200 && w.1.abs() > 0.01), "{weights:?}");
+        // breast bounce and cleavage are a female avatar's only (the sway
+        // has no sex in avatar_lad.xml)
+        let male = Params::with(true, [Some(behavior(1.0)); 6]);
+        physics.driven_weights(&rig, &male, &mut weights);
+        assert!(weights.iter().all(|w| ![1200, 1201].contains(&w.0)));
+        assert!(weights.iter().any(|w| w.0 == 1207));
     }
 
     #[test]

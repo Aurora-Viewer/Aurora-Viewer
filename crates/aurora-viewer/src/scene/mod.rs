@@ -1093,7 +1093,8 @@ impl Scene {
     pub fn new(cache_dir: std::path::PathBuf, avatar_lib: Arc<AvatarLibrary>) -> Scene {
         let (jobs, job_rx) = Jobs::new();
         let cache_dir_anim = cache_dir.clone();
-        let lips = lipsync::LipSync::new(&avatar_lib);
+        let live: Vec<i32> = body_physics::driven_ids().collect();
+        let lips = lipsync::LipSync::new(&avatar_lib, &live);
         let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
             jobs,
@@ -3266,9 +3267,9 @@ impl Scene {
                     flags: [flags::SKINNED, palette, system_binds, 0],
                     ..Default::default()
                 };
-                if let Some((base, count)) = self.lips.parts.get(pi).copied().flatten() {
+                if let Some((base, count, row)) = self.lips.parts.get(pi).copied().flatten() {
                     rec.flags[0] |= flags::LIP_SYNC;
-                    rec.anim = [alloc.vertex_offset, base, count, 0];
+                    rec.anim = [alloc.vertex_offset, base, count, row];
                 }
                 let mut slot = aurora_render::textures::WHITE;
                 if jelly {
@@ -4563,6 +4564,19 @@ impl Scene {
             },
         );
         (base, shape_dz)
+    }
+
+    /// The weights of the body physics' driven parameters of an avatar at
+    /// its last pose (the system body's live morphs, lipsync.rs).
+    fn physics_driven(&self, id: &Uuid, out: &mut Vec<(i32, f32)>) {
+        out.clear();
+        if let (Some(state), Some(params), Some(rig)) = (
+            self.physics.get(id),
+            self.skeletons.get(id).and_then(|s| s.physics.as_deref()),
+            self.physics_rig.as_deref(),
+        ) {
+            state.driven_weights(rig, params, out);
+        }
     }
 
     /// Collision volume offsets of an avatar's body physics at its last pose

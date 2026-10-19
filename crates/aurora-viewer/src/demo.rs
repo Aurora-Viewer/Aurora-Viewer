@@ -59,6 +59,10 @@ pub mod glyphs;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).
 #[path = "demo_group.rs"]
 pub mod group;
+/// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
+/// AURORA_DEMO_USERINFO).
+#[path = "demo_home.rs"]
+pub mod home;
 #[path = "demo_hud.rs"]
 pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
@@ -2948,7 +2952,7 @@ pub fn events() -> Vec<NetEvent> {
             region_id: Uuid::nil(),
             water_height: 20.0,
             sim_access: 13,
-            region_flags: aurora_net::region_flags::ALLOW_VOICE,
+            region_flags: aurora_net::region_flags::ALLOW_VOICE | home::region_flag(),
             terrain_base: [Uuid::nil(); 4],
             terrain_detail: [Uuid::nil(); 4],
             terrain_start_height: [20.0, 20.0, 20.0, 20.0],

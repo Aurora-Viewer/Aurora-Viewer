@@ -1395,7 +1395,7 @@ To check with these scenarios:
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
 | `AURORA_DEMO_DEFORM=1`, `reset`, `reset-anim`, `self` or `self-reset` | An avatar deformed by a finished pose, and "Reset skeleton" |
-| `AURORA_DEMO_PHYSICS=1\|still\|off` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
+| `AURORA_DEMO_PHYSICS=1\|still\|off\|classic` | Avatar body physics: balls on the breasts, belly and butt bounce as the avatars hop |
 | `AURORA_DEMO_DERENDER=menu\|inspect\|avatar\|hat` | A resident's Inspect, Derender and the Asset blacklist window |
 | `AURORA_DEMO_DISPLAYNAME="<name>"` | Display name change (simulated) |
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
@@ -1589,8 +1589,11 @@ tests do not establish that this report uses an invalid joint or index.
   frames from frame 230 to 1200 (`demo physics: frame …`). `still`: the
   same turn without the hops, the offsets stay constant (the layer's gravity
   sag). `off`: the same hops with Preferences › Graphics › Avatar physics
-  off, no offsets logged and the balls follow the body rigidly. Compare the frame-rate independence with `AURORA_FPS_LIMIT=30`,
-  `60` and `144`: the offsets at the same frame time match.
+  off, no offsets logged and the balls follow the body rigidly. `classic`:
+  the same hops without the balls, the system body's own breasts, belly and
+  butt bounce (its vertex morphs of the driven parameters). Compare the
+  frame-rate independence with `AURORA_FPS_LIMIT=30`, `60` and `144`: the
+  offsets at the same frame time match.
 - **`AURORA_DEMO_DEFORM`** (issue #272): at frame 240, a one-second pose
   that moves the neck up and the shoulders out plays once on the avatar in
   front of the start position ("Orion"), then stops. As on the grid, the
@@ -2330,6 +2333,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
+| `AURORA_DEMO_HOME=<outcome>[:set]` | World › Set Home to Here and the region's answer |
+| `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
@@ -3275,6 +3280,25 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
+- **`AURORA_DEMO_HOME=ok|refused|region|fail|udp|forbidden[:set]`**: the
+  demo region answers World › Set Home to Here (also the right click of the
+  home button). `ok` (the default): the capability keeps the place in whole
+  metres, then "Home position set." (a notification and a nearby chat line;
+  the log shows `home: set in region`). `refused`: not our land
+  (ListValidHomeLocations); `region`: CantSetHomeAtRegion; `fail`: the
+  capability does not answer; `udp`: a region without the capability, the
+  alert alone confirms; `forbidden`: the region has no
+  REGION_FLAGS_ALLOW_SET_HOME, the menu entry is greyed. `:set` asks for it
+  by itself at frame 700 (capture at about 780).
+- **`AURORA_DEMO_USERINFO=hidden|liaison|opensim|fail|savefail`**: what the
+  demo grid keeps of the account, for Preferences › Privacy › Visibility
+  (with `AURORA_DEMO_OPTIONS=12`). Without it: seen online by everyone.
+  `hidden`: "Only friends and groups know I'm online" ticked; `liaison`:
+  ticked and locked (a value the checkbox cannot change); `opensim`: another
+  grid, the e-mail checkbox with the demo address instead of the button to
+  the account's page; `fail`: the settings never come, the switches stay
+  greyed; `savefail`: a change is refused, a notice says so and the
+  switches go back to what the grid has.
 - **`AURORA_DEMO_EXPERIENCE=1|auto|profile|blocked|walk|arrive`**: experiences
   asking for permissions; the demo plays the simulator, GetExperienceInfo and
   ExperiencePreferences. In SL a script may ask from any event (a click, a

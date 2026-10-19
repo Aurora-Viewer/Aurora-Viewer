@@ -236,11 +236,13 @@ pub fn island(
             });
         }
     }
-    if icon_slot(ui, p, icons, next(SLOT), Id::new("bars_place_home"), "home-filled", true)
-        .on_hover_text(aurora_i18n::tr!("common-go-home"))
-        .clicked()
-    {
+    let home = icon_slot(ui, p, icons, next(SLOT), Id::new("bars_place_home"), "home-filled", true)
+        .on_hover_text(aurora_i18n::tr!("common-go-home"));
+    if home.clicked() {
         action = Some(BarAction::TeleportHome);
+    }
+    if super::home_menu(&home, p, st.can_set_home) {
+        action = Some(BarAction::SetHome);
     }
     if st.favorites.access == crate::settings::FavoritesAccess::Menu
         && let Some(a) = super::favorites::place_button(ui, p, icons, next(super::favorites::PLACE_BUTTON_W), st.favorites)

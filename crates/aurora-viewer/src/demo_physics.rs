@@ -5,7 +5,9 @@
 //! Both turn their side to the camera and hop in place twice every two
 //! seconds while their chest rolls from side to side: the balls bounce after
 //! each landing, then settle. `still`: the same pose without the hops, the
-//! balls stay where they are;
+//! balls stay where they are; `classic`: the hops without the balls, the
+//! system body's own breasts, belly and butt bouncing (its morphs of the
+//! driven parameters);
 //! `off`: they hop with Preferences › Graphics › Avatar physics off, the
 //! balls follow the body without bouncing.
 
@@ -32,6 +34,7 @@ pub enum Mode {
     Hop,
     Still,
     Off,
+    Classic,
 }
 
 pub fn mode() -> Option<Mode> {
@@ -41,6 +44,7 @@ pub fn mode() -> Option<Mode> {
         Some(match value.trim() {
             "still" => Mode::Still,
             "off" => Mode::Off,
+            "classic" => Mode::Classic,
             _ => Mode::Hop,
         })
     })
@@ -158,8 +162,9 @@ pub const BALLS: [(&str, Vec3, Vec3); 4] = [
     ("BUTT", Vec3::new(-0.08, 0.0, 0.0), Vec3::new(0.1, 0.15, 0.1)),
 ];
 
-/// The appearances with the physics layer, and the balls worn on the chest.
-pub fn events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent> {
+/// The appearances with the physics layer, and the balls worn on the chest
+/// (not in `Classic`).
+pub fn events(shapes: &crate::scene::shape::ShapeParams, mode: Mode) -> Vec<NetEvent> {
     let mesh = SculptParams {
         texture: BODY_MESH,
         sculpt_type: LL_SCULPT_TYPE_MESH,
@@ -202,7 +207,9 @@ pub fn events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent> {
             worn
         })
         .collect();
-    events.push(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+    if mode != Mode::Classic {
+        events.push(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+    }
     events
 }
 
@@ -230,7 +237,8 @@ mod tests {
     fn the_layer_gives_both_avatars_physics() {
         let lib = crate::scene::avatar::AvatarLibrary::load();
         let rig = crate::scene::body_physics::PhysicsRig::new(&lib.shape_params, &lib.rig).expect("physics rig");
-        let NetEvent::Appearance(a) = &events(&lib.shape_params)[0] else {
+        assert_eq!(events(&lib.shape_params, Mode::Classic).len(), 2, "no balls");
+        let NetEvent::Appearance(a) = &events(&lib.shape_params, Mode::Hop)[0] else {
             panic!("appearance first");
         };
         let weights = lib.shape_params.effective_weights(&a.visual_params);
