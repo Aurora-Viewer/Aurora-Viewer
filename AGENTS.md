@@ -331,8 +331,10 @@ change to the interface:
      on the project board (`issue-board.ps1 -Todo`, section 15).
 1. **Read** AGENTS.md, ARCHITECTURE.md, TASKS.md; study Firestorm.
 2. **Create the worktree** (`new-task.ps1`), set the task to 🔧 in TASKS.md;
-   when the task comes from an issue, take it on the board right away
-   (section 15): assigned to your human, area labels, Status `In progress`.
+   then **look for an issue that already covers the task**, even when your
+   human asked for it directly (section 15, "Find the issue of your task"),
+   and take it on the board right away: assigned to your human, area
+   labels, Status `In progress`.
 3. **Develop** in small local commits (clear messages, section 10).
 4. **Test in demo mode**, `check.ps1` green.
 5. **Human validation (mandatory, before the PR)**:
@@ -698,6 +700,27 @@ token: if it says so, give your human `gh auth refresh -s project`, to run
 once in their terminal (it opens GitHub to grant the right; never ask for a
 token). Run it alone, with no `cd` or `;`, like the `gh issue` commands.
 
+**Find the issue of your task.** A task does not have to start from an issue
+for one to exist: the gap may already be filed, alone or as the sub-issue of
+an epic (for example #655, "Legacy Viewer parity"). At the start of every
+task, before the code, search the open issues with a few words of the
+feature and its Legacy Viewer name:
+
+```powershell
+gh issue list --repo Aurora-Viewer/Aurora-Viewer --state open --search "<words> in:title,body"
+```
+
+- One matches: it is your task's issue. Take it as below, link it in your
+  `TASKS.md` line, and close it from the PR (`Closes #<n>`, or `Refs #<n>`
+  while a grid validation stays pending).
+- It is an epic: never take the epic itself. Take the sub-issue that matches
+  your task (`gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<epic>/sub_issues --paginate`;
+  without `--paginate` the list stops at 30).
+  An epic is closed by the project manager, once all its sub-issues are
+  closed: when your PR closes the last open one, tell your human.
+- None matches: carry on without an issue. Do not create one for your own
+  task unless your human asks you to.
+
 **At the very start of the work on an issue**, before the code, in this
 order:
 
@@ -714,8 +737,9 @@ order:
 3. **Status `In progress`**: `./scripts/issue-board.ps1 -Issue <n> -Status
    'In progress'`.
 
-**End of the work.** Before handing back on a task that comes from an
-issue, check that both are done:
+**End of the work.** Before handing back on a task that has an issue
+(whether it came from the issue or you found the issue for it), check that
+both are done:
 
 - **a reply on the issue** (below, "Reply and close"): what was done, the PR
   link, or what is missing;
