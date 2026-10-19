@@ -2365,6 +2365,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
+| `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
@@ -3945,6 +3946,19 @@ server appearance. `--language fr|en`, `AURORA_WINDOW_SIZE` and captures after f
 900 cover both locales, compact and wide layouts, and asynchronously loaded hints.
 On the grid, also check a rigged body, real baked textures and persistence after
 relogin; only the human connects and performs these checks.
+While the editor is open our avatar plays the customise animation: the log
+says `customise animation: start 038fcec9-…` on opening and, on closing, its
+stop then `start 6883a61a-…` (the "done" animation). In demo the animation
+is listed on our avatar but has no motion (no built-in animation assets).
+
+**`AURORA_DEMO_AVATAR_HEALTH=undeform|refresh`** runs one entry of Me ›
+Avatar health at frame 600, as its menu row would. `undeform`: our skeleton
+and animations reset, then the undeform animation started; the log says
+`undeform: …`. `refresh`: every object we wear from the inventory asked again
+on its point; the log says `refresh attachments: <n> of <m> worn objects
+asked again` and the demo server sends the objects back. The menu itself:
+`AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
+opens its submenu.
 
 **`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:

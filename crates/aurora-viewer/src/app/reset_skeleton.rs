@@ -53,6 +53,14 @@ impl App {
     /// (sitting, we stand up: the seat's own permission is revoked too), and
     /// the stand starts again unless we sat on the ground.
     pub(super) fn stop_current_animations(&mut self) {
+        self.stop_animations(true);
+    }
+
+    /// LLAgent::stopCurrentAnimations(force_keep_script_perms): with
+    /// `revoke` off (Avatar health's "Stop avatar animations",
+    /// Tools.StopAllAnimations "stop"), the scripts keep their animation
+    /// permissions and a seated avatar stays seated.
+    pub(super) fn stop_animations(&mut self, revoke: bool) {
         let me = self.world.agent_id;
         let playing: Vec<Uuid> = self
             .world
@@ -73,7 +81,7 @@ impl App {
             .and_then(|h| self.world.regions.get(&h))
             .and_then(|r| r.info.as_ref())
             .map(|i| i.region_id);
-        if let Some(region) = region.filter(|r| !r.is_nil()) {
+        if revoke && let Some(region) = region.filter(|r| !r.is_nil()) {
             self.send(NetCommand::RevokePermissions {
                 target: region,
                 permissions: ANIMATION_PERMISSIONS,

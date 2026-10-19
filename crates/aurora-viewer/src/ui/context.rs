@@ -260,6 +260,13 @@ pub enum CtxAction {
     /// "Stop animations" of our avatar (Tools.StopAllAnimations:
     /// LLAgent::stopCurrentAnimations).
     StopAnimations,
+    /// Me › Avatar health › "Stop avatar animations": the same, the scripts
+    /// keeping their animation permissions (Tools.StopAllAnimations "stop").
+    StopAnimationsKeepPermissions,
+    /// Me › Avatar health › "Undeform avatar" (Tools.Undeform).
+    Undeform,
+    /// Me › Avatar health › "Refresh attachments" (Advanced.RefreshAttachments).
+    RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
