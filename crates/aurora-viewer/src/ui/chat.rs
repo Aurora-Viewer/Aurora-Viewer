@@ -3520,7 +3520,7 @@ mod tests {
         let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
         let mut open = true;
         let ctx = frames.ctx.clone();
-        let mut frame = |st: &mut ChatUi, world: &mut World| {
+        let mut frame = |st: &mut ChatUi, world: &mut World, open: &mut bool| {
             frames.run(Vec::new(), |ui| {
                 show(
                     ui.ctx(),
@@ -3536,24 +3536,39 @@ mod tests {
                     &mut contacts_settings,
                     false,
                     None,
-                    &mut open,
+                    open,
                 );
             });
         };
         let field = |c: uuid::Uuid| egui::Id::new(("conv_input", Some(c)));
         // opened by a call: shown, the keyboard stays nowhere
         world.social.focus_im = Some(a);
-        frame(&mut st, &mut world);
-        frame(&mut st, &mut world);
+        frame(&mut st, &mut world, &mut open);
+        frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(a));
         assert!(ctx.memory(|m| m.focused()).is_none());
         // opened by the user: shown and ready to type in
         world.social.focus_im = Some(b);
         st.conv_focus_request = true;
-        frame(&mut st, &mut world);
-        frame(&mut st, &mut world);
+        frame(&mut st, &mut world, &mut open);
+        frame(&mut st, &mut world, &mut open);
         assert_eq!(st.selected, Some(b));
         assert!(ctx.memory(|m| m.has_focus(field(b))));
+        // Send IM with the window minimized (#704, App::open_conversation_to_type):
+        // it expands on the asked conversation, ready to type in
+        crate::ui::widgets::minimize_floater(&ctx, "conversations");
+        frame(&mut st, &mut world, &mut open);
+        frame(&mut st, &mut world, &mut open);
+        assert!(crate::ui::widgets::floater_minimized(&ctx, "conversations"));
+        world.social.focus_im = Some(a);
+        st.conv_focus_request = true;
+        crate::ui::notifications::open_conversations(&ctx, &mut open);
+        for _ in 0..4 {
+            frame(&mut st, &mut world, &mut open);
+        }
+        assert!(open && !crate::ui::widgets::floater_minimized(&ctx, "conversations"));
+        assert_eq!(st.selected, Some(a));
+        assert!(ctx.memory(|m| m.has_focus(field(a))));
     }
 
     /// A drag across the lines selects their text without moving the
