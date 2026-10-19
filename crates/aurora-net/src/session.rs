@@ -1195,9 +1195,12 @@ impl Session<'_> {
                 channel,
                 chat_type,
             } => {
-                // SL limits chat to 1023 bytes; split longer messages.
+                // SL limits chat to 1023 bytes; split longer messages. The
+                // typing notices are empty lines, sent whole
+                // (send_chat_from_viewer: "Don't break null messages").
                 let mut rest = message.as_str();
-                while !rest.is_empty() {
+                let mut notice = matches!(chat_type, ChatType::StartTyping | ChatType::StopTyping);
+                while !rest.is_empty() || std::mem::take(&mut notice) {
                     let mut cut = rest.len().min(1000);
                     while !rest.is_char_boundary(cut) {
                         cut -= 1;
@@ -3716,9 +3719,11 @@ impl Session<'_> {
         } else if id == ChatFromSimulator::ID {
             let m: ChatFromSimulator = pkt.decode()?;
             let c = &m.chat_data;
-            // 4/5: typing start/stop
+            // typing start/stop are no lines (others' typing is their
+            // animation, seen by the radar)
             // CHAT_AUDIBLE_FULLY == 1 (faint = 0, inaudible = -1 → 255)
-            if c.chat_type != 4 && c.chat_type != 5 && c.audible == 1 {
+            let notice = matches!(ChatType::from_u8(c.chat_type), ChatType::StartTyping | ChatType::StopTyping);
+            if !notice && c.audible == 1 {
                 emit(
                     self.sh,
                     NetEvent::Chat(ChatMessage {

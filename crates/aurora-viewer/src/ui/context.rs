@@ -263,6 +263,13 @@ pub enum CtxAction {
     /// "Stop animations" of our avatar (Tools.StopAllAnimations:
     /// LLAgent::stopCurrentAnimations).
     StopAnimations,
+    /// Me › Avatar health › "Stop avatar animations": the same, the scripts
+    /// keeping their animation permissions (Tools.StopAllAnimations "stop").
+    StopAnimationsKeepPermissions,
+    /// Me › Avatar health › "Undeform avatar" (Tools.Undeform).
+    Undeform,
+    /// Me › Avatar health › "Refresh attachments" (Advanced.RefreshAttachments).
+    RefreshAttachments,
     /// Block / unblock a resident (LLMuteList).
     ToggleBlock(Uuid),
     /// A resident's voice volume, 0..1 with 0.5 as sent (setUserVolume,
@@ -387,6 +394,8 @@ pub enum CtxAction {
     /// Web link clicked in a text: opened at once when trusted, else after
     /// the external link warning.
     OpenUrl(String),
+    /// A `secondlife:///app/...` command clicked in a text (`slapp.rs`).
+    AppLink(crate::slapp::AppLink),
     TeleportToPlace(String, glam::Vec3),
     TeleportToPlaceConfirmed(String, glam::Vec3),
     /// Rights given to a friend (GrantUserRights).

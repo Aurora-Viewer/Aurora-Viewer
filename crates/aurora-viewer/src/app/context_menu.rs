@@ -489,6 +489,9 @@ impl App {
             }
             CtxAction::ResetSkeleton { avatar, animations } => self.reset_skeleton(avatar, animations),
             CtxAction::StopAnimations => self.stop_current_animations(),
+            CtxAction::StopAnimationsKeepPermissions => self.stop_animations(false),
+            CtxAction::Undeform => self.undeform_avatar(),
+            CtxAction::RefreshAttachments => self.refresh_attachments(),
             CtxAction::AnswerTeleport { invite, accept } => {
                 for c in self.world.answer_teleport_invite(invite, accept) {
                     if matches!(c, NetCommand::AcceptLure { .. }) {
@@ -530,6 +533,7 @@ impl App {
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
             CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
+            CtxAction::AppLink(link) => self.run_app_link(link),
             CtxAction::OpenUrl(url) => {
                 use crate::link_trust::Trust;
                 // LLWeb::loadURLInternal: a Marketplace page opens in the

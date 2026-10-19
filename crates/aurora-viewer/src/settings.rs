@@ -445,6 +445,19 @@ pub struct Settings {
     /// Tell the resident of a conversation that we are typing
     /// (FSSendTypingState, on by default; Preferences > Chat).
     pub send_typing_state: bool,
+    /// Our avatar plays the typing animation while we type in the nearby
+    /// chat (PlayTypingAnim, on; Preferences > Chat); the typing notices go
+    /// out either way.
+    pub play_typing_anim: bool,
+    /// An emote ("/me") shows us typing too (FSTypeDuringEmote, off).
+    pub type_during_emote: bool,
+    /// The name tags show who types: the plates' dots, "(Typing)" on the
+    /// classic tags (FSShowTypingStateInNameTag). On, unlike the Legacy
+    /// Viewer's off: the plates have shown it since their redesign.
+    pub typing_in_name_tags: bool,
+    /// A "> " before "… is typing" in the tab of a conversation with one
+    /// resident (FSTypingChevronPrefix, off).
+    pub typing_chevron: bool,
     /// The entry of a conversation that receives a message while another
     /// is shown flashes in violet, then stays tinted until read
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
@@ -1198,6 +1211,10 @@ impl Default for Settings {
             chat_keep_focus: true,
             show_contacts_tab: true,
             send_typing_state: true,
+            play_typing_anim: true,
+            type_during_emote: false,
+            typing_in_name_tags: true,
+            typing_chevron: false,
             flash_unread_conversations: true,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,

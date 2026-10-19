@@ -194,6 +194,17 @@ pub struct StatusInfo<'a> {
     /// keys of its shortcut.
     pub interface_hidden: bool,
     pub interface_keys: String,
+    pub health: HealthMenu,
+}
+
+/// What Me › Avatar health needs: our avatar (its skeleton resets) and the
+/// keys of its shortcuts, as the menus write them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HealthMenu {
+    pub me: uuid::Uuid,
+    pub stop_keys: String,
+    pub rebake_keys: String,
+    pub refresh_keys: String,
 }
 
 /// The navigation bar's star (LLLocationInputCtrl's add landmark button).
@@ -594,6 +605,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 }
             },
         );
+        health_menu(ui, p, &st.health);
         menu::separator(ui, p);
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-bars-preferences")) {
             super::widgets::open_floater(ui.ctx(), "options", &mut panels.settings);
@@ -855,6 +867,65 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "keyboard-filled",
             aurora_i18n::tr!("ui-bars-editable-shortcuts-preferences-shortcuts"),
         );
+    });
+}
+
+/// Me › Avatar health (menu_viewer.xml "avhealth"): the usual fixes of a
+/// broken avatar, in the Legacy Viewer's order. Its default avatar resets
+/// ("Character Test") and complexity information are left out.
+fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
+    use super::context::{CtxAction, request};
+    menu::submenu(ui, p, "medical-cross-filled", aurora_i18n::tr!("avatar-health-menu"), true, |ui| {
+        if menu::item_keys(
+            ui,
+            p,
+            "player-stop-filled",
+            aurora_i18n::tr!("avatar-health-stop-animations"),
+            &h.stop_keys,
+        ) {
+            request(ui.ctx(), CtxAction::StopAnimationsKeepPermissions);
+        }
+        if menu::item(
+            ui,
+            p,
+            "player-stop-filled",
+            aurora_i18n::tr!("avatar-health-stop-animations-revoke"),
+        ) {
+            request(ui.ctx(), CtxAction::StopAnimations);
+        }
+        if menu::item(ui, p, "stretching", aurora_i18n::tr!("avatar-health-undeform")) {
+            request(ui.ctx(), CtxAction::Undeform);
+        }
+        if menu::item(ui, p, "bone-filled", aurora_i18n::tr!("ui-context-reset-skeleton")) {
+            request(
+                ui.ctx(),
+                CtxAction::ResetSkeleton {
+                    avatar: h.me,
+                    animations: false,
+                },
+            );
+        }
+        if menu::item(ui, p, "run", aurora_i18n::tr!("ui-context-reset-skeleton-and-animations")) {
+            request(
+                ui.ctx(),
+                CtxAction::ResetSkeleton {
+                    avatar: h.me,
+                    animations: true,
+                },
+            );
+        }
+        if menu::item_keys(ui, p, "reload", aurora_i18n::tr!("ui-context-rebake"), &h.rebake_keys) {
+            request(ui.ctx(), CtxAction::Rebake);
+        }
+        if menu::item_keys(
+            ui,
+            p,
+            "refresh",
+            aurora_i18n::tr!("avatar-health-refresh-attachments"),
+            &h.refresh_keys,
+        ) {
+            request(ui.ctx(), CtxAction::RefreshAttachments);
+        }
     });
 }
 

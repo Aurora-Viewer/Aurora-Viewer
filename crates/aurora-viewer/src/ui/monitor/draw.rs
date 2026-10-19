@@ -12,9 +12,19 @@ pub const BODY: f32 = 12.0;
 
 /// The colours of the parts of a breakdown, as the compact view's
 /// (`perf::part_colors`): neighbours stay apart for colour-blind readers,
-/// the last one (neutral) is the rest.
-pub fn part_colors(p: &Palette) -> [Color32; 7] {
-    [p.indigo_light, p.rose, p.amber, p.violet, p.teal, p.violet_pale, p.muted_dim]
+/// the seventh (neutral) is the rest; the eighth only serves breakdowns
+/// with eight parts (the cache by folder).
+pub fn part_colors(p: &Palette) -> [Color32; 8] {
+    [
+        p.indigo_light,
+        p.rose,
+        p.amber,
+        p.violet,
+        p.teal,
+        p.violet_pale,
+        p.muted_dim,
+        p.success,
+    ]
 }
 
 /// A cell's tint for `frac` of its column's largest value.

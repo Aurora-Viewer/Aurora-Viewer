@@ -427,7 +427,7 @@ fn bar_block(
     total: &str,
     values: &[f32; 7],
     names: &[&'static str; 7],
-    colors: &[Color32; 7],
+    colors: &[Color32],
     scale: f64,
 ) {
     ui.horizontal(|ui| {

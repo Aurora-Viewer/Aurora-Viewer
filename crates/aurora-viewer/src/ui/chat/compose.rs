@@ -244,6 +244,10 @@ pub(super) fn show(
                 empty: draft.trim().is_empty(),
                 sent,
             });
+            if local {
+                let said = typing::says_aloud(&draft, st.type_during_emote);
+                st.local_field(&resp, said, sent);
+            }
             if !draft.is_empty() {
                 *st.draft_mut(st.selected) = draft;
             } else {

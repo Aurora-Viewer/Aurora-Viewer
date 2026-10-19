@@ -72,7 +72,7 @@ pub struct PlaceDetailsUi {
 /// "title_teleport_history_item").
 pub fn window_title(place: &Place, world: &World) -> String {
     match &place.source {
-        Source::Link { .. } => match shown(place, world) {
+        Source::Link { .. } | Source::Parcel(_) => match shown(place, world) {
             Shown::Parcel(d) => aurora_i18n::tr!("ui-place-details-location-details-2", value0 = d.name.to_string()),
             _ => aurora_i18n::tr!("ui-place-details-location-details").to_owned(),
         },
@@ -89,7 +89,7 @@ pub fn window_title(place: &Place, world: &World) -> String {
 /// LLPanelLandmarkInfo "title_landmark" / "title_edit_landmark").
 pub fn header_title(place: &Place) -> &'static str {
     match place.source {
-        Source::Link { .. } => aurora_i18n::tr!("common-place-profile"),
+        Source::Link { .. } | Source::Parcel(_) => aurora_i18n::tr!("common-place-profile"),
         Source::History { .. } => aurora_i18n::tr!("ui-place-details-teleport-history"),
         Source::Landmark { .. } => aurora_i18n::tr!("common-landmark"),
     }

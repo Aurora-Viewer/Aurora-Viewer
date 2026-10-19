@@ -25,10 +25,12 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod ao;
+mod app_links;
 mod bridge;
 mod movelock;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
+mod avatar_health;
 mod buy_currency;
 mod buy_land;
 mod chat_commands;
@@ -479,6 +481,10 @@ pub struct App {
     demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
     demo_lookups: Vec<(Instant, NetCommand)>,
+    /// The object of an `objectim` link clicked (LLInspectRemoteObject).
+    remote_object: Option<crate::slapp::RemoteObject>,
+    /// Parcels asked for the labels of `parcel` links (once each).
+    app_link_parcels: HashSet<uuid::Uuid>,
     /// Parcel music stream on (radio toggle).
     music_playing: bool,
     /// Parcel media and media on a prim (web / video plugins).
@@ -641,6 +647,8 @@ pub struct App {
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
     physics_ui: crate::physics_editor::State,
+    /// Me › Avatar health and the customise animation.
+    avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
     /// Last keyboard / mouse button input (automatic away, AFKTimeout), and
     /// whether the current away status was set by that timer.
@@ -1005,6 +1013,8 @@ impl App {
             reconnect_place: None,
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
+            remote_object: None,
+            app_link_parcels: HashSet::new(),
             music_playing: false,
             audio_engine: match aurora_audio::AudioEngine::new_with_device(out_device) {
                 Ok(e) => {
@@ -1111,6 +1121,7 @@ impl App {
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
+            avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
             auto_away: false,
@@ -1959,6 +1970,7 @@ impl App {
         self.shape_ui = Default::default();
         self.shape_camera = None;
         self.physics_ui = Default::default();
+        self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
         self.login_form.busy = false;
@@ -2481,6 +2493,7 @@ impl App {
                 self.restore_local_environment();
             }
             NetEvent::TeleportFinished { .. } => {
+                self.stop_local_typing();
                 if self.world.tp_show_progress && matches!(self.screen, Screen::World) && !self.was_teleporting {
                     // Finish and arrival can be drained in the same frame.
                     // Start the screen here so a fast remote teleport still
@@ -2497,6 +2510,7 @@ impl App {
                         self.scene.own_attachment_count()
                     )
                 });
+                self.stop_local_typing();
                 self.move_complete_at = Some(Instant::now());
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
@@ -2952,6 +2966,8 @@ impl App {
                 });
             }
             Action::Rebake => self.rebake(),
+            Action::StopAnimations => self.stop_animations(false),
+            Action::RefreshAttachments => self.refresh_attachments(),
             Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
             Action::PhotoToDisk => self.photo_to_disk(),
             // held actions are read every frame
@@ -5208,6 +5224,7 @@ impl App {
         for id in self.chat_ui.wanted_names.drain() {
             self.world.social.want_name(id);
         }
+        self.ask_app_link_names();
         let mut wanted: Vec<uuid::Uuid> = self.chat_ui.wanted_pics.drain().collect();
         if !self.demo && !self.world.agent_id.is_nil() {
             wanted.push(self.world.agent_id);
@@ -5650,6 +5667,7 @@ impl App {
         self.world.poll_inventory_cache();
         self.world.poll_transcripts();
         self.update_hover_height();
+        self.update_avatar_health();
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
         }
@@ -5904,6 +5922,9 @@ impl App {
             }
             // send_agent_update: Alt or Ctrl turns script clicks into releases
             c.alt_or_ctrl = self.alt || self.ctrl;
+            if self.chat_ui.local_typing() {
+                c.state |= aurora_net::AGENT_STATE_TYPING;
+            }
             // diagnostic: vertical controls sent to the simulator
             let vertical = c.control_flags & (control::UP_POS | control::UP_NEG | control::FLY);
             if vertical != self.last_vertical_flags {
@@ -8450,6 +8471,53 @@ impl App {
         });
     }
 
+    /// Our typing in the nearby chat, once per frame after its fields are
+    /// drawn (`ChatUi::local_typing_update`).
+    fn update_local_typing(&mut self) {
+        self.chat_ui.type_during_emote = self.settings.type_during_emote;
+        // AURORA_DEMO_TYPING: we type from our arrival on, no key needed
+        if self.demo && crate::demo::typing_scenario() && matches!(self.screen, Screen::World) {
+            if self.chat_ui.hold_local_typing(Instant::now()) {
+                self.send_local_typing(true);
+            }
+            return;
+        }
+        if let Some(typing) = self.chat_ui.local_typing_update(Instant::now()) {
+            self.send_local_typing(typing);
+        }
+    }
+
+    /// LLAgent::startTyping / stopTyping: the typing animation (started
+    /// only with PlayTypingAnim, always stopped), then the empty typing
+    /// notice on channel 0 for those in range. AGENT_STATE_TYPING follows
+    /// in the agent updates (`ChatUi::local_typing`).
+    fn send_local_typing(&mut self, typing: bool) {
+        log::info!("nearby chat: typing {}", if typing { "started" } else { "stopped" });
+        if !typing || self.settings.play_typing_anim {
+            self.send(NetCommand::AgentAnimation {
+                anim: crate::world::radar::ANIM_AGENT_TYPE,
+                start: typing,
+            });
+        }
+        self.send(NetCommand::Chat {
+            message: String::new(),
+            channel: 0,
+            chat_type: if typing {
+                aurora_net::ChatType::StartTyping
+            } else {
+                aurora_net::ChatType::StopTyping
+            },
+        });
+    }
+
+    /// A teleport or an arrival ends our typing in the nearby chat (FIRE-7273
+    /// in process_teleport_finish / process_agent_movement_complete).
+    fn stop_local_typing(&mut self) {
+        if self.chat_ui.stop_local_typing() {
+            self.send_local_typing(false);
+        }
+    }
+
     /// "Report a bug" (login screen, top bar, Help menu): GitHub's issue
     /// template chooser in the browser, in place of the built-in form
     /// (disabled, see main.rs).
@@ -8475,9 +8543,12 @@ impl App {
             LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             LoginAction::None | LoginAction::Login => {}
         }
+        // the line first, then the typing stop it brings (sendChat, then
+        // stopTyping)
         if let Some(c) = a.chat {
             self.send_local_chat(c);
         }
+        self.update_local_typing();
         for cmd in a.typing {
             self.send(cmd);
         }
@@ -8735,6 +8806,22 @@ impl App {
             .as_ref()
             .map(|b| b.label())
             .unwrap_or_default()
+    }
+
+    /// Me › Avatar health: our avatar and the keys of its shortcuts.
+    fn health_menu(&self) -> ui::bars::HealthMenu {
+        let keys = |action| {
+            self.settings.keybinds.get(action)[0]
+                .as_ref()
+                .map(|b| b.label())
+                .unwrap_or_default()
+        };
+        ui::bars::HealthMenu {
+            me: self.world.agent_id,
+            stop_keys: keys(Action::StopAnimations),
+            rebake_keys: keys(Action::Rebake),
+            refresh_keys: keys(Action::RefreshAttachments),
+        }
     }
 
     /// Places › Favorites, the first tab.
@@ -9766,6 +9853,7 @@ impl App {
                             pictures: &self.avatar_pics,
                             too_complex: &self.scene.too_complex,
                             demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                            own_typing: self.chat_ui.local_typing(),
                         }),
                     )
                 };
@@ -9870,6 +9958,7 @@ impl App {
                     camera_preset: self.settings.camera.preset,
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),
+                    health: self.health_menu(),
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -10284,6 +10373,7 @@ impl App {
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
+                self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, their typing animation)
@@ -10944,6 +11034,8 @@ impl App {
                 if let Some((experience, change)) = ui::experience_profile::show(&ctx, &p, &mut self.world) {
                     self.world.experiences.change(experience, change);
                 }
+                // an `objectim` link clicked (LLInspectRemoteObject)
+                ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, renderer);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
@@ -11788,6 +11880,10 @@ impl ApplicationHandler for App {
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
             );
+            self.scene.anims.insert(
+                crate::world::radar::ANIM_AGENT_TYPE,
+                Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
+            );
             if crate::demo::water::mode().is_some() {
                 self.scene.anims.insert(
                     crate::demo::water::CONTACT_ANIM,
@@ -12394,6 +12490,50 @@ impl ApplicationHandler for App {
             for ev in crate::demo::events() {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
+                }
+            }
+            // AURORA_DEMO_APPLINKS: a link of each `secondlife:///app/...`
+            // command, in a conversation and in the bubbles
+            if crate::demo::applinks_scene() {
+                let item = self
+                    .world
+                    .inventory
+                    .items
+                    .values()
+                    .filter(|i| !i.name.is_empty())
+                    .min_by(|a, b| a.name.cmp(&b.name))
+                    .map(|i| (i.id, i.name.clone()));
+                let text = crate::demo::applinks_text(item);
+                let agent = self.world.agent_id;
+                self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                    from_agent_id: crate::demo::DEMO_NOVA,
+                    from_name: "Tess Touch".into(),
+                    to_agent_id: agent,
+                    dialog: 0,
+                    session_id: uuid::Uuid::nil(),
+                    message: text.clone(),
+                    offline: false,
+                    from_group: false,
+                    binary_bucket: Vec::new(),
+                    timestamp: 0,
+                }));
+                self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                    from_name: aurora_i18n::tr!("demo-places-sign").into(),
+                    source_id: uuid::Uuid::from_u128(0x5106),
+                    owner_id: uuid::Uuid::nil(),
+                    source_type: aurora_net::ChatSourceType::Object,
+                    chat_type: aurora_net::ChatType::Normal,
+                    position: glam::Vec3::ZERO,
+                    message: text.clone(),
+                }));
+                self.panels.perf = false;
+                self.panels.places = false;
+                self.panels.people = false;
+                self.panels.chat = true;
+                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 380.0), egui::vec2(640.0, 380.0));
+                if let Some(link) = crate::demo::applinks_click(&text) {
+                    self.run_app_link(link);
                 }
             }
             // AURORA_DEMO_SLURLS: place links of every rating, and one unknown
