@@ -603,7 +603,7 @@ pub struct Settings {
     /// the Legacy Viewer starts at asset activation and suspends during edits.
     pub synchronize_animations: bool,
     /// Project standing feet onto support and adapt landing recovery to its
-    /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). On by default.
+    /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
     pub ground_avatar_feet: bool,
     /// Maximum vertical terrain correction in metres, relative to animation.
     pub ground_feet_max_height: f32,
@@ -1306,7 +1306,7 @@ impl Default for Settings {
             classic_rez_effect: false,
             predict_own_motion: false,
             synchronize_animations: false,
-            ground_avatar_feet: true,
+            ground_avatar_feet: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
             region_restart: Default::default(),
             reduce_motion: false,

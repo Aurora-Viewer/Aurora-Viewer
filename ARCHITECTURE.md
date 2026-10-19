@@ -149,7 +149,7 @@ Switching to synchronized playback rejoins the receipt phase immediately;
 switching back preserves the current phase and uses Legacy timing for future
 starts and edit pauses. Import preview seeking overrides either preference.
 
-The same section's enabled-by-default `Settings::ground_avatar_feet` controls
+The same section's disabled-by-default `Settings::ground_avatar_feet` controls
 terrain adaptation in `scene/anim/grounding.rs`, applied to the final blended
 pose without feeding corrections back into the source animation. The previous
 placement solver was replaced at the human's request. The new implementation

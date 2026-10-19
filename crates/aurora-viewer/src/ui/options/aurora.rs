@@ -825,9 +825,10 @@ mod tests {
     }
 
     #[test]
-    fn grounding_defaults_on_is_saved_and_resets_with_its_section() {
+    fn grounding_defaults_off_is_saved_and_resets_with_its_section() {
         let old: Settings = serde_json::from_str("{}").expect("older settings");
-        assert!(old.ground_avatar_feet);
+        assert!(!Settings::default().ground_avatar_feet);
+        assert!(!old.ground_avatar_feet);
         assert_eq!(old.ground_feet_max_height, 0.4);
         for enabled in [false, true] {
             let settings = Settings {
@@ -839,7 +840,7 @@ mod tests {
             assert_eq!(back.ground_avatar_feet, enabled);
             assert_eq!(back.ground_feet_max_height, 1.0);
             super::super::sections::reset(super::super::TAB_AURORA, &mut back);
-            assert!(back.ground_avatar_feet);
+            assert!(!back.ground_avatar_feet);
             assert_eq!(back.ground_feet_max_height, 0.4);
         }
     }

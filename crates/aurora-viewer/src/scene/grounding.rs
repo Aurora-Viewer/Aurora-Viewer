@@ -149,6 +149,8 @@ mod tests {
         let idx = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
         let now = Instant::now();
         world.agent.flying = false;
+        assert!(scene.grounding_frame(&world, idx, now).is_none(), "placement defaults off");
+        scene.ground_avatar_feet = true;
         assert!(scene.grounding_frame(&world, idx, now).is_some());
         scene.ground_feet_max_height = 1.0;
         assert_eq!(scene.grounding_frame(&world, idx, now).expect("enabled").max_height, 1.0);

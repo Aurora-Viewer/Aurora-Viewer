@@ -1155,7 +1155,7 @@ impl Scene {
             movement_preview: None,
             paused_skeletons: HashSet::new(),
             synchronize_animations: false,
-            ground_avatar_feet: true,
+            ground_avatar_feet: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
