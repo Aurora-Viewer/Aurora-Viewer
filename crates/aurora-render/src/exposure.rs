@@ -271,13 +271,7 @@ impl Exposure {
 
     /// Binds the scene image (resolved, before the tone mapping), its depth
     /// prepass and the glow; again whenever the targets are made anew.
-    pub(crate) fn bind(
-        &mut self,
-        device: &wgpu::Device,
-        scene: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
-        glow: &wgpu::TextureView,
-    ) {
+    pub(crate) fn bind(&mut self, device: &wgpu::Device, scene: &wgpu::TextureView, depth: &wgpu::TextureView, glow: &wgpu::TextureView) {
         let view = |binding, v| wgpu::BindGroupEntry {
             binding,
             resource: wgpu::BindingResource::TextureView(v),
@@ -331,18 +325,8 @@ impl Exposure {
         self.was_off = !on;
         let u = ExposureU {
             inv_view_proj: f.inv_view_proj.to_cols_array_2d(),
-            a: [
-                dt,
-                DIFFUSE_SCALE,
-                if f.glow { 1.0 } else { 0.0 },
-                if reset { 1.0 } else { 0.0 },
-            ],
-            b: [
-                COEFFICIENT,
-                lo,
-                hi,
-                if f.hold { -1.0 } else { -SPEED_ERROR.ln() / SPEED_TARGET },
-            ],
+            a: [dt, DIFFUSE_SCALE, if f.glow { 1.0 } else { 0.0 }, if reset { 1.0 } else { 0.0 }],
+            b: [COEFFICIENT, lo, hi, if f.hold { -1.0 } else { -SPEED_ERROR.ln() / SPEED_TARGET }],
         };
         queue.write_buffer(&self.params, 0, bytemuck::bytes_of(&u));
         {
