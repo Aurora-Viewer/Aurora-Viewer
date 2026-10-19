@@ -91,6 +91,8 @@ pub struct OptionsUi {
     /// The page opens on the first (1) or second (2) of its marked rows
     /// (`AURORA_DEMO_OPTIONS=<n>:new` / `:new2`, captures).
     pub scroll_to_new: u8,
+    /// Chat opens on the taskbar and system notifications (`3:attention`).
+    pub scroll_to_attention: bool,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -299,6 +301,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-chat-logs") => "history",
         value if value == aurora_i18n::text("ui-options-emitter") => "user-filled",
         value if value == aurora_i18n::text("ui-options-chat-mentions") => "at",
+        value if value == aurora_i18n::text("ui-options-attention") => "bell-ringing-filled",
         value if value == aurora_i18n::text("ui-options-mouse") => "mouse-filled",
         value if value == aurora_i18n::text("preferences-group-huds") => "hand-grab",
         value if value == aurora_i18n::text("ui-options-keyboard") => "keyboard-filled",
@@ -1202,7 +1205,7 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
 
 /// First group of the Chat page; `center`: Aurora's notification center
 /// is chosen (Preferences › Aurora), where the friends' toasts have a place.
-fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool) -> bool {
+fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool, scroll_to_attention: bool) -> bool {
     let mut c = false;
     group(ui, p, aurora_i18n::tr!("common-nearby-chat"), |ui| {
         c |= row(ui, p, aurora_i18n::tr!("ui-options-show-time"), "", |ui| {
@@ -1359,6 +1362,43 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
             slider(ui, &mut s.im_toast_seconds, 3.0..=60.0, " s")
         });
     });
+    // the Legacy Viewer's Notifications › People / Objects & Scripts
+    // (FSFlashOnMessage, FSFlashOnObjectIM, FSFlashOnScriptDialog) and
+    // World (FSEnableGrowl, FSGrowlWhenActive)
+    if scroll_to_attention {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+    }
+    group(ui, p, aurora_i18n::tr!("ui-options-attention"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-flash-on-message"),
+            aurora_i18n::tr!("ui-options-flash-on-message-hint"),
+            |ui| toggle(ui, p, &mut s.flash_on_message),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-flash-on-object-im"), "", |ui| {
+            ui.add_enabled_ui(s.flash_on_message, |ui| toggle(ui, p, &mut s.flash_on_object_im))
+                .inner
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-flash-on-script-dialog"),
+            aurora_i18n::tr!("ui-options-flash-on-script-dialog-hint"),
+            |ui| toggle(ui, p, &mut s.flash_on_script_dialog),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-system-notifications"),
+            aurora_i18n::tr!("ui-options-system-notifications-hint"),
+            |ui| toggle(ui, p, &mut s.system_notifications),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-system-notifications-when-active"), "", |ui| {
+            ui.add_enabled_ui(s.system_notifications, |ui| toggle(ui, p, &mut s.system_notifications_when_active))
+                .inner
+        });
+    });
     c
 }
 
@@ -1369,7 +1409,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
     if st.tab == TAB_CHAT {
         // drawn after the first group of the page, below
         let center = s.notifications_style == crate::settings::NotificationsStyle::Aurora;
-        c |= chat_page_head(ui, p, s, center);
+        c |= chat_page_head(ui, p, s, center, std::mem::take(&mut st.scroll_to_attention));
         c |= chat_logs_group(ui, p, s, st, r);
     }
     match st.tab {

@@ -89,8 +89,11 @@ impl World {
         } else {
             aurora_i18n::tr!("world-calling-card-declined")
         };
-        self.notifications
+        let id = self
+            .notifications
             .push(Kind::Info, aurora_i18n::tr!("world-calling-card-title"), text, Data::None);
+        let notice = self.notice_of(id, super::attention::Open::Notifications);
+        self.ask_attention(super::attention::Cause::Notice, notice);
     }
 }
 

@@ -378,6 +378,11 @@ pub struct Notifications {
 const MAX: usize = 100;
 
 impl Notifications {
+    /// The id of the last notification pushed (0 before the first).
+    pub fn last_id(&self) -> u64 {
+        self.next
+    }
+
     pub fn push(&mut self, kind: Kind, title: impl Into<String>, body: impl Into<String>, data: Data) -> u64 {
         self.next += 1;
         self.list.push(Notification {
