@@ -105,7 +105,8 @@ pub struct BuildSettings {
     pub land_brush_force: f32,
     /// Actual-root pivot: primary linkset root, or primary prim in linked editing.
     pub actual_root: bool,
-    /// SelectReflectionProbes: invisible reflection probes can be picked.
+    /// SelectReflectionProbes: off at each start (settings.xml, Persist=0).
+    #[serde(skip)]
     pub select_probes: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
@@ -1329,7 +1330,7 @@ impl BuildTool {
         self.selection_linked = s.edit_linked;
         let mut units = Vec::new();
         for (idx, o) in world.objects.iter() {
-            if o.is_avatar() || (!s.edit_linked && root_of(world, idx) != idx) {
+            if o.is_avatar() || (!s.select_probes && o.extra.reflection_probe.is_some()) || (!s.edit_linked && root_of(world, idx) != idx) {
                 continue;
             }
             let Some((p, _, hud)) = crate::scene::Scene::object_transform(world, idx, now, 0) else {

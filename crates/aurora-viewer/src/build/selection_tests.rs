@@ -23,6 +23,37 @@ fn selected(tool: &BuildTool) -> Vec<u32> {
 }
 
 #[test]
+fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let probe = object(&world, 99614);
+    let position = world.objects.get(probe).unwrap().position;
+    world.objects.get_mut(probe).unwrap().extra.reflection_probe = Some(edits::PROBE_DEFAULT);
+    let eye = position - Vec3::X * 10.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, position, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    tool.cam = geom::Cam::new(eye, position, projection * view, 1.0, 800.0, 800.0, 1.0);
+    world.agent.position = eye;
+    assert!(!settings.select_probes);
+    for enabled in [false, true, false] {
+        settings.select_probes = enabled;
+        tool.deselect_all(&world);
+        tool.rect_select(&mut world, &settings, (0.0, 0.0), (800.0, 800.0), false);
+        assert_eq!(selected(&tool).contains(&99614), enabled);
+        assert!(!tool.selection.is_empty(), "Ordinary objects remain selectable");
+    }
+    settings.select_probes = true;
+    let saved = serde_json::to_value(&settings).unwrap();
+    assert!(saved.get("select_probes").is_none());
+    let restored: BuildSettings = serde_json::from_value(saved).unwrap();
+    assert!(!restored.select_probes);
+    let restored: BuildSettings = serde_json::from_str(r#"{"select_probes":true}"#).unwrap();
+    assert!(
+        !restored.select_probes,
+        "Old saved values must not enable probe selection at startup"
+    );
+}
+
+#[test]
 fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     let (mut world, mut tool, settings) = fixture();
     let first = object(&world, 99610);

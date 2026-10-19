@@ -33,6 +33,36 @@ fn fixture() -> (World, BuildTool, BuildSettings) {
 }
 
 #[test]
+fn reflection_probe_selection_toggle_is_available_without_selection_in_every_inspector_section() {
+    let mut inspector = Inspector::new();
+    inspector.tool.deselect_all(&inspector.world);
+    for tab in 0..7 {
+        inspector.tool.tab = tab;
+        for _ in 0..4 {
+            inspector.show(Vec::new());
+        }
+        let (window, texts) = inspector.show(Vec::new());
+        let label = aurora_i18n::tr!("build-compact-probes");
+        let matches: Vec<_> = texts.iter().filter(|(text, _)| text == label).collect();
+        assert_eq!(matches.len(), 1, "Exactly one probe selection toggle in section {tab}");
+        let rect = matches[0].1;
+        assert!(window.contains_rect(rect), "Toggle must be visible without scrolling");
+        let before = inspector.settings.select_probes;
+        inspector.show(vec![egui::Event::PointerMoved(rect.center())]);
+        for pressed in [true, false] {
+            inspector.show(vec![egui::Event::PointerButton {
+                pos: rect.center(),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            }]);
+        }
+        assert_eq!(inspector.settings.select_probes, !before, "Toggle in section {tab}");
+        assert!(inspector.tool.selection.is_empty());
+    }
+}
+
+#[test]
 fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_in_footer() {
     let mut inspector = Inspector::new();
     let idx = inspector.world.objects.index_of(inspector.tool.selection.first().unwrap()).unwrap();
@@ -1275,11 +1305,12 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
         for label in [
             aurora_i18n::tr!("build-compact-both-sides"),
             aurora_i18n::tr!("build-compact-root-axis"),
+            aurora_i18n::tr!("build-compact-probes"),
         ] {
             let matches: Vec<_> = texts.iter().filter(|(text, _)| text == label).collect();
             assert_eq!(matches.len(), 1, "Shared option missing or duplicated: {label}");
             assert!(
-                expanded.bottom() - matches[0].1.bottom() < 170.0,
+                expanded.bottom() - matches[0].1.bottom() < 195.0,
                 "Shared option must be in the footer: {label}; window={expanded:?}, control={:?}",
                 matches[0].1
             );

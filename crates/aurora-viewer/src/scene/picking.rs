@@ -343,12 +343,14 @@ impl Scene {
     /// pick_transparent includes every volume surface, without requiring a
     /// touch handler or click action. The displayed depth still bounds the
     /// search so terrain and GPU-posed surfaces occlude CPU geometry.
+    /// `select_probes` follows SelectReflectionProbes in LLToolSelect::handleMouseDown.
     pub fn selection_pick(
         &self,
         world: &World,
         ray: Option<(Vec3, Vec3)>,
         depth: Option<Vec3>,
         build: bool,
+        select_probes: bool,
         far: f32,
     ) -> (Option<Vec3>, Option<usize>) {
         let now = Instant::now();
@@ -370,6 +372,7 @@ impl Scene {
                     || g.is_avatar
                     || g.rigged
                     || (g.owner_avatar.is_some() && o.visual_volume().is_mesh())
+                    || (!select_probes && o.extra.reflection_probe.is_some())
                     || (!build && o.click_action == crate::interaction::code::IGNORE)
                     || !ray_may_hit(g, ray)
                 {
@@ -383,7 +386,10 @@ impl Scene {
                 return (Some(ray.0 + ray.1 * t), Some(idx));
             }
         }
-        (point, point.and_then(|p| self.interaction_at(world, p, now, build)))
+        let target = point
+            .and_then(|p| self.interaction_at(world, p, now, build))
+            .filter(|&idx| select_probes || world.objects.get(idx).is_some_and(|o| o.extra.reflection_probe.is_none()));
+        (point, target)
     }
 
     /// LLToolPipette: sample the texture entry tint of the nearest volume face,
@@ -427,7 +433,7 @@ impl Scene {
     /// Exact edit surfaces along the whole cursor ray, including hidden and
     /// occluded prims. Reuses hover's bounds index and the rendered triangles;
     /// the wheel never waits for a GPU depth readback.
-    pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool) -> Vec<usize> {
+    pub fn edit_ray_hits(&self, world: &World, ray: (Vec3, Vec3), hud: bool, select_probes: bool) -> Vec<usize> {
         let mut candidates = Vec::new();
         if hud {
             let own = world.objects.index_of_uuid(&world.agent_id);
@@ -443,7 +449,12 @@ impl Scene {
         let now = Instant::now();
         let mut hits = ray_hits(&candidates, |&idx| {
             let g = self.gpu.get(idx)?;
-            if g.hud != hud || !crate::build::selectable(world, idx) || !ray_may_hit(g, ray) {
+            let o = world.objects.get(idx)?;
+            if g.hud != hud
+                || (!select_probes && o.extra.reflection_probe.is_some())
+                || !crate::build::selectable(world, idx)
+                || !ray_may_hit(g, ray)
+            {
                 return None;
             }
             let hit = self.face_hit(world, idx, ray, now, true)?;
@@ -1733,6 +1744,55 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn reflection_probe_selection_toggle_passes_through_invisible_probes_for_menu_edit_and_wheel() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        world.agent.position = ray.0;
+        let probe = world.objects.get_mut(front).unwrap();
+        probe.extra.reflection_probe = Some(crate::build::edits::PROBE_DEFAULT);
+        for face in &mut Arc::make_mut(probe.te.as_mut().unwrap()).faces {
+            face.color[3] = 0.0;
+        }
+        scene.gpu[front].faces.clear();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let back_point = Vec3::new(6.5, 0.0, 50.0);
+        for enabled in [false, true, false] {
+            let expected = if enabled { (front_point, front) } else { (back_point, back) };
+            for build in [false, true] {
+                for depth in [Some(back_point), None] {
+                    assert_eq!(
+                        scene.selection_pick(&world, Some(ray), depth, build, enabled, 100.0),
+                        (Some(expected.0), Some(expected.1))
+                    );
+                }
+                // An actual foreground surface still occludes the probe.
+                let occluder = Vec3::new(1.0, 0.0, 50.0);
+                assert_eq!(
+                    scene.selection_pick(&world, Some(ray), Some(occluder), build, enabled, 100.0),
+                    (Some(occluder), None)
+                );
+            }
+            assert_eq!(
+                scene.edit_ray_hits(&world, ray, false, enabled),
+                if enabled { vec![front, back] } else { vec![back] }
+            );
+        }
+        // A visible probe cannot reappear through the depth-only fallback.
+        let face = scene.gpu[back].faces[0];
+        scene.gpu[front].faces.push(face);
+        assert_eq!(scene.selection_pick(&world, None, Some(front_point), true, false, 100.0).1, None);
+        assert_eq!(
+            scene.selection_pick(&world, None, Some(front_point), true, true, 100.0).1,
+            Some(front)
+        );
+    }
+
+    #[test]
     fn edit_stack_reaches_occluded_and_ignored_prims_and_uses_triangles() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         world.agent.position = Vec3::new(0.0, 0.0, 50.0);
@@ -1741,7 +1801,7 @@ pub(super) mod tests {
         }
         let ray = (world.agent.position, Vec3::X);
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
-        assert_eq!(scene.edit_ray_hits(&world, ray, false), [front, back]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false), [front, back]);
         // Bounds still cover this corner, but the only remaining triangle does not.
         let key = scene.gpu[front].geom.unwrap();
         let GeomState::Ready(geom) = &mut scene.geoms.get_mut(&key).unwrap().state else {
@@ -1749,8 +1809,12 @@ pub(super) mod tests {
         };
         Arc::get_mut(geom).unwrap().pick_faces[0].as_mut().unwrap().indices = vec![0, 2, 1];
         let ray = (Vec3::new(0.0, -0.4, 50.4), Vec3::X);
-        assert!(scene.edit_ray_hits(&world, ray, false).is_empty());
-        assert!(scene.edit_ray_hits(&world, (Vec3::new(0.0, 2.0, 50.0), Vec3::X), false).is_empty());
+        assert!(scene.edit_ray_hits(&world, ray, false, false).is_empty());
+        assert!(
+            scene
+                .edit_ray_hits(&world, (Vec3::new(0.0, 2.0, 50.0), Vec3::X), false, false)
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1762,15 +1826,15 @@ pub(super) mod tests {
             scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
         }
         world.objects.get_mut(back).unwrap().position.x = 200.0;
-        assert_eq!(scene.edit_ray_hits(&world, ray, false), [front]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false), [front]);
         world.objects.get_mut(back).unwrap().position.x = 7.0;
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         scene.gpu[front].hud = true;
         scene.gpu[front].owner_avatar = Some(own);
-        assert_eq!(scene.edit_ray_hits(&world, ray, false), [back]);
-        assert_eq!(scene.edit_ray_hits(&world, ray, true), [front]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, false, false), [back]);
+        assert_eq!(scene.edit_ray_hits(&world, ray, true, false), [front]);
         scene.gpu[front].owner_avatar = Some(back);
-        assert!(scene.edit_ray_hits(&world, ray, true).is_empty());
+        assert!(scene.edit_ray_hits(&world, ray, true, false).is_empty());
     }
 
     #[test]
@@ -2092,12 +2156,12 @@ pub(super) mod tests {
             scene.textures.alpha_by_slot = vec![tex_alpha];
             for build in [false, true] {
                 assert_eq!(
-                    scene.selection_pick(&world, Some(ray), Some(depth), build, 100.0),
+                    scene.selection_pick(&world, Some(ray), Some(depth), build, false, 100.0),
                     (Some(front_point), Some(front))
                 );
                 // No opaque depth (sky behind it) must still allow selection.
                 assert_eq!(
-                    scene.selection_pick(&world, Some(ray), None, build, 100.0),
+                    scene.selection_pick(&world, Some(ray), None, build, false, 100.0),
                     (Some(front_point), Some(front))
                 );
             }
@@ -2114,7 +2178,7 @@ pub(super) mod tests {
         scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
         for build in [false, true] {
             assert_eq!(
-                scene.selection_pick(&world, Some(ray), Some(depth), build, 100.0),
+                scene.selection_pick(&world, Some(ray), Some(depth), build, false, 100.0),
                 (Some(front_point), Some(front))
             );
         }
@@ -2134,24 +2198,24 @@ pub(super) mod tests {
         let occluder = Vec3::new(1.0, 0.0, 50.0);
         for build in [false, true] {
             assert_eq!(
-                scene.selection_pick(&world, Some(ray), Some(occluder), build, 100.0),
+                scene.selection_pick(&world, Some(ray), Some(occluder), build, false, 100.0),
                 (Some(occluder), None)
             );
-            assert_eq!(scene.selection_pick(&world, Some(ray), None, build, 2.0), (None, None));
+            assert_eq!(scene.selection_pick(&world, Some(ray), None, build, false, 2.0), (None, None));
         }
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::IGNORE;
         assert_eq!(
-            scene.selection_pick(&world, Some(ray), Some(front_point), false, 100.0),
+            scene.selection_pick(&world, Some(ray), Some(front_point), false, false, 100.0),
             (Some(back_point), Some(back))
         );
         assert_eq!(
-            scene.selection_pick(&world, Some(ray), Some(back_point), true, 100.0),
+            scene.selection_pick(&world, Some(ray), Some(back_point), true, false, 100.0),
             (Some(front_point), Some(front))
         );
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::DISABLED;
         scene.gpu[front].faces[0].te_alpha = 0.5;
         assert_eq!(
-            scene.selection_pick(&world, Some(ray), Some(back_point), false, 100.0),
+            scene.selection_pick(&world, Some(ray), Some(back_point), false, false, 100.0),
             (Some(front_point), Some(front))
         );
     }
@@ -2195,7 +2259,7 @@ pub(super) mod tests {
         let depth = Vec3::new(6.5, 0.0, 50.0);
         for build in [false, true] {
             assert_eq!(
-                scene.selection_pick(&world, Some(ray), Some(depth), build, 100.0),
+                scene.selection_pick(&world, Some(ray), Some(depth), build, false, 100.0),
                 (Some(depth), Some(back))
             );
         }

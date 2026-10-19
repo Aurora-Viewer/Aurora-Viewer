@@ -574,8 +574,14 @@ impl App {
         let tools = build && !self.alt && matches!(click, Click::Press | Click::Build);
         let (point, idx) =
             if click == Click::Menu || tools && matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene
-                    .selection_pick(&self.world, ray, depth, build, self.settings.draw_distance)
+                self.scene.selection_pick(
+                    &self.world,
+                    ray,
+                    depth,
+                    build,
+                    self.settings.build.select_probes,
+                    self.settings.draw_distance,
+                )
             } else if tools {
                 (depth, depth.and_then(|p| self.scene.pick_at(&self.world, p, now)))
             } else {

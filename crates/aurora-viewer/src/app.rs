@@ -4291,8 +4291,12 @@ impl App {
             .then_some(self.scene.lists.hud_view)
             .flatten()
             .map(|view| {
-                self.scene
-                    .edit_ray_hits(&self.world, view.ray(self.cursor_pos.0, self.cursor_pos.1), true)
+                self.scene.edit_ray_hits(
+                    &self.world,
+                    view.ray(self.cursor_pos.0, self.cursor_pos.1),
+                    true,
+                    self.settings.build.select_probes,
+                )
             })
             .unwrap_or_default();
         if hits.is_empty()
@@ -4301,7 +4305,7 @@ impl App {
                 .as_ref()
                 .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
         {
-            hits = self.scene.edit_ray_hits(&self.world, ray, false);
+            hits = self.scene.edit_ray_hits(&self.world, ray, false, self.settings.build.select_probes);
         }
         self.build.cycle_under_cursor(&mut self.world, &self.settings.build, &hits, steps);
         self.flush_build();
@@ -4345,15 +4349,25 @@ impl App {
             // LLToolFace picks the current cursor ray. A delayed GPU depth
             // sample can still point at the previous object during Shift clicks.
             let ray = self.build.cam.ray(x, y);
-            let target = self.scene.edit_ray_hits(&self.world, ray, false).first().copied();
+            let target = self
+                .scene
+                .edit_ray_hits(&self.world, ray, false, self.settings.build.select_probes)
+                .first()
+                .copied();
             (None, target, ray)
         } else {
             let Some(picked) = self.click_pick() else {
                 return false;
             };
             let (hit, target) = if matches!(self.build.tool, crate::build::Tool::Edit | crate::build::Tool::Grab) {
-                self.scene
-                    .selection_pick(&self.world, picked.ray, picked.depth, true, self.settings.draw_distance)
+                self.scene.selection_pick(
+                    &self.world,
+                    picked.ray,
+                    picked.depth,
+                    true,
+                    self.settings.build.select_probes,
+                    self.settings.draw_distance,
+                )
             } else {
                 (
                     picked.depth,
