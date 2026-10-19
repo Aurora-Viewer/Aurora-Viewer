@@ -215,7 +215,9 @@ with another, then cropped, so a forced side gives more tiles than the
 photo divided by it: 15 tiles of 640 x 600 for 3200 x 1800 with
 `AURORA_DEMO_SNAPSHOT_TILE=1024`. With `AURORA_AO=gtao:2` and
 `AURORA_DEMO_DEBUG=ao`, no dark line may cross the ground along the tiles'
-borders.
+borders. With `AURORA_DEBUG_SHADOWS=1`, the sun's shadows are those of the
+photo in one pass, in every tile (the shadow of the box on the right of the
+plaza, with `AURORA_DEMO_POS=129,134`).
 `inventory[:<side>|window]` opens the window on the Inventory destination
 (512 by default), asks the price at `AURORA_DEMO_SNAPSHOT_FRAME` and
 confirms it 60 frames later: the texture is encoded, the demo answers the
