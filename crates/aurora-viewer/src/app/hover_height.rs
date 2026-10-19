@@ -10,7 +10,7 @@ impl App {
                     self.panels.chat = false;
                     self.panels.people = false;
                     self.panels.perf = false;
-                    self.camera.demo_orbit(0.2, 0.25, Some(4.0), &self.settings.camera);
+                    self.camera.demo_orbit(1.0, 0.45, Some(5.0), &self.settings.camera);
                 }
             }
             let mode = std::env::var("AURORA_DEMO_HOVER_HEIGHT").ok();

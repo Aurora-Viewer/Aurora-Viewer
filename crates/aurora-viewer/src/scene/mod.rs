@@ -4383,7 +4383,7 @@ impl Scene {
             if let Some(frame) = &mut motions.ground {
                 let previous = world.avatar_shape_dz.get(&owner).copied().unwrap_or(0.0);
                 frame.to_world.w_axis.z += dz - previous;
-                frame.pelvis_height = (base.local_pos[rig.pelvis].z - dz).max(0.01);
+                frame.sole_height = self.grounding_sole_height(world, owner);
             }
             let physics = self.physics_job(world, owner, idx, control, eye, now);
             work.push((slot as usize, motions, base, owner, pose_now, physics));

@@ -150,32 +150,40 @@ switching back preserves the current phase and uses Legacy timing for future
 starts and edit pauses. Import preview seeking overrides either preference.
 
 The same section's enabled-by-default `Settings::ground_avatar_feet` controls
-`scene/anim/grounding.rs`: standard stand/crouch motions solve both leg chains
-before priority blending, preserving higher-priority AO poses. Support is
-sampled continuously; only the IK corrections are smoothed with an 80 ms
-half-life, independently of the frame rate. Each leg's contact weight comes
-from its uncorrected ankle height above the shaped neutral skeleton, with a
-smooth 5–30 mm release band. An authored lift skips that leg's support trace
-and discards its correction, preserving the exact raised pose independently
-of scene steps and the other foot. Missing support affects only that leg.
-Activation, retargeting, lost support and disabling the setting ease through
-the authored pose; editing pauses that clock, while shape resets and
-teleports discard old corrections.
-This human-requested improvement removes abrupt ankle retargeting without
-delaying the original animations. Short support traces in
-`scene/grounding.rs` run on the existing pose workers, using terrain, solid
-geometry and the region-corrected simulator contact plane as a fallback.
-Exact geometry deliberately improves separate-step placement over one shared
-contact plane; ankle targets retain the scaled ankle-to-foot clearance to
-keep the soles on the support plane. Standing-up recovery follows LLKeyframeFallMotion's velocity
-ease-in and pelvis tilt, with eased entry and return upright between 50% and
-75% of the clip.
-Seated/control avatars and animation import previews do not acquire support.
-`demo_grounding.rs` provides offline slope, step and recovery fixtures. It
-places the avatar once, then keeps normal movement, matching support planes
-and stand/walk/run/crouch/flight/jump/recovery signals. Explicit `-motion`
-fixtures drive the same input/physics path for automated captures; `-lift`
-alternates authored left/right foot lifts to verify release and replanting.
+the final-pose constraint pass in `scene/anim/grounding.rs`. This is an
+independent implementation inspired by [ozz-animation foot IK](https://guillaumeblanc.github.io/ozz-animation/samples/foot_ik/)
+and [Daniel Holden's foot locking](https://theorangeduck.com/page/inverse-kinematics-foot-locking),
+replacing the earlier Legacy Viewer motion-specific implementation at the
+human's request. It analyses the authored pose after animation priority
+blending; corrected rotations never feed back into the next authored pose.
+Per-foot height, vertical velocity and contact hysteresis distinguish stance
+from swing. Slow contacts acquire a bounded world-space anchor; moving feet
+retain their source motion. Four sole corners account for heels, toes and
+foot width, using the existing neutral shoe/hover calibration when available.
+Free feet retain authored clearance and heel/toe roll over the terrain;
+an 80 ms swing look-ahead anticipates stair edges. Stance targets use world
+coordinates while swing offsets travel with the pelvis; toe-off/replanting
+converts those coordinates to avoid applying pelvic movement twice.
+
+Critically damped positional targets and eased support tilt precede hard contact and
+collision projection, so smoothing cannot blend a foot back through a floor.
+Both leg reach spheres constrain the smallest necessary pelvis displacement
+(bounded to 45 cm), anticipating the support beneath a swing foot so the
+body does not rise at toe-off and snap down on replanting. Analytic two-bone IK
+preserves segment lengths and the authored knee bend plane. Sole orientation preserves authored heel/toe rolls
+while adapting the support slope. Priority 5/6 legs or pelvis, control avatars,
+seating, flight, airborne motions and import previews keep control. Editing
+pauses the placement clock, resets/teleports discard anchors, and disabling
+the option fades the target and pelvis offsets back to the authored pose.
+Landing uses the authored recovery clip through the same constraint pass.
+
+`scene/grounding.rs` runs short solid-geometry/terrain traces on the existing
+parallel pose workers, with a region-corrected simulator contact fallback.
+`demo_grounding.rs` places the avatar once and keeps free movement and stock
+motion signals. `slope`, `steps`, `landing`, `-lift`, `-motion` and `-off`
+cover contact, swing, recovery and comparison; `steps-reach` starts with the
+physical root on the high step and the other foot over the low one, exercising
+pelvis compensation instead of leaving an unreachable foot floating.
 
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these

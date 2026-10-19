@@ -169,6 +169,23 @@ impl Scene {
         )
     }
 
+    /// Reuse the neutral geometry calibration, including worn soles, without
+    /// scanning geometry on a pose worker or cancelling shoe hover with IK.
+    pub(super) fn grounding_sole_height(&self, world: &World, owner: uuid::Uuid) -> Option<f32> {
+        let skeleton = self.skeletons.get(&owner)?;
+        let height = standing_box_height(
+            skeleton.neutral_body_height,
+            skeleton.neutral_shape_hover,
+            self.auto_hover.second_life,
+        )?;
+        let adjustment = if owner == world.agent_id {
+            self.automatic_hover_base(world).unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        Some(skeleton.neutral_root_height - height * 0.5 - adjustment)
+    }
+
     /// Keep the raw estimate for immediate offset previews, without decoding
     /// or skinning the attachments again. Unfinished outfits have no baseline.
     pub fn automatic_hover_base(&self, world: &World) -> Option<f32> {

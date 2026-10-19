@@ -142,7 +142,11 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     }
     // Straddle the seam from the lower step, so one knee can bend up while
     // the other leg reaches its support without stretching the skeleton.
-    let spawn = if mode.starts_with("steps") { p - Vec3::Y * 0.06 } else { p };
+    let spawn = if mode.starts_with("steps") {
+        p + Vec3::Y * if mode.contains("-reach") { 0.005 } else { -0.005 }
+    } else {
+        p
+    };
     let position = spawn.with_z(surface_height(mode, spawn) + half_height(world, scene));
     world
         .agent
@@ -150,6 +154,10 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     world.agent.position = position;
     world.agent.yaw = 0.0;
     world.agent.velocity = Vec3::ZERO;
+    // Standing bodies retain a small heading difference from the agent.
+    // Seed the rendered heading too, so both sole footprints straddle the
+    // seam. Subsequent frames keep ordinary movement and body turning.
+    world.bodies.insert(world.agent_id, crate::world::body::Body::new(Vec3::X));
     if let Some(avatar) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get_mut(i)) {
         avatar.position = world.agent.position;
         avatar.rotation = Quat::IDENTITY;
@@ -285,6 +293,11 @@ mod tests {
     #[test]
     fn grounding_demo_keeps_human_position_yaw_and_movement_after_initial_spawn() {
         let (mut world, mut scene) = fixture();
+        world
+            .bodies
+            .insert(world.agent_id, crate::world::body::Body::new(Vec3::new(1.0, 0.5, 0.0)));
+        tick(&mut world, &mut scene, 600, "steps");
+        assert!(world.bodies[&world.agent_id].rotation.abs_diff_eq(Quat::IDENTITY, 1e-6));
         let spawn = world.agent.position;
         world.agent.yaw = 0.6;
         for frame in 601..621 {

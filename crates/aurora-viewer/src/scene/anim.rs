@@ -272,8 +272,6 @@ struct Motion {
     /// Started by another motion (the expression an animation names), not
     /// by the simulator: it ends on its own.
     internal: bool,
-    stand: grounding::Stand,
-    landing: Option<grounding::Landing>,
 }
 
 impl Motion {
@@ -281,7 +279,7 @@ impl Motion {
         let a = &self.anim.anim;
         let start = if a.looping { self.continuous_activation } else { self.activation };
         let elapsed = now.saturating_duration_since(start).as_secs_f64();
-        let ease_in = self.landing.map_or(a.ease_in, |landing| landing.ease_in);
+        let ease_in = a.ease_in;
         if ease_in > 0.0 {
             aurora_assets::anim::cubic_step(elapsed / f64::from(ease_in))
         } else {
@@ -330,6 +328,7 @@ pub struct Controller {
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
     pub(super) ground: Option<grounding::Frame>,
+    placement: grounding::Placement,
     /// Opt-in receipt clock; the default keeps Legacy Viewer activation / pauses.
     synchronized: bool,
     /// Newest first (mActiveMotions, push_front).
@@ -633,9 +632,7 @@ impl Controller {
         self.pelvis_offset = None;
         self.tag_pelvis_offset = 0.0;
         self.last_eval = None;
-        for motion in &mut self.motions {
-            motion.stand = grounding::Stand::default();
-        }
+        self.placement = grounding::Placement::default();
         if animations {
             self.motions.retain(|m| m.stop.is_none());
         }
@@ -675,9 +672,7 @@ impl Controller {
         pr.breathe_start = pr.breathe_start.map(|t| t + d);
         pr.noise_start = pr.noise_start.map(|t| t + d);
         self.last_eval = self.last_eval.map(|t| t + d);
-        for motion in &mut self.motions {
-            motion.stand.resume(d);
-        }
+        self.placement.resume(d);
     }
 
     /// Skeleton-space position of the head as posed last frame.
@@ -827,7 +822,6 @@ impl Controller {
         let frozen = self.paused_at;
         let now = frozen.unwrap_or(now);
         let preview = self.preview_start;
-        let ground = self.ground.filter(|_| !self.control);
         let activation = |id, start: Instant| {
             preview
                 .filter(|(target, _)| target.is_none_or(|target| target == id))
@@ -836,11 +830,6 @@ impl Controller {
         self.aiming = playing.iter().any(|p| default_motions::GUN_AIM_ANIMS.contains(&p.id));
         // stop the motions the server no longer plays
         for m in self.motions.iter_mut().filter(|m| !m.internal) {
-            if ground.is_none() {
-                m.landing = None;
-            } else if m.landing.is_none() && grounding::landing(m.id) {
-                m.landing = ground.map(grounding::Landing::new);
-            }
             if !playing
                 .iter()
                 .any(|p| p.id == m.id && p.continuous_start == m.signal.continuous_start)
@@ -887,8 +876,6 @@ impl Controller {
                         residual: 0.0,
                         weight: 0.0,
                         internal: false,
-                        stand: grounding::Stand::default(),
-                        landing: ground.filter(|_| grounding::landing(signal.id)).map(grounding::Landing::new),
                     },
                 );
                 self.signals.insert(signal.id, *signal);
@@ -993,35 +980,6 @@ impl Controller {
             }
             let a = &m.anim.anim;
             let t = m.local_time(now) as f32;
-            if let (Some(mut frame), Some(landing)) = (self.ground.filter(|_| !self.control), &mut m.landing)
-                && !landing.support_sampled
-            {
-                let foot = frame
-                    .to_world
-                    .transform_point3(rig.local_pos[rig.pelvis] - Vec3::Z * frame.pelvis_height);
-                if let Some(support) = ground(foot) {
-                    frame.normal = support.normal;
-                    landing.rotation = grounding::Landing::new(frame).rotation;
-                }
-                landing.support_sampled = true;
-            }
-            let corrected = if !self.control && grounding::standing(m.id) {
-                let fallback;
-                let base = match base {
-                    Some(base) => base,
-                    None => {
-                        fallback = SkeletonBase {
-                            local_pos: rig.local_pos.clone(),
-                            scale: rig.scale.clone(),
-                        };
-                        &fallback
-                    }
-                };
-                m.stand.sample(rig, &m.anim, t, base, self.ground, now, &ground)
-            } else {
-                m.stand = grounding::Stand::default();
-                None
-            };
             for ((jm, j), top) in a.joints.iter().zip(&m.anim.joints).zip(&m.anim.position_top) {
                 let Some(j) = *j else {
                     continue;
@@ -1029,21 +987,7 @@ impl Controller {
                 if j >= n {
                     continue;
                 }
-                let mut rot = jm.rotation_at_loop(t, a.loop_range());
-                if let Some(corrected) = &corrected {
-                    // Only replace states this motion owns; priorities and
-                    // ease weights still pass through the ordinary blender.
-                    rot = rot.map(|_| corrected[j]);
-                }
-                if j == rig.pelvis
-                    && self.ground.is_some()
-                    && !self.control
-                    && let Some(landing) = m.landing
-                {
-                    let phase = cubic_step((t / a.duration.max(0.001) - 0.5) / 0.25);
-                    let weight = cubic_step(t / 0.18) * (1.0 - phase);
-                    rot = rot.map(|r| (r * Quat::IDENTITY.slerp(landing.rotation, weight)).normalize());
-                }
+                let rot = jm.rotation_at_loop(t, a.loop_range());
                 let pos = jm
                     .position_at_loop(t, a.loop_range())
                     .filter(|p| p.is_finite())
@@ -1161,15 +1105,71 @@ impl Controller {
         let pelvis_rest =
             rest_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO) - rig.local_pos.get(rig.pelvis).copied().unwrap_or(Vec3::ZERO);
         let pelvis_offset = self.pelvis_offset.map_or(Vec3::ZERO, |position| position - pelvis_rest);
-        let world = if added_rot.is_empty() {
-            rig.world_with(&self.rot, pelvis_offset, &local_pos, scale)
+        let source_rotations = if added_rot.is_empty() {
+            None
         } else {
             let mut rot = self.rot.clone();
             for (j, r) in added_rot {
                 rot[j] = r;
             }
-            rig.world_with(&rot, pelvis_offset, &local_pos, scale)
+            Some(rot)
         };
+        let source_rotations = source_rotations.as_deref().unwrap_or(&self.rot);
+        // Foot constraints run on the final authored pose. Keep that pose in
+        // self.rot: feeding corrected rotations back into the blender would
+        // turn the next frame's contact analysis into an IK feedback loop.
+        let protected = |names: [&str; 3]| {
+            names.iter().any(|name| {
+                rig.names
+                    .get(*name)
+                    .and_then(|&j| states.get(j))
+                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _)| priority >= 5 && weight > 0.01))
+            })
+        };
+        let allowed = [
+            !protected(["mPelvis"; 3]) && !protected(["mHipLeft", "mKneeLeft", "mAnkleLeft"]),
+            !protected(["mPelvis"; 3]) && !protected(["mHipRight", "mKneeRight", "mAnkleRight"]),
+        ];
+        if self.control || self.preview_start.is_some() {
+            self.placement = grounding::Placement::default();
+        }
+        let frame = self.ground.filter(|frame| {
+            !self.control
+                && self.preview_start.is_none()
+                && frame.velocity_z.abs() < 0.5
+                && !self
+                    .motions
+                    .iter()
+                    .any(|motion| motion.stop.is_none() && grounding::unplanted(motion.id))
+        });
+        let fallback;
+        let skeleton = match base {
+            Some(base) => base,
+            None => {
+                fallback = SkeletonBase {
+                    local_pos: rig.local_pos.clone(),
+                    scale: rig.scale.clone(),
+                };
+                &fallback
+            }
+        };
+        let corrected = self.placement.apply(
+            rig,
+            skeleton,
+            grounding::Pose {
+                rotations: source_rotations,
+                positions: &local_pos,
+                pelvis: pelvis_offset,
+                allowed,
+            },
+            frame,
+            now,
+            &ground,
+        );
+        let (rotations, pelvis) = corrected.as_ref().map_or((source_rotations, pelvis_offset), |pose| {
+            (pose.rotations.as_slice(), pelvis_offset + pose.pelvis)
+        });
+        let world = rig.world_with(rotations, pelvis, &local_pos, scale);
         if !hold_pose {
             self.update_live_morphs(now);
         }

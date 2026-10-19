@@ -1446,14 +1446,21 @@ normal gait clips. Append `-off` to compare the original keyframes, or
 `-motion` for an automated side-step/stop/return/jump input sequence. Compare
 `slope-lift` with `slope-lift-off` (or `steps-lift` with `steps-lift-off`):
 the stand alternately raises each foot.
-The raised leg must follow the original animation exactly, while the other
-foot keeps its support; corrections resume progressively on replanting.
-Scene geometry above the raised foot must not pull it back onto a step. Compare
+The raised leg must keep its authored clearance over the terrain, while the other foot
+keeps its support. If a swing foot intersects a step, only the necessary
+upward correction should prevent penetration; it must not be forced down to
+the floor. Heel/toe rolls should survive the slope correction. `steps-reach`
+starts with the physical root on the high step and a foot over the low step:
+the pelvis must compensate enough for both soles to reach their surfaces,
+without stretching the legs. Compare `steps-reach-off`, then walk across the
+seam and jump with the normal controls. In `steps-reach-lift`, the pelvis must
+stay prepared for the lower foot's return rather than popping up and down
+with each swing. Inspect
 each foot's height and orientation, knee bending, and the recovery's return
 upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
 without restarting: corrections enter and leave smoothly, and should behave
 alike at 30, 60 and 144 fps. Imported animation previews and higher-priority AO poses
-must retain control. These fixtures never connect to a grid.
+of priority 5/6 must retain control. These fixtures never connect to a grid.
 
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
 bottom AO button with a complete swimming set. `quick-missing` and

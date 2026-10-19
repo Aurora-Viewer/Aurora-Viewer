@@ -1,6 +1,5 @@
-//! Render-space support queries for the standing/landing motion controllers.
-//! LLVOAvatar::getGround / LLWorld::resolveStepHeightGlobal (indra/newview,
-//! originally LGPL 2.1): a short vertical trace, terrain and contact fallback.
+//! Render-space collision queries for pose-space foot placement.
+//! Exact solid geometry and terrain, with streamed contact as a fallback.
 
 use super::anim::grounding::{Frame, Surface};
 use super::*;
@@ -27,16 +26,12 @@ impl Scene {
             plane.w += plane.truncate().dot(world.region_offset(object.key.region).unwrap_or(Vec3::ZERO));
             plane
         });
-        let normal = contact.map_or_else(|| terrain_normal(world, position), |p| p.truncate().normalize_or(Vec3::Z));
         let to_world = Mat4::from_rotation_translation(rotation, position) * Mat4::from_translation(-self.avatar_lib.pelvis);
         (to_world.is_finite() && velocity_z.is_finite()).then_some(Frame {
             to_world,
             contact,
             velocity_z,
-            pelvis_height: self.skeletons.get(&object.full_id).map_or(self.avatar_lib.pelvis.z, |s| {
-                (s.base.local_pos[self.avatar_lib.rig.pelvis].z - s.shape_dz).max(0.01)
-            }),
-            normal,
+            sole_height: self.grounding_sole_height(world, object.full_id),
         })
     }
 
@@ -124,8 +119,7 @@ mod tests {
             to_world: Mat4::IDENTITY,
             contact: Some(Vec4::new(0.0, 0.0, 1.0, 50.9)),
             velocity_z: 0.0,
-            pelvis_height: 1.0,
-            normal: Vec3::Z,
+            sole_height: None,
         };
         let ankle = Vec3::new(3.0, 0.0, 50.7);
         let now = Instant::now();
