@@ -209,7 +209,13 @@ written in <ms>)`. Open the file: its framing is the window's (cropped to
 its proportions), without the interface unless asked. With
 `AURORA_DEMO_SNAPSHOT_TILE=2048`, an 8K photo is drawn in 12 tiles: compare
 it with the same photo in one pass, the tiles must not show (the demo's
-particles and animations make a few levels of difference everywhere).
+particles and animations make a few levels of difference everywhere). Each
+tile is drawn with a guard band of up to 128 pixels on the sides it shares
+with another, then cropped, so a forced side gives more tiles than the
+photo divided by it: 15 tiles of 640 x 600 for 3200 x 1800 with
+`AURORA_DEMO_SNAPSHOT_TILE=1024`. With `AURORA_AO=gtao:2` and
+`AURORA_DEMO_DEBUG=ao`, no dark line may cross the ground along the tiles'
+borders.
 `inventory[:<side>|window]` opens the window on the Inventory destination
 (512 by default), asks the price at `AURORA_DEMO_SNAPSHOT_FRAME` and
 confirms it 60 frames later: the texture is encoded, the demo answers the

@@ -61,26 +61,28 @@ fn the_interface_needs_the_windows_proportions() {
 
 #[test]
 fn one_pass_while_the_card_holds_it_tiles_otherwise() {
-    assert_eq!(
-        plan((7680, 4320), 16384, 64_000_000),
-        vec![Tile {
-            x: 0,
-            y: 0,
-            width: 7680,
-            height: 4320
-        }]
-    );
+    let whole = Tile {
+        x: 0,
+        y: 0,
+        width: 7680,
+        height: 4320,
+    };
+    assert_eq!(plan((7680, 4320), 16384, 64_000_000), vec![TilePass { keep: whole, draw: whole }]);
+    // just within the limits: still one pass, no guard band
+    assert_eq!(plan((7680, 4320), 7680, 7680 * 4320), vec![TilePass { keep: whole, draw: whole }]);
     // a side over the card's limit
+    // (2 x 2 tiles of 3840 would leave no room for their bands: 3 x 2)
     let tiles = plan((7680, 4320), 4096, u64::MAX);
-    assert_eq!(tiles.len(), 4);
-    assert!(tiles.iter().all(|t| t.width <= 4096 && t.height <= 4096));
+    assert_eq!(tiles.len(), 6);
+    assert!(tiles.iter().all(|t| t.draw.width <= 4096 && t.draw.height <= 4096));
     // too many pixels for the memory
     let tiles = plan((7680, 4320), 16384, 10_000_000);
     assert!(tiles.len() >= 4);
-    assert!(tiles.iter().all(|t| u64::from(t.width) * u64::from(t.height) <= 10_000_000));
-    // the tiles cover the photo exactly once
+    assert!(tiles.iter().all(|t| u64::from(t.draw.width) * u64::from(t.draw.height) <= 10_000_000));
+    // the tiles kept cover the photo exactly once
     let mut covered = vec![0u8; 7680 * 4320];
     for t in &tiles {
+        let t = t.keep;
         for y in t.y..t.y + t.height {
             for x in t.x..t.x + t.width {
                 covered[(y * 7680 + x) as usize] += 1;
@@ -88,6 +90,67 @@ fn one_pass_while_the_card_holds_it_tiles_otherwise() {
         }
     }
     assert!(covered.iter().all(|&c| c == 1));
+    // down to the smallest limits, every pass fits
+    for (max_side, max_pixels) in [(32, 0), (100, 5_000), (1024, 1_000_000), (16384, 2_000)] {
+        let tiles = plan((3200, 1800), max_side, max_pixels);
+        let max_pixels = max_pixels.max(32 * 32);
+        assert!(
+            tiles.iter().all(|t| t.draw.width <= max_side.max(32)
+                && t.draw.height <= max_side.max(32)
+                && u64::from(t.draw.width) * u64::from(t.draw.height) <= max_pixels),
+            "{max_side} {max_pixels}"
+        );
+    }
+}
+
+#[test]
+fn a_tile_is_drawn_with_a_guard_band_on_the_sides_it_shares() {
+    // 3200 x 1800 with sides of 1024 at most: 5 x 3 tiles of 640 x 600,
+    // drawn with up to 128 pixels more on each inner side
+    let tiles = plan((3200, 1800), 1024, u64::MAX);
+    assert_eq!(tiles.len(), 15);
+    let corner = tiles[0];
+    assert_eq!(
+        corner.keep,
+        Tile {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 600
+        }
+    );
+    // the photo's own edges get no band
+    assert_eq!(
+        corner.draw,
+        Tile {
+            x: 0,
+            y: 0,
+            width: 640 + 128,
+            height: 600 + 128
+        }
+    );
+    let middle = tiles[5 + 1];
+    assert_eq!((middle.keep.x, middle.keep.y), (640, 600));
+    assert_eq!(
+        middle.draw,
+        Tile {
+            x: 512,
+            y: 472,
+            width: 128 + 640 + 128,
+            height: 128 + 600 + 128
+        }
+    );
+    let last = tiles[14];
+    assert_eq!((last.draw.x + last.draw.width, last.draw.y + last.draw.height), (3200, 1800));
+    for t in &tiles {
+        // what is kept lies in what is drawn, from an even pixel
+        assert!(t.draw.x <= t.keep.x && t.keep.x + t.keep.width <= t.draw.x + t.draw.width);
+        assert!(t.draw.y <= t.keep.y && t.keep.y + t.keep.height <= t.draw.y + t.draw.height);
+        assert!(t.draw.x % 2 == 0 && t.draw.y % 2 == 0);
+    }
+    // an odd tile origin moves the drawn one to the even pixel before
+    let odd = plan((3003, 1800), 1024, u64::MAX)[1];
+    assert_eq!((odd.keep.x, odd.draw.x, odd.draw.width), (751, 622, 129 + 751 + 128));
 }
 
 #[test]
@@ -119,19 +182,30 @@ fn a_tile_projection_maps_its_part_of_the_photo_to_the_whole_target() {
 }
 
 #[test]
-fn tiles_stitch_into_the_photo() {
+fn tiles_stitch_into_the_photo_without_their_guard_band() {
     let mut photo = vec![0u8; 4 * 3 * 4];
-    let tile = Tile {
-        x: 2,
-        y: 1,
-        width: 2,
-        height: 2,
+    let pass = TilePass {
+        keep: Tile {
+            x: 2,
+            y: 1,
+            width: 2,
+            height: 2,
+        },
+        draw: Tile {
+            x: 1,
+            y: 0,
+            width: 3,
+            height: 3,
+        },
     };
-    stitch(&mut photo, 4, tile, &[1; 16]);
-    for y in 0..3 {
-        for x in 0..4 {
-            let v = photo[(y * 4 + x) * 4];
-            assert_eq!(v, u8::from(x >= 2 && y >= 1), "({x}, {y})");
+    // the drawn pixels hold their column + 10 * their row in the photo
+    let drawn: Vec<u8> = (0..3).flat_map(|y| (1..4).flat_map(move |x| [x + 10 * y; 4])).collect();
+    stitch(&mut photo, 4, pass, &drawn);
+    for y in 0..3u8 {
+        for x in 0..4u8 {
+            let v = photo[usize::from(y * 4 + x) * 4];
+            let expect = if x >= 2 && y >= 1 { x + 10 * y } else { 0 };
+            assert_eq!(v, expect, "({x}, {y})");
         }
     }
 }

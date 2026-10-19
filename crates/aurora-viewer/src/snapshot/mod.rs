@@ -355,7 +355,7 @@ pub fn photo_size(aspect: Aspect, resolution: Resolution, custom: [u32; 2], wind
     (even(w), even(h))
 }
 
-/// The part of a photo one pass draws, in its pixels.
+/// A part of a photo, in its pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tile {
     pub x: u32,
@@ -364,23 +364,57 @@ pub struct Tile {
     pub height: u32,
 }
 
+/// One pass of a photo: the tile it keeps, and the larger part of the photo
+/// it draws for it (the tile and its guard band, see [`TILE_GUARD`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TilePass {
+    pub keep: Tile,
+    pub draw: Tile,
+}
+
+/// Photo pixels drawn around a tile on each side it shares with another
+/// tile, then cropped. The screen-space passes read the depth around each
+/// pixel: GTAO's horizon search, its normal and its edges, the contact
+/// shadows' rays (60 pixels). A tile drawn alone had no scene past its
+/// border, and GTAO took the border row it read again beyond it for a wall:
+/// a dark line along the seams. GTAO's radius (0.73 m) spans fewer pixels
+/// than the band beyond 9 m in a photo 1,800 pixels high, and its farthest
+/// samples weigh the least; the band costs 128 pixels of a side of 4,096 or
+/// more in the photos that need tiles.
+pub const TILE_GUARD: u32 = 128;
+
 /// How a photo of `size` is drawn: one pass when the card holds it (a side
 /// within `max_side`, the pixels within `max_pixels`, the memory its render
-/// targets take), otherwise the fewest equal tiles that fit
-/// (LLViewerWindow::rawSnapshot draws tiles of the window's size; one pass
-/// keeps the screen-space effects exact, so tiles are the fallback only).
-pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<Tile> {
+/// targets take), otherwise the fewest equal tiles that fit with their guard
+/// bands (LLViewerWindow::rawSnapshot draws tiles of the window's size; one
+/// pass keeps the screen-space effects exact, so tiles are the fallback
+/// only).
+pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<TilePass> {
     let (w, h) = (size.0.max(1), size.1.max(1));
     let max_side = max_side.max(MIN_SIDE);
     let max_pixels = max_pixels.max(u64::from(MIN_SIDE) * u64::from(MIN_SIDE));
+    // at most an eighth of the side a pass can draw, so that the tiles keep
+    // most of what they draw (and always fit, down to the smallest limits)
+    let guard = TILE_GUARD.min(max_side / 8).min(max_pixels.isqrt() as u32 / 8);    // the side a pass draws when `side` is split in `n`: the tile, a band on
+    // each side and the pixel that puts its origin on an even one
+    let drawn = |side: u32, n: u32| if n > 1 { side.div_ceil(n) + 2 * guard + 1 } else { side };
     let mut nx = w.div_ceil(max_side);
     let mut ny = h.div_ceil(max_side);
-    while u64::from(w.div_ceil(nx)) * u64::from(h.div_ceil(ny)) > max_pixels {
-        // split the longer tile side
-        if w.div_ceil(nx) >= h.div_ceil(ny) {
+    loop {
+        let (dw, dh) = (drawn(w, nx), drawn(h, ny));
+        if dw > max_side {
             nx += 1;
-        } else {
+        } else if dh > max_side {
             ny += 1;
+        } else if u64::from(dw) * u64::from(dh) > max_pixels {
+            // split the longer tile side
+            if w.div_ceil(nx) >= h.div_ceil(ny) {
+                nx += 1;
+            } else {
+                ny += 1;
+            }
+        } else {
+            break;
         }
     }
     let (tw, th) = (w.div_ceil(nx), h.div_ceil(ny));
@@ -389,16 +423,36 @@ pub fn plan(size: (u32, u32), max_side: u32, max_pixels: u64) -> Vec<Tile> {
         for i in 0..nx {
             let (x, y) = (i * tw, j * th);
             if x < w && y < h {
-                tiles.push(Tile {
+                let keep = Tile {
                     x,
                     y,
                     width: tw.min(w - x),
                     height: th.min(h - y),
+                };
+                tiles.push(TilePass {
+                    keep,
+                    draw: guarded((w, h), keep, guard),
                 });
             }
         }
     }
     tiles
+}
+
+/// `tile` of a photo of `size` and `guard` pixels around it, within the
+/// photo: its own edges stay those of one pass. The origin is on an even
+/// pixel, the pixels GTAO at half resolution reads in one pass.
+fn guarded(size: (u32, u32), tile: Tile, guard: u32) -> Tile {
+    let x = tile.x.saturating_sub(guard) & !1;
+    let y = tile.y.saturating_sub(guard) & !1;
+    let right = (tile.x + tile.width + guard).min(size.0);
+    let bottom = (tile.y + tile.height + guard).min(size.1);
+    Tile {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y,
+    }
 }
 
 /// The projection that draws `tile` of a photo of `size` with the photo's
@@ -420,13 +474,16 @@ pub fn tile_matrix(size: (u32, u32), tile: Tile) -> Mat4 {
     )
 }
 
-/// Copy a tile's RGBA rows into the photo.
-pub fn stitch(photo: &mut [u8], photo_width: u32, tile: Tile, pixels: &[u8]) {
-    let row = tile.width as usize * 4;
-    for y in 0..tile.height as usize {
-        let src = &pixels[y * row..(y + 1) * row];
-        let start = ((tile.y as usize + y) * photo_width as usize + tile.x as usize) * 4;
-        photo[start..start + row].copy_from_slice(src);
+/// Copy the RGBA rows of the tile a pass keeps, out of the `pixels` it
+/// drew, into the photo.
+pub fn stitch(photo: &mut [u8], photo_width: u32, pass: TilePass, pixels: &[u8]) {
+    let (keep, draw) = (pass.keep, pass.draw);
+    let row = keep.width as usize * 4;
+    let (dx, dy) = ((keep.x - draw.x) as usize, (keep.y - draw.y) as usize);
+    for y in 0..keep.height as usize {
+        let from = ((dy + y) * draw.width as usize + dx) * 4;
+        let start = ((keep.y as usize + y) * photo_width as usize + keep.x as usize) * 4;
+        photo[start..start + row].copy_from_slice(&pixels[from..from + row]);
     }
 }
 
