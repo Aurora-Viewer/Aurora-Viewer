@@ -142,15 +142,20 @@ are planned or in progress: they are not in the viewer yet.
 - **Smoother avatars**: movement of the people around you extrapolated and
   smoothed between two server updates.
 - **Mouselook that plays right**: hold the right button to zoom, and
-  scripted weapons and HUDs hear your clicks.
+  scripted weapons and HUDs hear your clicks — even a scripted attachment
+  worn under a mesh body.
 - **Little comforts**: walk backward without turning around, log back in
   still flying, and animations pause while you edit an attachment.
 - **Run your land**: a complete Region / Estate window (people and bans,
   interventions, scripts and physics with Top scripts / Top colliders,
   environment, experiences, covenant, telehub and terrain), in the Aurora
   layout or the classic eight tabs.
+- **Livelier water** (experimental, off by default): waves, foam on the
+  shores and around what floats, caustics, wakes and an underwater view, each
+  effect switched on its own; the built-in AO swims, at the surface and
+  underwater.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **RLVa and the clothing editors.**
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **A full pass on water**, and PBR terrain.
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **PBR terrain.**
 
 ### An interface made for today
 
@@ -158,13 +163,16 @@ are planned or in progress: they are not in the viewer yet.
   history, the Inter font throughout and a redesigned performance window.
 - **Conversations made for today**: a Contacts tab, conversations you can
   reorder, group pictures, and nearby chat as cards with the speaker's
-  picture.
+  picture. Unread conversations flash softly, "is typing…" shows, an item
+  someone gives you appears as a card in their conversation, and dropping
+  inventory on a conversation gives it.
 - **Emoji at your fingertips**: a keyboard-friendly picker with shortcodes
   like `:heart:`, and Windows Alt codes in every text field. Ctrl+Up brings
   back what you sent, per conversation.
 - **Your choice, window by window**: every redesigned window keeps its
   Legacy layout one click away in Preferences › Aurora (bars, people,
-  chat lines, About Land, Region / Estate, photos, controls and more).
+  chat lines, inventory, places, search, About Land, Region / Estate, photos,
+  controls and more).
 - **Arrange it your way**: customizable bottom, left and right toolbars,
   favourites in a menu, row or dock, and windows that move over the whole
   screen.
@@ -178,11 +186,24 @@ are planned or in progress: they are not in the viewer yet.
   world to rez, while documents and media use their native editors and players.
 - **Notecards in Markdown**: read them formatted, or edit the source beside a
   live preview, with LSL colouring for the code you share.
+- **An inventory that grows with you**: the familiar tree at its usual size;
+  widen it and it becomes an explorer with a folder column, details and
+  filter chips. Coloured icons by item type, and a CMT button that shows your
+  rights, the next owner's, or both. Folders opened in their own window get
+  the same layout.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
   double-click in the inventory to put something on or take it off.
+- **One search for everything**: type once and residents, places, events,
+  groups and classifieds come back together, with type chips, filters on
+  one line and the details beside the results.
+- **Places with a preview**: favourites, landmarks and history in one list,
+  with parcel snapshots, a star to add a favourite and, widened, folders and
+  a preview of the selected place.
 - **People and places at a glance**: redesigned resident and group profiles,
   a People window for friends, groups, contact sets, recent and blocked
   residents, and a world map with floating controls.
+- **Name tags your way**: show or hide your own tag, your friends' and other
+  residents' separately, or show them for a few seconds before they fade.
 - **Windows that get out of the way**: double-click a window's title to
   collapse it into a movable bar, then restore it with its size and content.
   Hold Alt while dragging to attach windows together; Alt+Shift+U hides or
@@ -210,6 +231,9 @@ are planned or in progress: they are not in the viewer yet.
   no-modify one. Sizes are remembered ([details](#huds)).
 - **Faces in the conversation**: local chat bubbles show the speaker's
   profile picture.
+- **Quiet from far-away objects**: one switch in Preferences › Privacy hides
+  the messages of objects outside your region, or outside your parcel. Your
+  own objects always get through, your friends' too if you wish.
 - **A password that stays safe**: the remembered password is kept in Windows
   Credential Manager, as a hash only.
 - **Try it without an account**: an offline demo mode simulates a server
@@ -252,14 +276,15 @@ The texture memory budget is set automatically from the detected VRAM.
   PBR and legacy materials, shadows, GTAO ambient occlusion with specular
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
-  screen-space indirect light and GPU occlusion (both experimental),
-  graphics presets and per-section resets.
+  screen-space indirect light, GPU occlusion and enhanced water effects (all
+  experimental), graphics presets and per-section resets.
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
   a shape editor with textured mesh previews, manual and automatic hover
   height, rebake, skeleton reset and animation controls; gestures with
   playback, editing, chat triggers and shortcuts; mouselook zoom on the
-  right button and script controls for weapons and HUDs.
+  right button and script controls for weapons and HUDs; a built-in AO with
+  swimming and water walking.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack.
@@ -270,8 +295,10 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Social** — local chat as cards or classic lines, messenger-style IMs and
   group conversations with a Contacts tab, resident profiles, the People
   window, contact sets, blocking, notifications
-  with history and friend/IM alerts; searchable conversation history kept on
-  disk per account and grid in the Legacy Viewer's text format, and offline messages.
+  with history and friend/IM alerts, inventory offers in the conversation,
+  a filter for object messages from elsewhere; searchable conversation
+  history kept on disk per account and grid in the Legacy Viewer's text
+  format, and offline messages.
 - **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
   invitations, adding participants and per-participant call volume; echo
   cancellation, automatic gain and noise suppression on the microphone.
@@ -281,13 +308,15 @@ The texture memory budget is set automatically from the detected VRAM.
   the complete Region / Estate window (Aurora or classic eight tabs) with
   Top scripts / Top colliders, parcel script information, parcel / region
   environments, experience permission prompts and region restart alerts.
-- **Inventory and commerce** — inventory tools, dedicated Marketplace and
+- **Inventory and commerce** — Aurora's inventory window (tree, explorer and
+  details) or the Legacy one, inventory tools, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
 - **Interface** — flat Aurora theme, Inter font, Tabler icons, glass island bars,
-  customizable bottom and side toolbars, classic layout options, mini-map,
-  world map, preferences and debug overlays; double-click walk / run /
-  teleport and content-rating controls for places and teleport offers.
+  customizable bottom and side toolbars, classic layout options, Aurora
+  search and Places windows, mini-map, world map, preferences and debug
+  overlays; double-click walk / run / teleport and content-rating controls
+  for places and teleport offers.
 - **Windows updates** — release checks, cancellable verified downloads,
   installation and restart with rollback. The prompt explains whether cache
   and settings will be preserved, migrated or reset.
@@ -315,13 +344,27 @@ Voice is WebRTC only; Vivox is not supported.
 - Frame Generation (under investigation).
 - Compression for the textures that fast BC7 encoding would harm (they
   stay uncompressed and are decoded at each visit).
-- PBR terrain and a full pass on water rendering.
+- PBR terrain, and the water effects out of their experimental stage.
 - Maybe a VR mode with controller support.
 
 The detailed list of what is done, in progress and to do is in
 [TASKS.md](TASKS.md).
 
 ## Using Aurora
+
+### Accounts and login
+
+The login screen shows your saved accounts as cards, each with its grid, its
+start location and a picture of the last place you visited. Click a card (or
+press Enter) to connect: a short password prompt appears only when needed,
+then the MFA code if the grid asks for it. Left / Right, the wheel or a
+horizontal drag browse more than three accounts. With no saved account, the
+full login form appears directly; afterwards **Add account** opens it.
+
+**Manage** lists the accounts with a search: forget a password or a 2FA
+authorization, remove an account, or drag the rows to reorder the cards. Each
+account and grid keeps its own password (a hash in Windows Credential
+Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
@@ -354,14 +397,25 @@ while keeping their saved local sizes.
 
 ### Animation Overrider (AO)
 
-The **AO** button of the bottom bar opens the built-in Animation Overrider,
-with its movement editor. Sets are kept under `#Aurora/Aurora AO`; at first
+The **AO** button of the bottom bar opens a compact panel: the set, the AO
+switch, swimming or water walking and speed boosts. Its **Settings** button
+opens the full Animation Overrider, with its movement editor and the
+animation lists by category (General, Ground, Jumping, Flying, Swimming).
+Swimming has its own lists at the surface and underwater. Sets are kept under `#Aurora/Aurora AO`; at first
 start, the sets of a Legacy Viewer `#Firestorm/#AO` folder are brought over.
 Import a ZHAO notecard from the same folder as its animations. The AO is off at first, as in the Legacy Viewer. `cao on` /
 `cao off` turn it on or off; `cao sit` toggles the sit, `cao sit off` replaces
 the sit and `cao sit on` keeps the standard sit, like the Legacy Viewer. The demo
 scenario is described in
 [the test options](docs/TESTING.md#avatars-and-animations).
+
+### Water effects
+
+**Preferences › Aurora › Water** turns on the experimental enhanced water
+(off by default): waves, foam, wet shores, caustics, reflections, wakes,
+spray and an underwater view, each with its own switch, at the quality you
+choose. They are local visual effects: objects and avatars keep the
+simulator's physics.
 
 ### Shape editor
 
@@ -449,6 +503,12 @@ bar layouts, including where favourites appear.
 
 ### Inventory
 
+Aurora's inventory opens as the usual tree. Drag its edge, or use the widen
+button in its title bar, to get the explorer: the folders move to a column,
+then a details pane, filter chips and a status bar appear. The **CMT** button
+chooses which rights each row shows: yours, the next owner's, both or none.
+Preferences › Aurora › Inventory brings back the Legacy window.
+
 The inventory's right-click menu offers "Move to…" for a folder, an item or a
 multiple selection. Type a name in the window's filter, choose the
 destination folder then confirm with Move.
@@ -466,7 +526,9 @@ The bar button can be hidden in Preferences › Interface.
 
 ### Where your files are
 
-Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
+Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`; each
+viewer writes its own (`aurora-<pid>.log`), so several viewers open at once
+do not overwrite each other's.
 
 Conversation history (plain text, one file per conversation) is in
 `%APPDATA%\Aurora\AuroraViewer\config\accounts\<account id>\chat_logs\<grid>\`;
@@ -619,28 +681,6 @@ the comment, indent and folding actions offline.
 The full list of switches (demo scenarios, captures, forced settings,
 diagnostics) and how to read the profiling output are in
 [docs/TESTING.md](docs/TESTING.md).
-
-
-Logs are in `%LOCALAPPDATA%\Aurora\AuroraViewer\data\logs\`.
-
-Normal launches without a test title use a PID suffix (`aurora-<pid>.log`) so concurrent viewers do not overwrite each other's logs. Saved login accounts are kept separately from global preferences, with a grid and start location on each card. Each account/grid retains its own OS-stored password hash and optional 30-day MFA authorization. Leaving the MFA checkbox unchecked uses the code for the current login only. Cache entries and preference files are published atomically; every process uses its own temporary filename.
-
-With no saved accounts, a complete login form appears directly; once a profile exists, the separate Add account button opens that form. Saved cards contain grid/start selectors and a thumbnail of the last visited place, saved without the interface at logout or quit. Cards contain no password field: clicking a card or pressing Enter connects, with a compact password prompt and remember option when needed, followed by MFA if required. Left/Right select an account; with more than three profiles, the selection stays centred. With three or fewer profiles, the middle card is selected initially and cards keep their positions when the selection changes. The account manager shows portraits, grid/start information and remembered password/MFA preferences, with search and separate confirmed actions to forget a password, forget 2FA, or remove a saved account. Drag a row to reorder accounts: a floating preview and insertion marker show the destination, the list scrolls at its edges, and the order is saved for the login screen. Escape or dropping outside the list cancels the move; passwords, MFA and the selected identity stay intact.
-
-The account screen keeps the Version/News column on desktop windows, community links and the installed version along the bottom. Up to three complete cards align horizontally, with faded previews of neighbouring accounts when more exist. Cards and their images grow moderately on larger displays (at most 22%), with the Manage/Add actions directly below them. Narrow windows reduce the central capacity, show information through the News dialog and retain all footer links.
-
-With more than three accounts, hold the left mouse button on a card or in the space beside the cards and drag horizontally to rotate the carousel. Three or fewer accounts form a fixed row without arrows or dragging. Portraits, place images, names, card surfaces and Connect buttons allow dragging; a simple click still connects. Cards follow the pointer, coast according to release velocity and settle gently. Browsing loops and highlights the nearest central card; when inertia settles, that account becomes the selection without starting a connection or changing saved credentials. The wheel also browses over gaps and faded previews. Hovering gently lights a card without selecting or moving it. Grid/start menus and text-field selection keep their own interactions.
-
-Add/password/MFA and management dialogs share the login cards’ frosted Aurora glass, colors and window geometry. Opaque skins retain solid surfaces.
-
-Cards keep the normal pointer on hover. The viewer's grasping-hand cursor appears only during an active drag and clears on release, including while inertia continues. Fields and buttons retain their normal cursors.
-
-Selecting a card starts a brief fragment/centering effect and requests login during the animation. The chosen card remains visible over the Aurora background with the server status and progress replacing its Connect button. Successful authentication switches directly to region loading; a password/MFA/terms challenge returns to the corresponding form.
-
-Conversation history (plain text, one file per conversation) is in
-`%APPDATA%\Aurora\AuroraViewer\config\accounts\<account id>\chat_logs\<grid>\`;
-Preferences › Chat shows the folder, turns logging off and erases it. These
-files never leave the machine and are never attached to a bug report.
 
 ## Contributing
 
