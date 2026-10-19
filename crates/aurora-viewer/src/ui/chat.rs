@@ -136,6 +136,9 @@ pub struct ChatUi {
     /// Typing notices are sent (Preferences › Chat), given every frame by
     /// the app.
     pub send_typing: bool,
+    /// "> " before the "… is typing" of a tab (FSTypingChevronPrefix,
+    /// Preferences › Chat), given every frame by the app.
+    pub typing_chevron: bool,
     /// The entries of conversations with news flash (Preferences › Chat),
     /// given every frame by the app; and where each flash stands.
     pub flash_unread: bool,
@@ -2163,10 +2166,11 @@ pub fn show(
                         // FSFloaterIM::addTypingIndicator: the tab of a
                         // resident typing to us reads "Nova is typing…", by
                         // their display name alone, so that it shows in a
-                        // narrow tab
+                        // narrow tab; "> " first with FSTypingChevronPrefix
                         let typing = (sidebar::kind(world, &other) == sidebar::Kind::Private && world.social.is_typing(&other))
                             .then(|| typing::text(&[world.social.display_name_of(&other)]))
-                            .flatten();
+                            .flatten()
+                            .map(|t| if st.typing_chevron { format!("> {t}") } else { t });
                         let entry = list_entry(
                             ui,
                             p,

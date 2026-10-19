@@ -255,6 +255,7 @@ fn plate_content(
     in_voice: bool,
     complexity: Option<&TagComplexity<'_>>,
     too_complex: bool,
+    typing_shown: bool,
 ) -> super::nameplate::Content {
     use super::nameplate::{Content, Detail, Presence, Role};
     use super::presence::Status;
@@ -310,7 +311,7 @@ fn plate_content(
         presence,
         in_voice,
         // FSShowTypingStateInNameTag: never on our own tag
-        typing: !own && playing(crate::world::radar::ANIM_AGENT_TYPE),
+        typing: typing_shown && !own && playing(crate::world::radar::ANIM_AGENT_TYPE),
         friend,
         too_complex: !own && too_complex,
         blocked,
@@ -416,6 +417,7 @@ pub fn draw(
                             && audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false),
                         complexity.as_ref(),
                         too,
+                        settings.typing_in_name_tags,
                     ),
                     voice: in_voice.filter(|_| audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false)),
                     loading: loading.and_then(|l| l.get(&id).copied()),
@@ -438,6 +440,10 @@ pub fn draw(
                 }
                 if world.is_avatar_blocked(&o.full_id) {
                     status.push(aurora_i18n::tr!("ui-hud-blocked"));
+                }
+                // FSShowTypingStateInNameTag, last, never on our own tag
+                if settings.typing_in_name_tags && o.full_id != world.agent_id && playing(crate::world::radar::ANIM_AGENT_TYPE) {
+                    status.push(aurora_i18n::tr!("radar-col-typing"));
                 }
                 if !status.is_empty() {
                     lines.push((format!("({})", status.join(", ")), p.muted, 11.0));

@@ -10170,6 +10170,7 @@ impl App {
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
+                self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, their typing animation)

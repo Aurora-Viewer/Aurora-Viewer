@@ -1199,6 +1199,21 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
                     .inner
             },
         );
+        // FSShowTypingStateInNameTag and FSTypingChevronPrefix
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-typing-in-name-tags"),
+            aurora_i18n::tr!("ui-options-typing-in-name-tags-hint"),
+            |ui| toggle(ui, p, &mut s.typing_in_name_tags),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-typing-chevron"),
+            aurora_i18n::tr!("ui-options-typing-chevron-hint"),
+            |ui| toggle(ui, p, &mut s.typing_chevron),
+        );
         // the tab of a conversation with news flashes
         // (FSFloaterIMContainer::startFlashingTab), in violet and softly
         c |= row(
