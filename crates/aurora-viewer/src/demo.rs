@@ -3534,6 +3534,50 @@ pub fn events() -> Vec<NetEvent> {
             add(o);
             id += 1;
         }
+        // AURORA_DEMO_PBR_OVERRIDE=alpha: three upright panels of the same
+        // opaque material, facing the start position, whose override zeroes
+        // the base color alpha, as seen on a worn mesh attachment. Like the
+        // Legacy Viewer, the opaque one stays drawn; the masked one is cut
+        // by the shader, the blended one is not drawn.
+        if std::env::var("AURORA_DEMO_PBR_OVERRIDE").is_ok_and(|v| v == "alpha") {
+            let modes = [
+                ("", aurora_i18n::tr!("demo-override-alpha-zero-opaque")),
+                (",'am':i2", aurora_i18n::tr!("demo-override-alpha-zero-mask")),
+                (",'am':i1", aurora_i18n::tr!("demo-override-alpha-zero-blend")),
+            ];
+            for (k, (am, label)) in modes.into_iter().enumerate() {
+                let mut t = TextureEntry::default();
+                for f in t.faces.iter_mut() {
+                    f.texture = BLANK_TEXTURE;
+                    f.color = [1.0, 1.0, 1.0, 1.0];
+                }
+                let mut o = prim(
+                    id,
+                    Vec3::new(134.5, 129.6 - 1.6 * k as f32, floor + 1.6),
+                    Quat::IDENTITY,
+                    Vec3::new(0.1, 1.2, 1.2),
+                    boxp,
+                    Arc::new(t),
+                    ExtraParams {
+                        render_materials: (0..6).map(|f| (f, MAT_PBR_TILES)).collect(),
+                        ..Default::default()
+                    },
+                    "",
+                );
+                let od = format!("{{'bc':[r1,r1,r1,r0]{am}}}");
+                let payload = format!("{{'id':i{id},'te':[i0,i1,i2,i3,i4,i5],'od':[{od},{od},{od},{od},{od},{od}]}}");
+                if let Some((local_id, sides)) = aurora_net::objects::parse_gltf_override(payload.as_bytes()) {
+                    overrides.push(NetEvent::GltfOverrides {
+                        handle: HANDLE,
+                        local_id,
+                        sides,
+                    });
+                }
+                o.text = label.into();
+                add(o);
+                id += 1;
+            }
+        }
     }
     // AURORA_DEMO_PBR_METAL=1: white metal (PBR, metallic 1) ahead of the
     // start position, three spheres from polished to rough and a slab: a
