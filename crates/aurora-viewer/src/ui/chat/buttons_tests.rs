@@ -986,7 +986,10 @@ fn the_field_acts() {
         // a resident: no volume, no attach button (#627), and the send button
         h.open(Some(JANE));
         assert!(h.shown(control_id("box-volume")).is_none(), "{style:?}: no volume in an IM");
-        assert!(h.shown(control_id("box-paperclip")).is_none(), "{style:?}: no attach button in an IM");
+        assert!(
+            h.shown(control_id("box-paperclip")).is_none(),
+            "{style:?}: no attach button in an IM"
+        );
         h.st.conv_focus_request = true;
         h.settle();
         h.type_text("hi Jane");

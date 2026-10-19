@@ -410,7 +410,8 @@ fn drop_fade(ui: &egui::Ui, im: bool) -> f32 {
         // kept for the fade back, once the drag is over
         ui.ctx().data_mut(|d| d.insert_temp(drop_count_id(ui), n));
     }
-    ui.ctx().animate_bool_with_time(ui.id().with("drop_hint"), carried.is_some(), DROP_FADE)
+    ui.ctx()
+        .animate_bool_with_time(ui.id().with("drop_hint"), carried.is_some(), DROP_FADE)
 }
 
 /// The hint over the faded messages: to whom a drop gives, and how many
@@ -431,13 +432,24 @@ fn drop_hint(ui: &egui::Ui, p: &Palette, area: egui::Rect, pane: egui::Rect, nam
     };
     let title = centred(aurora_i18n::tr!("ui-chat-drop-to-give", name = name), 13.5, ink);
     let number = aurora_i18n::integer(count as i64);
-    let sub = (count > 1).then(|| centred(aurora_i18n::tr!("inventory-items-count", count = count, number = number), 12.0, p.muted));
+    let sub = (count > 1).then(|| {
+        centred(
+            aurora_i18n::tr!("inventory-items-count", count = count, number = number),
+            12.0,
+            p.muted,
+        )
+    });
     let height = DROP_ICON + 8.0 + title.size().y + sub.as_ref().map_or(0.0, |s| 3.0 + s.size().y);
     let x = area.center().x;
     let mut y = area.center().y - height / 2.0;
     if let Some(icon) = crate::ui::icons::global("gift-filled") {
         let rect = egui::Rect::from_min_size(egui::pos2(x - DROP_ICON / 2.0, y), egui::Vec2::splat(DROP_ICON));
-        painter.image(icon.id(), rect, egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)), ink);
+        painter.image(
+            icon.id(),
+            rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            ink,
+        );
     }
     y += DROP_ICON + 8.0;
     let title_h = title.size().y;
