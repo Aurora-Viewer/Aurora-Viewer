@@ -4623,6 +4623,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
 | `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
 | `AURORA_ALPHA_COVERAGE=0` | Mips of alpha-masked textures plainly averaged, as before (foliage thins out with the distance) |
+| `AURORA_MIP_FILTER=weighted` | Colour of the mips averaged by the alpha, as before (distant foliage brighter than in the Legacy Viewer) |
 | `AURORA_SHADOW_FILTER=gaps\|mapped\|before` | Shadow lookup of before (lines along the shadow edges), to compare |
 | `AURORA_SHADOW_BIAS=legacy\|new\|alt` | Shadow receiver bias of before (stairs on avatars' backs), or one second in two |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
@@ -5248,6 +5249,17 @@ What the inventory must show with these scenarios:
   stored in the transcoded cache (a file made the other way is decoded
   again). It is read at start: compare two launches. See
   `AURORA_DEMO_FOLIAGE`.
+- **`AURORA_MIP_FILTER=weighted`**: the colour of each mip texel is the
+  average of its four texels weighted by their alpha, as Aurora did before,
+  so the empty texels around a cut-out leave no trace. By default it is the
+  plain average, as the Legacy Viewer's mips (`glGenerateMipmap`,
+  `LLImageBase::generateMip`): the colour creators leave in the empty
+  texels (often dark around grass and leaves) blends into the foliage seen
+  from afar, which comes out darker. Under the library Midday sky, a grass
+  bed seen from about 15 m was about 40 % brighter (linear) with the
+  weighted average than next to the Legacy Viewer. The mips are made at
+  decode and kept in the transcoded cache: delete the `.bc7` files of the
+  textures compared (`<cache>/tex/<id>.bc7`) before each of the two launches.
 - **`AURORA_SHADOW_FILTER=gaps|mapped|before`**: the sun shadow lookup as it
   was before its edges were cleaned (`cascade_shadow` in `common.wgsl`,
   `shadow_normal` in `object.wgsl`). `gaps`: 4 × 4 filter taps up to two
