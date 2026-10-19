@@ -125,6 +125,9 @@ pub mod frame_flags {
     pub const SPOT: u32 = 256;
     /// Exterior refraction shares the water bin, with a union of frustums.
     pub const WATER_AIR: u32 = 1024;
+    /// Blended faces that are not rigged cast too
+    /// (`shadow_cull::blend_casts`).
+    pub const BLEND_CASTS: u32 = 2048;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -444,7 +447,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, visible);
     }
     let mut m = 0u32;
-    if casts && (p != pass::BLEND || o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0) {
+    let rigged = o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0;
+    let caster = casts && (p != pass::BLEND || rigged || fl & frame_flags::BLEND_CASTS != 0);
+    if caster {
         let depth_only = (p == pass::OPAQUE || p == pass::OPAQUE_2S) && fl & frame_flags::SHADOW_ALPHA_ALL == 0;
         let bin = if depth_only { BIN_SHADOW } else { BIN_SHADOW_ALPHA };
         let cascades = frame.cascades.map(|m| Mat4::from_cols_array_2d(&m));
@@ -457,7 +462,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
             }
         }
     }
-    if casts && (p != pass::BLEND || o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0) {
+    if caster {
         for (k, planes) in frame.spots.iter().enumerate() {
             if fl & (frame_flags::SPOT << k) != 0 && sphere_in(planes, c, r) {
                 m |= 1 << (BIN_SPOT + k);
@@ -1301,7 +1306,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 39] = [
+        let pairs: [(&str, u32); 40] = [
             ("BIN_SHADOW_ALPHA", BIN_SHADOW_ALPHA as u32),
             ("BIN_SPOT", BIN_SPOT as u32),
             ("F_SPOT", frame_flags::SPOT),
@@ -1311,6 +1316,7 @@ mod tests {
             ("PASS_OPAQUE_2S", pass::OPAQUE_2S),
             ("F_SHADOW_STATS", frame_flags::SHADOW_STATS),
             ("F_SHADOW_ALPHA_ALL", frame_flags::SHADOW_ALPHA_ALL),
+            ("F_BLEND_CASTS", frame_flags::BLEND_CASTS),
             ("BINS", BINS as u32),
             ("MAIN_BINS", MAIN_BINS as u32),
             ("BIN_SHADOW", BIN_SHADOW as u32),
@@ -1542,8 +1548,15 @@ mod tests {
             face_bins(&frame, &faces, &objects, &spheres, 0),
             (1 | shadows | 1 << BIN_REFL_WATER, true)
         );
-        // blended: the CPU draws it, not a caster unless rigged
+        // blended: the CPU draws it; a caster with the alpha test, rigged or
+        // not (renderAlphaObjects), unless AURORA_BLEND_SHADOWS=0
+        let mut blend = frame;
+        blend.sizes[3] |= frame_flags::BLEND_CASTS;
+        assert_eq!(face_bins(&blend, &faces, &objects, &spheres, 1), (0b111 << BIN_SHADOW_ALPHA, true));
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 1), (0, true));
+        objects[0].flags |= object_flags::RIGGED;
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 1), (0b111 << BIN_SHADOW_ALPHA, true));
+        objects[0].flags &= !object_flags::RIGGED;
         // behind the camera: casts only; masked: with the alpha test
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 2).0, 0b111 << BIN_SHADOW_ALPHA);
         // the old path draws every caster with the alpha test
@@ -1837,7 +1850,8 @@ mod tests {
             | frame_flags::WATER_AIR
             | frame_flags::PROBE
             | frame_flags::OCCLUSION
-            | frame_flags::SHADOW_STATS;
+            | frame_flags::SHADOW_STATS
+            | frame_flags::BLEND_CASTS;
         // caster volumes: the east half in the second cascade, a slanted slab in the third
         frame.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
         frame.shadow_planes[2][3] = [0.6, 0.0, 0.8, 10.0];

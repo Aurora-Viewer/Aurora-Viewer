@@ -93,6 +93,8 @@ const F_SHADOW_ALPHA_ALL: u32 = 128u;
 // projector shadow map k is drawn
 const F_SPOT: u32 = 256u;
 const F_WATER_AIR: u32 = 1024u;
+// blended faces that are not rigged cast too (off: AURORA_BLEND_SHADOWS=0)
+const F_BLEND_CASTS: u32 = 2048u;
 
 struct CullFace {
     index_count: u32,
@@ -367,9 +369,11 @@ fn face_mask(i: u32) -> u32 {
         return 0u;
     }
     var m = 0u;
-    // LLDrawPoolAvatar::renderShadow: blended rigged faces cast too
+    // LLPipeline::renderShadow: blended faces cast too, rigged or not
+    // (renderAlphaObjects), with fs_shadow's alpha rules
     let rigged = (o.flags & (OBJ_RIGGED | OBJ_AVATAR)) != 0u;
-    if (casts && (fp != PASS_BLEND || rigged)) {
+    let caster = casts && (fp != PASS_BLEND || rigged || (fl & F_BLEND_CASTS) != 0u);
+    if (caster) {
         // fs_shadow only tests the alpha of masked and blended faces: the
         // others are drawn without a fragment shader
         let depth_only = (fp == PASS_OPAQUE || fp == PASS_OPAQUE_2S) && (fl & F_SHADOW_ALPHA_ALL) == 0u;
@@ -388,7 +392,7 @@ fn face_mask(i: u32) -> u32 {
         }
     }
     // casters of the projectors' shadow maps, all drawn with the alpha test
-    if (casts && (fp != PASS_BLEND || rigged)) {
+    if (caster) {
         for (var k = 0u; k < 2u; k++) {
             if ((fl & (F_SPOT << k)) != 0u && spot_in(k, c, r)) {
                 m |= 1u << (BIN_SPOT + k);

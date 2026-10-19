@@ -1362,20 +1362,31 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     return out;
 }
 
-// LLDrawPoolAvatar::renderShadow / deferred/avatarAlphaShadowF.glsl (LGPL 2.1):
-// transparent texels cast no shadow; semi-transparent texels use alternating
+// Transparent texels cast no shadow; semi-transparent texels use alternating
 // shadow-map columns. Opaque material modes ignore the texture alpha.
+// Blended faces (a blended face that is also alpha-tested casts like a
+// blended one), as LLPipeline::renderAlphaObjects (pipeline.cpp, LGPL 2.1)
+// draws them:
+// - static: shadowAlphaMaskF.glsl with ALPHA_BLEND_CUTOFF, the texture alpha
+//   first (a pane under 0.598 casts nothing, its opaque frame does), then
+//   times the face alpha: none under 0.05, dithered under 0.88;
+// - glTF: pbrShadowAlphaBlendF.glsl, the same without the texture test;
+// - rigged and avatars: dithered under 0.598, as avatarAlphaShadowF.glsl
+//   (LLDrawPoolAvatar::renderShadow).
 @fragment
 fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
-    let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+    let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
+    let alpha = tex_alpha * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {
-        // (a blended face that is also alpha-tested casts like a blended one)
         if ((rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
             if (alpha < rec.params.w) { discard; }
         } else {
+            let pbr = (rec.flags.x & FLAG_PBR) != 0u;
+            let skinned = (rec.flags.x & FLAG_SKINNED) != 0u;
+            if (!pbr && !skinned && tex_alpha < 0.598) { discard; }
             if (alpha < 0.05) { discard; }
-            let cutoff = select(0.598, 0.88, (rec.flags.x & FLAG_PBR) != 0u);
+            let cutoff = select(0.88, 0.598, skinned && !pbr);
             if (alpha < cutoff && (u32(in.clip.x) % 2u) == 0u) { discard; }
         }
     }
