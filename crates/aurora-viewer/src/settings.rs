@@ -469,6 +469,9 @@ pub struct Settings {
     pub log_im: bool,
     /// Write the nearby chat too (Firestorm LogNearbyChat, off).
     pub log_nearby: bool,
+    /// Reopen the private conversations of the last session at login (the
+    /// Legacy Viewer's FSRestoreOpenIMs, off).
+    pub reopen_ims: bool,
     /// Show the end of a conversation's file when it opens (LogShowHistory).
     pub log_show_history: bool,
     /// Date in the names of these files (LogFileNamewithDate, off).
@@ -1151,6 +1154,7 @@ impl Default for Settings {
             im_toast_seconds: 30.0,
             log_im: true,
             log_nearby: false,
+            reopen_ims: false,
             log_show_history: true,
             log_dated_names: false,
             warn_external_links: true,

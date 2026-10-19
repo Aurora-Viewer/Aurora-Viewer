@@ -37,6 +37,7 @@ pub mod lslbridge;
 pub mod marketplace;
 pub mod maturity;
 pub mod motion;
+pub mod open_ims;
 pub mod mutes;
 pub mod names;
 pub mod notification_history;
@@ -405,6 +406,11 @@ pub struct World {
     /// The instant messages kept while offline were asked for (once per
     /// login).
     offline_im_requested: bool,
+    /// The account's list of open private conversations (open_ims.rs).
+    open_ims_path: Option<std::path::PathBuf>,
+    /// Conversations of the last session, read at login, that the app
+    /// reopens when the setting asks for it.
+    pub reopen_ims: Vec<Uuid>,
     /// Disk cache root (inventory cache).
     pub cache_dir: Option<std::path::PathBuf>,
 }
@@ -576,6 +582,8 @@ impl World {
             profiles: profiles::Profiles::default(),
             arrived_once: false,
             offline_im_requested: false,
+            open_ims_path: None,
+            reopen_ims: Vec::new(),
             cache_dir: None,
         }
     }
@@ -584,6 +592,7 @@ impl World {
     /// stays for the next one: the conversations and the nearby chat go, and
     /// the transcripts close (only their writer and settings are kept).
     pub fn reset(&mut self) {
+        self.save_open_ims();
         let lib = self.avatar_lib.clone();
         let cache_dir = self.cache_dir.take();
         let mut chat_log = std::mem::take(&mut self.chat_log);
@@ -591,6 +600,14 @@ impl World {
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
+    }
+
+    /// saveOpenIMs, when the session ends (quit, logout or disconnection).
+    pub fn save_open_ims(&self) {
+        if let Some(path) = &self.open_ims_path {
+            let others: Vec<Uuid> = self.social.ims.iter().map(|s| s.other).collect();
+            open_ims::save(path, &others);
+        }
     }
 
     /// LLTeleportHistory::onTeleportFinished → LLTeleportHistoryStorage:
@@ -1545,6 +1562,9 @@ impl World {
                 self.groups.load_favorites(account.join(groups::FAVORITE_GROUPS_FILE));
                 self.group_data.load_read(account.join(group_data::NOTICES_READ_FILE));
                 self.status.invisible = status::Invisible::load(account.join(status::INVISIBLE_FILE), &self.social.friends);
+                let open = account.join(open_ims::FILE);
+                self.reopen_ims = open_ims::load(&open);
+                self.open_ims_path = Some(open);
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));

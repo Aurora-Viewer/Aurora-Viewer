@@ -1056,6 +1056,14 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
             aurora_i18n::tr!("ui-options-chat-logs-show-help"),
             |ui| toggle(ui, p, &mut s.log_show_history),
         );
+        // Legacy Viewer › Chat (FSRestoreOpenIMs)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-reopen-ims"),
+            aurora_i18n::tr!("ui-options-reopen-ims-help"),
+            |ui| toggle(ui, p, &mut s.reopen_ims),
+        );
         c |= row(
             ui,
             p,

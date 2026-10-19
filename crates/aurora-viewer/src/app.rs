@@ -3832,6 +3832,9 @@ impl App {
         if !self.exit_prompt.confirm(action, Instant::now()) {
             return;
         }
+        if self.in_world() {
+            self.world.save_open_ims();
+        }
         if self.in_world() && !self.demo {
             self.record_inventory_logout();
             self.want_scene_capture = true;
@@ -5584,6 +5587,16 @@ impl App {
             self.world.groups.mute_all_groups = self.settings.mute_all_groups;
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
+            // FSRestoreOpenIMs: the last session's private conversations,
+            // once, after login
+            if !self.world.reopen_ims.is_empty() {
+                let others = std::mem::take(&mut self.world.reopen_ims);
+                if self.settings.reopen_ims {
+                    for other in others {
+                        self.world.social.session_mut(other);
+                    }
+                }
+            }
             // AURORA_DEMO_OBJECT_IM: a filter for this run only
             self.world.object_im_filter = crate::demo::object_im::settings()
                 .filter(|_| self.demo)
