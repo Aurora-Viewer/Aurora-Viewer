@@ -675,6 +675,9 @@ impl Controller {
         pr.breathe_start = pr.breathe_start.map(|t| t + d);
         pr.noise_start = pr.noise_start.map(|t| t + d);
         self.last_eval = self.last_eval.map(|t| t + d);
+        for motion in &mut self.motions {
+            motion.stand.resume(d);
+        }
     }
 
     /// Skeleton-space position of the head as posed last frame.
@@ -1002,7 +1005,7 @@ impl Controller {
                 }
                 landing.support_sampled = true;
             }
-            let corrected = if let Some(frame) = self.ground.filter(|_| !self.control && grounding::standing(m.id)) {
+            let corrected = if !self.control && grounding::standing(m.id) {
                 let fallback;
                 let base = match base {
                     Some(base) => base,
@@ -1014,7 +1017,7 @@ impl Controller {
                         &fallback
                     }
                 };
-                m.stand.sample(rig, &m.anim, (t, m.weight), base, frame, &ground)
+                m.stand.sample(rig, &m.anim, t, base, self.ground, now, &ground)
             } else {
                 m.stand = grounding::Stand::default();
                 None
@@ -1037,8 +1040,9 @@ impl Controller {
                     && !self.control
                     && let Some(landing) = m.landing
                 {
-                    let phase = (t / a.duration.max(0.001) - 0.5) / 0.25;
-                    rot = rot.map(|r| (r * landing.rotation.slerp(Quat::IDENTITY, phase.clamp(0.0, 1.0))).normalize());
+                    let phase = cubic_step((t / a.duration.max(0.001) - 0.5) / 0.25);
+                    let weight = cubic_step(t / 0.18) * (1.0 - phase);
+                    rot = rot.map(|r| (r * Quat::IDENTITY.slerp(landing.rotation, weight)).normalize());
                 }
                 let pos = jm
                     .position_at_loop(t, a.loop_range())

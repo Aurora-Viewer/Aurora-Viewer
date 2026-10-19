@@ -21,13 +21,22 @@ pub(crate) struct Frame {
     pub normal: Vec3,
 }
 
-#[derive(Default)]
 pub(super) struct Stand {
-    targets: Option<[Surface; 2]>,
-    root: Vec3,
-    rotation: Quat,
     base: Option<SkeletonBase>,
-    frames: u8,
+    corrections: [[Quat; 3]; 2],
+    sampled: Option<Instant>,
+    root: Option<Vec3>,
+}
+
+impl Default for Stand {
+    fn default() -> Self {
+        Self {
+            base: None,
+            corrections: [[Quat::IDENTITY; 3]; 2],
+            sampled: None,
+            root: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -90,16 +99,28 @@ fn solve(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3) -> Option<(Quat, Quat
 }
 
 impl Stand {
+    fn active(&self) -> bool {
+        self.corrections.iter().flatten().any(|q| !q.abs_diff_eq(Quat::IDENTITY, 1e-5))
+    }
+
+    pub(super) fn resume(&mut self, duration: Duration) {
+        self.sampled = self.sampled.and_then(|at| at.checked_add(duration));
+    }
+
     pub(super) fn sample(
         &mut self,
         rig: &Rig,
         anim: &BoundAnim,
-        sample: (f32, f32),
+        time: f32,
         base: &SkeletonBase,
-        frame: Frame,
-        ground: &impl Fn(Vec3) -> Option<Surface>,
+        frame: Option<Frame>,
+        now: Instant,
+        ground: &dyn Fn(Vec3) -> Option<Surface>,
     ) -> Option<Vec<Quat>> {
-        let (time, weight) = sample;
+        if frame.is_none() && !self.active() {
+            self.sampled = None;
+            return None;
+        }
         let chains = [["mHipLeft", "mKneeLeft", "mAnkleLeft"], ["mHipRight", "mKneeRight", "mAnkleRight"]];
         let mut joints = [[0; 3]; 2];
         for (dst, names) in joints.iter_mut().zip(chains) {
@@ -110,6 +131,19 @@ impl Stand {
                 return None;
             }
         }
+        let root = frame.map(|f| f.to_world.w_axis.truncate());
+        let teleported = root.zip(self.root).is_some_and(|(a, b)| a.distance_squared(b) > 4.0);
+        if self.base.as_ref() != Some(base) || teleported {
+            self.base = Some(base.clone());
+            self.corrections = [[Quat::IDENTITY; 3]; 2];
+            self.sampled = None;
+        }
+        self.root = root.or(self.root);
+        let dt = self
+            .sampled
+            .replace(now)
+            .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f32())
+            .min(0.1);
         let mut rot = rig.local_rot.clone();
         let mut pos = base.local_pos.clone();
         let mut pelvis_offset = Vec3::ZERO;
@@ -126,70 +160,71 @@ impl Stand {
                 }
             }
         }
-        let world = rig.world_with(&rot, pelvis_offset, &pos, &base.scale);
-        let root = frame.to_world.w_axis.truncate();
-        let pelvis_rotation = (frame.to_world.to_scale_rotation_translation().1 * rotation(&world, rig.pelvis)).normalize();
-        // Match the two-frame startup, ease-in tracking and movement/rotation
-        // thresholds. Cache shape only here, never scan meshes per frame.
-        let changed = self.base.as_ref() != Some(base);
-        if changed {
-            self.base = Some(base.clone());
-            self.targets = None;
-        }
-        if self.frames < 2 {
-            self.frames += 1;
-            return None;
-        }
-        if changed || root.distance_squared(self.root) > 0.1 || pelvis_rotation.dot(self.rotation).abs() < 0.6 || weight < 1.0 {
-            self.targets = None;
-        }
-        {
-            let tracking = self.targets.is_none();
-            let mut targets = [Surface {
-                position: Vec3::ZERO,
-                normal: Vec3::Z,
-            }; 2];
-            for (target, chain) in targets.iter_mut().zip(joints) {
-                let ankle = frame.to_world.transform_point3(world[chain[2]].w_axis.truncate());
-                let query = self.targets.map_or(ankle, |targets| {
-                    let side = usize::from(chain[0] == joints[1][0]);
-                    Vec3::new(targets[side].position.x, targets[side].position.y, ankle.z)
-                });
-                *target = ground(query)?;
+        let projected = frame.and_then(|frame| {
+            let world = rig.world_with(&rot, pelvis_offset, &pos, &base.scale);
+            project(rig, joints, &world, &pos, &base.scale, frame, ground)
+        });
+        // Human-requested improvement over LLKeyframeStandMotion's retarget
+        // thresholds: continuously sample support and smooth only the IK
+        // corrections, never the authored pose. The 80 ms half-life is time
+        // based, so starts, steps, support loss and the setting's fade-out
+        // behave alike at different frame rates. Shape resets/teleports start
+        // from the new authored pose; editing suspends this clock.
+        let alpha = 1.0 - 2.0_f32.powf(-dt / 0.08);
+        for (side, chain) in joints.into_iter().enumerate() {
+            for (bone, joint) in chain.into_iter().enumerate() {
+                let desired = projected.map_or(Quat::IDENTITY, |pose| (rot[joint].inverse() * pose[side][bone]).normalize());
+                let desired = if desired.w < 0.0 { -desired } else { desired };
+                let correction = &mut self.corrections[side][bone];
+                *correction = correction.slerp(desired, alpha).normalize();
+                if projected.is_none() && correction.abs_diff_eq(Quat::IDENTITY, 1e-5) {
+                    *correction = Quat::IDENTITY;
+                }
+                rot[joint] = (rot[joint] * *correction).normalize();
             }
-            self.targets = Some(targets);
-            if tracking {
-                self.root = root;
-                self.rotation = pelvis_rotation;
-            }
-        }
-        let inverse = frame.to_world.inverse();
-        for (side, (chain, target)) in joints.into_iter().zip(self.targets?).enumerate() {
-            let [hip, knee, ankle] = chain;
-            let p = |j: usize| world[j].w_axis.truncate();
-            // Preserve the sole's clearance below the ankle. Projecting the
-            // ankle itself onto the surface sinks mFoot by its local height.
-            let foot_name = if side == 0 { "mFootLeft" } else { "mFootRight" };
-            let clearance = rig
-                .names
-                .get(foot_name)
-                .filter(|&&j| rig.parent[j] == Some(ankle))
-                .map_or(0.0, |&j| (-pos[j].z * base.scale[ankle].z).max(0.0));
-            let target_pos = inverse.transform_point3(target.position + target.normal * clearance);
-            let (hip_delta, knee_delta) = solve(p(hip), p(knee), p(ankle), target_pos)?;
-            let parent_rot = rig.parent[hip].map_or(Quat::IDENTITY, |j| rotation(&world, j));
-            let hip_rot = (hip_delta * rotation(&world, hip)).normalize();
-            let knee_rot = (knee_delta * hip_delta * rotation(&world, knee)).normalize();
-            rot[hip] = (parent_rot.inverse() * hip_rot).normalize();
-            rot[knee] = (hip_rot.inverse() * knee_rot).normalize();
-            let normal = inverse.transform_vector3(target.normal).normalize_or(Vec3::Z);
-            let old_forward = (knee_delta * hip_delta * rotation(&world, ankle)) * Vec3::X;
-            let forward = (old_forward - normal * old_forward.dot(normal)).normalize_or(Vec3::X);
-            let ankle_rot = Quat::from_mat3(&Mat3::from_cols(forward, normal.cross(forward), normal)).normalize();
-            rot[ankle] = (knee_rot.inverse() * ankle_rot).normalize();
         }
         Some(rot)
     }
+}
+
+fn project(
+    rig: &Rig,
+    joints: [[usize; 3]; 2],
+    world: &[Mat4],
+    pos: &[Vec3],
+    scale: &[Vec3],
+    frame: Frame,
+    ground: &dyn Fn(Vec3) -> Option<Surface>,
+) -> Option<[[Quat; 3]; 2]> {
+    let inverse = frame.to_world.inverse();
+    let mut result = [[Quat::IDENTITY; 3]; 2];
+    for (side, [hip, knee, ankle]) in joints.into_iter().enumerate() {
+        let p = |j: usize| world[j].w_axis.truncate();
+        let target = ground(frame.to_world.transform_point3(p(ankle)))?;
+        // Preserve the sole's clearance below the ankle. Projecting the
+        // ankle itself onto the surface sinks mFoot by its local height.
+        let foot_name = if side == 0 { "mFootLeft" } else { "mFootRight" };
+        let clearance = rig
+            .names
+            .get(foot_name)
+            .filter(|&&j| rig.parent[j] == Some(ankle))
+            .map_or(0.0, |&j| (-pos[j].z * scale[ankle].z).max(0.0));
+        let target_pos = inverse.transform_point3(target.position + target.normal * clearance);
+        let (hip_delta, knee_delta) = solve(p(hip), p(knee), p(ankle), target_pos)?;
+        let parent_rot = rig.parent[hip].map_or(Quat::IDENTITY, |j| rotation(world, j));
+        let hip_rot = (hip_delta * rotation(world, hip)).normalize();
+        let knee_rot = (knee_delta * hip_delta * rotation(world, knee)).normalize();
+        let normal = inverse.transform_vector3(target.normal).normalize_or(Vec3::Z);
+        let old_forward = (knee_delta * hip_delta * rotation(world, ankle)) * Vec3::X;
+        let forward = (old_forward - normal * old_forward.dot(normal)).normalize_or(Vec3::X);
+        let ankle_rot = Quat::from_mat3(&Mat3::from_cols(forward, normal.cross(forward), normal)).normalize();
+        result[side] = [
+            (parent_rot.inverse() * hip_rot).normalize(),
+            (hip_rot.inverse() * knee_rot).normalize(),
+            (knee_rot.inverse() * ankle_rot).normalize(),
+        ];
+    }
+    Some(result)
 }
 
 #[cfg(test)]
@@ -280,11 +315,21 @@ mod tests {
             })
         };
         let mut stand = Stand::default();
-        assert!(stand.sample(&rig, &anim, (0.0, 1.0), &base, avatar_frame, &ground).is_none());
-        assert!(stand.sample(&rig, &anim, (0.0, 1.0), &base, avatar_frame, &ground).is_none());
+        let start = Instant::now();
+        for i in 0..120 {
+            stand.sample(
+                &rig,
+                &anim,
+                0.0,
+                &base,
+                Some(avatar_frame),
+                start + Duration::from_secs_f32(i as f32 / 60.0),
+                &ground,
+            );
+        }
         let rot = stand
-            .sample(&rig, &anim, (0.0, 1.0), &base, avatar_frame, &ground)
-            .expect("IK pose");
+            .sample(&rig, &anim, 0.0, &base, Some(avatar_frame), start + Duration::from_secs(2), &ground)
+            .expect("settled IK pose");
         let posed = rig.world_with(&rot, Vec3::ZERO, &base.local_pos, &base.scale);
         for side in ["Left", "Right"] {
             let joint = rig.names[&format!("mAnkle{side}")];
@@ -343,8 +388,11 @@ mod tests {
         controller.evaluate_on_ground(&rig, at, Some(&base), &mut out, ground);
         assert!(controller.rot[knee].abs_diff_eq(Quat::IDENTITY, 1e-5), "priority-six pose wins");
         controller.ground = None;
-        controller.sync(&[stand], at + Duration::from_secs(1), |_| Some(anim.clone()));
-        controller.evaluate(&rig, at + Duration::from_secs(1), Some(&base), &mut out);
+        for i in 1..=120 {
+            let now = at + Duration::from_secs_f32(i as f32 / 60.0);
+            controller.sync(&[stand], now, |_| Some(anim.clone()));
+            controller.evaluate(&rig, now, Some(&base), &mut out);
+        }
         assert!(
             controller.rot[knee].abs_diff_eq(Quat::IDENTITY, 1e-5),
             "disabling restores keyframes"
@@ -401,5 +449,99 @@ mod tests {
             assert!(out.iter().all(|m| Mat4::from_cols_array_2d(m).is_finite()));
             assert!(controller.rot[rig.names["mKneeLeft"]].abs_diff_eq(Quat::IDENTITY, 1e-6));
         }
+    }
+
+    #[test]
+    fn grounding_corrections_ease_in_retarget_and_fade_out_independently_of_frame_rate() {
+        let (rig, base, anim) = fixture();
+        let knee = rig.names["mKneeLeft"];
+        let now = Instant::now();
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(p.z + 0.2),
+                normal: Vec3::Z,
+            })
+        };
+        let mut samples = Vec::new();
+        for fps in [30, 60, 144] {
+            let mut stand = Stand::default();
+            let first = stand
+                .sample(&rig, &anim, 0.0, &base, Some(frame()), now, &ground)
+                .expect("starting pose");
+            assert!(first[knee].abs_diff_eq(Quat::IDENTITY, 1e-6), "no activation pop");
+            let mut rot = first;
+            for i in 1..=fps {
+                rot = stand
+                    .sample(
+                        &rig,
+                        &anim,
+                        0.0,
+                        &base,
+                        Some(frame()),
+                        now + Duration::from_secs_f64(i as f64 / fps as f64),
+                        &ground,
+                    )
+                    .expect("easing pose");
+            }
+            samples.push(rot[knee]);
+            let before = rot[knee];
+            let changed = |p: Vec3| {
+                Some(Surface {
+                    position: p.with_z(p.z + 0.35),
+                    normal: Vec3::new(0.0, -0.1, 1.0).normalize(),
+                })
+            };
+            let switched = stand
+                .sample(&rig, &anim, 0.0, &base, Some(frame()), now + Duration::from_secs(1), &changed)
+                .expect("same-time retarget");
+            assert!(
+                switched[knee].abs_diff_eq(before, 1e-6),
+                "retargeting cannot jump without elapsed time"
+            );
+            for i in 1..=fps * 2 {
+                rot = stand
+                    .sample(
+                        &rig,
+                        &anim,
+                        0.0,
+                        &base,
+                        None,
+                        now + Duration::from_secs_f64(1.0 + i as f64 / fps as f64),
+                        &ground,
+                    )
+                    .unwrap_or_else(|| rig.local_rot.clone());
+            }
+            assert!(rot[knee].abs_diff_eq(Quat::IDENTITY, 1e-5), "disable settles to the authored pose");
+        }
+        assert!(samples[0].abs_diff_eq(samples[1], 2e-5));
+        assert!(samples[1].abs_diff_eq(samples[2], 2e-5));
+    }
+
+    #[test]
+    fn grounding_pause_and_teleport_do_not_replay_old_corrections() {
+        let (rig, base, anim) = fixture();
+        let now = Instant::now();
+        let mut stand = Stand::default();
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(p.z + 0.2),
+                normal: Vec3::Z,
+            })
+        };
+        stand.sample(&rig, &anim, 0.0, &base, Some(frame()), now, &ground);
+        let before = stand
+            .sample(&rig, &anim, 0.0, &base, Some(frame()), now + Duration::from_millis(50), &ground)
+            .unwrap();
+        stand.resume(Duration::from_secs(10));
+        let after = stand
+            .sample(&rig, &anim, 0.0, &base, Some(frame()), now + Duration::from_millis(10050), &ground)
+            .unwrap();
+        assert!(before[rig.names["mKneeLeft"]].abs_diff_eq(after[rig.names["mKneeLeft"]], 1e-6));
+        let mut moved = frame();
+        moved.to_world = Mat4::from_translation(Vec3::X * 100.0);
+        let teleported = stand
+            .sample(&rig, &anim, 0.0, &base, Some(moved), now + Duration::from_secs(11), &ground)
+            .unwrap();
+        assert!(teleported[rig.names["mKneeLeft"]].abs_diff_eq(Quat::IDENTITY, 1e-6));
     }
 }

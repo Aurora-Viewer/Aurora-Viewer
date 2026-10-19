@@ -151,16 +151,25 @@ starts and edit pauses. Import preview seeking overrides either preference.
 
 The same section's enabled-by-default `Settings::ground_avatar_feet` controls
 `scene/anim/grounding.rs`: standard stand/crouch motions solve both leg chains
-before priority blending, preserving higher-priority AO poses. Foot targets
-track ease-in, root movement and shape changes; short support traces in
+before priority blending, preserving higher-priority AO poses. Support is
+sampled continuously; only the IK corrections are smoothed with an 80 ms
+half-life, independently of the frame rate. Activation, retargeting, lost
+support and disabling the setting ease through the authored pose; editing
+pauses that clock, while shape resets and teleports discard old corrections.
+This human-requested improvement removes abrupt ankle retargeting without
+delaying the original animations. Short support traces in
 `scene/grounding.rs` run on the existing pose workers, using terrain, solid
 geometry and the region-corrected simulator contact plane as a fallback.
 Exact geometry deliberately improves separate-step placement over one shared
 contact plane; ankle targets retain the scaled ankle-to-foot clearance to
 keep the soles on the support plane. Standing-up recovery follows LLKeyframeFallMotion's velocity
-ease-in and pelvis tilt, returning upright between 50% and 75% of the clip.
+ease-in and pelvis tilt, with eased entry and return upright between 50% and
+75% of the clip.
 Seated/control avatars and animation import previews do not acquire support.
-`demo_grounding.rs` provides offline slope, step and recovery fixtures.
+`demo_grounding.rs` provides offline slope, step and recovery fixtures. It
+places the avatar once, then keeps normal movement, matching support planes
+and stand/walk/run/crouch/flight/jump/recovery signals. Explicit `-motion`
+fixtures drive the same input/physics path for automated captures.
 
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these

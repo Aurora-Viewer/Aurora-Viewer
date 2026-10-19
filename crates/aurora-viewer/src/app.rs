@@ -5839,6 +5839,12 @@ impl App {
         // ---- agent / camera
         let typing = self.egui_ctx.egui_wants_keyboard_input();
         self.update_move_input(typing, dt);
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
+            && let Some(input) = crate::demo::grounding::scripted_input(&mode, self.frame_count)
+        {
+            self.input = input;
+        }
         self.update_autopilot(dt);
         if self.in_world() {
             self.world.auto_land(&self.input);
@@ -5863,6 +5869,12 @@ impl App {
                 // no simulator offline: move the avatar locally
                 let p = self.world.agent.position;
                 let floor = crate::demo::floor_at(p.x, p.y);
+                let floor = std::env::var("AURORA_DEMO_GROUNDING")
+                    .ok()
+                    .filter(|_| self.frame_count >= 600)
+                    .map_or(floor, |mode| {
+                        crate::demo::grounding::simulation_floor(&self.world, &self.scene, &mode)
+                    });
                 self.world.agent.simulate_locally(&self.input, ml, Some(floor), dt);
                 if let Some(mm) = crate::demo::agent_jitter() {
                     let p = self.world.agent.predicted_position() + crate::demo::agent_jitter_offset(self.frame_count, mm);
@@ -5877,6 +5889,11 @@ impl App {
             self.update_own_prediction(ml, dt);
             let camera_distance = self.camera.position.distance(self.world.agent.position);
             self.world.agent.update(&self.input, ml, dt, camera_distance);
+            if self.demo
+                && let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING")
+            {
+                crate::demo::grounding::update_motion(&mut self.world, &self.scene, self.frame_count, &mode, &self.input);
+            }
             // seated, the agent's position is the one its seat gives it: the
             // map, the radar, the location bar and the voice read it
             if self.world.agent.seated

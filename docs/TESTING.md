@@ -1438,11 +1438,16 @@ To check with these scenarios:
 ### Details
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
-different-height steps (`steps`). `landing` repeats a synthetic standing-up
-clip on the ramp. Append `-off` to compare the original keyframes. Compare
+different-height steps (`steps`). `landing` starts with a synthetic standing-up
+clip on the ramp. The avatar is placed only once: walk, strafe, turn, crouch,
+fly or jump with the normal controls, then stop on either support. Jumps
+trigger recovery on actual return to the surface; walking uses the demo's
+normal gait clips. Append `-off` to compare the original keyframes, or
+`-motion` for an automated side-step/stop/return/jump input sequence. Compare
 each foot's height and orientation, knee bending, and the recovery's return
 upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
-without restarting. Imported animation previews and higher-priority AO poses
+without restarting: corrections enter and leave smoothly, and should behave
+alike at 30, 60 and 144 fps. Imported animation previews and higher-priority AO poses
 must retain control. These fixtures never connect to a grid.
 
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
