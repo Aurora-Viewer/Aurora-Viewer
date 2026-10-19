@@ -1929,8 +1929,9 @@ impl App {
     fn on_app_event(&mut self, ev: NetEvent) {
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
-            if result.is_err() && self.bridge_services.owns(request) {
-                self.bridge_runtime.refresh_queries(&self.world, Instant::now());
+            if self.bridge_services.owns(request) {
+                let error = result.as_ref().err().map(String::as_str);
+                self.bridge_runtime.query_reply(&self.world, error, Instant::now());
             }
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);

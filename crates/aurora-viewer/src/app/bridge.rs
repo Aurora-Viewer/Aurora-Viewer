@@ -87,6 +87,7 @@ impl App {
             let mode = std::env::var("AURORA_DEMO_MOVELOCK").unwrap_or_default();
             self.bridge_demo.startup_stalled = mode == "timeout";
             self.bridge_demo.invalid_endpoint = mode == "endpoint";
+            self.bridge_demo.halt = mode == "halted";
             let prefs = self.settings.bridge.get(&self.world.agent_id).copied().unwrap_or_default();
             self.bridge_demo.state(
                 &mut self.bridge_runtime,

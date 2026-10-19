@@ -91,7 +91,9 @@ a review or that left the queue.
   other labels.
 - **The project board** (GitHub project Aurora Team Planning): the project
   manager sets each issue's Priority and milestone, which say what to work on
-  first. An agent that takes an issue assigns it to you and moves it to
+  first. Even when you ask for a task directly, the agent first looks for an
+  open issue that already covers it (often the sub-issue of an epic) and
+  takes it. An agent that takes an issue assigns it to you and moves it to
   `In progress`; at the end it replies on the issue and moves it to `Done`,
   or to `Waiting Review` when it waits on someone (a reporter's answer, your
   test). The agents move the Status with `scripts/issue-board.ps1`, which
