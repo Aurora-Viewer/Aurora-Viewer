@@ -163,7 +163,10 @@ clearance with hysteresis distinguishes contact and flight, measured before
 the render-space translation to retain submillimetre precision. Contact targets
 follow the support; a flying foot retains the source arc from its departure
 elevation, transitioning toward the landing elevation during descent. Collision
-only raises flight targets. There are no horizontal anchors: authored lateral
+only raises flight targets. A critically damped terrain-offset filter eases
+changes toward lower support without delaying the current source clearance;
+absolute elevation absorbs collider-root steps. A final upward projection
+prevents penetration during that transition. There are no horizontal anchors: authored lateral
 trajectories remain unchanged. Support tilt preserves authored heel/toe roll.
 
 A single height filter follows absolute world elevation, absorbing physical
@@ -179,7 +182,10 @@ in metres while changing forward flexion. Segment lengths and authored bends
 survive small contact corrections; near-straight joints cannot amplify their
 inward taper. Priority 5/6 legs or pelvis, control avatars, seating, flight and import
 previews keep control. Editing pauses the placement clock; teleports and shape
-changes reset it. Disabling fades only this pass's pose deltas in 200 ms.
+changes reset it. Disabling fades only this pass's pose deltas in 200 ms;
+enabling seeds terrain offsets and body height from the uncorrected pose or
+the visible fade pose, including after a completed fade, instead of jumping
+to the full correction.
 
 `scene/grounding.rs` performs short solid-geometry/terrain traces on the parallel
 pose workers, with region-corrected simulator contact as a streaming fallback.

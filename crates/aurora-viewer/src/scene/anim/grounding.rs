@@ -138,6 +138,7 @@ struct Foot {
     peak: f32,
     landing: f32,
     normal: Vec3,
+    elevation: Option<Height>,
 }
 
 impl Foot {
@@ -257,7 +258,10 @@ impl Placement {
         });
         let weight = 1.0 - cubic_step(now.saturating_duration_since(release.at).as_secs_f32() / 0.2);
         if weight <= 0.0 {
-            *self = Self::default();
+            // Retain the zero-weight release as the re-enable seed. A new
+            // contact after a completed fade must also start at the source.
+            self.feet = Default::default();
+            self.height = None;
             return None;
         }
         Some(Placed {
@@ -293,6 +297,7 @@ impl Placement {
             self.held = result.clone();
             return result;
         };
+        let from_source = self.setup.is_none() && self.sampled.is_some();
         let reference = frame.sole_height;
         let teleported = self
             .previous_frame
@@ -301,8 +306,7 @@ impl Placement {
             .setup
             .as_ref()
             .is_none_or(|setup| setup.base != *base || setup.reference != reference)
-            || teleported
-            || self.release.is_some()
+            || (teleported && self.release.is_none())
         {
             *self = Self {
                 setup: Some(Setup::new(rig, base, reference)?),
@@ -329,6 +333,48 @@ impl Placement {
         let source: Vec<Mat4> = source.into_iter().map(|matrix| frame.to_world * matrix).collect();
         let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor).z;
         let inverse_frame = frame.to_world.inverse();
+        let seed = self
+            .release
+            .take()
+            .map(|release| {
+                // Re-enabling midway through the fade starts at the visible pose.
+                // Filtering the correction, rather than joint rotations or foot
+                // positions, keeps the current animation's motion responsive.
+                let weight = 1.0 - cubic_step(now.saturating_duration_since(release.at).as_secs_f32() / 0.2);
+                let rotations: Vec<_> = pose
+                    .rotations
+                    .iter()
+                    .zip(&release.rotations)
+                    .map(|(&raw, &delta)| (Quat::IDENTITY.slerp(delta, weight) * raw).normalize())
+                    .collect();
+                Placed {
+                    rotations,
+                    pelvis: release.pelvis * weight,
+                }
+            })
+            .or_else(|| {
+                from_source.then(|| Placed {
+                    rotations: pose.rotations.to_vec(),
+                    pelvis: Vec3::ZERO,
+                })
+            });
+        if let Some(seed) = seed {
+            let visible = rig.world_with(&seed.rotations, pose.pelvis + seed.pelvis, pose.positions, &base.scale);
+            self.feet = Default::default();
+            for (side, leg) in setup.legs.iter().enumerate() {
+                let ankle = leg.joints[2];
+                let visible = frame.to_world * visible[ankle];
+                self.feet[side].elevation = Some(Height {
+                    value: reference_floor + visible.w_axis.z - source[ankle].w_axis.z,
+                    velocity: 0.0,
+                });
+                self.feet[side].normal = orientation(visible) * orientation(source[ankle]).inverse() * Vec3::Z;
+            }
+            self.height = Some(Height {
+                value: reference_floor + frame.to_world.transform_vector3(seed.pelvis).z,
+                velocity: 0.0,
+            });
+        }
         let query = |point: Vec3| ground(point).filter(|hit| hit.normal.z > 0.2 && hit.position.distance(point) < 0.75);
         let mut targets = [Vec3::ZERO; 2];
         let mut rotations = [Quat::IDENTITY; 2];
@@ -391,12 +437,37 @@ impl Placement {
             } else if let Some(floor) = flight_floor {
                 targets[side].z += floor - reference_floor;
             }
+            if !supported[side] && foot.departure.is_none() {
+                // With no terrain information this leg follows the body.
+                // Seed a future acquisition from that uncorrected pose.
+                foot.elevation = Some(Height {
+                    value: reference_floor,
+                    velocity: 0.0,
+                });
+                continue;
+            }
+            // Smooth only the vertical terrain offset, in an absolute frame
+            // that cancels collider-root steps. Authored foot clearance and
+            // lateral motion are always sampled from this frame's animation.
+            let goal = reference_floor + targets[side].z - ankle.z;
+            let elevation = foot.elevation.get_or_insert(Height {
+                value: goal,
+                velocity: 0.0,
+            });
+            elevation.follow(goal, dt);
+            targets[side].z = ankle.z + elevation.value - reference_floor;
             if supported[side] {
                 // Query the actual oriented footprint before deriving body
                 // reach, so a toe crossing an edge is part of that constraint.
                 let corners = footprint(targets[side], rotations[side], leg.sole);
                 if let Some(lift) = correction(corners, corners.map(query)) {
-                    targets[side].z += if foot.contact { lift } else { lift.max(0.0) };
+                    // Collision is a hard constraint; settling toward a lower
+                    // support may ease, but a sole must never ease through it.
+                    if lift > 0.0 {
+                        targets[side].z += lift;
+                        elevation.value += lift;
+                        elevation.velocity = 0.0;
+                    }
                 }
             }
         }
@@ -564,7 +635,11 @@ mod tests {
                     }
                 }
                 if placement.feet[side].contact {
-                    assert!(nearest < 0.004, "contact foot {side} floats by {nearest}");
+                    let settling = placement.feet[side].elevation.is_some_and(|height| height.velocity < -0.001);
+                    assert!(
+                        nearest < 0.004 || (settling && nearest < 0.25),
+                        "contact foot {side} floats without settling: {nearest}"
+                    );
                 }
                 assert!(
                     output[knee].w_axis.y * if side == 0 { 1.0 } else { -1.0 } > 0.01,
@@ -1127,6 +1202,183 @@ mod tests {
                 before.distance(after) < 0.4,
                 "the source gait jerked at {at}: {before:?} -> {after:?}"
             );
+        }
+    }
+
+    #[test]
+    fn grounding_smoothing_settles_a_lower_support_but_preserves_lifts_and_collision() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let mut unloaded = Placement::default();
+        for i in 0..=1 {
+            let frame = f.frame(Vec3::Z * (i as f32 * 0.1), 0.0);
+            let placed = f.sample(
+                &mut unloaded,
+                &f.rig.local_rot,
+                Vec3::ZERO,
+                Some(frame),
+                now + Duration::from_secs_f32(i as f32 / 60.0),
+                &|_| None,
+            );
+            for (&placed, &raw) in placed.rotations.iter().zip(&f.rig.local_rot) {
+                assert!(placed.abs_diff_eq(raw, 1e-5), "unavailable terrain introduced a leg correction");
+            }
+        }
+        let frame = f.frame(Vec3::Z * 0.25, 0.0);
+        let ankle = f.rig.names["mAnkleLeft"];
+        for fps in [30, 60, 144] {
+            let mut placement = Placement::default();
+            let mut previous = None::<f32>;
+            for i in 0..=fps * 2 {
+                let level = if i < fps { 0.22 } else { 0.10 };
+                let ground = |p: Vec3| {
+                    Some(Surface {
+                        position: p.with_z(if p.y > 0.0 { level } else { 0.0 }),
+                        normal: Vec3::Z,
+                    })
+                };
+                let placed = f.sample(
+                    &mut placement,
+                    &f.rig.local_rot,
+                    Vec3::ZERO,
+                    Some(frame),
+                    now + Duration::from_secs_f32(i as f32 / fps as f32),
+                    &ground,
+                );
+                let world = f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &ground);
+                let z = world[ankle].w_axis.z;
+                if i >= fps {
+                    let before = previous.expect("settled support");
+                    assert!(
+                        z <= before + 1e-5 && before - z < 1.1 / fps as f32,
+                        "support transition snapped at {fps} fps"
+                    );
+                    if i == fps {
+                        assert!(before - z < 0.025, "the correction was applied at once");
+                    }
+                    if i == fps * 2 {
+                        assert!((before - z).abs() < 1e-5, "the foot never settled");
+                    }
+                }
+                previous = Some(z);
+            }
+            // A new source lift is visible immediately, even though terrain
+            // offsets ease. Filtering solved bones would delay this movement.
+            let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+            let [hip, knee] = ["mHipLeft", "mKneeLeft"].map(|name| f.rig.names[name]);
+            let length = rest[hip].w_axis.distance(rest[knee].w_axis) + rest[knee].w_axis.distance(rest[ankle].w_axis);
+            let bend = (1.0 - 0.08 / length).acos();
+            let mut raw = f.rig.local_rot.clone();
+            raw[hip] = Quat::from_rotation_y(-bend);
+            raw[knee] = Quat::from_rotation_y(2.0 * bend);
+            raw[ankle] = Quat::from_rotation_y(-bend);
+            let ground = |p: Vec3| {
+                Some(Surface {
+                    position: p.with_z(if p.y > 0.0 { 0.1 } else { 0.0 }),
+                    normal: Vec3::Z,
+                })
+            };
+            let at = now + Duration::from_secs_f32(2.0 + 1.0 / fps as f32);
+            let placed = f.sample(&mut placement, &raw, Vec3::ZERO, Some(frame), at, &ground);
+            let world = f.check(&placement, &placed, &raw, Vec3::ZERO, frame, &ground);
+            assert!(
+                world[ankle].w_axis.z - previous.unwrap() > 0.075,
+                "smoothing delayed the source lift"
+            );
+            let raised = |p: Vec3| {
+                Some(Surface {
+                    position: p.with_z(if p.y > 0.0 { 0.22 } else { 0.0 }),
+                    normal: Vec3::Z,
+                })
+            };
+            let placed = f.sample(
+                &mut placement,
+                &raw,
+                Vec3::ZERO,
+                Some(frame),
+                at + Duration::from_secs_f32(1.0 / fps as f32),
+                &raised,
+            );
+            f.check(&placement, &placed, &raw, Vec3::ZERO, frame, &raised);
+        }
+    }
+
+    #[test]
+    fn grounding_smoothing_reenable_continues_the_visible_partial_or_complete_fade() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let frame = f.frame(Vec3::Z * 0.2, 0.0);
+        let mut initially_disabled = Placement::default();
+        f.sample(&mut initially_disabled, &f.rig.local_rot, Vec3::ZERO, None, now, &flat);
+        let enabled = f.sample(
+            &mut initially_disabled,
+            &f.rig.local_rot,
+            Vec3::ZERO,
+            Some(frame),
+            now + Duration::from_secs_f32(1.0 / 60.0),
+            &flat,
+        );
+        assert!(enabled.pelvis.length() < 0.001, "initial activation jumped to the full correction");
+        for delay in [0.08, 0.3] {
+            let mut placement = Placement::default();
+            f.sample(&mut placement, &f.rig.local_rot, Vec3::ZERO, Some(frame), now, &flat);
+            f.sample(
+                &mut placement,
+                &f.rig.local_rot,
+                Vec3::ZERO,
+                None,
+                now + Duration::from_secs(1),
+                &flat,
+            );
+            let at = now + Duration::from_secs_f32(1.0 + delay);
+            let before = f.sample(&mut placement, &f.rig.local_rot, Vec3::ZERO, None, at, &flat);
+            // Walking while disabled must not be mistaken for an active IK
+            // teleport, which would discard the visible source-pose seed.
+            let frame = if delay > 0.2 {
+                f.frame(Vec3::new(3.0, 0.0, 0.2), 0.0)
+            } else {
+                frame
+            };
+            let after = f.sample(
+                &mut placement,
+                &f.rig.local_rot,
+                Vec3::ZERO,
+                Some(frame),
+                at + Duration::from_micros(1),
+                &flat,
+            );
+            let world = |placed: &Placed| f.rig.world_with(&placed.rotations, placed.pelvis, &f.base.local_pos, &f.base.scale);
+            let (before_world, after_world) = (world(&before), world(&after));
+            for name in ["mPelvis", "mKneeLeft", "mKneeRight", "mAnkleLeft", "mAnkleRight"] {
+                let j = f.rig.names[name];
+                assert!(
+                    before_world[j].w_axis.distance(after_world[j].w_axis) < 0.002,
+                    "{name} snapped on re-enable after {delay}s"
+                );
+            }
+            let mut last_gap = f32::INFINITY;
+            for i in 1..=60 {
+                let placed = f.sample(
+                    &mut placement,
+                    &f.rig.local_rot,
+                    Vec3::ZERO,
+                    Some(frame),
+                    at + Duration::from_secs_f32(i as f32 / 60.0),
+                    &flat,
+                );
+                let output = f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &flat);
+                let leg = placement.setup.as_ref().unwrap().legs[0];
+                let ankle = output[leg.joints[2]];
+                let gap = footprint(ankle.w_axis.truncate(), orientation(ankle), leg.sole)
+                    .into_iter()
+                    .map(|p| p.z)
+                    .fold(f32::INFINITY, f32::min);
+                assert!(gap <= last_gap + 1e-4, "re-enable reversed its approach to the support");
+                if i == 60 {
+                    assert!(gap < 0.004, "re-enable never reached support");
+                }
+                last_gap = gap;
+            }
         }
     }
 

@@ -5,6 +5,13 @@ impl App {
         if self.demo {
             if let Ok(mode) = std::env::var("AURORA_DEMO_GROUNDING") {
                 crate::demo::grounding::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
+                if mode.contains("-transition") {
+                    match self.frame_count {
+                        660 | 720 => self.settings.ground_avatar_feet = false,
+                        666 | 750 => self.settings.ground_avatar_feet = true,
+                        _ => {}
+                    }
+                }
                 if self.frame_count == 600 {
                     self.settings.ground_avatar_feet = !mode.ends_with("-off");
                     self.panels.chat = false;

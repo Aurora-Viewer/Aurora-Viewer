@@ -1463,6 +1463,11 @@ stay prepared for the lower foot's return rather than popping up and down
 with each swing. `steps-rise-front` places both soles on raised supports over
 a narrow groove beneath the physical centre. The body must rise smoothly
 instead of leaving both knees compressed; compare `steps-rise-front-off`.
+Append `-transition` to interrupt a fade-out after 100 ms, then fully disable
+and re-enable placement (frames 660/666 and 720/750 at the 60 fps cap). Both
+returns should continue from the visible pose. Terrain offsets settle toward
+lower support in about 250 ms, while source foot lifts remain immediate and
+collision correction always keeps the sole above solid support.
 `steps-rise-front-lift` must retain this height while either foot lifts and
 replants. An intentional crouch (normal downward control) must retain its
 authored flexion. Inspect
