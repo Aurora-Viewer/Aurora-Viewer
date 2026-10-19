@@ -635,7 +635,7 @@ same colour, intensity, range and falloff, and its projector controls become
 disabled. Cancel instead restores its texture and projector settings. Use
 `features` without the suffix to inspect the light before or after editing.
 
-`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|mouselook-gun|mouselook-touch|ground`:
+`AURORA_DEMO_WORLD_CLICKS=camera-zero|camera-te|camera-glass|plate-hidden|plate-wall|worn-prim|worn-mesh|worn-own|worn-other|worn-other-link|worn-other-covered|worn-other-under|mouselook-gun|mouselook-touch|ground`:
 install the fixture at frame 600, issue a real left press at 700 and release
 at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
@@ -649,6 +649,12 @@ without move/modify rights; both must log `demo touch_start: prim=975` and
 scenario installs the existing synthetic skinned mesh locally. `worn-own`
 wears a scripted prim on our own chest (issue #488): the press must touch it
 (`demo server: ObjectGrab 975`) instead of turning to our avatar.
+`worn-other` puts that prim on another resident's chest; `worn-other-link`
+adds a scriptless child above it and presses the child (`ObjectGrab 988`).
+`worn-other-covered` and `worn-other-under` put the demo's rigged mesh,
+without a script, over a smaller scripted prim on that chest, blended or
+opaque: the press goes through the rigged mesh to the prim (`ObjectGrab
+975`), as the Legacy Viewer's left click ignores rigged meshes.
 `mouselook-gun` makes a script take the mouselook button
 (ScriptControlChange) and enters mouselook: the press and release send only
 `demo server: click bits 0x40000000` then `0x80000000`. `mouselook-touch`

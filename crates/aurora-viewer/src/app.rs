@@ -2989,6 +2989,13 @@ impl App {
             return;
         }
         let alt = self.alt || self.object_view;
+        // a rigged mesh with nothing to do with the click lets it through
+        let depth = if alt || self.build.open {
+            depth
+        } else {
+            self.scene
+                .touch_depth(&self.world, &picked.drawn, ray, depth, self.settings.draw_distance)
+        };
         let hit = if alt {
             picked.visible_point()
         } else {
@@ -3052,7 +3059,8 @@ impl App {
         }
         // the click acts on the rigged mesh it lands on, as on any object:
         // also one we wear, like the scripted attachments Firestorm lets
-        // us touch (its rigged ones are out of the left click's reach)
+        // us touch (its rigged ones are out of the left click's reach);
+        // one without an action is not designated, the click went on behind
         if !alt
             && !self.ctrl
             && !self.shift

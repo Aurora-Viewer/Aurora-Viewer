@@ -67,7 +67,7 @@ impl App {
                     _ => 971,
                 };
                 self.world.objects.index_of_uuid(&crate::demo::action_id(local)).and_then(|idx| {
-                    let pos = if ["worn-mesh", "worn-own", "worn-other", "worn-other-covered"].contains(&mode) {
+                    let pos = if ["worn-mesh", "worn-own", "worn-other", "worn-other-covered", "worn-other-under"].contains(&mode) {
                         // A known point of the synthetic chest mesh, outside
                         // the classic body's silhouette. Its bounds' centre
                         // is inside the wearer and correctly hits the body.
@@ -128,6 +128,7 @@ impl App {
         if mode.starts_with("worn-") {
             // `worn-own`: the prim is ours (issue #488)
             let own = mode == "worn-own";
+            let covered = mode == "worn-other-covered" || mode == "worn-other-under";
             let Some((wearer_idx, wearer, owner)) = self
                 .world
                 .objects
@@ -175,7 +176,7 @@ impl App {
                         if own || mode.starts_with("worn-other") {
                             // on the body, inside the wearer's box
                             o.position = OWN_PRIM;
-                            o.scale = Vec3::splat(if mode == "worn-other-covered" { 0.25 } else { 0.6 });
+                            o.scale = Vec3::splat(if covered { 0.25 } else { 0.6 });
                         }
                     }
                     if mode == "worn-other-link"
@@ -193,8 +194,9 @@ impl App {
                     }
                 }
             }
-            if mode == "worn-other-covered" {
-                // rigged clothing without a script over the scripted prim
+            if covered {
+                // rigged clothing without a script over the scripted prim:
+                // blended (`worn-other-covered`) or opaque (`worn-other-under`)
                 if let Some(g) = self.gfx.as_mut() {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }
@@ -203,6 +205,13 @@ impl App {
                         for o in objects.iter_mut() {
                             o.owner_id = owner;
                             o.update_flags = 0;
+                            if mode == "worn-other-under"
+                                && let Some(te) = o.texture_entry.as_mut()
+                            {
+                                for f in &mut std::sync::Arc::make_mut(te).faces {
+                                    f.texture = aurora_prim::te::BLANK_TEXTURE;
+                                }
+                            }
                         }
                     }
                     events.push(event);

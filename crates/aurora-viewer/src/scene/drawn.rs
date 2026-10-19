@@ -23,6 +23,10 @@
 //! out. Aurora reads what is drawn, so every gesture reaches a rigged mesh,
 //! where it is shown. Once designated it follows the rules of any object of
 //! its kind: click action, touch, IGNORE, transparency, rights, menus.
+//! Except that a left click on one with nothing to do with it (no touch
+//! script, no click action) goes on to what is behind, as in the Legacy
+//! Viewer: the scripted prims worn under a mesh body or rigged clothing
+//! stay touchable (`touch_passes_through`, `touch_depth`).
 //!
 //! Camera clicks (Alt + click, Focus tool) use the visible-surface mode of
 //! that pass directly: no CPU rest-pose or invisible touch-surface search.
@@ -117,6 +121,41 @@ impl Scene {
         }
     }
 
+    /// Touch: a rigged mesh (or a mesh worn by an avatar) that has nothing
+    /// to do with a click, no touch script and no click action, lets it
+    /// through, as the Legacy Viewer's left click does with every rigged
+    /// mesh: a mesh body or rigged clothing does not hide the scripted prims
+    /// worn under it (#488).
+    pub fn touch_passes_through(&self, world: &World, idx: usize) -> bool {
+        let s = self.drawn_status(world, idx);
+        s.posed_by_gpu && !s.avatar && crate::interaction::target(world, idx, &HashMap::new()).is_none()
+    }
+
+    /// The depth a left click searches from: the GPU's, or, when the
+    /// nearest opaque face drawn under it is a mesh the click passes through
+    /// ([`Self::touch_passes_through`]), the nearest surface the CPU finds
+    /// behind that mesh. On an avatar, only just under its surface (a prim
+    /// under the clothing, not through the body to what is worn on the other
+    /// side); nothing there: the GPU's depth, the click is the avatar's.
+    pub fn touch_depth(&self, world: &World, drawn: &Drawn, ray: Option<(Vec3, Vec3)>, depth: Option<Vec3>, far: f32) -> Option<Vec3> {
+        /// How far under a worn mesh's surface the click goes on.
+        const UNDER_WORN: f32 = 0.25;
+        let (Some(face), Some(ray)) = (drawn.opaque, ray) else {
+            return depth;
+        };
+        let Some((idx, _)) = self.record_object(face.record) else {
+            return depth;
+        };
+        if !self.touch_passes_through(world, idx) {
+            return depth;
+        }
+        let wearer = self.gpu.get(idx).and_then(|g| g.owner_avatar);
+        let at = (face.point - ray.0).dot(ray.1);
+        let limit = if wearer.is_some() { at + UNDER_WORN } else { far };
+        // (the drawn face is a frame younger than the CPU's poses)
+        self.point_behind_rigged(world, ray, at - 0.05, limit, wearer).or(depth)
+    }
+
     /// The object `gesture` designates among the faces drawn under its
     /// pixel, if it is one the drawn faces speak for ([`reaches`]). `ray`:
     /// the cursor ray; `found`: the point the CPU search settled on, which
@@ -143,7 +182,8 @@ impl Scene {
         [(drawn.blend, true), (drawn.opaque, false)].into_iter().find_map(|(hit, blend)| {
             let hit = hit?;
             let (idx, face) = self.record_object(hit.record)?;
-            (along(hit.point) <= limit && reaches(gesture, self.drawn_status(world, idx), build_open)).then_some(DrawnObject {
+            let through = gesture == Gesture::Touch && !build_open && self.touch_passes_through(world, idx);
+            (along(hit.point) <= limit && reaches(gesture, self.drawn_status(world, idx), build_open) && !through).then_some(DrawnObject {
                 idx,
                 face,
                 blend,
@@ -199,7 +239,8 @@ mod tests {
         for build in [false, true] {
             for target in [animesh, worn_self, worn_other] {
                 // Material cutouts are resolved by the GPU. Every remaining
-                // surface stops the press, even a non-actionable Blend face.
+                // surface may be designated, even a Blend face; a touch
+                // without an action then goes through (`touch_passes_through`).
                 assert!(reaches(Gesture::Touch, target, build));
                 assert!(reaches(Gesture::Menu, target, build));
                 assert_eq!(reaches(Gesture::Build, target, build), target.selectable);
@@ -242,5 +283,82 @@ mod tests {
             assert!(!reaches(Gesture::Touch, s, false));
             assert!(!reaches(Gesture::Build, s, false));
         }
+    }
+
+    /// #488: rigged clothing without a script over a scripted prim worn just
+    /// under it. The touch goes on to the prim; the menu still designates
+    /// the clothing; a scripted rigged mesh keeps the touch.
+    #[test]
+    fn a_touch_goes_through_a_rigged_mesh_without_an_action() {
+        let (mut world, mut scene, clothing, prim) = super::super::picking::tests::scene_with_two_objects();
+        let wearer = world.objects.avatars().next().map(|(idx, _)| idx);
+        // the clothing's face at x = 2.5, the prim's 10 cm behind it
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(3.1, 0.0, 50.0);
+        for (idx, flags) in [(clothing, 0), (prim, crate::ui::context::flags::HANDLE_TOUCH)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.click_action = crate::interaction::code::TOUCH;
+            o.update_flags = flags;
+        }
+        scene.gpu[clothing].rigged = true;
+        scene.gpu[clothing].owner_avatar = wearer;
+        scene.gpu[prim].faces[0].record = 1;
+        // the ray grazes the box of another avatar (ours, seen from behind)
+        // before the clothing: no surface there, the GPU drew none
+        let grazed = world
+            .objects
+            .avatars()
+            .map(|(idx, _)| idx)
+            .find(|&idx| Some(idx) != wearer)
+            .unwrap();
+        scene.gpu.resize_with(scene.gpu.len().max(grazed + 1), Default::default);
+        scene.gpu[grazed].is_avatar = true;
+        scene.gpu[grazed].center = Vec3::new(1.0, 0.0, 50.0);
+        let face = FaceDraw {
+            record: 2,
+            ..scene.gpu[prim].faces[0]
+        };
+        scene.gpu[grazed].faces.push(face);
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let on_clothing = Vec3::new(2.5, 0.0, 50.0);
+        let drawn = Drawn {
+            opaque: Some(DrawnFace {
+                record: 0,
+                point: on_clothing,
+                st: glam::Vec2::splat(0.5),
+                normal: -Vec3::X,
+                binormal: Vec3::Z,
+            }),
+            ..Default::default()
+        };
+        let designated = |scene: &Scene, world: &World, gesture| {
+            scene
+                .designated(world, gesture, &drawn, Some(ray), Some(on_clothing), Some(on_clothing), false)
+                .map(|d| d.idx)
+        };
+        assert!(scene.touch_passes_through(&world, clothing));
+        assert_eq!(designated(&scene, &world, Gesture::Touch), None);
+        assert_eq!(designated(&scene, &world, Gesture::Menu), Some(clothing));
+        let depth = scene
+            .touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0)
+            .expect("a depth");
+        assert!((depth.x - 2.6).abs() < 1e-3, "the prim under the clothing: {depth:?}");
+        assert_eq!(scene.interaction_at_ray(&world, depth, ray, true), Some(prim));
+
+        // what is worn on the other side of the body stays out of reach:
+        // the click is the avatar's
+        world.objects.get_mut(prim).unwrap().position = Vec3::new(7.0, 0.0, 50.0);
+        assert_eq!(
+            scene.touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0),
+            Some(on_clothing)
+        );
+
+        // scripted clothing keeps the touch
+        world.objects.get_mut(clothing).unwrap().update_flags = crate::ui::context::flags::HANDLE_TOUCH;
+        assert!(!scene.touch_passes_through(&world, clothing));
+        assert_eq!(designated(&scene, &world, Gesture::Touch), Some(clothing));
+        assert_eq!(
+            scene.touch_depth(&world, &drawn, Some(ray), Some(on_clothing), 100.0),
+            Some(on_clothing)
+        );
     }
 }
