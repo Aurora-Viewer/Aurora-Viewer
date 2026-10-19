@@ -333,7 +333,7 @@ impl App {
                     if let Some(c) = self.world.calls.active.as_ref() {
                         self.chat_ui.open(c.conversation());
                     }
-                    self.panels.chat = true;
+                    self.show_conversations();
                 }
             }
             CtxAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
@@ -563,12 +563,12 @@ impl App {
             CtxAction::RemoveFriends(ids) => self.contacts_ui.ask_remove_friends(ids),
             CtxAction::Conference(ids) => {
                 self.world.start_text_conference(ids);
-                self.panels.chat = true;
+                self.show_conversations();
             }
             CtxAction::ConferenceCall(ids) => {
                 if self.settings.audio.voice_enabled {
                     self.world.start_conference(ids);
-                    self.panels.chat = true;
+                    self.show_conversations();
                 }
             }
             CtxAction::OfferTeleports(ids) => self.contacts_ui.ask_teleport_offer(ids, &self.world.region_name()),
@@ -579,7 +579,7 @@ impl App {
             CtxAction::GroupChat(id) => {
                 self.world.ui_sounds.push(UiSound::StartIm);
                 self.world.start_group_chat(id);
-                self.panels.chat = true;
+                self.show_conversations();
             }
             CtxAction::GroupChatBlocked(id, on) => self.world.set_group_chat_blocked(id, on),
             CtxAction::ContactSet(edit) => crate::ui::contacts::apply_set_edit(&mut self.world, edit),
