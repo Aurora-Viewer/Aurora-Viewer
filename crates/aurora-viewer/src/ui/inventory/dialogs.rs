@@ -517,48 +517,35 @@ fn share(
                 .color(p.muted),
             );
         }
+        // the notes share one frame, the amber one filled, so that their
+        // icons line up
         if excluded > 0 {
             ui.add_space(4.0);
-            ui.horizontal_top(|ui| {
-                crate::ui::widgets::glyph(ui, "info-circle-filled", p.muted, 15.0);
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(aurora_i18n::tr!(
-                            "ui-inventory-dialogs-not-given",
-                            count = excluded,
-                            number = aurora_i18n::integer(excluded as i64)
-                        ))
-                        .size(12.0)
-                        .color(p.muted),
-                    )
-                    .wrap(),
-                );
-            });
+            share_note(
+                ui,
+                "info-circle-filled",
+                p.muted,
+                None,
+                aurora_i18n::tr!(
+                    "ui-inventory-dialogs-not-given",
+                    count = excluded,
+                    number = aurora_i18n::integer(excluded as i64)
+                ),
+            );
         }
         if no_copy > 0 {
             ui.add_space(4.0);
-            egui::Frame::new()
-                .fill(p.warn.gamma_multiply(0.12))
-                .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-                .inner_margin(egui::Margin::symmetric(8, 6))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal_top(|ui| {
-                        crate::ui::widgets::glyph(ui, "alert-triangle-filled", p.warn, 15.0);
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(aurora_i18n::tr!(
-                                    "ui-inventory-dialogs-no-copy-will-leave",
-                                    count = no_copy,
-                                    number = aurora_i18n::integer(no_copy as i64)
-                                ))
-                                .size(12.0)
-                                .color(p.warn),
-                            )
-                            .wrap(),
-                        );
-                    });
-                });
+            share_note(
+                ui,
+                "alert-triangle-filled",
+                p.warn,
+                Some(p.warn.gamma_multiply(0.12)),
+                aurora_i18n::tr!(
+                    "ui-inventory-dialogs-no-copy-will-leave",
+                    count = no_copy,
+                    number = aurora_i18n::integer(no_copy as i64)
+                ),
+            );
         }
         ui.add_space(14.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -576,6 +563,24 @@ fn share(
         actions.push(InvAction::Share { items: given, resident });
     }
     give || cancel || modal.should_close()
+}
+
+/// A note under the give confirmation's entries: its icon and text in
+/// `color`, on `fill` when it warns.
+fn share_note(ui: &mut egui::Ui, icon: &str, color: egui::Color32, fill: Option<egui::Color32>, text: String) {
+    let mut frame = egui::Frame::new()
+        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+        .inner_margin(egui::Margin::symmetric(8, 6));
+    if let Some(fill) = fill {
+        frame = frame.fill(fill);
+    }
+    frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal_top(|ui| {
+            crate::ui::widgets::glyph(ui, icon, color, 15.0);
+            ui.add(egui::Label::new(RichText::new(text).size(12.0).color(color)).wrap());
+        });
+    });
 }
 
 fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &str, done: &mut bool) -> bool {
