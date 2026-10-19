@@ -5782,6 +5782,11 @@ impl App {
         if in_world {
             self.scene.draw_distance = self.settings.draw_distance;
             self.scene.synchronize_animations = self.settings.synchronize_animations;
+            self.scene.body_physics = crate::scene::body_physics::Config {
+                enabled: self.settings.avatar_physics,
+                detail: self.settings.avatar_physics_detail,
+                pixel_angle: lod_height as f32 / self.camera.fov_y.max(1e-3),
+            };
             self.scene.lod_factor = self.settings.lod_factor;
             self.scene.max_avatars = self.settings.max_avatars as usize;
             if self.demo {
@@ -7153,6 +7158,32 @@ impl App {
             }
             for event in crate::demo::loop_animation_events(self.frame_count) {
                 self.world.apply(event);
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::physics::mode()
+        {
+            for event in crate::demo::physics::animation_events(self.frame_count, mode) {
+                self.world.apply(event);
+            }
+            // the volumes' offsets, to read the bounce and its rest in the log
+            if (230..=1200).contains(&self.frame_count) && self.frame_count.is_multiple_of(6) {
+                let rig = &self.scene.avatar_lib.rig;
+                let name = |j: usize| {
+                    crate::demo::physics::BALLS
+                        .iter()
+                        .find(|b| rig.names.get(b.0) == Some(&j))
+                        .map_or("?", |b| b.0)
+                };
+                for (who, id) in [("own", crate::demo::DEMO_AGENT), ("other", crate::demo::DEMO_LOUP)] {
+                    let offsets: Vec<String> = self
+                        .scene
+                        .body_physics_offsets(&id)
+                        .into_iter()
+                        .map(|(j, o)| format!("{}=({:.4},{:.4},{:.4})", name(j), o.x, o.y, o.z))
+                        .collect();
+                    log::info!("demo physics: frame {} {who} {}", self.frame_count, offsets.join(" "));
+                }
             }
         }
         if self.demo
@@ -11550,6 +11581,15 @@ impl ApplicationHandler for App {
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::water::animation(), &rig)),
                 );
             }
+            if crate::demo::physics::mode().is_some() {
+                self.scene.anims.insert(
+                    crate::demo::physics::HOP_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::physics::animation(), &rig)),
+                );
+                if crate::demo::physics::mode() == Some(crate::demo::physics::Mode::Off) {
+                    self.settings.avatar_physics = false;
+                }
+            }
             if crate::demo::deform::mode().is_some() {
                 self.scene.anims.insert(
                     crate::demo::deform::DEFORM_ANIM,
@@ -12788,6 +12828,16 @@ impl ApplicationHandler for App {
                     self.scene.install_demo_hair(&mut g.renderer, hair);
                 }
                 for ev in crate::demo::hair_events(hair, crate::demo::crowd_count().unwrap_or(0)) {
+                    self.world.apply(ev);
+                }
+            }
+            // AURORA_DEMO_PHYSICS: a physics layer and balls on the body of
+            // our avatar and of the one in front of it
+            if crate::demo::physics::mode().is_some() {
+                if let Some(g) = &mut self.gfx {
+                    self.scene.install_demo_physics_body(&mut g.renderer);
+                }
+                for ev in crate::demo::physics::events(&self.scene.avatar_lib.shape_params) {
                     self.world.apply(ev);
                 }
             }

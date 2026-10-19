@@ -8,6 +8,7 @@ mod auto_hover;
 pub mod avatar;
 pub mod banlines;
 pub mod blend_order;
+pub mod body_physics;
 pub mod complexity;
 pub mod drawn;
 pub mod fetch_priority;
@@ -802,6 +803,10 @@ pub struct Scene {
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
     pub lips: lipsync::LipSync,
+    /// Avatar body physics: which avatars move, and their motions.
+    pub body_physics: body_physics::Config,
+    physics_rig: Option<Arc<body_physics::PhysicsRig>>,
+    physics: HashMap<Uuid, body_physics::BodyPhysics>,
     last_palette_gc: Instant,
     /// Periodic streaming summary in the log.
     last_diag: Instant,
@@ -1089,6 +1094,7 @@ impl Scene {
         let (jobs, job_rx) = Jobs::new();
         let cache_dir_anim = cache_dir.clone();
         let lips = lipsync::LipSync::new(&avatar_lib);
+        let physics_rig = body_physics::PhysicsRig::new(&avatar_lib.shape_params, &avatar_lib.rig).map(Arc::new);
         Scene {
             jobs,
             job_rx,
@@ -1195,6 +1201,9 @@ impl Scene {
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             lips,
+            body_physics: body_physics::Config::default(),
+            physics_rig,
+            physics: HashMap::new(),
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
             staging: None,
@@ -4154,7 +4163,7 @@ impl Scene {
         let rig = self.avatar_lib.rig.clone();
         // gather work: (slot, anims)
         #[allow(clippy::type_complexity)]
-        let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant)> = Vec::new();
+        let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant, Option<PhysicsJob>)> = Vec::new();
         let mut shape_dz: Vec<(Uuid, f32)> = Vec::new();
         let mut posed: Vec<(Uuid, usize)> = Vec::new();
         self.posed_now.clear();
@@ -4279,7 +4288,8 @@ impl Scene {
                 }
             };
             shape_dz.push((owner, dz));
-            work.push((slot as usize, motions, base, owner, pose_now));
+            let physics = self.physics_job(world, owner, idx, control, eye, now);
+            work.push((slot as usize, motions, base, owner, pose_now, physics));
             posed.push((owner, slot as usize));
             self.posed_now.insert(idx);
         }
@@ -4288,18 +4298,22 @@ impl Scene {
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
         let mut jobs: Vec<(
             &mut [[[f32; 4]; 4]],
-            &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant),
+            &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant, Option<PhysicsJob>),
         )> = work
             .iter_mut()
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
         let neutral_owner = (self.neutral_pose_test == Some(true)).then_some(world.agent_id);
-        frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now))| {
+        let physics_rig = self.physics_rig.clone();
+        frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
             // (the anchors after the joints are the sync's)
             for m in chunk.iter_mut().take(anim::ANCHOR_BASE).skip(rig.len()) {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
             motions.evaluate(&rig, *pose_now, Some(base), chunk);
+            if let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref()) {
+                job.run(physics_rig, &rig, now, chunk);
+            }
             if neutral_owner == Some(*owner) {
                 let neutral = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
                 for (dst, matrix) in chunk.iter_mut().zip(neutral) {
@@ -4307,8 +4321,11 @@ impl Scene {
                 }
             }
         });
-        for (_, motions, _, owner, _) in work {
+        for (_, motions, _, owner, _, physics) in work {
             self.motions.insert(owner, motions);
+            if let Some(job) = physics {
+                self.physics.insert(owner, job.state);
+            }
         }
         for (owner, _) in &posed {
             self.posed_at.insert(*owner, now);
@@ -4316,6 +4333,7 @@ impl Scene {
         let slots = &self.palette_slots;
         self.posed_at.retain(|id, _| slots.contains_key(id));
         self.motions.retain(|id, _| slots.contains_key(id));
+        self.physics.retain(|id, _| slots.contains_key(id));
         self.object_signals.retain(|id, _| slots.contains_key(id));
         // joint matrices for the attachments (rest -> posed, skeleton space)
         let joints = rig.len().min(anim::PALETTE_JOINTS);
@@ -4498,9 +4516,14 @@ impl Scene {
             }
         }
         let avatar = world.objects.get(owner_idx).is_some_and(|o| o.is_avatar());
+        let mut physics = None;
         let (mut local_pos, mut scale, hover) = if avatar {
             let values = world.visual_params(&owner).unwrap_or(&[]);
             let s = self.avatar_lib.shape_params.shape(values, &rig);
+            if let Some(physics_rig) = &self.physics_rig {
+                let weights = self.avatar_lib.shape_params.effective_weights(values);
+                physics = body_physics::Params::from_weights(physics_rig, &weights, s.male).map(Arc::new);
+            }
             (s.local_pos, s.scale, s.hover)
         } else {
             (rig.local_pos.clone(), rig.scale.clone(), 0.0)
@@ -4536,9 +4559,52 @@ impl Scene {
                 neutral_body_height,
                 neutral_shape_hover: hover,
                 members,
+                physics,
             },
         );
         (base, shape_dz)
+    }
+
+    /// Collision volume offsets of an avatar's body physics at its last pose
+    /// (demo log).
+    pub fn body_physics_offsets(&self, id: &Uuid) -> Vec<(usize, Vec3)> {
+        let mut out = Vec::new();
+        if let (Some(state), Some(params), Some(rig)) = (
+            self.physics.get(id),
+            self.skeletons.get(id).and_then(|s| s.physics.as_deref()),
+            self.physics_rig.as_deref(),
+        ) {
+            state.offsets(rig, params, &mut out);
+        }
+        out
+    }
+
+    /// The body physics of an avatar this frame (body_physics.rs): None, and
+    /// its motions forgotten, when it wears none or the physics are off. An
+    /// avatar too small on screen for the detail setting keeps its last
+    /// shape.
+    fn physics_job(&mut self, world: &World, owner: Uuid, idx: usize, control: bool, eye: Vec3, now: Instant) -> Option<PhysicsJob> {
+        let params = self
+            .skeletons
+            .get(&owner)
+            .and_then(|s| s.physics.clone())
+            .filter(|_| !control && self.body_physics.on() && self.physics_rig.is_some());
+        let root = params.as_ref().and_then(|_| Self::object_transform(world, idx, now, 0));
+        let (Some(params), Some((position, rotation, _))) = (params, root) else {
+            self.physics.remove(&owner);
+            return None;
+        };
+        let update = self.body_physics.updates(owner == world.agent_id, position.distance(eye));
+        let mut state = self.physics.remove(&owner).unwrap_or_else(|| body_physics::BodyPhysics::new(now));
+        if !update {
+            state.hold();
+        }
+        Some(PhysicsJob {
+            state,
+            params,
+            root: (position, rotation),
+            update,
+        })
     }
 
     /// "Reset skeleton" of an avatar or an animated object
@@ -5002,6 +5068,34 @@ impl Scene {
     }
 }
 
+/// One avatar's body physics, run with its pose.
+struct PhysicsJob {
+    state: body_physics::BodyPhysics,
+    params: Arc<body_physics::Params>,
+    /// The avatar's place in the world (its skeleton's origin).
+    root: (Vec3, Quat),
+    update: bool,
+}
+
+impl PhysicsJob {
+    /// Advance the motions with the joints just posed, then move the
+    /// collision volumes of the pose.
+    fn run(&mut self, physics_rig: &body_physics::PhysicsRig, rig: &anim::Rig, now: Instant, palette: &mut [[[f32; 4]; 4]]) {
+        if self.update {
+            let [chest, pelvis] = physics_rig.joints();
+            if let (Some(chest), Some(pelvis)) = (
+                body_physics::joint_world(palette, chest, self.root),
+                body_physics::joint_world(palette, pelvis, self.root),
+            ) {
+                self.state.update(physics_rig, &self.params, now, [chest, pelvis]);
+            }
+        }
+        let mut offsets = Vec::with_capacity(4);
+        self.state.offsets(physics_rig, &self.params, &mut offsets);
+        body_physics::apply(rig, &offsets, palette);
+    }
+}
+
 /// Cached rest skeleton of one skeleton owner.
 struct AvatarSkeleton {
     signature: u64,
@@ -5016,6 +5110,8 @@ struct AvatarSkeleton {
     neutral_shape_hover: f32,
     /// Objects whose shape or meshes went into it (see `skeleton_member_of`).
     members: Vec<usize>,
+    /// Body physics its appearance asks for (body_physics.rs).
+    physics: Option<Arc<body_physics::Params>>,
 }
 
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {

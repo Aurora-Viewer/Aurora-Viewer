@@ -488,6 +488,86 @@ impl super::Scene {
         }
     }
 
+    /// AURORA_DEMO_PHYSICS: the balls of `crate::demo::physics::BALLS`, each
+    /// a face skinned to its collision volume only, as the breasts, belly
+    /// and butt of a mesh body.
+    pub fn install_demo_physics_body(&mut self, renderer: &mut aurora_render::Renderer) {
+        use super::jobs::FaceGeom;
+        use aurora_render::SkinVertex;
+        const SEG: u32 = 16;
+        let rig = self.avatar_lib.rig.clone();
+        let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
+        let mut names = vec![String::new(); rig.len()];
+        for (name, &j) in &rig.names {
+            names[j] = name.clone();
+        }
+        let faces: Vec<Option<FaceGeom>> = crate::demo::physics::BALLS
+            .iter()
+            .filter_map(|&(name, offset, radii)| {
+                let &j = rig.names.get(name)?;
+                let center = rest[j].w_axis.truncate() + offset;
+                let mut vertices = Vec::new();
+                for row in 0..=SEG {
+                    let lat = std::f32::consts::PI * row as f32 / SEG as f32;
+                    for col in 0..=SEG {
+                        let lon = std::f32::consts::TAU * col as f32 / SEG as f32;
+                        let n = Vec3::new(lat.sin() * lon.cos(), lat.sin() * lon.sin(), lat.cos());
+                        let uv = [col as f32 / SEG as f32, row as f32 / SEG as f32];
+                        vertices.push(aurora_render::Vertex::new((center + n * radii).to_array(), n.to_array(), uv));
+                    }
+                }
+                let at = |row: u32, col: u32| (row * (SEG + 1) + col) as u16;
+                let mut indices = Vec::new();
+                for row in 0..SEG {
+                    for col in 0..SEG {
+                        let (a, b, c, d) = (at(row, col), at(row + 1, col), at(row + 1, col + 1), at(row, col + 1));
+                        indices.extend([a, b, c, a, c, d]);
+                    }
+                }
+                let skin = vec![
+                    SkinVertex {
+                        joints: [j as u8, 0, 0, 0],
+                        weights: [255, 0, 0, 0],
+                    };
+                    vertices.len()
+                ];
+                Some(Some(FaceGeom {
+                    vertices,
+                    indices,
+                    skin: Some(skin),
+                }))
+            })
+            .collect();
+        self.meshes.insert_demo_skin(
+            crate::demo::physics::BODY_MESH,
+            aurora_assets::SkinInfo {
+                joint_names: names,
+                inverse_bind: rest.iter().map(|m| m.inverse()).collect(),
+                ..Default::default()
+            },
+        );
+        for lod in 0..4 {
+            let faces = faces
+                .iter()
+                .map(|f| {
+                    f.as_ref().map(|f| FaceGeom {
+                        vertices: f.vertices.clone(),
+                        indices: f.indices.clone(),
+                        skin: f.skin.clone(),
+                    })
+                })
+                .collect();
+            self.upload_geom(
+                renderer,
+                super::GeomKey::Mesh {
+                    id: crate::demo::physics::BODY_MESH,
+                    lod,
+                },
+                super::jobs::PreparedGeom::new(faces, Vec3::splat(-2.0), Vec3::splat(2.0), true, None),
+            );
+        }
+    }
+
     /// Synthetic quadruped with a custom rest skeleton and smooth alpha fur.
     pub fn install_demo_animesh(&mut self, renderer: &mut aurora_render::Renderer) {
         use super::jobs::JobResult;
