@@ -5506,6 +5506,10 @@ impl App {
             self.world.groups.mute_all_groups = self.settings.mute_all_groups;
             self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
+            // AURORA_DEMO_OBJECT_IM: a filter for this run only
+            self.world.object_im_filter = crate::demo::object_im::settings()
+                .filter(|_| self.demo)
+                .unwrap_or(self.settings.object_im_filter);
             if self.world.status.cfg != self.settings.autoresponse {
                 self.world.status.cfg = self.settings.autoresponse.clone();
             }
@@ -7176,6 +7180,14 @@ impl App {
                 self.notif_ui.open = true;
                 if mode.ends_with("history") {
                     self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                }
+            }
+        }
+        if self.demo && crate::demo::object_im::settings().is_some() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::object_im::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
                 }
             }
         }

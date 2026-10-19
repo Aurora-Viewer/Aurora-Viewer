@@ -39,6 +39,7 @@ pub mod mutes;
 pub mod names;
 pub mod notification_history;
 pub mod notifications;
+pub mod object_im_filter;
 pub mod objects;
 pub mod outfit;
 pub mod parked;
@@ -230,6 +231,8 @@ pub struct World {
     pub bodies: HashMap<Uuid, body::Body>,
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
+    /// Object messages from elsewhere (Preferences › Privacy, issue #623).
+    pub object_im_filter: object_im_filter::Settings,
     pub teleporting: bool,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
@@ -468,6 +471,7 @@ impl World {
             water_float: Default::default(),
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
+            object_im_filter: object_im_filter::Settings::default(),
             appearance_counter: 1,
             shape_preview: None,
             shape_preview_generation: 0,
@@ -2637,7 +2641,7 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
-        if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) {
+        if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
         }
         if self.script_debug.route(&c, self.agent_id) {
@@ -2754,6 +2758,9 @@ impl World {
             return;
         }
         // dialog 19 = MessageFromObject
+        if self.object_im_filtered(&im) {
+            return;
+        }
         let kind = if im.dialog == 19 { ChatKind::ObjectIm } else { ChatKind::Im };
         let from = if im.from_name.is_empty() {
             aurora_i18n::tr!("common-system").to_owned()

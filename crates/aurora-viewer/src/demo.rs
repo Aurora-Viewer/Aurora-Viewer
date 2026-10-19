@@ -70,6 +70,9 @@ pub mod link;
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
 pub mod notifs;
+/// Objects' messages from near and far, filtered (AURORA_DEMO_OBJECT_IM).
+#[path = "demo_object_im.rs"]
+pub mod object_im;
 /// The object menu scenario's objects (AURORA_DEMO_OBJECT_MENU).
 #[path = "demo_object_menu.rs"]
 pub mod object_menu;

@@ -89,7 +89,7 @@ sections! {
     TAB_COMMANDS => [chat_commands],
     TAB_PRIVACY => [
         lookat.show_targets, lookat.show_names, lookat.hide_own, lookat.lines, lookat.private,
-        lookat.private_local, lookat.limit_distance, lookat.max_distance,
+        lookat.private_local, lookat.limit_distance, lookat.max_distance, object_im_filter,
     ],
     TAB_AURORA => [
         water_effects,
@@ -211,6 +211,9 @@ mod tests {
         pages[TAB_CAMERA].1.extend(accessed(include_str!("camera.rs"), "s", ""));
         pages[TAB_COMMANDS].1.insert("chat_commands".into());
         pages[TAB_PRIVACY].1.extend(accessed(include_str!("privacy.rs"), "s", "lookat."));
+        pages[TAB_PRIVACY]
+            .1
+            .extend(accessed(include_str!("privacy.rs"), "filter", "object_im_filter."));
         pages[TAB_AURORA]
             .1
             .extend(accessed(body(include_str!("aurora.rs"), "page"), "s", ""));
