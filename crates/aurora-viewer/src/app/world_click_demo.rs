@@ -6,6 +6,10 @@ use super::*;
 /// back, facing the default camera).
 const OWN_PRIM: Vec3 = Vec3::ZERO;
 
+/// `worn-other-link`: the child prim, without a script, of a worn linkset
+/// whose root holds the touch script.
+const WORN_CHILD: u32 = 988;
+
 fn mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| std::env::var("AURORA_DEMO_WORLD_CLICKS").ok()).as_deref()
@@ -57,9 +61,13 @@ impl App {
                         (p.x, p.y)
                     })
             } else {
-                let local = if mode.starts_with("worn-") { 975 } else { 971 };
+                let local = match mode {
+                    "worn-other-link" => WORN_CHILD,
+                    _ if mode.starts_with("worn-") => 975,
+                    _ => 971,
+                };
                 self.world.objects.index_of_uuid(&crate::demo::action_id(local)).and_then(|idx| {
-                    let pos = if mode == "worn-mesh" || mode == "worn-own" {
+                    let pos = if ["worn-mesh", "worn-own", "worn-other", "worn-other-covered"].contains(&mode) {
                         // A known point of the synthetic chest mesh, outside
                         // the classic body's silhouette. Its bounds' centre
                         // is inside the wearer and correctly hits the body.
@@ -70,7 +78,7 @@ impl App {
                         let pose = *self.world.avatar_poses.get(&avatar.full_id)?.get(joint)?;
                         let rest = self.world.avatar_lib.attach_points.get(&1)?.skel_position;
                         let (pos, rot, _) = Scene::object_transform(&self.world, wearer, Instant::now(), 0)?;
-                        let offset = if mode == "worn-own" { OWN_PRIM } else { Vec3::new(0.30, 0.0, 0.0) };
+                        let offset = if mode == "worn-mesh" { Vec3::new(0.30, 0.0, 0.0) } else { OWN_PRIM };
                         pos + rot * (pose.transform_point3(rest + offset) - self.world.avatar_lib.pelvis)
                     } else {
                         Scene::object_transform(&self.world, idx, Instant::now(), 0)?.0
@@ -153,7 +161,7 @@ impl App {
             };
             for event in &mut events {
                 if let NetEvent::ObjectUpdates { objects, .. } = event {
-                    for o in objects {
+                    for o in objects.iter_mut() {
                         o.local_id = 975;
                         o.full_id = crate::demo::action_id(975);
                         o.parent_id = wearer;
@@ -164,12 +172,40 @@ impl App {
                         if mode == "worn-prim" {
                             o.scale = Vec3::splat(0.5);
                         }
-                        if own {
-                            // on the back, inside our avatar's box
+                        if own || mode.starts_with("worn-other") {
+                            // on the body, inside the wearer's box
                             o.position = OWN_PRIM;
-                            o.scale = Vec3::splat(0.6);
+                            o.scale = Vec3::splat(if mode == "worn-other-covered" { 0.25 } else { 0.6 });
                         }
                     }
+                    if mode == "worn-other-link"
+                        && let Some(mut child) = objects.first().cloned()
+                    {
+                        // a scriptless child above the scripted root
+                        child.local_id = WORN_CHILD;
+                        child.full_id = crate::demo::action_id(WORN_CHILD);
+                        child.parent_id = 975;
+                        child.state = 0;
+                        child.position = Vec3::new(0.0, 0.0, 0.5);
+                        child.scale = Vec3::splat(0.3);
+                        child.update_flags = 0;
+                        objects.push(child);
+                    }
+                }
+            }
+            if mode == "worn-other-covered" {
+                // rigged clothing without a script over the scripted prim
+                if let Some(g) = self.gfx.as_mut() {
+                    self.scene.install_demo_animesh(&mut g.renderer);
+                }
+                for mut event in crate::demo::own_rigged_events(wearer) {
+                    if let NetEvent::ObjectUpdates { objects, .. } = &mut event {
+                        for o in objects.iter_mut() {
+                            o.owner_id = owner;
+                            o.update_flags = 0;
+                        }
+                    }
+                    events.push(event);
                 }
             }
             for event in events {
