@@ -1049,6 +1049,66 @@ impl Scene {
         found.then_some(ray.0 + ray.1 * nearest)
     }
 
+    /// The nearest surface the CPU finds along `ray` between `from` and
+    /// `limit`, leaving out what it cannot place (rigged meshes, meshes worn
+    /// by an avatar) and the avatar `wearer`, whose box holds what it wears.
+    /// What a left click finds behind a rigged mesh it passes through
+    /// (drawn.rs): nothing before that mesh's face is a surface (the GPU
+    /// drew it nearest), not even a box of our avatar the ray grazes.
+    pub(super) fn point_behind_rigged(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        from: f32,
+        limit: f32,
+        wearer: Option<usize>,
+    ) -> Option<Vec3> {
+        let now = Instant::now();
+        let mut nearest = limit;
+        let mut found = false;
+        for (idx, g) in self.pick_objects(None) {
+            let Some(o) = world.objects.get(idx) else { continue };
+            if g.faces.is_empty()
+                || g.hud
+                || g.rigged
+                || (g.owner_avatar.is_some() && !g.is_avatar && o.visual_volume().is_mesh())
+                || Some(idx) == wearer
+                || o.click_action == crate::interaction::code::IGNORE
+            {
+                continue;
+            }
+            let t = if g.is_avatar {
+                ray_box(
+                    ray.0,
+                    ray.1,
+                    g.center - Vec3::new(0.35, 0.35, 1.0),
+                    g.center + Vec3::new(0.35, 0.35, 1.0),
+                )
+            } else if ray_may_hit(g, ray) {
+                self.hit_distance(world, idx, ray, now, false, None)
+            } else {
+                None
+            };
+            if let Some(t) = t
+                && t >= from
+                && t < nearest
+            {
+                nearest = t;
+                found = true;
+            }
+        }
+        // the ground behind an animated object
+        let mut t = from.max(0.0);
+        while t < nearest {
+            let p = ray.0 + ray.1 * t;
+            if world.ground_height(p).is_some_and(|z| p.z <= z) {
+                return Some(p);
+            }
+            t += 1.0;
+        }
+        found.then_some(ray.0 + ray.1 * nearest)
+    }
+
     /// Firestorm also picks actionable transparent faces: they do not write
     /// the GPU depth buffer. Hidden touch panels take clicks but no hover.
     pub(super) fn transparent_action_point(

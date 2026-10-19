@@ -93,9 +93,9 @@ impl App {
         };
         self.left_down = true;
         let ray = picked.ray;
-        let hit = self
-            .scene
-            .action_point(&self.world, ray, picked.depth, false, self.settings.draw_distance);
+        let far = self.settings.draw_distance;
+        let depth = self.scene.touch_depth(&self.world, &picked.drawn, ray, picked.depth, far);
+        let hit = self.scene.action_point(&self.world, ray, depth, false, far);
         let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
         if let Some(d) = shown {
             if let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
