@@ -21,6 +21,11 @@ use uuid::Uuid;
 /// v2 adds the GLTF overrides. A v1 file is dropped: its objects would come
 /// back from the cache without their overrides, so the simulator must send
 /// them again with full updates (as LL does when the extras file is invalid).
+/// Bytes read from and written to the object cache files since the start
+/// (the resource monitor's disk statistics).
+pub static DISK_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static DISK_WRITTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 const MAGIC: &[u8; 4] = b"AOC2";
 /// Entries beyond this are not kept (very dense regions).
 const MAX_ENTRIES: usize = 60_000;
@@ -71,7 +76,13 @@ impl RegionObjectCache {
     /// Reads the file of a region. Blocking: not for the session loop.
     pub fn load(dir: &Path, region_id: Uuid) -> RegionObjectCache {
         let path = dir.join(format!("{region_id}.objc"));
-        let (entries, overrides) = std::fs::read(&path).ok().and_then(|d| Self::decode(&d)).unwrap_or_default();
+        let (entries, overrides) = std::fs::read(&path)
+            .ok()
+            .and_then(|d| {
+                DISK_READ.fetch_add(d.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                Self::decode(&d)
+            })
+            .unwrap_or_default();
         if !entries.is_empty() {
             // used: keep it in the rolling cache
             if let Ok(f) = std::fs::File::options().append(true).open(&path) {
@@ -251,6 +262,9 @@ impl Snapshot {
         }
         let tmp = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
         let result = std::fs::write(&tmp, content).and_then(|()| std::fs::rename(&tmp, &self.path));
+        if result.is_ok() {
+            DISK_WRITTEN.fetch_add(content.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         let _ = std::fs::remove_file(&tmp);
         result
     }

@@ -2297,7 +2297,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
-| `AURORA_DEMO_PERF=compact`, `full` or `network` | Opens the Performance window: compact, full, or as the bars open it on its Network section (full for this opening, the section unfolded and scrolled to) |
+| `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
@@ -2374,6 +2374,23 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 
 ### Details
+
+- **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
+  its graph); `full` the resource monitor on its overview; `network` the
+  monitor's Network section as the bars open it (the full view for this
+  opening only); `monitor-<section>` one section of the monitor:
+  `overview`, `subsystems`, `threads`, `memory`, `network`, `disk`, `scene`
+  or `region` (`scene-objects`: the scene on its objects). The monitor samples every half second: allow
+  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=1500` (25 s) for graphs
+  with some history, and `AURORA_WINDOW_SIZE=1600,1000` so that its default
+  size (1180 × 760) fits. What to look for: the rail's eight sections with
+  their live figures; the overview's six tiles and their minute; the
+  subsystems' table sorted by a column (click a title), its parts unfolded,
+  the selected row's pane (threads, related settings, processor graph);
+  the threads' groups and the per-core bars; the region's simulator health
+  (the demo's simulator sends its statistics when the monitor asks). The
+  demo has no circuit: the network's UDP counters stay empty but for its
+  synthetic traffic, and no media process runs.
 
 - **`AURORA_DEMO_PAY=<mode>`**: gives a balance of L$ 1,000 and opens the
   Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay

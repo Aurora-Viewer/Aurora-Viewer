@@ -7,7 +7,17 @@ use std::path::Path;
 /// holds it: the same publication a few milliseconds later goes through.
 const RENAME_ATTEMPTS: u32 = 6;
 
+/// Publish `bytes` as the file at `path` (counted as the viewer's other
+/// files in the disk statistics, `disk_io`).
 pub fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    publish(path, bytes)?;
+    crate::disk_io::written(crate::disk_io::Origin::Other, bytes.len());
+    Ok(())
+}
+
+/// [`write`] without counting the bytes: for writers that count them
+/// under their own origin (the disk cache).
+pub fn publish(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let temporary = parent.join(format!(".aurora-{}-{}.tmp", std::process::id(), uuid::Uuid::new_v4()));
     let result = (|| {

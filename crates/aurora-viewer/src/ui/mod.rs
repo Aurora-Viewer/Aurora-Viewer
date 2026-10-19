@@ -50,6 +50,7 @@ pub mod marketplace_listings;
 pub mod media;
 pub mod menu;
 pub mod minimap;
+pub mod monitor;
 pub mod movelock;
 pub mod movement;
 pub mod nameplate;

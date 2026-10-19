@@ -211,6 +211,8 @@ const ORDER: [usize; 15] = [
 ];
 
 pub const TAB_GRAPHICS: usize = 0;
+pub const TAB_INTERFACE: usize = 1;
+pub const TAB_NETWORK: usize = 6;
 pub const TAB_AUDIO: usize = 7;
 pub const TAB_CHAT: usize = 3;
 pub const TAB_CAMERA: usize = 10;

@@ -1506,14 +1506,13 @@ mod tests {
             vram_mb: None,
             integrated: false,
         };
-        let (render, net, scene, tex) = Default::default();
-        let (period, totals) = Default::default();
         let input = egui::RawInput {
             screen_rect: Some(screen),
             time: Some(time),
             events,
             ..Default::default()
         };
+        let mut monitor = crate::ui::monitor::Monitor::default();
         let mut out = ctx.run_ui(input, |ui| {
             top(
                 ui,
@@ -1528,22 +1527,8 @@ mod tests {
                 BellState::default(),
             );
             crate::ui::layout::set_work_area(ui.ctx(), work_area(screen, screen.bottom() - 60.0));
-            let view = crate::ui::perf::PerfView {
-                data: &data,
-                render: &render,
-                gpu: &gpu,
-                net: &net,
-                link: (&period, &totals),
-                scene: &scene,
-                tex: &tex,
-                meshes_fetching: 0,
-                regions: 1,
-                draw_distance: 128.0,
-                probes: (0, 0),
-                sounds: 0,
-                complexity: (None, 0),
-            };
-            crate::ui::perf::show(ui.ctx(), &p, &view, open);
+            let view = crate::ui::perf::PerfView { data: &data, gpu: &gpu };
+            crate::ui::perf::show(ui.ctx(), &p, &view, &mut monitor, open);
         });
         out.textures_delta.clear();
     }
@@ -1552,11 +1537,11 @@ mod tests {
         ctx.memory(|m| m.area_rect(Id::new("perf"))).expect("the Performance window")
     }
 
-    /// Performance opened from the system island: its full view stands 8 px
-    /// under the island, its left and right edges on the island's (within
-    /// half a pixel), down to the bottom of the work area at most, at the
-    /// three widths; its sides do not resize it, its bottom does, never
-    /// past the work area. The compact view keeps its own width and place.
+    /// Performance opened from the system island: its full view (the
+    /// resource monitor) stands 8 px under the island, its right edge on
+    /// the island's (within half a pixel), at its own size and within the
+    /// work area, at the three widths; its edges resize it both ways. The
+    /// compact view keeps its own width and place.
     #[test]
     fn performance_opens_under_the_system_island() {
         for width in [1280.0, 1536.0, 1920.0] {
@@ -1581,13 +1566,12 @@ mod tests {
             }
             let full = perf_rect(&ctx);
             let case = format!("{width}: {full:?} under {island:?}");
-            assert!((full.left() - island.left()).abs() <= 0.5, "{case}");
             assert!((full.right() - island.right()).abs() <= 0.5, "{case}");
             assert!((full.top() - (island.bottom() + MARGIN)).abs() <= 0.5, "{case}");
             assert!(full.bottom() <= work.bottom() + 0.5, "{case}: within the work area {work:?}");
-            assert!(full.bottom() >= work.bottom() - 1.0, "{case}: down to the dock");
+            assert!(full.width() <= work.width() + 0.5, "{case}: within the work area {work:?}");
+            assert!(full.width() >= crate::ui::monitor::MIN_SIZE.x.min(work.width()) - 0.5, "{case}");
 
-            // the right side does not resize it
             let drag = |ctx: &egui::Context,
                         open: &mut bool,
                         from: Pos2,
@@ -1601,48 +1585,32 @@ mod tests {
                 frame(ctx, open, vec![press(from + by, egui::PointerButton::Primary, false)]);
                 frame(ctx, open, vec![]);
             };
-            drag(
-                &ctx,
-                &mut open,
-                Pos2::new(full.right() - 1.0, full.center().y),
-                Vec2::new(60.0, 0.0),
-                &mut frame,
-            );
+            // the left side resizes it, as the bottom does
             drag(
                 &ctx,
                 &mut open,
                 Pos2::new(full.left() + 1.0, full.center().y),
-                Vec2::new(-60.0, 0.0),
+                Vec2::new(60.0, 0.0),
                 &mut frame,
             );
-            let after = perf_rect(&ctx);
+            let narrower = perf_rect(&ctx);
             assert!(
-                (after.width() - full.width()).abs() <= 0.5,
-                "{width}: no horizontal handle, {after:?}"
+                narrower.width() < full.width() - 30.0,
+                "{width}: the left side resizes it, {narrower:?}"
             );
-            // its bottom does, within the work area
             drag(
                 &ctx,
                 &mut open,
-                Pos2::new(full.center().x, full.bottom() - 1.0),
-                Vec2::new(0.0, -120.0),
+                Pos2::new(narrower.center().x, narrower.bottom() - 1.0),
+                Vec2::new(0.0, -80.0),
                 &mut frame,
             );
             let shorter = perf_rect(&ctx);
             assert!(
-                shorter.height() < full.height() - 60.0,
+                shorter.height() < narrower.height() - 40.0,
                 "{width}: the bottom resizes it, {shorter:?}"
             );
-            drag(
-                &ctx,
-                &mut open,
-                Pos2::new(shorter.center().x, shorter.bottom() - 1.0),
-                Vec2::new(0.0, 400.0),
-                &mut frame,
-            );
-            let taller = perf_rect(&ctx);
-            assert!(taller.bottom() <= work.bottom() + 0.5, "{width}: {taller:?} within {work:?}");
-            assert!((taller.width() - full.width()).abs() <= 0.5, "{width}: same width, {taller:?}");
+            assert!(shorter.bottom() <= work.bottom() + 0.5, "{width}: {shorter:?} within {work:?}");
 
             // compact: its own width, wherever it stands
             open = false;
@@ -1666,10 +1634,10 @@ mod tests {
         }
     }
 
-    /// A network opening (the tooltip's network row, the traffic indicator,
-    /// "Network graph…") shows the full view for itself alone: closed, the
-    /// frame rate's click opens the view chosen with ⤢, compact by default,
-    /// and the choice saved stays as it was.
+    /// The full view by default; a network opening (the tooltip's network
+    /// row, the traffic indicator, "Network graph…") shows it for itself
+    /// alone when the compact view was chosen, and the choice saved stays
+    /// as it was.
     #[test]
     fn a_network_opening_does_not_change_the_view_chosen() {
         let ctx = egui::Context::default();
@@ -1683,22 +1651,22 @@ mod tests {
         frame(&ctx, &mut open);
         let island = system_rect(&ctx);
         let compact_w = crate::ui::perf::COMPACT_W + crate::ui::perf::SIDES;
-        let saved = |ctx: &egui::Context| ctx.data_mut(|d| d.get_persisted::<bool>(Id::new(("perf", "full"))));
-        // the network: full, under the island
+        let saved = |ctx: &egui::Context| ctx.data_mut(|d| d.get_persisted::<bool>(Id::new(("perf", "monitor"))));
+        // nothing chosen: the full view
+        assert!(crate::ui::perf::is_full(&ctx), "the full view by default");
+        // the compact view chosen, then a network opening: full, this time
+        crate::ui::perf::set_full(&ctx, false);
         crate::ui::perf::place_under(&ctx, island);
         crate::ui::perf::show_network(&ctx);
         open = true;
         for _ in 0..3 {
             frame(&ctx, &mut open);
         }
-        assert!(
-            (perf_rect(&ctx).width() - island.width()).abs() <= 0.5,
-            "the full view under the island"
-        );
+        assert!(perf_rect(&ctx).width() > compact_w + 100.0, "the full view for the network");
         // closed during that full view
         open = false;
         frame(&ctx, &mut open);
-        assert_ne!(saved(&ctx), Some(true), "the network opening saved the full view");
+        assert_eq!(saved(&ctx), Some(false), "the network opening kept the compact view chosen");
         // the frame rate's click: compact
         crate::ui::perf::place_under(&ctx, island);
         open = true;
@@ -1706,18 +1674,5 @@ mod tests {
             frame(&ctx, &mut open);
         }
         assert_eq!(perf_rect(&ctx).width(), compact_w, "the frame rate opens the compact view");
-        // with the full view chosen, the frame rate opens it, and a network
-        // opening leaves the choice as it was
-        open = false;
-        frame(&ctx, &mut open);
-        crate::ui::perf::set_full(&ctx, true);
-        crate::ui::perf::show_network(&ctx);
-        open = true;
-        for _ in 0..3 {
-            frame(&ctx, &mut open);
-        }
-        open = false;
-        frame(&ctx, &mut open);
-        assert_eq!(saved(&ctx), Some(true), "the choice kept");
     }
 }

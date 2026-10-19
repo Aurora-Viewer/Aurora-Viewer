@@ -26,6 +26,7 @@ mod credentials;
 mod cursors;
 mod deep_profile;
 mod demo;
+mod disk_io;
 mod dof;
 mod frame_par;
 mod frame_profile;

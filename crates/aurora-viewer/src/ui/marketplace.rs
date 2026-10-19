@@ -64,6 +64,12 @@ pub struct MarketplaceUi {
 }
 
 impl MarketplaceUi {
+    /// The system id of the marketplace page's browser process, while one
+    /// runs.
+    pub fn web_process_id(&self) -> Option<u32> {
+        self.web.process_id()
+    }
+
     /// LLFloaterMarketplace::onOpen: the home page, or `url` when a link
     /// asked for one (openMarketplaceURL).
     pub fn open(&mut self, url: Option<String>) {
