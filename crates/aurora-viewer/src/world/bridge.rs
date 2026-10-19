@@ -59,7 +59,9 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             enabled: false,
-            indicator: true,
+            // The bottom-left indicator is opt-in; the toolbar button
+            // already shows the lock state.
+            indicator: false,
             mode: LockMode::Bridge,
         }
     }

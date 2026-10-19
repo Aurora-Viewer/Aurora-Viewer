@@ -1398,6 +1398,7 @@ fn account_preferences_roundtrip_and_old_settings_default_to_unlocked() {
     assert!(old.bridge.is_empty());
     assert!(!Preferences::default().enabled);
     assert_eq!(Preferences::default().mode, LockMode::Bridge);
+    assert!(!Preferences::default().indicator, "the lock indicator is opt-in");
     let old: Preferences = serde_json::from_str(r#"{"enabled":true,"indicator":false}"#).expect("old account");
     assert!(old.enabled);
     assert_eq!(old.mode, LockMode::Bridge);
