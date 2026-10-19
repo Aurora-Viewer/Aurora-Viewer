@@ -434,7 +434,7 @@ fn bar_favorites() -> &'static Vec<(&'static str, (u32, u32), [f32; 3], i64, [[u
 /// eleven and this place with `added` (the mockup's twelve).
 fn bar_favorite_shown(k: usize) -> bool {
     match crate::ui::bars::demo::get().favorites {
-        Some(crate::ui::bars::demo::Favorites::Twelve) => k < 12,
+        Some(crate::ui::bars::demo::Favorites::Twelve | crate::ui::bars::demo::Favorites::Snapshots) => k < 12,
         Some(crate::ui::bars::demo::Favorites::Added) => k < 11 || k == 12,
         _ => false,
     }
@@ -599,13 +599,16 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         .chain(extra)
         .collect();
     // AURORA_DEMO_BARS's favourites take the place of the demo's own
-    let items = if n == FAVORITES_FOLDER && crate::ui::bars::demo::get().favorites.is_some() {
+    let bars = crate::ui::bars::demo::get().favorites;
+    let snapshots = bars == Some(crate::ui::bars::demo::Favorites::Snapshots);
+    let items = if n == FAVORITES_FOLDER && bars.is_some() {
         bar_favorites()
             .iter()
             .enumerate()
             .filter(|(k, _)| bar_favorite_shown(*k))
             .map(|(k, f)| InvItem {
-                thumbnail: thumbnail_id(k),
+                // favsnap: the parcels' snapshots instead
+                thumbnail: if snapshots { Uuid::nil() } else { thumbnail_id(k) },
                 ..item(BAR_FAVORITES + k, f.0, f.3)
             })
             .collect()
