@@ -275,6 +275,13 @@ impl ChatUi {
         self.local_typing.update(now, std::mem::take(&mut self.local_field))
     }
 
+    /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
+    /// it starts.
+    pub fn hold_local_typing(&mut self, now: std::time::Instant) -> bool {
+        self.local_field = typing::LocalField::default();
+        self.local_typing.hold(now)
+    }
+
     /// We type in the nearby chat (AGENT_STATE_TYPING).
     pub fn local_typing(&self) -> bool {
         self.local_typing.typing()

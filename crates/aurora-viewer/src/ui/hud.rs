@@ -243,6 +243,8 @@ pub struct PlateFrame<'a> {
     pub too_complex: &'a std::collections::HashSet<usize>,
     /// Demo: an avatar whose plate is shown as too complex.
     pub demo_too_complex: Option<uuid::Uuid>,
+    /// We type in the nearby chat (`ChatUi::local_typing`).
+    pub own_typing: bool,
 }
 
 /// What a name plate says about the avatar `o`. The states are those of
@@ -256,6 +258,7 @@ fn plate_content(
     complexity: Option<&TagComplexity<'_>>,
     too_complex: bool,
     typing_shown: bool,
+    own_typing: bool,
 ) -> super::nameplate::Content {
     use super::nameplate::{Content, Detail, Presence, Role};
     use super::presence::Status;
@@ -310,8 +313,16 @@ fn plate_content(
         role: Role::of(own, blocked, super::colors::is_linden(&legacy), friend),
         presence,
         in_voice,
-        // FSShowTypingStateInNameTag: never on our own tag
-        typing: typing_shown && !own && playing(crate::world::radar::ANIM_AGENT_TYPE),
+        // FSShowTypingStateInNameTag. Our own plate too, from our typing
+        // rather than the animation (it may be off), like its microphone:
+        // the Legacy Viewer's tag never shows ours (the human's choice,
+        // 2026-10-19)
+        typing: typing_shown
+            && if own {
+                own_typing
+            } else {
+                playing(crate::world::radar::ANIM_AGENT_TYPE)
+            },
         friend,
         too_complex: !own && too_complex,
         blocked,
@@ -362,7 +373,7 @@ pub fn draw(
     )> = Vec::new();
     let mut name_tags = Vec::new();
     let (plates, plate_frame) = match plates {
-        Some(f) => (Some(f.plates), Some((f.pictures, f.too_complex, f.demo_too_complex))),
+        Some(f) => (Some(f.plates), Some((f.pictures, f.too_complex, f.demo_too_complex, f.own_typing))),
         None => (None, None),
     };
     let mut plate_tags: Vec<super::nameplate::Tag<'_>> = Vec::new();
@@ -390,7 +401,7 @@ pub fn draw(
                 continue;
             }
             let at = tag_point(head, eye);
-            if let Some((pictures, too_complex, demo_too_complex)) = plate_frame {
+            if let Some((pictures, too_complex, demo_too_complex, own_typing)) = plate_frame {
                 use super::nameplate::Picture;
                 let id = o.full_id;
                 let in_voice = voice.get(&id).copied();
@@ -418,6 +429,7 @@ pub fn draw(
                         complexity.as_ref(),
                         too,
                         settings.typing_in_name_tags,
+                        own_typing,
                     ),
                     voice: in_voice.filter(|_| audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false)),
                     loading: loading.and_then(|l| l.get(&id).copied()),
@@ -793,6 +805,7 @@ mod tests {
                                 pictures: &pictures,
                                 too_complex: &too_complex,
                                 demo_too_complex: None,
+                                own_typing: false,
                             }),
                         );
                     },

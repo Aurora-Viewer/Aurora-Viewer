@@ -8313,6 +8313,13 @@ impl App {
     /// drawn (`ChatUi::local_typing_update`).
     fn update_local_typing(&mut self) {
         self.chat_ui.type_during_emote = self.settings.type_during_emote;
+        // AURORA_DEMO_TYPING: we type from our arrival on, no key needed
+        if self.demo && crate::demo::typing_scenario() && matches!(self.screen, Screen::World) {
+            if self.chat_ui.hold_local_typing(Instant::now()) {
+                self.send_local_typing(true);
+            }
+            return;
+        }
         if let Some(typing) = self.chat_ui.local_typing_update(Instant::now()) {
             self.send_local_typing(typing);
         }
@@ -9652,6 +9659,7 @@ impl App {
                             pictures: &self.avatar_pics,
                             too_complex: &self.scene.too_complex,
                             demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
+                            own_typing: self.chat_ui.local_typing(),
                         }),
                     )
                 };
@@ -11668,6 +11676,10 @@ impl ApplicationHandler for App {
             self.scene.anims.insert(
                 crate::demo::SEAT_ANIM,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
+            );
+            self.scene.anims.insert(
+                crate::world::radar::ANIM_AGENT_TYPE,
+                Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );
             if crate::demo::water::mode().is_some() {
                 self.scene.anims.insert(

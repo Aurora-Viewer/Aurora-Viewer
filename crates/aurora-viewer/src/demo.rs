@@ -4592,6 +4592,58 @@ pub fn idle_animation() -> aurora_assets::Animation {
     }
 }
 
+/// `AURORA_DEMO_TYPING=1`: we type in the nearby chat from our arrival on,
+/// without a key (our typing animation and our plate's dots).
+pub fn typing_scenario() -> bool {
+    std::env::var_os("AURORA_DEMO_TYPING").is_some()
+}
+
+/// The typing animation (ANIM_AGENT_TYPE), a grid asset the demo has no
+/// server for: the arms only, over the stand, forearms forward and the
+/// wrists tapping, for our typing in the nearby chat and the crowd's.
+pub fn typing_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, RotKey};
+    let joint = |name: &str, keys: Vec<(f32, Quat)>| JointMotion {
+        joint_name: name.into(),
+        priority: -1,
+        rot_keys: keys.into_iter().map(|(time, rotation)| RotKey { time, rotation }).collect(),
+        pos_keys: Vec::new(),
+    };
+    // the upper arms hang (as the stand's), the elbows bend forward about
+    // the same lateral axis: -Z for the left arm, +Z for the right
+    let (down, bend) = (1.3f32, 1.45f32);
+    // a wrist up every other quarter second, the two hands in turn
+    let tap = |side: f32, phase: usize| {
+        (0..=4usize)
+            .map(|i| {
+                (
+                    i as f32 * 0.25,
+                    Quat::from_rotation_z(if (i + phase).is_multiple_of(2) { 0.0 } else { side * 0.25 }),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    aurora_assets::Animation {
+        base_priority: 3,
+        duration: 1.0,
+        emote_name: String::new(),
+        loop_in: 0.0,
+        loop_out: 1.0,
+        looping: true,
+        ease_in: 0.3,
+        ease_out: 0.3,
+        hand_pose: 0,
+        joints: vec![
+            joint("mShoulderLeft", vec![(0.0, Quat::from_rotation_x(-down))]),
+            joint("mShoulderRight", vec![(0.0, Quat::from_rotation_x(down))]),
+            joint("mElbowLeft", vec![(0.0, Quat::from_rotation_z(-bend))]),
+            joint("mElbowRight", vec![(0.0, Quat::from_rotation_z(bend))]),
+            joint("mWristLeft", tap(1.0, 0)),
+            joint("mWristRight", tap(-1.0, 1)),
+        ],
+    }
+}
+
 pub const IDLE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0001);
 
 pub const ANIMESH_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0100);

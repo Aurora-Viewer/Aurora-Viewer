@@ -129,6 +129,12 @@ impl LocalTyping {
         None
     }
 
+    /// Keep typing as if a key came now (`AURORA_DEMO_TYPING`); true when
+    /// it starts.
+    pub fn hold(&mut self, now: Instant) -> bool {
+        self.last_key.replace(now).is_none()
+    }
+
     /// Stop typing (a teleport, LLAgent::stopTyping); true when we were.
     pub fn stop(&mut self) -> bool {
         self.last_key.take().is_some()
@@ -253,6 +259,10 @@ mod tests {
         me.update(t0, local(true, Some(true), false));
         assert!(me.stop());
         assert!(!me.stop());
+        // the demo's typing without a key starts once, then goes on
+        assert!(me.hold(t0));
+        assert!(!me.hold(at(t0, 6000)));
+        assert!(me.typing());
     }
 
     /// What shows us typing: words on channel 0; "/me" only with the
