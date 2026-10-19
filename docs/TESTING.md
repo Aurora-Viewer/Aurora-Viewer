@@ -3970,7 +3970,10 @@ Avatar health at frame 600, as its menu row would. `undeform`: our skeleton
 and animations reset, then the undeform animation started; the log says
 `undeform: …`. `refresh`: every object we wear from the inventory asked again
 on its point; the log says `refresh attachments: <n> of <m> worn objects
-asked again` and the demo server sends the objects back. The menu itself:
+asked again`. The demo's worn objects (`AURORA_DEMO_WORN`, outfits) carry
+their item id as object id, which is how a temporary attachment looks, so
+the demo always logs `0 of <m>`; the choice of objects is covered by the
+unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
 
