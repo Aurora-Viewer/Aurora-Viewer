@@ -1618,7 +1618,26 @@ fn bound_for(last_live: Option<usize>, page_capacity: u32, partial: bool) -> u32
 }
 
 /// Generate a box-filtered mip chain from RGBA8 data (level 0 included).
+/// Every channel is the plain average of its four texels, as the Legacy
+/// Viewer's mips (glGenerateMipmap, or LLImageBase::generateMip,
+/// indra/llimage/llimage.cpp, originally LGPL 2.1): the colour of the empty
+/// texels around a cut-out blends into it down the levels, and content is
+/// made against that look (that colour is often a dark one around grass
+/// and leaves, which darkens them with the distance); averaged by the alpha, as before, a
+/// grass bed stayed the colour of its blades and came out much brighter
+/// than in the Legacy Viewer.
 pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Vec<(u32, u32, Vec<u8>)> {
+    box_mips(width, height, data, max_levels, false)
+}
+
+/// The same chain with each colour averaged by the alpha of its texels (the
+/// empty ones leave no trace): what Aurora did before, kept to compare
+/// (`AURORA_MIP_FILTER=weighted`).
+pub fn build_mips_alpha_weighted(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Vec<(u32, u32, Vec<u8>)> {
+    box_mips(width, height, data, max_levels, true)
+}
+
+fn box_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32, alpha_weighted: bool) -> Vec<(u32, u32, Vec<u8>)> {
     let mut out = Vec::new();
     let (mut w, mut h) = (width, height);
     out.push((w, h, data));
@@ -1637,7 +1656,6 @@ pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Ve
                 let y1 = (y * 2 + 1).min(h - 1);
                 let idx = |xx: u32, yy: u32| ((yy * w + xx) * 4) as usize;
                 let (a, b, c, d) = (idx(x0, y0), idx(x1, y0), idx(x0, y1), idx(x1, y1));
-                // alpha-weighted color average to avoid dark fringes
                 let wa = prev[a + 3] as u32;
                 let wb = prev[b + 3] as u32;
                 let wc = prev[c + 3] as u32;
@@ -1645,14 +1663,17 @@ pub fn build_mips(width: u32, height: u32, data: Vec<u8>, max_levels: u32) -> Ve
                 let wsum = wa + wb + wc + wd;
                 let o = ((y * nw + x) * 4) as usize;
                 for ch in 0..3 {
-                    let weighted = prev[a + ch] as u32 * wa
-                        + prev[b + ch] as u32 * wb
-                        + prev[c + ch] as u32 * wc
-                        + prev[d + ch] as u32 * wd
-                        + wsum / 2;
-                    let v = weighted
-                        .checked_div(wsum)
-                        .unwrap_or((prev[a + ch] as u32 + prev[b + ch] as u32 + prev[c + ch] as u32 + prev[d + ch] as u32 + 2) / 4);
+                    let plain = (prev[a + ch] as u32 + prev[b + ch] as u32 + prev[c + ch] as u32 + prev[d + ch] as u32 + 2) / 4;
+                    let v = if alpha_weighted {
+                        let weighted = prev[a + ch] as u32 * wa
+                            + prev[b + ch] as u32 * wb
+                            + prev[c + ch] as u32 * wc
+                            + prev[d + ch] as u32 * wd
+                            + wsum / 2;
+                        weighted.checked_div(wsum).unwrap_or(plain)
+                    } else {
+                        plain
+                    };
                     next[o + ch] = v as u8;
                 }
                 next[o + 3] = ((wsum + 2) / 4) as u8;
@@ -1751,6 +1772,21 @@ mod tests {
             }
         }
         px
+    }
+
+    /// A blade colour beside an empty texel of another colour: the plain
+    /// average takes both, as the Legacy Viewer's mips; the weighted one
+    /// keeps the blade's.
+    #[test]
+    fn empty_texels_colour_blends_into_the_mips() {
+        let mut px = vec![0u8; 2 * 2 * 4];
+        for (i, p) in px.chunks_mut(4).enumerate() {
+            p.copy_from_slice(if i % 2 == 0 { &[200, 220, 100, 255] } else { &[40, 44, 20, 0] });
+        }
+        let plain = build_mips(2, 2, px.clone(), 16);
+        assert_eq!(plain[1].2, vec![120, 132, 60, 128]);
+        let weighted = build_mips_alpha_weighted(2, 2, px, 16);
+        assert_eq!(weighted[1].2, vec![200, 220, 100, 128]);
     }
 
     #[test]

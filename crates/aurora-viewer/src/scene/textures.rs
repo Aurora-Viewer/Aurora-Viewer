@@ -2708,12 +2708,25 @@ pub(crate) fn alpha_coverage_on() -> bool {
     *ON.get_or_init(|| std::env::var("AURORA_ALPHA_COVERAGE").map_or(true, |v| v.trim() != "0"))
 }
 
+/// `AURORA_MIP_FILTER=weighted`: the colour of the mips averaged by the
+/// alpha, as before (`aurora_render::build_mips_alpha_weighted`), to compare
+/// with the Legacy Viewer's plain average. Clear the transcoded cache
+/// (`<cache>/tex/*.bc7`) between the two, or it serves the mips of the other.
+fn mips_alpha_weighted() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_MIP_FILTER").is_ok_and(|v| v.trim() == "weighted"))
+}
+
 /// The mip chain of a decoded texture, with its alpha coverage kept when
 /// its alpha is a mask. The texture does not know the cutoff of the faces
 /// that will use it: the default one (0.5) is taken, the cutoff of every
 /// face whose alpha is detected as a mask and of most masked materials.
 fn mips_for(width: u32, height: u32, rgba: Vec<u8>, levels: u32, alpha: AlphaKind) -> Vec<(u32, u32, Vec<u8>)> {
-    let mut mips = build_mips(width, height, rgba, levels);
+    let mut mips = if mips_alpha_weighted() {
+        aurora_render::build_mips_alpha_weighted(width, height, rgba, levels)
+    } else {
+        build_mips(width, height, rgba, levels)
+    };
     if alpha == AlphaKind::Mask && alpha_coverage_on() {
         aurora_render::preserve_alpha_coverage(&mut mips, aurora_render::MASK_CUTOFF);
     }
