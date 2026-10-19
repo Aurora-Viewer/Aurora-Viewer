@@ -13,15 +13,18 @@ struct VsIn {
     @builtin(vertex_index) vertex: u32,
 };
 
-// System avatar morphs share one static delta bank in the palette buffer.
-// anim.xy holds the geometry's first vertex and the bank's first matrix.
+// Live morphs of the system avatar body (lip sync, body physics) share one
+// static delta bank in the palette buffer: per vertex, a matrix of the
+// position deltas of up to four morphs, then one of their normal deltas.
+// anim.xyz holds the geometry's first vertex, the bank's first matrix and the
+// vertex count; anim.w the row of the skeleton's weight matrix to use.
 fn lip_delta(rec: DrawRecord, in: VsIn) -> mat2x3<f32> {
     var result = mat2x3<f32>(vec3<f32>(0.0), vec3<f32>(0.0));
     if ((rec.flags.x & FLAG_LIP_SYNC) != 0u && in.vertex >= rec.anim.x && in.vertex - rec.anim.x < rec.anim.z) {
-        let delta = palettes[rec.anim.y + in.vertex - rec.anim.x];
-        let weights = palettes[rec.flags.y + 208u][0].xy;
-        result[0] = delta[0].xyz * weights.x + delta[2].xyz * weights.y;
-        result[1] = delta[1].xyz * weights.x + delta[3].xyz * weights.y;
+        let at = rec.anim.y + 2u * (in.vertex - rec.anim.x);
+        let weights = palettes[rec.flags.y + 208u][rec.anim.w & 3u];
+        result[0] = (palettes[at] * weights).xyz;
+        result[1] = (palettes[at + 1u] * weights).xyz;
     }
     return result;
 }

@@ -709,6 +709,12 @@ pub struct Settings {
     /// RenderAvatarComplexityMode: 0 limit everyone, 1 always show friends
     /// fully, 2 show only friends.
     pub complexity_mode: u8,
+    /// AvatarPhysics: the bounce of the avatars that wear a physics layer
+    /// (scene/body_physics.rs).
+    pub avatar_physics: bool,
+    /// RenderAvatarPhysicsLODFactor, 0 to 1: at 1 every avatar moves; below,
+    /// avatars small on screen keep their shape; 0 stops the physics.
+    pub avatar_physics_detail: f32,
     /// Per-avatar exceptions (LLRenderMuteList): avatar id -> 1 never render
     /// fully (silhouette), 2 always render fully.
     pub render_exceptions: Vec<(String, u8)>,
@@ -783,7 +789,7 @@ pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 /// The default strength of the bloom (half of the light over its threshold).
 pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
-const SETTINGS_VERSION: u32 = 23;
+const SETTINGS_VERSION: u32 = 24;
 
 /// `settings.json` from a newer build: the document, what this build loaded
 /// from it, and the top-level keys to leave as they were unless changed here
@@ -1231,6 +1237,8 @@ impl Default for Settings {
             max_attachment_area: 1000.0,
             loading_avatars: 0,
             complexity_mode: 0,
+            avatar_physics: true,
+            avatar_physics_detail: 1.0,
             render_exceptions: Vec::new(),
             tag_complexity: true,
             tag_complexity_too_complex_only: true,
@@ -1629,6 +1637,11 @@ impl Settings {
             // earlier file wrote the old grey default)
             self.classic_rez_effect = false;
         }
+        if self.settings_version < 24 {
+            // the levels now set the avatar physics detail: a profile still
+            // exactly on Potato or Low takes theirs, any other keeps 1
+            crate::graphics_presets::upgrade_physics_detail(&mut self);
+        }
         if !self.audio.mic_gain.is_finite() {
             self.audio.mic_gain = 1.0;
         }
@@ -1643,6 +1656,11 @@ impl Settings {
         self.max_particles = self.max_particles.min(8192);
         self.max_avatars = self.max_avatars.clamp(1, 100);
         self.complexity_mode = self.complexity_mode.min(2);
+        self.avatar_physics_detail = if self.avatar_physics_detail.is_finite() {
+            self.avatar_physics_detail.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
         self.loading_avatars = self.loading_avatars.min(2);
         self.max_attachment_area = if self.max_attachment_area.is_finite() {
             self.max_attachment_area.clamp(0.0, 100_000.0)

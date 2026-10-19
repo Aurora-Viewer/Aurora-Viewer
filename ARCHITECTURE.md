@@ -573,6 +573,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/monitor/`, `app/monitor.rs` | The resource monitor, the Performance window's full view (`ui/perf.rs` keeps the compact one and the switch between them): `mod.rs` the rail of eight sections, the status bar, the CSV report; `model.rs` what each part of the viewer costs in processor, frame time, GPU, memory, video memory, network and disk, attributed from the thread loads, the frame's steps, the GPU timers, the probes and the disk counters (nothing measured stays unknown); `snapshot.rs` the half-second snapshot and a minute of history; `draw.rs` its cards, graphs, segmented bars and tables; one file per section (`overview.rs`, `subsystems.rs`, `threads.rs`, `memory.rs`, `network.rs`, `disk.rs`, `scene.rs`, `region.rs`); `app/monitor.rs` turns the measures on while the view shows (frame profile and probes without a log line, the sampler), gathers the snapshot, lists the scene's costliest avatars and objects and answers the monitor's actions |
 | `scene/lights.rs` | Local lights of the frame: the prim lights closest to the camera (range × 1.5, falloff, colour) and, for those that have a texture, their projector — cone computed from the position, the rotation and the size of the prim (`aurora-render` `Projector`), texture reserved as long as the light stays in the list; choice of the two projectors that cast shadows (the most present on screen) and fade of their shadow maps (`SpotShadowSlots`) |
 | `scene/animesh.rs` | Standalone skeletons of the animated objects, animations of the linkset, bounds of the poses for culling and shadows, demo scenario |
+| `scene/body_physics.rs` | Avatar body physics (LLPhysicsMotion): six springs per avatar wearing a physics layer, driven by the world motion of its chest and pelvis at a fixed step, move the LEFT_PEC / RIGHT_PEC / BELLY / BUTT collision volumes of the posed palette (what mesh bodies are rigged to), in the parallel pose loop; detail and on/off from Preferences › Graphics |
 | `scene/morph.rs` | Morphs of the system avatar body: the visual parameters that move the vertices of the base meshes (sex, body fat, face, system hair, eyelashes, skirt). A body part is built by a job for a set of weights and shared by the avatars that have them (`GeomKey::AvatarMorph`); hidden parts are not built |
 | `scene/skin_binds.rs` | Skin bindings sent to the GPU (inverse matrix and palette bone of each bone of a rigged mesh, default skeleton first): one range per mesh, returned when its last geometry is freed and reused by the following meshes; only the modified ranges are sent |
 | `scene/sync_sets.rs` | Objects that the scene sync visits every frame, kept up to date by events (modified objects noted by `ObjectStore`, set of the objects that move by themselves and of what follows them, pending geometries, level-of-detail checks: still objects due when the camera has moved enough, objects placed by the GPU in turn (every 24 frames if the camera moves, every 0.4 s otherwise), every object every 10 s; worn HUDs listed on their changes and not with their wearer) instead of a walk over all the objects; the old LOD slice of all the objects stays behind `AURORA_SYNC_SLICE`; queue of the full syncs that did not fit in the frame's time budget, served from the nearest to the farthest (`Backlog`, `FullSyncBudget`); queue of the new objects, which wait for their first sync in arrival order without going through the frame's list (`Arrivals`, marked by the `ObjectStore` until that first sync) |
@@ -605,11 +606,15 @@ and metering; preferences apply live without running DSP on the UI thread.
 `ui/options/audio.rs` owns Sound and voice preferences and the shared ear/noise
 controls in the microphone popup. `AudioSettings` persists the processing,
 camera/avatar listening and visualizer options with the Legacy Viewer defaults.
-`scene/lipsync.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble curves.
-Static deltas are shared in a reserved prefix of the GPU palette buffer; the
-extra matrix after each skeleton's anchors stores two live weights. Object,
-shadow and picking vertex passes apply the deltas before skinning, including
-shape-morphed system heads, without rebuilding meshes per speech frame.
+`scene/lipsync.rs` implements the Legacy Viewer's 24 Hz Aah/Ooh babble curves
+and holds the system body's other live morphs, the body physics' driven
+parameters (`scene/body_physics.rs`). Static deltas are shared in a reserved
+prefix of the GPU palette buffer, two matrices per vertex (position and
+normal deltas of up to four morphs); the extra matrix after each skeleton's
+anchors stores one row of four live weights per body part. Object, shadow and
+picking vertex passes apply the deltas before skinning, including
+shape-morphed system parts, without rebuilding meshes per speech or physics
+frame.
 
 The voice indicators of the classic name tags are drawn by
 `ui/voice_tag.rs` (the name plates have their own outline and halo,

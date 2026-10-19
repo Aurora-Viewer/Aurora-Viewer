@@ -1395,6 +1395,32 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                 c |= row(
                     ui,
                     p,
+                    aurora_i18n::tr!("ui-options-avatar-physics"),
+                    aurora_i18n::tr!("ui-options-avatar-physics-help"),
+                    |ui| toggle(ui, p, &mut s.avatar_physics),
+                );
+                if s.avatar_physics {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-avatar-physics-detail"),
+                        aurora_i18n::tr!("ui-options-avatar-physics-detail-help"),
+                        |ui| {
+                            ui.spacing_mut().slider_width = SLIDER_W;
+                            ui.add(
+                                egui::Slider::new(&mut s.avatar_physics_detail, 0.0..=1.0)
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .step_by(0.05)
+                                    .fixed_decimals(2)
+                                    .trailing_fill(true),
+                            )
+                            .changed()
+                        },
+                    );
+                }
+                c |= row(
+                    ui,
+                    p,
                     aurora_i18n::tr!("ui-options-occlusion"),
                     aurora_i18n::tr!("ui-options-objects-hidden-behind-others-walls-floors-are-not-drawn"),
                     |ui| toggle(ui, p, &mut s.occlusion_culling),

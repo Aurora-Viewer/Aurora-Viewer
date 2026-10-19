@@ -83,6 +83,9 @@ pub mod object_menu;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_people.rs"]
 pub mod people;
+/// Avatar body physics: a physics layer and balls on the body (AURORA_DEMO_PHYSICS).
+#[path = "demo_physics.rs"]
+pub mod physics;
 #[path = "demo_place.rs"]
 pub mod place;
 /// Linden trees and grass, near, far or as a forest (AURORA_DEMO_PLANTS).

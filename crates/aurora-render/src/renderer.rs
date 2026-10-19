@@ -7033,10 +7033,11 @@ mod tests {
             )
         };
         const LIP_BANK: u32 = SKELETON + 209;
-        let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); LIP_BANK as usize + vertices.len()];
-        palettes[(SKELETON + 208) as usize] = [[0.7, 0.3, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
+        let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); LIP_BANK as usize + 2 * vertices.len()];
+        palettes[(SKELETON + 208) as usize] = [[0.0; 4], [0.7, 0.3, 0.0, 0.0], [0.0; 4], [0.0; 4]];
         for (i, vertex) in vertices.iter().enumerate() {
-            palettes[LIP_BANK as usize + i] = [[0.02, 0.0, vertex.pos[0] * 0.09, 0.0], [0.0; 4], [0.0, -0.03, 0.02, 0.0], [0.0; 4]];
+            palettes[LIP_BANK as usize + 2 * i] = [[0.02, 0.0, vertex.pos[0] * 0.09, 0.0], [0.0, -0.03, 0.02, 0.0], [0.0; 4], [0.0; 4]];
+            palettes[LIP_BANK as usize + 2 * i + 1] = [[0.0, 0.01, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
         }
         for j in 0..4 {
             let m = Mat4::from_rotation_translation(
@@ -7073,7 +7074,7 @@ mod tests {
             record(place(Vec3::new(0.1, 0.4, -0.9), 0.1) * Mat4::from_scale(Vec3::splat(3.0)), [0; 4]),
             // Lip morphs must have exactly the same depth in both vertex passes.
             DrawRecord {
-                anim: [0, LIP_BANK, vertices.len() as u32, 0],
+                anim: [0, LIP_BANK, vertices.len() as u32, 1],
                 ..record(
                     place(Vec3::new(0.0, 0.2, 0.8), 0.4),
                     [flags::SKINNED | flags::LIP_SYNC, SKELETON, 0, 0],

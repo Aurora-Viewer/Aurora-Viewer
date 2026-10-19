@@ -67,6 +67,17 @@ pub struct ShapeParams {
     transmitted: Vec<i32>,
 }
 
+/// Collision volume offsets (per unit of weight) of a body morph.
+#[derive(Debug, Clone)]
+pub struct VolumeMorph {
+    pub min: f32,
+    pub max: f32,
+    /// Sexes it applies to; for the other one it keeps its default weight.
+    pub female: bool,
+    pub male: bool,
+    pub offsets: Vec<(usize, Vec3)>,
+}
+
 /// Skeleton of one avatar: local joint positions and scales.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shape {
@@ -223,6 +234,32 @@ impl ShapeParams {
     #[cfg(test)]
     pub fn transmitted_count(&self) -> usize {
         self.transmitted.len()
+    }
+
+    /// Range and default weight of a parameter.
+    pub fn range(&self, id: i32) -> Option<(f32, f32, f32)> {
+        self.params.get(&id).map(|p| (p.min, p.max, p.default))
+    }
+
+    /// Whether a parameter applies to (female, male) avatars.
+    pub fn sexes(&self, id: i32) -> Option<(bool, bool)> {
+        self.params.get(&id).map(|p| (p.sex & SEX_FEMALE != 0, p.sex & SEX_MALE != 0))
+    }
+
+    /// The collision volume moves of a body morph (its volume morphs), for
+    /// the driven parameters that avatar physics animates locally.
+    pub fn volume_morph(&self, id: i32) -> Option<VolumeMorph> {
+        let p = self.params.get(&id)?;
+        let Kind::Skeleton(deltas) = &p.kind else {
+            return None;
+        };
+        Some(VolumeMorph {
+            min: p.min,
+            max: p.max,
+            female: p.sex & SEX_FEMALE != 0,
+            male: p.sex & SEX_MALE != 0,
+            offsets: deltas.iter().filter_map(|d| Some((d.joint, d.offset?))).collect(),
+        })
     }
 
     /// LLDriverParam::getDrivenWeight.
