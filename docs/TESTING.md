@@ -1449,7 +1449,12 @@ the stand alternately raises each foot.
 The raised leg must keep its authored clearance over the terrain, while the other foot
 keeps its support. If a swing foot intersects a step, only the necessary
 upward correction should prevent penetration; it must not be forced down to
-the floor. Heel/toe rolls should survive the slope correction. `steps-reach`
+the floor. `steps-front-walk` and `steps-reach-front-walk` use an independently
+authored walk with explicit stance/flight paths; `-off` exposes its source.
+On flat support, adaptation should retain that source animation. During real
+movement across a step, inspect the rendered body rather than its correction
+offset: a sudden change of the physical centre must not pop the body upward.
+Heel/toe rolls should survive the slope correction. `steps-reach`
 starts with the physical root on the high step and a foot over the low step:
 the pelvis must compensate enough for both soles to reach their surfaces,
 without stretching the legs. Compare `steps-reach-off`, then walk across the

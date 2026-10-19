@@ -150,50 +150,41 @@ switching back preserves the current phase and uses Legacy timing for future
 starts and edit pauses. Import preview seeking overrides either preference.
 
 The same section's enabled-by-default `Settings::ground_avatar_feet` controls
-the final-pose constraint pass in `scene/anim/grounding.rs`. This is an
-independent implementation inspired by [ozz-animation foot IK](https://guillaumeblanc.github.io/ozz-animation/samples/foot_ik/)
-and [Daniel Holden's foot locking](https://theorangeduck.com/page/inverse-kinematics-foot-locking),
-replacing the earlier Legacy Viewer motion-specific implementation at the
-human's request. It analyses the authored pose after animation priority
-blending; corrected rotations never feed back into the next authored pose.
-Per-foot height, vertical velocity and contact hysteresis distinguish stance
-from swing. Slow contacts acquire a bounded world-space anchor; moving feet
-retain their source motion. A turn releases a plant before it crosses the
-source stance envelope, also constraining any fading offset. Four sole corners account for heels, toes and
-foot width, using the existing neutral shoe/hover calibration when available.
-Free feet retain authored clearance and heel/toe roll over the terrain;
-an 80 ms swing look-ahead anticipates stair edges. Stance targets use world
-coordinates while swing offsets travel with the pelvis; toe-off/replanting
-converts those coordinates to avoid applying pelvic movement twice.
+terrain adaptation in `scene/anim/grounding.rs`, applied to the final blended
+pose without feeding corrections back into the source animation. The previous
+placement solver was replaced at the human's request. The new implementation
+separates authored foot clearance, terrain elevation and world-space body
+elevation, following independently implemented concepts from
+[ozz-animation Foot IK](https://guillaumeblanc.github.io/ozz-animation/samples/foot_ik/)
+and [Daniel Holden's foot IK](https://www.theorangeduck.com/page/inverse-kinematics-foot-locking).
 
-Critically damped positional targets and eased support tilt precede hard contact and
-collision projection, so smoothing cannot blend a foot back through a floor.
-Both leg reach spheres constrain the pelvis displacement (bounded to 45 cm).
-Within that interval, the lower of both legs' preferred heights preserves
-authored extension: two raised supports lift the body instead of compressing
-both knees, while a source crouch keeps its flexion. Virtual contact beneath
-a swing foot removes authored clearance from both spans, so toe-off/replanting
-does not make the pelvis bob. Analytic two-bone IK
-preserves segment lengths. Its bend guide subtracts the shaped neutral knee
-bias (the rest legs taper inward) before reading authored articulation; near
-extension it uses anatomical forward with a continuous confidence transition.
-An outward half-space bounds added medial bending to the source hip, knee and
-ankle target envelope. This constraint acts on the two-bone knee circle, so
-avoiding new knee crossings cannot move the ankle off its support or stretch
-the leg. Sole orientation preserves authored heel/toe rolls
-while adapting the support slope. Priority 5/6 legs or pelvis, control avatars,
-seating, flight, airborne motions and import previews keep control. Editing
-pauses the placement clock, resets/teleports discard anchors, and disabling
-the option fades the target and pelvis offsets back to the authored pose.
-Landing uses the authored recovery clip through the same constraint pass.
+Four shaped sole probes use the existing neutral shoe calibration. Source
+clearance with hysteresis distinguishes contact and flight, measured before
+the render-space translation to retain submillimetre precision. Contact targets
+follow the support; a flying foot retains the source arc from its departure
+elevation, transitioning toward the landing elevation during descent. Collision
+only raises flight targets. There are no horizontal anchors: authored lateral
+trajectories remain unchanged. Support tilt preserves authored heel/toe roll.
 
-`scene/grounding.rs` runs short solid-geometry/terrain traces on the existing
-parallel pose workers, with a region-corrected simulator contact fallback.
-`demo_grounding.rs` places the avatar once and keeps free movement and stock
-motion signals. `slope`, `steps`, `landing`, `-lift`, `-motion` and `-off`
-cover contact, swing, recovery and comparison; `steps-reach` starts with the
-physical root on the high step and the other foot over the low one, exercising
-pelvis compensation instead of leaving an unreachable foot floating.
+A single height filter follows absolute world elevation, absorbing physical
+root-height changes before they reach the rendered body. Initial placement
+starts at the valid support height. The common support
+height raises a body compressed over two higher supports; both contact-leg
+reach intervals bound its displacement to 45 cm. Down-step anticipation acts
+on body elevation using the whole future footprint. Analytic two-bone IK uses
+the knee's rig-defined local Y hinge and retains the source lateral knee offset
+in metres while changing forward flexion. Segment lengths and authored bends
+survive small contact corrections; near-straight joints cannot amplify their
+inward taper. Priority 5/6 legs or pelvis, control avatars, seating, flight and import
+previews keep control. Editing pauses the placement clock; teleports and shape
+changes reset it. Disabling fades only this pass's pose deltas in 200 ms.
+
+`scene/grounding.rs` performs short solid-geometry/terrain traces on the parallel
+pose workers, with region-corrected simulator contact as a streaming fallback.
+`demo_grounding.rs` authors walking/recovery from explicit source foot paths,
+independently of terrain adaptation, and seeds position once before leaving
+normal controls free. Slope, steps, elevated supports, lift, movement and disabled
+comparisons expose contacts and transitions; frontal views show both knees.
 
 Object and attachment menus offer Object information immediately after Script
 information, without a preference. `world/bridge/services.rs` correlates these

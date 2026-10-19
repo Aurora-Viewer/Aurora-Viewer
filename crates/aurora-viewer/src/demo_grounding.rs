@@ -1,7 +1,10 @@
 //! Offline standing on a slope or two steps, and landing recovery (#667).
 use super::*;
 use crate::ao::State;
-use crate::scene::{Scene, anim::BoundAnim};
+use crate::scene::{
+    Scene,
+    anim::{BoundAnim, Rig, SkeletonBase},
+};
 use aurora_assets::anim::{JointMotion, PosKey, RotKey};
 
 pub fn animation(landing: bool) -> aurora_assets::Animation {
@@ -56,6 +59,91 @@ pub fn animation(landing: bool) -> aurora_assets::Animation {
     anim
 }
 
+/// Author the fixture from explicit flat-floor foot paths, independently of
+/// the runtime terrain solver. Stance is level; only swing lifts the foot.
+pub fn contact_animation(rig: &Rig, base: &SkeletonBase, recovery: bool) -> aurora_assets::Animation {
+    let mut clip = animation(false);
+    clip.duration = if recovery { 2.0 } else { 1.0 };
+    clip.loop_out = clip.duration;
+    clip.looping = !recovery;
+    let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+    let pelvis_rest = base.local_pos[rig.pelvis] - rig.local_pos[rig.pelvis];
+    let frames = (clip.duration * 60.0) as usize;
+    for joint in &mut clip.joints {
+        joint.rot_keys.clear();
+        joint.pos_keys.clear();
+    }
+    for i in 0..=frames {
+        let time = i as f32 / 60.0;
+        let fraction = time / clip.duration;
+        let pelvis = if recovery {
+            -0.12 * (1.0 - fraction).powi(2)
+        } else {
+            -0.045 - 0.008 * (fraction * std::f32::consts::TAU).sin().powi(2)
+        };
+        if let Some(joint) = clip.joints.iter_mut().find(|joint| joint.joint_name == "mPelvis") {
+            joint.pos_keys.push(PosKey {
+                time,
+                position: pelvis_rest + Vec3::Z * pelvis,
+            });
+        }
+        for (side, phase) in [("Left", 0.0), ("Right", 0.5)] {
+            let [Some(hip), Some(knee), Some(ankle)] =
+                ["Hip", "Knee", "Ankle"].map(|bone| rig.names.get(&format!("m{bone}{side}")).copied())
+            else {
+                continue;
+            };
+            let p = |j: usize| rest[j].w_axis.truncate();
+            let upper = p(knee) - p(hip);
+            let lower = p(ankle) - p(knee);
+            let (a, b) = (upper.x.hypot(upper.z), lower.x.hypot(lower.z));
+            let phase = (fraction + phase) % 1.0;
+            let (stride, lift) = if recovery {
+                (0.0, 0.0)
+            } else if phase < 0.6 {
+                (0.21 - 0.42 * phase / 0.6, 0.0)
+            } else {
+                let flight = (phase - 0.6) / 0.4;
+                (
+                    -0.21 + 0.42 * flight * flight * (3.0 - 2.0 * flight),
+                    0.12 * (std::f32::consts::PI * flight).sin().powi(2),
+                )
+            };
+            let target = p(ankle) + Vec3::new(stride, 0.0, lift) - p(hip) - Vec3::Z * pelvis;
+            let distance = target.x.hypot(target.z).clamp((a - b).abs() + 1e-5, a + b - 1e-5);
+            let bend = ((distance * distance - a * a - b * b) / (2.0 * a * b)).clamp(-1.0, 1.0).acos();
+            let hip_angle = (-target.x).atan2(-target.z)
+                - ((a * a + distance * distance - b * b) / (2.0 * a * distance))
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                - (-upper.x).atan2(-upper.z);
+            let knee_angle = bend - ((-lower.x).atan2(-lower.z) - (-upper.x).atan2(-upper.z));
+            for (bone, angle) in [("Hip", hip_angle), ("Knee", knee_angle), ("Ankle", -hip_angle - knee_angle)] {
+                if let Some(joint) = clip.joints.iter_mut().find(|joint| joint.joint_name == format!("m{bone}{side}")) {
+                    joint.rot_keys.push(RotKey {
+                        time,
+                        rotation: Quat::from_rotation_y(angle),
+                    });
+                }
+            }
+        }
+        for (name, sign) in [("mShoulderLeft", 1.0), ("mShoulderRight", -1.0)] {
+            if let Some(joint) = clip.joints.iter_mut().find(|joint| joint.joint_name == name) {
+                let swing = if recovery {
+                    0.0
+                } else {
+                    0.22 * (fraction * std::f32::consts::TAU).sin() * sign
+                };
+                joint.rot_keys.push(RotKey {
+                    time,
+                    rotation: Quat::from_rotation_x(-1.3 * sign) * Quat::from_rotation_y(swing),
+                });
+            }
+        }
+    }
+    clip
+}
+
 /// Alternate authored foot lifts while standing, independently of scene IK.
 pub fn lifting_animation() -> aurora_assets::Animation {
     let mut anim = animation(false);
@@ -97,6 +185,14 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     let p = origin(mode);
     if frame == 600 {
         let rig = scene.avatar_lib.rig.clone();
+        let shape = scene
+            .avatar_lib
+            .shape_params
+            .shape(world.visual_params(&world.agent_id).unwrap_or(&[]), &rig);
+        let base = SkeletonBase {
+            local_pos: shape.local_pos,
+            scale: shape.scale,
+        };
         for (id, mut clip) in super::link::animations() {
             for joint in animation(false)
                 .joints
@@ -109,16 +205,26 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
             }
             scene.anims.insert(id, Arc::new(BoundAnim::bind(clip, &rig)));
         }
+        let walk = contact_animation(&rig, &base, false);
+        for state in [State::Walking, State::Running, State::CrouchWalk] {
+            scene.anims.insert(state.motion(), Arc::new(BoundAnim::bind(walk.clone(), &rig)));
+        }
         for state in [State::Standing, State::StandingUp] {
             let clip = if state == State::Standing && mode.contains("-lift") {
                 lifting_animation()
+            } else if state == State::Standing && mode.contains("-walk") {
+                contact_animation(&rig, &base, false)
             } else {
-                animation(state == State::StandingUp)
+                if state == State::StandingUp {
+                    contact_animation(&rig, &base, true)
+                } else {
+                    animation(false)
+                }
             };
             scene.anims.insert(state.motion(), Arc::new(BoundAnim::bind(clip, &rig)));
         }
         for state in [State::Jumping, State::Falling, State::Crouching] {
-            let mut clip = animation(true);
+            let mut clip = contact_animation(&rig, &base, true);
             clip.looping = true;
             if state == State::Crouching {
                 clip.loop_out = 0.0;
