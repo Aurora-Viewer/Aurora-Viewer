@@ -98,8 +98,8 @@ impl SkinBinds {
     }
 
     /// Skin bindings of a rigged mesh: its inverse bind matrices and the rig
-    /// joints its joint names refer to. Unknown names resolve to the pelvis
-    /// as LLSkinningUtil::initJointNums does, retaining the inverse bind.
+    /// joints its joint names refer to ([`Rig::skin_bind`]: attachment
+    /// points through their joint, other unknown names the pelvis).
     pub(super) fn mesh(&mut self, mesh: Uuid, skin: &aurora_assets::SkinInfo, rig: &Rig) -> u32 {
         self.system(rig);
         if let Some(&(base, _)) = self.ranges.get(&mesh) {
@@ -108,9 +108,10 @@ impl SkinBinds {
         let len = skin.joint_names.len().min(skin.inverse_bind.len());
         let base = self.alloc(len as u32);
         for (i, (name, ib)) in skin.joint_names.iter().zip(&skin.inverse_bind).enumerate() {
+            let (joint, ib) = rig.skin_bind(name, *ib);
             self.list[base as usize + i] = SkinBind {
                 inverse_bind: ib.to_cols_array_2d(),
-                joint: [rig.skin_joint(name) as u32, 0, 0, 0],
+                joint: [joint as u32, 0, 0, 0],
             };
         }
         self.ranges.insert(mesh, (base, len as u32));
@@ -149,6 +150,7 @@ mod tests {
             names: (0..joints).map(|j| (format!("j{j}"), j)).collect(),
             pelvis: 0,
             tag_chain: Vec::new(),
+            skin_points: Default::default(),
         }
     }
 
