@@ -556,6 +556,9 @@ impl Bridge {
         if let Ok((folder, endpoint)) = query_handshake(&chat.message)
             && folder == self.folder
         {
+            if self.query.as_ref().is_none_or(|current| current.token != endpoint.token) {
+                log::info!("Aurora bridge: query service ready");
+            }
             self.query = Some(endpoint);
             self.query_watch = Watch::default();
         }
