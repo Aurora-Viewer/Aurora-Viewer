@@ -50,6 +50,9 @@ pub mod classifieds;
 pub mod deform;
 #[path = "demo_eep.rs"]
 pub mod eep;
+/// A facial expression and a hand pose (AURORA_DEMO_EMOTE).
+#[path = "demo_emote.rs"]
+pub mod emote;
 /// Environment selector library and script (AURORA_DEMO_ENV_SELECT).
 #[path = "demo_env.rs"]
 pub mod env;

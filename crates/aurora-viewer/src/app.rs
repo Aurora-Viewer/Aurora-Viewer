@@ -7416,6 +7416,13 @@ impl App {
             }
         }
         if self.demo
+            && let Some(mode) = crate::demo::emote::mode()
+        {
+            for event in crate::demo::emote::events(self.frame_count, mode) {
+                self.world.apply(event);
+            }
+        }
+        if self.demo
             && let Some(mode) = crate::demo::notifs::mode()
         {
             let agent = self.world.agent_id;
@@ -11949,6 +11956,12 @@ impl ApplicationHandler for App {
                 self.scene.anims.insert(
                     crate::demo::deform::DEFORM_ANIM,
                     Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::deform::animation(&rig), &rig)),
+                );
+            }
+            if let Some(mode) = crate::demo::emote::mode() {
+                self.scene.anims.insert(
+                    crate::demo::emote::EMOTE_ANIM,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::emote::animation(mode), &rig)),
                 );
             }
             let demo_anim = if std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {

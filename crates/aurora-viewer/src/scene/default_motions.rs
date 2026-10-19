@@ -74,6 +74,12 @@ pub fn emote_named(name: &str) -> Option<Uuid> {
         .map(|e| Uuid::from_u128(e.0))
 }
 
+/// The LLAnimationLibrary name of an expression (demo).
+pub fn emote_name(id: &Uuid) -> Option<&'static str> {
+    let id = id.as_u128();
+    EMOTES.iter().find(|e| e.0 == id).map(|e| e.1)
+}
+
 /// Every expression parameter, Express_Closed_Mouth included.
 pub fn emote_params() -> impl Iterator<Item = i32> {
     std::iter::once(CLOSED_MOUTH).chain(EMOTES.iter().map(|e| e.2))
