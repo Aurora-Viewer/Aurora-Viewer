@@ -239,6 +239,9 @@ fn pane(
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);
+    if give_demo().is_some() {
+        ui.ctx().data_mut(|d| d.insert_temp(give_demo_id(), pane));
+    }
     let members_room = !rail && members_room_now(st.layout_members_room, width);
     st.layout_members_room = Some(members_room);
     // the panel's width eases to its new one when the room comes or goes
@@ -457,6 +460,43 @@ fn drop_hint(ui: &egui::Ui, p: &Palette, area: egui::Rect, pane: egui::Rect, nam
     if let Some(sub) = sub {
         painter.galley(egui::pos2(x, y + title_h + 3.0), sub, p.muted);
     }
+}
+
+/// `AURORA_DEMO_CONV_GIVE=away|over|many` (with `AURORA_DEMO_CONV=aurora`).
+fn give_demo() -> Option<&'static str> {
+    static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    MODE.get_or_init(|| {
+        (std::env::var("AURORA_DEMO").as_deref() == Ok("1"))
+            .then(|| std::env::var("AURORA_DEMO_CONV_GIVE").ok())
+            .flatten()
+            .filter(|mode| matches!(mode.as_str(), "away" | "over" | "many"))
+    })
+    .as_deref()
+}
+
+fn give_demo_id() -> egui::Id {
+    egui::Id::new("conversation_give_demo")
+}
+
+/// From frame 700, inventory carried and never released: the pointer left
+/// outside the window (`away`), or on the conversation with one entry
+/// (`over`) or three (`many`). No button is pressed: the payload alone
+/// lasts until a release.
+pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let Some(mode) = give_demo().filter(|_| frame >= 700) else {
+        return Vec::new();
+    };
+    if frame == 700 {
+        let n = if mode == "many" { 3 } else { 1 };
+        let ids = (1..=n).map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k)).collect();
+        crate::ui::inventory::drag::demo_carry(ctx, ids);
+    }
+    let pane = ctx.data(|d| d.get_temp::<egui::Rect>(give_demo_id()));
+    let pos = match (mode, pane) {
+        ("away", _) | (_, None) => egui::pos2(4.0, 4.0),
+        (_, Some(pane)) => pane.center(),
+    };
+    vec![egui::Event::PointerMoved(pos)]
 }
 
 /// The conversation shown is in sight: its "New" line (`NewLines`).

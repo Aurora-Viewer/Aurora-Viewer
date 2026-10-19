@@ -2189,6 +2189,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_GIVE=away\|over\|many` | Inventory carried to the IM shown: its drop hint (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
@@ -2739,6 +2740,18 @@ failure. Grid validation and any paid upload are performed by the human.
   click. Check filtering, edge scrolling, close buttons, menus and switching
   chat styles. Order lasts while those conversations remain open; closing
   and reopening a conversation appends it again. No grid is needed.
+
+- **`AURORA_DEMO_CONV_GIVE=away|over|many`**: with `AURORA_DEMO_CONV=aurora`
+  (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
+  frame 700 and is never released. `away` leaves the pointer outside the
+  window: the friend's messages fade behind the gift and "Drop here to
+  give to <name>" in the muted ink. `over` brings the pointer onto the
+  conversation: the violet outline of the drop zone and the hint in the
+  ink. `many` carries three entries: "3 items" under the hint. Capture at
+  frame 780 with `AURORA_FPS_LIMIT=60`. The field has no attach button.
+  Manually: drag an item from the inventory onto a private conversation
+  (the Share confirmation opens), onto a group's (no hint, nothing given),
+  and Escape during the drag (the messages come back). No grid is needed.
 
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is

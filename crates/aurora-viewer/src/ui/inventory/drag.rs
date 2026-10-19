@@ -123,6 +123,15 @@ pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
     Cargo::carried(ctx).map(|c| c.ids().len())
 }
 
+/// The cargo of `AURORA_DEMO_CONV_GIVE`: one item, or a selection of several.
+pub(crate) fn demo_carry(ctx: &egui::Context, ids: Vec<Uuid>) {
+    match ids[..] {
+        [] => {}
+        [id] => egui::DragAndDrop::set_payload(ctx, InvDrag(id)),
+        _ => egui::DragAndDrop::set_payload(ctx, SelectionDrag(ids)),
+    }
+}
+
 /// Inventory dragged over a conversation with a resident, which gives it
 /// (LLFloaterIMSession::handleDragAndDrop → LLGiveInventory, Firestorm
 /// indra/newview/llfloaterimsession.cpp): the items carried, and whether
