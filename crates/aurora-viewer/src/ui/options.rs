@@ -1180,6 +1180,40 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
             aurora_i18n::tr!("ui-options-send-typing-hint"),
             |ui| toggle(ui, p, &mut s.send_typing_state),
         );
+        // PlayTypingAnim and FSTypeDuringEmote, the second greyed while
+        // the first is off (panel_preferences_chat.xml)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-play-typing-anim"),
+            aurora_i18n::tr!("ui-options-play-typing-anim-hint"),
+            |ui| toggle(ui, p, &mut s.play_typing_anim),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-type-during-emote"),
+            aurora_i18n::tr!("ui-options-type-during-emote-hint"),
+            |ui| {
+                ui.add_enabled_ui(s.play_typing_anim, |ui| toggle(ui, p, &mut s.type_during_emote))
+                    .inner
+            },
+        );
+        // FSShowTypingStateInNameTag and FSTypingChevronPrefix
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-typing-in-name-tags"),
+            aurora_i18n::tr!("ui-options-typing-in-name-tags-hint"),
+            |ui| toggle(ui, p, &mut s.typing_in_name_tags),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-typing-chevron"),
+            aurora_i18n::tr!("ui-options-typing-chevron-hint"),
+            |ui| toggle(ui, p, &mut s.typing_chevron),
+        );
         // the tab of a conversation with news flashes
         // (FSFloaterIMContainer::startFlashingTab), in violet and softly
         c |= row(

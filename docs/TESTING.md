@@ -2343,6 +2343,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
@@ -2350,6 +2351,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_HOME=<outcome>[:set]` | World › Set Home to Here and the region's answer |
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
+| `AURORA_DEMO_APPLINKS=1\|<command>` | A `secondlife:///app/...` link of each command; with a command, its first link clicked |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
@@ -3168,6 +3170,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   centered pills). `legacy`: the friend's conversation in the legacy lines
   of the setting `chat_style` (`Legacy`; otherwise `Bubbles`), which the
   demo does not save.
+- **`AURORA_DEMO_TYPING=1`**: our typing in the nearby chat without a key,
+  held from our arrival on (`nearby chat: typing started` in the log). The
+  demo plays its own stand-in for the typing animation (a grid asset it
+  cannot download): forearms forward at the waist, wrists tapping in turn;
+  it also plays on the crowd's typing avatars (`AURORA_DEMO_TAGS=1`, Lune
+  and Iris). Our plate shows the typing dots beside its microphone
+  (Preferences › Chat › "Show typing in name tags"); seen from behind, the
+  forearms are hidden in front of the body. Typing by hand in the chat bar
+  does the same, and stops when the line is sent, the field emptied or left,
+  or after five seconds without a key.
 - **`AURORA_DEMO_CONV=aurora[:flag…]`**: the Conversations window in
   Aurora's workspace (the default style), alone on screen (People and the
   inventory closed), 960 x 560 px. The column holds two groups: Northern
@@ -3294,6 +3306,22 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   value with Enter or
   by leaving the field: a destination appears without teleporting. Remove
   it: the coordinates return to our position and can be edited again.
+- **`AURORA_DEMO_APPLINKS=1|<command>`**: Tess Touch's conversation and the
+  chat console show one `secondlife:///app/...` link of each command: a
+  group (its name), a link written with its own text, the "About Land"
+  parcel (its name once the demo server answers), an object (`objectim`),
+  an inventory item, two experiences (the region's treasure hunt by its
+  name; the experience of `AURORA_DEMO_EXPERIENCE`, "unknown" without that
+  scenario), a classified and an event (their address, as in the Legacy
+  Viewer), the map, a chat on channel 42, a search, a resident's IM, a
+  folder to wear and an unknown command. Each opens what the Legacy Viewer
+  opens on a click (group profile, place profile, remote object
+  inspector, inventory, experience profile, the classified or the event
+  alone in Search, the map); the folder to wear is refused (a notice), as
+  is the unknown command. With a command name instead of `1` (`group`,
+  `parcel`, `objectim`, `inventory`, `experience`, `classified`, `event`,
+  `worldmap`, `chat`, `search`, `agent`, `wear_folder`, `frobnicate`) its
+  first link is clicked once the scene is set, for a capture.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),

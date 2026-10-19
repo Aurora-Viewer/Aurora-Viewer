@@ -244,6 +244,10 @@ pub enum ChatType {
     Whisper,
     Normal,
     Shout,
+    /// CHAT_TYPE_START / STOP: an empty line telling those in range that we
+    /// type in the nearby chat, or stopped (LLAgent::startTyping).
+    StartTyping,
+    StopTyping,
     OwnerSay,
     Debug,
     Region,
@@ -256,6 +260,8 @@ impl ChatType {
             0 => ChatType::Whisper,
             1 => ChatType::Normal,
             2 => ChatType::Shout,
+            4 => ChatType::StartTyping,
+            5 => ChatType::StopTyping,
             6 => ChatType::Debug,
             7 => ChatType::Region,
             8 => ChatType::OwnerSay,
@@ -267,6 +273,8 @@ impl ChatType {
             ChatType::Whisper => 0,
             ChatType::Normal => 1,
             ChatType::Shout => 2,
+            ChatType::StartTyping => 4,
+            ChatType::StopTyping => 5,
             ChatType::Debug => 6,
             ChatType::Region => 7,
             ChatType::OwnerSay => 8,
@@ -1963,6 +1971,9 @@ pub mod control {
     pub const ML_LBUTTON_UP: u32 = 0x8000_0000;
 }
 
+/// The typing bit of AgentUpdate's State (AGENT_STATE_TYPING, llagent.cpp).
+pub const AGENT_STATE_TYPING: u8 = 0x04;
+
 /// Agent state the viewer writes each frame and the network layer sends by
 /// the rule of `agent_update.rs`.
 #[derive(Debug, Clone, Copy)]
@@ -1975,6 +1986,8 @@ pub struct AgentControls {
     pub camera_left: Vec3,
     pub camera_up: Vec3,
     pub far: f32,
+    /// The render state (LLAgent::getRenderState): `AGENT_STATE_TYPING`
+    /// while we type in the nearby chat.
     pub state: u8,
     pub flags: u8,
     /// Alt or Ctrl held: the left-button bits go out as releases
