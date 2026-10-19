@@ -2337,6 +2337,36 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-check-texture-heights-help"),
                     |ui| toggle(ui, p, &mut s.region_check_texture_heights),
                 );
+                // Legacy Viewer › Alerts: FSShowServerVersionChangeNotice,
+                // FSReportTotalScriptCountChanges and its threshold
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-sim-version-alert"),
+                    aurora_i18n::tr!("ui-options-sim-version-alert-help"),
+                    |ui| toggle(ui, p, &mut s.sim_version_alert),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-script-count-alert"),
+                    aurora_i18n::tr!("ui-options-script-count-alert-help"),
+                    |ui| {
+                        let mut changed = toggle(ui, p, &mut s.script_count_alert);
+                        ui.add_enabled_ui(s.script_count_alert, |ui| {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut s.script_count_threshold)
+                                        .custom_parser(aurora_i18n::parse_number)
+                                        .range(0..=10000)
+                                        .speed(10.0),
+                                )
+                                .on_hover_text(aurora_i18n::tr!("ui-options-script-count-threshold"))
+                                .changed();
+                        });
+                        changed
+                    },
+                );
             });
             // FSUseNewRegionRestartNotification, FSNoScreenShakeOnRegionRestart,
             // FSReportRegionRestartToChat / FSRegionRestartAnnounceChannel

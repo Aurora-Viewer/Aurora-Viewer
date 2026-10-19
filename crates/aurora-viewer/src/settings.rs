@@ -489,6 +489,13 @@ pub struct Settings {
     /// Show the invitations to a group we are already in (the Legacy
     /// Viewer's FSShowJoinedGroupInvitations, off: they are dropped).
     pub show_joined_group_invitations: bool,
+    /// Tell in nearby chat when the region's script count changes by at
+    /// least the threshold (FSReportTotalScriptCountChanges, off; 100).
+    pub script_count_alert: bool,
+    pub script_count_threshold: u32,
+    /// A notice when the region runs another simulator version than the
+    /// last one (FSShowServerVersionChangeNotice, on).
+    pub sim_version_alert: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
     /// Automatic responses and the kept online status modes.
@@ -1179,6 +1186,9 @@ impl Default for Settings {
             mute_groups_without_notices: false,
             report_blocks: false,
             show_joined_group_invitations: false,
+            script_count_alert: false,
+            script_count_threshold: 100,
+            sim_version_alert: true,
             object_im_filter: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),

@@ -38,6 +38,7 @@ pub mod marketplace;
 pub mod maturity;
 pub mod motion;
 pub mod open_ims;
+pub mod region_alerts;
 pub mod mutes;
 pub mod names;
 pub mod notification_history;
@@ -408,6 +409,8 @@ pub struct World {
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
+    /// Script count and simulator version alerts (region_alerts.rs).
+    pub region_alerts: region_alerts::RegionAlerts,
     /// The account's list of open private conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -585,6 +588,7 @@ impl World {
             arrived_once: false,
             offline_im_requested: false,
             group_titles: Default::default(),
+            region_alerts: Default::default(),
             open_ims_path: None,
             reopen_ims: Vec::new(),
             cache_dir: None,
@@ -2409,6 +2413,11 @@ impl World {
                 None
             }
             NetEvent::Estate(ev) => {
+                match &ev {
+                    aurora_net::estate::EstateEvent::Stats { stats, .. } => self.on_sim_stats_alert(stats),
+                    aurora_net::estate::EstateEvent::SimVersion { version, .. } => self.on_sim_version_alert(version),
+                    _ => {}
+                }
                 if self.estate.apply(ev)
                     && let Some(handle) = self.estate.open
                 {

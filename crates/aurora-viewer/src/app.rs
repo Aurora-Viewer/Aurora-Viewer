@@ -5604,6 +5604,11 @@ impl App {
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.group_titles = self.settings.group_titles;
+            self.world.region_alerts.cfg = crate::world::region_alerts::Config {
+                script_count: self.settings.script_count_alert,
+                script_threshold: self.settings.script_count_threshold,
+                version: self.settings.sim_version_alert,
+            };
             // FSDisableNeighbourRegionConnections, lifted while crossing
             let refuse = self.settings.no_neighbour_regions && self.world.agent_inside_main_region();
             if self.neighbours_refused != refuse {
