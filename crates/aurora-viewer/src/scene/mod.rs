@@ -3315,8 +3315,13 @@ impl Scene {
                 // system body under a mesh one)
                 let mut key = GeomKey::AvatarPart(pi as u8);
                 let morphed = (!hidden).then(|| {
-                    let w =
-                        weights.get_or_insert_with(|| lib.shape_params.effective_weights(world.visual_params(&o.full_id).unwrap_or(&[])));
+                    let w = weights.get_or_insert_with(|| {
+                        let mut w = lib.shape_params.effective_weights(world.visual_params(&o.full_id).unwrap_or(&[]));
+                        // the relaxed hands of LLHandMotion, the pose most of
+                        // the time, are baked: the live weights move from them
+                        w.insert(default_motions::RELAXED_HANDS, 1.0);
+                        w
+                    });
                     self.avatar_morph(pi as u8, w)
                 });
                 if let Some(morphed) = morphed.flatten() {
@@ -3346,9 +3351,9 @@ impl Scene {
                     flags: [flags::SKINNED, palette, system_binds, 0],
                     ..Default::default()
                 };
-                if let Some((base, count)) = self.live_morphs.parts.get(pi).copied().flatten() {
+                if let Some((base, count, moving)) = self.live_morphs.parts.get(pi).copied().flatten() {
                     rec.flags[0] |= flags::LIP_SYNC;
-                    rec.anim = [alloc.vertex_offset, base, count, 0];
+                    rec.anim = [alloc.vertex_offset, base, count, moving];
                 }
                 let mut slot = aurora_render::textures::WHITE;
                 if jelly {

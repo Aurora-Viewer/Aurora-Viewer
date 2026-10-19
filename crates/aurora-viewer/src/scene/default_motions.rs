@@ -119,6 +119,8 @@ pub fn register(anims: &mut AnimStreamer, rig: &Rig) {
 pub const HAND_PARAMS: [i32; 14] = [0, 101, 102, 103, 666, 667, 668, 669, 670, 671, 766, 672, 791, 792];
 const HAND_POSE_SPREAD: usize = 0;
 const HAND_POSE_RELAXED: usize = 1;
+/// Hands_Relaxed, baked into the shape of system bodies at full weight.
+pub const RELAXED_HANDS: i32 = HAND_PARAMS[HAND_POSE_RELAXED];
 /// HAND_MORPH_BLEND_TIME.
 const HAND_MORPH_BLEND_TIME: f32 = 0.2;
 
@@ -187,14 +189,15 @@ impl HandMotion {
         }
     }
 
-    /// The weights of the hand morphs that are not zero.
+    /// The hand morph weights that differ from the shape's: the relaxed
+    /// hands are baked into it at full weight (RELAXED_HANDS).
     pub fn weights(&self) -> impl Iterator<Item = (i32, f32)> + '_ {
         HAND_PARAMS
             .iter()
             .zip(self.weights)
             .skip(1)
+            .map(|(&p, w)| (p, if p == RELAXED_HANDS { w - 1.0 } else { w }))
             .filter(|(_, w)| *w != 0.0)
-            .map(|(p, w)| (*p, w))
     }
 }
 
@@ -276,25 +279,26 @@ mod tests {
         let at = |ms: u64| t0 + Duration::from_millis(ms);
         let mut hands = HandMotion::default();
         hands.update(None, at(0));
-        assert_eq!(hands.weights().collect::<Vec<_>>(), vec![(101, 1.0)]);
+        // (relaxed is baked into the shape: nothing differs from it)
+        assert_eq!(hands.weights().count(), 0);
         // a fist (3): halfway after 0.1 s, there at 0.2 s
         hands.update(Some(3), at(0));
         hands.update(Some(3), at(100));
         let w: Vec<_> = hands.weights().collect();
         assert!(w.iter().any(|&(p, w)| p == 103 && (w - 0.5).abs() < 1e-3), "{w:?}");
-        assert!(w.iter().any(|&(p, w)| p == 101 && (w - 0.5).abs() < 1e-3), "{w:?}");
+        assert!(w.iter().any(|&(p, w)| p == 101 && (w + 0.5).abs() < 1e-3), "{w:?}");
         hands.update(Some(3), at(200));
-        assert_eq!(hands.weights().collect::<Vec<_>>(), vec![(103, 1.0)]);
+        assert_eq!(hands.weights().collect::<Vec<_>>(), vec![(101, -1.0), (103, 1.0)]);
         // spread (0) is the bare mesh: the fist blends out alone
         hands.update(Some(0), at(300));
         hands.update(Some(0), at(400));
-        assert_eq!(hands.weights().count(), 0);
+        assert_eq!(hands.weights().collect::<Vec<_>>(), vec![(101, -1.0)]);
         // an out of range pose is ignored; back to relaxed without animation
         hands.update(Some(40), at(500));
-        assert_eq!(hands.weights().count(), 0);
+        assert_eq!(hands.weights().collect::<Vec<_>>(), vec![(101, -1.0)]);
         hands.update(None, at(600));
         hands.update(None, at(800));
-        assert_eq!(hands.weights().collect::<Vec<_>>(), vec![(101, 1.0)]);
+        assert_eq!(hands.weights().count(), 0);
     }
 
     #[test]

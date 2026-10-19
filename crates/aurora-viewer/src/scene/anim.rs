@@ -2279,9 +2279,9 @@ mod tests {
         assert_eq!(morph(&c, default_motions::CLOSED_MOUTH), -w);
         step(&mut c, 1.0);
         assert_eq!(morph(&c, 318), 1.0);
-        // the fist (Hands_Fist, 103) is there; relaxed (101) has gone
+        // the fist (Hands_Fist, 103) is there; relaxed (101, baked) has gone
         assert_eq!(morph(&c, 103), 1.0);
-        assert_eq!(morph(&c, 101), 0.0);
+        assert_eq!(morph(&c, 101), -1.0);
         step(&mut c, 2.1);
         let w = morph(&c, 318);
         assert!(w > 0.2 && w < 0.8, "{w}");
@@ -2309,8 +2309,9 @@ mod tests {
         c.sync(&[signal(wink, 1, t0)], at(0.5), |m| streamer.get(m));
         c.evaluate(&rig, at(0.5), None, &mut out);
         assert_eq!(morph(&c, 303), 1.0);
-        // without animations the hands relax
-        assert_eq!(morph(&c, 101), 1.0);
+        // without animations the hands stay relaxed, as baked
+        assert_eq!(morph(&c, 101), 0.0);
+        assert_eq!(c.live_morphs().len(), 2);
         c.sync(&[], at(0.6), |m| streamer.get(m));
         c.sync(&[], at(1.3), |m| streamer.get(m));
         c.evaluate(&rig, at(1.3), None, &mut out);

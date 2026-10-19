@@ -634,8 +634,12 @@ parameters (`scene/body_physics.rs`), the facial expressions and the hand
 poses (`scene/default_motions.rs`). Static deltas are shared, sparse, in a
 reserved prefix of the GPU palette buffer: per vertex of a part, where its
 entries start and how many there are; per entry, the position delta and
-weight column of one morph, then its normal delta. The three matrices after
-each skeleton's anchors hold one weight per live parameter (48 columns).
+weight column of one morph, then its normal delta. The four matrices after
+each skeleton's anchors hold one weight per live parameter (64 columns), and
+from the last column one per body part, not zero while one of its weights is
+not: a part at rest costs the vertex shader one read. The relaxed hands, the
+usual pose, are baked into the shape (`scene/mod.rs`, `RELAXED_HANDS`), the
+live hand weights moving from them.
 Object, shadow and picking vertex passes apply the deltas before skinning,
 including shape-morphed system parts, without rebuilding meshes per speech,
 expression or physics frame.

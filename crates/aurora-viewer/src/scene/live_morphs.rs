@@ -19,8 +19,10 @@ use uuid::Uuid;
 
 /// First weight matrix of a palette (after the anchors).
 pub const WEIGHTS: usize = aurora_render::LIVE_MORPH_WEIGHTS as usize;
-/// Weight matrices per palette: sixteen columns each.
-pub const WEIGHT_MATRICES: usize = 3;
+/// Weight matrices per palette: sixteen columns each, a column per live
+/// parameter from the first, one per body part from the last (not zero
+/// while the part moves).
+pub const WEIGHT_MATRICES: usize = 4;
 const COLUMNS: usize = 16 * WEIGHT_MATRICES;
 type Matrix = [[f32; 4]; 4];
 pub type Weights = [Matrix; WEIGHT_MATRICES];
@@ -32,12 +34,16 @@ const NORMAL_SOFTEN_FACTOR: f32 = 0.65;
 
 pub struct LiveMorphs {
     pub matrices: Vec<Matrix>,
-    /// Per body part: (vector of its first vertex in the bank, vertices).
-    pub parts: Vec<Option<(u32, u32)>>,
+    /// Per body part: (vector of its first vertex in the bank, vertices,
+    /// the column that says it moves).
+    pub parts: Vec<Option<(u32, u32, u32)>>,
     pub slots: u32,
     pub uploaded: bool,
     /// The parameter of each weight column.
     columns: Vec<i32>,
+    /// Per body part with a bank: the column that says it moves, and the
+    /// columns of its morphs.
+    moving: Vec<(usize, Vec<usize>)>,
     levels: HashMap<Uuid, (f32, Instant)>,
 }
 
@@ -51,20 +57,24 @@ impl LiveMorphs {
                 columns.push(*p);
             }
         }
-        if columns.len() > COLUMNS {
-            log::warn!("system body: {} live morphs, only the first {COLUMNS} move", columns.len());
-            columns.truncate(COLUMNS);
+        let room = COLUMNS - lib.parts.len();
+        if columns.len() > room {
+            log::warn!("system body: {} live morphs, only the first {room} move", columns.len());
+            columns.truncate(room);
         }
         // the bank, as vectors: for each part its vertex table, then its
         // entries
         let mut bank: Vec<[f32; 4]> = Vec::new();
         let mut parts = Vec::new();
+        let mut moving = Vec::new();
         for part in &lib.parts {
             let mut entries: Vec<Vec<[[f32; 4]; 2]>> = vec![Vec::new(); part.vertices.len()];
+            let mut used = Vec::new();
             for m in &part.morphs {
                 let Some(column) = columns.iter().position(|p| *p == m.param) else {
                     continue;
                 };
+                used.push(column);
                 for (i, &vertex) in m.vertices.iter().enumerate() {
                     let (Some(list), Some(dp), Some(dn)) = (entries.get_mut(vertex as usize), m.d_positions.get(i), m.d_normals.get(i))
                     else {
@@ -87,7 +97,9 @@ impl LiveMorphs {
             for list in entries {
                 bank.extend(list.into_iter().flatten());
             }
-            parts.push(Some((table as u32, part.vertices.len() as u32)));
+            let flag = COLUMNS - 1 - moving.len();
+            parts.push(Some((table as u32, part.vertices.len() as u32, flag as u32)));
+            moving.push((flag, used));
         }
         let slots = bank.len().div_ceil(4 * anim::PALETTE_JOINTS) as u32;
         let mut matrices = vec![[[0.0; 4]; 4]; slots as usize * anim::PALETTE_JOINTS];
@@ -100,6 +112,7 @@ impl LiveMorphs {
             slots,
             uploaded: false,
             columns,
+            moving,
             levels: HashMap::new(),
         }
     }
@@ -137,6 +150,12 @@ impl LiveMorphs {
                 p => live.iter().find(|l| l.0 == p).map_or(0.0, |l| l.1),
             };
             result[k / 16][k / 4 % 4][k % 4] = if w.is_finite() { w } else { 0.0 };
+        }
+        // a part at rest skips its bank on the GPU
+        for (flag, used) in &self.moving {
+            if used.iter().any(|&k| result[k / 16][k / 4 % 4][k % 4] != 0.0) {
+                result[flag / 16][flag / 4 % 4][flag % 4] = 1.0;
+            }
         }
         result
     }
@@ -201,7 +220,20 @@ mod tests {
         assert_eq!(weight(&bank, &w, 1200), 1.5);
         assert_eq!(weight(&bank, &w, 318), 0.25);
         assert_eq!(weight(&bank, &w, 101), 1.0);
-        assert_eq!(w.iter().flatten().flatten().filter(|v| **v != 0.0).count(), 3);
+        let at = |w: &Weights, k: usize| w[k / 16][k / 4 % 4][k % 4];
+        assert_eq!((0..bank.columns.len()).filter(|&k| at(&w, k) != 0.0).count(), 3);
+        // the parts that move say so; at rest, none does
+        let part = |name: &str| {
+            let (_, _, flag) = bank.parts[lib.parts.iter().position(|p| p.name == name).expect("part")].expect("bank");
+            flag as usize
+        };
+        let w = bank.weights(&id, Instant::now(), &[(318, 0.25)]);
+        assert_eq!(
+            (at(&w, part("head")), at(&w, part("eyelashes")), at(&w, part("upper"))),
+            (1.0, 1.0, 0.0)
+        );
+        let rest = bank.weights(&id, Instant::now(), &[]);
+        assert!(rest.iter().flatten().flatten().all(|v| *v == 0.0));
     }
 
     #[test]
@@ -212,7 +244,7 @@ mod tests {
         let vector = |i: usize| bank.matrices[i / 4][i % 4];
         for (pi, part) in lib.parts.iter().enumerate() {
             let moved = part.morphs.iter().any(|m| bank.columns.contains(&m.param));
-            let Some((table, count)) = bank.parts[pi] else {
+            let Some((table, count, _)) = bank.parts[pi] else {
                 assert!(!moved, "{} has live morphs but no bank", part.name);
                 continue;
             };

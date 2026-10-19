@@ -1634,11 +1634,11 @@ tests do not establish that this report uses an invalid joint or index.
   `AURORA_DEMO_SHAPE=mouth` (face) or `torso` (hands) frames from the front:
   with `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=760` the face smiles
   (eyes narrowed, teeth showing) and the fists are closed; without the
-  variable the same frame shows the face at rest. The log shows
-  `demo emote: round <n> on <avatar>`. Without any animation, system hands
-  are relaxed (LLHandMotion's default), and breathing turns the chest and
-  the body noise sways the torso by about a degree: watch an avatar
-  standing with no animation.
+  variable the same frame shows the face at rest and the hands relaxed (the
+  demo idle animation asks for them, as LLHandMotion does when no animation
+  asks for a pose). The log shows `demo emote: round <n> on <avatar>`.
+  Breathing turns the chest and the body noise sways the torso by about a
+  degree whenever no stronger animation drives them.
 - **`AURORA_DEMO_DERENDER`**: the avatar in front of the start position
   (Violet Wolf, unblocked for the scenario) wears a hat and an orb. At
   frame 700 its menu opens (`menu`: Inspect, Derender temporarily and

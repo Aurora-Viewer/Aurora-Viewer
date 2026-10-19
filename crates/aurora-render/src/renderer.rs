@@ -7178,9 +7178,10 @@ mod tests {
                 center + offset,
             )
         };
-        const LIP_BANK: u32 = SKELETON + 211;
+        const LIP_BANK: u32 = SKELETON + 212;
         // the sparse live morph bank: per vertex (first entry, count), then
-        // two entries per vertex, weighed by columns 4 and 5
+        // two entries per vertex, weighed by columns 4 and 5; column 15 says
+        // the part moves
         let mut bank: Vec<[f32; 4]> = Vec::new();
         let entries = 4 * LIP_BANK as usize + vertices.len();
         for i in 0..vertices.len() {
@@ -7191,7 +7192,7 @@ mod tests {
             bank.extend([[0.0, -0.03, 0.02, 5.0], [0.0; 4]]);
         }
         let mut palettes = vec![Mat4::IDENTITY.to_cols_array_2d(); LIP_BANK as usize + bank.len().div_ceil(4)];
-        palettes[(SKELETON + LIVE_MORPH_WEIGHTS) as usize] = [[0.0; 4], [0.7, 0.3, 0.0, 0.0], [0.0; 4], [0.0; 4]];
+        palettes[(SKELETON + LIVE_MORPH_WEIGHTS) as usize] = [[0.0; 4], [0.7, 0.3, 0.0, 0.0], [0.0; 4], [0.0, 0.0, 0.0, 1.0]];
         for (i, v) in bank.iter().enumerate() {
             palettes[LIP_BANK as usize + i / 4][i % 4] = *v;
         }
@@ -7230,7 +7231,7 @@ mod tests {
             record(place(Vec3::new(0.1, 0.4, -0.9), 0.1) * Mat4::from_scale(Vec3::splat(3.0)), [0; 4]),
             // Lip morphs must have exactly the same depth in both vertex passes.
             DrawRecord {
-                anim: [0, 4 * LIP_BANK, vertices.len() as u32, 0],
+                anim: [0, 4 * LIP_BANK, vertices.len() as u32, 15],
                 ..record(
                     place(Vec3::new(0.0, 0.2, 0.8), 0.4),
                     [flags::SKINNED | flags::LIP_SYNC, SKELETON, 0, 0],
