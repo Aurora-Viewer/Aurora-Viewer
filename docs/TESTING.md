@@ -3352,7 +3352,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `fav12` (the mockup's twelve, with their thumbnails), `nofav` (none: the
   empty state), `added` (eleven and this place, just added from the star:
   first in the list, as Firestorm orders a new favourite, and "Add this
-  place" greyed out); where they live: `row` (the row under the islands),
+  place" greyed out), `favsnap` (the twelve without item thumbnails: each
+  picture is the snapshot of its landmark's parcel, the pin where the demo
+  parcel has none or its request fails); where they live: `row` (the row under the islands),
   `folded` (the row folded to its tab), `rowdrag` (frame 654: the second
   pill dragged after the fourth), `dock` (the dock's Favorites button);
   with `favorites` the place island's menu or, with `dock`, the grid opens

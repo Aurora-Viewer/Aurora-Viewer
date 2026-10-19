@@ -5256,6 +5256,7 @@ impl App {
         }
         self.world.place_details.update(&self.world.map, &mut self.world.landmarks, now);
         let mut cmds = self.world.place_details.take_commands();
+        cmds.extend(self.world.place_snapshots.take_commands());
         cmds.extend(self.world.landmarks.take_commands());
         // "Search": a key typed in the people tab waits for its name
         let names = &self.world.social.avatar_names;
@@ -8601,13 +8602,13 @@ impl App {
                 continue;
             };
             let (asset, name, thumb) = (item.asset_id, item.name.clone(), item.thumbnail);
-            let global = match self.world.landmarks.peek(asset) {
-                crate::world::landmarks::Resolved::Ready { global, .. } => Some(global),
+            let (global, region_id) = match self.world.landmarks.peek(asset) {
+                crate::world::landmarks::Resolved::Ready { global, region_id, .. } => (Some(global), region_id),
                 crate::world::landmarks::Resolved::Pending if shown => {
                     self.world.landmarks.resolve(asset);
-                    None
+                    (None, uuid::Uuid::nil())
                 }
-                _ => None,
+                _ => (None, uuid::Uuid::nil()),
             };
             let sim = global.and_then(|g| self.world.map.sim_at_global(g.x, g.y).map(|(_, s)| (s.name.clone(), s.access)));
             if shown
@@ -8617,7 +8618,16 @@ impl App {
                 let (x, y) = ((g.x / 256.0) as i64, (g.y / 256.0) as i64);
                 self.world.map.want_regions(x, y, x, y);
             }
-            let thumbnail = (!thumb.is_nil()).then_some(thumb).and_then(|t| {
+            // the item's thumbnail, else the snapshot of the landmark's parcel
+            let picture = if thumb.is_nil() {
+                if shown && let Some(g) = global {
+                    self.world.place_snapshots.want(asset, g, region_id);
+                }
+                self.world.place_snapshots.snapshot(asset, &self.world.profiles.parcels)
+            } else {
+                Some(thumb)
+            };
+            let thumbnail = picture.and_then(|t| {
                 let loaded = self.ui_images.get(&t).map(|h| h.id());
                 if loaded.is_none() && shown {
                     self.favorite_images.insert(t);

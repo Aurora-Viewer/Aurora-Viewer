@@ -44,6 +44,7 @@ pub mod objects;
 pub mod outfit;
 pub mod parked;
 pub mod place_details;
+pub mod place_snapshots;
 pub mod profiles;
 pub mod radar;
 pub mod recent;
@@ -371,6 +372,8 @@ pub struct World {
     pub map: worldmap::WorldMap,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
+    /// Parcel snapshots of the favourites without a thumbnail.
+    pub place_snapshots: place_snapshots::PlaceSnapshots,
     /// "Search": result lists and details of the directory search.
     pub search: search::Search,
     /// Members, roles, titles and notices of the groups whose profile is
@@ -539,6 +542,7 @@ impl World {
             landmarks: Default::default(),
             map: worldmap::WorldMap::default(),
             place_details: Default::default(),
+            place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
             group_money: Default::default(),
@@ -2470,6 +2474,8 @@ impl World {
             }
             NetEvent::RemoteParcel { handle, position, result } => {
                 self.map.apply_remote_parcel(handle, position, result.as_ref().ok().copied());
+                self.place_snapshots
+                    .apply_remote_parcel(handle, position, result, &self.profiles.parcels);
                 self.place_details.apply_remote_parcel(handle, position, result);
                 None
             }
