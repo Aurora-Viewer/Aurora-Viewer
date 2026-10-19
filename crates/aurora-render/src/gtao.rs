@@ -1,8 +1,8 @@
 //! Ground-truth ambient occlusion (GTAO), the option beside the Legacy
 //! Viewer's screen-space occlusion (shaders/ssao.wgsl): Intel's XeGTAO
-//! (MIT licence, see NOTICE.md) in four compute steps from the depth
-//! prepass — depth levels, the occlusion with the depth edges, then
-//! XeGTAO's edge-aware blur (shaders/gtao.wgsl). Its result goes where the
+//! (MIT licence, see NOTICE.md) in compute steps from the depth prepass —
+//! depth levels, the occlusion with the depth edges, its accumulation over
+//! the frames, then XeGTAO's edge-aware blur (shaders/gtao.wgsl). Its result goes where the
 //! Legacy occlusion goes (`screen_ao` in common.wgsl), so the method only
 //! changes the occlusion term.
 //!
@@ -15,6 +15,17 @@
 //! reflections fade in the creases and recesses GTAO finds. It comes with
 //! GTAO; `AURORA_GTAO_SPECULAR=0|1|alt` turns it off, on (the default) or
 //! on every other second, to compare.
+//!
+//! XeGTAO is meant to run under TAA, which spreads its noise over frames;
+//! Aurora's default anti-aliasing is SMAA, so the occlusion gathers its own
+//! frames (`temporal` in gtao.wgsl): the noise moves every frame and each
+//! pixel blends with its reprojected history, which takes the fine grain
+//! out of the penumbra that the 3 x 3 blur alone left. The history lives
+//! with the targets, so new ones (a resize, a quality change, a photo
+//! frame or tile) start again from the current frame, as does a frame
+//! after one without GTAO or without the previous camera.
+//! `AURORA_GTAO_TEMPORAL=0|1|alt` turns it off (the noise fixed again, as
+//! before), on (the default) or on every other second.
 //!
 //! With the screen-space indirect light of Preferences on, `main_bitmask`
 //! runs after the main pass: one bounce of the previous frame's lit colour
@@ -51,6 +62,13 @@ const INDIRECT_RADIUS: f32 = 1.5;
 const BENT_BLUR: u32 = 3;
 /// Blur passes of the indirect light beyond the occlusion's.
 const INDIRECT_EXTRA_BLUR: u32 = 4;
+/// The accumulation: the current frame's least weight (the history then
+/// holds about ten frames), and the half width of the neighbourhood the
+/// history is clipped to, in standard deviations.
+const TEMPORAL_MIN_WEIGHT: f32 = 0.1;
+const TEMPORAL_CLIP: f32 = 1.25;
+/// Frames the noise goes through before it repeats (XeGTAO's 64).
+const NOISE_FRAMES: u64 = 64;
 
 /// How much work one quality level does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,9 +84,10 @@ pub(crate) struct Quality {
 }
 
 /// The four levels of Preferences (0 low … 3 ultra). XeGTAO's own presets
-/// are slices 1 / 2 / 3 / 9 with 2 / 2 / 3 / 3 steps; with no temporal
-/// accumulation to spread their noise over frames, low takes two slices at
-/// half resolution and the levels blur more where they sample less.
+/// are slices 1 / 2 / 3 / 9 with 2 / 2 / 3 / 3 steps; low takes two slices
+/// at half resolution and the levels blur more where they sample less, as
+/// they did before the accumulation: a frame without history (a photo)
+/// looks as it did.
 pub(crate) fn quality(level: u8) -> Quality {
     match level {
         0 => Quality {
@@ -197,6 +216,77 @@ impl SpecularOcclusion {
     }
 }
 
+/// `AURORA_GTAO_TEMPORAL`: the occlusion's accumulation over the frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Temporal {
+    On,
+    Off,
+    /// On one second, off the next.
+    Alternate,
+}
+
+impl Temporal {
+    pub(crate) fn parse(v: Option<&str>) -> Self {
+        match v.map(str::trim) {
+            Some("0") | Some("off") => Temporal::Off,
+            Some("alt") => Temporal::Alternate,
+            _ => Temporal::On,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        static MODE: std::sync::OnceLock<Temporal> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| Temporal::parse(std::env::var("AURORA_GTAO_TEMPORAL").ok().as_deref()))
+    }
+
+    /// Whether the frame drawn `secs` whole seconds into the session
+    /// accumulates.
+    pub(crate) fn applied(self, secs: u64) -> bool {
+        match self {
+            Temporal::On => true,
+            Temporal::Off => false,
+            Temporal::Alternate => secs.is_multiple_of(2),
+        }
+    }
+}
+
+/// What a frame's occlusion knows of its frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Frame {
+    /// The renderer's frame counter.
+    pub index: u64,
+    /// It accumulates (`Temporal::applied`).
+    pub temporal: bool,
+    /// The previous frame's camera is known (else the reprojection is the
+    /// current one's and the history is not read).
+    pub previous_camera: bool,
+}
+
+/// The accumulation's state between frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct History {
+    /// The frame that last wrote the history, and into which of the two.
+    written: Option<(u64, usize)>,
+}
+
+impl History {
+    /// This frame's history target and whether the other one holds the
+    /// previous frame's (None: the frame does not accumulate).
+    fn next(&mut self, f: Frame) -> Option<(usize, bool)> {
+        if !f.temporal {
+            // the blur uses the history targets: nothing is left to read
+            self.written = None;
+            return None;
+        }
+        let (target, valid) = match self.written {
+            Some((frame, last)) if frame.wrapping_add(1) == f.index => (1 - last, f.previous_camera),
+            _ => (0, false),
+        };
+        self.written = Some((f.index, target));
+        Some((target, valid))
+    }
+}
+
 /// `AURORA_SSIL`: the screen-space indirect light forced on or off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Indirect {
@@ -264,12 +354,25 @@ struct GtaoU {
     misc: [f32; 4],
     reproj: [[f32; 4]; 4],
     il: [f32; 4],
+    temporal: [f32; 4],
 }
 
 /// The constants of a frame drawn with `proj` into targets of `size`;
 /// `reproj` takes its view space (z in front) to the clip space of the
-/// previous frame; `intensity` scales the indirect light.
-fn uniforms(proj: Mat4, reproj: Mat4, intensity: f32, size: (u32, u32), q: Quality) -> GtaoU {
+/// previous frame; `intensity` scales the indirect light; `temporal` is the
+/// accumulation's frame, if it accumulates, and whether a history is there.
+fn uniforms(
+    proj: Mat4,
+    reproj: Mat4,
+    intensity: f32,
+    size: (u32, u32),
+    q: Quality,
+    temporal: Option<(u64, bool)>,
+) -> GtaoU {
+    let (noise, history) = match temporal {
+        Some((index, history)) => ((index % NOISE_FRAMES) as f32, history),
+        None => (0.0, false),
+    };
     GtaoU {
         // scales and off-centre terms (a photo tile's projection has them)
         proj: [proj.x_axis.x, proj.y_axis.y, proj.z_axis.x, proj.z_axis.y],
@@ -280,6 +383,12 @@ fn uniforms(proj: Mat4, reproj: Mat4, intensity: f32, size: (u32, u32), q: Quali
         misc: [DENOISE_BLUR_BETA, if q.half_res { 2.0 } else { 1.0 }, 0.0, 0.0],
         reproj: reproj.to_cols_array_2d(),
         il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
+        temporal: [
+            noise,
+            if history { 0.0 } else { 1.0 },
+            TEMPORAL_MIN_WEIGHT,
+            TEMPORAL_CLIP,
+        ],
     }
 }
 
@@ -309,6 +418,7 @@ pub(crate) struct Gtao {
     prefilter0: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     prefilter: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     main: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
+    temporal: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_final: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
     denoise_bent: (wgpu::ComputePipeline, wgpu::BindGroupLayout),
@@ -347,8 +457,15 @@ pub(crate) struct Targets {
     prefilter0: wgpu::BindGroup,
     prefilter: Vec<wgpu::BindGroup>,
     main: wgpu::BindGroup,
-    /// In order; the last one writes `result`.
+    /// The accumulation writing history target `i` (reading the other).
+    temporal: [wgpu::BindGroup; 2],
+    /// The blur, in order (the last one writes `result`): from `main`'s
+    /// result, or after the accumulation into history target `i`.
     denoise: Vec<(wgpu::BindGroup, Blur)>,
+    denoise_temporal: [Vec<(wgpu::BindGroup, Blur)>; 2],
+    history: History,
+    /// This frame's history target, when it accumulates (set by `write`).
+    accumulate: Option<usize>,
     /// The visibility in `.r` and the view-space bent normal in `.gba`
     /// (0..1), sampled by the shading.
     pub result: wgpu::TextureView,
@@ -401,6 +518,8 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const EDGES_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The history's view depth and frame count, two halves (pack2x16float).
+const META_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// The indirect light while it is blurred, and its result.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -450,6 +569,18 @@ impl Gtao {
                     texture_entry(4, UNFILTERED),
                     storage_entry(5, AO_FORMAT),
                     storage_entry(6, EDGES_FORMAT),
+                ],
+            ),
+            temporal: make(
+                "temporal",
+                &[
+                    uniform_entry(),
+                    texture_entry(4, UNFILTERED),
+                    texture_entry(7, UNFILTERED),
+                    texture_entry(15, UNFILTERED),
+                    texture_entry(16, wgpu::TextureSampleType::Uint),
+                    storage_entry(17, AO_FORMAT),
+                    storage_entry(18, META_FORMAT),
                 ],
             ),
             denoise: make(
@@ -558,7 +689,19 @@ impl Gtao {
         };
         let all_mips = depth_mips.create_view(&wgpu::TextureViewDescriptor::default());
         let view = |t: wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
-        let ao = [view(texture("gtao a", AO_FORMAT, 1)), view(texture("gtao b", AO_FORMAT, 1))];
+        // `main` writes `ao`; the two history targets are the accumulation's
+        // (this frame's and the previous one's), and the blur's second
+        // working target: the other history once the accumulation has read
+        // it, the first one without the accumulation
+        let ao = view(texture("gtao a", AO_FORMAT, 1));
+        let hist = [
+            view(texture("gtao history a", AO_FORMAT, 1)),
+            view(texture("gtao history b", AO_FORMAT, 1)),
+        ];
+        let meta = [
+            view(texture("gtao history depth a", META_FORMAT, 1)),
+            view(texture("gtao history depth b", META_FORMAT, 1)),
+        ];
         let edges = view(texture("gtao edges", EDGES_FORMAT, 1));
         let result = view(texture("gtao", RESULT_FORMAT, 1));
         let group = |layout: &wgpu::BindGroupLayout, entries: &[(u32, &wgpu::TextureView)]| {
@@ -580,27 +723,46 @@ impl Gtao {
         let prefilter = (1..mip_count)
             .map(|l| group(&self.prefilter.1, &[(2, &mip_view(l - 1)), (3, &mip_view(l))]))
             .collect();
-        let main = group(&self.main.1, &[(4, &all_mips), (5, &ao[0]), (6, &edges)]);
-        // the passes read a and b by turns; the bent normal's own turns come
-        // before the last, which writes the result
+        let main = group(&self.main.1, &[(4, &all_mips), (5, &ao), (6, &edges)]);
+        let temporal = [0, 1].map(|i| {
+            group(
+                &self.temporal.1,
+                &[
+                    (4, &all_mips),
+                    (7, &ao),
+                    (15, &hist[1 - i]),
+                    (16, &meta[1 - i]),
+                    (17, &hist[i]),
+                    (18, &meta[i]),
+                ],
+            )
+        });
+        // the passes read `first` then the two working targets by turns; the
+        // bent normal's own turns come before the last, which writes the
+        // result
         let passes = q.denoise_passes.max(1);
         let kinds: Vec<Blur> = std::iter::repeat_n(Blur::Both, passes as usize - 1)
             .chain(std::iter::repeat_n(Blur::Bent, BENT_BLUR as usize))
             .chain(std::iter::once(Blur::Final))
             .collect();
-        let denoise = kinds
-            .into_iter()
-            .enumerate()
-            .map(|(i, kind)| {
-                let (src, dst) = (&ao[i % 2], &ao[(i + 1) % 2]);
-                let bg = match kind {
-                    Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, &result)]),
-                    Blur::Both => group(&self.denoise.1, &[(5, dst), (7, src), (8, &edges)]),
-                    Blur::Bent => group(&self.denoise_bent.1, &[(5, dst), (7, src), (8, &edges)]),
-                };
-                (bg, kind)
-            })
-            .collect();
+        let chain = |first: &wgpu::TextureView, work: [&wgpu::TextureView; 2]| -> Vec<(wgpu::BindGroup, Blur)> {
+            kinds
+                .iter()
+                .enumerate()
+                .map(|(i, &kind)| {
+                    let src = if i == 0 { first } else { work[(i + 1) % 2] };
+                    let dst = work[i % 2];
+                    let bg = match kind {
+                        Blur::Final => group(&self.denoise_final.1, &[(7, src), (8, &edges), (9, &result)]),
+                        Blur::Both => group(&self.denoise.1, &[(5, dst), (7, src), (8, &edges)]),
+                        Blur::Bent => group(&self.denoise_bent.1, &[(5, dst), (7, src), (8, &edges)]),
+                    };
+                    (bg, kind)
+                })
+                .collect()
+        };
+        let denoise = chain(&ao, [&hist[0], &ao]);
+        let denoise_temporal = [0, 1].map(|i| chain(&hist[i], [&ao, &hist[1 - i]]));
         let indirect = scene.map(|scene| {
             let light = [
                 view(texture("gtao light a", LIGHT_FORMAT, 1)),
@@ -631,7 +793,11 @@ impl Gtao {
             prefilter0,
             prefilter,
             main,
+            temporal,
             denoise,
+            denoise_temporal,
+            history: History::default(),
+            accumulate: None,
             result,
             indirect,
         }
@@ -639,12 +805,23 @@ impl Gtao {
 
     /// The constants of this frame (before the encoder runs): `proj` its
     /// projection, `reproj` from [`reprojection`], `intensity` the indirect
-    /// light's strength.
-    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &Targets, proj: Mat4, reproj: Mat4, intensity: f32) {
+    /// light's strength, `frame` what it knows of the frames before.
+    pub(crate) fn write(
+        &self,
+        queue: &wgpu::Queue,
+        t: &mut Targets,
+        proj: Mat4,
+        reproj: Mat4,
+        intensity: f32,
+        frame: Frame,
+    ) {
+        let next = t.history.next(frame);
+        t.accumulate = next.map(|(target, _)| target);
+        let temporal = next.map(|(_, history)| (frame.index, history));
         queue.write_buffer(
             &self.buffer,
             0,
-            bytemuck::bytes_of(&uniforms(proj, reproj, intensity, t.size, t.quality)),
+            bytemuck::bytes_of(&uniforms(proj, reproj, intensity, t.size, t.quality, temporal)),
         );
     }
 
@@ -676,7 +853,16 @@ impl Gtao {
             pass.set_bind_group(0, &il.main, &[]);
             dispatch(&mut pass, groups(t.size));
         }
-        for (bg, kind) in &t.denoise {
+        let denoise = match t.accumulate {
+            Some(i) => {
+                pass.set_pipeline(&self.temporal.0);
+                pass.set_bind_group(0, &t.temporal[i], &[]);
+                dispatch(&mut pass, groups(t.size));
+                &t.denoise_temporal[i]
+            }
+            None => &t.denoise,
+        };
+        for (bg, kind) in denoise {
             pass.set_pipeline(match kind {
                 Blur::Both => &self.denoise.0,
                 Blur::Bent => &self.denoise_bent.0,
@@ -752,6 +938,51 @@ mod tests {
         let alt: Vec<bool> = (0..4).map(|s| SpecularOcclusion::Alternate.applied(s)).collect();
         assert_eq!(alt, [true, false, true, false]);
         assert!((0..4).all(|s| SpecularOcclusion::On.applied(s) && !SpecularOcclusion::Off.applied(s)));
+    }
+
+    #[test]
+    fn temporal_switch_is_on_by_default_and_alternates_every_second() {
+        assert_eq!(Temporal::parse(None), Temporal::On);
+        assert_eq!(Temporal::parse(Some("1")), Temporal::On);
+        assert_eq!(Temporal::parse(Some(" off ")), Temporal::Off);
+        assert_eq!(Temporal::parse(Some("0")), Temporal::Off);
+        let alt: Vec<bool> = (0..4).map(|s| Temporal::Alternate.applied(s)).collect();
+        assert_eq!(alt, [true, false, true, false]);
+        assert!((0..4).all(|s| Temporal::On.applied(s) && !Temporal::Off.applied(s)));
+    }
+
+    /// The history targets take turns while frames follow each other; a
+    /// frame skipped, one without the accumulation or without the previous
+    /// camera, and new targets start again from the current frame.
+    #[test]
+    fn history_takes_turns_and_starts_again_after_a_gap() {
+        let frame = |index, temporal, previous_camera| Frame {
+            index,
+            temporal,
+            previous_camera,
+        };
+        let mut h = History::default();
+        assert_eq!(h.next(frame(10, true, true)), Some((0, false)), "new targets");
+        assert_eq!(h.next(frame(11, true, true)), Some((1, true)));
+        assert_eq!(h.next(frame(12, true, true)), Some((0, true)));
+        assert_eq!(h.next(frame(14, true, true)), Some((0, false)), "a frame without GTAO");
+        assert_eq!(h.next(frame(15, true, false)), Some((1, false)), "no previous camera");
+        assert_eq!(h.next(frame(16, true, true)), Some((0, true)));
+        assert_eq!(h.next(frame(17, false, true)), None);
+        assert_eq!(h.next(frame(18, true, true)), Some((0, false)), "after a frame without it");
+        // the frame counter wraps
+        let mut h = History::default();
+        h.next(frame(u64::MAX, true, true));
+        assert_eq!(h.next(frame(0, true, true)), Some((1, true)));
+    }
+
+    #[test]
+    fn noise_moves_only_while_accumulating_and_history_is_read_only_when_there() {
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+        let u = |t| uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), t).temporal;
+        assert_eq!(u(None)[..2], [0.0, 1.0]);
+        assert_eq!(u(Some((3, true)))[..2], [3.0, 0.0]);
+        assert_eq!(u(Some((NOISE_FRAMES + 5, false)))[..2], [5.0, 1.0]);
     }
 
     #[test]
@@ -914,7 +1145,7 @@ mod tests {
     #[test]
     fn uniforms_rebuild_view_positions() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-        let u = uniforms(proj, Mat4::IDENTITY, 1.0, (1600, 1000), quality(2));
+        let u = uniforms(proj, Mat4::IDENTITY, 1.0, (1600, 1000), quality(2), None);
         // a point 7 m in front, 1 m right and 0.5 m up (right-handed view: -z)
         let p = glam::Vec4::new(1.0, 0.5, -7.0, 1.0);
         let clip = proj * p;
