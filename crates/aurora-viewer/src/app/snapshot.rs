@@ -9,7 +9,7 @@
 //! LLWebProfile::uploadImage).
 
 use super::App;
-use crate::snapshot::{self, Tile, gallery, inventory, profile, save};
+use crate::snapshot::{self, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
@@ -73,7 +73,7 @@ enum ProfileStep {
 struct Job {
     purpose: Purpose,
     size: (u32, u32),
-    tiles: Vec<Tile>,
+    tiles: Vec<TilePass>,
     next: usize,
     /// The current tile's frame is asked.
     asked: bool,
@@ -244,7 +244,7 @@ impl App {
             s.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
             return None;
         }
-        let tile = job.tiles[job.next];
+        let tile = job.tiles[job.next].draw;
         let single = job.tiles.len() == 1;
         let spec = SnapshotSpec {
             width: tile.width,
@@ -277,8 +277,8 @@ impl App {
             return;
         };
         job.asked = false;
-        let tile = job.tiles[job.next];
-        let Some((w, h, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (tile.width, tile.height)) else {
+        let pass = job.tiles[job.next];
+        let Some((_, _, pixels)) = answer.filter(|(w, h, _)| (*w, *h) == (pass.draw.width, pass.draw.height)) else {
             log::warn!("photo: part {} of {} not drawn", job.next + 1, job.tiles.len());
             self.snapshots.job = None;
             self.snapshots.message = Some((aurora_i18n::tr!("photo-draw-failed").to_owned(), true));
@@ -290,16 +290,7 @@ impl App {
             if job.pixels.is_empty() {
                 job.pixels = vec![0; job.size.0 as usize * job.size.1 as usize * 4];
             }
-            snapshot::stitch(
-                &mut job.pixels,
-                job.size.0,
-                Tile {
-                    width: w,
-                    height: h,
-                    ..tile
-                },
-                &pixels,
-            );
+            snapshot::stitch(&mut job.pixels, job.size.0, pass, &pixels);
         }
         job.next += 1;
         if job.next < job.tiles.len() {
