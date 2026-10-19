@@ -27,6 +27,19 @@ pub enum Status {
     Timeout,
 }
 impl Status {
+    pub fn short_label(self) -> &'static str {
+        aurora_i18n::text(match self {
+            Self::Off => "movelock-short-off",
+            Self::Waiting => "movelock-short-waiting",
+            Self::Moving => "movelock-short-moving",
+            Self::Seated | Self::Suspended | Self::Water | Self::Airborne | Self::Travel => "movelock-short-paused",
+            Self::NeedsStand => "movelock-short-ao",
+            Self::Anchoring => "movelock-short-anchoring",
+            Self::Anchored => "movelock-short-anchored",
+            Self::Releasing => "movelock-short-releasing",
+            Self::Timeout => "movelock-short-timeout",
+        })
+    }
     pub fn label(self) -> &'static str {
         aurora_i18n::text(match self {
             Self::Off => "movelock-off",

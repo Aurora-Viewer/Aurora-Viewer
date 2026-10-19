@@ -720,7 +720,8 @@ Localized status and transition logs distinguish region arrival, water movement,
 airborne transitions and other travel controllers.
 The optional position-lock indicator starts disabled. When enabled, its area
 can be dragged within the work area and its position uses the shared saved UI
-layout; a simple click still opens the lock options.
+layout; a simple click still opens the lock options. Compact state labels keep
+the indicator short; its tooltip and the options retain the full diagnostic.
 Acquisition waits at least 250 ms at rest, releases immediately for movement or mode
 changes, bounds retries, handles cancelled requests' late echoes and drops
 ownership across regions. Water movement, jumps/falls and autopilot pause it.

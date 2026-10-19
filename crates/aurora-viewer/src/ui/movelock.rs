@@ -83,7 +83,7 @@ impl MoveLockUi {
         });
         (*prefs != before, repair)
     }
-    pub fn indicator(&mut self, ctx: &egui::Context, p: &Palette, status: &str) {
+    pub fn indicator(&mut self, ctx: &egui::Context, p: &Palette, label: &str, status: &str) {
         let room = super::layout::work_area(ctx);
         egui::Area::new(egui::Id::new("movelock_indicator"))
             .default_pos(egui::pos2(room.left() + 12.0, room.bottom() - 40.0))
@@ -93,7 +93,10 @@ impl MoveLockUi {
             .order(egui::Order::Middle)
             .show(ctx, |ui| {
                 widgets::overlay(ui, p, egui::Margin::same(4), |ui| {
-                    if widgets::action_button(ui, p, "lock-filled", status, ActionKind::Flat, egui::vec2(0.0, 26.0)).clicked() {
+                    if widgets::action_button(ui, p, "lock-filled", label, ActionKind::Flat, egui::vec2(0.0, 26.0))
+                        .on_hover_text(status)
+                        .clicked()
+                    {
                         self.open = true;
                     }
                 });
@@ -123,7 +126,12 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    panel.indicator(ui.ctx(), &crate::theme::Theme::default().palette(), aurora_i18n::tr!("movelock-on"));
+                    panel.indicator(
+                        ui.ctx(),
+                        &crate::theme::Theme::default().palette(),
+                        aurora_i18n::tr!("movelock-short-on"),
+                        aurora_i18n::tr!("movelock-on"),
+                    );
                 },
             );
             output.textures_delta.clear();
