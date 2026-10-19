@@ -493,6 +493,8 @@ pub struct App {
     stream_url: String,
     /// The parcel music's title last told (ShowStreamMetadata).
     stream_title_said: Option<String>,
+    /// Every sound is cut because the window is minimised (MuteWhenMinimized).
+    minimized_mute: bool,
     music_parcel_url: String,
     /// `/music` chat command: a stream played instead of the parcel's until
     /// the parcel stream changes.
@@ -1016,6 +1018,7 @@ impl App {
             applied_audio: None,
             stream_url: String::new(),
             stream_title_said: None,
+            minimized_mute: false,
             music_parcel_url: String::new(),
             music_override: None,
             key_to_name: Vec::new(),
@@ -3835,10 +3838,30 @@ impl App {
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
                 engine.set_volume(*ch, a.volume[i]);
-                engine.set_muted(*ch, a.muted[i]);
+                engine.set_muted(*ch, a.muted[i] || (i == 0 && self.minimized_mute));
                 engine.set_enabled(*ch, i == 0 || a.enabled[i]);
             }
             self.applied_audio = Some(a.clone());
+        }
+        self.sync_minimized_mute();
+    }
+
+    /// MuteWhenMinimized (audio_update_volume): every sound stops while the
+    /// window is minimised, losing the focus alone does not. Called each
+    /// frame and when the window's size changes, frames being rare while it
+    /// is minimised.
+    fn sync_minimized_mute(&mut self) {
+        let minimized = self
+            .gfx
+            .as_ref()
+            .is_some_and(|g| g.window.is_minimized().unwrap_or(false));
+        let mute = self.settings.audio.mute_when_minimized && minimized;
+        if mute == self.minimized_mute {
+            return;
+        }
+        self.minimized_mute = mute;
+        if let Some(engine) = &self.audio_engine {
+            engine.set_muted(aurora_audio::Channel::Master, mute || self.settings.audio.muted[0]);
         }
     }
 
@@ -13292,6 +13315,7 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(s) => {
                 g.renderer.resize(s.width, s.height);
                 self.geom_changed = Some(Instant::now());
+                self.sync_minimized_mute();
             }
             WindowEvent::Moved(_) => self.geom_changed = Some(Instant::now()),
             WindowEvent::RedrawRequested => {

@@ -198,6 +198,14 @@ pub(super) fn page(
             aurora_i18n::tr!("ui-options-auto-play-parcel-media-after-standing-still-for-5"),
             |ui| toggle(ui, p, &mut a.media_autoplay),
         );
+        // Legacy Viewer › Sound & Media (MuteWhenMinimized)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-mute-when-minimized"),
+            aurora_i18n::tr!("ui-options-mute-when-minimized-help"),
+            |ui| toggle(ui, p, &mut a.mute_when_minimized),
+        );
     });
     c |= ui_sounds_group(ui, p, a, st);
     section(ui, st, AudioSection::Voice);

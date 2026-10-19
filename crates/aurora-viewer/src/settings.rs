@@ -995,6 +995,8 @@ pub struct AudioSettings {
     /// StreamMetadataAnnounceChannel, 362394).
     pub stream_title_announce: bool,
     pub stream_title_channel: i32,
+    /// Cut every sound while the window is minimised (MuteWhenMinimized, off).
+    pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
     pub output_device: String,
     /// Microphone name (empty = system default).
@@ -1046,6 +1048,7 @@ impl Default for AudioSettings {
             stream_title: StreamTitleShow::Chat,
             stream_title_announce: false,
             stream_title_channel: 362394,
+            mute_when_minimized: false,
             output_device: String::new(),
             input_device: String::new(),
             voice_enabled: true,
