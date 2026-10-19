@@ -593,6 +593,10 @@ pub struct Settings {
     /// Region / Estate as Firestorm's eight tabs (not ported yet: the
     /// Aurora window opens meanwhile) instead of Aurora's (`ui/region`).
     pub classic_region_estate: bool,
+    /// The inventory as the Legacy Viewer's single tree with its tabs and
+    /// footer instead of Aurora's window that widens from a compact tree to
+    /// an explorer (`ui/inventory/aurora`).
+    pub classic_inventory: bool,
     /// "Places" as the Legacy Viewer's three tabs (`ui/places.rs`) instead
     /// of Aurora's list and preview (`ui/places/aurora.rs`).
     pub classic_places: bool,
@@ -1174,6 +1178,7 @@ impl Default for Settings {
             classic_about_land: false,
             classic_search: false,
             classic_region_estate: false,
+            classic_inventory: false,
             classic_places: false,
             places_sort: PlacesSort::Visit,
             invert_mouse: false,

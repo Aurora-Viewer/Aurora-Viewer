@@ -44,6 +44,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_about_land = !aurora;
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
+    s.classic_inventory = !aurora;
     s.classic_places = !aurora;
     s.classic_pay_window = !aurora;
     s.classic_controls = !aurora;
@@ -561,6 +562,16 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
         c |= look_choice(
             ui,
             p,
+            aurora_i18n::tr!("common-inventory"),
+            aurora_i18n::tr!("ui-options-aurora-inventory-help"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-aurora"),
+            aurora_i18n::tr!("ui-options-aurora-about-land-classic"),
+            &mut s.classic_inventory,
+        );
+        between(ui, p);
+        c |= look_choice(
+            ui,
+            p,
             aurora_i18n::tr!("ui-options-aurora-pay-window"),
             aurora_i18n::tr!("ui-options-aurora-pay-window-help"),
             aurora_i18n::tr!("ui-options-aurora-pay-aurora"),
@@ -774,6 +785,7 @@ mod tests {
         assert!(s.classic_about_land, "About Land opens Firestorm's nine tabs");
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
+        assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
         assert!(s.classic_pay_window);
         assert!(s.classic_controls, "Firestorm's two control windows");
@@ -804,6 +816,10 @@ mod tests {
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
         assert!(!s.classic_search && !fresh.classic_search, "the Aurora Search is the default");
         assert!(!s.classic_region_estate && !fresh.classic_region_estate);
+        assert!(
+            !s.classic_inventory && !fresh.classic_inventory,
+            "the Aurora inventory is the default"
+        );
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
         assert!(!s.classic_pay_window && !fresh.classic_pay_window);
         assert!(!s.classic_controls && !fresh.classic_controls);
@@ -850,7 +866,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 1800.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 2400.0))),
                 ..Default::default()
             },
             |ui| {

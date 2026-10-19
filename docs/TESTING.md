@@ -2194,7 +2194,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -3769,7 +3769,23 @@ sky, material, link and varied permissions; library in the tree,
 root open and labels aligned left. Creations and mutations simulated
 offline; the files and snapshots uploaded in demo stay offline.
 
-- `1`: the inventory alone.
+- `1`: the inventory alone. This mode and every one below but the
+  `aurora` ones were written for the Legacy Viewer's window and show it,
+  whatever Preferences › Aurora › Inventory says.
+- `aurora`, `aurora-medium`, `aurora-wide`, `aurora-rights`: Aurora's
+  window, placed at frame 2 at its narrow (440 px), medium (800 px) and wide
+  (1180 px) width, on the demo object of the right-click tests, the demo
+  shirt in the favourites; `aurora-rights` is the wide window with the
+  CMT menu on "Both". Capture at frame 700 with `AURORA_FPS_LIMIT=60`.
+  Narrow: icon tabs, search row (filters, CMT, Sort, New), the tree with
+  C/M/T at the end of each item, the selection's card (Wear, Add,
+  Properties, More). Medium: the column of shortcuts (with their counts) and
+  folders, the explorer of the revealed folder with Type and Modified.
+  Wide: breadcrumb, Ctrl F inside the empty search field, the filter count,
+  the details pane (picture, Give, Properties, creator, owner, acquired,
+  next owner switches) and the status bar. Hover an object or clothing row
+  for Wear / Take off (and More at the wide width); widen the narrow
+  window with the title bar button.
 - `permissions`: expanded inventory with the approved additive next-owner
   indicators enabled. Combine with `AURORA_DEMO_BUILD=contents-ready,object:118`
   and `AURORA_DEMO_BUILD_TAB=contents+next-owner` to inspect both windows.

@@ -142,6 +142,8 @@ pub struct InventoryPreferences {
     pub last_logout: i64,
     pub warn_task_move: bool,
     pub warn_scripted_task_move: bool,
+    /// The rights Aurora's rows show (its "CMT" menu).
+    pub rights: super::permissions::Rights,
 }
 impl Default for InventoryPreferences {
     fn default() -> Self {
@@ -165,7 +167,18 @@ impl Default for InventoryPreferences {
             last_logout: 0,
             warn_task_move: true,
             warn_scripted_task_move: true,
+            rights: Default::default(),
         }
+    }
+}
+
+/// Where "Recent" starts: the last logout, or a day ago (refreshed once a
+/// minute) before the first one.
+pub(super) fn recent_cutoff(prefs: &InventoryPreferences, time: i64) -> i64 {
+    if prefs.last_logout > 0 {
+        prefs.last_logout
+    } else {
+        time / 60 * 60 - 86400
     }
 }
 
@@ -212,6 +225,8 @@ pub struct ViewCache {
     children: IdMap<Vec<Uuid>>,
     result_children: IdMap<Vec<Uuid>>,
     folders: IdSet,
+    /// A folder's date: its newest descendant's (see `prepare`).
+    folder_dates: IdMap<i64>,
     revision: u64,
     /// Bumped by every rebuild of the sorted entries (`prepare`).
     built: u64,
@@ -313,6 +328,7 @@ impl ViewCache {
         for entry in self.entries.iter_mut().filter(|e| e.folder) {
             entry.date = dates.get(&entry.id).copied().unwrap_or(0);
         }
+        self.folder_dates = dates;
         self.entries.par_sort_unstable_by(|a, b| compare(a, b, sort));
         self.folders = inv.folders.keys().copied().collect();
         // Keep the lists' memory: a folder gone keeps an empty list.
@@ -335,6 +351,12 @@ impl ViewCache {
     /// Changes whenever the sorted children change (see `prepare`).
     pub fn built(&self) -> u64 {
         self.built
+    }
+
+    /// The date a folder sorts by: its newest descendant's, 0 when it holds
+    /// no dated item.
+    pub fn folder_date(&self, id: Uuid) -> i64 {
+        self.folder_dates.get(&id).copied().unwrap_or(0)
     }
 
     #[cfg(test)]
@@ -373,8 +395,7 @@ impl ViewCache {
         };
         let cutoff = match age {
             Age::Any => 0,
-            Age::SinceLogout if prefs.last_logout > 0 => prefs.last_logout,
-            Age::SinceLogout => time / 60 * 60 - 86400,
+            Age::SinceLogout => recent_cutoff(prefs, time),
             // Refresh relative dates once a minute, not once per frame.
             _ => time / 60 * 60 - i64::from(filters.hours.min(876_000)) * 3600,
         };
@@ -625,7 +646,7 @@ impl TreeState {
 /// with MurmurHash3's mixer (synthetic ids differ only in a few bytes), for a
 /// fraction of SipHash's cost (a third of a rebuild went to hashing).
 #[derive(Default, Clone, Copy)]
-struct IdHasher(u64);
+pub(super) struct IdHasher(u64);
 
 impl std::hash::Hasher for IdHasher {
     fn write(&mut self, bytes: &[u8]) {
@@ -647,11 +668,11 @@ impl std::hash::Hasher for IdHasher {
 }
 
 type IdMap<V> = HashMap<Uuid, V, std::hash::BuildHasherDefault<IdHasher>>;
-type IdSet = HashSet<Uuid, std::hash::BuildHasherDefault<IdHasher>>;
+pub(super) type IdSet = HashSet<Uuid, std::hash::BuildHasherDefault<IdHasher>>;
 
 /// The folders under one of `roots` (`rules::under`, the roots included),
 /// each ancestor chain walked once.
-fn within(inv: &Inventory, roots: &[Uuid]) -> IdSet {
+pub(super) fn within(inv: &Inventory, roots: &[Uuid]) -> IdSet {
     let mut known: IdMap<bool> = IdMap::default();
     known.reserve(inv.folders.len());
     let mut path = Vec::new();
@@ -823,6 +844,7 @@ mod tests {
             agent: id(99),
             worn: HashSet::new(),
             worn_labels: Default::default(),
+            worn_at: Default::default(),
             points: vec![],
             appearance_busy: false,
             active_gestures: Default::default(),
