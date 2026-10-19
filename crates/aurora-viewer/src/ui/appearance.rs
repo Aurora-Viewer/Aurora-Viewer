@@ -203,7 +203,8 @@ fn row(ui: &mut egui::Ui, p: &Palette, it: &InvItem, desc: &str, selected: bool,
 
 fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut Vec<Action>) {
     menu::context_menu(response, p, |ui| {
-        if it.asset_type == 13 && it.flags & 0xff == 0 && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
+        let editable = (it.asset_type == 13 && it.flags & 0xff == 0) || crate::physics_editor::is_physics(it);
+        if editable && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
             super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(it.id));
         }
         let label = if it.asset_type == 6 {

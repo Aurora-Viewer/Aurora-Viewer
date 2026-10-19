@@ -52,7 +52,7 @@ const AVATARS: [(Uuid, u32); 2] = [(DEMO_AGENT, 9000), (DEMO_LOUP, 9001)];
 /// A lively physics layer: (parameter, weight). Mass, gravity and drag of
 /// the breasts, belly and butt, then max effect, spring, gain and damping of
 /// each motion.
-const LAYER: [(i32, f32); 33] = [
+pub const LAYER: [(i32, f32); 33] = [
     (10000, 0.2),
     (10001, 4.0),
     (10002, 1.0),
