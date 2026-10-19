@@ -1,6 +1,7 @@
 //! Viewer-side world model fed by network events.
 
 pub mod appearance;
+pub mod attention;
 pub mod blocking;
 pub mod body;
 pub mod calling_cards;
@@ -279,6 +280,9 @@ pub struct World {
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
     pub im_messages: Vec<ImMessage>,
+    /// Taskbar flashes and system notifications asked for (drained by the
+    /// app, `app/attention.rs`).
+    pub attention: Vec<attention::Attention>,
     /// L$ balance changes (previous, new), for the money sounds.
     pub balance_changes: Vec<(Option<i32>, i32)>,
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
@@ -467,6 +471,7 @@ impl World {
             notification_history: Default::default(),
             ui_sounds: Vec::new(),
             im_messages: Vec::new(),
+            attention: Vec::new(),
             balance_changes: Vec::new(),
             typing_started: Vec::new(),
             login: None,
@@ -2040,12 +2045,15 @@ impl World {
                 let restart = message.to_lowercase().contains("restart");
                 self.ui_sounds.push(if restart { UiSound::Restart } else { UiSound::Alert });
                 self.system_message(message.clone());
-                self.notifications.push(
+                let id = self.notifications.push(
                     notifications::Kind::Alert,
                     aurora_i18n::tr!("world-mod-simulator-alert"),
                     message.clone(),
                     notifications::Data::None,
                 );
+                // SystemMessageTip (process_alert_core)
+                let notice = self.notice_of(id, attention::Open::Notifications);
+                self.ask_attention(attention::Cause::Notice, notice);
                 self.alerts.push_back(message);
                 None
             }
@@ -2089,9 +2097,13 @@ impl World {
                     }
                 };
                 let title = format!("{object_name} ({owner_name})");
-                self.notifications.push(notifications::Kind::Script, title, message, data);
+                let id = self.notifications.push(notifications::Kind::Script, title, message, data);
                 // LLScriptFloater ("script_floater") opening
                 self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+                // FSFlashOnScriptDialog and the ScriptDialog notification
+                // (LLScriptFloaterManager::onAddNotification)
+                let notice = self.notice_of(id, attention::Open::Notifications);
+                self.ask_attention(attention::Cause::ScriptDialog, notice);
                 None
             }
             NetEvent::ScriptQuestion {
@@ -2726,6 +2738,16 @@ impl World {
             ChatSourceType::Agent => self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name),
             _ => c.from_name,
         };
+        // a resident's line that mentions the agent
+        // (LLUrlRegistry::containsAgentMention)
+        if matches!(kind, ChatKind::Local(_)) && crate::ui::chat::mentions(&c.message, &self.agent_id) {
+            let notice = attention::Notice {
+                title: from.clone(),
+                body: c.message.clone(),
+                open: attention::Open::NearbyChat,
+            };
+            self.ask_attention(attention::Cause::Mention, Some(notice));
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -2820,6 +2842,20 @@ impl World {
         } else {
             im.message
         };
+        // an object's message by FSFlashOnObjectIM, told like an IM by its
+        // name (GrowlManager::onNearbyChatMessage); a message without a
+        // sender ("System") is a SystemMessage
+        let cause = if im.dialog == 19 {
+            attention::Cause::ObjectIm
+        } else {
+            attention::Cause::Message
+        };
+        let notice = attention::Notice {
+            title: from.clone(),
+            body: text.clone(),
+            open: attention::Open::NearbyChat,
+        };
+        self.ask_attention(cause, Some(notice));
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -2839,6 +2875,7 @@ impl World {
         } else {
             im.from_name.clone()
         };
+        let before = self.notifications.last_id();
         let n = &mut self.notifications;
         match im.dialog {
             // teleport offers and requests (teleport_invites.rs)
@@ -2961,6 +2998,32 @@ impl World {
             }
             _ => return false,
         }
+        // every offer and notice flashes (the end of processNewMessage);
+        // the system hears those of the Legacy list (growl_notifications.xml:
+        // TeleportOffered*, TeleportRequest, OfferFriendship, FriendshipAccepted,
+        // UserGiveItem, ObjectGiveItem, GroupNotice, InventoryAccepted /
+        // Declined, SystemMessageTip)
+        let told = matches!(
+            im.dialog,
+            d::LURE_USER
+                | d::GODLIKE_LURE_USER
+                | d::TELEPORT_REQUEST
+                | d::FRIENDSHIP_OFFERED
+                | d::FRIENDSHIP_ACCEPTED
+                | d::INVENTORY_OFFERED
+                | d::TASK_INVENTORY_OFFERED
+                | d::INVENTORY_ACCEPTED
+                | d::INVENTORY_DECLINED
+                | d::GROUP_NOTICE
+                | d::MESSAGEBOX
+        );
+        let last = self.notifications.last_id();
+        let notice = if told && last != before {
+            self.notice_of(last, attention::Open::Notifications)
+        } else {
+            None
+        };
+        self.ask_attention(attention::Cause::Message, notice);
         true
     }
 
@@ -3260,6 +3323,15 @@ impl World {
             // never during login, in do not disturb nor for a blocked resident
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
                 self.notifications.push_presence(id, n.clone(), online);
+            }
+            // FriendOnlineOffline for the system (never during login)
+            if self.notifications.started && !self.mutes.is_muted_id(&id) {
+                let notice = attention::Notice {
+                    title: n.clone(),
+                    body: String::new(),
+                    open: attention::Open::Conversation(id),
+                };
+                self.ask_attention(attention::Cause::Notice, Some(notice));
             }
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it

@@ -12,14 +12,12 @@ use crate::world::notifications::{Data, Kind, Response};
 use crate::world::region_restart::{Cue, Level, Phase, Shake, view_shake};
 use aurora_net::region_restart::Notice;
 use aurora_net::{ChatType, NetCommand};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use uuid::Uuid;
 
 /// LLAssetType::AT_LANDMARK and LLFolderType::FT_TRASH.
 const ASSET_LANDMARK: i32 = 3;
 const FOLDER_TRASH: i32 = 14;
-/// LLWindow::flashIcon(5.f) when the box opens.
-const FLASH: Duration = Duration::from_secs(5);
 
 /// What the app keeps of the restart besides its rules.
 #[derive(Default)]
@@ -27,8 +25,6 @@ pub struct State {
     pub ui: alert::RestartUi,
     /// The pinned card of the bell.
     bell: Option<u64>,
-    /// The taskbar icon flashes until then.
-    flash_until: Option<Instant>,
     /// Firestorm's view shake, since then.
     view_shake_at: Option<Instant>,
     last_tick: Option<Instant>,
@@ -132,6 +128,14 @@ impl App {
             UiSound::Restart
         };
         let region = notice.region.clone().unwrap_or_else(|| self.world.region_name());
+        // RegionRestartMinutes / RegionRestartSeconds for the system, at
+        // each notice (the alert flashes on its own when it opens)
+        let told = crate::world::attention::Notice {
+            title: aurora_i18n::tr!("region-restart-title").to_owned(),
+            body: toast_text(&region, notice.seconds),
+            open: crate::world::attention::Open::Notifications,
+        };
+        self.world.ask_attention(crate::world::attention::Cause::Notice, Some(told));
         if !self.settings.region_restart.show_alert {
             // FSUseNewRegionRestartNotification off: a toast at each notice
             // (RegionRestartMinutesToast / RegionRestartSecondsToast)
@@ -188,7 +192,10 @@ impl App {
                     self.region_restart.ui.opened(now);
                     self.region_restart.legacy_open = true;
                     self.region_restart.legacy_pick = None;
-                    self.flash_taskbar();
+                    // LLWindow::flashIcon(5.f) when the box opens
+                    if !self.focused {
+                        self.flash_taskbar();
+                    }
                     // the notification of the well, without a toast
                     // (show_toast="false"), pinned while the count runs
                     self.drop_restart_bell();
@@ -260,17 +267,7 @@ impl App {
         }
     }
 
-    /// LLWindow::flashIcon(5.f): the taskbar button flashes for five seconds.
-    fn flash_taskbar(&mut self) {
-        if let Some(g) = &self.gfx {
-            g.window
-                .request_user_attention(Some(winit::window::UserAttentionType::Informational));
-            self.region_restart.flash_until = Some(Instant::now() + FLASH);
-        }
-    }
-
-    /// Each frame: the demo, the count, the region left, the view shake and
-    /// the end of the taskbar's flashing.
+    /// Each frame: the demo, the count, the region left and the view shake.
     pub(super) fn update_region_restart(&mut self) {
         let now = Instant::now();
         let real = self
@@ -309,12 +306,6 @@ impl App {
             match view_shake(now.duration_since(t).as_secs_f64()) {
                 Some((x, y)) => self.camera.shake = self.camera.pan_offset(x, y),
                 None => self.region_restart.view_shake_at = None,
-            }
-        }
-        if self.region_restart.flash_until.is_some_and(|t| now >= t) {
-            self.region_restart.flash_until = None;
-            if let Some(g) = &self.gfx {
-                g.window.request_user_attention(None);
             }
         }
         if self.world.region_restart.alert.is_none() {

@@ -450,6 +450,19 @@ pub struct Settings {
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
     /// Preferences > Chat, on).
     pub flash_unread_conversations: bool,
+    /// Flash the taskbar button when a message, an offer or a mention
+    /// arrives while the window is not in front (FSFlashOnMessage; on here,
+    /// off in the Legacy Viewer: the point of #680 is not to miss them).
+    pub flash_on_message: bool,
+    /// Also for an object's message (FSFlashOnObjectIM, on).
+    pub flash_on_object_im: bool,
+    /// Flash for a script dialog (FSFlashOnScriptDialog, off).
+    pub flash_on_script_dialog: bool,
+    /// Windows notifications for messages, mentions, offers and alerts
+    /// while the window is not in front (FSEnableGrowl, off).
+    pub system_notifications: bool,
+    /// The same notifications while the window is in front (FSGrowlWhenActive, off).
+    pub system_notifications_when_active: bool,
     pub chat_toast_seconds: f32,
     /// Toast when a friend comes online or goes offline (ChatOnlineNotification, on).
     pub toast_friends_online: bool,
@@ -1142,6 +1155,11 @@ impl Default for Settings {
             show_contacts_tab: true,
             send_typing_state: true,
             flash_unread_conversations: true,
+            flash_on_message: true,
+            flash_on_object_im: true,
+            flash_on_script_dialog: false,
+            system_notifications: false,
+            system_notifications_when_active: false,
             chat_toast_seconds: 20.0,
             toast_friends_online: true,
             friends_online_in_chat: false,

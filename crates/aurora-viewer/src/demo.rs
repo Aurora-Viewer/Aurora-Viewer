@@ -26,6 +26,10 @@ pub mod arrival;
 /// The local asset server of its `net=` option.
 #[path = "demo_asset_server.rs"]
 pub mod asset_server;
+/// Taskbar flashes and system notifications in the background
+/// (AURORA_DEMO_ATTENTION).
+#[path = "demo_attention.rs"]
+pub mod attention;
 #[path = "demo_auto_hover.rs"]
 pub mod auto_hover;
 /// Voice calls with a simulated voice server (AURORA_DEMO_CALL).

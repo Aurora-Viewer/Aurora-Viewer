@@ -785,6 +785,34 @@ enum Seg<'a> {
     Labelled(Cow<'a, str>, Box<Seg<'a>>),
 }
 
+/// The text mentions `agent` (LLUrlRegistry::containsAgentMention).
+pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
+    text.contains("/mention") && segments(text).iter().any(|s| matches!(s, Seg::Mention(id) if id == agent))
+}
+
+/// A message as plain text, for a system notification: agents by their
+/// name (a mention with its "@"), places by their label, labelled links by
+/// their text, other links as written.
+pub(crate) fn plain_text(text: &str, name: impl Fn(&uuid::Uuid) -> Option<String>) -> String {
+    fn piece(seg: &Seg<'_>, name: &dyn Fn(&uuid::Uuid) -> Option<String>, out: &mut String) {
+        match seg {
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(t),
+            Seg::Place(_, place) => out.push_str(&place.label),
+            Seg::Mention(id) => {
+                out.push('@');
+                out.push_str(&name(id).unwrap_or_else(|| id.to_string()));
+            }
+            Seg::Agent(id) => out.push_str(&name(id).unwrap_or_else(|| id.to_string())),
+            Seg::Labelled(label, _) => out.push_str(label),
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    for seg in segments(text) {
+        piece(&seg, &name, &mut out);
+    }
+    out
+}
+
 fn segments(text: &str) -> Vec<Seg<'_>> {
     let mut out = Vec::new();
     let mut rest = text;
@@ -2992,6 +3020,22 @@ mod tests {
         assert_eq!(segs[3], Seg::Mention(id));
         let bad = segments("secondlife:///app/agent/nope/about");
         assert!(matches!(bad[0], Seg::Slurl(_)));
+    }
+
+    #[test]
+    fn a_mention_of_the_agent_is_found_and_written_as_a_name() {
+        let (me, jane) = (uuid::Uuid::from_u128(5), uuid::Uuid::from_u128(6));
+        let t = format!("secondlife:///app/agent/{me}/mention see secondlife:///app/agent/{jane}/about at https://example.org");
+        assert!(mentions(&t, &me));
+        assert!(!mentions(&t, &jane), "an about link is not a mention");
+        assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
+        let name = |id: &uuid::Uuid| (*id == me).then(|| "Aurora Demo".to_owned());
+        assert_eq!(
+            plain_text(&t, name),
+            format!("@Aurora Demo see {jane} at https://example.org"),
+            "an unknown name keeps its id, a web link its address"
+        );
+        assert_eq!(plain_text("[https://example.org the site] now", name), "the site now");
     }
 
     #[test]

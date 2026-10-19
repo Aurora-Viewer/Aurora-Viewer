@@ -25,6 +25,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod ao;
+mod attention;
 mod bridge;
 mod movelock;
 // Bug report form (disabled, see main.rs):
@@ -168,6 +169,9 @@ const FLY_TIME: f32 = 0.5;
 /// Radians: a change of the viewing angle below this is not sent in AgentFOV
 /// (an eased FOV zoom creeps toward its target for ever).
 const FOV_SEND_EPSILON: f32 = 1e-3;
+
+/// The wolf logo (window icon, loading screen, system notifications).
+pub(crate) const LOGO_PNG: &[u8] = include_bytes!("../assets/logo-loup-couleur-4096.png");
 
 struct LogoData {
     ui: egui::ColorImage,
@@ -470,6 +474,8 @@ pub struct App {
     notif_ui: ui::notifications::NotifUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
+    /// Taskbar flashes and system notifications (app/attention.rs).
+    attention: attention::State,
     /// After the link with the region was lost: the grid, the user and the
     /// place "Reconnect" goes back to (ui/link_health.rs).
     reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
@@ -779,21 +785,18 @@ impl App {
 
         // Decode the 4096px logo off the main thread.
         let (tx, rx) = crossbeam_channel::bounded(1);
-        std::thread::spawn(move || {
-            let bytes = include_bytes!("../assets/logo-loup-couleur-4096.png");
-            match image::load_from_memory(bytes) {
-                Ok(img) => {
-                    let ui_img = img.resize(384, 384, image::imageops::FilterType::Triangle).to_rgba8();
-                    let icon = img.resize(64, 64, image::imageops::FilterType::Triangle).to_rgba8();
-                    let ci = egui::ColorImage::from_rgba_unmultiplied([ui_img.width() as usize, ui_img.height() as usize], ui_img.as_raw());
-                    let (w, h) = icon.dimensions();
-                    let _ = tx.send(LogoData {
-                        ui: ci,
-                        icon: Some((icon.into_raw(), w, h)),
-                    });
-                }
-                Err(e) => log::warn!("logo decode failed: {e}"),
+        std::thread::spawn(move || match image::load_from_memory(LOGO_PNG) {
+            Ok(img) => {
+                let ui_img = img.resize(384, 384, image::imageops::FilterType::Triangle).to_rgba8();
+                let icon = img.resize(64, 64, image::imageops::FilterType::Triangle).to_rgba8();
+                let ci = egui::ColorImage::from_rgba_unmultiplied([ui_img.width() as usize, ui_img.height() as usize], ui_img.as_raw());
+                let (w, h) = icon.dimensions();
+                let _ = tx.send(LogoData {
+                    ui: ci,
+                    icon: Some((icon.into_raw(), w, h)),
+                });
             }
+            Err(e) => log::warn!("logo decode failed: {e}"),
         });
 
         let panels = Panels::from_settings(&settings);
@@ -990,6 +993,7 @@ impl App {
             audio_ui: Default::default(),
             notif_ui: Default::default(),
             region_restart: Default::default(),
+            attention: Default::default(),
             reconnect_place: None,
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
@@ -3642,6 +3646,7 @@ impl App {
                 w.ui_sounds.push(s);
             }
             w.notify_message(&m, shown == Some(m.session));
+            w.message_attention(&m);
         }
         w.acknowledge_read_messages();
         for (old, new) in std::mem::take(&mut w.balance_changes) {
@@ -5690,6 +5695,7 @@ impl App {
         let mut edit_camera_frame = None;
         if self.in_world() {
             self.update_sounds();
+            self.update_attention();
         }
         if self.in_world() {
             let ml = self.camera.mouselook();
@@ -7308,6 +7314,31 @@ impl App {
             for (open, close) in crate::demo::presence::LIST {
                 if self.frame_count == open || self.frame_count == close {
                     self.notif_ui.open = self.frame_count == open;
+                }
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::attention::mode()
+        {
+            if self.frame_count == crate::demo::attention::MINIMIZE_AT
+                && mode != "front"
+                && let Some(g) = &self.gfx
+            {
+                g.window.set_minimized(true);
+            }
+            if self.frame_count == crate::demo::attention::RESTORE_AT
+                && mode == "capture"
+                && let Some(g) = &self.gfx
+            {
+                g.window.set_minimized(false);
+                g.window.focus_window();
+                self.notif_ui.open = true;
+            }
+            let agent = self.world.agent_id;
+            for event in crate::demo::attention::events(self.frame_count, agent) {
+                log::info!("demo attention: arrival at frame {}, focused {}", self.frame_count, self.focused);
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
                 }
             }
         }
@@ -11502,6 +11533,7 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_occlusion = filter == "occlusion";
                     self.options_ui.scroll_to_bloom = filter == "bloom";
                     self.options_ui.scroll_to_name_tags = filter == "name-tags";
+                    self.options_ui.scroll_to_attention = filter == "attention";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
@@ -13482,6 +13514,7 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.record_window_geometry();
+        self.attention_window();
         if self.gfx.as_ref().is_some_and(|g| !g.shown) {
             // Hidden windows may receive no RedrawRequested event. Keep
             // producing frames until a real presentation makes it visible,

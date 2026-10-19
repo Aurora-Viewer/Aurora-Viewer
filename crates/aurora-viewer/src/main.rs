@@ -53,6 +53,7 @@ mod shape_editor;
 mod slurl;
 mod snapshot;
 mod sys_probe;
+mod system_notify;
 mod theme;
 mod tolerant;
 mod ui;

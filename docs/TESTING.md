@@ -2335,6 +2335,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
+| `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
@@ -2837,6 +2838,22 @@ failure. Grid validation and any paid upload are performed by the human.
   the front on that conversation, and its card leaves the list. Capture
   with `AURORA_FPS_LIMIT=60`, at `900,1160` for `1` and `1240,1310` for the
   click modes. Add `AURORA_DEMO_SOUND=1` to hear the existing sounds.
+- **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
+  taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
+  mention in a group chat (880), an object's message (940), a teleport offer
+  (1000) and a script dialog (1060) arrive. Each but the script dialog
+  flashes the taskbar button ten times, which then stays lit (Preferences ›
+  Chat › Taskbar and system notifications; the script dialog's switch is off
+  by default); the system notifications are turned on for the scenario: one
+  Windows notification per arrival, a click brings the window back on the
+  conversation, the nearby chat or the bell's list. The log says
+  `taskbar flash` and `system notification shown (<what a click opens>)`,
+  never the text. `front` keeps the window in front: nothing flashes and
+  nothing is shown. `capture` brings the window back at frame 1150 with the
+  bell's list open: capture with `AURORA_FPS_LIMIT=60` at frame 1300. The
+  first notification writes the application's name and icon under
+  `HKCU\Software\Classes\AppUserModelId\Aurora.Viewer` (what Windows shows
+  above it). `AURORA_DEMO_OPTIONS=3:attention` opens the switches.
 - **`AURORA_DEMO_EXIT=1|cancel|logout|quit`**: opens the modal at frame 650.
   `1` leaves it interactive; the other modes make the choice at frame 800.
   Take screenshots at `740,900` to compare the blurred background then the
