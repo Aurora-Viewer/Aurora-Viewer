@@ -38,6 +38,26 @@ fn mip_texel(face: u32, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(c, 1.0);
 }
 
+// The Legacy Viewer keeps every stage of its probes (the capture, each mip,
+// the filtered radiance and irradiance) in GL_R11F_G11F_B10F
+// (LLReflectionMapManager, LLCubeMapArray), and the GPU truncates what is
+// written there: 6 bits of mantissa for red and green, 5 for blue. Each
+// write loses about half a step, twice as much in blue, so its probes come
+// out a few percent darker and yellower than the light they hold
+// (an RTX 4090 truncates every write, Vulkan and DX12 alike). With
+// LEGACY_FORMAT (skies with a probe ambiance, which take their ambient from
+// the probes) the filtering stores its values the same way.
+override LEGACY_FORMAT: bool = false;
+
+fn legacy_store(c: vec3<f32>) -> vec3<f32> {
+    if (!LEGACY_FORMAT) {
+        return c;
+    }
+    let bits = bitcast<vec3<u32>>(max(c, vec3<f32>(0.0))) & vec3<u32>(0xFFFE0000u, 0xFFFE0000u, 0xFFFC0000u);
+    // the largest finite value of the format
+    return min(bitcast<vec3<f32>>(bits), vec3<f32>(65024.0, 65024.0, 64512.0));
+}
+
 const PI: f32 = 3.1415926536;
 // RenderReflectionProbeResolution 128: mips 128 .. 2, max_probe_lod = log2(128) - 1
 const MAX_PROBE_LOD: f32 = 6.0;
@@ -121,10 +141,10 @@ const IRR_SAMPLES: u32 = 32u;
 const IRR_WIDTH: f32 = 64.0;
 const IRR_LOD_BIAS: f32 = 2.0;
 
-// The irradiance capture of skies with a probe ambiance is drawn at an
-// eighth of the radiance capture (IRR_CAPTURE_RES of probes.rs): its mip
-// `m` is the radiance capture's `m + 3`.
-const IRR_CAPTURE_LOD_OFFSET: f32 = CAPTURE_LOD_OFFSET - 3.0;
+// The irradiance capture of skies with a probe ambiance is drawn at half
+// the radiance capture's size (IRR_CAPTURE_RES of probes.rs): its mip `m`
+// is the radiance capture's `m + 1`.
+const IRR_CAPTURE_LOD_OFFSET: f32 = CAPTURE_LOD_OFFSET - 1.0;
 
 fn irradiance_texel(face: u32, uv: vec2<f32>, lod_offset: f32) -> vec4<f32> {
     let n = face_dir(face, uv);
@@ -157,7 +177,16 @@ fn cs_mip(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= dims.x || id.y >= dims.y) {
         return;
     }
-    textureStore(dst, vec2<i32>(id.xy), i32(id.z), mip_texel(id.z, texel_uv(id, dims)));
+    var c = mip_texel(id.z, texel_uv(id, dims)).rgb;
+    if (LEGACY_FORMAT) {
+        // the four texels averaged, each as it was stored (the capture
+        // included: the Legacy Viewer draws it into that format too)
+        let p = vec2<i32>(id.xy) * 2;
+        let f = i32(id.z);
+        c = (legacy_store(textureLoad(src_faces, p, f, 0).rgb) + legacy_store(textureLoad(src_faces, p + vec2<i32>(1, 0), f, 0).rgb)
+            + legacy_store(textureLoad(src_faces, p + vec2<i32>(0, 1), f, 0).rgb) + legacy_store(textureLoad(src_faces, p + vec2<i32>(1, 1), f, 0).rgb)) * 0.25;
+    }
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), vec4<f32>(legacy_store(c), 1.0));
 }
 
 // The mip being written gives the roughness: its size against PROBE_RES.
@@ -168,7 +197,7 @@ fn cs_radiance(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let mip = f32(firstTrailingBit(PROBE_RES / dims.x));
-    textureStore(dst, vec2<i32>(id.xy), i32(id.z), radiance_texel(id.z, mip, texel_uv(id, dims)));
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), vec4<f32>(legacy_store(radiance_texel(id.z, mip, texel_uv(id, dims)).rgb), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -177,7 +206,7 @@ fn cs_irradiance(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= dims.x || id.y >= dims.y) {
         return;
     }
-    textureStore(dst, vec2<i32>(id.xy), i32(id.z), irradiance_texel(id.z, texel_uv(id, dims), CAPTURE_LOD_OFFSET));
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), vec4<f32>(legacy_store(irradiance_texel(id.z, texel_uv(id, dims), CAPTURE_LOD_OFFSET).rgb), 1.0));
 }
 
 // The same from the irradiance capture.
@@ -187,5 +216,5 @@ fn cs_irradiance_capture(@builtin(global_invocation_id) id: vec3<u32>) {
     if (id.x >= dims.x || id.y >= dims.y) {
         return;
     }
-    textureStore(dst, vec2<i32>(id.xy), i32(id.z), irradiance_texel(id.z, texel_uv(id, dims), IRR_CAPTURE_LOD_OFFSET));
+    textureStore(dst, vec2<i32>(id.xy), i32(id.z), vec4<f32>(legacy_store(irradiance_texel(id.z, texel_uv(id, dims), IRR_CAPTURE_LOD_OFFSET).rgb), 1.0));
 }
