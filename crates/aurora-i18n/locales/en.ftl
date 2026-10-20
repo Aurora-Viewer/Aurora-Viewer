@@ -6359,6 +6359,7 @@ script-preferences-title = Script editor preferences
 script-preferences-colors = Editor colors
 script-preferences-reset-colors = Theme colors
 script-preferences-font-size = Font size
+script-preferences-word-wrap = Wrap long lines
 script-preferences-convert-tabs = Convert tabs from files to spaces
 script-preferences-preprocessor = Enable LSL preprocessor
 script-preferences-optimize = Script optimizer

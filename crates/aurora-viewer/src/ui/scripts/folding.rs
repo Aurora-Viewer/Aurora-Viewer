@@ -199,7 +199,7 @@ impl State {
                     .translate(output.galley_pos.to_vec2());
                 let label = format!("⋯ {} {}", block.lines, aurora_i18n::tr!("script-fold-lines"));
                 let galley = ui.painter().layout_no_wrap(label, egui::FontId::proportional(11.0), p.muted);
-                let label_rect = Rect::from_min_size(egui::pos2(anchor.left() + 8.0, cursor.top()), galley.size());
+                let label_rect = Rect::from_min_size(egui::pos2(anchor.left() + 8.0, anchor.top()), galley.size());
                 ui.painter().galley(label_rect.min, galley, p.muted);
                 if ui
                     .interact(label_rect, id.with(("fold_label", block.open)), egui::Sense::click())
@@ -231,6 +231,41 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folded_label_follows_the_end_of_a_wrapped_header() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let source = format!("default {{ // {}\n    llOwnerSay(\"hidden\");\n}}", "long header ".repeat(15));
+        let mut state = State::default();
+        state.sync(&source);
+        state.collapse_all();
+        let mut expected_y = 0.0;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _: f32| {
+                let mut job = LayoutJob::simple(text.as_str().into(), egui::FontId::monospace(13.0), p.ink, 200.0);
+                state.layout(&mut job);
+                ui.fonts_mut(|fonts| fonts.layout_job(job))
+            };
+            let mut text = source.as_str();
+            let output = egui::TextEdit::multiline(&mut text).layouter(&mut layouter).show(ui);
+            let end = source[..source.find('\n').expect("newline")].chars().count();
+            let anchor = output.galley.pos_from_cursor(CCursor::new(end));
+            assert!(anchor.top() > output.galley.rows[0].pos.y + 30.0, "header must wrap");
+            expected_y = output.galley_pos.y + anchor.top();
+            state.draw(ui, &p, Id::new("wrapped_fold"), &output, 0.0);
+        });
+        let label = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) if text.galley.job.text.starts_with('⋯') => Some(text),
+                _ => None,
+            })
+            .expect("folded label");
+        assert!((label.pos.y - expected_y).abs() < 1.0);
+        output.textures_delta.clear();
+    }
 
     #[test]
     fn hidden_rows_have_zero_height_but_keep_all_source_and_character_indices() {
