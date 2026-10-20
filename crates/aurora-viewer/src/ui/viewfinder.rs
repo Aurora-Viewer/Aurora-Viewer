@@ -1172,7 +1172,12 @@ impl Viewfinder {
             .pivot(Align2::CENTER_BOTTOM)
             .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 16.0))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
+                // top-aligned, each block lowered so that its line (the
+                // values' text, the scale's ticks, the AE-L frame) sits
+                // MIDDLE points down: egui does not move the blocks already
+                // laid when a taller one comes
+                const MIDDLE: f32 = 22.0;
+                ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 30.0;
                     let font = bold(ctx, 22.0);
                     let dial = |ui: &mut egui::Ui, d: Dial, text: &str, dim: bool, tip: &str, me: &mut Viewfinder| {
@@ -1180,6 +1185,8 @@ impl Viewfinder {
                         let resp = ui
                             .vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 3.0;
+                                // the text's middle (22-point figures) on the line
+                                ui.add_space(MIDDLE - 13.3);
                                 let r = text_button(ui, p, text, font.clone(), color, tip);
                                 let (line, _) = ui.allocate_exact_size(Vec2::new(r.rect.width(), 2.0), Sense::hover());
                                 if me.dial == d {
@@ -1213,6 +1220,8 @@ impl Viewfinder {
                     let resp = ui
                         .vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 3.0;
+                            // the ticks' middle on the line
+                            ui.add_space(MIDDLE - 13.0);
                             let (rect, resp) = ui.allocate_exact_size(Vec2::new(170.0, 36.0), Sense::click());
                             let painter = ui.painter();
                             let base = rect.left() + 6.0;
@@ -1269,8 +1278,11 @@ impl Viewfinder {
                     {
                         self.dial = Dial::Exposure;
                     }
-                    // AE-L: the automatic exposure held where it is
-                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(44.0, 26.0), Sense::click());
+                    // AE-L: the automatic exposure held where it is, its
+                    // frame's middle on the line
+                    let (cell, _) = ui.allocate_exact_size(Vec2::new(44.0, MIDDLE + 13.0), Sense::hover());
+                    let rect = Rect::from_min_size(Pos2::new(cell.left(), cell.top() + MIDDLE - 13.0), Vec2::new(44.0, 26.0));
+                    let resp = ui.interact(rect, Id::new("vf_ael"), Sense::click());
                     let color = if self.ae_lock {
                         p.teal
                     } else if resp.hovered() {
