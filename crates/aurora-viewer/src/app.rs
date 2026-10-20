@@ -13311,6 +13311,8 @@ impl ApplicationHandler for App {
                         | "aurora-received-sort-name"
                         | "received-filing"
                         | "aurora-received-filing"
+                        | "aurora-received-unread"
+                        | "aurora-received-unread-compact"
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
@@ -13365,11 +13367,11 @@ impl ApplicationHandler for App {
                         self.inventory_ui.selection.clear();
                         self.settings.inventory.received_sort.folders_by_name = view.ends_with("-name");
                     }
-                    if view.ends_with("received-filing") {
+                    if view.ends_with("received-filing") || view.starts_with("aurora-received-unread") {
                         self.settings.sort_received_items = true;
                         self.settings.received_items_since = 0;
                         crate::world::received_items::demo(&mut self.world);
-                        self.inventory_ui.tab = 1;
+                        self.inventory_ui.tab = usize::from(view.ends_with("received-filing"));
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;

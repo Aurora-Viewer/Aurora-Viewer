@@ -109,7 +109,8 @@ fn received_filing_moves_all_direct_asset_types_and_reuses_sender_folders() {
         let mut w = world();
         item(&mut w, kind);
         let before = w.inventory.items[&ITEM].clone();
-        deliver(&mut w, offer(false, kind as u8));
+        let notification = deliver(&mut w, offer(false, kind as u8));
+        w.respond_notification(notification, super::super::notifications::Response::Accept);
         run(&mut w);
         let received = root(&w.inventory).expect("received folder");
         let destination = child(&w.inventory, received, "Test Resident").expect("sender folder");
@@ -304,4 +305,143 @@ fn received_filing_rejection_wins_over_a_late_in_flight_move() {
     let trash = actions::system(&w.inventory, 14).expect("Trash");
     let edits = w.take_inventory_edits();
     assert!(matches!(&edits[0].operations[..], [Operation::Patch { id: ITEM, body, .. }] if body["parent_id"].as_uuid() == trash));
+}
+
+#[test]
+fn received_filing_retires_only_empty_sender_folders_to_trash() {
+    let mut w = world();
+    let marketplace = Uuid::from_u128(50);
+    w.inventory.created_folders(vec![InvFolder {
+        id: marketplace,
+        parent: w.inventory.root,
+        type_default: 50,
+        name: "Inbox".into(),
+        ..Default::default()
+    }]);
+    item(&mut w, 6);
+    deliver(&mut w, offer(false, 6));
+    run(&mut w);
+    let received = root(&w.inventory).unwrap();
+    let sender = child(&w.inventory, received, "Test Resident").unwrap();
+    let trash = actions::system(&w.inventory, 14).unwrap();
+    assert_eq!(w.inventory.items[&ITEM].parent, sender);
+    let mut moved = w.inventory.items[&ITEM].clone();
+    moved.parent = w.inventory.root;
+    w.inventory.add_items(vec![moved]);
+    let commands = w.file_received_items(Instant::now() + Duration::from_secs(3));
+    assert_eq!(commands.len(), 1);
+    let NetCommand::EditInventory { request, change } = commands.into_iter().next().unwrap() else {
+        panic!("empty sender cleanup")
+    };
+    assert!(
+        matches!(&change.operations[..], [Operation::Patch { id, folder: true, body }] if *id == sender && body["parent_id"].as_uuid() == trash)
+    );
+    let result = actions::demo_mutate(&mut w.inventory, w.agent_id, change);
+    w.received_items_event(&NetEvent::InventoryEdited { request, result });
+    assert_eq!(w.inventory.folders[&sender].info.parent, trash);
+    assert_eq!(root(&w.inventory), Some(received), "the Received container stays");
+    assert_eq!(
+        w.inventory.folders[&marketplace].info.parent, w.inventory.root,
+        "empty Marketplace stays"
+    );
+    assert_eq!(w.inventory.items[&ITEM].parent, w.inventory.root);
+    // A future delivery recreates the sender destination outside the Trash.
+    let mut next = offer(false, 6);
+    next.binary_bucket = [vec![6], Uuid::from_u128(100_000).as_bytes().to_vec()].concat();
+    let mut next_item = w.inventory.items[&ITEM].clone();
+    next_item.id = Uuid::from_u128(100_000);
+    w.inventory.add_items(vec![next_item]);
+    deliver(&mut w, next);
+    run(&mut w);
+    assert_ne!(w.inventory.items[&Uuid::from_u128(100_000)].parent, sender);
+    assert!(actions::under(&w.inventory, Uuid::from_u128(100_000), received));
+}
+
+#[test]
+fn received_filing_never_cleans_unloaded_or_disabled_sender_folders() {
+    let mut w = world();
+    item(&mut w, 6);
+    deliver(&mut w, offer(false, 6));
+    run(&mut w);
+    let received = root(&w.inventory).unwrap();
+    let unknown = Uuid::from_u128(200_000);
+    w.inventory.created_folders(vec![InvFolder {
+        id: unknown,
+        parent: received,
+        name: "Another Resident".into(),
+        type_default: -1,
+        ..Default::default()
+    }]);
+    w.inventory.folders.get_mut(&unknown).unwrap().state = FetchState::Unknown;
+    assert!(w.file_received_items(Instant::now() + Duration::from_secs(3)).is_empty());
+    assert!(w.inventory.queue.iter().any(|(id, _)| *id == unknown));
+    w.inventory.folders.get_mut(&unknown).unwrap().state = FetchState::Fetched;
+    w.received_items.enabled = false;
+    assert!(w.file_received_items(Instant::now() + Duration::from_secs(6)).is_empty());
+    assert_eq!(w.inventory.folders[&unknown].info.parent, received);
+}
+
+#[test]
+fn received_filing_keeps_a_scripted_destination_until_delivery_arrives() {
+    let mut w = world();
+    w.social.avatar_names.on_legacy(GIVER, "Owner", "Resident");
+    let notification = deliver(&mut w, offer(true, 6));
+    w.respond_notification(notification, super::super::notifications::Response::Accept);
+    assert_eq!(run(&mut w).len(), 1, "the acceptance was sent");
+    let received = root(&w.inventory).unwrap();
+    let sender = child(&w.inventory, received, "Owner Resident").unwrap();
+    assert!(w.file_received_items(Instant::now() + Duration::from_secs(3)).is_empty());
+    assert_eq!(w.inventory.folders[&sender].info.parent, received);
+    w.inventory.add_items(vec![InvItem {
+        id: ITEM,
+        parent: sender,
+        ..Default::default()
+    }]);
+    assert!(w.file_received_items(Instant::now() + Duration::from_secs(6)).is_empty());
+    w.inventory.remove(&[ITEM]);
+    assert_eq!(w.file_received_items(Instant::now() + Duration::from_secs(9)).len(), 1);
+}
+
+#[test]
+fn received_filing_overrides_type_destinations_when_kept_before_or_after_the_move() {
+    for keep_first in [false, true] {
+        let mut w = world();
+        item(&mut w, 6);
+        let notification = deliver(&mut w, offer(false, 6));
+        if keep_first {
+            assert!(
+                w.respond_notification(notification, super::super::notifications::Response::Accept)
+                    .0
+                    .is_empty()
+            );
+        }
+        let mut commands = run(&mut w);
+        let destination = child(&w.inventory, root(&w.inventory).unwrap(), "Test Resident").unwrap();
+        if !keep_first {
+            commands = w
+                .respond_notification(notification, super::super::notifications::Response::Accept)
+                .0;
+        }
+        assert!(
+            matches!(&commands[..], [NetCommand::SendImDialog { dialog: im::INVENTORY_ACCEPTED, bucket, .. }] if bucket == destination.as_bytes())
+        );
+        assert_eq!(w.inventory.items[&ITEM].parent, destination);
+    }
+}
+
+#[test]
+fn received_filing_disabled_while_keep_waits_preserves_the_original_answer() {
+    let mut w = world();
+    let notification = deliver(&mut w, offer(false, 6));
+    assert!(
+        w.respond_notification(notification, super::super::notifications::Response::Accept)
+            .0
+            .is_empty()
+    );
+    w.received_items.enabled = false;
+    let expected = actions::system(&w.inventory, 6).unwrap_or(w.inventory.root);
+    let commands = w.file_received_items(Instant::now());
+    assert!(
+        matches!(&commands[..], [NetCommand::SendImDialog { dialog: im::INVENTORY_ACCEPTED, bucket, .. }] if bucket == expected.as_bytes())
+    );
 }

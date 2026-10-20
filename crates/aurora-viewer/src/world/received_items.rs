@@ -37,6 +37,23 @@ pub fn roots(inv: &Inventory) -> Vec<Uuid> {
     actions::system(inv, 50).into_iter().chain(root(inv)).collect()
 }
 
+/// Count delivered items/categories, not their sender containers or a gift's contents.
+pub fn deliveries(inv: &Inventory) -> impl Iterator<Item = Uuid> + '_ {
+    let children = |id| {
+        inv.folders
+            .get(&id)
+            .into_iter()
+            .flat_map(|folder| folder.children.iter().chain(&folder.items).copied())
+    };
+    let marketplace = actions::system(inv, 50).into_iter().flat_map(children);
+    let senders = root(inv)
+        .and_then(|id| inv.folders.get(&id))
+        .into_iter()
+        .flat_map(|folder| folder.children.iter().copied())
+        .flat_map(children);
+    marketplace.chain(senders)
+}
+
 #[derive(Clone)]
 struct Sender {
     id: Uuid,
@@ -46,7 +63,11 @@ struct Sender {
 }
 
 enum Delivery {
-    Item { id: Uuid, folder: bool },
+    Item {
+        id: Uuid,
+        folder: bool,
+        answer: Option<Box<NetCommand>>,
+    },
     Accept(Box<NetCommand>),
 }
 
@@ -69,12 +90,17 @@ pub struct ReceivedItems {
     pub enabled: bool,
     pub enabled_since: i64,
     offers: HashMap<u64, Sender>,
+    destinations: HashMap<u64, Uuid>,
     asked_groups: HashSet<Uuid>,
     pending: VecDeque<Pending>,
     seen: HashSet<Uuid>,
     /// Retained across a timeout too: a late move must still honor rejection.
     moves: HashMap<Uuid, Moving>,
     mutation: Option<(Uuid, Instant, Option<u64>)>,
+    /// Scripted acceptance precedes inventory delivery. Never retire its empty
+    /// destination while the simulator is still populating it.
+    awaiting: HashMap<Uuid, Instant>,
+    cleanup_at: Option<Instant>,
 }
 
 impl ReceivedItems {
@@ -109,6 +135,7 @@ impl ReceivedItems {
                 delivery: Delivery::Item {
                     id,
                     folder: kind == super::notifications::AT_CATEGORY,
+                    answer: None,
                 },
                 since: Instant::now(),
             });
@@ -136,6 +163,25 @@ impl ReceivedItems {
         if !self.enabled || self.pending.len() >= LIMIT {
             return;
         }
+        if let Some(index) = commands.iter().position(|c| {
+            matches!(
+                c,
+                NetCommand::SendImDialog {
+                    dialog: im::INVENTORY_ACCEPTED,
+                    ..
+                }
+            )
+        }) {
+            if let Some(destination) = self.destinations.remove(&offer) {
+                if let NetCommand::SendImDialog { bucket, .. } = &mut commands[index] {
+                    *bucket = destination.as_bytes().to_vec();
+                }
+            } else if let Some(pending) = self.pending.iter_mut().find(|p| p.offer == offer)
+                && let Delivery::Item { answer, .. } = &mut pending.delivery
+            {
+                *answer = Some(Box::new(commands.remove(index)));
+            }
+        }
         if let Some(sender) = sender
             && let Some(index) = commands.iter().position(|c| {
                 matches!(
@@ -157,11 +203,14 @@ impl ReceivedItems {
     }
 
     fn fallback(&mut self, out: &mut Vec<NetCommand>) {
-        if let Some(pending) = self.pending.pop_front()
-            && let Delivery::Accept(command) = pending.delivery
-        {
-            // A folder/name failure must never swallow the user's acceptance.
-            out.push(*command);
+        if let Some(pending) = self.pending.pop_front() {
+            match pending.delivery {
+                Delivery::Accept(command) | Delivery::Item { answer: Some(command), .. } => {
+                    // A folder/name failure must never swallow the user's acceptance.
+                    out.push(*command);
+                }
+                Delivery::Item { answer: None, .. } => {}
+            }
         }
     }
 
@@ -184,13 +233,73 @@ impl ReceivedItems {
         });
     }
 
+    fn cleanup(&mut self, inv: &mut Inventory, now: Instant, out: &mut Vec<NetCommand>) {
+        if !self.offers.is_empty()
+            || !self.moves.is_empty()
+            || self.cleanup_at.is_some_and(|at| now.duration_since(at) < Duration::from_secs(2))
+        {
+            return;
+        }
+        self.cleanup_at = Some(now);
+        self.awaiting.retain(|id, since| {
+            now.duration_since(*since) < TIMEOUT && inv.folders.get(id).is_some_and(|f| f.items.is_empty() && f.children.is_empty())
+        });
+        let Some(root) = root(inv) else { return };
+        let Some(trash) = actions::system(inv, 14) else { return };
+        inv.request(root);
+        let Some(folder) = inv.folders.get(&root).filter(|f| f.state == FetchState::Fetched) else {
+            return;
+        };
+        let senders = folder.children.clone();
+        let mut operations = Vec::new();
+        let mut requested = 0;
+        for id in senders {
+            let Some(sender) = inv.folders.get(&id) else { continue };
+            if sender.library || sender.info.parent != root || sender.info.type_default != -1 || self.awaiting.contains_key(&id) {
+                continue;
+            }
+            if sender.state != FetchState::Fetched {
+                if requested < 32 {
+                    inv.request(id);
+                    requested += 1;
+                }
+            } else if sender.items.is_empty() && sender.children.is_empty() {
+                // "Delete" in the inventory moves to Trash. Keep that recovery
+                // path if a simulator delivery races this empty-folder check.
+                operations.push(Operation::Patch {
+                    id,
+                    folder: true,
+                    body: aurora_llsd::llsd_map! { "parent_id" => trash },
+                });
+                if operations.len() == 32 {
+                    break;
+                }
+            }
+        }
+        if !operations.is_empty() {
+            let request = Uuid::new_v4();
+            self.mutation = Some((request, now, None));
+            out.push(NetCommand::EditInventory {
+                request,
+                change: Mutation {
+                    operations,
+                    refresh: vec![root, trash],
+                    ..Default::default()
+                },
+            });
+        }
+    }
+
     fn update(&mut self, world: &mut World, now: Instant) -> Vec<NetCommand> {
         let mut out = Vec::new();
         // The list of notifications is bounded too; expired scripted offers
         // must not keep a sender alive indefinitely.
         self.offers.retain(|id, _| world.notifications.list.iter().any(|n| n.id == *id));
+        self.destinations
+            .retain(|id, _| world.notifications.list.iter().any(|n| n.id == *id));
         if !self.enabled {
             self.offers.clear();
+            self.destinations.clear();
             self.asked_groups.clear();
             while !self.pending.is_empty() {
                 self.fallback(&mut out);
@@ -207,7 +316,10 @@ impl ReceivedItems {
                 self.fallback(&mut out);
             }
         }
-        let Some(pending) = self.pending.front() else { return out };
+        let Some(pending) = self.pending.front() else {
+            self.cleanup(&mut world.inventory, now, &mut out);
+            return out;
+        };
         if now.duration_since(pending.since) >= TIMEOUT {
             log::warn!("received item filing: name or inventory unavailable");
             self.fallback(&mut out);
@@ -215,7 +327,7 @@ impl ReceivedItems {
         }
         if let Delivery::Item { id, .. } = pending.delivery {
             if actions::in_type(&world.inventory, id, 14) || world.mutes.is_muted_id(&pending.sender.id) {
-                self.pending.pop_front();
+                self.fallback(&mut out);
                 return out;
             }
             if actions::parent(&world.inventory, id).is_none() {
@@ -283,9 +395,20 @@ impl ReceivedItems {
                 if let NetCommand::SendImDialog { bucket, .. } = command.as_mut() {
                     *bucket = parent.as_bytes().to_vec();
                 }
+                self.awaiting.insert(parent, now);
                 out.push(*command);
             }
-            Delivery::Item { id, folder } => {
+            Delivery::Item { id, folder, answer } => {
+                // Keep also reports this destination: the type's default folder
+                // must never override filing, whichever answer/move arrives first.
+                if let Some(mut command) = answer {
+                    if let NetCommand::SendImDialog { bucket, .. } = command.as_mut() {
+                        *bucket = parent.as_bytes().to_vec();
+                    }
+                    out.push(*command);
+                } else if self.destinations.len() < LIMIT {
+                    self.destinations.insert(pending.offer, parent);
+                }
                 let Some(source) = actions::parent(inv, id) else { return out };
                 // A folder stays intact. No copy, re-upload or permission change.
                 if source != parent && !actions::under(inv, parent, id) && !actions::in_type(inv, id, 14) {
@@ -308,6 +431,7 @@ impl ReceivedItems {
                         },
                     );
                     self.mutation = Some((request, now, None));
+                    self.awaiting.insert(parent, now);
                     out.push(NetCommand::EditInventory {
                         request,
                         change: Mutation {

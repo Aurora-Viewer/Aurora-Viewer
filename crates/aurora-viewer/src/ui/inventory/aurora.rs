@@ -105,9 +105,12 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         let size = match mode {
             "aurora-medium" => egui::vec2(800.0, 640.0),
-            "aurora-wide" | "aurora-rights" | "aurora-received-filing" | "aurora-received-sort" | "aurora-received-sort-name" => {
-                egui::vec2(WIDE_SIZE, 720.0)
-            }
+            "aurora-wide"
+            | "aurora-rights"
+            | "aurora-received-filing"
+            | "aurora-received-unread"
+            | "aurora-received-sort"
+            | "aurora-received-sort-name" => egui::vec2(WIDE_SIZE, 720.0),
             _ => egui::vec2(DEFAULT_SIZE.x, 640.0),
         };
         if let Some(wide) = mode.strip_prefix("aurora-folder-window") {
@@ -204,11 +207,7 @@ impl Counts {
                 .and_then(|id| inv.folders.get(&id))
                 .map_or(0, |f| f.items.len() + f.children.len())
         };
-        self.received = crate::world::received_items::roots(inv)
-            .iter()
-            .filter_map(|id| inv.folders.get(id))
-            .map(|f| f.items.len() + f.children.len())
-            .sum();
+        self.received = crate::world::received_items::deliveries(inv).count();
         self.trash = held(14);
     }
 }

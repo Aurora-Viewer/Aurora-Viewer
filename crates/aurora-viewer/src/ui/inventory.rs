@@ -26,6 +26,7 @@ pub use document::document_demo_events;
 pub(crate) mod permissions;
 mod progress;
 pub(crate) mod properties;
+mod received;
 mod rows;
 pub(crate) mod task_drop;
 pub mod thumbnail;
@@ -330,7 +331,8 @@ pub struct InventoryUi {
     plain_scroll_restore: Option<f32>,
     roots_seen: HashSet<Uuid>,
     /// Received Items folders already shown once (closed on their arrival).
-    received_seen: HashSet<Uuid>,
+    received_shown: HashSet<Uuid>,
+    received_badge: received::Badge,
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     visible: Vec<Uuid>,
@@ -1349,11 +1351,12 @@ fn list(
             let fresh: Vec<Uuid> = st
                 .view
                 .result_folders()
-                .filter(|id| *id != root && st.received_seen.insert(*id))
+                .filter(|id| *id != root && st.received_shown.insert(*id))
                 .collect();
             if !fresh.is_empty() {
                 st.result_tree.collapse_folders(fresh, RECEIVED_TAB);
             }
+            st.received_badge.acknowledge(inv, &st.view.results);
         }
         prepare_result_tree(st, inv, root);
         return search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
@@ -2678,8 +2681,10 @@ mod tests {
                 },
             ));
         };
+        assert!(st.received_badge.unseen(&inv) > 0);
         frame(&mut inv, &mut st);
         frame(&mut inv, &mut st);
+        assert_eq!(st.received_badge.unseen(&inv), 0, "showing Received acknowledges its deliveries");
         let inbox = rules::system(&inv, 50).expect("Marketplace container");
         assert_eq!(st.result_tree.rows.len(), 1, "Marketplace starts as one closed folder");
         assert_eq!(st.result_tree.rows[0].id, inbox);

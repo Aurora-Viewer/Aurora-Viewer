@@ -9782,7 +9782,7 @@ ao-category-water = Swimming
 # Experimental received inventory filing.
 received-filing-title = Received items
 received-filing-enabled = Sort new deliveries by sender
-received-filing-help = File new items and folders in #Aurora/Received items/<legacy name>. Scripted deliveries use the object's owner. Offline deliveries are filed after login. Existing items stay where they are.
+received-filing-help = File new items and folders in #Aurora/Received items/<legacy name>, overriding the usual destinations by type. Scripted deliveries use the object's owner. Offline deliveries are filed after login. Empty sender folders move to Trash. Existing items stay where they are.
 received-filing-warning = Experimental feature — disabled by default. Automatically moves new deliveries in your inventory.
 received-marketplace-folder = MarketPlace
 received-filing-demo-gift = Example gift
