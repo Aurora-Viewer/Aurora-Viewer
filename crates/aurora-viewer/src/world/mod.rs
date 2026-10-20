@@ -1408,7 +1408,7 @@ impl World {
     pub fn appearance_hover(&self, avatar: &Uuid) -> f32 {
         if *avatar == self.agent_id {
             return if self.hover_height_available() {
-                self.hover_height.value()
+                self.hover_height.effective()
             } else {
                 0.0
             };

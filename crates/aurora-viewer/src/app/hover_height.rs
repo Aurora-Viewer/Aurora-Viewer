@@ -1,4 +1,5 @@
 use super::App;
+use crate::world::hover_height::Posture;
 
 impl App {
     pub(super) fn update_hover_height(&mut self) {
@@ -71,6 +72,20 @@ impl App {
                         _ => {}
                     }
                 }
+                // A separate ground height, then the sit shortcut: the avatar
+                // floats 0.5 m above its ground pose, and stands back at 0.
+                if mode == "sit-ground" {
+                    match self.frame_count {
+                        600 => {
+                            self.world.hover_height.set_separate(Posture::OnGround, true);
+                            self.world.hover_height.preview_seated(Posture::OnGround, 0.5);
+                            self.world.hover_height.commit_seated(Posture::OnGround);
+                            self.camera.demo_orbit(1.0, 0.3, Some(5.0), &self.settings.camera);
+                        }
+                        660 | 900 => self.sit_stand_shortcut(),
+                        _ => {}
+                    }
+                }
                 if matches!(mode, "cycle" | "camera") {
                     match self.frame_count {
                         720 => self.world.hover_height.preview(0.4),
@@ -84,6 +99,14 @@ impl App {
                 }
             }
         }
+        let agent = &self.world.agent;
+        self.world.hover_height.set_posture(if agent.ground_sit {
+            Posture::OnGround
+        } else if agent.seated {
+            Posture::OnObject
+        } else {
+            Posture::Standing
+        });
         let region = self.world.hover_height_available().then_some(self.world.main_region).flatten();
         if let Some(command) = self.world.hover_height.next_update(region) {
             self.send(command);

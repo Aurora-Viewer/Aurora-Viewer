@@ -1,7 +1,13 @@
 //! LLFloaterHoverHeight / LLVOAvatarSelf::setHoverOffset (Firestorm,
 //! originally LGPL 2.1): preview locally, persist and send on final commit.
+//!
+//! Aurora addition: sitting on an object and sitting on the ground can each
+//! have their own height. The simulator keeps a single hover value
+//! (AgentPreferences `hover_height`), so the one of the current posture is
+//! sent again whenever the avatar sits down or stands up.
 use aurora_net::{NetCommand, RegionHandle};
 use crossbeam_channel::{self as mpsc, Receiver, Sender};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::JoinHandle;
@@ -26,9 +32,87 @@ pub fn step(alt: bool, fine: bool) -> f32 {
     }
 }
 
+/// Which saved height applies to our avatar.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Posture {
+    /// Standing, walking, flying: the usual (manual or automatic) height.
+    #[default]
+    Standing,
+    /// Sitting on an object (a seat, a pose ball).
+    OnObject,
+    /// Sitting on the ground.
+    OnGround,
+}
+
+impl Posture {
+    fn seat(self) -> Option<usize> {
+        match self {
+            Posture::Standing => None,
+            Posture::OnObject => Some(0),
+            Posture::OnGround => Some(1),
+        }
+    }
+}
+
+/// The height of one sitting posture. Without `separate`, the standing
+/// height applies; `height` keeps the last separate value meanwhile.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SeatedHeight {
+    pub separate: bool,
+    pub height: Option<f32>,
+}
+
+/// The per-account file. Older files hold the standing height alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Saved {
+    standing: f32,
+    on_object: SeatedHeight,
+    on_ground: SeatedHeight,
+}
+
+impl Saved {
+    fn parse(bytes: &[u8]) -> Option<Saved> {
+        let saved = match serde_json::from_slice::<Saved>(bytes) {
+            Ok(saved) => saved,
+            Err(_) => Saved {
+                standing: serde_json::from_slice::<f32>(bytes).ok()?,
+                ..Saved::default()
+            },
+        };
+        let seat = |s: SeatedHeight| SeatedHeight {
+            separate: s.separate,
+            height: s.height.and_then(bounded),
+        };
+        Some(Saved {
+            standing: bounded(saved.standing).unwrap_or(0.0),
+            on_object: seat(saved.on_object),
+            on_ground: seat(saved.on_ground),
+        })
+    }
+
+    fn seats(&self) -> [SeatedHeight; 2] {
+        [self.on_object, self.on_ground]
+    }
+
+    fn seat_mut(&mut self, seat: usize) -> &mut SeatedHeight {
+        if seat == 0 { &mut self.on_object } else { &mut self.on_ground }
+    }
+
+    fn height(&self, posture: Posture) -> f32 {
+        posture
+            .seat()
+            .map(|seat| self.seats()[seat])
+            .filter(|seat| seat.separate)
+            .and_then(|seat| seat.height)
+            .unwrap_or(self.standing)
+    }
+}
+
 struct Storage {
-    loaded: Receiver<f32>,
-    writer: Option<Sender<f32>>,
+    loaded: Receiver<Saved>,
+    writer: Option<Sender<Saved>>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -43,8 +127,11 @@ impl Drop for Storage {
 
 #[derive(Default)]
 pub struct HoverHeight {
-    value: f32,
-    committed: f32,
+    /// What the sliders show and our avatar is drawn with.
+    preview: Saved,
+    /// Saved, and sent to the simulator.
+    committed: Saved,
+    posture: Posture,
     region: Option<RegionHandle>,
     sent: Option<f32>,
     pending: Option<(u64, RegionHandle, f32)>,
@@ -59,27 +146,28 @@ impl HoverHeight {
     /// atomic writes stay off the frame thread; demo uses Default in memory.
     pub fn load(path: PathBuf) -> Self {
         let (loaded_tx, loaded) = mpsc::unbounded();
-        let (writer, writes) = mpsc::unbounded::<f32>();
+        let (writer, writes) = mpsc::unbounded::<Saved>();
         let worker = std::thread::Builder::new().name("aurora-hover-height".into()).spawn(move || {
-            let value = match std::fs::read(&path) {
-                Ok(bytes) => serde_json::from_slice::<f32>(&bytes).ok().and_then(bounded).unwrap_or(0.0),
+            let saved = match std::fs::read(&path) {
+                Ok(bytes) => Saved::parse(&bytes).unwrap_or_default(),
                 Err(error) => {
                     if error.kind() != std::io::ErrorKind::NotFound {
                         log::warn!("Cannot read hover height: {error}");
                     }
-                    0.0
+                    Saved::default()
                 }
             };
-            let _ = loaded_tx.send(value);
-            while let Ok(mut value) = writes.recv() {
+            let _ = loaded_tx.send(saved);
+            while let Ok(mut saved) = writes.recv() {
                 while let Ok(newer) = writes.try_recv() {
-                    value = newer;
+                    saved = newer;
                 }
                 let save = || -> std::io::Result<()> {
                     if let Some(parent) = path.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
-                    crate::atomic_file::write(&path, value.to_string().as_bytes())
+                    let json = serde_json::to_vec(&saved).map_err(std::io::Error::other)?;
+                    crate::atomic_file::write(&path, &json)
                 };
                 if let Err(error) = save() {
                     log::warn!("Cannot save hover height: {error}");
@@ -103,8 +191,23 @@ impl HoverHeight {
         }
     }
 
+    /// The standing height (manual, or the automatic estimate).
     pub fn value(&self) -> f32 {
-        self.value
+        self.preview.standing
+    }
+
+    /// The height our avatar has now, in its current posture.
+    pub fn effective(&self) -> f32 {
+        self.preview.height(self.posture)
+    }
+
+    pub fn posture(&self) -> Posture {
+        self.posture
+    }
+
+    /// Sitting down or standing up switches the height that is drawn and sent.
+    pub fn set_posture(&mut self, posture: Posture) {
+        self.posture = posture;
     }
 
     pub fn ready(&self) -> bool {
@@ -113,18 +216,63 @@ impl HoverHeight {
 
     pub fn preview(&mut self, value: f32) {
         if let Some(value) = bounded(value) {
-            self.value = value;
+            self.preview.standing = value;
         }
     }
 
     pub fn commit(&mut self) {
-        if self.value != self.committed {
-            self.committed = self.value;
-            self.edited = true;
-            self.failed = false;
-            if let Some(writer) = self.storage.as_ref().and_then(|storage| storage.writer.as_ref()) {
-                let _ = writer.send(self.committed);
+        if self.preview.standing != self.committed.standing {
+            self.committed.standing = self.preview.standing;
+            self.save();
+        }
+    }
+
+    /// A sitting posture's own height, previewed (`Standing` has none).
+    pub fn seated(&self, posture: Posture) -> SeatedHeight {
+        posture.seat().map(|seat| self.preview.seats()[seat]).unwrap_or_default()
+    }
+
+    /// The height a sitting posture uses: its own, or the standing one.
+    pub fn seated_value(&self, posture: Posture) -> f32 {
+        self.preview.height(posture)
+    }
+
+    /// Turning a posture's own height on starts from the standing height the
+    /// first time, then from its last value. Saved at once.
+    pub fn set_separate(&mut self, posture: Posture, separate: bool) {
+        let Some(seat) = posture.seat() else { return };
+        let standing = self.committed.standing;
+        for saved in [&mut self.preview, &mut self.committed] {
+            let seat = saved.seat_mut(seat);
+            seat.separate = separate;
+            seat.height.get_or_insert(standing);
+        }
+        self.save();
+    }
+
+    pub fn preview_seated(&mut self, posture: Posture, value: f32) {
+        if let (Some(seat), Some(value)) = (posture.seat(), bounded(value)) {
+            let seat = self.preview.seat_mut(seat);
+            if seat.separate {
+                seat.height = Some(value);
             }
+        }
+    }
+
+    pub fn commit_seated(&mut self, posture: Posture) {
+        let Some(seat) = posture.seat() else { return };
+        let preview = self.preview.seats()[seat];
+        if preview != self.committed.seats()[seat] {
+            *self.committed.seat_mut(seat) = preview;
+            self.save();
+        }
+    }
+
+    fn save(&mut self) {
+        self.edited = true;
+        self.failed = false;
+        if let Some(writer) = self.storage.as_ref().and_then(|storage| storage.writer.as_ref()) {
+            let _ = writer.send(self.committed);
         }
     }
 
@@ -139,10 +287,10 @@ impl HoverHeight {
             && let Some(storage) = &self.storage
         {
             match storage.loaded.try_recv() {
-                Ok(value) => {
+                Ok(saved) => {
                     if !self.edited {
-                        self.value = value;
-                        self.committed = value;
+                        self.preview = saved;
+                        self.committed = saved;
                     }
                     self.loading = false;
                 }
@@ -154,18 +302,19 @@ impl HoverHeight {
             self.region = region;
             self.sent = None;
             self.failed = false;
-            self.value = self.committed;
+            self.preview = self.committed;
         }
         let region = region?;
-        if self.loading || self.pending.is_some() || self.failed || self.sent == Some(self.committed) {
+        let target = self.committed.height(self.posture);
+        if self.loading || self.pending.is_some() || self.failed || self.sent == Some(target) {
             return None;
         }
         let request = REQUEST.fetch_add(1, Ordering::Relaxed);
-        self.pending = Some((request, region, self.committed));
+        self.pending = Some((request, region, target));
         Some(NetCommand::SetHoverHeight {
             region,
             request,
-            value: self.committed,
+            value: target,
         })
     }
 
@@ -179,8 +328,8 @@ impl HoverHeight {
             if success {
                 self.sent = Some(value);
             }
-            // A failed older value must not block a newer user edit.
-            self.failed = !success && self.committed == value;
+            // A failed older value must not block a newer user edit or posture.
+            self.failed = !success && self.committed.height(self.posture) == value;
         }
     }
 }
@@ -248,6 +397,93 @@ mod tests {
     }
 
     #[test]
+    fn sitting_sends_the_posture_height_and_standing_up_restores_the_usual_one() {
+        let mut height = HoverHeight::default();
+        height.preview(0.2);
+        height.commit();
+        let (first, _) = request(&mut height, 1);
+        height.reply(first, 1, true);
+        // Without a separate height, sitting keeps the standing one: nothing to send.
+        height.set_posture(Posture::OnObject);
+        assert_eq!(height.effective(), 0.2);
+        assert!(height.next_update(Some(1)).is_none());
+        height.set_separate(Posture::OnObject, true);
+        assert_eq!(
+            height.seated(Posture::OnObject).height,
+            Some(0.2),
+            "starts from the standing height"
+        );
+        height.preview_seated(Posture::OnObject, -0.15);
+        assert_eq!(height.effective(), -0.15, "drawn while dragging");
+        assert!(height.next_update(Some(1)).is_none(), "sent on release only");
+        height.commit_seated(Posture::OnObject);
+        let (second, value) = request(&mut height, 1);
+        assert_eq!(value, -0.15);
+        height.reply(second, 1, true);
+        // The ground posture has no separate height yet: the standing one.
+        height.set_posture(Posture::OnGround);
+        let (third, value) = request(&mut height, 1);
+        assert_eq!(value, 0.2);
+        height.reply(third, 1, true);
+        height.set_separate(Posture::OnGround, true);
+        height.preview_seated(Posture::OnGround, 0.4);
+        height.commit_seated(Posture::OnGround);
+        let (fourth, value) = request(&mut height, 1);
+        assert_eq!(value, 0.4);
+        height.reply(fourth, 1, true);
+        height.set_posture(Posture::Standing);
+        assert_eq!(height.effective(), 0.2);
+        assert_eq!(request(&mut height, 1).1, 0.2);
+        // A standing edit (manual or automatic) leaves the sitting heights alone.
+        height.preview(0.3);
+        height.commit();
+        assert_eq!(height.seated_value(Posture::OnObject), -0.15);
+        assert_eq!(height.seated_value(Posture::OnGround), 0.4);
+        // Off again: the standing height applies, the separate value is kept.
+        height.set_separate(Posture::OnObject, false);
+        assert_eq!(height.seated_value(Posture::OnObject), 0.3);
+        height.preview_seated(Posture::OnObject, 1.0);
+        assert_eq!(height.seated(Posture::OnObject).height, Some(-0.15), "inactive slider");
+        height.set_separate(Posture::OnObject, true);
+        assert_eq!(height.seated_value(Posture::OnObject), -0.15);
+    }
+
+    #[test]
+    fn a_failed_posture_height_does_not_block_the_next_posture() {
+        let mut height = HoverHeight::default();
+        height.set_separate(Posture::OnGround, true);
+        height.preview_seated(Posture::OnGround, 0.5);
+        height.commit_seated(Posture::OnGround);
+        let (first, _) = request(&mut height, 1);
+        height.reply(first, 1, true);
+        height.set_posture(Posture::OnGround);
+        let (second, value) = request(&mut height, 1);
+        assert_eq!(value, 0.5);
+        height.set_posture(Posture::Standing); // stood up while the write was in flight
+        height.reply(second, 1, false);
+        assert!(!height.failed);
+        assert!(height.next_update(Some(1)).is_none(), "the simulator kept the standing height");
+        height.set_posture(Posture::OnGround);
+        assert_eq!(request(&mut height, 1).1, 0.5, "sitting again retries");
+    }
+
+    #[test]
+    fn older_files_hold_only_the_standing_height() {
+        assert_eq!(
+            Saved::parse(b"0.25"),
+            Some(Saved {
+                standing: 0.25,
+                ..Saved::default()
+            })
+        );
+        let saved = Saved::parse(br#"{"standing":9,"on_ground":{"separate":true,"height":-0.1}}"#).unwrap();
+        assert_eq!(saved.standing, MAX);
+        assert_eq!(saved.on_object, SeatedHeight::default());
+        assert_eq!(saved.height(Posture::OnGround), -0.1);
+        assert_eq!(Saved::parse(b"garbage"), None);
+    }
+
+    #[test]
     fn persisted_heights_are_per_account_and_the_latest_commit_survives_restart() {
         let root = std::env::temp_dir().join(format!("aurora-hover-{}", uuid::Uuid::new_v4()));
         let path = root.join("first").join(FILE);
@@ -256,17 +492,24 @@ mod tests {
         height.commit();
         height.preview(-0.135);
         height.commit();
+        height.set_separate(Posture::OnObject, true);
+        height.preview_seated(Posture::OnObject, 0.07);
+        height.commit_seated(Posture::OnObject);
         drop(height); // drains the ordered writer
-        assert_eq!(serde_json::from_slice::<f32>(&std::fs::read(&path).unwrap()).unwrap(), -0.135);
+        let saved = Saved::parse(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.standing, -0.135);
+        assert_eq!(saved.height(Posture::OnObject), 0.07);
         let mut reloaded = HoverHeight::load(path);
+        reloaded.set_posture(Posture::OnObject);
         for _ in 0..1000 {
             if let Some(NetCommand::SetHoverHeight { value, .. }) = reloaded.next_update(Some(1)) {
-                assert_eq!(value, -0.135);
+                assert_eq!(value, 0.07);
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert!(!reloaded.loading);
+        assert_eq!(reloaded.value(), -0.135);
         assert!(!root.join("second").join(FILE).exists());
         drop(reloaded);
         std::fs::remove_dir_all(root).unwrap();

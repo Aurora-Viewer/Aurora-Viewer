@@ -1,7 +1,7 @@
 //! LLFloaterHoverHeight (Firestorm llfloaterhoverheight.cpp, LGPL 2.1).
 use super::widgets::{self, ActionKind, Floater};
 use crate::theme::Palette;
-use crate::world::hover_height::{self, HoverHeight};
+use crate::world::hover_height::{self, HoverHeight, Posture};
 
 pub struct HoverHeightOptions<'a> {
     pub camera: &'a mut bool,
@@ -16,6 +16,13 @@ pub struct HoverHeightUi {
     pub open: bool,
     editing: bool,
     offset_editing: bool,
+    /// 0 standing, 1 sitting on an object, 2 sitting on the ground.
+    tab: usize,
+    /// The avatar's posture when the tab last followed it.
+    followed: Option<Posture>,
+    seated_editing: Option<Posture>,
+    #[cfg(test)]
+    seated_rects: Vec<egui::Rect>,
     #[cfg(test)]
     offset_rect: Option<egui::Rect>,
     #[cfg(test)]
@@ -53,95 +60,124 @@ impl HoverHeightUi {
             "hover_height",
             aurora_i18n::tr!("ui-context-hover-height"),
             egui::pos2(480.0, 100.0),
-            egui::vec2(440.0, if neutral_pose_test.is_some() { 332.0 } else { 296.0 }),
+            egui::vec2(440.0, if neutral_pose_test.is_some() { 368.0 } else { 332.0 }),
         )
         .fixed()
         .show(ctx, p, &mut self.open, |ui| {
-            ui.add_enabled_ui(enabled, |ui| {
-                ui.scope(|ui| {
-                    if *automatic {
-                        ui.set_opacity(0.72); // visually secondary, still interactive
-                    }
-                    let mut value = height.value();
+            // Sitting down or standing up shows the height that now applies.
+            let posture = height.posture();
+            if self.followed != Some(posture) {
+                self.followed = Some(posture);
+                self.tab = match posture {
+                    Posture::Standing => 0,
+                    Posture::OnObject => 1,
+                    Posture::OnGround => 2,
+                };
+            }
+            widgets::stretched_tabs(
+                ui,
+                p,
+                &mut self.tab,
+                &[
+                    (aurora_i18n::tr!("hover-height-standing"), true),
+                    (aurora_i18n::tr!("hover-height-on-object"), true),
+                    (aurora_i18n::tr!("hover-height-on-ground"), true),
+                ],
+            );
+            if self.tab != 0 {
+                let posture = if self.tab == 1 { Posture::OnObject } else { Posture::OnGround };
+                let _rects = seated_tab(ui, p, height, enabled, posture, &mut self.seated_editing);
+                #[cfg(test)]
+                {
+                    self.seated_rects = _rects.to_vec();
+                }
+            } else {
+                ui.add_enabled_ui(enabled, |ui| {
+                    ui.scope(|ui| {
+                        if *automatic {
+                            ui.set_opacity(0.72); // visually secondary, still interactive
+                        }
+                        let mut value = height.value();
+                        ui.spacing_mut().slider_width = 260.0;
+                        let response = widgets::height_slider(ui, p, &mut value, hover_height::MIN..=hover_height::MAX, *automatic)
+                            .on_hover_text(aurora_i18n::tr!("hover-height-manual-tip"));
+                        #[cfg(test)]
+                        {
+                            self.manual_rect = Some(response.rect);
+                            self.button_rects.clear();
+                        }
+                        if response.changed() {
+                            preferences_changed |= std::mem::replace(automatic, false);
+                            self.offset_editing = false;
+                            height.preview(value);
+                            self.editing = true;
+                        }
+                        ui.horizontal(|ui| {
+                            let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
+                            for (icon, label, value) in [
+                                ("minus", aurora_i18n::tr!("hover-height-lower"), height.value() - step),
+                                ("restore", aurora_i18n::tr!("common-reset"), 0.0),
+                                ("plus", aurora_i18n::tr!("hover-height-raise"), height.value() + step),
+                            ] {
+                                let response = widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0));
+                                #[cfg(test)]
+                                {
+                                    self.button_rects.push(response.rect);
+                                }
+                                if response.clicked() {
+                                    preferences_changed |= std::mem::replace(automatic, false);
+                                    self.offset_editing = false;
+                                    height.preview(value);
+                                    height.commit();
+                                }
+                            }
+                        });
+                    });
+                });
+                widgets::divider(ui, p);
+                preferences_changed |= widgets::switch_labeled(ui, p, automatic, aurora_i18n::tr!("hover-height-automatic")).changed();
+                ui.add_enabled_ui(*automatic, |ui| {
                     ui.spacing_mut().slider_width = 260.0;
-                    let response = widgets::height_slider(ui, p, &mut value, hover_height::MIN..=hover_height::MAX, *automatic)
-                        .on_hover_text(aurora_i18n::tr!("hover-height-manual-tip"));
+                    ui.label(aurora_i18n::tr!("hover-height-auto-offset"))
+                        .on_hover_text(aurora_i18n::tr!("hover-height-auto-offset-tip"));
+                    let response = widgets::height_slider(ui, p, offset, hover_height::MIN..=hover_height::MAX, !*automatic);
                     #[cfg(test)]
                     {
-                        self.manual_rect = Some(response.rect);
-                        self.button_rects.clear();
+                        self.offset_rect = Some(response.rect);
                     }
                     if response.changed() {
-                        preferences_changed |= std::mem::replace(automatic, false);
-                        self.offset_editing = false;
-                        height.preview(value);
-                        self.editing = true;
+                        if enabled && let Some(base) = automatic_base {
+                            height.preview(base + *offset);
+                        }
+                        self.offset_editing = true;
                     }
+                    #[cfg(test)]
+                    self.auto_button_rects.clear();
                     ui.horizontal(|ui| {
                         let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
                         for (icon, label, value) in [
-                            ("minus", aurora_i18n::tr!("hover-height-lower"), height.value() - step),
+                            ("minus", aurora_i18n::tr!("hover-height-lower"), *offset - step),
                             ("restore", aurora_i18n::tr!("common-reset"), 0.0),
-                            ("plus", aurora_i18n::tr!("hover-height-raise"), height.value() + step),
+                            ("plus", aurora_i18n::tr!("hover-height-raise"), *offset + step),
                         ] {
                             let response = widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0));
                             #[cfg(test)]
+                            self.auto_button_rects.push(response.rect);
+                            if response.clicked()
+                                && let Some(value) = hover_height::bounded(value)
                             {
-                                self.button_rects.push(response.rect);
-                            }
-                            if response.clicked() {
-                                preferences_changed |= std::mem::replace(automatic, false);
+                                *offset = value;
                                 self.offset_editing = false;
-                                height.preview(value);
-                                height.commit();
+                                preferences_changed = true;
+                                if enabled && let Some(base) = automatic_base {
+                                    height.preview(base + *offset);
+                                    height.commit();
+                                }
                             }
                         }
                     });
                 });
-            });
-            widgets::divider(ui, p);
-            preferences_changed |= widgets::switch_labeled(ui, p, automatic, aurora_i18n::tr!("hover-height-automatic")).changed();
-            ui.add_enabled_ui(*automatic, |ui| {
-                ui.spacing_mut().slider_width = 260.0;
-                ui.label(aurora_i18n::tr!("hover-height-auto-offset"))
-                    .on_hover_text(aurora_i18n::tr!("hover-height-auto-offset-tip"));
-                let response = widgets::height_slider(ui, p, offset, hover_height::MIN..=hover_height::MAX, !*automatic);
-                #[cfg(test)]
-                {
-                    self.offset_rect = Some(response.rect);
-                }
-                if response.changed() {
-                    if enabled && let Some(base) = automatic_base {
-                        height.preview(base + *offset);
-                    }
-                    self.offset_editing = true;
-                }
-                #[cfg(test)]
-                self.auto_button_rects.clear();
-                ui.horizontal(|ui| {
-                    let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
-                    for (icon, label, value) in [
-                        ("minus", aurora_i18n::tr!("hover-height-lower"), *offset - step),
-                        ("restore", aurora_i18n::tr!("common-reset"), 0.0),
-                        ("plus", aurora_i18n::tr!("hover-height-raise"), *offset + step),
-                    ] {
-                        let response = widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0));
-                        #[cfg(test)]
-                        self.auto_button_rects.push(response.rect);
-                        if response.clicked()
-                            && let Some(value) = hover_height::bounded(value)
-                        {
-                            *offset = value;
-                            self.offset_editing = false;
-                            preferences_changed = true;
-                            if enabled && let Some(base) = automatic_base {
-                                height.preview(base + *offset);
-                                height.commit();
-                            }
-                        }
-                    }
-                });
-            });
+            }
             widgets::divider(ui, p);
             preferences_changed |= widgets::switch_labeled(ui, p, camera, aurora_i18n::tr!("hover-height-affect-camera")).changed();
             if let Some(neutral) = neutral_pose_test {
@@ -165,6 +201,14 @@ impl HoverHeightUi {
             }
             self.editing = false;
         }
+        if let Some(posture) = self.seated_editing
+            && !ctx.input(|i| i.pointer.any_down())
+        {
+            if enabled {
+                height.commit_seated(posture);
+            }
+            self.seated_editing = None;
+        }
         if self.offset_editing && !ctx.input(|i| i.pointer.any_down()) {
             if enabled && *automatic {
                 height.commit();
@@ -174,6 +218,67 @@ impl HoverHeightUi {
         }
         preferences_changed
     }
+}
+
+/// A sitting posture's tab: its own height, or the standing one. Returns
+/// where its slider and its three buttons are.
+fn seated_tab(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    height: &mut HoverHeight,
+    enabled: bool,
+    posture: Posture,
+    editing: &mut Option<Posture>,
+) -> [egui::Rect; 4] {
+    let mut rects = [egui::Rect::NOTHING; 4];
+    ui.add_enabled_ui(enabled, |ui| {
+        let mut separate = height.seated(posture).separate;
+        let label = if posture == Posture::OnObject {
+            aurora_i18n::tr!("hover-height-separate-on-object")
+        } else {
+            aurora_i18n::tr!("hover-height-separate-on-ground")
+        };
+        if widgets::switch_labeled(ui, p, &mut separate, label)
+            .on_hover_text(aurora_i18n::tr!("hover-height-separate-tip"))
+            .changed()
+        {
+            height.set_separate(posture, separate);
+        }
+        ui.add_enabled_ui(separate, |ui| {
+            let mut value = height.seated_value(posture);
+            ui.spacing_mut().slider_width = 260.0;
+            let response = widgets::height_slider(ui, p, &mut value, hover_height::MIN..=hover_height::MAX, !separate);
+            rects[0] = response.rect;
+            if response.changed() {
+                height.preview_seated(posture, value);
+                *editing = Some(posture);
+            }
+            ui.horizontal(|ui| {
+                let step = ui.input(|i| hover_height::step(i.modifiers.alt, i.modifiers.ctrl || i.modifiers.shift));
+                let value = height.seated_value(posture);
+                for (i, (icon, label, value)) in [
+                    ("minus", aurora_i18n::tr!("hover-height-lower"), value - step),
+                    ("restore", aurora_i18n::tr!("common-reset"), 0.0),
+                    ("plus", aurora_i18n::tr!("hover-height-raise"), value + step),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let response = widgets::action_button(ui, p, icon, label, ActionKind::Flat, egui::vec2(0.0, 26.0));
+                    rects[i + 1] = response.rect;
+                    if response.clicked() {
+                        *editing = None;
+                        height.preview_seated(posture, value);
+                        height.commit_seated(posture);
+                    }
+                }
+            });
+        });
+        if !separate {
+            ui.label(egui::RichText::new(aurora_i18n::tr!("hover-height-follows-standing")).color(p.muted));
+        }
+    });
+    rects
 }
 
 #[cfg(test)]
@@ -247,6 +352,42 @@ mod tests {
             pressed,
             modifiers: egui::Modifiers::default(),
         }
+    }
+
+    #[test]
+    fn sitting_shows_its_tab_and_its_slider_saves_on_release_without_touching_standing() {
+        let mut f = Fixture::new();
+        f.height.set_posture(Posture::OnGround);
+        for _ in 0..3 {
+            f.frame(Vec::new());
+        }
+        assert_eq!(f.panel.tab, 2, "the tab follows the posture");
+        let slider = f.panel.seated_rects[0];
+        let point = egui::pos2(slider.left() + 180.0, slider.center().y);
+        f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]);
+        f.frame(vec![button(point, false)]);
+        assert_eq!(f.height.seated(Posture::OnGround), Default::default(), "inactive until switched on");
+        f.height.set_separate(Posture::OnGround, true);
+        f.frame(Vec::new());
+        f.frame(vec![egui::Event::PointerMoved(point), button(point, true)]);
+        let dragged = f.height.effective();
+        assert_ne!(dragged, 0.2);
+        assert!(f.height.next_update(Some(1)).is_none(), "previews until release");
+        assert!(!f.frame(vec![button(point, false)]), "not a viewer setting");
+        let Some(NetCommand::SetHoverHeight { request, value, .. }) = f.height.next_update(Some(1)) else {
+            panic!("seated commit");
+        };
+        assert_eq!(value, dragged);
+        f.height.reply(request, 1, true);
+        assert_eq!(f.height.value(), 0.2);
+        assert!(f.automatic, "a sitting height leaves automatic mode alone");
+        let reset = f.panel.seated_rects[2].center();
+        f.frame(vec![egui::Event::PointerMoved(reset), button(reset, true)]);
+        f.frame(vec![button(reset, false)]);
+        assert_eq!(f.height.seated_value(Posture::OnGround), 0.0);
+        f.height.set_posture(Posture::Standing);
+        f.frame(Vec::new());
+        assert_eq!(f.panel.tab, 0);
     }
 
     #[test]
