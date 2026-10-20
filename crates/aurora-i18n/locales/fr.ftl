@@ -6941,8 +6941,8 @@ workspace-land-actions = Actions sur la parcelle
 workspace-outfit-selection = Sélectionnez une tenue
 workspace-outfit-items = { $count } éléments dans cette tenue
 
-ui-inventory-received-purchases = Achats reçus
-ui-inventory-no-received-purchases = Aucun achat reçu pour le moment.
+ui-inventory-received-purchases = Éléments reçus
+ui-inventory-no-received-purchases = Aucun élément reçu pour le moment.
 import-local-settings = Réglages de chargement des meshes
 import-local-clear = Retirer de la sélection
 import-local-rez = Placer un prim pour cet aperçu
@@ -9774,3 +9774,13 @@ ao-category-ground = Au sol
 ao-category-jumping = Sauts
 ao-category-flight = Vol
 ao-category-water = Nage
+
+# Experimental received inventory filing.
+received-filing-title = Éléments reçus
+received-filing-enabled = Classer les nouveaux envois par expéditeur
+received-filing-help = Range les nouveaux éléments et dossiers dans #Aurora/Received items/<legacy name>. Les envois par un objet utilisent le nom de son propriétaire. Les envois hors ligne sont rangés à la connexion. Les éléments existants restent à leur place.
+received-filing-warning = Fonctionnalité expérimentale — désactivée par défaut. Déplace automatiquement les nouveaux envois dans votre inventaire.
+received-marketplace-folder = MarketPlace
+received-filing-demo-gift = Cadeau de démonstration
+received-filing-demo-photo = Photo de démonstration
+received-filing-demo-object = Cadeau envoyé par un objet scripté

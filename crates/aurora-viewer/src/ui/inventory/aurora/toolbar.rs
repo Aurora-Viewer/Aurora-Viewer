@@ -93,9 +93,11 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
 
 /// The purchases of Received Items not shown yet this session.
 pub(super) fn unseen_received(inv: &Inventory, st: &InventoryUi) -> usize {
-    rules::system(inv, 50).and_then(|id| inv.folders.get(&id)).map_or(0, |f| {
-        f.children.iter().filter(|id| !st.received_seen.contains(id)).count() + f.items.len()
-    })
+    crate::world::received_items::roots(inv)
+        .iter()
+        .filter_map(|id| inv.folders.get(id))
+        .map(|f| f.children.iter().filter(|id| !st.received_seen.contains(id)).count() + f.items.len())
+        .sum()
 }
 
 /// The hint of the search field: what it searches.

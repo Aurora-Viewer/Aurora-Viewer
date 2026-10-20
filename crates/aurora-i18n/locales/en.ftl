@@ -6948,8 +6948,8 @@ workspace-land-actions = Parcel actions
 workspace-outfit-selection = Select an outfit
 workspace-outfit-items = { $count } items in this outfit
 
-ui-inventory-received-purchases = Received purchases
-ui-inventory-no-received-purchases = No received purchases yet.
+ui-inventory-received-purchases = Received items
+ui-inventory-no-received-purchases = No received items yet.
 import-local-settings = Mesh loading settings
 import-local-clear = Remove from selection
 import-local-rez = Place a prim for this preview
@@ -9778,3 +9778,13 @@ ao-category-ground = Ground
 ao-category-jumping = Jumping
 ao-category-flight = Flying
 ao-category-water = Swimming
+
+# Experimental received inventory filing.
+received-filing-title = Received items
+received-filing-enabled = Sort new deliveries by sender
+received-filing-help = File new items and folders in #Aurora/Received items/<legacy name>. Scripted deliveries use the object's owner. Offline deliveries are filed after login. Existing items stay where they are.
+received-filing-warning = Experimental feature — disabled by default. Automatically moves new deliveries in your inventory.
+received-marketplace-folder = MarketPlace
+received-filing-demo-gift = Example gift
+received-filing-demo-photo = Example photo
+received-filing-demo-object = Gift from a scripted object

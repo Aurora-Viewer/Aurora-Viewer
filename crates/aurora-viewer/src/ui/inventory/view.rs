@@ -11,6 +11,99 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+#[test]
+fn received_filing_view_pins_marketplace_and_scopes_sender_search_without_server_moves() {
+    use aurora_net::inventory::{InvFolder, InvItem};
+    let agent = Uuid::from_u128(1);
+    let mut inv = Inventory {
+        root: Uuid::from_u128(90_000),
+        ..Default::default()
+    };
+    inv.created_folders(vec![InvFolder {
+        id: inv.root,
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    crate::world::inventory::demo::seed(&mut inv, agent);
+    crate::world::inventory::demo::seed_received(&mut inv, agent);
+    let inbox = rules::system(&inv, 50).unwrap();
+    let base = Uuid::from_u128(90_001);
+    let received = Uuid::from_u128(90_002);
+    let sender = Uuid::from_u128(90_003);
+    let gift = Uuid::from_u128(90_004);
+    inv.created_folders(vec![
+        InvFolder {
+            id: base,
+            parent: inv.root,
+            name: "#Aurora".into(),
+            type_default: -1,
+            ..Default::default()
+        },
+        InvFolder {
+            id: received,
+            parent: base,
+            name: "Received items".into(),
+            type_default: -1,
+            ..Default::default()
+        },
+        InvFolder {
+            id: sender,
+            parent: received,
+            name: "Aaa Resident".into(),
+            type_default: -1,
+            ..Default::default()
+        },
+    ]);
+    inv.add_items(vec![InvItem {
+        id: gift,
+        parent: sender,
+        name: "Unique received texture".into(),
+        asset_type: 0,
+        inv_type: 0,
+        ..Default::default()
+    }]);
+    for by_date in [false, true] {
+        for system_first in [false, true] {
+            let prefs = InventoryPreferences {
+                sort: Sort {
+                    by_date,
+                    folders_by_name: !by_date,
+                    system_first,
+                },
+                ..Default::default()
+            };
+            for query in ["", "Unique received texture", "no matching gift"] {
+                let mut view = ViewCache::default();
+                view.search(
+                    &inv,
+                    inv.root,
+                    query,
+                    &prefs,
+                    &Filters::default(),
+                    super::RECEIVED_TAB,
+                    None,
+                    &Facts::default(),
+                    agent,
+                    now(),
+                );
+                let mut tree = TreeState::default();
+                tree.prepare(&view, inv.root, super::RECEIVED_TAB, false);
+                assert_eq!(tree.rows[0].id, inbox, "Marketplace stays first for every sort and search");
+                assert!(!tree.order.contains(&base));
+                assert!(!tree.order.contains(&received));
+                assert!(!tree.order.contains(&Uuid::from_u128(8100)), "ordinary inventory is excluded");
+                assert_eq!(tree.order.contains(&gift), query != "no matching gift");
+                if query != "no matching gift" {
+                    assert!(tree.order.contains(&sender));
+                }
+                assert_eq!(inv.folders[&inbox].info.parent, inv.root);
+                assert_eq!(inv.folders[&sender].info.parent, received);
+            }
+        }
+    }
+}
+
 pub fn types() -> &'static Vec<(i32, &'static str)> {
     static TABLE: aurora_i18n::Localized<Vec<(i32, &'static str)>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
@@ -449,7 +542,16 @@ impl ViewCache {
         }
         // The scope by folder, once (`rules::under` for each entry walked its
         // ancestors again); an item is where its folder is.
-        let scope = if root == inv.root {
+        let received = tab == super::RECEIVED_TAB;
+        let received_roots = if received {
+            crate::world::received_items::roots(inv)
+        } else {
+            Vec::new()
+        };
+        let received_root = received.then(|| crate::world::received_items::root(inv)).flatten();
+        let scope = if received {
+            within(inv, &received_roots)
+        } else if root == inv.root {
             within(inv, &[inv.root, inv.lib_root])
         } else {
             within(inv, &[root])
@@ -462,6 +564,9 @@ impl ViewCache {
                     return false;
                 }
                 if e.id == root || e.id == inv.lib_root {
+                    return false;
+                }
+                if received && Some(e.id) == received_root {
                     return false;
                 }
                 if (!query.trash && e.trash) || (!query.library && e.library) || (!query.outfits && e.outfit) {
@@ -535,6 +640,9 @@ impl ViewCache {
             })
             .map(|e| e.id)
             .collect();
+        // Keep the Marketplace container even when it is empty or filtered.
+        // These are presentation parents only; server membership stays intact.
+        let inbox = received.then(|| rules::system(inv, 50)).flatten();
         // Every matching item retains its real ancestors. Folder visibility
         // is independent of whether the folder itself passes item filters.
         // A walk stops at an ancestor already in: the ones above it are too.
@@ -542,6 +650,9 @@ impl ViewCache {
         for id in &self.results {
             let mut parent = *id;
             while parent != root && included.insert(parent) {
+                if received && received_roots.contains(&parent) {
+                    break;
+                }
                 if parent == inv.lib_root && root == inv.root {
                     break;
                 }
@@ -554,6 +665,27 @@ impl ViewCache {
             let children: Vec<_> = children.iter().filter(|id| included.contains(id)).copied().collect();
             if !children.is_empty() {
                 self.result_children.insert(*parent, children);
+            }
+        }
+        if received {
+            let mut top: Vec<Uuid> = inbox.into_iter().collect();
+            if let Some(received_root) = received_root {
+                top.extend(
+                    self.children
+                        .get(&received_root)
+                        .into_iter()
+                        .flatten()
+                        .filter(|id| included.contains(id))
+                        .copied(),
+                );
+            }
+            if !top.is_empty() {
+                self.result_children.insert(root, top);
+                if let Some(inbox) = inbox
+                    && !self.results.contains(&inbox)
+                {
+                    self.results.push(inbox);
+                }
             }
         }
         self.revision = self.revision.wrapping_add(1);

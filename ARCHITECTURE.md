@@ -1754,3 +1754,5 @@ surface hold threshold; open-water deliberate flight remains available. Water
 jumps retain an explicit nonflying end state, and an old pre-swim flight flag is
 never restored onto measured support. Native jump signals refresh the early
 dive-gesture window so server delay does not consume it before the jump begins.
+
+`world/received_items.rs` files only newly observed inventory offers when the experimental preference is enabled. It waits for legacy owner names and acknowledged ordinary folders below `#Aurora/Received items`, moves direct offers by their delivered item/category ID, and supplies the exact destination in scripted-offer acceptance buckets. Refusals cancel pending moves; disabling or failed folder/name resolution preserves scripted acceptance through its original system destination. The Received inventory view joins FT_INBOX (presented as the first MarketPlace folder) and the sender-folder subtree with view-only parents, preserving server Marketplace membership.

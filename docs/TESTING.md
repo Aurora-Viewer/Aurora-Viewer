@@ -6808,3 +6808,7 @@ screen-only/half/quarter exterior are Water 0.151/0.155/0.128 ms and total GPU
 1.16/1.08/1.17 ms, all at the 60 FPS cap. CPU parameter work is
 0.10/0.09/0.10 ms. Shared desktop load varies; these local simple-scene
 observations do not establish a general speedup or a busy-grid cost.
+
+### Received inventory filing
+
+`AURORA_DEMO_INVENTORY=received-filing` exercises new direct deliveries, an offline delivery, an intact folder and an accepted scripted gift below their sender/owner legacy names. `aurora-received-filing` shows the same fixture in Aurora's wide inventory. Both use the real filing state machine and synthetic inventory acknowledgements; at frame 700 the Received tree expands for capture. Use `AURORA_CAPTURE_FRAMES=900`. Preferences > Aurora (`AURORA_DEMO_OPTIONS=13`) shows the OFF-by-default switch and its experimental warning. No grid access or old-inventory classification. On the grid, the human checks enabled/disabled direct and object-owner deliveries, offline retrieval, rejection, folder contents, and Marketplace purchases above the sender folders.

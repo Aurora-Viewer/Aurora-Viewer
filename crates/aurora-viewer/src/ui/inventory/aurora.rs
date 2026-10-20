@@ -105,7 +105,9 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         let size = match mode {
             "aurora-medium" => egui::vec2(800.0, 640.0),
-            "aurora-wide" | "aurora-rights" | "aurora-received-sort" | "aurora-received-sort-name" => egui::vec2(WIDE_SIZE, 720.0),
+            "aurora-wide" | "aurora-rights" | "aurora-received-filing" | "aurora-received-sort" | "aurora-received-sort-name" => {
+                egui::vec2(WIDE_SIZE, 720.0)
+            }
             _ => egui::vec2(DEFAULT_SIZE.x, 640.0),
         };
         if let Some(wide) = mode.strip_prefix("aurora-folder-window") {
@@ -202,7 +204,11 @@ impl Counts {
                 .and_then(|id| inv.folders.get(&id))
                 .map_or(0, |f| f.items.len() + f.children.len())
         };
-        self.received = held(50);
+        self.received = crate::world::received_items::roots(inv)
+            .iter()
+            .filter_map(|id| inv.folders.get(id))
+            .map(|f| f.items.len() + f.children.len())
+            .sum();
         self.trash = held(14);
     }
 }
@@ -333,8 +339,9 @@ fn compact(
         )
     });
     let zone = ui.interact(out.inner_rect, ui.id().with("aurora_list_zone"), Sense::hover());
-    task_drop::target(ui, p, &zone, inv, root, prefs, actions);
-    drag::target(ui, p, &zone, inv, root, st, prefs, facts, actions);
+    let target = list_destination(st, root);
+    task_drop::target(ui, p, &zone, inv, target, prefs, actions);
+    drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
     in_rect(ui, foot, "aurora_inventory_foot", |ui| {
         if let Some((text, color)) = message {
             toolbar::message_line(ui, st, &text, color);
@@ -342,7 +349,7 @@ fn compact(
         details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
     });
     ui.advance_cursor_after_rect(room);
-    clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
+    clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
 }
 
 /// The medium and wide window: the column at the left, the explorer, and
@@ -428,7 +435,7 @@ fn explorer_list(
     let (room, list_rect, foot) = list_and_foot(ui, foot_h);
     let list_h = list_rect.height();
     let explore = !filtered && !root.is_nil();
-    let target = if explore { st.browse } else { root };
+    let target = if explore { st.browse } else { list_destination(st, root) };
     let out = if explore {
         // A revealed entry (Find original, a new item) shows in its folder;
         // a folder to show opened is gone into.

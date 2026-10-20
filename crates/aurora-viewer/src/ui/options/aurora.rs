@@ -450,9 +450,38 @@ fn animation_clock_choice(ui: &mut egui::Ui, p: &Palette, synchronized: &mut boo
     changed
 }
 
+#[test]
+fn received_filing_stays_opt_in_when_appearance_changes_and_resets_with_aurora() {
+    let mut settings = Settings::default();
+    set_all(&mut settings, Look::Aurora);
+    assert!(!settings.sort_received_items);
+    settings.sort_received_items = true;
+    settings.received_items_since = 123;
+    set_all(&mut settings, Look::Firestorm);
+    assert!(settings.sort_received_items);
+    super::sections::reset(super::TAB_AURORA, &mut settings);
+    assert!(!settings.sort_received_items);
+    assert_eq!(settings.received_items_since, 0);
+}
+
 /// `reset`: "Reset this section…" was clicked in the page's head.
 pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     let mut c = hero(ui, p, s, reset);
+    group(ui, p, aurora_i18n::tr!("received-filing-title"), |ui| {
+        let changed = super::row_experimental(
+            ui,
+            p,
+            aurora_i18n::tr!("received-filing-enabled"),
+            aurora_i18n::tr!("received-filing-help"),
+            |ui| toggle(ui, p, &mut s.sort_received_items),
+        );
+        if changed {
+            s.received_items_since = crate::ui::inventory::view::now();
+        }
+        c |= changed;
+        ui.label(egui::RichText::new(aurora_i18n::tr!("received-filing-warning")).color(p.warn));
+    });
+    ui.add_space(14.0);
     c |= water_page(ui, p, s);
     ui.add_space(14.0);
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
