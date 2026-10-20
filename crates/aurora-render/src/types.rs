@@ -969,6 +969,9 @@ pub struct FrameParams {
     pub fog_color: Vec3,
     pub fog_density: f32,
     pub exposure: f32,
+    /// The automatic exposure held where it is (the photo viewfinder's
+    /// AE-L), as for a photo.
+    pub exposure_lock: bool,
     /// Share of the tone mapped color over the exposed linear one on skies
     /// that are not classic (RenderTonemapMix, 0.7 in the Legacy Viewer).
     pub tonemap_mix: f32,
@@ -1026,6 +1029,9 @@ pub struct DepthOfField {
     pub samples: u32,
     /// Debug: near field red, far field blue, sharp grey.
     pub debug: bool,
+    /// Focus peaking (the photo viewfinder's manual focus): the sharp
+    /// edges painted this linear colour.
+    pub peaking: Option<[f32; 3]>,
 }
 
 /// Views shown instead of the image, and checks painted over it

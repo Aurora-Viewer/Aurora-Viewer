@@ -174,6 +174,11 @@ pub struct Renderer {
     /// The answer to the last photo: its image (width, height, RGBA8), or
     /// None when it could not be drawn.
     pub snapshot: Option<Option<(u32, u32, Vec<u8>)>>,
+    /// Count the luminance histogram of the next frame shown at that
+    /// exposure (asked each frame the photo viewfinder shows it).
+    pub histogram_request: Option<f32>,
+    /// The last histogram counted, from black to white.
+    pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
 }
 
 impl Renderer {
@@ -396,6 +401,8 @@ impl Renderer {
             captured: None,
             snapshot_request: None,
             snapshot: None,
+            histogram_request: None,
+            histogram: None,
         })
     }
 
@@ -734,6 +741,9 @@ impl Renderer {
     /// Take in what a frame gave back.
     fn apply(&mut self, mut r: FrameResult) {
         self.hover_latest = r.hover;
+        if let Some(h) = r.histogram.take() {
+            self.histogram = Some(h);
+        }
         self.pick_answers.append(&mut r.picks);
         self.drawn_answers.append(&mut r.drawn);
         // (the answer of a click given up while it was in flight is never
@@ -842,6 +852,7 @@ impl Renderer {
             picks: std::mem::take(&mut self.pick_requests),
             drawn: std::mem::take(&mut self.drawn_requests),
             capture,
+            histogram: self.histogram_request.take(),
         };
         self.frames += 1;
         let built = t0.elapsed();

@@ -22,7 +22,7 @@ pub const CLASSIC_WINDOW: &str = "photo_classic";
 const CLASSIC_PREVIEW: f32 = 420.0;
 const WIDTH: f32 = 340.0;
 /// Focal lengths of the slider and its presets (mm, full frame).
-const FOCAL_RANGE: std::ops::RangeInclusive<f32> = 10.0..=135.0;
+pub(crate) const FOCAL_RANGE: std::ops::RangeInclusive<f32> = 10.0..=135.0;
 const FOCAL_PRESETS: [f32; 5] = [24.0, 35.0, 50.0, 85.0, 135.0];
 
 #[derive(Default)]
@@ -212,6 +212,36 @@ impl SnapshotUi {
         }
     }
 
+    /// The viewfinder's drawer: every setting of the panel, its shutter,
+    /// progress, last outcome and latest photos, without the preview (the
+    /// viewfinder is one); the settings scroll in `room` points.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drawer(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        s: &mut Settings,
+        fov: &mut f32,
+        default_fov: f32,
+        view: &View,
+        room: f32,
+        out: &mut Vec<Action>,
+    ) {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let before = s.clone();
+        let light_before = self.light;
+        let freeze = self.freeze;
+        egui::ScrollArea::vertical()
+            .id_salt("photo_drawer")
+            .max_height(room)
+            .show(ui, |ui| self.settings(ui, p, s, fov, default_fov, view, out));
+        self.actions(ui, p, view, out);
+        changed(s, &before, out);
+        if (self.light != light_before || self.freeze != freeze) && !out.contains(&Action::Changed) {
+            out.push(Action::Changed);
+        }
+    }
+
     /// The shutter (or the destination's button), the progress or the last
     /// outcome, and the latest photos.
     fn actions(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
@@ -372,7 +402,7 @@ impl SnapshotUi {
             for a in Aspect::ALL {
                 let label = a.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"));
                 if chip(ui, p, label, None, s.aspect == a, true).clicked() {
-                    s.aspect = a;
+                    s.set_aspect(a, view.window);
                 }
             }
         });
@@ -1029,7 +1059,7 @@ fn guide_face(g: Guide) -> (&'static str, &'static str) {
     }
 }
 
-fn guide_lines(painter: &egui::Painter, frame: Rect, guide: Guide, color: Color32) {
+pub(crate) fn guide_lines(painter: &egui::Painter, frame: Rect, guide: Guide, color: Color32) {
     let at = |v: [f32; 2]| Pos2::new(frame.left() + v[0] * frame.width(), frame.top() + v[1] * frame.height());
     for [a, b] in guide.lines() {
         painter.line_segment([at(a), at(b)], Stroke::new(1.0, color));

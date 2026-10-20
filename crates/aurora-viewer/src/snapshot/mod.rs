@@ -14,6 +14,7 @@ pub mod light;
 pub mod profile;
 pub mod quality;
 pub mod save;
+pub mod viewfinder;
 
 use glam::{Mat4, Vec4};
 use serde::{Deserialize, Serialize};
@@ -238,13 +239,16 @@ pub struct Settings {
     /// "Photo quality": the graphics raised while the window is open
     /// (`quality`), the user's settings back once it closes.
     pub quality: bool,
+    /// The viewfinder's display, AF area, peaking and beep.
+    pub viewfinder: viewfinder::Prefs,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             aspect: Aspect::Window,
-            resolution: Resolution::Window,
+            // 4K: a photo, not a screenshot of the window
+            resolution: Resolution::Uhd,
             custom: [1920, 1080],
             keep_ratio: true,
             format: FileFormat::Png,
@@ -263,6 +267,7 @@ impl Default for Settings {
             profile_location: true,
             dof: Default::default(),
             quality: false,
+            viewfinder: Default::default(),
         }
     }
 }
@@ -285,6 +290,22 @@ impl Settings {
     /// The size of the photo for a window of `window` pixels.
     pub fn size(&self, window: (u32, u32)) -> (u32, u32) {
         photo_size(self.aspect, self.resolution, self.custom, window)
+    }
+
+    /// Choose the proportions: a typed size whose proportions are kept
+    /// takes the new ones, its long side kept (otherwise it stayed as
+    /// typed and the choice changed nothing).
+    pub fn set_aspect(&mut self, aspect: Aspect, window: (u32, u32)) {
+        self.aspect = aspect;
+        if self.resolution == Resolution::Custom && self.keep_ratio {
+            let long = self.custom[0].max(self.custom[1]);
+            let ratio = aspect.ratio((window.0.max(1), window.1.max(1)));
+            self.custom = if ratio >= 1.0 {
+                [long, clamp_side((long as f32 / ratio).round() as u32)]
+            } else {
+                [clamp_side((long as f32 * ratio).round() as u32), long]
+            };
+        }
     }
 
     /// The typed size after one side changed, the other following when the

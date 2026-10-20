@@ -158,6 +158,26 @@ pub(super) struct Snapshots {
     /// The demo's web profile.
     demo_profile: Option<profile::demo::Server>,
     demo: Option<DemoPhoto>,
+    /// The viewfinder's state for the session (`ui::viewfinder`).
+    pub(super) vf: crate::ui::viewfinder::Viewfinder,
+    /// The focus beep, the self-timer's beep and a lens ring's click, made
+    /// on first use.
+    pub(super) beep: Option<aurora_audio::SoundClip>,
+    pub(super) tick: Option<aurora_audio::SoundClip>,
+    pub(super) click: Option<aurora_audio::SoundClip>,
+    /// The self-timer's last beep: (its slot, its beat).
+    pub(super) vf_tick_slot: Option<(i64, u64)>,
+    /// The camera pad rises or lowers the free camera (−1 to 1).
+    pub(super) vf_free_up: f32,
+    /// The field of view before the viewfinder opened: its focal length
+    /// is the photo's, the view gets this back when it closes.
+    pub(super) fov_before: Option<f32>,
+    /// The last photo's card in the viewfinder: what it says, what it
+    /// offers, its thumbnail (made on a worker for the inventory and the
+    /// profile feed).
+    review: Option<(String, crate::ui::viewfinder::Review)>,
+    review_tex: Option<egui::TextureHandle>,
+    review_rx: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
 }
 
 struct DemoPhoto {
@@ -173,14 +193,37 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=dof | full-dof: the window's depth of field on,
     /// f/1.4, focused by hand on the own avatar (3.3 m).
     dof: bool,
-    /// AURORA_DEMO_SNAPSHOT=classic: Firestorm's floater for this run, the
-    /// setting itself left alone.
-    classic: bool,
     /// AURORA_DEMO_SNAPSHOT=quality: the window with its photo quality on.
     quality: bool,
+    /// The photo mode's look for the run (classic, panel, full…,
+    /// viewfinder…), the setting itself left alone.
+    style: Option<crate::settings::PhotoWindowStyle>,
+    /// AURORA_DEMO_SNAPSHOT=viewfinder[-essential|-hidden][-menu|-help|
+    /// -drawer][-mf|-afc][-point][-focus|-shoot]: the viewfinder, its
+    /// display, a panel open, its focus mode, and the own avatar focused
+    /// (then the photo taken) at AURORA_DEMO_SNAPSHOT_FRAME.
+    viewfinder: Option<DemoViewfinder>,
     /// AURORA_DEMO_SNAPSHOT=light: sunset, a brighter exposure, the clouds
     /// still and the worn lights off.
     light: bool,
+}
+
+/// What AURORA_DEMO_SNAPSHOT=viewfinder… shows.
+struct DemoViewfinder {
+    display: crate::snapshot::viewfinder::Display,
+    menu: bool,
+    help: bool,
+    drawer: bool,
+    focus_mode: Option<crate::dof::PhotoFocus>,
+    point: bool,
+    focus: bool,
+    shoot: bool,
+    /// The camera pad, the self-timer (2 s), AE-L, the controls on hover
+    /// or hidden.
+    pad: bool,
+    timer: bool,
+    ael: bool,
+    controls: crate::snapshot::viewfinder::OnScreen,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -227,6 +270,16 @@ impl Default for Snapshots {
             web_auth: Default::default(),
             demo_profile: None,
             demo: None,
+            vf: Default::default(),
+            beep: None,
+            tick: None,
+            click: None,
+            vf_tick_slot: None,
+            vf_free_up: 0.0,
+            fov_before: None,
+            review: None,
+            review_tex: None,
+            review_rx: None,
         }
     }
 }
@@ -348,7 +401,7 @@ impl App {
 
     /// The size of the photo for the chosen destination: the disk's
     /// settings, or the inventory's size before it becomes a texture.
-    fn photo_size(&self, window: (u32, u32)) -> (u32, u32) {
+    pub(super) fn photo_size(&self, window: (u32, u32)) -> (u32, u32) {
         let s = &self.settings.snapshot;
         match self.snapshots.ui.destination {
             Destination::Disk => s.size(window),
@@ -414,6 +467,7 @@ impl App {
             self.snapshots.message = Some((aurora_i18n::tr!("photo-profile-not-ready").to_owned(), true));
             return;
         };
+        self.photo_review_thumb(size, &rgba);
         let caption: String = self.snapshots.ui.caption.chars().take(profile::MAX_CAPTION).collect();
         let add_location = self.settings.snapshot.profile_location;
         let auth = self.snapshots.web_auth.clone();
@@ -619,6 +673,7 @@ impl App {
     /// Scale and encode the texture on a worker; the shutter sounds as the
     /// upload starts, like saveTexture's playSnapshotAnimAndSound.
     fn photo_encode(&mut self, size: (u32, u32), rgba: Vec<u8>, cost: i32) {
+        self.photo_review_thumb(size, &rgba);
         let texture = inventory::texture_size(size);
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -698,6 +753,10 @@ impl App {
                 self.snapshots.message = Some((aurora_i18n::tr!("photo-uploaded").to_owned(), false));
                 self.snapshots.message_item = Some(id);
                 self.snapshots.message_profile = false;
+                self.photo_review_show(
+                    aurora_i18n::tr!("photo-destination-inventory").to_owned(),
+                    crate::ui::viewfinder::Review::Inventory,
+                );
             }
             Err(e) => {
                 log::warn!("photo: upload failed: {e}");
@@ -709,6 +768,7 @@ impl App {
                     upload::Error::Rejected | upload::Error::Refused(_) => aurora_i18n::tr!("photo-upload-refused").to_owned(),
                     other => aurora_i18n::tr!("photo-upload-failed", error = other.to_string()).to_owned(),
                 };
+                self.photo_vf_error(&text);
                 self.snapshots.message = Some((text, true));
                 self.snapshots.message_item = None;
             }
@@ -739,6 +799,10 @@ impl App {
                 log::info!("photo: posted to the profile feed");
                 s.message = Some((aurora_i18n::tr!("photo-profile-posted").to_owned(), false));
                 s.message_profile = true;
+                self.photo_review_show(
+                    aurora_i18n::tr!("photo-destination-profile").to_owned(),
+                    crate::ui::viewfinder::Review::Profile,
+                );
             }
             Err(e) => {
                 log::warn!("photo: not posted to the profile feed: {e}");
@@ -750,6 +814,7 @@ impl App {
                 };
                 s.message = Some((text.to_owned(), true));
                 s.message_profile = false;
+                self.photo_vf_error(text);
             }
         }
     }
@@ -812,6 +877,7 @@ impl App {
             }
         }
         self.photo_profile_poll();
+        let viewfinder = self.viewfinder_on();
         let s = &mut self.snapshots;
         // the save on its worker
         if let Some(r) = s.saving.as_ref().and_then(|saving| saving.poll()) {
@@ -830,7 +896,15 @@ impl App {
                     let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
                     let tex = self.egui_ctx.load_texture("photo_thumb", image, egui::TextureOptions::LINEAR);
                     s.gallery.retain(|(p, _)| *p != saved.path);
-                    s.gallery.insert(0, (saved.path.clone(), Some(tex)));
+                    s.gallery.insert(0, (saved.path.clone(), Some(tex.clone())));
+                    s.review_tex = Some(tex);
+                    s.review = Some((
+                        format!("{} · {name}", aurora_i18n::tr!("photo-destination-disk")),
+                        crate::ui::viewfinder::Review::Disk(saved.path.clone()),
+                    ));
+                    if viewfinder {
+                        s.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
+                    }
                     s.gallery.truncate(gallery::SHOWN);
                     if std::mem::take(&mut s.quiet) {
                         self.world.notifications.push(
@@ -844,7 +918,10 @@ impl App {
                 }
                 Err(e) => {
                     log::warn!("photo: not saved: {e}");
-                    s.message = Some((aurora_i18n::tr!("photo-failed", error = e.as_str()).to_owned(), true));
+                    let text = aurora_i18n::tr!("photo-failed", error = e.as_str()).to_owned();
+                    let now = self.egui_ctx.input(|i| i.time);
+                    s.vf.say(text.clone(), true, now);
+                    s.message = Some((text, true));
                 }
             }
         }
@@ -869,6 +946,14 @@ impl App {
                 let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
                 slot.1 = Some(self.egui_ctx.load_texture("photo_thumb", image, egui::TextureOptions::LINEAR));
             }
+        }
+        // the last photo's thumbnail, made on a worker
+        if let Some(rx) = &s.review_rx
+            && let Ok((w, h, px)) = rx.try_recv()
+        {
+            s.review_rx = None;
+            let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
+            s.review_tex = Some(self.egui_ctx.load_texture("photo_review", image, egui::TextureOptions::LINEAR));
         }
         // the held photo, reduced for the screen
         if let Some(rx) = &s.held_view
@@ -904,9 +989,11 @@ impl App {
             }
         }
         let in_world = self.in_world();
+        let viewfinder = self.viewfinder_on();
         let s = &mut self.snapshots;
-        // the preview: asked, its photo changed, or the camera settled
-        if !self.panels.snapshot || s.held.is_some() {
+        // the preview: asked, its photo changed, or the camera settled (the
+        // viewfinder needs none: it is one)
+        if !self.panels.snapshot || s.held.is_some() || viewfinder {
             return;
         }
         let window = renderer.size();
@@ -1044,9 +1131,110 @@ impl App {
         }
     }
 
-    /// The photo window, the full-frame view or the held photo, in the
-    /// interface of the world.
-    pub(super) fn photo_ui(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, renderer: &Renderer) {
+    /// What the photo is doing, for a progress line: details loading, the
+    /// drawing, the save, the upload.
+    fn photo_busy_line(&self) -> Option<(f32, String)> {
+        let s = &self.snapshots;
+        if let Some(t) = s.detail_wait {
+            let wait = snapshot::quality::DETAIL_WAIT.as_secs_f32();
+            Some((
+                (t.elapsed().as_secs_f32() / wait).min(1.0) * 0.5,
+                aurora_i18n::tr!("photo-quality-loading", count = self.scene.textures.pending_in_view()).to_owned(),
+            ))
+        } else if let Some(saving) = &s.saving {
+            Some((0.5 + 0.5 * saving.fraction(), aurora_i18n::tr!("photo-saving").to_owned()))
+        } else if let Some(upload) = &s.upload {
+            Some(match upload {
+                Upload::Encoding { .. } => (0.6, aurora_i18n::tr!("photo-encoding").to_owned()),
+                Upload::Sent(_) => (0.85, aurora_i18n::tr!("photo-uploading").to_owned()),
+                Upload::Profile { bytes: None, .. } => (0.6, aurora_i18n::tr!("photo-profile-encoding").to_owned()),
+                Upload::Profile { bytes: Some(_), .. } => (0.85, aurora_i18n::tr!("photo-profile-posting").to_owned()),
+            })
+        } else {
+            s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
+                let f = 0.5 * j.next as f32 / j.tiles.len().max(1) as f32;
+                let what = if j.tiles.len() > 1 {
+                    aurora_i18n::tr!("photo-rendering-tiles", tile = j.next + 1, count = j.tiles.len()).to_owned()
+                } else {
+                    aurora_i18n::tr!("photo-rendering").to_owned()
+                };
+                (f, what)
+            })
+        }
+    }
+
+    /// The photo mode's look: Preferences', or the demo's for the run
+    /// (AURORA_DEMO_SNAPSHOT=classic the Legacy floater, viewfinder… the
+    /// viewfinder, any other scenario the panel).
+    pub(super) fn photo_style(&self) -> crate::settings::PhotoWindowStyle {
+        self.snapshots
+            .demo
+            .as_ref()
+            .and_then(|d| d.style)
+            .unwrap_or(self.settings.photo_window)
+    }
+
+    /// The demo's viewfinder steps due this frame: aim at the own avatar's
+    /// face and half-press, then release.
+    pub(super) fn photo_demo_viewfinder(&self) -> (bool, bool) {
+        let Some(d) = self.snapshots.demo.as_ref() else {
+            return (false, false);
+        };
+        let Some(v) = d.viewfinder.as_ref() else {
+            return (false, false);
+        };
+        (
+            (v.focus || v.shoot) && self.frame_count == d.frame,
+            v.shoot && self.frame_count == d.frame + 2,
+        )
+    }
+
+    /// The last photo's card of the viewfinder: its thumbnail, what it
+    /// says, what it offers.
+    pub(super) fn photo_review(&self) -> Option<(egui::TextureHandle, String, crate::ui::viewfinder::Review)> {
+        let s = &self.snapshots;
+        let (label, kind) = s.review.clone()?;
+        Some((s.review_tex.clone()?, label, kind))
+    }
+
+    /// The card shows a photo sent to the inventory or the profile feed.
+    fn photo_review_show(&mut self, label: String, kind: crate::ui::viewfinder::Review) {
+        self.snapshots.review = Some((label, kind));
+        if self.viewfinder_on() {
+            self.snapshots.vf.review_until = self.egui_ctx.input(|i| i.time) + 4.8;
+        }
+    }
+
+    /// The card's thumbnail of a photo that is not saved to disk, reduced
+    /// on a worker.
+    fn photo_review_thumb(&mut self, size: (u32, u32), rgba: &[u8]) {
+        if !self.viewfinder_on() {
+            return;
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let rgba = rgba.to_vec();
+        std::thread::spawn(move || {
+            let _ = tx.send(save::downscale(size.0, size.1, &rgba, 300));
+        });
+        self.snapshots.review_tex = None;
+        self.snapshots.review_rx = Some(rx);
+    }
+
+    /// An upload's error, on the viewfinder's line too.
+    fn photo_vf_error(&mut self, text: &str) {
+        let now = self.egui_ctx.input(|i| i.time);
+        self.snapshots.vf.say(text.to_owned(), true, now);
+    }
+
+    /// The photo window, the viewfinder, the full-frame view or the held
+    /// photo, in the interface of the world.
+    pub(super) fn photo_ui(
+        &mut self,
+        ctx: &egui::Context,
+        p: &crate::theme::Palette,
+        projector: &crate::ui::hud::Projector,
+        renderer: &Renderer,
+    ) {
         // a photo with the interface does not show the photo window
         if self.snapshots.capturing.is_some_and(|c| c.interface) {
             return;
@@ -1054,7 +1242,41 @@ impl App {
         let window = renderer.size();
         let photo = self.photo_size(window);
         let mut actions = self.snapshots.ui.dialogs(ctx, p, self.snapshots.confirm, self.snapshots.short);
-        if self.snapshots.ui.full_frame && self.panels.snapshot {
+        if self.viewfinder_on() {
+            // the held photo under the overlay
+            if let Some(t) = self.snapshots.held.as_ref().and_then(|h| h.texture.as_ref()) {
+                crate::ui::snapshot::frozen(ctx, p, t);
+            }
+            let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
+            let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
+            let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
+            let busy = self.photo_busy_line();
+            if let Some((_, what)) = &busy {
+                let now = ctx.input(|i| i.time);
+                self.snapshots.vf.message = Some((what.clone(), false, now + 0.3));
+            }
+            let message = self.snapshots.message.clone();
+            let last_saved = self.snapshots.last_saved.clone();
+            let gallery = self.snapshots.gallery.clone();
+            let view = crate::ui::snapshot::View {
+                window,
+                photo,
+                tiles,
+                preview: None,
+                busy,
+                message: message.as_ref(),
+                last_saved: last_saved.as_deref(),
+                gallery: &gallery,
+                folder: self.settings.snapshot.folder(),
+                inventory,
+                item_saved: self.snapshots.message_item.is_some(),
+                profile,
+                profile_posted: self.snapshots.message_profile,
+                exposure: self.settings.exposure,
+                back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+            };
+            self.viewfinder_ui(ctx, p, projector, renderer, &view);
+        } else if self.snapshots.ui.full_frame && self.panels.snapshot {
             actions.extend(self.snapshots.ui.full_frame(
                 ctx,
                 p,
@@ -1114,6 +1336,7 @@ impl App {
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
             };
             let mut open = self.panels.snapshot;
+            let classic = self.photo_style() == crate::settings::PhotoWindowStyle::Legacy;
             actions.extend(state.show(
                 ctx,
                 p,
@@ -1122,8 +1345,7 @@ impl App {
                 &mut self.settings.camera.fov,
                 crate::camera::DEFAULT_FOV,
                 &view,
-                self.settings.photo_window == crate::settings::PhotoWindowStyle::Legacy
-                    || self.snapshots.demo.as_ref().is_some_and(|d| d.classic),
+                classic,
             ));
             self.snapshots.ui = state;
             self.panels.snapshot = open;
@@ -1150,14 +1372,37 @@ impl App {
         }
     }
 
-    /// The full-frame view hides the rest of the interface.
+    /// The full-frame view and the viewfinder hide the rest of the
+    /// interface.
     pub(super) fn photo_full_frame(&self) -> bool {
-        self.panels.snapshot && self.snapshots.ui.full_frame
+        self.panels.snapshot && (self.snapshots.ui.full_frame || self.viewfinder_on())
     }
 
     /// Escape leaves the full-frame view, then brings the free camera back,
-    /// instead of resetting the camera.
+    /// instead of resetting the camera. In the viewfinder: a menu open
+    /// closes, the free camera comes back, the first person view ends, then
+    /// the photo mode closes.
     pub(super) fn photo_escape(&mut self) -> bool {
+        if self.viewfinder_on() {
+            let v = &mut self.snapshots.vf;
+            if v.countdown.is_some() {
+                v.countdown = None;
+                let now = self.egui_ctx.input(|i| i.time);
+                self.snapshots.vf.say(aurora_i18n::tr!("photo-vf-timer-cancelled"), false, now);
+            } else if v.menu || v.help || v.drawer {
+                v.menu = false;
+                v.help = false;
+                v.drawer = false;
+            } else if self.camera.free().is_some() {
+                self.snapshots.ui.free.on = false;
+                self.photo_free_camera();
+            } else if self.camera.mouselook() {
+                self.toggle_mouselook();
+            } else {
+                self.panels.snapshot = false;
+            }
+            return true;
+        }
         if self.photo_full_frame() {
             self.snapshots.ui.full_frame = false;
             return true;
@@ -1232,7 +1477,7 @@ impl App {
             forward: axis(i.forward, i.back) + stick.y,
             // the turn keys slide: the free camera turns with the mouse
             left: axis(i.turn_left || i.strafe_left, i.turn_right || i.strafe_right) - stick.x,
-            up: axis(i.up, i.down),
+            up: axis(i.up, i.down) + self.snapshots.vf_free_up,
             fast: self.shift,
             slow: self.ctrl,
         };
@@ -1402,6 +1647,52 @@ impl App {
                     poor: kind == "inventory-poor",
                 }
             });
+            let words: Vec<&str> = kind.split('-').collect();
+            let viewfinder = (words[0] == "viewfinder").then(|| {
+                use crate::snapshot::viewfinder::Display;
+                let has = |w: &str| words.contains(&w);
+                DemoViewfinder {
+                    display: if has("essential") {
+                        Display::Essential
+                    } else if has("hidden") {
+                        Display::Hidden
+                    } else {
+                        Display::Full
+                    },
+                    menu: has("menu"),
+                    help: has("help"),
+                    drawer: has("drawer"),
+                    focus_mode: if has("mf") {
+                        Some(crate::dof::PhotoFocus::Manual)
+                    } else if has("afc") {
+                        Some(crate::dof::PhotoFocus::Pointer)
+                    } else {
+                        None
+                    },
+                    point: has("point"),
+                    focus: has("focus"),
+                    shoot: has("shoot"),
+                    pad: has("pad"),
+                    timer: has("timer"),
+                    ael: has("ael"),
+                    controls: if has("hover") {
+                        crate::snapshot::viewfinder::OnScreen::Hover
+                    } else if has("nocontrols") {
+                        crate::snapshot::viewfinder::OnScreen::Hidden
+                    } else {
+                        crate::snapshot::viewfinder::OnScreen::Always
+                    },
+                }
+            });
+            let style = if kind == "classic" {
+                Some(crate::settings::PhotoWindowStyle::Legacy)
+            } else if viewfinder.is_some() {
+                Some(crate::settings::PhotoWindowStyle::Aurora)
+            } else {
+                // the panel's scenarios keep the panel (open, full…, save…,
+                // inventory…, profile…, dof, quality, light, panel)
+                Some(crate::settings::PhotoWindowStyle::Panel)
+            };
             self.snapshots.demo = Some(DemoPhoto {
                 frame,
                 save,
@@ -1410,9 +1701,10 @@ impl App {
                 inventory,
                 profile: kind.starts_with("profile"),
                 dof: kind.ends_with("dof"),
-                classic: kind == "classic",
                 quality: kind.ends_with("quality"),
                 light: kind == "light",
+                style,
+                viewfinder,
             });
         }
         let Some(demo) = self.snapshots.demo.as_ref() else {
@@ -1456,6 +1748,28 @@ impl App {
             if demo.profile {
                 self.snapshots.ui.destination = Destination::Profile;
                 self.snapshots.ui.caption = aurora_i18n::tr!("demo-photo-caption").to_owned();
+            }
+            if let Some(v) = &demo.viewfinder {
+                let s = &mut self.settings.snapshot;
+                s.viewfinder.display = v.display;
+                s.dof.enabled = true;
+                s.dof.f_number = 1.8;
+                s.dof.focus = v.focus_mode.unwrap_or(crate::dof::PhotoFocus::Click);
+                if v.focus_mode == Some(crate::dof::PhotoFocus::Manual) {
+                    s.dof.distance = 3.3;
+                }
+                if v.point {
+                    s.viewfinder.area = crate::snapshot::viewfinder::AfArea::Point;
+                }
+                s.viewfinder.pad = v.pad;
+                s.viewfinder.timer = if v.timer { 2 } else { 0 };
+                s.viewfinder.controls = v.controls;
+                let vf = &mut self.snapshots.vf;
+                vf.ae_lock = v.ael;
+                vf.menu = v.menu;
+                vf.help = v.help;
+                vf.drawer = v.drawer;
+                vf.hinted = v.menu || v.help || v.drawer;
             }
         }
         if demo.profile {

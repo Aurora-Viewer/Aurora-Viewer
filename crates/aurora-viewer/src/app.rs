@@ -82,6 +82,7 @@ mod task_notecards;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod viewfinder;
 mod world_click_demo;
 mod worn_demo;
 
@@ -2656,7 +2657,7 @@ impl App {
                 .as_ref()
                 .zip(self.world.map.track.as_ref())
                 .is_some_and(|(hit, track)| hit.contains(at, track))
-            && (!self.settings.show_huds || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
+            && (!self.huds_shown() || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
     }
 
     /// The camera drag a left click would start under the pointer, like
@@ -3059,7 +3060,7 @@ impl App {
     fn world_press(&mut self) {
         self.left_down = true;
         if self.hud_drag_requested()
-            && self.settings.show_huds
+            && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
         {
             // Own the complete gesture: no media / script click or camera focus,
@@ -4450,8 +4451,7 @@ impl App {
             return true;
         }
         let mut hits = self
-            .settings
-            .show_huds
+            .huds_shown()
             .then_some(self.scene.lists.hud_view)
             .flatten()
             .map(|view| {
@@ -4493,7 +4493,7 @@ impl App {
         }
         if !self.build.open
             || self.alt
-            || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
+            || (self.hud_drag_requested() && self.huds_shown() && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
         {
             return false;
         }
@@ -5064,6 +5064,12 @@ impl App {
                 rate[n] = if held < NUDGE_TIME { 0.05 + held * 0.95 / NUDGE_TIME } else { 1.0 };
             } else {
                 self.cam_key_since[n] = None;
+            }
+        }
+        // the photo viewfinder's camera pad, held like the keys
+        if let Some(pad) = self.viewfinder_pad(dt) {
+            for (r, p) in rate.iter_mut().zip(pad) {
+                *r = r.max(p);
             }
         }
         let keys = crate::camera::CameraKeys {
@@ -5848,6 +5854,7 @@ impl App {
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
         self.photo_update(&gfx.renderer);
+        self.viewfinder_frame(&mut gfx.renderer);
         let photo = self.photo_frame(&mut gfx.renderer);
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
@@ -6184,7 +6191,7 @@ impl App {
                 h as f32,
                 self.egui_ctx.pixels_per_point(),
             );
-            if self.build.hud_selected(&self.world) && !self.settings.show_huds {
+            if self.build.hud_selected(&self.world) && !self.huds_shown() {
                 self.build.deselect_all(&self.world);
             } else if self.build.tool == crate::build::Tool::Edit
                 && self.build.hud_selected(&self.world)
@@ -6379,8 +6386,8 @@ impl App {
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.frame_profile.lap(Lap::Extras);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
-            self.scene
-                .build_huds(&self.world, [hud_size.width, hud_size.height], self.settings.show_huds);
+            let huds_shown = self.huds_shown();
+            self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
@@ -6738,6 +6745,7 @@ impl App {
             fog_color: env.fog_color,
             fog_density: env.fog_density,
             exposure: self.photo_exposure(),
+            exposure_lock: self.viewfinder_on() && self.snapshots.vf.ae_lock,
             tonemap_mix: self.settings.tonemap_mix,
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,
@@ -6931,7 +6939,7 @@ impl App {
         }
         if self.build.tool == crate::build::Tool::Edit
             && self.build.hud_selected(&self.world)
-            && self.settings.show_huds
+            && self.huds_shown()
             && let Some(view) = self.scene.lists.hud_view
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
@@ -7130,7 +7138,7 @@ impl App {
         }
         if self.hud_drag.is_some()
             || (self.hud_drag_requested()
-                && self.settings.show_huds
+                && self.huds_shown()
                 && matches!(self.screen, Screen::World)
                 && self.mouse_mode == MouseMode::None
                 && !self.camera.mouselook()
@@ -9851,7 +9859,9 @@ impl App {
             Screen::World => {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
-                    self.photo_ui(&ctx, &p, renderer);
+                    self.photo_ui(&ctx, &p, projector, renderer);
+                    // the exit's question still shows over the photo mode
+                    a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
                 }
                 // a held photo (freeze frame) instead of the world, under the windows
@@ -11127,7 +11137,7 @@ impl App {
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
-                self.photo_ui(&ctx, &p, renderer);
+                self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
@@ -13687,6 +13697,11 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // the photo viewfinder's keys (the shutter, its menu…)
+                    if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
                     // The command table is shared with egui's dispatcher:
                     // an editing accelerator must never become a held move.
                     let input = Input::key(code);
@@ -13846,7 +13861,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
-                if self.on_build_scroll(steps) || self.on_hud_scroll(steps) {
+                if self.on_build_scroll(steps) || self.on_hud_scroll(steps) || self.viewfinder_wheel(steps) {
                     return;
                 }
                 let mods = aurora_media::Modifiers {

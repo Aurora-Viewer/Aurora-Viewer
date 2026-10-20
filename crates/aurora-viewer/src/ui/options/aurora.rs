@@ -356,6 +356,56 @@ fn look_choice_with(
     })
 }
 
+/// The photo mode's three looks: Aurora's viewfinder, its panel on the
+/// right, the Legacy Viewer's floater (the two Aurora ones in the accent).
+fn photo_window_choice(ui: &mut egui::Ui, p: &Palette, style: &mut PhotoWindowStyle) -> bool {
+    const STYLES: [PhotoWindowStyle; 3] = [PhotoWindowStyle::Aurora, PhotoWindowStyle::Panel, PhotoWindowStyle::Legacy];
+    let options = [
+        (aurora_i18n::tr!("ui-options-aurora-photo-viewfinder"), true),
+        (aurora_i18n::tr!("ui-options-aurora-photo-panel"), true),
+        (aurora_i18n::tr!("ui-options-aurora-photo-classic"), false),
+    ];
+    let size = widgets::segmented_size(ui, &options);
+    item(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-options-aurora-photo-window"),
+        aurora_i18n::tr!("ui-options-aurora-photo-window-help"),
+        size,
+        |ui| {
+            let mut selected = STYLES.iter().position(|s| s == style).unwrap_or(0);
+            let changed = widgets::segmented(ui, p, &mut selected, &options);
+            *style = STYLES[selected];
+            changed
+        },
+    )
+}
+
+/// The viewfinder's on-screen controls: always, when the pointer comes
+/// near them, or never (the shortcuts stay).
+fn viewfinder_controls_choice(ui: &mut egui::Ui, p: &Palette, on: &mut crate::snapshot::viewfinder::OnScreen) -> bool {
+    use crate::snapshot::viewfinder::OnScreen;
+    let options = [
+        (aurora_i18n::tr!("ui-options-aurora-vf-controls-always"), true),
+        (aurora_i18n::tr!("ui-options-aurora-vf-controls-hover"), true),
+        (aurora_i18n::tr!("ui-options-aurora-vf-controls-hidden"), false),
+    ];
+    let size = widgets::segmented_size(ui, &options);
+    item(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-options-aurora-vf-controls"),
+        aurora_i18n::tr!("ui-options-aurora-vf-controls-help"),
+        size,
+        |ui| {
+            let mut selected = OnScreen::ALL.iter().position(|o| o == on).unwrap_or(0);
+            let changed = widgets::segmented(ui, p, &mut selected, &options);
+            *on = OnScreen::ALL[selected];
+            changed
+        },
+    )
+}
+
 /// The Conversations window's four looks: Aurora's workspace, its compact
 /// rows, the bubbles, Firestorm's lines (the two Aurora ones in the accent).
 fn chat_style_choice(ui: &mut egui::Ui, p: &Palette, style: &mut ChatStyle) -> bool {
@@ -513,22 +563,10 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             &mut s.classic_profiles,
         );
         between(ui, p);
-        let mut legacy = s.photo_window == PhotoWindowStyle::Legacy;
-        if look_choice(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-aurora-photo-window"),
-            aurora_i18n::tr!("ui-options-aurora-photo-window-help"),
-            aurora_i18n::tr!("ui-options-aurora-photo-panel"),
-            aurora_i18n::tr!("ui-options-aurora-photo-classic"),
-            &mut legacy,
-        ) {
-            s.photo_window = if legacy {
-                PhotoWindowStyle::Legacy
-            } else {
-                PhotoWindowStyle::Aurora
-            };
-            c = true;
+        c |= photo_window_choice(ui, p, &mut s.photo_window);
+        if s.photo_window == PhotoWindowStyle::Aurora {
+            between(ui, p);
+            c |= viewfinder_controls_choice(ui, p, &mut s.snapshot.viewfinder.controls);
         }
         between(ui, p);
         c |= look_choice(

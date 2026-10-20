@@ -26,6 +26,25 @@ fn sizes_stay_even_and_within_firestorms_limits() {
 }
 
 #[test]
+fn a_new_format_reshapes_a_typed_size_kept_in_proportion() {
+    let mut s = Settings {
+        resolution: Resolution::Custom,
+        custom: [3200, 1800],
+        keep_ratio: true,
+        ..Settings::default()
+    };
+    s.set_aspect(Aspect::R1x1, (1600, 900));
+    assert_eq!(s.custom, [3200, 3200]);
+    s.set_aspect(Aspect::R4x5, (1600, 900));
+    assert_eq!(s.custom, [2560, 3200]);
+    assert_eq!(photo_size(s.aspect, s.resolution, s.custom, (1600, 900)), (2560, 3200));
+    // the size typed freely stays as it is
+    s.keep_ratio = false;
+    s.set_aspect(Aspect::R16x9, (1600, 900));
+    assert_eq!(s.custom, [2560, 3200]);
+}
+
+#[test]
 fn typed_sizes_keep_the_proportions_when_asked() {
     let mut s = Settings {
         aspect: Aspect::R16x9,

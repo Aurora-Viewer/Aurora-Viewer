@@ -1339,6 +1339,8 @@ pub(crate) struct Backend {
     bloom: crate::bloom::Bloom,
     /// The automatic exposure of skies that are not classic (exposure.rs).
     exposure: crate::exposure::Exposure,
+    /// The photo viewfinder's luminance histogram (histogram.rs).
+    histogram: crate::histogram::Histogram,
     /// The glow was drawn last frame: its image is there for the exposure.
     glow_drawn: bool,
     frame_buffer: wgpu::Buffer,
@@ -2557,6 +2559,8 @@ impl Backend {
         );
         let mut exposure = crate::exposure::Exposure::new(&device);
         exposure.bind(&device, &targets.color, &targets.depth_ss, &glow.views[1]);
+        let mut histogram = crate::histogram::Histogram::new(&device);
+        histogram.bind(&device, &targets.color);
         let groups = Self::make_frame_groups(
             &device,
             &frame_layout,
@@ -2617,6 +2621,7 @@ impl Backend {
             contact_now: false,
             bloom,
             exposure,
+            histogram,
             glow_drawn: false,
             frame_buffer,
             refl_buffers,
@@ -3862,6 +3867,7 @@ impl Backend {
         );
         self.exposure
             .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
+        self.histogram.bind(&self.device, &self.targets.color);
         self.smaa_targets = (self.settings.aa == AntiAliasing::Smaa).then(|| {
             self.smaa.make_targets(
                 &self.device,
@@ -4331,6 +4337,7 @@ impl Backend {
             cull: self.cull.last,
             captured,
             snapshot,
+            histogram: self.histogram.take(),
             spent,
         }
     }
@@ -4403,6 +4410,7 @@ impl Backend {
             picks,
             drawn,
             capture: wanted,
+            histogram,
         } = packet;
         let mut stats = RenderStats::default();
         if let Some(t) = &mut self.timer {
@@ -6414,13 +6422,19 @@ impl Backend {
             &crate::exposure::FrameExposure {
                 tone_mapped: !f.sky.no_post,
                 hdr_scale: f.sky.hdr_scale,
-                hold: snapshot.is_some(),
+                hold: snapshot.is_some() || f.exposure_lock,
                 glow: self.glow_drawn,
                 inv_view_proj: unjittered_vp.inverse(),
             },
             &self.post_buffer,
             POST_AUTO_EXPOSURE_OFFSET,
         );
+        // the viewfinder's histogram, of the live view only
+        if let Some(exposure) = histogram
+            && snapshot.is_none()
+        {
+            self.histogram.encode(&self.queue, &mut encoder, exposure);
+        }
         self.glow_drawn = glow_on;
         if glow_on {
             self.glow.encode(&mut encoder, post_bg);
@@ -6768,6 +6782,7 @@ impl Backend {
         self.cull.after_submit();
         self.depth_pick.after_submit();
         self.exposure.after_submit();
+        self.histogram.after_submit();
         self.drawn_pick.after_submit();
         prof.mark("submit");
         let encode_ms = t0.elapsed().as_secs_f32() * 1000.0;

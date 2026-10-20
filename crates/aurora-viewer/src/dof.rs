@@ -113,7 +113,9 @@ pub struct PhotoDof {
 impl Default for PhotoDof {
     fn default() -> Self {
         PhotoDof {
-            enabled: false,
+            // on: the blur that follows the focus is what makes the photo
+            // mode a camera (the Preferences' own stays off)
+            enabled: true,
             f_number: 2.8,
             focus: PhotoFocus::Click,
             distance: 5.0,
@@ -251,6 +253,7 @@ pub fn lens(s: &Settings, focus: f32, fov_y: f32, height: u32, window_height: u3
         max_coc: s.max_coc * height as f32 / window_height.max(1) as f32,
         samples: s.samples(),
         debug,
+        peaking: None,
     }
 }
 

@@ -186,7 +186,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
@@ -198,7 +198,27 @@ what a saved layout gives in a window of another size (the windows keep
 their edge). A layout is only written by a normal exit, for example
 `AURORA_DEMO_EXIT=quit` without `AURORA_CAPTURE`.
 
-`AURORA_DEMO_SNAPSHOT`: `open` shows the photo window at frame 600;
+`AURORA_DEMO_SNAPSHOT`: `viewfinder` opens the photo mode in its
+viewfinder at frame 600 (whatever Preferences › Aurora › Photo window
+says), with the depth of field on at f/1.8 in AF-S on the Avatar area;
+words joined by `-` add to it: `essential` or `hidden` the display level,
+`menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
+(`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
+peaking), `point` the Point area, `pad` the camera pad shown, `timer` the
+2 s self-timer, `ael` AE-L on, `hover` or `nocontrols` the on-screen controls
+on hover or hidden (the lens ring and the AF choices show otherwise), `focus`
+the own avatar's face aimed at
+and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
+same then released two frames later (the photo saved to disk; with `timer`
+the log gives `viewfinder: self-timer, 2 s`, then `viewfinder: shutter` two
+seconds after the lock, and the countdown shows at the top). With
+`viewfinder-focus` the log gives `viewfinder: focus asked at <m>` then,
+about 0.36 s later, `viewfinder: locked at <m>`: capture at frame 760 with
+`AURORA_FPS_LIMIT=60` to see the green face box, the distance under it,
+the zone kept sharp on the scale and the beep's moment; the hunt is
+between frames 702 and 722. The other scenarios below keep the photo
+panel for the run.
+`open` shows the photo window at frame 600;
 `full` the full-frame view, `full-4x5` (or `full-16x9`, `full-9x16`…) with
 those proportions, to see the mask and the guide; `save:<W>x<H>[:png|jpg|bmp][:<folder>]`
 also takes a photo of that size at `AURORA_DEMO_SNAPSHOT_FRAME` and saves

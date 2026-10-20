@@ -4591,6 +4591,15 @@ impl Scene {
         }
     }
 
+    /// An avatar's two eyes in the world (`anim::Controller::eye_pair`).
+    pub fn eye_pair_world(&self, world: &World, id: &Uuid, now: Instant) -> Option<(Vec3, Vec3)> {
+        let idx = world.objects.index_of_uuid(id)?;
+        let (p, r, _) = Self::object_transform(world, idx, now, 0)?;
+        let (l, rr) = self.motions.get(id)?.eye_pair()?;
+        let at = |e: Vec3| p + r * (e - world.avatar_lib.pelvis);
+        Some((at(l), at(rr)))
+    }
+
     /// Stable name tag above the avatar root, also used for click depth.
     /// Its height includes shape, mesh offsets and translation deformers;
     /// neither body/head rotations nor animation bobbing move the anchor.

@@ -69,6 +69,14 @@ impl App {
         if !s.enabled || (self.build.open && !s.in_edit) || !self.in_world() {
             return None;
         }
+        // the viewfinder's AF-S: the lens where its hunt has it (the image
+        // pumps through the focus like a camera's), no transition of its own
+        let viewfinder = self.viewfinder_on() && photo.enabled;
+        if viewfinder && photo.focus == crate::dof::PhotoFocus::Click {
+            let d = self.snapshots.vf.af.distance();
+            self.dof_focus.set(d);
+            return Some(dof::lens(&s, d, fov_y, height, window_height, false));
+        }
         let eye = self.camera.position;
         let at = self.camera.target - self.camera.position;
         let (w, h) = renderer.size();
@@ -100,6 +108,14 @@ impl App {
         let target = manual.unwrap_or_else(|| point.map_or(f32::NAN, |p| dof::distance_along(eye, at, p)));
         let transition = s.transition;
         let focus = self.dof_focus.update(target, dt, transition);
-        Some(dof::lens(&s, focus, fov_y, height, window_height, false))
+        let mut lens = dof::lens(&s, focus, fov_y, height, window_height, false);
+        // focus peaking in manual focus, on the view only (never a photo)
+        if viewfinder && photo.focus == crate::dof::PhotoFocus::Manual && self.snapshots.capturing.is_none() {
+            lens.peaking = crate::ui::viewfinder::peaking_color(&self.palette, self.settings.snapshot.viewfinder.peaking).map(|c| {
+                let l = egui::Rgba::from(c);
+                [l.r(), l.g(), l.b()]
+            });
+        }
+        Some(lens)
     }
 }

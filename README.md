@@ -446,9 +446,29 @@ height change. Your hover height is remembered per avatar.
 
 ### Photos
 
-Open the photo window from the toolbar or with **Ctrl+Shift+S**. Choose a
+Open the photo mode from the toolbar or with **Ctrl+Shift+S**. It opens in
+the **viewfinder**: the world full screen under a camera's overlay, its
+display switched between Full, Essential and Hidden with **I**. Click the
+subject to focus: the lens hunts, the AF point turns green on the avatar's
+face and beeps twice. **Enter** is a two-stage shutter (held: the focus,
+released: the photo), the wheel zooms the camera as usual, Alt + wheel
+drives the underlined value of the bottom bar (the focal length at first,
+the distance for manual focus with focus peaking), Alt + Shift + wheel the
+aperture and Alt + Ctrl + wheel the exposure; Alt + click and the camera's
+drags work as everywhere. **N** switches AF-S, AF-C and MF, **V** the
+avatar or point area, **Tab** opens the quick menu, **H** the help, and
+the dock on the right holds the same for the mouse, with every setting of
+the photo panel in a drawer. Without the keyboard: the value chosen in the
+bottom bar becomes a lens ring to drag (or − and +), the focus mode and
+area are choices at the start of the bar, and the dock's joystick button
+shows a camera pad (turn, slide, a spring-loaded zoom rocker, the tilt, and
+orbit, free or first person). **L** or the AE-L button holds the automatic
+exposure, and the quick menu has a 2 s or 10 s self-timer. The photo panel anchored on the right and the
+Legacy Viewer's floater remain in Preferences › Aurora › Photo window.
+
+In the panel, choose a
 destination (disk, inventory or profile feed), an aspect ratio and a
-resolution. Disk photos support PNG, JPEG and BMP, with presets up to 8K.
+resolution. Disk photos support PNG, JPEG and BMP, with presets up to 8K (4K by default).
 Inventory uploads use the grid's upload charge; the profile destination
 offers a caption and an optional location.
 
