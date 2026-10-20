@@ -167,6 +167,11 @@ impl SyncCheck {
             .map(|_| SyncCheck::new(Instant::now()))
     }
 
+    /// The check started now (the Dev Toolbox's P5).
+    pub fn start() -> SyncCheck {
+        SyncCheck::new(Instant::now())
+    }
+
     fn new(now: Instant) -> SyncCheck {
         SyncCheck {
             since: now,

@@ -2074,15 +2074,159 @@ app-disconnected-lost = { "Déconnecté : " }{ $reason } Reconnectez-vous pour r
 app-logging-out = Déconnexion…
 build-ui-object-profile-cut-begin-end = Découpe du profilé (début/fin)
 build-ui-object-path-cut-begin-end = Découpe du tracé (déb./fin)
-ui-options-describe = Débogage → journal
-ui-options-describe-clipboard = Débogage → presse-papiers
-ui-options-describe-help = Placez-vous à moins de 3 m de l'avatar dont la tenue s'affiche mal (inutile de le viser), ou sélectionnez l'objet (clic droit › Modifier) pour ne cibler que lui, puis appuyez. Les objets à moins de 12 m et ce que portent les avatars à moins de 10 m sont écrits ; les avatars à moins de 3 m, ou l'objet sélectionné, face par face. Comptez environ 3 s, le temps que les noms des objets portés arrivent. « Débogage → presse-papiers » copie ces mêmes lignes, prêtes à coller dans un message, au lieu du journal entier.
-ui-options-describe-waiting = En attente des noms…
-ui-options-describe-written = Écrit dans le journal
-ui-options-describe-copied = { $lines ->
-    [one] { $lines } ligne copiée
-   *[other] { $lines } lignes copiées
+dev-toolbox-title = Dev Toolbox
+dev-toolbox-menu = Dev Toolbox
+dev-toolbox-help = Les outils de débogage au même endroit. Chaque bouton a un identifiant (J2, L1…) qui ne dépend pas de la langue : un agent ou un développeur peut vous demander d'en presser un et de coller ce qu'il copie, au lieu de votre journal entier. Personnalisez pour déplacer les boutons ; clic droit sur un bouton pour l'épingler dans Favoris.
+dev-toolbox-toggles-on = { $count ->
+    [one] { $count } bascule active
+   *[other] { $count } bascules actives
     }
+dev-toolbox-search = Outil ou identifiant (J2, L1…)
+dev-toolbox-customize = Personnaliser
+dev-toolbox-done = Terminer
+dev-toolbox-target = Cible
+dev-toolbox-target-nearest = Avatar le plus proche
+dev-toolbox-target-selection = Sélection
+dev-toolbox-target-cursor = Sous le curseur
+dev-toolbox-target-nearest-hint = à moins de 3 m, sans viser
+dev-toolbox-target-selection-hint = clic droit › Modifier
+dev-toolbox-target-cursor-hint = dernière surface pointée
+dev-toolbox-aim = Viser
+dev-toolbox-aim-frozen = Figé
+dev-toolbox-aim-help = Pointez une surface dans le monde : elle devient la cible. Appuyez pour la figer, le pointeur ne la change plus ; appuyez de nouveau pour suivre le pointeur.
+dev-toolbox-target-avatar = { $name } · { $distance } m · { $worn } objets portés
+dev-toolbox-target-nearest-none = Aucun avatar à moins de 3 m
+dev-toolbox-target-selected = { $name } · { $count ->
+    [one] { $count } objet sélectionné
+   *[other] { $count } objets sélectionnés
+    }
+dev-toolbox-target-selection-none = Rien de sélectionné — clic droit › Modifier
+dev-toolbox-target-surface = Prim { $id } · { $kind } · face { $face }
+dev-toolbox-target-cursor-none = Rien de pointé pour l'instant : passez le pointeur sur le monde
+dev-toolbox-edit-hint = Glissez un bouton pour le déplacer, dans son groupe ou vers un autre. Glissez un groupe par son titre. La disposition est enregistrée.
+dev-toolbox-new-group = Nouveau groupe
+dev-toolbox-new-group-title = Mes outils
+dev-toolbox-default-layout = Disposition par défaut
+dev-toolbox-add-tool = + Ajouter un outil
+dev-toolbox-removed = retiré
+dev-toolbox-pin = Épingler dans Favoris
+dev-toolbox-unpin = Retirer des Favoris
+dev-toolbox-copy-id = Copier l'identifiant « { $id } »
+dev-toolbox-remove = Retirer de la Toolbox
+dev-toolbox-no-match = Aucun outil ne correspond à « { $query } ».
+dev-toolbox-on = Activé
+dev-toolbox-kind-toggle = Bascule
+dev-toolbox-kind-copy = Copier
+dev-toolbox-kind-live = Vue en direct
+dev-toolbox-kind-window = Fenêtre
+dev-toolbox-group-favorites = Favoris
+dev-toolbox-group-favorites-hint = épinglés
+dev-toolbox-group-reports = Rapports
+dev-toolbox-group-reports-hint = ce qu'on colle à un agent
+dev-toolbox-group-live = Vues en direct
+dev-toolbox-group-live-hint = mises à jour en continu
+dev-toolbox-group-rendering = Rendu
+dev-toolbox-group-rendering-hint = superposé à la vue
+dev-toolbox-group-objects = Objets et avatars
+dev-toolbox-group-objects-hint = agissent sur la cible
+dev-toolbox-group-network = Réseau et performance
+dev-toolbox-j1 = Débogage → journal
+dev-toolbox-j2 = Débogage → presse-papiers
+dev-toolbox-j3 = Copier les avertissements
+dev-toolbox-j4 = Copier la config système
+dev-toolbox-j5 = Copier la sortie d'un outil
+dev-toolbox-j6 = Ouvrir le dossier des journaux
+dev-toolbox-j7 = Erreurs de scripts
+dev-toolbox-l1 = Sous le curseur
+dev-toolbox-l2 = Objets portés de la cible
+dev-toolbox-l3 = Problèmes en direct
+dev-toolbox-n3 = Chargements
+dev-toolbox-r1 = Afficher la transparence
+dev-toolbox-r2 = … objets riggés aussi
+dev-toolbox-r3 = Passe et alpha par face
+dev-toolbox-r4 = Fil de fer
+dev-toolbox-r5 = Visualiser le glow
+dev-toolbox-r6 = Cascades d'ombres
+dev-toolbox-r7 = Occlusion ambiante
+dev-toolbox-r8 = Objets avec glow
+dev-toolbox-r9 = Lumières
+dev-toolbox-r10 = Sondes de réflexion
+dev-toolbox-r11 = Tri des lumières locales
+dev-toolbox-r12 = Tri des sondes de réflexion
+dev-toolbox-o1 = Boîtes englobantes
+dev-toolbox-o2 = Niveaux de détail (LOD)
+dev-toolbox-o3 = Culling
+dev-toolbox-o4 = Figer le culling
+dev-toolbox-o5 = Squelettes
+dev-toolbox-o6 = Complexité dans l'étiquette
+dev-toolbox-o7 = Inspecter les objets
+dev-toolbox-o8 = Santé de l'avatar
+dev-toolbox-o9 = Suivre les sculpts
+dev-toolbox-n1 = Graphe réseau
+dev-toolbox-n2 = Résumé de la région
+dev-toolbox-p1 = Performance
+dev-toolbox-p2 = Moniteur de ressources
+dev-toolbox-p3 = Images lentes
+dev-toolbox-p4 = Que change l'image fixe
+dev-toolbox-p5 = Ce que visite la synchro
+dev-toolbox-p6 = Profil dans le journal
+dev-toolbox-m1 = Débogage média
+dev-toolbox-live = En direct
+dev-toolbox-see-warnings = Voir et copier (J3)
+dev-toolbox-no-warning = Aucun avertissement depuis le lancement
+dev-toolbox-live-warnings = { $count } en 2 min
+dev-toolbox-live-warnings-total = { $count ->
+    [one] { $count } avertissement
+   *[other] { $count } avertissements
+    }
+dev-toolbox-live-lines = { $count ->
+    [one] { $count } ligne en 60 s
+   *[other] { $count } lignes en 60 s
+    }
+dev-toolbox-live-not-drawn = face non dessinée
+dev-toolbox-live-nothing-pointed = rien de pointé
+dev-toolbox-live-left-out = { $count ->
+    [one] { $count } face écartée
+   *[other] { $count } faces écartées
+    }
+dev-toolbox-live-frame = { $ms } ms · pire { $worst }
+dev-toolbox-live-threshold = seuil { $ms } ms
+dev-toolbox-live-on-target = sur la cible
+dev-toolbox-live-of-target = de la cible
+dev-toolbox-live-health = rebake, rafraîchir…
+dev-toolbox-send = Envoyer un diagnostic
+dev-toolbox-what-j1 = Le même texte que J2, écrit aussi dans le journal de session
+dev-toolbox-what-j2 = Ce que porte la cible, face par face, et les objets à moins de 12 m
+dev-toolbox-what-j3 = Les 50 derniers avertissements et erreurs, sans adresses
+dev-toolbox-what-j4 = Version, matériel et réglages graphiques
+dev-toolbox-what-j5 = Ce que les diagnostics activés ont écrit en 60 s (P3, P4, P5, P6, O9, M1)
+dev-toolbox-what-l1 = La prim pointée en dernier, face par face
+dev-toolbox-what-l2 = Les objets portés de la cible, faces dessinées et écartées
+dev-toolbox-what-l3 = Les 20 derniers avertissements, mis à jour
+dev-toolbox-what-n2 = Sans nom de lieu ni adresse
+dev-toolbox-what-n3 = Mémoire des textures, téléchargements, meshes et matériaux
+dev-toolbox-hide-names = Masquer les noms des résidents
+dev-toolbox-hide-names-hint = Avatar 1, Avatar 2… dans le texte copié. Conseillé pour un ticket public.
+dev-toolbox-with-system = Joindre la config système (J4)
+dev-toolbox-with-system-hint = Version, GPU, pilote, réglages graphiques.
+dev-toolbox-preview = Aperçu
+dev-toolbox-stats = { $lines ->
+    [one] { $lines } ligne
+   *[other] { $lines } lignes
+    } · { $kb } Ko
+dev-toolbox-waiting = En attente des noms des objets portés…
+dev-toolbox-press-hint = Appuyez sur cet outil pour construire son texte.
+dev-toolbox-fits = Tient dans un commentaire GitHub (65 536 caractères)
+dev-toolbox-too-long = Trop long pour un commentaire GitHub : enregistrez-le en .txt et joignez le fichier
+dev-toolbox-copy = Copier
+dev-toolbox-copied = Copié
+dev-toolbox-save = Enregistrer en .txt
+dev-toolbox-log = Journal
+dev-toolbox-log-help = Écrire ce texte dans le journal de session
+dev-toolbox-nothing-sent = Rien n'est envoyé par Aurora : vous choisissez où coller ce texte.
+dev-toolbox-no-avatar-target = Aucun avatar pour cette cible : placez-vous à moins de 3 m d'un avatar, ou sélectionnez ce qu'il porte
+dev-toolbox-no-target = Rien à inspecter pour cette cible
+dev-toolbox-no-tool-output = Aucun diagnostic n'a rien écrit en 60 s : activez d'abord P3, P4, P5, P6, O9 ou M1.
 common-default = Défaut
 demo-scrolling-smooth = Défilement (SMOOTH)
 ui-land-options-set = Définir
@@ -3315,7 +3459,6 @@ ui-options-objects-and-culling = Objets et culling
 ui-land-general-objects-included-in-sale = Objets inclus dans la vente
 ui-land-general-objects-not-included-in-sale = Objets non inclus dans la vente
 ui-minimap-physical-objects = Objets physiques
-ui-options-nearby-objects = Objets proches
 ui-inventory-controls-coalesced-objects-only = Objets regroupés uniquement
 ui-minimap-scripted-objects = Objets scriptés
 ui-minimap-temporary-objects = Objets temporaires
@@ -5306,7 +5449,6 @@ common-personal-lighting = Éclairage personnel…
 ui-options-listen = Écouter
 ui-audio-listen-to-parcel-music = Écouter la musique de la parcelle
 keybinds-type-in-chat = Écrire dans le chat
-ui-options-write-faces-lights-and-materials-within-12-m-to = Faces, lumières et matériaux à moins de 12 m, et ce que portent les avatars autour
 ui-land-options-education = Éducation
 build-ui-features-elasticity = Élasticité
 build-land-raise = Élever

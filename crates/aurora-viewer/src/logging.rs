@@ -108,6 +108,92 @@ fn strip_headers(text: &str) -> String {
     out
 }
 
+/// A line the Dev Toolbox keeps in memory: J3 and L3 show the last warnings,
+/// J5 the recent output of a diagnostic, without reading the log file.
+#[derive(Debug, Clone)]
+pub struct Recent {
+    pub at: std::time::Instant,
+    /// "HH:MM:SS" of the record's header (UTC, as in the log).
+    pub clock: String,
+    pub level: log::Level,
+    pub text: String,
+}
+
+const WARNINGS_KEPT: usize = 200;
+const TOOL_LINES_KEPT: usize = 600;
+
+/// The diagnostics whose output J5 copies, by the start of their lines.
+pub const TOOL_PREFIXES: &[(&str, &str)] = &[
+    ("P3", "slow sync:"),
+    ("P4", "still check:"),
+    ("P5", "sync check:"),
+    ("P6", "perf summary:"),
+    ("P6", "net summary:"),
+    ("O9", "sculpt watch:"),
+    ("M1", "media objects:"),
+];
+
+static WARNINGS: std::sync::Mutex<std::collections::VecDeque<Recent>> = std::sync::Mutex::new(std::collections::VecDeque::new());
+static TOOL_LINES: std::sync::Mutex<std::collections::VecDeque<(&'static str, Recent)>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// The header of a record: (clock, level, the message after the header).
+fn parse_record(text: &str) -> Option<(&str, log::Level, &str)> {
+    let rest = text.strip_prefix('[')?;
+    let (header, message) = rest.split_once("] ")?;
+    let mut parts = header.split_whitespace();
+    let stamp = parts.next()?;
+    let level = parts.next()?.parse().ok()?;
+    let clock = stamp.split_once('T').map_or(stamp, |(_, t)| t.get(..8).unwrap_or(t));
+    Some((clock, level, message.trim_end()))
+}
+
+/// Keep what the Dev Toolbox shows from one record.
+fn remember(text: &str) {
+    let Some((clock, level, message)) = parse_record(text) else {
+        return;
+    };
+    let recent = || Recent {
+        at: std::time::Instant::now(),
+        clock: clock.to_owned(),
+        level,
+        text: message.to_owned(),
+    };
+    if level <= log::Level::Warn
+        && let Ok(mut ring) = WARNINGS.lock()
+    {
+        if ring.len() == WARNINGS_KEPT {
+            ring.pop_front();
+        }
+        ring.push_back(recent());
+    }
+    if let Some((tool, _)) = TOOL_PREFIXES.iter().find(|(_, prefix)| message.starts_with(prefix))
+        && let Ok(mut ring) = TOOL_LINES.lock()
+    {
+        if ring.len() == TOOL_LINES_KEPT {
+            ring.pop_front();
+        }
+        ring.push_back((tool, recent()));
+    }
+}
+
+/// The last `n` warnings and errors, the oldest first.
+pub fn recent_warnings(n: usize) -> Vec<Recent> {
+    WARNINGS
+        .lock()
+        .map(|ring| ring.iter().skip(ring.len().saturating_sub(n)).cloned().collect())
+        .unwrap_or_default()
+}
+
+/// The lines the diagnostics of [`TOOL_PREFIXES`] wrote in the last `since`.
+pub fn tool_lines(since: std::time::Duration) -> Vec<(&'static str, Recent)> {
+    let now = std::time::Instant::now();
+    TOOL_LINES
+        .lock()
+        .map(|ring| ring.iter().filter(|(_, r)| now.duration_since(r.at) <= since).cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Console + file writer.
 struct Tee {
     file: Option<std::fs::File>,
@@ -123,6 +209,7 @@ impl Write for Tee {
                 s.push_str(&text);
             }
         });
+        remember(&text);
         let _ = std::io::stderr().write_all(text.as_bytes());
         if let Some(f) = &mut self.file {
             let _ = f.write_all(text.as_bytes());
@@ -177,7 +264,17 @@ pub fn init() {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact, strip_headers};
+    use super::{parse_record, redact, strip_headers};
+
+    #[test]
+    fn record_headers_give_clock_and_level() {
+        let (clock, level, message) =
+            parse_record("[2026-10-20T02:34:46.538Z WARN  aurora_viewer::scene::textures] texture memory: pressure\n").unwrap();
+        assert_eq!(clock, "02:34:46");
+        assert_eq!(level, log::Level::Warn);
+        assert_eq!(message, "texture memory: pressure");
+        assert!(parse_record("  continuation line").is_none());
+    }
 
     #[test]
     fn captured_lines_lose_their_header() {

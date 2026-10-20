@@ -1909,7 +1909,9 @@ tests do not establish that this report uses an invalid joint or index.
 - **`AURORA_DEMO_DEBUG`**: comma-separated list among `bounds`,
   `culling`, `lights`, `probes`, `skeletons`, `alpha`, `alpha_rigged`, `wire`, `complexity`,
   `glow`, `glow_view`, `freeze`, `lod`, `shadows`, `ao`, `check_lights`,
-  `check_probes`: the entries of Preferences › Debug. `shadows` is the view
+  `check_probes`, `pass`: the toggles of the Dev Toolbox (formerly
+  Preferences › Debug); `pass` is R3, every face tinted by its pass (green
+  opaque, blue masked, red blended, yellow hidden). `shadows` is the view
   of `AURORA_DEBUG_SHADOWS`; `ao` shows the ambient occlusion of the screen
   alone, light grey where nothing is occluded (everywhere when the effect is
   off); `check_lights` and `check_probes` are the checks of
@@ -2490,6 +2492,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
+| `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
@@ -3049,7 +3052,18 @@ failure. Grid validation and any paid upload are performed by the human.
   Combine with `AURORA_DEMO_VOICE=speaking|cycle` and `AURORA_PROFILE=1` for
   matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
   check that hiding world indicators leaves the call's controls intact.
-- **`AURORA_DEMO_OPTIONS=<section>`**: `7:voice`, `7:processing` and `7:indicators`
+- **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
+  Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
+  tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1
+  selection, 2 under the cursor) and presses the tool once the world shows
+  (frame 600), its text in "Send a diagnostic": `0:J1` for the worn items of
+  the avatar within 3 m (with `AURORA_DEMO_POS=134.5,128`,
+  `AURORA_DEMO_CROWD=4`, `AURORA_DEMO_ANIMESH=1`), `0:J4` for the system
+  configuration, `0:N3` for the loads. Prefer J1 to J2 in automated runs:
+  J2 copies to the clipboard of the PC. Capture after frame 1000 when names
+  are asked (3 s).
+- **`AURORA_DEMO_OPTIONS=<section>`**: section 9, the former Debug page,
+  opens the Dev Toolbox instead. `7:voice`, `7:processing` and `7:indicators`
   jump to the corresponding Sound and voice card for offline captures;
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
@@ -4798,7 +4812,7 @@ What the inventory must show with these scenarios:
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
 | `AURORA_STILL_CHECK=1` | What changes when the image should be still |
 | `AURORA_SCULPT_WATCH=<avatar UUID>` | Logs changed attachment geometry and sculpt-map states for one avatar |
-| `AURORA_DEMO_DESCRIBE=<frame>[,clipboard]` | Presses "Debug to log" (or "Debug to clipboard") of Preferences › Debug › Logs at that frame |
+| `AURORA_DEMO_DESCRIBE=<frame>[,clipboard]` | Opens the Dev Toolbox and presses J1 (J2) at that frame |
 | `AURORA_DEBUG_GLOW=1` | Glow diagnostics |
 | `AURORA_GLOW_SKIP=<mask>` | Removes a family of faces from the glow |
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
@@ -5555,9 +5569,9 @@ setting or asset request. No names, locations, texture pixels or service URLs
 are added to these lines. In normal mode the human connects and positions the
 camera; the diagnostic is disabled unless explicitly configured.
 
-**`AURORA_DEMO_DESCRIBE=<frame>[,clipboard]`** presses the "Debug to log"
-button of Preferences › Debug › Logs at that frame (`clipboard`:
-"Debug to clipboard", which also logs `describe: N lines copied`). The lines
+**`AURORA_DEMO_DESCRIBE=<frame>[,clipboard]`** opens the Dev Toolbox and
+presses J1 "Debug to log" at that frame (`clipboard`: J2 "Debug to
+clipboard", which also copies and logs `dev toolbox: J2 copied (N lines)`). The lines
 follow at once in demo, or after 3 s when names of worn items were asked:
 `describe:` (scope), `attachments of …` per avatar within 10 m, `attachment
 '<name>' <root id> point …` per attachment (prims with no face drawn, faces

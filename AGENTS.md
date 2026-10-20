@@ -567,6 +567,12 @@ the review comment.
   (test something, log in, decide).
 - Never claim something is tested when it is not.
 - Keep the logs and screenshots to back up what you state.
+- **Viewer data you cannot read**: when a report needs what only the
+  viewer knows and you cannot read the log yourself (a tester's PC, a
+  viewer on another machine), ask the human or the tester to press one Dev
+  Toolbox tool by its identifier (J2, L1…) and to paste what it copies, as
+  [docs/DEV_TOOLBOX.md](docs/DEV_TOOLBOX.md) explains per kind of problem.
+  Never ask a tester for their full log.
 - **Answer from fresh data.** Before answering any question on the state of
   the project (what is left to do, missing features, progress of a task,
   issues, PRs, what was merged):

@@ -27,8 +27,6 @@ pub enum BarAction {
     ReportAbuse,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
-    /// Advanced › Debug to log / Debug to clipboard (app/describe.rs).
-    Describe(crate::app::DescribeOutput),
     ShowHuds(bool),
     HudZoom(f32),
     #[default]
@@ -838,23 +836,15 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             flip_window(ui, p, "gauge-filled", perf, "perf", &mut panels.perf);
             let graphics = aurora_i18n::tr!("ui-bars-graphics-preferences");
             flip_window(ui, p, "settings-filled", graphics, "options", &mut panels.settings);
-            menu::separator(ui, p);
-            for (icon, label, output) in [
-                (
-                    "file-text-filled",
-                    aurora_i18n::tr!("ui-options-describe"),
-                    crate::app::DescribeOutput::Log,
-                ),
-                (
-                    "clipboard-text-filled",
-                    aurora_i18n::tr!("ui-options-describe-clipboard"),
-                    crate::app::DescribeOutput::Clipboard,
-                ),
-            ] {
-                if menu::item(ui, p, icon, label) {
-                    *action = BarAction::Describe(output);
-                }
-            }
+            let toolbox = aurora_i18n::tr!("dev-toolbox-menu");
+            flip_window(
+                ui,
+                p,
+                "code-circle-filled",
+                toolbox,
+                crate::ui::dev_toolbox::WINDOW,
+                &mut panels.dev_toolbox,
+            );
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {

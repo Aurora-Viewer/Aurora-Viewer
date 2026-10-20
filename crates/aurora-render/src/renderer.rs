@@ -752,6 +752,8 @@ struct Pipelines {
     /// Debug "Show transparency": red and blue translucent faces.
     debug_red: wgpu::RenderPipeline,
     debug_blue: wgpu::RenderPipeline,
+    debug_green: wgpu::RenderPipeline,
+    debug_yellow: wgpu::RenderPipeline,
     /// Debug wireframe (None without POLYGON_MODE_LINE).
     debug_wire: Option<wgpu::RenderPipeline>,
     /// Selection wireframes (SilhouetteParentColor / SilhouetteChildColor).
@@ -2129,6 +2131,8 @@ struct Ranges {
     glow_alpha: (u64, u32),
     debug_red: (u64, u32),
     debug_blue: (u64, u32),
+    debug_green: (u64, u32),
+    debug_yellow: (u64, u32),
     select_root: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
@@ -3024,6 +3028,17 @@ impl Backend {
             &[("debug_r", 0.0), ("debug_g", 0.2), ("debug_b", 1.0), ("debug_a", 0.35)],
             false,
         );
+        // Dev Toolbox R3 (pass per face): opaque faces and hidden ones
+        let debug_green = debug(
+            "debug green",
+            &[("debug_r", 0.1), ("debug_g", 0.85), ("debug_b", 0.3), ("debug_a", 0.3)],
+            false,
+        );
+        let debug_yellow = debug(
+            "debug yellow",
+            &[("debug_r", 1.0), ("debug_g", 0.85), ("debug_b", 0.1), ("debug_a", 0.45)],
+            false,
+        );
         let debug_wire = device.features().contains(wgpu::Features::POLYGON_MODE_LINE).then(|| {
             debug(
                 "debug wire",
@@ -3242,6 +3257,8 @@ impl Backend {
             glow_suppress,
             debug_red,
             debug_blue,
+            debug_green,
+            debug_yellow,
             debug_wire,
             select_root_wire,
             select_child_wire,
@@ -5208,6 +5225,8 @@ impl Backend {
         let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.debug_blue = push(cpu, &lists.debug_blue);
+        rg.debug_green = push(cpu, &lists.debug_green);
+        rg.debug_yellow = push(cpu, &lists.debug_yellow);
         rg.select_root = push(cpu, &lists.select_root);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
@@ -6163,6 +6182,8 @@ impl Backend {
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
             draw(pass, &self.pipelines.debug_blue, rg.debug_blue);
+            draw(pass, &self.pipelines.debug_green, rg.debug_green);
+            draw(pass, &self.pipelines.debug_yellow, rg.debug_yellow);
             if let Some(wire) = &self.pipelines.select_child_wire {
                 draw(pass, wire, rg.select_child);
             }

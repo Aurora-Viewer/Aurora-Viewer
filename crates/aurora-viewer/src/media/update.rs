@@ -3,6 +3,20 @@
 
 use super::*;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The Dev Toolbox's M1 "Media debug", besides AURORA_MEDIA_DEBUG.
+static DEBUG: AtomicBool = AtomicBool::new(false);
+
+/// Turn the `media objects:` lines on or off while the viewer runs.
+pub fn set_debug(on: bool) {
+    DEBUG.store(on, Ordering::Relaxed);
+}
+
+/// Whether the media lines are written (AURORA_MEDIA_DEBUG or M1).
+pub fn debug_on() -> bool {
+    DEBUG.load(Ordering::Relaxed) || std::env::var_os("AURORA_MEDIA_DEBUG").is_some()
+}
 
 /// Upload budget per frame (bytes): a 1024² media is 4 MB.
 const UPLOAD_BUDGET: usize = 16 << 20;
@@ -118,7 +132,7 @@ impl MediaManager {
         }
         changes.clear();
         self.changes = changes;
-        if refresh && std::env::var_os("AURORA_MEDIA_DEBUG").is_some() {
+        if refresh && debug_on() {
             log::info!(
                 "media objects: {} objects, {} with media, {} showing the parcel media, {} local entries",
                 world.objects.len(),

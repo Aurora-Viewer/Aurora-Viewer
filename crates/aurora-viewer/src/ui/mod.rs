@@ -20,6 +20,7 @@ pub mod contacts;
 pub mod context;
 pub mod controls;
 pub mod debug_overlay;
+pub mod dev_toolbox;
 pub mod display_name;
 pub mod emoji;
 pub mod env_day_editor;
@@ -101,6 +102,8 @@ pub mod worldmap;
 pub struct Panels {
     pub chat: bool,
     pub perf: bool,
+    /// The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D).
+    pub dev_toolbox: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -152,6 +155,7 @@ impl Panels {
         Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
+            dev_toolbox: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,

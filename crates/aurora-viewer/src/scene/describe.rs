@@ -115,7 +115,7 @@ impl Scene {
 
     /// The other avatars within `radius` m of ours, nearest first (drawn
     /// positions: a seated avatar's own position is relative to its seat).
-    fn avatars_near(world: &World, radius: f32) -> Vec<(f32, Uuid)> {
+    pub fn avatars_near(world: &World, radius: f32) -> Vec<(f32, Uuid)> {
         let Some(me) = world
             .objects
             .index_of_uuid(&world.agent_id)
@@ -792,5 +792,81 @@ impl Scene {
                 );
             }
         }
+    }
+}
+
+/// One attachment of an avatar, for the Dev Toolbox's L2.
+#[derive(Debug, Clone)]
+pub struct WornRow {
+    pub root: Uuid,
+    /// The inventory item's name for ours, else the ObjectProperties name.
+    pub name: Option<String>,
+    pub point: u8,
+    pub prims: usize,
+    pub faces_drawn: usize,
+    /// Faces `rebuild_faces` left out (texture-entry alpha 0, no triangles).
+    pub left_out: usize,
+}
+
+impl Scene {
+    /// The Dev Toolbox's L1: one prim, every face, as "Debug to log" writes
+    /// it for a detailed prim.
+    pub fn describe_prim(&self, world: &World, renderer: &Renderer, idx: usize) -> Option<String> {
+        Some(self.prim_faces_line(world, renderer, world.objects.get(idx)?, self.gpu.get(idx)?))
+    }
+
+    /// The pass and drawn alpha of one face, for the L1 button ("Blend ·
+    /// alpha 1.000"); None when the face is not drawn.
+    pub fn face_brief(&self, renderer: &Renderer, idx: usize, face: usize) -> Option<(Pass, f32)> {
+        let g = self.gpu.get(idx)?;
+        let f = g.faces.iter().find(|f| f.te_index as usize == face)?;
+        let a = self
+            .textures
+            .alpha_by_slot
+            .get(f.base_slot as usize)
+            .copied()
+            .unwrap_or(AlphaKind::Opaque);
+        let alpha = renderer.records.get(f.record).map_or(f.te_alpha, |r| r.base_color[3]);
+        Some((classify(f, a), alpha))
+    }
+
+    /// The Dev Toolbox's L2: the attachments of an avatar with their faces
+    /// drawn and left out, the most left out first.
+    pub fn worn_rows(&self, world: &World, avatar: Uuid, names: Names) -> Vec<WornRow> {
+        let Some(av) = world.objects.index_of_uuid(&avatar).and_then(|i| world.objects.get(i)) else {
+            return Vec::new();
+        };
+        let mut rows: Vec<WornRow> = world
+            .objects
+            .children_of(&av.key)
+            .iter()
+            .filter_map(|&att| {
+                let root = world.objects.get(att).filter(|o| !o.is_avatar())?;
+                let prims = linkset(world, att);
+                let (mut drawn, mut left) = (0, 0);
+                for &i in &prims {
+                    if let (Some(o), Some(g)) = (world.objects.get(i), self.gpu.get(i)) {
+                        drawn += g.faces.len();
+                        let (zero, none) = self.left_out(o, g);
+                        left += zero + none;
+                    }
+                }
+                let name = root
+                    .attachment_item_id()
+                    .and_then(|id| world.inventory.items.get(&id))
+                    .map(|i| i.name.clone())
+                    .or_else(|| names(&root.full_id));
+                Some(WornRow {
+                    root: root.full_id,
+                    name,
+                    point: root.attachment_point(),
+                    prims: prims.len(),
+                    faces_drawn: drawn,
+                    left_out: left,
+                })
+            })
+            .collect();
+        rows.sort_by(|a, b| b.left_out.cmp(&a.left_out).then(b.prims.cmp(&a.prims)));
+        rows
     }
 }

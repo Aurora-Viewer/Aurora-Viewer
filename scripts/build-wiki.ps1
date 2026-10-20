@@ -29,6 +29,7 @@ $pages = @(
     @{ Section = 'For testers'; Page = 'Reporting-bugs'; Title = 'Reporting bugs'; Source = 'docs/BUG_REPORTING.md' }
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
     @{ Section = 'For testers'; Page = 'Asset-imports'; Title = 'Asset imports'; Source = 'docs/IMPORTS.md' }
+    @{ Section = 'For testers'; Page = 'Dev-Toolbox'; Title = 'Dev Toolbox'; Source = 'docs/DEV_TOOLBOX.md' }
     @{ Section = 'Contributing'; Page = 'Guide-for-humans'; Title = 'Guide for humans'; Source = 'HUMANS.md' }
     @{ Section = 'Contributing'; Page = 'Test-options'; Title = 'Test options and profiling'; Source = 'docs/TESTING.md' }
     @{ Section = 'Contributing'; Page = 'Translating'; Title = 'Translating the viewer'; Source = 'docs/TRANSLATING.md' }

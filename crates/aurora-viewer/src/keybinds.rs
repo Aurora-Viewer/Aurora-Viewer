@@ -333,6 +333,8 @@ pub enum Action {
     HudDrag,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
+    /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
+    DevToolbox,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
     Rebake,
     /// Avatar health's "Stop avatar animations", the scripts keeping their
@@ -464,7 +466,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
             ),
             (
                 aurora_i18n::tr!("keybinds-debug"),
-                vec![(Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency"))],
+                vec![
+                    (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
+                    (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
+                ],
             ),
         ]
     })
@@ -665,6 +670,8 @@ impl KeyBindings {
                     None,
                 ],
             ),
+            // Aurora's Dev Toolbox (Advanced › Dev Toolbox)
+            (Action::DevToolbox, [kalt(K::KeyD, true, false), None]),
             // menu_viewer.xml: Avatar Health
             (Action::StopAnimations, [kalt(K::KeyA, false, true), None]),
             (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
@@ -1501,6 +1508,7 @@ mod tests {
             (Action::Preferences, (true, false, false), [K::KeyP; 4]),
             (Action::Import, (true, false, false), [K::KeyU; 4]),
             (Action::ShowTransparency, (true, false, true), [K::KeyT; 4]),
+            (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),

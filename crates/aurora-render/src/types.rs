@@ -389,6 +389,11 @@ pub struct DrawLists {
     pub debug_red: Vec<DrawCmd>,
     /// ... and faces masked by their material in blue.
     pub debug_blue: Vec<DrawCmd>,
+    /// Dev Toolbox "Pass and alpha per face": opaque faces in green, faces
+    /// left hidden (fully transparent) in yellow; masked ones go to
+    /// `debug_blue`, blended ones to `debug_red`.
+    pub debug_green: Vec<DrawCmd>,
+    pub debug_yellow: Vec<DrawCmd>,
     /// Build tools: wireframe of the selected mesh / sculpted objects
     /// (LLSelectMgr::renderOneSilhouette draws meshes as wireframes), root
     /// in yellow, other prims of the linkset in blue.
@@ -475,6 +480,8 @@ impl DrawLists {
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
         self.debug_blue.clone_from(&src.debug_blue);
+        self.debug_green.clone_from(&src.debug_green);
+        self.debug_yellow.clone_from(&src.debug_yellow);
         self.select_root.clone_from(&src.select_root);
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
@@ -510,6 +517,8 @@ impl DrawLists {
         self.glow_alpha.clear();
         self.debug_red.clear();
         self.debug_blue.clear();
+        self.debug_green.clear();
+        self.debug_yellow.clear();
         self.select_root.clear();
         self.select_child.clear();
         self.select_faces.clear();
