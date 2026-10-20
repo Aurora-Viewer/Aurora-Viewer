@@ -88,22 +88,30 @@ impl Viewfinder {
         match dial {
             Dial::Aperture => {
                 let n = s.dof.f_number;
-                let u = vf::STOPS
+                // past f/22, one more stop: all sharp (the depth of field off)
+                let all_sharp = vf::STOPS.len() as f32;
+                let u = if s.dof.enabled {
+                    vf::STOPS
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| (a.1 - n).abs().total_cmp(&(b.1 - n).abs()))
+                        .map_or(0, |(i, _)| i) as f32
+                } else {
+                    all_sharp
+                };
+                let majors = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0];
+                let mut marks: Vec<(f32, String, bool)> = vf::STOPS
                     .iter()
                     .enumerate()
-                    .min_by(|a, b| (a.1 - n).abs().total_cmp(&(b.1 - n).abs()))
-                    .map_or(0, |(i, _)| i) as f32;
-                let majors = [1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0];
+                    .map(|(i, &v)| (i as f32, mark_label(v), majors.contains(&v)))
+                    .collect();
+                marks.push((all_sharp, aurora_i18n::tr!("photo-vf-ring-all-sharp").to_owned(), true));
                 Ring {
                     u,
                     k: 46.0,
                     min: 0.0,
-                    max: (vf::STOPS.len() - 1) as f32,
-                    marks: vf::STOPS
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &v)| (i as f32, mark_label(v), majors.contains(&v)))
-                        .collect(),
+                    max: all_sharp,
+                    marks,
                     title: aurora_i18n::tr!("photo-vf-ring-aperture"),
                     keys: aurora_i18n::tr!("photo-vf-ring-aperture-keys"),
                 }
@@ -182,12 +190,20 @@ impl Viewfinder {
                 *fov = fov_of_focal(mm);
             }
             Dial::Aperture => {
-                let i = (u.round() as usize).min(vf::STOPS.len() - 1);
-                s.dof.f_number = vf::STOPS[i];
-                // an aperture means a depth of field
-                if !s.dof.enabled {
-                    s.dof.enabled = true;
-                    self.say(aurora_i18n::tr!("photo-vf-dof-on"), false, f.now);
+                let i = u.round() as usize;
+                if i >= vf::STOPS.len() {
+                    // the last stop: all sharp
+                    if s.dof.enabled {
+                        s.dof.enabled = false;
+                        self.say(aurora_i18n::tr!("photo-vf-dof-off"), false, f.now);
+                    }
+                } else {
+                    s.dof.f_number = vf::STOPS[i];
+                    // an aperture means a depth of field
+                    if !s.dof.enabled {
+                        s.dof.enabled = true;
+                        self.say(aurora_i18n::tr!("photo-vf-dof-on"), false, f.now);
+                    }
                 }
             }
             Dial::Exposure => {

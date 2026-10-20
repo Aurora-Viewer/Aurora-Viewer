@@ -365,7 +365,19 @@ impl App {
                 let next = vf::step_focal(mm, dir, crate::ui::snapshot::FOCAL_RANGE);
                 self.settings.camera.fov = crate::snapshot::fov_of_focal(next);
             }
-            Dial::Aperture => s.dof.f_number = vf::step_aperture(s.dof.f_number, dir),
+            // past f/22, all sharp (the photo's depth of field off), and back
+            Dial::Aperture => {
+                if !s.dof.enabled {
+                    if dir < 0 {
+                        s.dof.enabled = true;
+                        s.dof.f_number = vf::STOPS[vf::STOPS.len() - 1];
+                    }
+                } else if dir > 0 && s.dof.f_number >= vf::STOPS[vf::STOPS.len() - 1] {
+                    s.dof.enabled = false;
+                } else {
+                    s.dof.f_number = vf::step_aperture(s.dof.f_number, dir);
+                }
+            }
             Dial::Exposure => {
                 let base = self.settings.exposure;
                 let ev = vf::ev_of(self.snapshots.ui.light.exposure.unwrap_or(base), base) + dir as f32 / 3.0;

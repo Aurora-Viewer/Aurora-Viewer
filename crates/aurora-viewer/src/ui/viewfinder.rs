@@ -70,8 +70,6 @@ pub struct Viewfinder {
     pub countdown: Option<f64>,
     /// The camera pad this frame.
     pub pad: Pad,
-    /// The aperture was chosen with the depth of field off: it comes on.
-    wants_dof: bool,
     /// The lens ring dragged: its value and the pointer's x at the start.
     ring_drag: Option<(f32, f32)>,
     /// The ring's mark last crossed (a click at each).
@@ -1118,10 +1116,6 @@ impl Viewfinder {
                 });
         }
 
-        if std::mem::take(&mut self.wants_dof) && !s.dof.enabled {
-            s.dof.enabled = true;
-            self.say(aurora_i18n::tr!("photo-vf-dof-on"), false, f.now);
-        }
         // the dials
         egui::Area::new(Id::new("vf_dials"))
             .order(Order::Foreground)
@@ -1147,9 +1141,6 @@ impl Viewfinder {
                             .inner;
                         if resp.clicked() {
                             me.dial = d;
-                            if d == Dial::Aperture {
-                                me.wants_dof = true;
-                            }
                         }
                     };
                     dial(
