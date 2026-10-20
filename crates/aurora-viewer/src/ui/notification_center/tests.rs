@@ -252,6 +252,7 @@ fn a_script_menu_stays_out_until_answered() {
         "Fountain",
         "Pick a colour",
         Data::Dialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
             object: Uuid::from_u128(9),
             object_name: "Fountain".into(),
             own_object: false,

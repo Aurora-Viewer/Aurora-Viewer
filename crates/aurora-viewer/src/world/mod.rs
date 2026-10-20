@@ -2168,6 +2168,7 @@ impl World {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
             NetEvent::ScriptDialog {
+                sender,
                 object_id,
                 object_name,
                 owner_name,
@@ -2178,12 +2179,14 @@ impl World {
                 let textbox = buttons.first().is_some_and(|b| b == "!!llTextBox!!");
                 let data = if textbox {
                     notifications::Data::TextBox {
+                        sender,
                         object: object_id,
                         channel,
                     }
                 } else {
                     let buttons = if buttons.is_empty() { vec!["OK".to_owned()] } else { buttons };
                     notifications::Data::Dialog {
+                        sender,
                         object: object_id,
                         object_name: object_name.clone(),
                         own_object: self
@@ -4989,10 +4992,58 @@ mod motion_tests {
     }
 
     #[test]
+    fn script_dialog_replies_keep_the_sender_without_resolving_the_hud_in_the_scene() {
+        let (mut world, _, here) = fixture();
+        let sender = ([127, 0, 0, 1], 13001).into();
+        let object_id = Uuid::from_u128(0x4321);
+        assert!(world.objects.index_of_uuid(&object_id).is_none());
+        let labels = vec!["  Keep spaces  ".to_owned(), "✓ Sélection".to_owned(), " ".to_owned()];
+        for channel in [i32::MIN, -42, 0, 42, i32::MAX] {
+            for index in 0..labels.len() {
+                world.apply(NetEvent::ScriptDialog {
+                    sender,
+                    object_id,
+                    object_name: "HUD".into(),
+                    owner_name: "Example Resident".into(),
+                    message: "Choose".into(),
+                    channel,
+                    buttons: labels.clone(),
+                });
+                // The menu can outlive a region crossing. Object lookup,
+                // parent/root transforms and HUD rendering never route it.
+                world.main_region = Some(here + (256u64 << 32));
+                let id = world.notifications.list.last().expect("dialog").id;
+                let (commands, url) = world.respond_notification(id, notifications::Response::Button(index));
+                assert!(url.is_none());
+                assert!(matches!(commands.as_slice(), [aurora_net::NetCommand::ScriptDialogReply {
+                    sender: Some(to), object_id: object, channel: ch, index: button, label,
+                }] if *to == sender && *object == object_id && *ch == channel && *button == index as i32 && label == &labels[index]));
+            }
+        }
+        world.apply(NetEvent::ScriptDialog {
+            sender,
+            object_id,
+            object_name: "HUD".into(),
+            owner_name: "Example Resident".into(),
+            message: "Enter text".into(),
+            channel: -42,
+            buttons: vec!["!!llTextBox!!".into()],
+        });
+        let n = world.notifications.list.last_mut().expect("text box");
+        n.text = "  ✓ Original text  ".into();
+        let id = n.id;
+        let (commands, _) = world.respond_notification(id, notifications::Response::SendText);
+        assert!(matches!(commands.as_slice(), [aurora_net::NetCommand::ScriptDialogReply {
+            sender: Some(to), object_id: object, channel: -42, index: 0, label,
+        }] if *to == sender && *object == object_id && label == "  ✓ Original text  "));
+    }
+
+    #[test]
     fn script_menu_ignore_sends_no_reply_and_block_suppresses_future_menus() {
         let (mut world, _, _) = fixture();
         let object_id = Uuid::from_u128(0x4321);
         let menu = || NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
             object_id,
             object_name: aurora_i18n::tr!("world-mod-test-menu").into(),
             owner_name: aurora_i18n::tr!("world-mod-test-seller").into(),
