@@ -403,12 +403,26 @@ fn inventory_photos_are_named_after_the_place() {
 #[test]
 fn inventory_photos_encode_to_a_texture_of_their_size() {
     let (w, h) = (300u32, 170u32);
-    let rgba: Vec<u8> = (0..w * h).flat_map(|i| [(i % 256) as u8, 90, 200, 255]).collect();
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|i| [if i / w < h / 2 { 220 } else { 30 }, if i % w < w / 2 { 40 } else { 200 }, 90, 255])
+        .collect();
     let texture = inventory::texture_size((w, h));
     assert_eq!(texture, (256, 128));
     let data = inventory::encode(w, h, &rgba, texture).expect("encode");
     let info = aurora_assets::j2k_info(&data).expect("J2K");
     assert_eq!((info.width, info.height), texture);
+    let decoded = aurora_assets::decode_j2k(&data, 0).expect("decoded photo");
+    for (x, y, expected) in [
+        (16, 16, [220, 40, 90]),
+        (240, 16, [220, 200, 90]),
+        (16, 112, [30, 40, 90]),
+        (240, 112, [30, 200, 90]),
+    ] {
+        let offset = (y * texture.0 as usize + x) * 3;
+        for (actual, expected) in decoded.data[offset..offset + 3].iter().zip(expected) {
+            assert!(actual.abs_diff(expected) <= 15, "photo orientation at ({x}, {y})");
+        }
+    }
     assert!(inventory::encode(w, h, &rgba[..10], texture).is_err());
 }
 
