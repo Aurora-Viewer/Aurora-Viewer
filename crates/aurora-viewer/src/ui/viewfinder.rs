@@ -70,6 +70,8 @@ pub struct Viewfinder {
     pub countdown: Option<f64>,
     /// The camera pad this frame.
     pub pad: Pad,
+    /// The aperture was chosen with the depth of field off: it comes on.
+    wants_dof: bool,
     /// The lens ring dragged: its value and the pointer's x at the start.
     ring_drag: Option<(f32, f32)>,
     /// The ring's mark last crossed (a click at each).
@@ -278,6 +280,50 @@ pub fn next_guide(g: Guide) -> Guide {
     }
 }
 
+/// A "·" between two switches.
+fn dot(ui: &mut egui::Ui, p: &Palette) {
+    let (r, _) = ui.allocate_exact_size(Vec2::new(4.0, 14.0), Sense::hover());
+    shadow_text(ui.painter(), p, r.center(), Align2::CENTER_CENTER, "·", regular(13.0), p.ink);
+}
+
+fn next_destination(d: Destination) -> Destination {
+    match d {
+        Destination::Disk => Destination::Inventory,
+        Destination::Inventory => Destination::Profile,
+        Destination::Profile => Destination::Disk,
+    }
+}
+
+fn next_time(time: Option<u8>) -> Option<u8> {
+    match time {
+        None => Some(1),
+        Some(n) if n < 4 => Some(n + 1),
+        Some(_) => None,
+    }
+}
+
+/// The next size of the destination: the disk's resolutions (the typed
+/// one stays in the drawer), the inventory's textures, the profile's.
+fn next_size(s: &mut Settings, destination: Destination) {
+    match destination {
+        Destination::Disk => {
+            let all: Vec<Resolution> = Resolution::ALL.into_iter().filter(|r| *r != Resolution::Custom).collect();
+            let i = all.iter().position(|r| *r == s.resolution).map_or(0, |i| i + 1);
+            s.resolution = all[i % all.len()];
+        }
+        Destination::Inventory => {
+            let all = crate::snapshot::inventory::TextureSize::ALL;
+            let i = all.iter().position(|r| *r == s.inventory_size).unwrap_or(0);
+            s.inventory_size = all[(i + 1) % all.len()];
+        }
+        Destination::Profile => {
+            let all = crate::snapshot::profile::ProfileSize::ALL;
+            let i = all.iter().position(|r| *r == s.profile_size).unwrap_or(0);
+            s.profile_size = all[(i + 1) % all.len()];
+        }
+    }
+}
+
 fn time_label(time: Option<u8>) -> &'static str {
     match time {
         None => aurora_i18n::tr!("photo-vf-sky-current"),
@@ -462,7 +508,7 @@ impl Viewfinder {
         back: &egui::Painter,
         screen: Rect,
         s: &mut Settings,
-        panel: &SnapshotUi,
+        panel: &mut SnapshotUi,
         f: &Frame,
         out: &mut Vec<Out>,
     ) {
@@ -531,41 +577,79 @@ impl Viewfinder {
                 });
             });
 
-        // what the photo will be
-        let mut x = screen.right() - GAP;
-        let y = screen.top() + 24.0;
-        let font = regular(13.0);
-        let right = |x: &mut f32, text: &str, color: Color32, font: FontId, icon_name: Option<&str>| {
-            let r = shadow_text(back, p, Pos2::new(*x, y), Align2::RIGHT_CENTER, text, font, color);
-            *x = r.left();
-            if let Some(name) = icon_name {
-                let ir = Rect::from_center_size(Pos2::new(*x - 6.0 - 8.5, y), Vec2::splat(17.0));
-                icon(back, name, ir, color);
-                *x = ir.left();
-            }
-            *x -= 18.0;
-        };
-        right(&mut x, &format!("{} i/s", f.fps.round() as i32), p.muted, font.clone(), None);
-        if !s.huds {
-            right(&mut x, aurora_i18n::tr!("photo-huds"), p.muted, font.clone(), Some("eye-off"));
-        }
-        if s.quality {
-            right(&mut x, "8×", p.ink, font.clone(), Some("sparkles-filled"));
-        }
-        right(
-            &mut x,
-            destination_label(panel.destination),
-            p.ink,
-            font.clone(),
-            Some("device-floppy-filled"),
-        );
-        let format = if panel.destination == Destination::Profile {
-            FileFormat::Png
-        } else {
-            s.format
-        };
-        let size = format!("{} · {} × {} · {}", aspect_label(s.aspect), f.photo.0, f.photo.1, format.label());
-        right(&mut x, &size, p.ink, bold(ctx, 13.0), None);
+        // what the photo will be: each a switch, a click for the next value
+        egui::Area::new(Id::new("vf_top_right"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::RIGHT_TOP)
+            .fixed_pos(screen.right_top() + Vec2::new(-GAP, 14.0))
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 18.0;
+                    let fps = format!("{} i/s", f.fps.round() as i32);
+                    let (r, _) = ui.allocate_exact_size(
+                        ui.painter().layout_no_wrap(fps.clone(), regular(13.0), p.muted).size(),
+                        Sense::hover(),
+                    );
+                    shadow_text(ui.painter(), p, r.left_top(), Align2::LEFT_TOP, &fps, regular(13.0), p.muted);
+                    let (eye, hud_color) = if s.huds { ("eye-filled", p.ink) } else { ("eye-off", p.muted) };
+                    if icon_text_button(
+                        ui,
+                        p,
+                        eye,
+                        aurora_i18n::tr!("photo-huds"),
+                        hud_color,
+                        aurora_i18n::tr!("photo-vf-hud-tip"),
+                    )
+                    .clicked()
+                    {
+                        s.huds = !s.huds;
+                    }
+                    let quality = if s.quality { p.ink } else { p.muted_dim };
+                    if icon_text_button(ui, p, "sparkles-filled", "8×", quality, aurora_i18n::tr!("photo-vf-quality-tip")).clicked() {
+                        s.quality = !s.quality;
+                    }
+                    if icon_text_button(
+                        ui,
+                        p,
+                        "device-floppy-filled",
+                        destination_label(panel.destination),
+                        p.ink,
+                        aurora_i18n::tr!("photo-vf-destination-tip"),
+                    )
+                    .clicked()
+                    {
+                        panel.destination = next_destination(panel.destination);
+                        out.push(Out::Panel(Action::Changed));
+                    }
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let font = bold(ctx, 13.0);
+                    // the file's format: the disk's choice (the profile feed takes a PNG)
+                    match panel.destination {
+                        Destination::Disk => {
+                            if text_button(ui, p, s.format.label(), font.clone(), p.ink, aurora_i18n::tr!("photo-vf-file-tip")).clicked() {
+                                let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
+                                s.format = FileFormat::ALL[(i + 1) % FileFormat::ALL.len()];
+                            }
+                            dot(ui, p);
+                        }
+                        Destination::Profile => {
+                            text_button(ui, p, FileFormat::Png.label(), font.clone(), p.ink, "");
+                            dot(ui, p);
+                        }
+                        Destination::Inventory => {}
+                    }
+                    let size = format!("{} × {}", f.photo.0, f.photo.1);
+                    if text_button(ui, p, &size, font.clone(), p.ink, aurora_i18n::tr!("photo-vf-size-tip")).clicked() {
+                        next_size(s, panel.destination);
+                    }
+                    dot(ui, p);
+                    if text_button(ui, p, aspect_label(s.aspect), font, p.ink, aurora_i18n::tr!("photo-vf-format-tip")).clicked() {
+                        let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
+                        s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], f.window);
+                    }
+                });
+            });
 
         // the light of the photo
         let mut y = screen.top() + 66.0;
@@ -587,7 +671,27 @@ impl Viewfinder {
             );
             *y += 24.0;
         };
-        line(&mut y, "sun-filled", time_label(panel.light.time), p.ink);
+        // (the time of day is a switch too)
+        egui::Area::new(Id::new("vf_time"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::LEFT_CENTER)
+            .fixed_pos(Pos2::new(screen.left() + GAP, y))
+            .show(ctx, |ui| {
+                if icon_text_button(
+                    ui,
+                    p,
+                    "sun-filled",
+                    time_label(panel.light.time),
+                    p.ink,
+                    aurora_i18n::tr!("photo-vf-time-tip"),
+                )
+                .clicked()
+                {
+                    panel.light.time = next_time(panel.light.time);
+                }
+            });
+        y += 24.0;
         if panel.light.clouds_paused {
             line(&mut y, "cloud-filled", aurora_i18n::tr!("photo-vf-clouds-frozen"), p.ink);
         }
@@ -904,7 +1008,7 @@ impl Viewfinder {
         p: &Palette,
         back: &egui::Painter,
         screen: Rect,
-        s: &Settings,
+        s: &mut Settings,
         f: &Frame,
         ctl: bool,
         out: &mut Vec<Out>,
@@ -989,16 +1093,35 @@ impl Viewfinder {
         } else {
             aurora_i18n::tr!("photo-vf-all-sharp").to_owned()
         };
-        shadow_text(
-            back,
-            p,
-            Pos2::new(right, y - 2.0),
-            Align2::RIGHT_TOP,
-            &range,
-            bold(ctx, 15.0),
-            p.ink,
-        );
+        if s.dof.enabled {
+            shadow_text(
+                back,
+                p,
+                Pos2::new(right, y - 2.0),
+                Align2::RIGHT_TOP,
+                &range,
+                bold(ctx, 15.0),
+                p.ink,
+            );
+        } else {
+            // the depth of field off: a click turns it on
+            egui::Area::new(Id::new("vf_all_sharp"))
+                .order(Order::Foreground)
+                .fade_in(false)
+                .pivot(Align2::RIGHT_TOP)
+                .fixed_pos(Pos2::new(right, y - 2.0))
+                .show(ctx, |ui| {
+                    if text_button(ui, p, &range, bold(ctx, 15.0), p.ink, aurora_i18n::tr!("photo-vf-dof-off-tip")).clicked() {
+                        s.dof.enabled = true;
+                        self.say(aurora_i18n::tr!("photo-vf-dof-on"), false, f.now);
+                    }
+                });
+        }
 
+        if std::mem::take(&mut self.wants_dof) && !s.dof.enabled {
+            s.dof.enabled = true;
+            self.say(aurora_i18n::tr!("photo-vf-dof-on"), false, f.now);
+        }
         // the dials
         egui::Area::new(Id::new("vf_dials"))
             .order(Order::Foreground)
@@ -1024,6 +1147,9 @@ impl Viewfinder {
                             .inner;
                         if resp.clicked() {
                             me.dial = d;
+                            if d == Dial::Aperture {
+                                me.wants_dof = true;
+                            }
                         }
                     };
                     dial(
@@ -1709,24 +1835,7 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         aurora_i18n::tr!("photo-section-resolution"),
         size_value,
         Box::new(|s, panel| {
-            match panel.destination {
-                Destination::Disk => {
-                    // (the typed size stays in the drawer)
-                    let all: Vec<Resolution> = Resolution::ALL.into_iter().filter(|r| *r != Resolution::Custom).collect();
-                    let i = all.iter().position(|r| *r == s.resolution).map_or(0, |i| i + 1);
-                    s.resolution = all[i % all.len()];
-                }
-                Destination::Inventory => {
-                    let all = crate::snapshot::inventory::TextureSize::ALL;
-                    let i = all.iter().position(|r| *r == s.inventory_size).unwrap_or(0);
-                    s.inventory_size = all[(i + 1) % all.len()];
-                }
-                Destination::Profile => {
-                    let all = crate::snapshot::profile::ProfileSize::ALL;
-                    let i = all.iter().position(|r| *r == s.profile_size).unwrap_or(0);
-                    s.profile_size = all[(i + 1) % all.len()];
-                }
-            }
+            next_size(s, panel.destination);
             None
         }),
     ));
@@ -1734,11 +1843,7 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         aurora_i18n::tr!("photo-section-destination"),
         destination_label(panel.destination).to_owned(),
         Box::new(|_, panel| {
-            panel.destination = match panel.destination {
-                Destination::Disk => Destination::Inventory,
-                Destination::Inventory => Destination::Profile,
-                Destination::Profile => Destination::Disk,
-            };
+            panel.destination = next_destination(panel.destination);
             Some(Out::Panel(Action::Changed))
         }),
     ));
@@ -1782,11 +1887,7 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
             aurora_i18n::tr!("photo-light-time-current"),
         ),
         Box::new(|_, panel| {
-            panel.light.time = match panel.light.time {
-                None => Some(1),
-                Some(n) if n < 4 => Some(n + 1),
-                Some(_) => None,
-            };
+            panel.light.time = next_time(panel.light.time);
             None
         }),
     ));

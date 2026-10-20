@@ -184,6 +184,11 @@ impl Viewfinder {
             Dial::Aperture => {
                 let i = (u.round() as usize).min(vf::STOPS.len() - 1);
                 s.dof.f_number = vf::STOPS[i];
+                // an aperture means a depth of field
+                if !s.dof.enabled {
+                    s.dof.enabled = true;
+                    self.say(aurora_i18n::tr!("photo-vf-dof-on"), false, f.now);
+                }
             }
             Dial::Exposure => {
                 let ev = u.round() / 3.0;
