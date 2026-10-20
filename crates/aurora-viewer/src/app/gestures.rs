@@ -815,7 +815,11 @@ impl App {
             }
             .into(),
             replacement: aurora_i18n::tr!("gesture-demo-replacement").into(),
-            key: 0xa8,
+            key: if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "numpad") {
+                b'6'
+            } else {
+                0xa8
+            },
             steps: vec![
                 Step::Chat {
                     text: aurora_i18n::tr!("gesture-demo-chat").into(),
@@ -908,7 +912,7 @@ impl App {
             }
         }
         self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate"));
-        if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "editor") {
+        if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
             self.gesture_action(Action::Open(item));
         }
     }

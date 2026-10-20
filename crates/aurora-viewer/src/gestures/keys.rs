@@ -2,17 +2,20 @@
 use winit::keyboard::{Key, KeyCode, NamedKey};
 
 pub fn from_key(code: KeyCode, unmodified: &Key) -> Option<u8> {
+    // LLKeyboardWin32::mTranslateKeyMap (indra/llwindow/llkeyboardwin32.cpp)
+    // gives both number rows the same codes. Use the physical keypad key:
+    // winit's key_without_modifiers also removes NumLock.
     Some(match code {
-        KeyCode::Digit0 => b'0',
-        KeyCode::Digit1 => b'1',
-        KeyCode::Digit2 => b'2',
-        KeyCode::Digit3 => b'3',
-        KeyCode::Digit4 => b'4',
-        KeyCode::Digit5 => b'5',
-        KeyCode::Digit6 => b'6',
-        KeyCode::Digit7 => b'7',
-        KeyCode::Digit8 => b'8',
-        KeyCode::Digit9 => b'9',
+        KeyCode::Digit0 | KeyCode::Numpad0 => b'0',
+        KeyCode::Digit1 | KeyCode::Numpad1 => b'1',
+        KeyCode::Digit2 | KeyCode::Numpad2 => b'2',
+        KeyCode::Digit3 | KeyCode::Numpad3 => b'3',
+        KeyCode::Digit4 | KeyCode::Numpad4 => b'4',
+        KeyCode::Digit5 | KeyCode::Numpad5 => b'5',
+        KeyCode::Digit6 | KeyCode::Numpad6 => b'6',
+        KeyCode::Digit7 | KeyCode::Numpad7 => b'7',
+        KeyCode::Digit8 | KeyCode::Numpad8 => b'8',
+        KeyCode::Digit9 | KeyCode::Numpad9 => b'9',
         KeyCode::NumpadAdd => 0x95,
         KeyCode::NumpadSubtract => 0x96,
         KeyCode::NumpadMultiply => 0x97,
