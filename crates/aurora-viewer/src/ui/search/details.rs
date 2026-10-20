@@ -16,7 +16,7 @@ use crate::ui::widgets::{self, ActionKind};
 use crate::ui::{colors, menu};
 use crate::world::place_details::{Place, Source, Stage};
 use crate::world::profiles::{self, Online};
-use crate::world::search::{self, Key, List, Tab};
+use crate::world::search::{self, Key, List, Row, RowIcon, Tab};
 use aurora_net::profile::classified_flags;
 use egui::{RichText, Vec2};
 use glam::DVec3;
@@ -239,11 +239,12 @@ pub fn show(
         ui.vertical_centered(|ui| muted(ui, c.p, aurora_i18n::tr!("search-select-a-result")));
         return;
     };
-    let row_name = list.rows.iter().find(|r| r.key == key).map_or("", |r| r.name.as_str());
+    let row = list.rows.iter().find(|r| r.key == key);
+    let row_name = row.map_or("", |r| r.name.as_str());
     match (list.tab, key) {
         (Tab::People, Key::Id(id)) => person(ui, c, pics, wanted_pics, id, row_name),
         (Tab::Groups, Key::Id(id)) => group(ui, c, id, row_name, false, actions),
-        (Tab::Places | Tab::Land, Key::Id(id)) => place(ui, c, id, actions),
+        (Tab::Places | Tab::Land, Key::Id(id)) => place(ui, c, id, row, actions),
         (Tab::Classifieds, Key::Id(id)) => classified(ui, c, id, row_name, actions),
         (Tab::Events, Key::Event(id)) => event(ui, c, id, row_name, actions),
         _ => {}
@@ -476,7 +477,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
 
 /// A parcel of the places and land sales tabs: the place profile of
 /// "Places", with Teleport, Map and its menu.
-fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, actions: &mut Vec<SearchAction>) {
+fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, row: Option<&Row>, actions: &mut Vec<SearchAction>) {
     let (p, world) = (c.p, c.world);
     let data = world.profiles.parcels.get(&parcel);
     // mParcelGlobal: where the buttons go, once the parcel answered
@@ -505,7 +506,10 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, actions: &mut Vec<SearchA
         ui.label(RichText::new(aurora_i18n::tr!("common-place-profile")).size(12.0).color(p.muted));
         ui.set_max_width(ui.available_width().min(340.0));
         place_details::profile_body(ui, c, &place);
-        if let Some(d) = data.filter(|d| d.sale_price > 0) {
+        // ParcelInfoReply keeps the last asking price after a sale ends: only
+        // a row the search reply marked for sale shows it
+        let for_sale = row.is_some_and(|r| r.icon == RowIcon::ForSale);
+        if let Some(d) = data.filter(|d| for_sale && d.sale_price > 0) {
             ui.add_space(4.0);
             text_field(ui, p, aurora_i18n::tr!("search-col-price"), &format!("L${}", d.sale_price));
         }
