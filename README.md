@@ -468,7 +468,7 @@ Legacy Viewer's floater remain in Preferences › Aurora › Photo window.
 
 In the panel, choose a
 destination (disk, inventory or profile feed), an aspect ratio and a
-resolution. Disk photos support PNG, JPEG and BMP, with presets up to 8K.
+resolution. Disk photos support PNG, JPEG and BMP, with presets up to 8K (4K by default).
 Inventory uploads use the grid's upload charge; the profile destination
 offers a caption and an optional location.
 
