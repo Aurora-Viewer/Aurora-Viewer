@@ -214,6 +214,41 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, text: &str, font: FontId, color: 
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
 }
 
+/// An icon alone of the top bar, clickable, centred on the line.
+fn icon_switch(ui: &mut egui::Ui, p: &Palette, name: &str, color: Color32, tip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+    let color = if resp.hovered() { p.ink } else { color };
+    let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(18.0));
+    icon(
+        ui.painter(),
+        name,
+        icon_rect.translate(Vec2::new(0.0, 1.0)),
+        p.navy.gamma_multiply(0.7),
+    );
+    icon(ui.painter(), name, icon_rect, color);
+    keep_keys(&resp);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
+}
+
+/// A short label in a frame (a resolution's badge), clickable.
+fn badge_button(ui: &mut egui::Ui, p: &Palette, text: &str, color: Color32, tip: &str) -> egui::Response {
+    let font = FontId::new(11.5, crate::ui::fonts::semibold(ui.ctx()));
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), color);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(galley.size().x + 10.0, 18.0), Sense::click());
+    let color = if resp.hovered() { p.ink } else { color };
+    let radius = widgets::inner_radius(ui.visuals());
+    ui.painter().rect_stroke(
+        rect.translate(Vec2::new(0.0, 1.0)),
+        radius,
+        Stroke::new(1.5, p.navy.gamma_multiply(0.6)),
+        StrokeKind::Inside,
+    );
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.5, color), StrokeKind::Inside);
+    shadow_text(ui.painter(), p, rect.center(), Align2::CENTER_CENTER, text, font, color);
+    keep_keys(&resp);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
+}
+
 /// An icon and a text of the top bar, clickable.
 fn icon_text_button(ui: &mut egui::Ui, p: &Palette, name: &str, text: &str, color: Color32, tip: &str) -> egui::Response {
     let font = regular(13.0);
@@ -605,7 +640,7 @@ impl Viewfinder {
                         s.huds = !s.huds;
                     }
                     let quality = if s.quality { p.ink } else { p.muted_dim };
-                    if icon_text_button(ui, p, "sparkles-filled", "8×", quality, aurora_i18n::tr!("photo-vf-quality-tip")).clicked() {
+                    if icon_switch(ui, p, "sparkles-filled", quality, aurora_i18n::tr!("photo-vf-quality-tip")).clicked() {
                         s.quality = !s.quality;
                     }
                     if icon_text_button(
@@ -638,8 +673,18 @@ impl Viewfinder {
                         }
                         Destination::Inventory => {}
                     }
-                    let size = format!("{} × {}", f.photo.0, f.photo.1);
-                    if text_button(ui, p, &size, font.clone(), p.ink, aurora_i18n::tr!("photo-vf-size-tip")).clicked() {
+                    // a common resolution as its badge (HD, QHD, 4K…), the
+                    // pixels in its tip; the window's or a typed size in pixels
+                    let pixels = format!("{} × {}", f.photo.0, f.photo.1);
+                    let preset = (panel.destination == Destination::Disk).then(|| s.resolution.short()).flatten();
+                    let clicked = match preset {
+                        Some(short) => {
+                            let tip = format!("{pixels} · {}", aurora_i18n::tr!("photo-vf-size-tip"));
+                            badge_button(ui, p, short, p.ink, &tip).clicked()
+                        }
+                        None => text_button(ui, p, &pixels, font.clone(), p.ink, aurora_i18n::tr!("photo-vf-size-tip")).clicked(),
+                    };
+                    if clicked {
                         next_size(s, panel.destination);
                     }
                     dot(ui, p);

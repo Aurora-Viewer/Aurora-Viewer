@@ -2657,7 +2657,7 @@ impl App {
                 .as_ref()
                 .zip(self.world.map.track.as_ref())
                 .is_some_and(|(hit, track)| hit.contains(at, track))
-            && (!self.settings.show_huds || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
+            && (!self.huds_shown() || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
     }
 
     /// The camera drag a left click would start under the pointer, like
@@ -3060,7 +3060,7 @@ impl App {
     fn world_press(&mut self) {
         self.left_down = true;
         if self.hud_drag_requested()
-            && self.settings.show_huds
+            && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
         {
             // Own the complete gesture: no media / script click or camera focus,
@@ -4451,8 +4451,7 @@ impl App {
             return true;
         }
         let mut hits = self
-            .settings
-            .show_huds
+            .huds_shown()
             .then_some(self.scene.lists.hud_view)
             .flatten()
             .map(|view| {
@@ -4494,7 +4493,7 @@ impl App {
         }
         if !self.build.open
             || self.alt
-            || (self.hud_drag_requested() && self.settings.show_huds && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
+            || (self.hud_drag_requested() && self.huds_shown() && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
         {
             return false;
         }
@@ -6192,7 +6191,7 @@ impl App {
                 h as f32,
                 self.egui_ctx.pixels_per_point(),
             );
-            if self.build.hud_selected(&self.world) && !self.settings.show_huds {
+            if self.build.hud_selected(&self.world) && !self.huds_shown() {
                 self.build.deselect_all(&self.world);
             } else if self.build.tool == crate::build::Tool::Edit
                 && self.build.hud_selected(&self.world)
@@ -6387,8 +6386,8 @@ impl App {
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.frame_profile.lap(Lap::Extras);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
-            self.scene
-                .build_huds(&self.world, [hud_size.width, hud_size.height], self.settings.show_huds);
+            let huds_shown = self.huds_shown();
+            self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
             self.frame_profile.lap(Lap::Lists);
             if self.demo && std::env::var_os("AURORA_DEMO_ANIMESH").is_some() && self.frame_count.is_multiple_of(120) {
                 self.scene.log_demo_animesh(&self.world);
@@ -6940,7 +6939,7 @@ impl App {
         }
         if self.build.tool == crate::build::Tool::Edit
             && self.build.hud_selected(&self.world)
-            && self.settings.show_huds
+            && self.huds_shown()
             && let Some(view) = self.scene.lists.hud_view
         {
             self.build.cam = crate::build::geom::Cam::for_hud(view, ctx.pixels_per_point());
@@ -7139,7 +7138,7 @@ impl App {
         }
         if self.hud_drag.is_some()
             || (self.hud_drag_requested()
-                && self.settings.show_huds
+                && self.huds_shown()
                 && matches!(self.screen, Screen::World)
                 && self.mouse_mode == MouseMode::None
                 && !self.camera.mouselook()

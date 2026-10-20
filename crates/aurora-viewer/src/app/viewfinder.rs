@@ -23,6 +23,13 @@ impl App {
         self.panels.snapshot && self.photo_style() == PhotoWindowStyle::Aurora
     }
 
+    /// The HUDs show (and take clicks): Preferences' switch, and in the
+    /// viewfinder the photo's own, so that the screen shows what the photo
+    /// will hold.
+    pub(super) fn huds_shown(&self) -> bool {
+        self.settings.show_huds && (!self.viewfinder_on() || self.settings.snapshot.huds)
+    }
+
     fn vf_now(&self) -> f64 {
         self.egui_ctx.input(|i| i.time)
     }
