@@ -41,7 +41,9 @@ mod context_menu;
 mod controls;
 mod cursor_hold;
 mod derender;
+mod describe;
 mod folders;
+pub use describe::DescribeOutput;
 use folders::chat_log_root;
 mod dof;
 mod double_click;
@@ -399,6 +401,9 @@ pub struct App {
     stuck_logged: Option<Instant>,
     /// Attachment diagnostics written to the log (0, 1 or 2 times).
     attachments_logged: u8,
+    /// A "Debug to log" press waiting for the names it asked
+    /// (app/describe.rs): when it is written, what, and where.
+    describe: Option<describe::Pending>,
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
@@ -963,6 +968,7 @@ impl App {
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
+            describe: None,
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
@@ -6389,18 +6395,14 @@ impl App {
             let since_arrival = self.move_complete_at.map(|t| t.elapsed().as_secs()).unwrap_or(0);
             if (self.attachments_logged == 0 && since_arrival >= 40) || (self.attachments_logged == 1 && since_arrival >= 120) {
                 self.attachments_logged += 1;
-                self.scene.log_attachments(&self.world, self.world.agent_id, &gfx.renderer.textures);
-                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer.textures);
+                self.scene
+                    .log_attachments(&self.world, self.world.agent_id, &gfx.renderer, &|_| None, None);
+                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer);
             }
-            if std::mem::take(&mut self.options_ui.describe_nearby) {
-                // scene space: the agent avatar's drawn center
-                let me = self.scene.agent_idx.and_then(|i| self.scene.gpu.get(i)).map(|g| g.center);
-                if let Some(me) = me {
-                    self.scene.log_nearby(&self.world, me, 12.0);
-                }
-                // what the avatars around wear: a missing part shows there
-                self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer.textures);
+            if let Some(output) = self.options_ui.describe_nearby.take() {
+                self.start_describe(output);
             }
+            self.finish_describe(&gfx.renderer);
             let texture_budget = self
                 .settings
                 .texture_budget(gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
@@ -8699,6 +8701,7 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
+            BarAction::Describe(output) => self.start_describe(output),
             BarAction::Import => {
                 self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();

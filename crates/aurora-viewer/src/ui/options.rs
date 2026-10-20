@@ -46,8 +46,11 @@ pub struct OptionsUi {
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
-    /// Set by the "describe nearby objects" button, cleared by the app.
-    pub describe_nearby: bool,
+    /// Set by the "Debug to log" / "Debug to clipboard" buttons of Debug ›
+    /// Logs, cleared by the app (app/describe.rs).
+    pub describe_nearby: Option<crate::app::DescribeOutput>,
+    /// Where the last press stands (waiting for names, copied), set by the app.
+    pub describe_note: Option<String>,
     /// Audio devices (set by the app) and microphone level (0..1).
     pub output_devices: Vec<String>,
     pub input_devices: Vec<String>,
@@ -581,7 +584,7 @@ fn format_bytes(b: u64) -> String {
 }
 
 /// Debug overlays (not saved: off again at the next launch).
-fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
     let mut c = false;
     let before = s.debug;
     let d = &mut s.debug;
@@ -719,6 +722,30 @@ fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
             aurora_i18n::tr!("ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed"),
             |ui| toggle(ui, p, &mut d.check_probe_sets),
         );
+    });
+    group(ui, p, aurora_i18n::tr!("ui-options-logs"), |ui| {
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-nearby-objects"),
+            aurora_i18n::tr!("ui-options-write-faces-lights-and-materials-within-12-m-to"),
+            |ui| {
+                use crate::app::DescribeOutput;
+                let help = aurora_i18n::tr!("ui-options-describe-help");
+                for (label, output) in [
+                    (aurora_i18n::tr!("ui-options-describe"), DescribeOutput::Log),
+                    (aurora_i18n::tr!("ui-options-describe-clipboard"), DescribeOutput::Clipboard),
+                ] {
+                    if ui.button(RichText::new(label).color(p.ink)).on_hover_text(help).clicked() {
+                        st.describe_nearby = Some(output);
+                    }
+                }
+                false
+            },
+        );
+        if let Some(note) = &st.describe_note {
+            ui.label(RichText::new(note).size(11.5).color(p.muted));
+        }
     });
     d.keep_one_view(&before);
     c
@@ -930,7 +957,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                         r.changed |= match st.tab {
                             TAB_AUDIO => audio::page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
                             8 => keys_page(ui, p, s, st),
-                            9 => debug_page(ui, p, s),
+                            9 => debug_page(ui, p, s, st),
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             TAB_PRIVACY => privacy::page(
@@ -3199,21 +3226,6 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                             .clicked()
                         {
                             crate::logging::open_logs_dir();
-                        }
-                        false
-                    },
-                );
-                row(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("ui-options-nearby-objects"),
-                    aurora_i18n::tr!("ui-options-write-faces-lights-and-materials-within-12-m-to"),
-                    |ui| {
-                        if ui
-                            .button(RichText::new(aurora_i18n::tr!("ui-options-describe")).color(p.ink))
-                            .clicked()
-                        {
-                            st.describe_nearby = true;
                         }
                         false
                     },

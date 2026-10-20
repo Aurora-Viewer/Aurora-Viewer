@@ -78,6 +78,36 @@ fn redact(line: &str) -> std::borrow::Cow<'_, str> {
     out.into()
 }
 
+thread_local! {
+    /// What this thread logs while a capture runs (`capture`).
+    static CAPTURE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` and return, besides its result, the lines it logged on this
+/// thread without their timestamp and target (the diagnostic copied to the
+/// clipboard, scene/describe.rs). env_logger writes in the calling thread.
+pub fn capture<R>(f: impl FnOnce() -> R) -> (R, String) {
+    CAPTURE.with(|c| *c.borrow_mut() = Some(String::new()));
+    let result = f();
+    let text = CAPTURE.with(|c| c.borrow_mut().take()).unwrap_or_default();
+    (result, strip_headers(&text))
+}
+
+/// Log lines without env_logger's header
+/// ("[2026-10-20T12:00:00.000Z INFO  aurora_viewer::scene] text").
+fn strip_headers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        let line = match line.strip_prefix('[').and_then(|l| l.split_once("] ")) {
+            Some((_, rest)) => rest,
+            None => line,
+        };
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Console + file writer.
 struct Tee {
     file: Option<std::fs::File>,
@@ -88,6 +118,11 @@ impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let text = String::from_utf8_lossy(buf);
         let text = redact(&text);
+        CAPTURE.with(|c| {
+            if let Some(s) = c.borrow_mut().as_mut() {
+                s.push_str(&text);
+            }
+        });
         let _ = std::io::stderr().write_all(text.as_bytes());
         if let Some(f) = &mut self.file {
             let _ = f.write_all(text.as_bytes());
@@ -142,7 +177,13 @@ pub fn init() {
 
 #[cfg(test)]
 mod tests {
-    use super::redact;
+    use super::{redact, strip_headers};
+
+    #[test]
+    fn captured_lines_lose_their_header() {
+        let text = "[2026-10-20T12:00:00.000Z INFO  aurora_viewer::scene::describe] attachment '?' point 40\n  prim [0 tex] x\n";
+        assert_eq!(strip_headers(text), "attachment '?' point 40\n  prim [0 tex] x\n");
+    }
 
     #[test]
     fn masks_capability_ids() {

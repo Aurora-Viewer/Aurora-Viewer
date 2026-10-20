@@ -2074,7 +2074,15 @@ app-disconnected-lost = { "Déconnecté : " }{ $reason } Reconnectez-vous pour r
 app-logging-out = Déconnexion…
 build-ui-object-profile-cut-begin-end = Découpe du profilé (début/fin)
 build-ui-object-path-cut-begin-end = Découpe du tracé (déb./fin)
-ui-options-describe = Décrire
+ui-options-describe = Débogage → journal
+ui-options-describe-clipboard = Débogage → presse-papiers
+ui-options-describe-help = Placez-vous à moins de 3 m de l'avatar dont la tenue s'affiche mal (inutile de le viser), ou sélectionnez l'objet (clic droit › Modifier) pour ne cibler que lui, puis appuyez. Les objets à moins de 12 m et ce que portent les avatars à moins de 10 m sont écrits ; les avatars à moins de 3 m, ou l'objet sélectionné, face par face. Comptez environ 3 s, le temps que les noms des objets portés arrivent. « Débogage → presse-papiers » copie ces mêmes lignes, prêtes à coller dans un message, au lieu du journal entier.
+ui-options-describe-waiting = En attente des noms…
+ui-options-describe-written = Écrit dans le journal
+ui-options-describe-copied = { $lines ->
+    [one] { $lines } ligne copiée
+   *[other] { $lines } lignes copiées
+    }
 common-default = Défaut
 demo-scrolling-smooth = Défilement (SMOOTH)
 ui-land-options-set = Définir
@@ -5298,7 +5306,7 @@ common-personal-lighting = Éclairage personnel…
 ui-options-listen = Écouter
 ui-audio-listen-to-parcel-music = Écouter la musique de la parcelle
 keybinds-type-in-chat = Écrire dans le chat
-ui-options-write-faces-lights-and-materials-within-12-m-to = Écrit les faces, lumières et matériaux à moins de 12 m dans le journal
+ui-options-write-faces-lights-and-materials-within-12-m-to = Faces, lumières et matériaux à moins de 12 m, et ce que portent les avatars autour
 ui-land-options-education = Éducation
 build-ui-features-elasticity = Élasticité
 build-land-raise = Élever
