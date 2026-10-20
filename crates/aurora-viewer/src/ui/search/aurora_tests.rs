@@ -218,7 +218,10 @@ fn all_then_a_chip_rows_toggles_and_the_web() {
 fn a_place_is_for_sale_by_its_row_not_by_its_parcel_price() {
     let mut world = world();
     let mut w = Window::new("aurora");
-    apply(&mut world, w.st.aurora_requests(&w.settings).into_iter().map(SearchAction::Find).collect());
+    apply(
+        &mut world,
+        w.st.aurora_requests(&w.settings).into_iter().map(SearchAction::Find).collect(),
+    );
     w.click(&mut world, aurora_i18n::tr!("common-places"));
     w.settle(&mut world);
     let list = world.search.list(Tab::Places).expect("places").clone();
@@ -233,7 +236,10 @@ fn a_place_is_for_sale_by_its_row_not_by_its_parcel_price() {
     let texts = w.settle(&mut world);
     let for_sale = |r: &crate::world::search::Row| r.icon == RowIcon::ForSale;
     let expected = list.rows.iter().filter(|r| for_sale(r)).count() + usize::from(for_sale(&selected));
-    let drawn = texts.iter().filter(|(_, t)| t == aurora_i18n::tr!("search-aurora-for-sale")).count();
+    let drawn = texts
+        .iter()
+        .filter(|(_, t)| t == aurora_i18n::tr!("search-aurora-for-sale"))
+        .count();
     assert_eq!(drawn, expected, "only the rows the search reply marked for sale, and their details");
 }
 
