@@ -131,9 +131,6 @@ impl Editor {
                     if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("import-preview-reset-view"), true) {
                         view.reset_camera();
                     }
-                    ui.add_enabled_ui(editable && self.saving.is_none(), |ui| {
-                        widgets::switch_labeled(ui, p, &mut value.double_sided, aurora_i18n::tr!("import-double-sided"));
-                    });
                 });
                 let side = ui.available_width().min((body.height() * 0.33).clamp(96.0, 240.0));
                 ui.horizontal(|ui| {
@@ -384,6 +381,7 @@ impl Editor {
                             scalar(ui, aurora_i18n::tr!("import-alpha-cutoff-short"), &mut value.alpha_cutoff);
                         }
                     });
+                    widgets::switch_labeled(ui, p, &mut value.double_sided, aurora_i18n::tr!("import-double-sided"));
                 }
             });
         });
