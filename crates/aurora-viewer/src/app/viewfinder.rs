@@ -704,6 +704,7 @@ impl App {
         let frame = Frame {
             now,
             photo,
+            window,
             fps: self.perf.fps,
             focal_mm: mm,
             ev,

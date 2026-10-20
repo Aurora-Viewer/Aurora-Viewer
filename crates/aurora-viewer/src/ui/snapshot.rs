@@ -402,7 +402,7 @@ impl SnapshotUi {
             for a in Aspect::ALL {
                 let label = a.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"));
                 if chip(ui, p, label, None, s.aspect == a, true).clicked() {
-                    s.aspect = a;
+                    s.set_aspect(a, view.window);
                 }
             }
         });

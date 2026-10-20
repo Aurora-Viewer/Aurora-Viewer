@@ -82,8 +82,9 @@ pub struct Viewfinder {
 pub struct Frame<'a> {
     /// egui's clock (seconds).
     pub now: f64,
-    /// The photo's size in pixels.
+    /// The photo's size in pixels, and the window's.
     pub photo: (u32, u32),
+    pub window: (u32, u32),
     pub fps: f32,
     pub focal_mm: f32,
     /// Stops from Preferences' exposure.
@@ -1678,12 +1679,13 @@ type Step = Box<dyn FnOnce(&mut Settings, &mut SnapshotUi) -> Option<Out>>;
 fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, String, Step)> {
     let yes_no = |on: bool| on_off(on, aurora_i18n::tr!("photo-vf-on"), aurora_i18n::tr!("photo-vf-off")).to_owned();
     let mut v: Vec<(&'static str, String, Step)> = Vec::new();
+    let window = f.window;
     v.push((
         aurora_i18n::tr!("photo-section-format"),
         aspect_label(s.aspect).to_owned(),
-        Box::new(|s, _| {
+        Box::new(move |s, _| {
             let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
-            s.aspect = Aspect::ALL[(i + 1) % Aspect::ALL.len()];
+            s.set_aspect(Aspect::ALL[(i + 1) % Aspect::ALL.len()], window);
             None
         }),
     ));

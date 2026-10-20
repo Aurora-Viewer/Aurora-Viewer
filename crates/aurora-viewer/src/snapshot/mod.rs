@@ -291,6 +291,22 @@ impl Settings {
         photo_size(self.aspect, self.resolution, self.custom, window)
     }
 
+    /// Choose the proportions: a typed size whose proportions are kept
+    /// takes the new ones, its long side kept (otherwise it stayed as
+    /// typed and the choice changed nothing).
+    pub fn set_aspect(&mut self, aspect: Aspect, window: (u32, u32)) {
+        self.aspect = aspect;
+        if self.resolution == Resolution::Custom && self.keep_ratio {
+            let long = self.custom[0].max(self.custom[1]);
+            let ratio = aspect.ratio((window.0.max(1), window.1.max(1)));
+            self.custom = if ratio >= 1.0 {
+                [long, clamp_side((long as f32 / ratio).round() as u32)]
+            } else {
+                [clamp_side((long as f32 * ratio).round() as u32), long]
+            };
+        }
+    }
+
     /// The typed size after one side changed, the other following when the
     /// proportions are kept.
     pub fn set_custom(&mut self, width: Option<u32>, height: Option<u32>, window: (u32, u32)) {
