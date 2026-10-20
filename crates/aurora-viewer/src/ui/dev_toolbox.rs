@@ -520,7 +520,8 @@ fn tool_button(
     if id == "O8" && !st.edit {
         menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| health_menu(ui, p, st));
     }
-    menu::context_menu(&resp, p, |ui| {
+    // its own id: O8's dropdown is keyed on the button too
+    menu::context_menu_of_button(&resp, p, |ui| {
         let pinned = layout.is_favorite(id);
         let pin = if pinned { tr!("dev-toolbox-unpin") } else { tr!("dev-toolbox-pin") };
         if menu::item(ui, p, if pinned { "pinned-filled" } else { "pin-filled" }, pin) {
