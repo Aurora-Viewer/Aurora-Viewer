@@ -288,6 +288,9 @@ pub enum Action {
     MoveLock,
     MovementEnhancer,
     PassWall,
+    /// Sit on the ground, or stand up when sitting (menu_viewer.xml: "Sit
+    /// Down" / "Stand Up", both shortcut="alt|shift|S").
+    SitGround,
     Mouselook,
     ResetCamera,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
@@ -396,6 +399,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::MoveLock, aurora_i18n::tr!("movelock-title")),
                     (Action::MovementEnhancer, aurora_i18n::tr!("movement-title")),
                     (Action::PassWall, aurora_i18n::tr!("movement-pass")),
+                    (Action::SitGround, aurora_i18n::tr!("keybinds-sit-ground-stand")),
                 ],
             ),
             (
@@ -578,6 +582,8 @@ impl KeyBindings {
             (Action::MovementEnhancer, [kalt(K::KeyM, true, false), None]),
             // Ctrl + the current jump key is derived at use, including rebindings.
             (Action::PassWall, [None, None]),
+            // menu_viewer.xml: Sit Down / Stand Up, shortcut="alt|shift|S"
+            (Action::SitGround, [kalt(K::KeyS, false, true), None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
@@ -1505,6 +1511,7 @@ mod tests {
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
+            (Action::SitGround, (false, true, true), [K::KeyS; 4]),
         ];
         for (i, layout) in [&us, &fr, &be, &de].into_iter().enumerate() {
             let kb = KeyBindings::for_layout(layout);

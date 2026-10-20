@@ -2934,6 +2934,7 @@ impl App {
             Action::MoveLock => self.toggle_move_lock(),
             Action::MovementEnhancer => self.open_movement(),
             Action::PassWall => self.pass_wall(),
+            Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
             Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
             Action::ResetCamera => {
@@ -4766,6 +4767,15 @@ impl App {
             control::SIT_ON_GROUND
         };
         self.send(NetCommand::OneShotControl(f));
+    }
+
+    /// Alt+Shift+S: the menu's "Stand Up" while sitting (enable_standup_self),
+    /// else its "Sit Down", which stays disabled while flying
+    /// (enable_sitdown_self, indra/newview/llviewermenu.cpp).
+    fn sit_stand_shortcut(&mut self) {
+        if self.world.agent.is_sitting() || !self.world.agent.flying {
+            self.toggle_ground_sit();
+        }
     }
 
     /// "Always run" (Ctrl+R, the Controls window's Walk and Run).

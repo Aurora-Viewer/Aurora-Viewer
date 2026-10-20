@@ -300,7 +300,7 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -310,6 +310,11 @@ when unfocused") is ignored during a screenshot.
   must stay fixed throughout, also when seated or using a scripted camera.
   `unsupported`
   disables adjustment as on a region without AvatarHoverHeightEnabled;
+  `sit-ground` turns on a separate +0.5 m height for sitting on the ground at
+  600, then presses the sit shortcut (Alt+Shift+S) at 660 and again at 900:
+  the floater follows to its "Sitting on the ground" tab, the avatar sits
+  0.5 m above the plaza (capture at 780), then stands back at its standing
+  height (capture at 1000).
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
