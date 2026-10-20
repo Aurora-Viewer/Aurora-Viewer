@@ -213,6 +213,8 @@ pub struct Autofocus {
     started: f64,
     /// Until then the scale and the distance stay up after a lock.
     recent_until: f64,
+    /// The last frame the lens followed its subject.
+    followed: f64,
 }
 
 impl Default for Autofocus {
@@ -226,8 +228,15 @@ impl Default for Autofocus {
             back: 16.0,
             started: 0.0,
             recent_until: 0.0,
+            followed: 0.0,
         }
     }
+}
+
+/// `t` of the way from `a` to `b`, in dioptres.
+fn lerp_dioptre_linear(a: f32, b: f32, t: f32) -> f32 {
+    let (ia, ib) = (1.0 / a.max(1e-3), 1.0 / b.max(1e-3));
+    1.0 / (ia + (ib - ia) * t.clamp(0.0, 1.0)).max(1.0 / FAR)
 }
 
 /// Between two distances, in dioptres: a lens moves evenly in 1/d, so the
@@ -269,7 +278,22 @@ impl Autofocus {
             back,
             started: now,
             recent_until: self.recent_until,
+            followed: now,
         };
+    }
+
+    /// Locked on a subject that moves (or a camera that does): the lens
+    /// follows its distance, eased in dioptres, without a new hunt.
+    pub fn follow(&mut self, target: f32, now: f64) {
+        let dt = ((now - self.followed) as f32).clamp(0.0, 0.1);
+        self.followed = now;
+        if self.phase != Phase::Lock || !target.is_finite() {
+            return;
+        }
+        let target = target.clamp(MIN_FOCUS, FAR);
+        let k = 1.0 - (-dt * 12.0).exp();
+        self.distance = lerp_dioptre_linear(self.distance, target, k);
+        self.target = target;
     }
 
     /// Follow `target` without a hunt (AF-C; the lens's own transition
@@ -627,6 +651,31 @@ mod tests {
         assert_eq!(af.phase, Phase::Lock);
         assert_eq!(af.distance(), 4.2);
         assert!(af.recent(11.5) && !af.recent(13.0));
+    }
+
+    #[test]
+    fn a_locked_lens_follows_its_subject_smoothly() {
+        let mut af = Autofocus::default();
+        af.manual(20.0);
+        af.hunt(4.0, 0.0);
+        run(&mut af, 0.0, 1.0);
+        assert_eq!(af.phase, Phase::Lock);
+        // the subject walks away to 6 m: the lens follows, without a jump
+        af.follow(6.0, 1.0);
+        let mut t = 1.0;
+        let mut last = af.distance();
+        for _ in 0..30 {
+            t += 1.0 / 60.0;
+            af.follow(6.0, t);
+            assert!(af.distance() >= last && af.distance() <= 6.0 + 1e-3);
+            last = af.distance();
+        }
+        assert!((af.distance() - 6.0).abs() < 0.1, "{}", af.distance());
+        assert_eq!(af.phase, Phase::Lock);
+        // not locked: nothing follows
+        af.idle();
+        af.follow(2.0, t + 0.1);
+        assert!((af.distance() - 6.0).abs() < 0.1);
     }
 
     #[test]

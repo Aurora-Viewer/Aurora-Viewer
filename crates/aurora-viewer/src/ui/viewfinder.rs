@@ -99,7 +99,8 @@ pub struct Frame<'a> {
     pub point: Pos2,
     /// The face of the avatar under the AF point, or of the subject (its
     /// box in points), and whether the focus is on it.
-    pub face: Option<(Rect, bool)>,
+    /// With the eye the lens takes, on screen.
+    pub face: Option<(Rect, bool, Option<Pos2>)>,
     /// The camera's pitch (degrees, positive up).
     pub pitch: f32,
     pub histogram: Option<&'a [u32; vf::HISTOGRAM_BINS]>,
@@ -874,7 +875,7 @@ impl Viewfinder {
             .filter(|_| s.viewfinder.area == AfArea::Avatar && s.dof.focus != PhotoFocus::Manual);
         let mut under = f.point + Vec2::new(0.0, AF_BOX / 2.0 + 6.0);
         match face {
-            Some((rect, on)) if on || display != Display::Hidden => {
+            Some((rect, on, eye_pos)) if on || display != Display::Hidden => {
                 let rect = Rect::from_center_size(rect.center(), rect.size() * if on { scale } else { 1.0 });
                 let radius = ctx.global_style().visuals.window_corner_radius;
                 let (stroke, c) = if on {
@@ -884,10 +885,13 @@ impl Viewfinder {
                 };
                 painter.rect_stroke(rect, radius, shadow, StrokeKind::Middle);
                 painter.rect_stroke(rect, radius, stroke, StrokeKind::Middle);
-                // the eye the lens holds
-                let eye = Pos2::new(rect.left() + rect.width() * 0.29, rect.top() + rect.height() * 0.4);
-                painter.circle_stroke(eye, 3.5, Stroke::new(1.5, c));
-                let label = if on && locked {
+                // the eye the lens holds (the nearest one), where it is;
+                // none when the face is turned away (the head then)
+                let eye = eye_pos.filter(|e| rect.expand(rect.width() * 0.25).contains(*e));
+                if let Some(e) = eye {
+                    painter.circle_stroke(e, 3.5, Stroke::new(1.5, c));
+                }
+                let label = if on && locked && eye.is_some() {
                     aurora_i18n::tr!("photo-vf-eye")
                 } else {
                     aurora_i18n::tr!("photo-vf-area-avatar")

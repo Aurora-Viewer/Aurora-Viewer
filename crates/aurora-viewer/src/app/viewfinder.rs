@@ -127,6 +127,16 @@ impl App {
             log::info!("viewfinder: focus asked at {target:.2} m");
             self.snapshots.vf.af.hunt(target, now);
         }
+        // locked on an avatar: the lens stays on its eye as it (or the
+        // camera) moves, like a camera's eye tracking
+        if self.settings.snapshot.dof.focus == PhotoFocus::Click
+            && let Some(id) = self.snapshots.vf.subject
+        {
+            match self.vf_eye(&id, Instant::now()) {
+                Some((e, _)) => self.snapshots.vf.af.follow(dof::distance_along(eye, at, e), now),
+                None => self.snapshots.vf.subject = None,
+            }
+        }
         match self.settings.snapshot.dof.focus {
             PhotoFocus::Manual => {
                 let d = self.settings.snapshot.dof.distance;
@@ -185,13 +195,32 @@ impl App {
                 let head = self.scene.head_world(&self.world, &o.full_id, now)?;
                 let across = (hit.truncate() - head.truncate()).length();
                 let inside = across < 0.6 && hit.z > head.z - 1.9 && hit.z < head.z + 0.35;
-                inside.then(|| {
-                    let eyes = self.scene.eyes_world(&self.world, &o.full_id, now).unwrap_or(head);
-                    (across, o.full_id, eyes)
-                })
+                inside.then(|| (across, o.full_id, self.vf_eye(&o.full_id, now).map_or(head, |(e, _)| e)))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, id, eyes)| (id, eyes))
+    }
+
+    /// What the lens takes on an avatar: its eye nearest the camera when
+    /// the face is turned towards it (eye detection), else its head (seen
+    /// from behind, a camera falls back on the head too); and whether it
+    /// is an eye.
+    fn vf_eye(&self, id: &uuid::Uuid, now: Instant) -> Option<(glam::Vec3, bool)> {
+        let cam = self.camera.position;
+        let head = self.scene.head_world(&self.world, id, now)?;
+        let Some((l, r)) = self.scene.eye_pair_world(&self.world, id, now) else {
+            return Some((self.scene.eyes_world(&self.world, id, now).unwrap_or(head), false));
+        };
+        // the face's direction: from the head's centre (a little above
+        // mHead, behind the eyes) to between the eyes
+        let middle = (l + r) * 0.5;
+        let centre = head + glam::Vec3::Z * (middle.z - head.z).max(0.0);
+        let facing = (middle - centre).normalize_or_zero();
+        let toward = (cam - centre).normalize_or_zero();
+        if facing.dot(toward) < 0.15 {
+            return Some((middle, false));
+        }
+        Some((if l.distance(cam) <= r.distance(cam) { l } else { r }, true))
     }
 
     /// The two beeps of a locked focus (`snapshot::viewfinder::beep_wav`),
@@ -667,6 +696,14 @@ impl App {
             _ => screen.center(),
         };
         let wall = Instant::now();
+        // the eye on screen, when the face is turned towards the camera
+        let eye_at = |app: &App, id: &uuid::Uuid| -> Option<Pos2> {
+            let (e, visible) = app.vf_eye(id, wall)?;
+            if !visible {
+                return None;
+            }
+            projector.project(e).map(|(p, _)| p)
+        };
         let face_of = |app: &App, id: &uuid::Uuid| -> Option<Rect> {
             let head = app.scene.head_world(&app.world, id, wall)?;
             // mHead sits at the base of the skull: the face is above it
@@ -686,7 +723,7 @@ impl App {
                 match face_of(self, &id) {
                     Some(r) => {
                         point = r.center();
-                        face = Some((r, true));
+                        face = Some((r, true, eye_at(self, &id)));
                     }
                     None => self.snapshots.vf.subject = None,
                 }
@@ -697,11 +734,11 @@ impl App {
                     .world
                     .objects
                     .avatars()
-                    .filter_map(|(_, o)| face_of(self, &o.full_id))
-                    .map(|r| (r.center().distance(point), r))
-                    .filter(|(d, _)| *d < 120.0)
+                    .filter_map(|(_, o)| Some((face_of(self, &o.full_id)?, o.full_id)))
+                    .map(|(r, id)| (r.center().distance(point), r, id))
+                    .filter(|(d, _, _)| *d < 120.0)
                     .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .map(|(_, r)| (r, false));
+                    .map(|(_, r, id)| (r, false, eye_at(self, &id)));
             }
         }
         // the zone kept sharp, as the renderer blurs it
