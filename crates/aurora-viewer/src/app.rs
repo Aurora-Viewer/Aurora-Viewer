@@ -9854,6 +9854,8 @@ impl App {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
                     self.photo_ui(&ctx, &p, projector, renderer);
+                    // the exit's question still shows over the photo mode
+                    a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     return a;
                 }
                 // a held photo (freeze frame) instead of the world, under the windows
