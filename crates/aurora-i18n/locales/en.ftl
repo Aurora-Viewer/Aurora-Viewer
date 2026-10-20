@@ -699,6 +699,7 @@ notecard-demo-text =
 
     This notecard can be edited and saved.
     Accents: été, forêt. Emoji: 🐺
+notecard-demo-description = Notes and instructions for this item
 notecard-demo-edit =
     { "\u000A" }Text added during the test.
 script-save-unconfirmed = The server did not confirm that the script was saved.

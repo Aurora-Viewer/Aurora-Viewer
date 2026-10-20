@@ -236,6 +236,11 @@ movement keeps egui's existing drag, constraints and saved positions.
 complete drags on expanded, fixed, inspector, minimized and bare windows at
 three interface scales.
 
+Notecard previews show item descriptions above all three views. Description edits
+use inventory metadata mutations or `UpdateTaskInventory` for object contents,
+independently of the content draft and its asset upload. Modify permissions
+apply even when the content itself cannot be read or edited.
+
 `ui/inventory/markdown.rs` provides each inventory/object notecard's Classic,
 Markdown and split Edit views. Classic retains Firestorm's plain proportional
 text with embedded inventory. CommonMark is parsed once per source change on

@@ -93,6 +93,11 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
             asset_type,
             inv_type,
             flags,
+            desc: if asset_type == 7 {
+                aurora_i18n::tr!("notecard-demo-description").into()
+            } else {
+                String::new()
+            },
             creator: agent,
             owner: agent,
             created_at: now,
