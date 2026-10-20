@@ -4,13 +4,30 @@
 use crate::scene::{Scene, textures::PreviewRevision};
 use crate::theme::Palette;
 use aurora_render::preview::{Image, Model, Part, Vertex, View};
+use std::hash::{Hash, Hasher};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, OnceLock},
 };
 use uuid::Uuid;
 
-type Signature = (usize, [Option<(Uuid, PreviewRevision)>; 4]);
+type Signature = (u64, [Option<(Uuid, PreviewRevision)>; 4]);
+
+fn material_signature(material: &aurora_assets::PbrMaterial) -> u64 {
+    let mut hash = std::hash::DefaultHasher::new();
+    material.base_color_factor.map(f32::to_bits).hash(&mut hash);
+    material.emissive_factor.map(f32::to_bits).hash(&mut hash);
+    [material.metallic_factor, material.roughness_factor, material.alpha_cutoff]
+        .map(f32::to_bits)
+        .hash(&mut hash);
+    (material.alpha_mode as u8, material.double_sided).hash(&mut hash);
+    for transform in material.transforms {
+        transform.offset.map(f32::to_bits).hash(&mut hash);
+        transform.scale.map(f32::to_bits).hash(&mut hash);
+        transform.rotation.to_bits().hash(&mut hash);
+    }
+    hash.finish()
+}
 type Geometry = (Arc<[Vertex]>, Arc<[u32]>);
 struct Cached {
     signature: Option<Signature>,
@@ -65,6 +82,17 @@ impl Previews {
     }
     pub fn model(&mut self, asset: Uuid, scene: &mut Scene, wanted: &mut HashSet<Uuid>, ctx: &egui::Context) -> Option<Arc<Model>> {
         let material = scene.materials.get(&asset)?;
+        self.material_model(asset, material, scene, wanted, ctx)
+    }
+
+    pub fn material_model(
+        &mut self,
+        asset: Uuid,
+        material: Arc<aurora_assets::PbrMaterial>,
+        scene: &mut Scene,
+        wanted: &mut HashSet<Uuid>,
+        ctx: &egui::Context,
+    ) -> Option<Arc<Model>> {
         let maps = [
             material.base_color_texture,
             material.normal_texture,
@@ -74,7 +102,7 @@ impl Previews {
         wanted.extend(maps.iter().flatten().copied());
         let sources = maps.map(|id| id.map(|id| (id, scene.textures.preview_source(&id))));
         let signature = (
-            Arc::as_ptr(&material) as usize,
+            material_signature(&material),
             sources.each_ref().map(|s| s.as_ref().map(|(id, s)| (*id, s.revision()))),
         );
         if !self.entries.contains_key(&asset) {

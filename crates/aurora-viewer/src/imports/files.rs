@@ -496,6 +496,46 @@ pub(super) fn encode(source: &Source, options: import_texture::Options, sound_op
 }
 
 impl Imports {
+    /// One texture linked to an inventory material map. Upload remains in the
+    /// normal inspector, including its price confirmation and retries.
+    pub(crate) fn choose_material_map_upload(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+        options: import_texture::Options,
+    ) -> Option<Uuid> {
+        if self.pending_files.is_some() || self.busy() || self.entries.len() >= 512 {
+            return None;
+        }
+        let request = Uuid::new_v4();
+        let entry_id = Uuid::new_v4();
+        self.pending_files = Some(request);
+        self.open(Choice::Texture);
+        self.active = Some(entry_id);
+        for entry in &mut self.entries {
+            entry.selected = false;
+        }
+        let prefs = self.load_preferences.clone();
+        let tx = self.tx.clone();
+        let wake = ctx.clone();
+        jobs.execute(move || {
+            let mut entries = Vec::new();
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title(aurora_i18n::tr!("import-title"))
+                .add_filter(Choice::Texture.label(), &["tga", "bmp", "jpg", "jpeg", "png", "j2c", "j2k", "jp2"])
+                .pick_file()
+            {
+                entries = load(&path, Choice::Texture, options, 30, &prefs, false)
+                    .unwrap_or_else(|reason| vec![Entry::new(path, Err(reason.to_string()), options)]);
+                for entry in &mut entries {
+                    entry.id = entry_id;
+                }
+            }
+            let _ = tx.send(Worker::Loaded(request, entries));
+            wake.request_repaint();
+        });
+        Some(entry_id)
+    }
     pub fn map_file(&mut self, id: Uuid, slot: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
         let Some(entry) = self.entries.iter().find(|e| e.id == id) else {
             return;

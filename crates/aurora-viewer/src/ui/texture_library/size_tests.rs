@@ -223,3 +223,78 @@ fn preview_size_memory_ignores_placement_minimization_and_automatic_screen_fitti
     assert_eq!(prefs.preview_size(false), None);
     assert_eq!(prefs.preview_size(true), None);
 }
+
+#[test]
+fn texture_preview_grows_past_320_pixels_and_keeps_each_windows_display_options() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    f.open(110);
+    let image = |f: &Fixture| {
+        f.ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_texture_preview", Uuid::from_u128(110)))))
+            .expect("image")
+    };
+    let before = image(&f).size();
+    assert!(before.x > 320.0, "preview must use the space available: {before:?}");
+    f.resize(110, Vec2::new(260.0, 200.0));
+    let after = image(&f).size();
+    assert!(after.x > before.x + 100.0, "{before:?} -> {after:?}");
+    assert!((after.x / after.y - 2.0).abs() < 0.01);
+    f.resources.windows[0].texture.display.keep_ratio = false;
+    f.settle();
+    let stretched = image(&f).size();
+    assert!((stretched.x / stretched.y - 2.0).abs() > 0.1);
+    f.resources.windows[0].texture.display.actual_size = true;
+    f.settle();
+    same_size(image(&f).size(), Vec2::new(128.0, 64.0));
+    f.open(111);
+    assert!(!f.resources.windows[1].texture.display.actual_size);
+    assert!(f.resources.windows[0].texture.display.actual_size);
+}
+
+#[test]
+fn material_save_callbacks_are_scoped_to_their_window_and_preserve_failed_drafts() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    f.open(113);
+    f.open(114);
+    let value = f.resources.windows[0].editor.as_mut().expect("loaded");
+    Arc::make_mut(&mut value.draft).metallic_factor = 0.2;
+    let request = Uuid::from_u128(300);
+    assert!(f.resources.begin_material_save(Uuid::from_u128(113), request));
+    assert!(!f.resources.begin_material_save(Uuid::from_u128(113), Uuid::from_u128(301)));
+    assert!(f.resources.material_saved(Uuid::from_u128(302), &Err("unrelated".into())).is_none());
+    f.resources.material_saved(request, &Err("rejected".into()));
+    assert!(f.resources.windows[0].editor.as_ref().expect("editor").dirty());
+    assert!(!f.resources.windows[1].editor.as_ref().expect("editor").dirty());
+    assert_eq!(f.scene.materials.get(&Uuid::from_u128(121)).expect("asset").metallic_factor, 1.0);
+}
+
+#[test]
+fn a_new_material_with_no_asset_opens_its_default_parameters_immediately() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    f.world.inventory.items.get_mut(&Uuid::from_u128(113)).expect("item").asset_id = Uuid::nil();
+    f.open(113);
+    let editor = f.resources.windows[0].editor.as_ref().expect("new material defaults");
+    assert_eq!(*editor.draft, aurora_assets::PbrMaterial::default());
+    assert!(!editor.dirty());
+}
+
+#[test]
+fn viewer_exit_waits_for_a_material_draft_or_pending_save() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    f.open(113);
+    assert!(f.resources.prepare_exit(&f.ctx));
+    let editor = f.resources.windows[0].editor.as_mut().expect("editor");
+    Arc::make_mut(&mut editor.draft).roughness_factor = 0.3;
+    assert!(!f.resources.prepare_exit(&f.ctx));
+    let editor = f.resources.windows[0].editor.as_mut().expect("editor");
+    assert!(editor.confirm_close);
+    editor.draft = editor.original.clone();
+    editor.begin_save(Uuid::from_u128(310));
+    assert!(!f.resources.prepare_exit(&f.ctx));
+    f.resources.material_saved(Uuid::from_u128(310), &Err("Rejected".into()));
+    assert!(f.resources.prepare_exit(&f.ctx));
+}

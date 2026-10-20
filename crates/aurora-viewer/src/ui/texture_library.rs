@@ -2,7 +2,9 @@
 //! actual subtree under #Aurora/Aurora Library.
 
 pub(crate) mod catalogue;
+mod material_editor;
 pub(crate) mod previews;
+mod texture_view;
 mod windows;
 pub(crate) use windows::window_id as preview_window_id;
 #[cfg(test)]
@@ -60,6 +62,7 @@ pub struct Preferences {
     recent_by_agent: HashMap<Uuid, Vec<Uuid>>,
     pub texture_preview_size: Option<[f32; 2]>,
     pub material_preview_size: Option<[f32; 2]>,
+    pub texture_display: texture_view::Display,
 }
 impl Preferences {
     pub fn activate(&mut self, agent: Uuid) {
@@ -114,6 +117,22 @@ pub enum Action {
     Reveal(Uuid),
     Apply(Uuid),
     Open(Uuid),
+    SaveMaterial {
+        item: Uuid,
+        material: aurora_assets::PbrMaterial,
+        name: Option<String>,
+    },
+    RefreshTexture(Uuid),
+    ExportTexture {
+        item: Uuid,
+        png: bool,
+    },
+    Profile(Uuid),
+    Discard(Uuid),
+    MaterialMapFile {
+        item: Uuid,
+        slot: usize,
+    },
 }
 #[derive(Default)]
 pub struct LibraryUi {
@@ -133,6 +152,7 @@ pub struct LibraryUi {
     pub pending_refresh: Vec<Uuid>,
     pub message: String,
     pub wanted_images: HashSet<Uuid>,
+    map_uploads: HashMap<Uuid, (Uuid, usize)>,
 }
 impl LibraryUi {
     pub fn demo(&mut self, mode: &str, agent: Uuid) {
@@ -400,7 +420,7 @@ impl LibraryUi {
                 prefs.presentation.flip();
             }
         }
-        self.show_previews(ctx, p, world, scene, images, prefs);
+        self.show_previews(ctx, p, world, scene, images, prefs, &mut actions);
         actions
     }
     fn prepare_root(&mut self, inv: &mut Inventory, actions: &mut Vec<Action>) {

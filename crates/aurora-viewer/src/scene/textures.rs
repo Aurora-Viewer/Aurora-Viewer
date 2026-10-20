@@ -947,6 +947,27 @@ pub struct PreviewSource {
 }
 pub type PreviewRevision = (usize, Option<u8>, Option<(u32, u32)>, bool);
 impl PreviewSource {
+    /// Inspector pixels at the resident resolution, decoded on a worker.
+    /// Exports must wait for discard 0 instead of using the small BC7 preview.
+    pub fn inspector_image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
+        if let Some((rgba, width, height)) = crate::demo::local_texture(&id) {
+            return Some(Arc::new(aurora_render::preview::Image {
+                size: [width, height],
+                rgba: rgba.into(),
+            }));
+        }
+        let discard = self.decoded?;
+        let bytes = if self.bytes.is_empty() {
+            Arc::new(std::fs::read(&self.jpeg).ok()?)
+        } else {
+            self.bytes
+        };
+        let pixels = aurora_assets::decode_j2k(&bytes, discard).ok()?;
+        Some(Arc::new(aurora_render::preview::Image {
+            size: [pixels.width, pixels.height],
+            rgba: super::jobs::to_rgba(pixels.components, &pixels.data, (pixels.width * pixels.height) as usize).into(),
+        }))
+    }
     pub fn revision(&self) -> PreviewRevision {
         (self.bytes.len(), self.decoded, self.size, self.procedural)
     }
@@ -1108,7 +1129,7 @@ impl TextureStreamer {
     /// Diagnostic: loading state of a texture.
     /// Full resolution of a texture once its header is known.
     pub fn full_size(&self, id: &Uuid) -> Option<(u32, u32)> {
-        self.entries.get(id)?.info.map(|i| (i.width, i.height))
+        self.entries.get(id).and_then(full_size)
     }
 
     /// Share source bytes and cache locations, never GPU readback or disk IO

@@ -271,7 +271,9 @@ including wrapped and empty rows. Inline code retains its glyph highlight.
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material
-windows keyed by inventory item. Inventory and library opens share these windows
+windows keyed by inventory item. `texture_view.rs` handles fitted, ratio-constrained
+or native-pixel images and worker decoding/export; `material_editor.rs` owns isolated
+PBR drafts, map pickers and save state. Inventory and library opens share these windows
 and the same bounded model cache; reopening an item raises/restores its window
 without resetting its camera. Each window survives closing either source panel,
 and closes independently. Texture and material windows each persist their own

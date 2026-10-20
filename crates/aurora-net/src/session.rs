@@ -2146,6 +2146,7 @@ impl Session<'_> {
                     10 => "UpdateScriptAgent",
                     21 => "UpdateGestureAgentInventory",
                     56 => "UpdateSettingsAgentInventory",
+                    57 => "UpdateMaterialAgentInventory",
                     _ => "",
                 };
                 let Some((cap, fetch)) = self.main_cap(name).zip(self.main_cap("FetchInventory2")) else {
