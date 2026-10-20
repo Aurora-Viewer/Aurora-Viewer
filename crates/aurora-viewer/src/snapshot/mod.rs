@@ -14,6 +14,7 @@ pub mod light;
 pub mod profile;
 pub mod quality;
 pub mod save;
+pub mod viewfinder;
 
 use glam::{Mat4, Vec4};
 use serde::{Deserialize, Serialize};
@@ -238,6 +239,8 @@ pub struct Settings {
     /// "Photo quality": the graphics raised while the window is open
     /// (`quality`), the user's settings back once it closes.
     pub quality: bool,
+    /// The viewfinder's display, AF area, peaking and beep.
+    pub viewfinder: viewfinder::Prefs,
 }
 
 impl Default for Settings {
@@ -263,6 +266,7 @@ impl Default for Settings {
             profile_location: true,
             dof: Default::default(),
             quality: false,
+            viewfinder: Default::default(),
         }
     }
 }

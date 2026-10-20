@@ -1026,6 +1026,9 @@ pub struct DepthOfField {
     pub samples: u32,
     /// Debug: near field red, far field blue, sharp grey.
     pub debug: bool,
+    /// Focus peaking (the photo viewfinder's manual focus): the sharp
+    /// edges painted this linear colour.
+    pub peaking: Option<[f32; 3]>,
 }
 
 /// Views shown instead of the image, and checks painted over it

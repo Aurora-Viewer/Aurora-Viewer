@@ -24,6 +24,8 @@ struct Dof {
     sizes: vec4<f32>,
     // tile width, height, debug view, unused
     tiles: vec4<f32>,
+    // focus peaking: colour, w 1 when on
+    peak: vec4<f32>,
 };
 @group(0) @binding(5) var<uniform> dof: Dof;
 
@@ -204,6 +206,27 @@ fn fs_blur(in: Out) -> Fields {
     return o;
 }
 
+// Focus peaking (the photo viewfinder's manual focus): where the image is
+// sharp, its edges painted in the peaking colour, by the contrast of the
+// sharp image around the pixel.
+fn luma(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+fn peaking(col: vec3<f32>, sharp: vec3<f32>, px: vec2<i32>, c: f32) -> vec3<f32> {
+    if (dof.peak.w < 0.5 || abs(c) >= 1.0) {
+        return col;
+    }
+    let last = vec2<i32>(textureDimensions(t_a)) - vec2<i32>(1);
+    let l = luma(textureLoad(t_a, clamp(px - vec2<i32>(1, 0), vec2<i32>(0), last), 0).rgb);
+    let r = luma(textureLoad(t_a, clamp(px + vec2<i32>(1, 0), vec2<i32>(0), last), 0).rgb);
+    let u = luma(textureLoad(t_a, clamp(px - vec2<i32>(0, 1), vec2<i32>(0), last), 0).rgb);
+    let d = luma(textureLoad(t_a, clamp(px + vec2<i32>(0, 1), vec2<i32>(0), last), 0).rgb);
+    let g = length(vec2<f32>(r - l, d - u)) / (luma(sharp) + 0.05);
+    let edge = smoothstep(0.3, 0.7, g) * (1.0 - smoothstep(0.5, 1.0, abs(c)));
+    return mix(col, dof.peak.rgb * max(1.5, luma(col) * 1.5), edge);
+}
+
 // Full resolution: the sharp image, the far field where the pixel is
 // behind the focus, then the near field over both.
 @fragment
@@ -240,6 +263,7 @@ fn fs_composite(in: Out) -> @location(0) vec4<f32> {
     // the near field over both, spread over its surroundings
     let near_rgb = near.rgb / max(near.a, 1e-4);
     col = mix(col, near_rgb, near.a);
+    col = peaking(col, sharp.rgb, px, c);
     if (dof.tiles.z > 0.5) {
         // debug: near in red, far in blue, sharp in grey
         let k = clamp(abs(c) / max(dof.lens.z, 1.0), 0.0, 1.0);

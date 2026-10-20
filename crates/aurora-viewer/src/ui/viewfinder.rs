@@ -1,0 +1,1686 @@
+//! The photo viewfinder (Preferences › Aurora › Photo mode › Viewfinder):
+//! the world full screen under a camera's overlay, like an electronic
+//! viewfinder. Its three display levels (DISP), the AF point that hunts,
+//! turns green and beeps, the distance scale with the zone kept sharp, the
+//! exposure bar, the histogram, the level, the dock for the mouse, the
+//! quick menu, the help and a drawer with every setting of the photo
+//! panel. The logic is `snapshot::viewfinder`, the frames and the keys
+//! `app::viewfinder`; TASKS.md (photo window, part 6) tells what it does.
+
+use super::snapshot::{self as panel, Action, Destination, SnapshotUi, View};
+use super::widgets;
+use crate::dof::PhotoFocus;
+use crate::snapshot::viewfinder::{self as vf, AfArea, Autofocus, Display, Peaking, Phase, Sounds};
+use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
+use crate::theme::Palette;
+use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
+
+/// The value the mouse wheel drives (the underlined one of the bottom bar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Dial {
+    #[default]
+    Focal,
+    Aperture,
+    Exposure,
+    Distance,
+}
+
+/// The viewfinder's state for the session (its settings are
+/// `snapshot::viewfinder::Prefs`).
+#[derive(Default)]
+pub struct Viewfinder {
+    pub menu: bool,
+    pub help: bool,
+    /// Every setting of the photo panel, in a drawer on the right.
+    pub drawer: bool,
+    pub dial: Dial,
+    /// The shutter half-pressed (Enter or the button held).
+    pub pressed: bool,
+    /// Released while the lens hunts: the photo goes as it locks.
+    pub pending_shot: bool,
+    /// The shutter button was pressed this frame (the app focuses next).
+    pub half_press: bool,
+    /// And released in the same frame: the photo follows the focus.
+    pub release: bool,
+    pub af: Autofocus,
+    /// The AF point, in fractions of the screen (None: its centre).
+    pub point: Option<Pos2>,
+    /// The avatar the focus is on (AF area Avatar).
+    pub subject: Option<uuid::Uuid>,
+    /// The depth under the AF point asked of the renderer.
+    pub pick: Option<u64>,
+    /// The first hint was put away (a focus or a photo).
+    pub hinted: bool,
+    /// When the shutter's blackout started.
+    pub flash_at: Option<f64>,
+    /// The last photo's card shows until then.
+    pub review_until: f64,
+    /// A line at the top: (text, is an error, until).
+    pub message: Option<(String, bool, f64)>,
+    /// The shutter button is held by the mouse.
+    mouse_down: bool,
+}
+
+/// What the app gives the viewfinder each frame.
+pub struct Frame<'a> {
+    /// egui's clock (seconds).
+    pub now: f64,
+    /// The photo's size in pixels.
+    pub photo: (u32, u32),
+    pub fps: f32,
+    pub focal_mm: f32,
+    /// Stops from Preferences' exposure.
+    pub ev: f32,
+    /// The zone the lens keeps sharp (m).
+    pub sharp: (f32, f32),
+    /// The AF point (points).
+    pub point: Pos2,
+    /// The face of the avatar under the AF point, or of the subject (its
+    /// box in points), and whether the focus is on it.
+    pub face: Option<(Rect, bool)>,
+    /// The camera's pitch (degrees, positive up).
+    pub pitch: f32,
+    pub histogram: Option<&'a [u32; vf::HISTOGRAM_BINS]>,
+    /// The last photo: its thumbnail and what the card says of it.
+    pub review: Option<(&'a egui::TextureHandle, String, Review)>,
+    pub first_person: bool,
+    pub free_camera: bool,
+    /// The keys: menu, AF mode, first person.
+    pub keys: Keys<'a>,
+}
+
+/// The keys the help and the hints name.
+pub struct Keys<'a> {
+    pub menu: &'a str,
+    pub af_mode: &'a str,
+    pub first_person: Option<&'a str>,
+}
+
+/// What the last photo's card offers.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Review {
+    /// On disk: open it, show its folder.
+    Disk(std::path::PathBuf),
+    /// In the Photo Album.
+    Inventory,
+    /// On the profile feed.
+    Profile,
+}
+
+/// What the viewfinder asks of the app.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Out {
+    /// One of the photo panel's actions (the drawer, the card).
+    Panel(Action),
+    /// The shutter half-pressed, released (the photo), or let go off the
+    /// button (no photo).
+    HalfPress,
+    Release,
+    Cancel,
+    /// AF-S, AF-C, MF in turn.
+    CycleAf,
+    /// Avatar or point.
+    ToggleArea,
+    /// The view from the avatar's eyes, or back behind it.
+    FirstPerson(bool),
+    /// Out of the photo mode.
+    Exit,
+}
+
+const GAP: f32 = 24.0;
+/// The AF point's brackets.
+const AF_BOX: f32 = 88.0;
+
+/// The fonts of the overlay.
+fn regular(size: f32) -> FontId {
+    FontId::proportional(size)
+}
+
+fn bold(ctx: &egui::Context, size: f32) -> FontId {
+    FontId::new(size, crate::ui::fonts::semibold(ctx))
+}
+
+/// A text over the picture, with the shadow that keeps it readable on a
+/// bright sky.
+fn shadow_text(painter: &egui::Painter, p: &Palette, pos: Pos2, align: Align2, text: &str, font: FontId, color: Color32) -> Rect {
+    painter.text(
+        pos + Vec2::new(0.0, 1.0),
+        align,
+        text,
+        font.clone(),
+        p.navy.gamma_multiply(0.85 * color.a() as f32 / 255.0),
+    );
+    painter.text(pos, align, text, font, color)
+}
+
+/// A band fading from `top` to `bottom`.
+fn gradient(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), top);
+    mesh.colored_vertex(rect.right_top(), top);
+    mesh.colored_vertex(rect.left_bottom(), bottom);
+    mesh.colored_vertex(rect.right_bottom(), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+fn icon(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
+    if let Some(t) = crate::ui::icons::global(name) {
+        painter.image(t.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), tint);
+    }
+}
+
+/// A text of the overlay that can be clicked; its colour brightens under
+/// the pointer.
+fn text_button(ui: &mut egui::Ui, p: &Palette, text: &str, font: FontId, color: Color32, tip: &str) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), color);
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), Sense::click());
+    let color = if resp.hovered() { p.ink } else { color };
+    shadow_text(ui.painter(), p, rect.left_top(), Align2::LEFT_TOP, text, font, color);
+    keep_keys(&resp);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
+}
+
+/// An icon and a text of the top bar, clickable.
+fn icon_text_button(ui: &mut egui::Ui, p: &Palette, name: &str, text: &str, color: Color32, tip: &str) -> egui::Response {
+    let font = regular(13.0);
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), color);
+    let size = Vec2::new(18.0 + 6.0 + galley.size().x, galley.size().y.max(18.0));
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let color = if resp.hovered() { p.ink } else { color };
+    let icon_rect = Rect::from_center_size(Pos2::new(rect.left() + 9.0, rect.center().y), Vec2::splat(18.0));
+    icon(
+        ui.painter(),
+        name,
+        icon_rect.translate(Vec2::new(0.0, 1.0)),
+        p.navy.gamma_multiply(0.7),
+    );
+    icon(ui.painter(), name, icon_rect, color);
+    shadow_text(
+        ui.painter(),
+        p,
+        Pos2::new(rect.left() + 24.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        font,
+        color,
+    );
+    keep_keys(&resp);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
+}
+
+/// The overlay's controls never keep the keyboard: after a click on one,
+/// Enter, I, Tab… are still the viewfinder's.
+fn keep_keys(resp: &egui::Response) {
+    if resp.clicked() || resp.drag_stopped() {
+        resp.surrender_focus();
+    }
+}
+
+/// The AF mode's name.
+pub fn af_label(focus: PhotoFocus) -> &'static str {
+    match focus {
+        PhotoFocus::Click => "AF-S",
+        PhotoFocus::Pointer => "AF-C",
+        PhotoFocus::Manual => "MF",
+    }
+}
+
+fn guide_label(g: Guide) -> &'static str {
+    match g {
+        Guide::None => aurora_i18n::tr!("photo-vf-guide-none"),
+        Guide::Thirds => aurora_i18n::tr!("photo-guide-thirds"),
+        Guide::Golden => aurora_i18n::tr!("photo-guide-golden"),
+        Guide::Diagonals => aurora_i18n::tr!("photo-guide-diagonals"),
+        Guide::Center => aurora_i18n::tr!("photo-guide-center"),
+    }
+}
+
+pub fn next_guide(g: Guide) -> Guide {
+    match g {
+        Guide::None => Guide::Thirds,
+        Guide::Thirds => Guide::Golden,
+        Guide::Golden => Guide::Diagonals,
+        Guide::Diagonals => Guide::Center,
+        Guide::Center => Guide::None,
+    }
+}
+
+fn time_label(time: Option<u8>) -> &'static str {
+    match time {
+        None => aurora_i18n::tr!("photo-vf-sky-current"),
+        Some(1) => aurora_i18n::tr!("ui-environment-sunrise"),
+        Some(2) => aurora_i18n::tr!("common-midday"),
+        Some(3) => aurora_i18n::tr!("ui-environment-lie-down"),
+        Some(_) => aurora_i18n::tr!("common-midnight"),
+    }
+}
+
+fn aspect_label(a: Aspect) -> &'static str {
+    a.short().unwrap_or(aurora_i18n::tr!("photo-aspect-window"))
+}
+
+fn destination_label(d: Destination) -> &'static str {
+    match d {
+        Destination::Disk => aurora_i18n::tr!("photo-destination-disk"),
+        Destination::Inventory => aurora_i18n::tr!("photo-destination-inventory"),
+        Destination::Profile => aurora_i18n::tr!("photo-destination-profile"),
+    }
+}
+
+fn peaking_label(k: Peaking) -> &'static str {
+    match k {
+        Peaking::White => aurora_i18n::tr!("photo-vf-peaking-white"),
+        Peaking::Red => aurora_i18n::tr!("photo-vf-peaking-red"),
+        Peaking::Yellow => aurora_i18n::tr!("photo-vf-peaking-yellow"),
+        Peaking::Off => aurora_i18n::tr!("photo-vf-off"),
+    }
+}
+
+/// The peaking colour of the palette (white, red, yellow).
+pub fn peaking_color(p: &Palette, k: Peaking) -> Option<Color32> {
+    match k {
+        Peaking::White => Some(p.ink),
+        Peaking::Red => Some(p.danger),
+        Peaking::Yellow => Some(p.amber),
+        Peaking::Off => None,
+    }
+}
+
+fn sounds_label(s: Sounds) -> &'static str {
+    match s {
+        Sounds::BeepAndShutter => aurora_i18n::tr!("photo-vf-sounds-both"),
+        Sounds::Shutter => aurora_i18n::tr!("photo-vf-sounds-shutter"),
+        Sounds::None => aurora_i18n::tr!("photo-vf-sounds-none"),
+    }
+}
+
+fn on_off(on: bool, yes: &'static str, no: &'static str) -> &'static str {
+    if on { yes } else { no }
+}
+
+impl Viewfinder {
+    /// The line at the top for a few seconds.
+    pub fn say(&mut self, text: impl Into<String>, error: bool, now: f64) {
+        self.message = Some((text.into(), error, now + 2.6));
+    }
+
+    /// The whole viewfinder for this frame; `fov` is the camera's vertical
+    /// field of view (the focal length), `panel` the photo panel's state
+    /// (its destination, light, free camera, freeze), `view` what its
+    /// drawer shows.
+    #[allow(clippy::too_many_arguments)]
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        s: &mut Settings,
+        panel: &mut SnapshotUi,
+        fov: &mut f32,
+        default_fov: f32,
+        f: &Frame,
+        view: &View,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        let before = s.clone();
+        let light_before = panel.light;
+        let screen = ctx.content_rect();
+        let display = s.viewfinder.display;
+        let full = display == Display::Full;
+        let shows = display != Display::Hidden;
+        let back = ctx.layer_painter(egui::LayerId::new(Order::Background, Id::new("vf_back")));
+        let front = ctx.layer_painter(egui::LayerId::new(Order::Middle, Id::new("vf_front")));
+
+        // the photo's proportions: the rest darkened, a fine frame, the guide
+        let ratio = f.photo.0 as f32 / f.photo.1.max(1) as f32;
+        let frame = panel::fit(screen, ratio);
+        for r in panel::outside(screen, frame) {
+            back.rect_filled(r, 0.0, p.navy.gamma_multiply(0.66));
+        }
+        let border = if shows { 0.5 } else { 0.25 };
+        back.rect_stroke(frame, 0.0, Stroke::new(1.0, p.ink.gamma_multiply(border)), StrokeKind::Inside);
+        if shows && s.guide != Guide::None {
+            panel::guide_lines(&back, frame, s.guide, p.ink.gamma_multiply(0.4));
+        }
+
+        if full {
+            self.top_bar(ctx, p, &back, screen, s, panel, f, &mut out);
+        }
+        self.af_point(ctx, p, &front, s, f);
+        if shows && !self.hinted && !self.menu && !self.help {
+            hint(ctx, p, screen, f);
+        }
+        if let Some((text, error, until)) = &self.message {
+            if f.now < *until {
+                message(ctx, p, screen, text, *error);
+            } else {
+                self.message = None;
+            }
+        }
+        let manual = s.dof.focus == PhotoFocus::Manual;
+        let active = matches!(self.af.phase, Phase::Hunt | Phase::Fail) || (self.af.recent(f.now) && shows);
+        if !self.menu && (manual || active || full) {
+            self.scale(ctx, p, &front, screen, s, f);
+        }
+        if shows {
+            self.bottom_bar(ctx, p, &back, screen, s, f);
+            self.dock(ctx, p, screen, s, f, &mut out);
+        } else if ghost_disp(ctx, p, screen) {
+            s.viewfinder.display = display.next();
+        }
+        if f.now < self.review_until && !self.menu {
+            review(ctx, p, screen, f, &mut out);
+        }
+        if self.menu {
+            self.quick_menu(ctx, p, screen, s, panel, f, &mut out);
+        }
+        if self.help {
+            self.help_panel(ctx, p, screen, f);
+        }
+        if self.drawer {
+            self.drawer(ctx, p, screen, s, panel, fov, default_fov, view, &mut out);
+        }
+        // the shutter's blackout: black at once, then gone in 0.18 s
+        if let Some(t) = self.flash_at {
+            let k = ((f.now - t) as f32 / 0.18).clamp(0.0, 1.0);
+            let alpha = if f.now - t < 0.09 { 1.0 } else { 1.0 - k };
+            if alpha > 0.0 {
+                let top = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::new("vf_flash")));
+                top.rect_filled(screen, 0.0, p.navy.gamma_multiply(alpha));
+                ctx.request_repaint();
+            } else {
+                self.flash_at = None;
+            }
+        }
+
+        if *s != before {
+            let photo = s.aspect != before.aspect
+                || s.resolution != before.resolution
+                || s.inventory_size != before.inventory_size
+                || s.profile_size != before.profile_size
+                || s.dof != before.dof
+                || s.huds != before.huds;
+            out.push(Out::Panel(if photo { Action::Changed } else { Action::Saved }));
+        }
+        if panel.light != light_before && !out.contains(&Out::Panel(Action::Changed)) {
+            out.push(Out::Panel(Action::Changed));
+        }
+        out
+    }
+
+    /// The top bar: the focus on the left, what the photo will be on the
+    /// right; under it the light of the photo and the histogram, and the
+    /// level in the middle.
+    #[allow(clippy::too_many_arguments)]
+    fn top_bar(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        back: &egui::Painter,
+        screen: Rect,
+        s: &mut Settings,
+        panel: &SnapshotUi,
+        f: &Frame,
+        out: &mut Vec<Out>,
+    ) {
+        gradient(
+            back,
+            Rect::from_min_size(screen.min, Vec2::new(screen.width(), 96.0)),
+            p.navy.gamma_multiply(0.62),
+            Color32::TRANSPARENT,
+        );
+        let color = af_color(p, self.af.phase, false);
+        egui::Area::new(Id::new("vf_top_left"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .fixed_pos(screen.left_top() + Vec2::new(GAP, 12.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 18.0;
+                    // the AF mode, framed
+                    let font = bold(ctx, 14.0);
+                    let label = af_label(s.dof.focus);
+                    let galley = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), color);
+                    let (rect, resp) = ui.allocate_exact_size(galley.size() + Vec2::new(16.0, 4.0), Sense::click());
+                    let c = if resp.hovered() { p.ink } else { color };
+                    ui.painter()
+                        .rect_stroke(rect, widgets::inner_radius(ui.visuals()), Stroke::new(1.5, c), StrokeKind::Inside);
+                    shadow_text(ui.painter(), p, rect.center(), Align2::CENTER_CENTER, label, font, c);
+                    if resp
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(aurora_i18n::tr!("photo-vf-af-mode-tip", key = f.keys.af_mode))
+                        .clicked()
+                    {
+                        out.push(Out::CycleAf);
+                    }
+                    let (name, text) = match s.viewfinder.area {
+                        AfArea::Avatar => ("user-filled", aurora_i18n::tr!("photo-vf-area-avatar")),
+                        AfArea::Point => ("focus-centered", aurora_i18n::tr!("photo-vf-area-point")),
+                    };
+                    if icon_text_button(ui, p, name, text, p.ink, aurora_i18n::tr!("photo-vf-area-tip")).clicked() {
+                        out.push(Out::ToggleArea);
+                    }
+                    if icon_text_button(
+                        ui,
+                        p,
+                        "grid-3x3",
+                        guide_label(s.guide),
+                        p.ink,
+                        aurora_i18n::tr!("photo-vf-guide-tip"),
+                    )
+                    .clicked()
+                    {
+                        s.guide = next_guide(s.guide);
+                    }
+                    if f.free_camera {
+                        icon_text_button(ui, p, "video-filled", aurora_i18n::tr!("photo-free-camera"), p.teal, "");
+                    }
+                    if f.first_person {
+                        icon_text_button(ui, p, "user-filled", aurora_i18n::tr!("photo-vf-first-person"), p.teal, "");
+                    }
+                });
+            });
+
+        // what the photo will be
+        let mut x = screen.right() - GAP;
+        let y = screen.top() + 24.0;
+        let font = regular(13.0);
+        let right = |x: &mut f32, text: &str, color: Color32, font: FontId, icon_name: Option<&str>| {
+            let r = shadow_text(back, p, Pos2::new(*x, y), Align2::RIGHT_CENTER, text, font, color);
+            *x = r.left();
+            if let Some(name) = icon_name {
+                let ir = Rect::from_center_size(Pos2::new(*x - 6.0 - 8.5, y), Vec2::splat(17.0));
+                icon(back, name, ir, color);
+                *x = ir.left();
+            }
+            *x -= 18.0;
+        };
+        right(&mut x, &format!("{} i/s", f.fps.round() as i32), p.muted, font.clone(), None);
+        if !s.huds {
+            right(&mut x, aurora_i18n::tr!("photo-huds"), p.muted, font.clone(), Some("eye-off"));
+        }
+        if s.quality {
+            right(&mut x, "8×", p.ink, font.clone(), Some("sparkles-filled"));
+        }
+        right(
+            &mut x,
+            destination_label(panel.destination),
+            p.ink,
+            font.clone(),
+            Some("device-floppy-filled"),
+        );
+        let format = if panel.destination == Destination::Profile {
+            FileFormat::Png
+        } else {
+            s.format
+        };
+        let size = format!("{} · {} × {} · {}", aspect_label(s.aspect), f.photo.0, f.photo.1, format.label());
+        right(&mut x, &size, p.ink, bold(ctx, 13.0), None);
+
+        // the light of the photo
+        let mut y = screen.top() + 66.0;
+        let line = |y: &mut f32, name: &str, text: &str, color: Color32| {
+            icon(
+                back,
+                name,
+                Rect::from_center_size(Pos2::new(screen.left() + GAP + 8.0, *y), Vec2::splat(16.0)),
+                color,
+            );
+            shadow_text(
+                back,
+                p,
+                Pos2::new(screen.left() + GAP + 23.0, *y),
+                Align2::LEFT_CENTER,
+                text,
+                regular(12.5),
+                color,
+            );
+            *y += 24.0;
+        };
+        line(&mut y, "sun-filled", time_label(panel.light.time), p.ink);
+        if panel.light.clouds_paused {
+            line(&mut y, "cloud-filled", aurora_i18n::tr!("photo-vf-clouds-frozen"), p.ink);
+        }
+        if !panel.light.attached_lights {
+            line(&mut y, "bulb-off", aurora_i18n::tr!("photo-vf-lights-off"), p.amber);
+        }
+
+        // the histogram
+        let h = Rect::from_min_size(Pos2::new(screen.right() - GAP - 150.0, screen.top() + 52.0), Vec2::new(150.0, 62.0));
+        back.rect_filled(h, ctx.global_style().visuals.window_corner_radius, p.navy.gamma_multiply(0.45));
+        back.rect_stroke(
+            h,
+            ctx.global_style().visuals.window_corner_radius,
+            Stroke::new(1.0, p.ink.gamma_multiply(0.12)),
+            StrokeKind::Inside,
+        );
+        for k in [1.0, 2.0] {
+            let x = h.left() + h.width() * k / 3.0;
+            back.line_segment(
+                [Pos2::new(x, h.top()), Pos2::new(x, h.bottom())],
+                Stroke::new(1.0, p.ink.gamma_multiply(0.12)),
+            );
+        }
+        if let Some(bins) = f.histogram {
+            let total: u32 = bins.iter().sum();
+            // the square root keeps the small counts visible
+            let top = bins.iter().map(|&b| (b as f32).sqrt()).fold(0.0f32, f32::max).max(1.0);
+            let w = h.width() / bins.len() as f32;
+            let inner = h.shrink2(Vec2::new(0.0, 3.0));
+            for (i, &b) in bins.iter().enumerate() {
+                let v = (b as f32).sqrt() / top;
+                if v <= 0.0 {
+                    continue;
+                }
+                let x = h.left() + i as f32 * w;
+                let bar = Rect::from_min_max(
+                    Pos2::new(x, inner.bottom() - v * inner.height()),
+                    Pos2::new(x + w + 0.5, h.bottom()),
+                );
+                back.rect_filled(bar, 0.0, p.ink.gamma_multiply(0.6));
+            }
+            // the highlights clip: a bar on the right
+            let bright = bins[bins.len() - 2..].iter().sum::<u32>();
+            if total > 0 && bright as f32 / total as f32 > 0.01 {
+                let edge = Rect::from_min_max(Pos2::new(h.right() - 4.0, h.top()), h.right_bottom());
+                back.rect_filled(edge, 0.0, p.amber);
+            }
+        }
+
+        // the level: the camera's pitch (0: verticals stay straight)
+        let c = screen.center();
+        let level = if f.pitch.abs() < 0.5 { p.success } else { p.ink };
+        for side in [-1.0, 1.0] {
+            let a = Pos2::new(c.x + side * 35.0, c.y);
+            let b = Pos2::new(c.x + side * 105.0, c.y);
+            back.line_segment(
+                [a + Vec2::new(0.0, 1.0), b + Vec2::new(0.0, 1.0)],
+                Stroke::new(1.5, p.navy.gamma_multiply(0.5)),
+            );
+            back.line_segment([a, b], Stroke::new(1.5, level.gamma_multiply(0.8)));
+        }
+        let pitch = format!("{}°", aurora_i18n::number(f64::from(f.pitch.round()), 0).replace('-', "−"));
+        shadow_text(
+            back,
+            p,
+            c + Vec2::new(0.0, 12.0),
+            Align2::CENTER_TOP,
+            &pitch,
+            regular(11.0),
+            level.gamma_multiply(0.85),
+        );
+    }
+
+    /// The AF point: brackets, or the face box of an avatar; green when
+    /// sharp, red when it failed, the distance under it once locked.
+    fn af_point(&self, ctx: &egui::Context, p: &Palette, painter: &egui::Painter, s: &Settings, f: &Frame) {
+        let display = s.viewfinder.display;
+        let phase = self.af.phase;
+        let t = self.af.phase_time(f.now);
+        let busy = matches!(phase, Phase::Hunt | Phase::Fail) || self.af.recent(f.now);
+        if display == Display::Hidden && !busy {
+            return;
+        }
+        let color = af_color(p, phase, true);
+        // the failure blinks five times
+        let blink = phase == Phase::Fail && t < 1.1 && ((t / 0.22).fract() >= 0.5);
+        let color = if blink { color.gamma_multiply(0.12) } else { color };
+        let scale = match phase {
+            Phase::Hunt => 1.0 - 0.16 * (0.5 - 0.5 * (t / 0.28 * std::f32::consts::TAU).cos()),
+            Phase::Lock if t < 0.24 => {
+                let u = t / 0.24;
+                if u < 0.55 {
+                    1.22 + (0.93 - 1.22) * (u / 0.55)
+                } else {
+                    0.93 + 0.07 * ((u - 0.55) / 0.45)
+                }
+            }
+            Phase::Track => 0.72,
+            _ => 1.0,
+        };
+        let locked = matches!(phase, Phase::Lock | Phase::Track);
+        let width = if locked { 3.0 } else { 2.2 };
+        let shadow = Stroke::new(width + 1.5, p.navy.gamma_multiply(0.45));
+        let face = f
+            .face
+            .filter(|_| s.viewfinder.area == AfArea::Avatar && s.dof.focus != PhotoFocus::Manual);
+        let mut under = f.point + Vec2::new(0.0, AF_BOX / 2.0 + 6.0);
+        match face {
+            Some((rect, on)) if on || display != Display::Hidden => {
+                let rect = Rect::from_center_size(rect.center(), rect.size() * if on { scale } else { 1.0 });
+                let radius = ctx.global_style().visuals.window_corner_radius;
+                let (stroke, c) = if on {
+                    (Stroke::new(2.5, color), color)
+                } else {
+                    (Stroke::new(1.2, p.ink.gamma_multiply(0.7)), p.ink.gamma_multiply(0.7))
+                };
+                painter.rect_stroke(rect, radius, shadow, StrokeKind::Middle);
+                painter.rect_stroke(rect, radius, stroke, StrokeKind::Middle);
+                // the eye the lens holds
+                let eye = Pos2::new(rect.left() + rect.width() * 0.29, rect.top() + rect.height() * 0.4);
+                painter.circle_stroke(eye, 3.5, Stroke::new(1.5, c));
+                let label = if on && locked {
+                    aurora_i18n::tr!("photo-vf-eye")
+                } else {
+                    aurora_i18n::tr!("photo-vf-area-avatar")
+                };
+                shadow_text(
+                    painter,
+                    p,
+                    rect.left_top() - Vec2::new(0.0, 4.0),
+                    Align2::LEFT_BOTTOM,
+                    label,
+                    bold(ctx, 11.0),
+                    c,
+                );
+                if on {
+                    under = Pos2::new(rect.center().x, rect.bottom() + 8.0);
+                } else {
+                    brackets(painter, f.point, scale, Stroke::new(width, color), shadow);
+                }
+            }
+            _ => {
+                brackets(painter, f.point, scale, Stroke::new(width, color), shadow);
+                if s.dof.focus == PhotoFocus::Manual {
+                    let c = f.point;
+                    painter.line_segment([c - Vec2::new(6.0, 0.0), c + Vec2::new(6.0, 0.0)], Stroke::new(1.5, p.ink));
+                    painter.line_segment([c - Vec2::new(0.0, 6.0), c + Vec2::new(0.0, 6.0)], Stroke::new(1.5, p.ink));
+                }
+            }
+        }
+        if locked && self.af.recent(f.now) && display != Display::Hidden {
+            let text = format!("{} m", vf::distance_text(self.af.distance()));
+            let text = if self.af.distance() >= vf::INFINITY {
+                "∞".to_owned()
+            } else {
+                text
+            };
+            shadow_text(painter, p, under, Align2::CENTER_TOP, &text, bold(ctx, 12.0), p.success);
+        }
+        if matches!(phase, Phase::Hunt | Phase::Fail) || (phase == Phase::Lock && t < 0.3) {
+            ctx.request_repaint();
+        }
+    }
+
+    /// The distance scale (log, infinity at the end), the zone kept sharp
+    /// and the lens's needle.
+    fn scale(&self, ctx: &egui::Context, p: &Palette, painter: &egui::Painter, screen: Rect, s: &Settings, f: &Frame) {
+        let width = 560.0;
+        let left = screen.center().x - 290.0 + 10.0;
+        let line_y = screen.bottom() - 74.0 - 40.0 + 12.0;
+        let x = |d: f32| left + vf::scale_position(d) * width;
+        painter.line_segment(
+            [Pos2::new(left, line_y), Pos2::new(left + width, line_y)],
+            Stroke::new(1.0, p.ink.gamma_multiply(0.55)),
+        );
+        if s.dof.enabled {
+            let (near, far) = f.sharp;
+            let a = x(near);
+            let b = x(far).max(a + 3.0);
+            painter.rect_filled(
+                Rect::from_min_max(Pos2::new(a, line_y - 3.0), Pos2::new(b, line_y + 4.0)),
+                widgets::inner_radius(&ctx.global_style().visuals),
+                p.success.gamma_multiply(0.55),
+            );
+        }
+        for d in vf::SCALE_MARKS {
+            let px = x(d);
+            painter.line_segment(
+                [Pos2::new(px, line_y - 3.0), Pos2::new(px, line_y + 4.0)],
+                Stroke::new(1.0, p.ink.gamma_multiply(0.75)),
+            );
+            let label = if d >= vf::INFINITY {
+                "∞".to_owned()
+            } else {
+                aurora_i18n::number(f64::from(d), if d < 1.0 { 1 } else { 0 })
+            };
+            shadow_text(
+                painter,
+                p,
+                Pos2::new(px, line_y + 7.0),
+                Align2::CENTER_TOP,
+                &label,
+                regular(10.5),
+                p.ink,
+            );
+        }
+        shadow_text(
+            painter,
+            p,
+            Pos2::new(left + width + 44.0, line_y - 5.0),
+            Align2::LEFT_TOP,
+            "m",
+            regular(10.5),
+            p.muted,
+        );
+        // the needle
+        let n = x(self.af.distance());
+        let c = af_color(p, self.af.phase, false);
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                Pos2::new(n - 6.0, line_y - 14.0),
+                Pos2::new(n + 6.0, line_y - 14.0),
+                Pos2::new(n, line_y - 5.0),
+            ],
+            c,
+            Stroke::NONE,
+        ));
+    }
+
+    /// The bottom bar: the focus confirmation and the AF mode on the left;
+    /// focal length, aperture, exposure and distance in the middle (the
+    /// one the wheel drives underlined; a click chooses it); the zone kept
+    /// sharp on the right.
+    fn bottom_bar(&mut self, ctx: &egui::Context, p: &Palette, back: &egui::Painter, screen: Rect, s: &Settings, f: &Frame) {
+        gradient(
+            back,
+            Rect::from_min_max(Pos2::new(screen.left(), screen.bottom() - 110.0), screen.right_bottom()),
+            Color32::TRANSPARENT,
+            p.navy.gamma_multiply(0.72),
+        );
+        let y = screen.bottom() - 16.0 - 22.0;
+        // the confirmation dot
+        let dot = Pos2::new(screen.left() + GAP + 6.0, y);
+        let t = self.af.phase_time(f.now);
+        match self.af.phase {
+            Phase::Lock | Phase::Track => {
+                back.circle_filled(dot, 6.0, p.success);
+            }
+            Phase::Fail => {
+                if t > 1.1 || (t / 0.22).fract() < 0.5 {
+                    back.circle_filled(dot, 6.0, p.danger);
+                }
+            }
+            Phase::Hunt => {
+                let a = 0.25 + 0.75 * (0.5 + 0.5 * (t / 0.3 * std::f32::consts::TAU).cos());
+                back.circle_stroke(dot, 5.0, Stroke::new(2.0, p.ink.gamma_multiply(a)));
+            }
+            _ => {
+                back.circle_stroke(dot, 5.25, Stroke::new(1.5, p.muted.gamma_multiply(0.8)));
+            }
+        }
+        let c = af_color(p, self.af.phase, false);
+        let r = shadow_text(
+            back,
+            p,
+            Pos2::new(dot.x + 6.0 + 14.0, y),
+            Align2::LEFT_CENTER,
+            af_label(s.dof.focus),
+            bold(ctx, 15.0),
+            c,
+        );
+        let area = if s.dof.focus == PhotoFocus::Manual {
+            aurora_i18n::tr!("photo-vf-area-manual")
+        } else if s.viewfinder.area == AfArea::Avatar {
+            aurora_i18n::tr!("photo-vf-area-avatar-eye")
+        } else {
+            aurora_i18n::tr!("photo-vf-area-point")
+        };
+        shadow_text(
+            back,
+            p,
+            Pos2::new(r.right() + 14.0, y),
+            Align2::LEFT_CENTER,
+            area,
+            regular(13.0),
+            p.muted,
+        );
+
+        // the zone kept sharp
+        let right = screen.right() - GAP;
+        shadow_text(
+            back,
+            p,
+            Pos2::new(right, y - 4.0),
+            Align2::RIGHT_BOTTOM,
+            aurora_i18n::tr!("photo-vf-sharp-from"),
+            regular(11.0),
+            p.muted,
+        );
+        let range = if s.dof.enabled {
+            let (near, far) = f.sharp;
+            if far >= vf::INFINITY {
+                format!("{} – ∞", vf::distance_text(near))
+            } else {
+                format!("{} – {} m", vf::distance_text(near), vf::distance_text(far))
+            }
+        } else {
+            aurora_i18n::tr!("photo-vf-all-sharp").to_owned()
+        };
+        shadow_text(
+            back,
+            p,
+            Pos2::new(right, y - 2.0),
+            Align2::RIGHT_TOP,
+            &range,
+            bold(ctx, 15.0),
+            p.ink,
+        );
+
+        // the dials
+        egui::Area::new(Id::new("vf_dials"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::CENTER_BOTTOM)
+            .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 16.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 30.0;
+                    let font = bold(ctx, 22.0);
+                    let dial = |ui: &mut egui::Ui, d: Dial, text: &str, dim: bool, tip: &str, me: &mut Viewfinder| {
+                        let color = if dim { p.ink.gamma_multiply(0.45) } else { p.ink };
+                        let resp = ui
+                            .vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 3.0;
+                                let r = text_button(ui, p, text, font.clone(), color, tip);
+                                let (line, _) = ui.allocate_exact_size(Vec2::new(r.rect.width(), 2.0), Sense::hover());
+                                if me.dial == d {
+                                    ui.painter().rect_filled(line, 0.0, p.teal);
+                                }
+                                r
+                            })
+                            .inner;
+                        if resp.clicked() {
+                            me.dial = d;
+                        }
+                    };
+                    dial(
+                        ui,
+                        Dial::Focal,
+                        &format!("{} mm", f.focal_mm.round() as i32),
+                        false,
+                        aurora_i18n::tr!("photo-vf-focal-tip"),
+                        self,
+                    );
+                    let n = s.dof.f_number;
+                    dial(
+                        ui,
+                        Dial::Aperture,
+                        &format!("f/{}", aurora_i18n::number(f64::from(n), if n < 10.0 { 1 } else { 0 })),
+                        !s.dof.enabled,
+                        aurora_i18n::tr!("photo-vf-aperture-tip"),
+                        self,
+                    );
+                    // the exposure scale, by thirds
+                    let resp = ui
+                        .vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 3.0;
+                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(170.0, 36.0), Sense::click());
+                            let painter = ui.painter();
+                            let base = rect.left() + 6.0;
+                            let bottom = rect.top() + 20.0;
+                            for i in 0..=12 {
+                                let x = base + i as f32 * 12.2;
+                                let big = i % 3 == 0;
+                                let h = if i == 6 {
+                                    12.0
+                                } else if big {
+                                    8.0
+                                } else {
+                                    4.0
+                                };
+                                painter.line_segment(
+                                    [Pos2::new(x, bottom - h), Pos2::new(x, bottom)],
+                                    Stroke::new(if big { 1.5 } else { 1.0 }, p.ink),
+                                );
+                            }
+                            let m = base + (f.ev.clamp(-2.0, 2.0) + 2.0) * 3.0 * 12.2;
+                            let mc = if f.ev.abs() < 0.01 { p.ink } else { p.teal };
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![
+                                    Pos2::new(m - 4.5, rect.top()),
+                                    Pos2::new(m + 4.5, rect.top()),
+                                    Pos2::new(m, rect.top() + 6.0),
+                                ],
+                                mc,
+                                Stroke::NONE,
+                            ));
+                            for (k, label) in ["−2", "−1", "0", "+1", "+2"].iter().enumerate() {
+                                let x = base + k as f32 * 3.0 * 12.2;
+                                shadow_text(
+                                    painter,
+                                    p,
+                                    Pos2::new(x, bottom + 2.0),
+                                    Align2::CENTER_TOP,
+                                    label,
+                                    regular(10.5),
+                                    p.muted,
+                                );
+                            }
+                            let (line, _) = ui.allocate_exact_size(Vec2::new(170.0, 2.0), Sense::hover());
+                            if self.dial == Dial::Exposure {
+                                ui.painter().rect_filled(line, 0.0, p.teal);
+                            }
+                            resp
+                        })
+                        .inner;
+                    if resp
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(aurora_i18n::tr!("photo-vf-exposure-tip"))
+                        .clicked()
+                    {
+                        self.dial = Dial::Exposure;
+                    }
+                    let d = self.af.distance();
+                    let text = if d >= vf::INFINITY {
+                        "∞".to_owned()
+                    } else {
+                        format!("{} m", vf::distance_text(d))
+                    };
+                    dial(ui, Dial::Distance, &text, false, aurora_i18n::tr!("photo-vf-distance-tip"), self);
+                });
+            });
+    }
+
+    /// The dock on the right: everything the mouse needs.
+    fn dock(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, out: &mut Vec<Out>) {
+        egui::Area::new(Id::new("vf_dock"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::RIGHT_CENTER)
+            .fixed_pos(Pos2::new(screen.right() - 20.0, screen.center().y))
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.spacing_mut().item_spacing.y = 10.0;
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Icon("layout-grid-filled"),
+                        &aurora_i18n::tr!("photo-vf-menu-tip", key = f.keys.menu),
+                        self.menu,
+                    ) {
+                        self.menu = !self.menu;
+                        self.help = false;
+                    }
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Icon("adjustments-horizontal-filled"),
+                        aurora_i18n::tr!("photo-vf-drawer-tip"),
+                        self.drawer,
+                    ) {
+                        self.drawer = !self.drawer;
+                    }
+                    if dock_button(ui, p, Face::Text("DISP"), aurora_i18n::tr!("photo-vf-disp-tip"), false) {
+                        s.viewfinder.display = s.viewfinder.display.next();
+                    }
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Text(af_label(s.dof.focus)),
+                        &aurora_i18n::tr!("photo-vf-af-mode-tip", key = f.keys.af_mode),
+                        false,
+                    ) {
+                        out.push(Out::CycleAf);
+                    }
+                    ui.add_space(6.0);
+                    self.shutter_button(ui, p, out);
+                    ui.add_space(6.0);
+                    let has_photo = f.review.is_some();
+                    if dock_button(ui, p, Face::Icon("photo-filled"), aurora_i18n::tr!("photo-vf-last-photo"), false) && has_photo {
+                        self.review_until = if f.now < self.review_until { 0.0 } else { f.now + 4.8 };
+                    }
+                    if dock_button(ui, p, Face::Text("?"), aurora_i18n::tr!("photo-vf-help-tip"), self.help) {
+                        self.help = !self.help;
+                        self.menu = false;
+                    }
+                    if dock_button(ui, p, Face::Icon("x"), aurora_i18n::tr!("photo-vf-exit-tip"), false) {
+                        out.push(Out::Exit);
+                    }
+                });
+            });
+    }
+
+    /// The round shutter: pressed, the focus; released on it, the photo;
+    /// let go elsewhere, nothing.
+    fn shutter_button(&mut self, ui: &mut egui::Ui, p: &Palette, out: &mut Vec<Out>) {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(66.0), Sense::click_and_drag());
+        let down = resp.is_pointer_button_down_on();
+        if down && !self.mouse_down {
+            self.mouse_down = true;
+            out.push(Out::HalfPress);
+        } else if !down && self.mouse_down {
+            self.mouse_down = false;
+            out.push(if resp.hovered() { Out::Release } else { Out::Cancel });
+        }
+        let locked = matches!(self.af.phase, Phase::Lock | Phase::Track);
+        let c = rect.center();
+        ui.painter().circle_filled(c, 33.0, p.navy.gamma_multiply(0.35));
+        let ring = if self.pressed && locked { p.success } else { p.ink };
+        ui.painter().circle_stroke(c, 31.5, Stroke::new(3.0, ring));
+        let fill = if self.pressed {
+            if locked { p.success } else { p.ink }
+        } else {
+            p.ink.gamma_multiply(0.92)
+        };
+        ui.painter().circle_filled(c, if self.pressed { 25.0 * 0.86 } else { 25.0 }, fill);
+        keep_keys(&resp);
+        resp.on_hover_text(aurora_i18n::tr!("photo-vf-shutter-tip"));
+    }
+
+    /// The quick menu: a tile per setting, a click for the next value.
+    #[allow(clippy::too_many_arguments)]
+    fn quick_menu(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        screen: Rect,
+        s: &mut Settings,
+        panel: &mut SnapshotUi,
+        f: &Frame,
+        out: &mut Vec<Out>,
+    ) {
+        let cols = 8.0;
+        let width = (screen.width() - 2.0 * GAP - 120.0).min(1180.0);
+        egui::Area::new(Id::new("vf_menu"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::CENTER_BOTTOM)
+            .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 128.0))
+            .show(ctx, |ui| {
+                widgets::overlay(ui, p, egui::Margin::same(14), |ui| {
+                    ui.set_width(width - 28.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(aurora_i18n::tr!("photo-vf-menu"))
+                                .font(bold(ctx, 14.0))
+                                .color(p.ink),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(aurora_i18n::tr!("photo-vf-menu-hint", key = f.keys.menu))
+                                    .size(12.0)
+                                    .color(p.muted),
+                            );
+                        });
+                    });
+                    ui.add_space(6.0);
+                    let tile_w = (width - 28.0 - 8.0 * (cols - 1.0)) / cols;
+                    let tiles = tiles(s, panel, f);
+                    egui::Grid::new("vf_tiles")
+                        .num_columns(cols as usize)
+                        .spacing(Vec2::splat(8.0))
+                        .show(ui, |ui| {
+                            for (i, (label, value, step)) in tiles.into_iter().enumerate() {
+                                if tile(ui, p, Vec2::new(tile_w, 68.0), label, &value)
+                                    && let Some(o) = step(s, panel)
+                                {
+                                    out.push(o);
+                                }
+                                if (i + 1) % cols as usize == 0 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                });
+            });
+    }
+
+    /// The keys and the mouse, in a panel in the middle.
+    fn help_panel(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame) {
+        egui::Area::new(Id::new("vf_help"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::CENTER_CENTER)
+            .fixed_pos(screen.center())
+            .show(ctx, |ui| {
+                widgets::overlay(ui, p, egui::Margin::symmetric(26, 22), |ui| {
+                    ui.set_width(548.0);
+                    ui.spacing_mut().item_spacing.y = 8.0;
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(aurora_i18n::tr!("photo-vf-help-title"))
+                                .font(bold(ctx, 17.0))
+                                .color(p.ink),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true) {
+                                self.help = false;
+                            }
+                        });
+                    });
+                    let menu = f.keys.menu;
+                    let af = f.keys.af_mode;
+                    let sections: [(&str, Vec<(String, &str)>); 3] = [
+                        (
+                            aurora_i18n::tr!("photo-vf-help-aim"),
+                            vec![
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-click").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-click-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-enter-down").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-enter-down-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-enter-up").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-enter-up-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-button").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-button-text"),
+                                ),
+                            ],
+                        ),
+                        (
+                            aurora_i18n::tr!("photo-vf-help-adjust"),
+                            vec![
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-wheel-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-shift-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-shift-wheel-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-alt-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-alt-wheel-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-ctrl-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-ctrl-wheel-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-digits").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-digits-text"),
+                                ),
+                            ],
+                        ),
+                        (aurora_i18n::tr!("photo-vf-help-focus"), {
+                            let mut v = vec![
+                                (af.to_owned(), aurora_i18n::tr!("photo-vf-help-af-text")),
+                                ("V".to_owned(), aurora_i18n::tr!("photo-vf-help-area-text")),
+                                ("I".to_owned(), aurora_i18n::tr!("photo-vf-help-disp-text")),
+                                ("G".to_owned(), aurora_i18n::tr!("photo-vf-help-guide-text")),
+                                (menu.to_owned(), aurora_i18n::tr!("photo-vf-help-menu-text")),
+                            ];
+                            if let Some(k) = f.keys.first_person {
+                                v.push((k.to_owned(), aurora_i18n::tr!("photo-vf-help-first-person-text")));
+                            }
+                            v.push((
+                                aurora_i18n::tr!("photo-vf-help-h").to_owned(),
+                                aurora_i18n::tr!("photo-vf-help-h-text"),
+                            ));
+                            v.push((
+                                aurora_i18n::tr!("photo-vf-help-escape").to_owned(),
+                                aurora_i18n::tr!("photo-vf-help-escape-text"),
+                            ));
+                            v
+                        }),
+                    ];
+                    for (title, rows) in sections {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(title).font(bold(ctx, 12.0)).color(p.teal));
+                        egui::Grid::new(("vf_help", title))
+                            .num_columns(2)
+                            .spacing(Vec2::new(14.0, 8.0))
+                            .min_col_width(170.0)
+                            .show(ui, |ui| {
+                                for (key, text) in rows {
+                                    ui.label(egui::RichText::new(key).font(bold(ctx, 13.0)).color(p.ink));
+                                    ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(p.muted)).wrap());
+                                    ui.end_row();
+                                }
+                            });
+                    }
+                    ui.add_space(8.0);
+                    widgets::divider(ui, p);
+                    ui.label(
+                        egui::RichText::new(aurora_i18n::tr!("photo-vf-help-free-camera"))
+                            .size(12.0)
+                            .color(p.muted),
+                    );
+                });
+            });
+    }
+
+    /// Every setting of the photo panel, in a drawer left of the dock.
+    #[allow(clippy::too_many_arguments)]
+    fn drawer(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        screen: Rect,
+        s: &mut Settings,
+        panel: &mut SnapshotUi,
+        fov: &mut f32,
+        default_fov: f32,
+        view: &View,
+        out: &mut Vec<Out>,
+    ) {
+        egui::Area::new(Id::new("vf_drawer"))
+            .order(Order::Foreground)
+            .fade_in(false)
+            .pivot(Align2::RIGHT_TOP)
+            .fixed_pos(Pos2::new(screen.right() - 84.0, screen.top() + 128.0))
+            .show(ctx, |ui| {
+                widgets::overlay(ui, p, egui::Margin::same(12), |ui| {
+                    ui.set_width(316.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(aurora_i18n::tr!("photo-vf-drawer"))
+                                .font(bold(ctx, 14.0))
+                                .color(p.ink),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true) {
+                                self.drawer = false;
+                            }
+                        });
+                    });
+                    let mut actions = Vec::new();
+                    // above the bottom bar, the shutter and the gallery under it
+                    let room = (screen.height() - 128.0 - 120.0 - 170.0).max(160.0);
+                    panel.drawer(ui, p, s, fov, default_fov, view, room, &mut actions);
+                    out.extend(actions.into_iter().map(Out::Panel));
+                });
+            });
+    }
+}
+
+/// The AF point's colour: green when sharp, red when it failed, white
+/// otherwise (the confirmation colours of a camera, from the palette).
+fn af_color(p: &Palette, phase: Phase, _point: bool) -> Color32 {
+    match phase {
+        Phase::Lock | Phase::Track => p.success,
+        Phase::Fail => p.danger,
+        _ => p.ink,
+    }
+}
+
+/// Four corner brackets around `c`.
+fn brackets(painter: &egui::Painter, c: Pos2, scale: f32, stroke: Stroke, shadow: Stroke) {
+    let h = AF_BOX / 2.0 * scale - 3.0;
+    let l = 19.0 * scale;
+    for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let corner = c + Vec2::new(sx * h, sy * h);
+        let pts = vec![corner - Vec2::new(0.0, sy * l), corner, corner - Vec2::new(sx * l, 0.0)];
+        painter.add(egui::Shape::line(pts.clone(), shadow));
+        painter.add(egui::Shape::line(pts, stroke));
+    }
+}
+
+/// The first hint: how to focus and take the photo.
+fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame) {
+    egui::Area::new(Id::new("vf_hint"))
+        .order(Order::Foreground)
+        .fade_in(false)
+        .interactable(false)
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 128.0))
+        .show(ctx, |ui| {
+            widgets::overlay(ui, p, egui::Margin::symmetric(16, 9), |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 18.0;
+                    let t = |ui: &mut egui::Ui, s: &str| {
+                        ui.label(egui::RichText::new(s).size(13.0).color(p.ink));
+                    };
+                    t(ui, aurora_i18n::tr!("photo-vf-hint-click"));
+                    ui.label(egui::RichText::new("·").color(p.muted_dim));
+                    t(ui, aurora_i18n::tr!("photo-vf-hint-enter"));
+                    ui.label(egui::RichText::new("·").color(p.muted_dim));
+                    t(ui, aurora_i18n::tr!("photo-vf-hint-help"));
+                    let _ = f;
+                });
+            });
+        });
+}
+
+/// A line at the top (an error in its colour).
+fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bool) {
+    egui::Area::new(Id::new("vf_message"))
+        .order(Order::Foreground)
+        .fade_in(false)
+        .interactable(false)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(Pos2::new(screen.center().x, screen.top() + 64.0))
+        .show(ctx, |ui| {
+            widgets::overlay(ui, p, egui::Margin::symmetric(16, 8), |ui| {
+                ui.label(egui::RichText::new(text).size(13.0).color(if error { p.danger } else { p.ink }));
+            });
+        });
+}
+
+/// With the overlay hidden: a small DISP button to bring it back.
+fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
+    let mut clicked = false;
+    egui::Area::new(Id::new("vf_ghost"))
+        .order(Order::Foreground)
+        .fade_in(false)
+        .pivot(Align2::RIGHT_BOTTOM)
+        .fixed_pos(screen.right_bottom() - Vec2::new(20.0, 18.0))
+        .show(ctx, |ui| {
+            ui.multiply_opacity(0.5);
+            clicked = text_button(ui, p, "DISP · I", regular(12.0), p.ink, aurora_i18n::tr!("photo-vf-disp-tip")).clicked();
+        });
+    clicked
+}
+
+/// The card of the photo just taken.
+fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>) {
+    let Some((texture, label, kind)) = &f.review else {
+        return;
+    };
+    egui::Area::new(Id::new("vf_review"))
+        .order(Order::Foreground)
+        .fade_in(false)
+        .pivot(Align2::LEFT_BOTTOM)
+        .fixed_pos(Pos2::new(screen.left() + GAP, screen.bottom() - 132.0))
+        .show(ctx, |ui| {
+            widgets::overlay(ui, p, egui::Margin::same(8), |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(150.0, 100.0), Sense::hover());
+                    // the photo covering the card's picture
+                    let size = texture.size_vec2();
+                    let (r, c) = (size.x / size.y.max(1.0), 1.5);
+                    let uv = if r > c {
+                        let w = c / r;
+                        Rect::from_min_max(Pos2::new(0.5 - w / 2.0, 0.0), Pos2::new(0.5 + w / 2.0, 1.0))
+                    } else {
+                        let h = r / c;
+                        Rect::from_min_max(Pos2::new(0.0, 0.5 - h / 2.0), Pos2::new(1.0, 0.5 + h / 2.0))
+                    };
+                    ui.painter().image(texture.id(), rect, uv, widgets::PICTURE_TINT);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        let title = match kind {
+                            Review::Disk(_) => aurora_i18n::tr!("photo-vf-saved"),
+                            Review::Inventory => aurora_i18n::tr!("photo-uploaded"),
+                            Review::Profile => aurora_i18n::tr!("photo-profile-posted"),
+                        };
+                        ui.label(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink));
+                        ui.label(egui::RichText::new(label).size(12.0).color(p.muted));
+                        ui.horizontal(|ui| match kind {
+                            Review::Disk(path) => {
+                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked() {
+                                    out.push(Out::Panel(Action::OpenPhoto(path.clone())));
+                                }
+                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-vf-folder")).clicked() {
+                                    out.push(Out::Panel(Action::OpenFolder));
+                                }
+                            }
+                            Review::Inventory => {
+                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-show-in-inventory")).clicked() {
+                                    out.push(Out::Panel(Action::ShowItem));
+                                }
+                            }
+                            Review::Profile => {
+                                if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-profile-show")).clicked() {
+                                    out.push(Out::Panel(Action::ShowProfile));
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+        });
+    let _ = screen;
+}
+
+/// The face of a dock button.
+enum Face<'a> {
+    Icon(&'a str),
+    Text(&'a str),
+}
+
+/// A 44-point button of the dock; true when clicked.
+fn dock_button(ui: &mut egui::Ui, p: &Palette, face: Face, tip: &str, on: bool) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::click());
+    let radius = ui.visuals().window_corner_radius;
+    let fill = if resp.hovered() || on {
+        p.panel.gamma_multiply(0.85)
+    } else {
+        p.navy.gamma_multiply(0.55)
+    };
+    ui.painter().rect_filled(rect, radius, fill);
+    let edge = if on {
+        p.teal.gamma_multiply(0.7)
+    } else {
+        p.ink.gamma_multiply(0.16)
+    };
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
+    match face {
+        Face::Icon(name) => icon(ui.painter(), name, Rect::from_center_size(rect.center(), Vec2::splat(20.0)), p.ink),
+        Face::Text(text) => {
+            let size = if text.chars().count() == 1 { 16.0 } else { 11.0 };
+            ui.painter()
+                .text(rect.center(), Align2::CENTER_CENTER, text, bold(ui.ctx(), size), p.ink);
+        }
+    }
+    keep_keys(&resp);
+    resp.on_hover_text(tip).clicked()
+}
+
+/// A tile of the quick menu; true when clicked.
+fn tile(ui: &mut egui::Ui, p: &Palette, size: Vec2, label: &str, value: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let radius = ui.visuals().window_corner_radius;
+    ui.painter().rect_filled(rect, radius, p.panel.gamma_multiply(0.85));
+    let edge = if resp.hovered() {
+        p.teal.gamma_multiply(0.6)
+    } else {
+        p.ink.gamma_multiply(0.08)
+    };
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
+    let left = rect.left() + 12.0;
+    ui.painter().text(
+        Pos2::new(left, rect.center().y - 4.0),
+        Align2::LEFT_BOTTOM,
+        label,
+        regular(11.0),
+        p.muted,
+    );
+    let galley = ui
+        .painter()
+        .layout(value.to_owned(), bold(ui.ctx(), 14.0), p.ink, rect.width() - 24.0);
+    let mut job_rect = Rect::from_min_size(Pos2::new(left, rect.center().y), galley.size());
+    job_rect.max.x = job_rect.max.x.min(rect.right() - 12.0);
+    ui.painter().with_clip_rect(rect.shrink(2.0)).galley(job_rect.min, galley, p.ink);
+    keep_keys(&resp);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
+type Step = Box<dyn FnOnce(&mut Settings, &mut SnapshotUi) -> Option<Out>>;
+
+/// The quick menu's tiles: (label, value, what a click does).
+fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, String, Step)> {
+    let yes_no = |on: bool| on_off(on, aurora_i18n::tr!("photo-vf-on"), aurora_i18n::tr!("photo-vf-off")).to_owned();
+    let mut v: Vec<(&'static str, String, Step)> = Vec::new();
+    v.push((
+        aurora_i18n::tr!("photo-section-format"),
+        aspect_label(s.aspect).to_owned(),
+        Box::new(|s, _| {
+            let i = Aspect::ALL.iter().position(|a| *a == s.aspect).unwrap_or(0);
+            s.aspect = Aspect::ALL[(i + 1) % Aspect::ALL.len()];
+            None
+        }),
+    ));
+    // the size: the disk's resolution, or the destination's own sizes
+    let size_value = match panel.destination {
+        Destination::Disk => match s.resolution {
+            Resolution::Window => aurora_i18n::tr!("photo-resolution-window").to_owned(),
+            Resolution::Custom => aurora_i18n::tr!("photo-resolution-custom").to_owned(),
+            r => r.short().unwrap_or("").to_owned(),
+        },
+        Destination::Inventory => s
+            .inventory_size
+            .side()
+            .map_or_else(|| aurora_i18n::tr!("photo-resolution-window").to_owned(), |v| v.to_string()),
+        Destination::Profile => {
+            let (w, h) = f.photo;
+            format!("{w} × {h}")
+        }
+    };
+    v.push((
+        aurora_i18n::tr!("photo-section-resolution"),
+        size_value,
+        Box::new(|s, panel| {
+            match panel.destination {
+                Destination::Disk => {
+                    // (the typed size stays in the drawer)
+                    let all: Vec<Resolution> = Resolution::ALL.into_iter().filter(|r| *r != Resolution::Custom).collect();
+                    let i = all.iter().position(|r| *r == s.resolution).map_or(0, |i| i + 1);
+                    s.resolution = all[i % all.len()];
+                }
+                Destination::Inventory => {
+                    let all = crate::snapshot::inventory::TextureSize::ALL;
+                    let i = all.iter().position(|r| *r == s.inventory_size).unwrap_or(0);
+                    s.inventory_size = all[(i + 1) % all.len()];
+                }
+                Destination::Profile => {
+                    let all = crate::snapshot::profile::ProfileSize::ALL;
+                    let i = all.iter().position(|r| *r == s.profile_size).unwrap_or(0);
+                    s.profile_size = all[(i + 1) % all.len()];
+                }
+            }
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-section-destination"),
+        destination_label(panel.destination).to_owned(),
+        Box::new(|_, panel| {
+            panel.destination = match panel.destination {
+                Destination::Disk => Destination::Inventory,
+                Destination::Inventory => Destination::Profile,
+                Destination::Profile => Destination::Disk,
+            };
+            Some(Out::Panel(Action::Changed))
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-file-format"),
+        s.format.label().to_owned(),
+        Box::new(|s, _| {
+            let i = FileFormat::ALL.iter().position(|x| *x == s.format).unwrap_or(0);
+            s.format = FileFormat::ALL[(i + 1) % FileFormat::ALL.len()];
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-quality"),
+        yes_no(s.quality),
+        Box::new(|s, _| {
+            s.quality = !s.quality;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-huds"),
+        on_off(s.huds, aurora_i18n::tr!("photo-vf-visible"), aurora_i18n::tr!("photo-vf-hidden")).to_owned(),
+        Box::new(|s, _| {
+            s.huds = !s.huds;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-section-dof"),
+        yes_no(s.dof.enabled),
+        Box::new(|s, _| {
+            s.dof.enabled = !s.dof.enabled;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-time"),
+        time_label(panel.light.time).replace(
+            aurora_i18n::tr!("photo-vf-sky-current"),
+            aurora_i18n::tr!("photo-light-time-current"),
+        ),
+        Box::new(|_, panel| {
+            panel.light.time = match panel.light.time {
+                None => Some(1),
+                Some(n) if n < 4 => Some(n + 1),
+                Some(_) => None,
+            };
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-clouds"),
+        on_off(
+            panel.light.clouds_paused,
+            aurora_i18n::tr!("photo-vf-clouds-still"),
+            aurora_i18n::tr!("photo-vf-clouds-moving"),
+        )
+        .to_owned(),
+        Box::new(|_, panel| {
+            panel.light.clouds_paused = !panel.light.clouds_paused;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-light-attached"),
+        on_off(
+            panel.light.attached_lights,
+            aurora_i18n::tr!("photo-vf-lights-on"),
+            aurora_i18n::tr!("photo-vf-lights-out"),
+        )
+        .to_owned(),
+        Box::new(|_, panel| {
+            panel.light.attached_lights = !panel.light.attached_lights;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-guide"),
+        guide_label(s.guide).to_owned(),
+        Box::new(|s, _| {
+            s.guide = next_guide(s.guide);
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-peaking"),
+        peaking_label(s.viewfinder.peaking).to_owned(),
+        Box::new(|s, _| {
+            let i = Peaking::ALL.iter().position(|k| *k == s.viewfinder.peaking).unwrap_or(0);
+            s.viewfinder.peaking = Peaking::ALL[(i + 1) % Peaking::ALL.len()];
+            None
+        }),
+    ));
+    let sounds = Sounds::of(s.viewfinder.beep, s.sound);
+    v.push((
+        aurora_i18n::tr!("photo-vf-sounds"),
+        sounds_label(sounds).to_owned(),
+        Box::new(move |s, _| {
+            let i = Sounds::ALL.iter().position(|k| *k == sounds).unwrap_or(0);
+            let (beep, shutter) = Sounds::ALL[(i + 1) % Sounds::ALL.len()].split();
+            s.viewfinder.beep = beep;
+            s.sound = shutter;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-free-camera"),
+        yes_no(panel.free.on),
+        Box::new(|_, panel| {
+            panel.free.on = !panel.free.on;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-freeze"),
+        yes_no(panel.freeze),
+        Box::new(|_, panel| {
+            panel.freeze = !panel.freeze;
+            Some(Out::Panel(Action::Freeze(panel.freeze)))
+        }),
+    ));
+    let first = f.first_person;
+    v.push((
+        aurora_i18n::tr!("photo-vf-view"),
+        on_off(
+            first,
+            aurora_i18n::tr!("photo-vf-first-person"),
+            aurora_i18n::tr!("photo-vf-third-person"),
+        )
+        .to_owned(),
+        Box::new(move |_, _| Some(Out::FirstPerson(!first))),
+    ));
+    v
+}

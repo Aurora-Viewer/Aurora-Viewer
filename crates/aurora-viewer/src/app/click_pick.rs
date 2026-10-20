@@ -239,6 +239,12 @@ impl App {
                     self.double_click.reset();
                     self.mouselook_press();
                 } else if !over_ui && self.in_world() && !self.camera.mouselook() {
+                    // the photo viewfinder: the AF point goes where clicked
+                    if self.viewfinder_click() {
+                        self.double_click.reset();
+                        self.double_press = false;
+                        return;
+                    }
                     if self.toolbox_pick_press() {
                         self.double_click.reset();
                         self.double_press = false;

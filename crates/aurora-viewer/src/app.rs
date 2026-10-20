@@ -82,6 +82,7 @@ mod task_notecards;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod viewfinder;
 mod world_click_demo;
 mod worn_demo;
 
@@ -5848,6 +5849,7 @@ impl App {
         // a photo drawn at its own size this frame: its proportions, the
         // part of it this frame draws, the height its details are chosen for
         self.photo_update(&gfx.renderer);
+        self.viewfinder_frame(&mut gfx.renderer);
         let photo = self.photo_frame(&mut gfx.renderer);
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
@@ -9851,7 +9853,7 @@ impl App {
             Screen::World => {
                 // the full-frame photo view: the world and its own strip only
                 if self.photo_full_frame() {
-                    self.photo_ui(&ctx, &p, renderer);
+                    self.photo_ui(&ctx, &p, projector, renderer);
                     return a;
                 }
                 // a held photo (freeze frame) instead of the world, under the windows
@@ -11127,7 +11129,7 @@ impl App {
                 }
                 // an `objectim` link clicked (LLInspectRemoteObject)
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
-                self.photo_ui(&ctx, &p, renderer);
+                self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
@@ -13687,6 +13689,11 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // the photo viewfinder's keys (the shutter, its menu…)
+                    if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
+                        self.down.remove(&Input::key(code));
+                        return;
+                    }
                     // The command table is shared with egui's dispatcher:
                     // an editing accelerator must never become a held move.
                     let input = Input::key(code);
@@ -13846,7 +13853,7 @@ impl ApplicationHandler for App {
                     MouseScrollDelta::LineDelta(_, y) => *y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
-                if self.on_build_scroll(steps) || self.on_hud_scroll(steps) {
+                if self.on_build_scroll(steps) || self.on_hud_scroll(steps) || self.viewfinder_wheel(steps) {
                     return;
                 }
                 let mods = aurora_media::Modifiers {

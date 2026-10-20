@@ -1,0 +1,575 @@
+//! The photo viewfinder's logic (the interface is `ui::viewfinder`, the
+//! frames `app::viewfinder`): how much of the overlay shows, the
+//! autofocus that hunts past the subject, comes back and locks like a
+//! camera's contrast detection, the zone the lens keeps sharp, the
+//! distance and exposure scales, and the settings kept between sessions.
+//! A camera's behaviour, not the Legacy Viewer's: its snapshot floater has
+//! no viewfinder.
+
+use serde::{Deserialize, Serialize};
+
+/// The closest a lens focuses (the photo window's manual distance starts
+/// there too): nearer, the autofocus fails.
+pub const MIN_FOCUS: f32 = 0.3;
+/// The distance taken when nothing is under the AF point (the sky): far
+/// enough to be infinity for any lens.
+pub const FAR: f32 = 1000.0;
+/// Distances from here are shown as infinity.
+pub const INFINITY: f32 = 100.0;
+/// The apertures the dial steps through (thirds of a stop, like a lens).
+pub const STOPS: [f32; 16] = [1.4, 1.8, 2.0, 2.2, 2.8, 3.5, 4.0, 4.5, 5.6, 6.3, 8.0, 9.0, 11.0, 13.0, 16.0, 22.0];
+/// The focal lengths of the keys 1 to 5 (mm, full frame).
+pub const FOCAL_PRESETS: [f32; 5] = [24.0, 35.0, 50.0, 85.0, 135.0];
+/// The exposure scale's reach, in stops either side of Preferences'.
+pub const EV_RANGE: f32 = 2.0;
+/// A circle of confusion up to this many pixels of the window still looks
+/// sharp: the depth of field shown on the scale.
+pub const SHARP_COC: f32 = 1.5;
+/// Bins of the luminance histogram (`aurora_render::HISTOGRAM_BINS`).
+pub const HISTOGRAM_BINS: usize = aurora_render::HISTOGRAM_BINS;
+
+/// How much of the overlay shows (a camera's DISP button).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Display {
+    /// Everything: the top bar, the light, the histogram, the level.
+    #[default]
+    Full,
+    /// The bottom bar, the AF point and the dock.
+    Essential,
+    /// The picture alone; the AF point only while it focuses.
+    Hidden,
+}
+
+impl Display {
+    pub fn next(self) -> Display {
+        match self {
+            Display::Full => Display::Essential,
+            Display::Essential => Display::Hidden,
+            Display::Hidden => Display::Full,
+        }
+    }
+}
+
+/// Where the autofocus looks: the face of the avatar under the AF point,
+/// or the point itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AfArea {
+    #[default]
+    Avatar,
+    Point,
+}
+
+/// The colour of the sharp edges in manual focus (focus peaking).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Peaking {
+    #[default]
+    White,
+    Red,
+    Yellow,
+    Off,
+}
+
+impl Peaking {
+    pub const ALL: [Peaking; 4] = [Peaking::White, Peaking::Red, Peaking::Yellow, Peaking::Off];
+}
+
+/// The sounds of the viewfinder: the focus beep and the shutter
+/// (`Settings::sound`, PlayModeUISndSnapshot) are switched together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sounds {
+    BeepAndShutter,
+    Shutter,
+    None,
+}
+
+impl Sounds {
+    pub const ALL: [Sounds; 3] = [Sounds::BeepAndShutter, Sounds::Shutter, Sounds::None];
+
+    pub fn of(beep: bool, shutter: bool) -> Sounds {
+        match (beep, shutter) {
+            (_, false) => Sounds::None,
+            (true, true) => Sounds::BeepAndShutter,
+            (false, true) => Sounds::Shutter,
+        }
+    }
+
+    /// (beep, shutter)
+    pub fn split(self) -> (bool, bool) {
+        match self {
+            Sounds::BeepAndShutter => (true, true),
+            Sounds::Shutter => (false, true),
+            Sounds::None => (false, false),
+        }
+    }
+}
+
+/// The viewfinder's settings kept between sessions (the rest of the photo
+/// is `snapshot::Settings`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Prefs {
+    pub display: Display,
+    pub area: AfArea,
+    pub peaking: Peaking,
+    /// The two beeps when the focus locks.
+    pub beep: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Prefs {
+            display: Display::Full,
+            area: AfArea::Avatar,
+            peaking: Peaking::White,
+            beep: true,
+        }
+    }
+}
+
+/// What the autofocus is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Waiting for a click or the shutter.
+    Idle,
+    /// Looking for the subject (about a third of a second).
+    Hunt,
+    /// Sharp and held (AF-S).
+    Lock,
+    /// Too close: nothing changes, no photo.
+    Fail,
+    /// Following the pointer (AF-C).
+    Track,
+    /// Set by hand (MF).
+    Manual,
+}
+
+/// What a frame of the autofocus tells the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event {
+    Locked,
+    Failed,
+}
+
+/// The hunt: past the subject, back short of it, then on it (seconds from
+/// the start, and the distance at that time as a factor of the target).
+const HUNT_PAST: f32 = 0.15;
+const HUNT_BACK: f32 = 0.30;
+const HUNT_LOCK: f32 = 0.36;
+/// The failed hunt lasts a little longer, then blinks this long.
+const FAIL_AT: f32 = 0.41;
+const FAIL_BLINK: f32 = 1.5;
+/// The scale and the distance under the AF point stay after a lock.
+const RECENT: f32 = 2.1;
+
+/// The autofocus of the viewfinder: in AF-S a click (or the shutter
+/// half-pressed) starts a hunt that ends locked on the subject, or failed
+/// when it is closer than the lens can focus. Times are seconds of any
+/// clock that only goes forward (egui's).
+#[derive(Debug, Clone)]
+pub struct Autofocus {
+    pub phase: Phase,
+    /// The distance the lens is at now (m).
+    distance: f32,
+    from: f32,
+    target: f32,
+    past: f32,
+    back: f32,
+    started: f64,
+    /// Until then the scale and the distance stay up after a lock.
+    recent_until: f64,
+}
+
+impl Default for Autofocus {
+    fn default() -> Self {
+        Autofocus {
+            phase: Phase::Idle,
+            distance: 16.0,
+            from: 16.0,
+            target: 16.0,
+            past: 16.0,
+            back: 16.0,
+            started: 0.0,
+            recent_until: 0.0,
+        }
+    }
+}
+
+/// Between two distances, in dioptres: a lens moves evenly in 1/d, so the
+/// far end is not crossed in a blink and the near end in an age.
+fn lerp_dioptre(a: f32, b: f32, t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    let (ia, ib) = (1.0 / a.max(1e-3), 1.0 / b.max(1e-3));
+    1.0 / (ia + (ib - ia) * t).max(1.0 / FAR)
+}
+
+impl Autofocus {
+    /// The distance the lens is at (m).
+    pub fn distance(&self) -> f32 {
+        self.distance
+    }
+
+    /// Start a hunt towards `target` (m; `FAR` for nothing under the
+    /// point).
+    pub fn hunt(&mut self, target: f32, now: f64) {
+        let from = self.distance;
+        let target = if target.is_finite() { target.clamp(0.01, FAR) } else { FAR };
+        let away = from < target;
+        let (past, back) = if target < MIN_FOCUS {
+            (MIN_FOCUS, 0.7)
+        } else if target >= FAR {
+            (FAR, 45.0)
+        } else if away {
+            ((target * 1.7).min(FAR), target * 0.86)
+        } else {
+            ((target * 0.6).max(MIN_FOCUS), target * 1.16)
+        };
+        *self = Autofocus {
+            phase: Phase::Hunt,
+            distance: from,
+            from,
+            target,
+            past,
+            back,
+            started: now,
+            recent_until: self.recent_until,
+        };
+    }
+
+    /// Follow `target` without a hunt (AF-C; the lens's own transition
+    /// smooths it).
+    pub fn track(&mut self, target: f32, now: f64) {
+        if target.is_finite() {
+            self.distance = target.clamp(MIN_FOCUS, FAR);
+        }
+        self.phase = Phase::Track;
+        self.recent_until = now + f64::from(RECENT);
+    }
+
+    /// Set by hand (MF).
+    pub fn manual(&mut self, distance: f32) {
+        self.distance = distance.clamp(MIN_FOCUS, FAR);
+        self.phase = Phase::Manual;
+    }
+
+    /// Back to waiting, the lens where it is.
+    pub fn idle(&mut self) {
+        self.phase = Phase::Idle;
+    }
+
+    /// The scale and the distance under the point are still shown.
+    pub fn recent(&self, now: f64) -> bool {
+        now < self.recent_until
+    }
+
+    /// Seconds since the phase began (the hunt, the lock, the failure):
+    /// what the AF point's animation follows.
+    pub fn phase_time(&self, now: f64) -> f32 {
+        let t = (now - self.started) as f32;
+        match self.phase {
+            Phase::Lock => t - HUNT_LOCK,
+            Phase::Fail => t - FAIL_AT,
+            _ => t,
+        }
+    }
+
+    /// One frame at `now`: the lens's distance moves along the hunt, which
+    /// ends locked or failed.
+    pub fn update(&mut self, now: f64) -> Option<Event> {
+        let t = (now - self.started) as f32;
+        match self.phase {
+            Phase::Hunt if self.target < MIN_FOCUS => {
+                if t < HUNT_PAST {
+                    self.distance = lerp_dioptre(self.from, self.past, t / HUNT_PAST);
+                } else if t < HUNT_BACK {
+                    self.distance = lerp_dioptre(self.past, self.back, (t - HUNT_PAST) / (HUNT_BACK - HUNT_PAST));
+                } else if t < FAIL_AT {
+                    self.distance = lerp_dioptre(self.back, MIN_FOCUS, (t - HUNT_BACK) / (FAIL_AT - HUNT_BACK));
+                } else {
+                    // the lens goes back where it was
+                    self.distance = self.from;
+                    self.phase = Phase::Fail;
+                    return Some(Event::Failed);
+                }
+                None
+            }
+            Phase::Hunt => {
+                if t < HUNT_PAST {
+                    self.distance = lerp_dioptre(self.from, self.past, t / HUNT_PAST);
+                } else if t < HUNT_BACK {
+                    self.distance = lerp_dioptre(self.past, self.back, (t - HUNT_PAST) / (HUNT_BACK - HUNT_PAST));
+                } else if t < HUNT_LOCK {
+                    self.distance = lerp_dioptre(self.back, self.target, (t - HUNT_BACK) / (HUNT_LOCK - HUNT_BACK));
+                } else {
+                    self.distance = self.target;
+                    self.phase = Phase::Lock;
+                    self.recent_until = now + f64::from(RECENT);
+                    return Some(Event::Locked);
+                }
+                None
+            }
+            Phase::Fail if t > FAIL_AT + FAIL_BLINK => {
+                self.phase = Phase::Idle;
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The nearest and farthest distances the lens keeps sharp (a circle
+/// under `SHARP_COC` pixels), for `coc_scale` the circle in pixels for
+/// (s - z) / z at the focus `focus` (`dof::coc_scale`). The far limit is
+/// `FAR` past the hyperfocal distance.
+pub fn sharp_range(coc_scale: f32, focus: f32) -> (f32, f32) {
+    let k = coc_scale.max(1e-6);
+    let near = k * focus / (k + SHARP_COC);
+    let far = if k > SHARP_COC { k * focus / (k - SHARP_COC) } else { FAR };
+    (near, far.min(FAR))
+}
+
+/// Where a distance sits on the scale, 0 at `MIN_FOCUS` to 1 at infinity:
+/// logarithmic like a lens's, infinity a little apart from the rest.
+pub fn scale_position(distance: f32) -> f32 {
+    if distance >= INFINITY {
+        return 1.0;
+    }
+    let d = distance.max(MIN_FOCUS);
+    (d / MIN_FOCUS).ln() / (INFINITY / MIN_FOCUS).ln() * (530.0 / 560.0)
+}
+
+/// The marks of the scale (m), the last one infinity.
+pub const SCALE_MARKS: [f32; 10] = [0.3, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0, FAR];
+
+/// The exposure's stops from Preferences' `base`.
+pub fn ev_of(exposure: f32, base: f32) -> f32 {
+    (exposure.max(1e-3) / base.max(1e-3)).log2()
+}
+
+/// The exposure `ev` stops from `base`, rounded to a third of a stop and
+/// kept in the photo light's range.
+pub fn exposure_at(ev: f32, base: f32) -> f32 {
+    let ev = ((ev * 3.0).round() / 3.0).clamp(-EV_RANGE, EV_RANGE);
+    let range = crate::snapshot::light::EXPOSURE;
+    (base * ev.exp2()).clamp(*range.start(), *range.end())
+}
+
+/// The stop after (`dir` > 0) or before `f` on the dial.
+pub fn step_aperture(f: f32, dir: i32) -> f32 {
+    let i = STOPS
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1 - f).abs().total_cmp(&(b.1 - f).abs()))
+        .map_or(0, |(i, _)| i);
+    STOPS[(i as i32 + dir).clamp(0, STOPS.len() as i32 - 1) as usize]
+}
+
+/// The focal length after a click of the dial: 6 % a click, at least one
+/// millimetre, within the photo window's range.
+pub fn step_focal(mm: f32, dir: i32, range: std::ops::RangeInclusive<f32>) -> f32 {
+    let next = (mm * if dir > 0 { 1.06 } else { 1.0 / 1.06 }).round();
+    let next = if (next - mm.round()).abs() < 1.0 {
+        mm.round() + dir.signum() as f32
+    } else {
+        next
+    };
+    next.clamp(*range.start(), *range.end())
+}
+
+/// The manual distance after a click of the dial: 10 % a click, infinity
+/// past `INFINITY`.
+pub fn step_distance(d: f32, dir: i32) -> f32 {
+    let d = if d >= INFINITY {
+        if dir > 0 { FAR } else { 90.0 }
+    } else {
+        d * if dir > 0 { 1.1 } else { 1.0 / 1.1 }
+    };
+    if d >= INFINITY { FAR } else { d.max(MIN_FOCUS) }
+}
+
+/// A distance as the viewfinder writes it: one decimal below 10 m, none
+/// above, infinity past `INFINITY`.
+pub fn distance_text(d: f32) -> String {
+    if d >= INFINITY {
+        "∞".into()
+    } else if d < 10.0 {
+        aurora_i18n::number(f64::from(d), 1)
+    } else {
+        format!("{}", d.round() as i64)
+    }
+}
+
+/// The focus beep, made here rather than fetched (the interface sounds are
+/// grid assets, none of them a camera's): two short tones at 2.75 kHz, a
+/// mono 16-bit WAV at 48 kHz.
+pub fn beep_wav() -> Vec<u8> {
+    const RATE: u32 = 48_000;
+    const TONE: f32 = 2750.0;
+    // (start, length) of each beep, seconds
+    const BEEPS: [(f32, f32); 2] = [(0.0, 0.066), (0.11, 0.066)];
+    let length = 0.2;
+    let n = (length * RATE as f32) as usize;
+    let mut samples = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / RATE as f32;
+        let mut v = 0.0;
+        for (start, len) in BEEPS {
+            let u = t - start;
+            if (0.0..len).contains(&u) {
+                // 5 ms up, 11 ms down: no click
+                let env = (u / 0.005).min(1.0) * ((len - u) / 0.011).min(1.0);
+                v += (u * TONE * std::f32::consts::TAU).sin() * env * 0.35;
+            }
+        }
+        samples.push((v.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
+    }
+    let data = (samples.len() * 2) as u32;
+    let mut wav = Vec::with_capacity(44 + data as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+    wav.extend_from_slice(&RATE.to_le_bytes());
+    wav.extend_from_slice(&(RATE * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data.to_le_bytes());
+    for s in samples {
+        wav.extend_from_slice(&s.to_le_bytes());
+    }
+    wav
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_beep_is_two_tones_with_silence_between() {
+        let wav = beep_wav();
+        assert_eq!(&wav[..4], b"RIFF");
+        assert_eq!(&wav[8..16], b"WAVEfmt ");
+        let pcm: Vec<i16> = wav[44..].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect();
+        let loud = |from: f32, to: f32| {
+            let r = (from * 48_000.0) as usize..(to * 48_000.0) as usize;
+            pcm[r].iter().map(|v| v.unsigned_abs()).max().unwrap_or(0)
+        };
+        assert!(loud(0.02, 0.05) > 8000, "first beep");
+        assert!(loud(0.075, 0.105) == 0, "gap");
+        assert!(loud(0.13, 0.16) > 8000, "second beep");
+        assert!(aurora_audio::SoundClip::decode(&wav).is_ok());
+    }
+
+    fn run(af: &mut Autofocus, from: f64, to: f64) -> Vec<Event> {
+        let mut events = Vec::new();
+        let mut t = from;
+        while t <= to {
+            events.extend(af.update(t));
+            t += 1.0 / 120.0;
+        }
+        events
+    }
+
+    #[test]
+    fn a_hunt_goes_past_the_subject_comes_back_and_locks() {
+        let mut af = Autofocus::default();
+        af.manual(20.0);
+        af.hunt(4.2, 10.0);
+        // nearer first: past the subject (closer than it), then back
+        // beyond it
+        let mut nearest = f32::MAX;
+        let mut t = 10.0;
+        while t < 10.0 + f64::from(HUNT_BACK) {
+            af.update(t);
+            nearest = nearest.min(af.distance());
+            t += 1.0 / 120.0;
+        }
+        assert!(nearest < 4.2 * 0.7, "it went past: {nearest}");
+        assert!(af.distance() > 4.2, "it came back: {}", af.distance());
+        assert_eq!(af.phase, Phase::Hunt);
+        assert_eq!(run(&mut af, t, 11.0), vec![Event::Locked]);
+        assert_eq!(af.phase, Phase::Lock);
+        assert_eq!(af.distance(), 4.2);
+        assert!(af.recent(11.5) && !af.recent(13.0));
+    }
+
+    #[test]
+    fn too_close_fails_and_leaves_the_lens_where_it_was() {
+        let mut af = Autofocus::default();
+        af.manual(4.2);
+        af.hunt(0.2, 0.0);
+        assert_eq!(run(&mut af, 0.0, 1.0), vec![Event::Failed]);
+        assert_eq!(af.phase, Phase::Fail);
+        assert_eq!(af.distance(), 4.2);
+        // the blink ends
+        run(&mut af, 1.0, 3.0);
+        assert_eq!(af.phase, Phase::Idle);
+    }
+
+    #[test]
+    fn the_sky_locks_at_infinity() {
+        let mut af = Autofocus::default();
+        af.manual(4.2);
+        af.hunt(f32::INFINITY, 0.0);
+        assert_eq!(run(&mut af, 0.0, 1.0), vec![Event::Locked]);
+        assert_eq!(af.distance(), FAR);
+        assert_eq!(distance_text(af.distance()), "∞");
+    }
+
+    #[test]
+    fn the_sharp_zone_surrounds_the_focus_and_reaches_infinity_past_the_hyperfocal() {
+        let (near, far) = sharp_range(40.0, 4.0);
+        assert!(near < 4.0 && far > 4.0);
+        // a wider circle (a wider aperture) keeps less sharp
+        let (n2, f2) = sharp_range(80.0, 4.0);
+        assert!(n2 > near && f2 < far);
+        // a lens barely blurring keeps everything to infinity
+        assert_eq!(sharp_range(1.0, 4.0).1, FAR);
+    }
+
+    #[test]
+    fn the_scale_is_logarithmic_with_infinity_apart() {
+        assert_eq!(scale_position(0.1), 0.0);
+        assert_eq!(scale_position(MIN_FOCUS), 0.0);
+        assert_eq!(scale_position(FAR), 1.0);
+        let (a, b, c) = (scale_position(1.0), scale_position(10.0), scale_position(50.0));
+        assert!(a < b && b < c && c < 1.0);
+        // 1 to 10 m as wide as 0.3 to 3 m
+        assert!(((b - a) - (scale_position(3.0) - scale_position(0.3))).abs() < 1e-4);
+    }
+
+    #[test]
+    fn exposure_steps_in_thirds_within_two_stops() {
+        assert!((exposure_at(1.0, 1.0) - 2.0).abs() < 1e-5);
+        assert!((exposure_at(0.34, 1.0) - (1.0f32 / 3.0).exp2()).abs() < 1e-5);
+        assert!((exposure_at(9.0, 1.0) - 4.0).abs() < 1e-5);
+        assert!((ev_of(0.5, 1.0) + 1.0).abs() < 1e-5);
+        // never out of the photo light's range
+        assert_eq!(exposure_at(-2.0, 0.25), 0.25);
+    }
+
+    #[test]
+    fn dials_step_and_stop_at_their_ends() {
+        assert_eq!(step_aperture(2.8, 1), 3.5);
+        assert_eq!(step_aperture(2.7, -1), 2.2);
+        assert_eq!(step_aperture(22.0, 1), 22.0);
+        assert_eq!(step_focal(50.0, 1, 10.0..=135.0), 53.0);
+        assert_eq!(step_focal(10.0, -1, 10.0..=135.0), 10.0);
+        assert_eq!(step_focal(12.0, 1, 10.0..=135.0), 13.0);
+        assert_eq!(step_distance(95.0, 1), FAR);
+        assert_eq!(step_distance(FAR, -1), 90.0);
+        assert_eq!(step_distance(0.3, -1), MIN_FOCUS);
+    }
+
+    #[test]
+    fn display_levels_cycle_and_sounds_round_trip() {
+        assert_eq!(Display::Full.next().next().next(), Display::Full);
+        for s in Sounds::ALL {
+            let (b, sh) = s.split();
+            assert_eq!(Sounds::of(b, sh), s);
+        }
+    }
+}

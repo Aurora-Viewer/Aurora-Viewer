@@ -251,6 +251,7 @@ pub fn lens(s: &Settings, focus: f32, fov_y: f32, height: u32, window_height: u3
         max_coc: s.max_coc * height as f32 / window_height.max(1) as f32,
         samples: s.samples(),
         debug,
+        peaking: None,
     }
 }
 

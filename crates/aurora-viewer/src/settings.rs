@@ -141,13 +141,16 @@ pub enum WorldMapStyle {
     Legacy,
 }
 
-/// The photo window: Aurora's panel anchored on the right, or Firestorm's
-/// floater (floater_snapshot.xml: a floating window, the controls on the
-/// left, the preview on the right). Preferences › Aurora.
+/// The photo mode: Aurora's viewfinder (the world full screen under a
+/// camera's overlay, `ui::viewfinder`), Aurora's panel anchored on the
+/// right, or the Legacy Viewer's floater (floater_snapshot.xml: a floating
+/// window, the controls on the left, the preview on the right).
+/// Preferences › Aurora.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PhotoWindowStyle {
     #[default]
     Aurora,
+    Panel,
     Legacy,
 }
 

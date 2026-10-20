@@ -119,6 +119,9 @@ pub(crate) struct FramePacket {
     /// answered with a later result (drawn_pick.rs).
     pub drawn: Vec<DrawnRequest>,
     pub capture: Option<Capture>,
+    /// Count the luminance histogram of this frame shown at that exposure
+    /// (the photo viewfinder; answered a few frames later).
+    pub histogram: Option<f32>,
 }
 
 pub(crate) struct FrameResult {
@@ -139,6 +142,8 @@ pub(crate) struct FrameResult {
     /// The frame was a photo (`Capture::Snapshot`): `captured` is its image,
     /// None when it could not be drawn.
     pub snapshot: bool,
+    /// The luminance histogram counted lately (`FramePacket::histogram`).
+    pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
     pub spent: Spent,
 }
 

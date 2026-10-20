@@ -92,6 +92,7 @@ pub mod texture_picker;
 mod theme_guard;
 pub mod toolbar;
 pub mod update;
+pub mod viewfinder;
 pub mod voice_tag;
 pub mod web_view;
 pub mod widgets;

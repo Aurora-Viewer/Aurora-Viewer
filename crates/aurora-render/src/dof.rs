@@ -21,6 +21,8 @@ struct DofU {
     lens: [f32; 4],
     sizes: [f32; 4],
     tiles: [f32; 4],
+    /// Focus peaking: colour, 1 when on.
+    peak: [f32; 4],
 }
 
 struct Targets {
@@ -242,6 +244,10 @@ impl Dof {
                 if params.debug { 1.0 } else { 0.0 },
                 0.0,
             ],
+            peak: match params.peaking {
+                Some([r, g, b]) => [r, g, b, 1.0],
+                None => [0.0; 4],
+            },
         };
         queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&u));
         self.ensure_targets(device, size, hdr, post);
