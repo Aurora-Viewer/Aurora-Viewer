@@ -132,6 +132,9 @@ impl Windows {
             (Some(a), Some(b)) => !a.minimized && !b.minimized && snap::touching(a.rect, b.rect),
             _ => false,
         });
+        if pointer.dragged.is_none() {
+            self.refresh_anchors(room);
+        }
 
         if self.live.moved.is_none()
             && let Some(window) = open.iter().find(|s| pointer.dragged == Some(move_id(s.id)))
@@ -159,11 +162,13 @@ impl Windows {
         if pointer.alt && !moved.detached {
             moved.detached = true;
             self.links.retain(|(a, b)| *a != window && *b != window);
+            self.live.reanchor.extend(moved.start.iter().map(|(id, _)| *id));
             moved.start.truncate(1);
         }
         let in_group = |id: u64| moved.start.iter().any(|(member, _)| *member == id);
 
         if released {
+            self.live.reanchor.extend(moved.start.iter().map(|(id, _)| *id));
             // egui leaves the windows where the last frame had them, and the
             // snap shown then is the one applied
             let snap = if snap_enabled && pointer.alt { moved.snap } else { Snap::default() };
@@ -248,6 +253,9 @@ impl Windows {
 
     /// One frame of a resize; see `layout::resizing`.
     pub(super) fn resize(&mut self, request: ResizeRequest, area: Rect) -> (Rect, Option<overlay::Overlay>) {
+        if request.released {
+            self.live.reanchor.insert(request.window);
+        }
         let frame = self.live.frame;
         let previous = self
             .live
@@ -490,6 +498,36 @@ mod tests {
     }
 
     #[test]
+    fn a_completed_move_replaces_the_anchor_and_keeps_its_offset_on_viewer_resize() {
+        let mut s = Session::new();
+        s.idle(3);
+        let saved = windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor);
+        let at = s.hold_at(A, Pos2::new(650.0, 80.0));
+        assert_eq!(
+            windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor),
+            saved,
+            "choose only on release"
+        );
+        s.release(at);
+        let rect = s.rect(A);
+        assert_eq!(rect.min, Pos2::new(650.0, 80.0), "invisible anchoring does not snap the window");
+        let anchor = windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor.expect("released"));
+        assert_eq!(anchor.point, egui::Align2::CENTER_TOP);
+        s.screen = Vec2::new(1920.0, 1080.0);
+        s.idle(3);
+        assert_eq!(s.rect(A), rect.translate(Vec2::new(160.0, 0.0)));
+        assert_eq!(windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor), Some(anchor));
+        // A later move can select a different side midpoint.
+        s.drop_at(A, Pos2::new(810.0, 800.0));
+        let rect = s.rect(A);
+        let anchor = windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor.expect("released again"));
+        assert_eq!(anchor.point, egui::Align2::CENTER_BOTTOM);
+        s.screen = Vec2::new(2240.0, 1200.0);
+        s.idle(3);
+        assert_eq!(s.rect(A), rect.translate(Vec2::new(160.0, 120.0)));
+    }
+
+    #[test]
     fn the_work_area_snaps_a_window_and_glues_nothing() {
         let mut s = Session::new();
         s.idle(3);
@@ -663,9 +701,8 @@ mod tests {
         assert!(!s.linked(A, B));
     }
 
-    /// When the viewer window changes size, a group follows the edges
-    /// nearest to its bounds: its windows stay side by side, where each on
-    /// its own would have followed a different edge.
+    /// A group shares the perimeter anchor nearest to its bounds, so its
+    /// windows stay side by side through viewer resizing.
     #[test]
     fn a_group_follows_the_edges_as_a_block() {
         let mut s = Session::new();
@@ -681,23 +718,30 @@ mod tests {
         let (a, b) = (s.rect(A), s.rect(B));
         let screen = Rect::from_min_size(Pos2::ZERO, s.screen);
         let wide = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
-        // alone, B would go with the right edge and A stay
-        assert_eq!(super::super::follow_edges(screen, wide, a), Vec2::ZERO);
-        assert_eq!(super::super::follow_edges(screen, wide, b), Vec2::new(320.0, 0.0));
+        let travel = Vec2::new((wide.width() - screen.width()) * 0.5, 0.0);
         s.screen = wide.size();
         s.idle(3);
-        assert_eq!((s.rect(A), s.rect(B)), (a, b), "the block is nearer the left edge");
+        assert_eq!(
+            (s.rect(A), s.rect(B)),
+            (a.translate(travel), b.translate(travel)),
+            "the block follows the top midpoint"
+        );
         assert!(s.linked(A, B));
-        // against the right edge, both follow it
+        // Near the right midpoint, both follow its horizontal and vertical
+        // movement while keeping their individual offsets.
         let start = s.rect(B).min;
         s.drop_at(B, start + Vec2::new(2000.0, 0.0));
         let (a, b) = (s.rect(A), s.rect(B));
         assert_eq!(b.right(), 1600.0 - GAP);
+        assert_eq!(
+            windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor.expect("group anchor").point),
+            egui::Align2::RIGHT_CENTER
+        );
         s.screen = Vec2::new(1920.0, 1000.0);
         s.idle(3);
         assert_eq!(
             (s.rect(A), s.rect(B)),
-            (a.translate(Vec2::new(320.0, 0.0)), b.translate(Vec2::new(320.0, 0.0)))
+            (a.translate(Vec2::new(320.0, 50.0)), b.translate(Vec2::new(320.0, 50.0)))
         );
         assert!(s.linked(A, B));
     }
