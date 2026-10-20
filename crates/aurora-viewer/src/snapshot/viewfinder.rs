@@ -402,6 +402,49 @@ pub fn distance_text(d: f32) -> String {
     }
 }
 
+/// Points of the histogram's curve drawn by the viewfinder.
+pub const CURVE_POINTS: usize = 96;
+
+/// The histogram as a camera draws it: a smooth curve, each count under a
+/// square root (the small ones stay visible), blurred over its neighbours
+/// and sampled at `CURVE_POINTS` points, 0 to 1 (1 at the highest).
+pub fn histogram_curve(bins: &[u32]) -> Vec<f32> {
+    if bins.is_empty() {
+        return vec![0.0; CURVE_POINTS];
+    }
+    let raw: Vec<f32> = bins.iter().map(|&b| (b as f32).sqrt()).collect();
+    // a binomial kernel over five bins
+    const K: [f32; 5] = [1.0, 4.0, 6.0, 4.0, 1.0];
+    let n = raw.len() as i32;
+    let smooth: Vec<f32> = (0..n)
+        .map(|i| {
+            let (mut sum, mut w) = (0.0, 0.0);
+            for (k, kw) in K.iter().enumerate() {
+                let j = i + k as i32 - 2;
+                if (0..n).contains(&j) {
+                    sum += raw[j as usize] * kw;
+                    w += kw;
+                }
+            }
+            sum / w
+        })
+        .collect();
+    let top = smooth.iter().copied().fold(0.0f32, f32::max).max(1e-6);
+    // Catmull-Rom between the bins' centres
+    let at = |i: i32| smooth[i.clamp(0, n - 1) as usize];
+    (0..CURVE_POINTS)
+        .map(|k| {
+            let x = k as f32 / (CURVE_POINTS - 1) as f32 * (n - 1) as f32;
+            let i = x.floor() as i32;
+            let t = x - i as f32;
+            let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+            let v = 0.5
+                * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t);
+            (v / top).clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
 /// The focus beep, made here rather than fetched (the interface sounds are
 /// grid assets, none of them a camera's): two short tones at 2.75 kHz, a
 /// mono 16-bit WAV at 48 kHz.
@@ -565,6 +608,24 @@ mod tests {
         assert_eq!(step_distance(95.0, 1), FAR);
         assert_eq!(step_distance(FAR, -1), 90.0);
         assert_eq!(step_distance(0.3, -1), MIN_FOCUS);
+    }
+
+    #[test]
+    fn the_histogram_curve_is_smooth_and_normalised() {
+        // a scene's spread of tones, two humps
+        let bins: Vec<u32> = (0..HISTOGRAM_BINS)
+            .map(|i| {
+                let x = i as f32;
+                (900.0 * (-(x - 20.0).powi(2) / 18.0).exp() + 300.0 * (-(x - 44.0).powi(2) / 30.0).exp()) as u32
+            })
+            .collect();
+        let c = histogram_curve(&bins);
+        assert_eq!(c.len(), CURVE_POINTS);
+        assert!(c.iter().all(|v| (0.0..=1.0).contains(v)));
+        assert!((c.iter().copied().fold(0.0f32, f32::max) - 1.0).abs() < 0.05);
+        // no step from one point to the next as large as a bar's
+        assert!(c.windows(2).all(|w| (w[0] - w[1]).abs() < 0.2));
+        assert_eq!(histogram_curve(&[]), vec![0.0; CURVE_POINTS]);
     }
 
     #[test]

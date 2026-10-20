@@ -55,6 +55,8 @@ pub struct Viewfinder {
     pub flash_at: Option<f64>,
     /// The last photo's card shows until then.
     pub review_until: f64,
+    /// The histogram's curve as shown, easing towards the last counts.
+    histogram: Vec<f32>,
     /// A line at the top: (text, is an error, until).
     pub message: Option<(String, bool, f64)>,
     /// The shutter button is held by the mouse.
@@ -618,22 +620,38 @@ impl Viewfinder {
         }
         if let Some(bins) = f.histogram {
             let total: u32 = bins.iter().sum();
-            // the square root keeps the small counts visible
-            let top = bins.iter().map(|&b| (b as f32).sqrt()).fold(0.0f32, f32::max).max(1.0);
-            let w = h.width() / bins.len() as f32;
-            let inner = h.shrink2(Vec2::new(0.0, 3.0));
-            for (i, &b) in bins.iter().enumerate() {
-                let v = (b as f32).sqrt() / top;
-                if v <= 0.0 {
-                    continue;
-                }
-                let x = h.left() + i as f32 * w;
-                let bar = Rect::from_min_max(
-                    Pos2::new(x, inner.bottom() - v * inner.height()),
-                    Pos2::new(x + w + 0.5, h.bottom()),
-                );
-                back.rect_filled(bar, 0.0, p.ink.gamma_multiply(0.6));
+            // a smooth curve, easing between the counts read back
+            let curve = vf::histogram_curve(bins);
+            if self.histogram.len() != curve.len() {
+                self.histogram = curve.clone();
             }
+            for (shown, target) in self.histogram.iter_mut().zip(&curve) {
+                *shown += (target - *shown) * 0.3;
+            }
+            let inner = h.shrink2(Vec2::new(0.0, 4.0));
+            let points: Vec<Pos2> = self
+                .histogram
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let x = h.left() + i as f32 / (self.histogram.len() - 1) as f32 * h.width();
+                    Pos2::new(x, inner.bottom() - v * inner.height())
+                })
+                .collect();
+            let mut mesh = egui::Mesh::default();
+            let fill = p.ink.gamma_multiply(0.35);
+            for (i, pt) in points.iter().enumerate() {
+                mesh.colored_vertex(*pt, fill);
+                mesh.colored_vertex(Pos2::new(pt.x, h.bottom()), fill);
+                if i > 0 {
+                    let k = (i * 2) as u32;
+                    mesh.add_triangle(k - 2, k - 1, k);
+                    mesh.add_triangle(k - 1, k + 1, k);
+                }
+            }
+            back.add(egui::Shape::mesh(mesh));
+            back.add(egui::Shape::line(points, Stroke::new(1.2, p.ink.gamma_multiply(0.85))));
+            ctx.request_repaint();
             // the highlights clip: a bar on the right
             let bright = bins[bins.len() - 2..].iter().sum::<u32>();
             if total > 0 && bright as f32 / total as f32 > 0.01 {
