@@ -107,7 +107,7 @@ impl App {
         } else {
             Posture::Standing
         });
-        let region = self.world.hover_height_available().then_some(self.world.main_region).flatten();
+        let region = self.world.hover_height_target();
         if let Some(command) = self.world.hover_height.next_update(region) {
             self.send(command);
         }

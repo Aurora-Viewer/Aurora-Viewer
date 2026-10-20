@@ -136,7 +136,8 @@ impl App {
             me: w.agent_id,
             seated: w.agent.is_sitting(),
             flying: w.agent.flying,
-            hover_height: w.hover_height_available(),
+            // Account options remain accessible while region support loads.
+            hover_height: w.login.is_some(),
             edit_linked: self.settings.build.edit_linked,
             voice: self.settings.audio.voice_enabled,
             particle_owner: self.object_menu.particle_owner.filter(|o| *o != w.agent_id),

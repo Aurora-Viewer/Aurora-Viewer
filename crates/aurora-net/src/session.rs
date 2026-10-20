@@ -92,6 +92,8 @@ struct Sim {
     eq_task: Option<JoinHandle<()>>,
     /// The request of the seed capability, while it is asked for.
     caps_task: Option<JoinHandle<()>>,
+    /// Region features belong to this circuit, never to the next account.
+    features_task: Option<JoinHandle<()>>,
     last_ping: Instant,
     time_dilation: f32,
     /// UseCircuitCode sequence; CompleteAgentMovement waits for its ack.
@@ -127,6 +129,7 @@ impl Sim {
             caps: Arc::new(HashMap::new()),
             eq_task: None,
             caps_task: None,
+            features_task: None,
             last_ping: Instant::now(),
             time_dilation: 1.0,
             ucc_seq: None,
@@ -150,6 +153,9 @@ impl Drop for Sim {
             t.abort();
         }
         if let Some(t) = self.caps_task.take() {
+            t.abort();
+        }
+        if let Some(t) = self.features_task.take() {
             t.abort();
         }
     }
@@ -629,6 +635,9 @@ impl Session<'_> {
         if let Some(old) = sim.caps_task.take() {
             old.abort();
         }
+        if let Some(old) = sim.features_task.take() {
+            old.abort();
+        }
         sim.caps_task = Some(tokio::spawn(async move {
             let alive = tx.clone();
             let r = caps::resolve_seed(&http, &seed, caps::SeedRetry::FIRESTORM, move || !alive.is_closed())
@@ -699,7 +708,7 @@ impl Session<'_> {
         emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
         let features = sim.caps.get("SimulatorFeatures").cloned().map(|u| (sim.handle, u));
         if let Some((handle, url)) = features {
-            self.request_features(handle, url);
+            self.request_features(addr, handle, url);
         }
         if self.main == Some(addr) {
             self.update_agent_language();
@@ -713,34 +722,35 @@ impl Session<'_> {
     }
 
     /// SimulatorFeatures (LLViewerRegion::requestSimulatorFeatures): the voice
-    /// server type and the RenderMaterials limits are used for now.
-    fn request_features(&self, handle: RegionHandle, url: String) {
+    /// server type, hover support and RenderMaterials limits.
+    fn request_features(&mut self, addr: SocketAddr, handle: RegionHandle, url: String) {
+        let Some(sim) = self.sims.get_mut(&addr) else { return };
+        if let Some(old) = sim.features_task.take() {
+            old.abort();
+        }
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
-        tokio::spawn(async move {
-            match http.get(&url).header("Accept", "application/llsd+xml").send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(bytes) = resp.bytes().await
-                        && let Ok(v) = aurora_llsd::from_xml(&bytes)
-                    {
-                        let voice_server_type = v["VoiceServerType"].to_string_value();
-                        let rate = &v["RenderMaterialsCapability"];
-                        let materials_rate = (!rate.is_undef()).then(|| rate.as_f32());
-                        let max = &v["MaxMaterialsPerTransaction"];
-                        let materials_max = (!max.is_undef()).then(|| max.as_u32());
-                        let _ = events.send(NetEvent::SimulatorFeatures {
-                            handle,
-                            voice_server_type,
-                            avatar_hover_height: v["AvatarHoverHeightEnabled"].as_bool(),
-                            materials_rate,
-                            materials_max,
-                        });
-                    }
+        sim.features_task = Some(tokio::spawn(async move {
+            match caps::simulator_features(&http, &url, caps::SeedRetry::SIMULATOR_FEATURES).await {
+                Ok(v) => {
+                    let voice_server_type = v["VoiceServerType"].to_string_value();
+                    let rate = &v["RenderMaterialsCapability"];
+                    let materials_rate = (!rate.is_undef()).then(|| rate.as_f32());
+                    let max = &v["MaxMaterialsPerTransaction"];
+                    let materials_max = (!max.is_undef()).then(|| max.as_u32());
+                    let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
+                    log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
+                    let _ = events.send(NetEvent::SimulatorFeatures {
+                        handle,
+                        voice_server_type,
+                        avatar_hover_height,
+                        materials_rate,
+                        materials_max,
+                    });
                 }
-                Ok(resp) => log::info!("SimulatorFeatures: HTTP {}", resp.status()),
-                Err(e) => log::info!("SimulatorFeatures failed: {e}"),
+                Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
             }
-        });
+        }));
     }
 
     /// Fetch the EEP environment of the main region, or of one of its parcels
@@ -4740,6 +4750,27 @@ mod socket_tests {
 #[cfg(test)]
 mod event_queue_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn dropping_a_circuit_cancels_its_pending_simulator_features() {
+        let addr = "127.0.0.1:13001".parse().expect("local address");
+        let mut sim = Sim::new(addr, 10);
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (finished, canceled) = tokio::sync::oneshot::channel::<()>();
+        sim.features_task = Some(tokio::spawn(async move {
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+            let _ = finished.send(());
+        }));
+        ready.await.expect("feature request started");
+        drop(sim);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), canceled)
+                .await
+                .expect("request canceled")
+                .is_err()
+        );
+    }
 
     async fn finished_task() -> JoinHandle<()> {
         let task = tokio::spawn(async {});

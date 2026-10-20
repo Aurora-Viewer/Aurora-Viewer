@@ -348,6 +348,12 @@ when unfocused") is ignored during a screenshot.
   account must leave the other's height options intact. Former shared options
   migrate only to the first account used after the update; new accounts start
   with defaults, including automatic mode OFF.
+  The avatar's Appearance › Hover Height entry must remain available after
+  changing accounts, even while region features are pending: automatic and
+  camera options can still be saved. Manual height controls require the region's
+  advertised support; server writes also wait for AgentPreferences. Transient
+  SimulatorFeatures failures must recover without another login; an explicitly
+  unsupported region must still block manual edits and all height writes.
   `auto-static` adds two rigid soles with a linked heel at frame 620;
   the `auto-*` scenarios frame the feet at 600, after the login camera reset.
   Their avatar deliberately reports a 1.68 m streamed size; the fixture places

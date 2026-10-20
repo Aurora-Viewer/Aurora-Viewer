@@ -381,6 +381,16 @@ updates; every settings save snapshots the active account. Former shared
 options migrate once to the first account, including across pre-login saves;
 other new accounts use defaults. Reset keeps other accounts' options.
 Standing and both sitting heights remain in each account's `hover_height.json`.
+The account's Hover Height window remains accessible while region support is
+unavailable, so its automatic and camera options are still editable. Manual
+height editing follows the region's feature; only server writes additionally
+wait for AgentPreferences, as in LLFloaterHoverHeight::updateEditEnabled and
+LLVOAvatarSelf::sendHoverHeight. This is a
+deliberate UI difference from the Legacy Viewer's disabled menu entry.
+`aurora-net/src/caps.rs::simulator_features` retries failed, timed-out or
+malformed feature GETs with bounded backoff, following
+LLViewerRegionImpl::requestSimulatorFeatureCoro's 30-attempt limit. Each
+simulator owns its request task and aborts it on seed replacement or logout.
 
 `ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the
 account's camera preference. `world/hover_height.rs` owns local preview, the
