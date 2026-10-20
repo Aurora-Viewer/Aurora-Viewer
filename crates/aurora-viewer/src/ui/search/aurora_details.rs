@@ -39,7 +39,7 @@ pub(super) fn show(
     match (tab, key) {
         (Tab::People, Key::Id(id)) => person(ui, c, pics, wanted_pics, id, name),
         (Tab::Groups, Key::Id(id)) => group(ui, c, id, name, actions),
-        (Tab::Places | Tab::Land, Key::Id(id)) => place(ui, c, id, row.filter(|_| tab == Tab::Land), actions),
+        (Tab::Places | Tab::Land, Key::Id(id)) => place(ui, c, id, tab, row, actions),
         (Tab::Classifieds, Key::Id(id)) => classified(ui, c, id, name, actions),
         (Tab::Events, Key::Event(id)) => event(ui, c, id, name, row, actions),
         _ => {}
@@ -309,8 +309,9 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
 
 /// A parcel of the places and land sales: the place profile's snapshot,
 /// region, figures and description; a land row adds its sale's figures.
-fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, land: Option<&Row>, actions: &mut Vec<SearchAction>) {
+fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, tab: Tab, row: Option<&Row>, actions: &mut Vec<SearchAction>) {
     let (p, world) = (c.p, c.world);
+    let land = row.filter(|_| tab == Tab::Land);
     let data = world.profiles.parcels.get(&parcel);
     // mParcelGlobal: where the buttons go, once the parcel answered
     let global = data.map(|d| d.global).filter(|g| *g != DVec3::ZERO);
@@ -334,8 +335,12 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, land: Option<&Row>, actio
         Btn::new("map", aurora_i18n::tr!("common-map")).enabled(global.is_some()),
         Btn::new("dots-filled", aurora_i18n::tr!("ui-profile-more")).menu(&more),
     ];
-    let auction = land.is_some_and(|r| r.icon == RowIcon::Auction) || data.is_some_and(|d| d.auction_id != 0);
-    let for_sale = land.is_some() || auction || data.is_some_and(|d| d.sale_price > 0);
+    // The sale comes from the search reply's ForSale / Auction (the row's
+    // icon), never from ParcelInfoReply: its SalePrice is the parcel's last
+    // asking price, kept when the sale ends (LLParcel starts at L$10000), so
+    // LLPanelPlaceInfo::processParcelInfo never shows it.
+    let auction = row.is_some_and(|r| r.icon == RowIcon::Auction);
+    let for_sale = land.is_some() || auction || row.is_some_and(|r| r.icon == RowIcon::ForSale);
     let clicked = pane(ui, p, ("aurora-search-place", Key::Id(parcel)), &buttons, |ui| {
         ui.spacing_mut().item_spacing.y = 5.0;
         media(ui, c, data.map_or(Uuid::nil(), |d| d.snapshot), |ui| {
@@ -381,7 +386,7 @@ fn place(ui: &mut egui::Ui, c: &mut Ctx, parcel: Uuid, land: Option<&Row>, actio
             if let Some(Value::Text(kind)) = row.values.first() {
                 text_field(ui, p, aurora_i18n::tr!("common-type-2"), kind);
             }
-        } else if d.sale_price > 0 {
+        } else if for_sale && !auction && d.sale_price > 0 {
             text_field(ui, p, aurora_i18n::tr!("search-aurora-price"), &linden(d.sale_price as i64));
         }
         content_field(ui, p, maturity);
