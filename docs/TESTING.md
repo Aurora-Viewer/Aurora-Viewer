@@ -4798,6 +4798,7 @@ What the inventory must show with these scenarios:
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
 | `AURORA_STILL_CHECK=1` | What changes when the image should be still |
 | `AURORA_SCULPT_WATCH=<avatar UUID>` | Logs changed attachment geometry and sculpt-map states for one avatar |
+| `AURORA_DEMO_DESCRIBE=<frame>[,clipboard]` | Presses "Debug to log" (or "Debug to clipboard") of Preferences › Debug › Logs at that frame |
 | `AURORA_DEBUG_GLOW=1` | Glow diagnostics |
 | `AURORA_GLOW_SKIP=<mask>` | Removes a family of faces from the glow |
 | `AURORA_MEDIA_DEBUG=1` | Media diagnostics |
@@ -5553,6 +5554,19 @@ and geometry left bound while a sculpt waits. It changes no object, rendering
 setting or asset request. No names, locations, texture pixels or service URLs
 are added to these lines. In normal mode the human connects and positions the
 camera; the diagnostic is disabled unless explicitly configured.
+
+**`AURORA_DEMO_DESCRIBE=<frame>[,clipboard]`** presses the "Debug to log"
+button of Preferences › Debug › Logs at that frame (`clipboard`:
+"Debug to clipboard", which also logs `describe: N lines copied`). The lines
+follow at once in demo, or after 3 s when names of worn items were asked:
+`describe:` (scope), `attachments of …` per avatar within 10 m, `attachment
+'<name>' <root id> point …` per attachment (prims with no face drawn, faces
+left out for a texture-entry alpha of 0 or without triangles), and for the
+avatars within 3 m, or the selected linkset, one `prim …` line per prim with
+every face: drawn (`[fi tex … rgba … legacy / glTF alpha mode, cutoff …
+tex alpha … -> Pass]`) or `left out` with its reason. To check a change of
+these lines, stand the demo avatar near the crowd (`AURORA_DEMO_POS`) and
+grep the session log for `prim ` and `left out`.
 
 ## Profiling
 

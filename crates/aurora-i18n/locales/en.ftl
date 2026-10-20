@@ -2071,7 +2071,15 @@ app-disconnected-lost = { "Disconnected: " }{ $reason } Log in again to go back 
 app-logging-out = Logging out…
 build-ui-object-profile-cut-begin-end = Profile cut (begin/end)
 build-ui-object-path-cut-begin-end = Path cut (begin/end)
-ui-options-describe = Describe
+ui-options-describe = Debug to log
+ui-options-describe-clipboard = Debug to clipboard
+ui-options-describe-help = Stand within 3 m of the avatar whose outfit looks wrong (no need to aim at them), or select the object (right-click › Edit) to target it alone, then press. The objects within 12 m and what the avatars within 10 m wear are written; the avatars within 3 m, or the selected object, face by face. It takes about 3 s, while the names of the worn items arrive. "Debug to clipboard" copies the same lines, ready to paste in a message, instead of the whole log.
+ui-options-describe-waiting = Waiting for the names…
+ui-options-describe-written = Written to the log
+ui-options-describe-copied = { $lines ->
+    [one] { $lines } line copied
+   *[other] { $lines } lines copied
+    }
 common-default = Default
 demo-scrolling-smooth = Scrolling (SMOOTH)
 ui-land-options-set = Set
@@ -5296,7 +5304,7 @@ common-personal-lighting = Personal lighting…
 ui-options-listen = Listen
 ui-audio-listen-to-parcel-music = Listen to parcel music
 keybinds-type-in-chat = Type in chat
-ui-options-write-faces-lights-and-materials-within-12-m-to = Write faces, lights and materials within 12 m to the log
+ui-options-write-faces-lights-and-materials-within-12-m-to = Faces, lights and materials within 12 m, and what the avatars around wear
 ui-land-options-education = Education
 build-ui-features-elasticity = Elasticity
 build-land-raise = Raise
