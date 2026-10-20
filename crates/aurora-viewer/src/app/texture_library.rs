@@ -397,7 +397,7 @@ impl App {
                 );
             }
             if self.frame_count == 700 {
-                self.texture_library.demo_preview_controls(mode.ends_with("stretch"));
+                self.texture_library.demo_preview_controls(&mode);
             }
         }
         let preferences = self.settings.texture_library.clone();

@@ -298,3 +298,109 @@ fn viewer_exit_waits_for_a_material_draft_or_pending_save() {
     f.resources.material_saved(Uuid::from_u128(310), &Err("Rejected".into()));
     assert!(f.resources.prepare_exit(&f.ctx));
 }
+
+#[test]
+fn material_maps_have_thumbnails_without_a_new_scene_upload_and_shapes_are_selectable() {
+    use crate::imports::preview::MaterialShape;
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    f.images.clear(); // No prior UI image or pending GPU upload.
+    f.open(113);
+    f.front(113);
+    let maps = [
+        aurora_prim::te::BLANK_TEXTURE,
+        aurora_prim::te::TRANSPARENT_TEXTURE,
+        Uuid::from_u128(0xde40_a170_0000_0000_0000_0000_0000_0064),
+        Uuid::from_u128(0xde40_a170_0000_0000_0000_0000_0000_0065),
+    ];
+    for (slot, map) in maps.into_iter().enumerate() {
+        f.resources.windows[0].editor.as_mut().expect("editor").set_map(slot, map);
+    }
+    f.settle();
+    let thumbnails = |f: &Fixture| {
+        std::array::from_fn::<_, 4, _>(|slot| {
+            f.ctx
+                .data(|data| {
+                    data.get_temp::<(Option<Uuid>, Option<egui::TextureId>, egui::Rect)>(egui::Id::new((
+                        "resource_material_map",
+                        Uuid::from_u128(113),
+                        slot,
+                    )))
+                })
+                .expect("map row")
+        })
+    };
+    let initial = thumbnails(&f);
+    for (slot, (map, texture, _)) in initial.iter().enumerate() {
+        assert_eq!(*map, Some(maps[slot]));
+        assert!(texture.is_some(), "map {slot} needs actual pixels");
+    }
+    for shape in [MaterialShape::Cube, MaterialShape::Aurora, MaterialShape::Sphere] {
+        let choice = f
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_material_shape_choice", Uuid::from_u128(113)))))
+            .expect("shape selector")
+            .center();
+        f.button(choice, true);
+        f.button(choice, false);
+        f.settle();
+        let option = f
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_material_shape", Uuid::from_u128(113), shape))))
+            .expect("shape option")
+            .center();
+        f.button(option, true);
+        f.button(option, false);
+        f.settle();
+        assert!(f.resources.windows[0].editor.as_ref().expect("editor").shape == shape);
+        for (slot, (_, texture, _)) in thumbnails(&f).iter().enumerate() {
+            assert_eq!(*texture, initial[slot].1, "shape changes reuse map thumbnails");
+        }
+    }
+    let replacement = Uuid::from_u128(0xde40_a170_0000_0000_0000_0000_0000_0066);
+    f.resources.windows[0].editor.as_mut().expect("editor").set_map(0, replacement);
+    f.settle();
+    let updated = thumbnails(&f);
+    assert_eq!(updated[0].0, Some(replacement));
+    assert!(updated[0].1.is_some() && updated[0].1 != initial[0].1);
+}
+
+#[test]
+fn material_window_keeps_its_geometry_with_wrapped_settings_messages_and_late_maps() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let item = Uuid::from_u128(113);
+    let source = f.world.inventory.items.get_mut(&item).expect("item");
+    source.owner = f.world.agent_id;
+    source.owner_mask = rules::MODIFY | rules::COPY | rules::TRANSFER;
+    f.open(113);
+    for delta in [Vec2::new(-230.0, -380.0), Vec2::new(180.0, 250.0), Vec2::new(280.0, 240.0)] {
+        f.resize(113, delta);
+        let expected = f.rect(113);
+        for frame in 0..120 {
+            let editor = f.resources.windows[0].editor.as_mut().expect("editor");
+            if frame == 10 {
+                let value = Arc::make_mut(&mut editor.draft);
+                value.alpha_mode = aurora_assets::AlphaMode::Mask;
+                value.base_color_texture = Some(aurora_prim::te::BLANK_TEXTURE);
+                value.normal_texture = Some(aurora_prim::te::TRANSPARENT_TEXTURE);
+            }
+            if frame == 30 {
+                editor.message = "A long response that must wrap inside the footer without enlarging the preview window. ".repeat(3);
+            }
+            if frame == 60 {
+                f.world.inventory.items.get_mut(&item).expect("item").owner_mask = rules::COPY;
+            }
+            f.frame(Vec::new());
+            same_size(f.rect(113).size(), expected.size());
+        }
+        let viewport = f
+            .ctx
+            .data(|data| data.get_temp::<(egui::Rect, Vec2)>(egui::Id::new(("resource_material_viewport", item))))
+            .expect("scroll viewport");
+        assert!(f.rect(113).contains_rect(viewport.0));
+        assert!(viewport.1.y > viewport.0.height(), "settings stay scrollable");
+    }
+}

@@ -39,10 +39,17 @@ impl LibraryUi {
             editor.message = message;
         }
     }
-    pub(crate) fn demo_preview_controls(&mut self, stretch: bool) {
+    pub(crate) fn demo_preview_controls(&mut self, mode: &str) {
         for window in &mut self.windows {
-            window.texture.display.keep_ratio = !stretch;
+            window.texture.display.keep_ratio = !mode.ends_with("stretch");
             if let Some(editor) = &mut window.editor {
+                editor.shape = if mode.ends_with("cube") {
+                    crate::imports::preview::MaterialShape::Cube
+                } else if mode.ends_with("aurora") {
+                    crate::imports::preview::MaterialShape::Aurora
+                } else {
+                    crate::imports::preview::MaterialShape::Sphere
+                };
                 let draft = std::sync::Arc::make_mut(&mut editor.draft);
                 draft.metallic_factor = 0.35;
                 draft.roughness_factor = 0.6;
@@ -205,6 +212,7 @@ impl LibraryUi {
         let mut floater = Floater::new(&id, &item.name, ctx.content_rect().center() - size * 0.5, size)
             .cascade(widgets::CascadeGroup::inventory(item.asset_type));
         floater.min_size = Vec2::new(220.0, 260.0);
+        floater.steady_size = material;
         floater.show(ctx, p, &mut open, |ui| {
             if material {
                 if window
@@ -218,18 +226,6 @@ impl LibraryUi {
                     }
                 {
                     window.editor = Some(material_editor::Editor::new(asset, value));
-                }
-                let side = ui.available_width().min((ui.available_height() * 0.33).clamp(72.0, 240.0));
-                let model = window.editor.as_ref().and_then(|editor| {
-                    self.previews
-                        .material_model(item.id, editor.draft.clone(), scene, &mut self.wanted_images, ctx)
-                });
-                if let Some(model) = model {
-                    window.view.background = previews::view(p).background;
-                    let response = aurora_render::preview::paint(ui, ui.id().with(item.id), model, &mut window.view, Vec2::splat(side));
-                    ctx.data_mut(|data| data.insert_temp(egui::Id::new(("resource_material_scene", item.id)), response.rect));
-                } else {
-                    ui.allocate_space(Vec2::splat(side));
                 }
             } else {
                 self.wanted_images.insert(asset);
@@ -262,26 +258,12 @@ impl LibraryUi {
                 );
             }
             if material {
-                ui.horizontal(|ui| {
-                    let label = aurora_i18n::tr!("texture-library-material-drag");
-                    let width = widgets::action_button_fit(ui, "grip-vertical", label);
-                    let path_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
-                    ui.add_sized(
-                        [path_width, 24.0],
-                        egui::Label::new(RichText::new(&path).size(11.0).color(p.muted)).truncate(),
-                    )
-                    .on_hover_text(&path);
-                    // Only this handle starts a permission-aware inventory drag;
-                    // the scene keeps its orbit gesture and independent camera.
-                    let drag = widgets::action_button(ui, p, "grip-vertical", label, ActionKind::Flat, Vec2::new(width, 24.0))
-                        .interact(egui::Sense::click_and_drag())
-                        .on_hover_cursor(egui::CursorIcon::Grab)
-                        .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
-                    drag.dnd_set_drag_payload(InvDrag(item.id));
-                    ctx.data_mut(|data| data.insert_temp(egui::Id::new(("resource_material_handle", item.id)), drag.rect));
-                });
                 if let Some(editor) = &mut window.editor {
-                    editor.show(ui, p, &item, world, images, actions);
+                    let model =
+                        self.previews
+                            .material_model(item.id, editor.draft.clone(), editor.shape, scene, &mut self.wanted_images, ctx);
+                    let thumbnails = self.previews.thumbnails(item.id);
+                    editor.show(ui, p, &item, world, images, &thumbnails, model, &mut window.view, &path, actions);
                 } else {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
                 }
@@ -345,15 +327,17 @@ impl LibraryUi {
                     }
                 });
             }
-            ui.label(
-                RichText::new(if item.owner_mask & rules::COPY != 0 {
-                    aurora_i18n::tr!("texture-library-copy")
-                } else {
-                    aurora_i18n::tr!("texture-library-no-copy")
-                })
-                .size(11.0)
-                .color(p.muted),
-            );
+            if !material {
+                ui.label(
+                    RichText::new(if item.owner_mask & rules::COPY != 0 {
+                        aurora_i18n::tr!("texture-library-copy")
+                    } else {
+                        aurora_i18n::tr!("texture-library-no-copy")
+                    })
+                    .size(11.0)
+                    .color(p.muted),
+                );
+            }
         });
         open &= !close_clicked;
         if let Some(editor) = &mut window.editor {

@@ -273,7 +273,12 @@ shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material
 windows keyed by inventory item. `texture_view.rs` handles fitted, ratio-constrained
 or native-pixel images and worker decoding/export; `material_editor.rs` owns isolated
-PBR drafts, map pickers and save state. Inventory and library opens share these windows
+PBR drafts, map pickers and save state with the importer's map-row presentation and sphere/cube/Aurora
+geometry. Its bounded scroll viewport and measured footer keep wrapped settings
+from expanding the floater. PBR preview workers also prepare the four map thumbnails
+from their cached sources, so an already resident scene map needs no new GPU upload;
+shape and factor changes reuse unchanged map pixels and thumbnails.
+Inventory and library opens share these windows
 and the same bounded model cache; reopening an item raises/restores its window
 without resetting its camera. Each window survives closing either source panel,
 and closes independently. Texture and material windows each persist their own

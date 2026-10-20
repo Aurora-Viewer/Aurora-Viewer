@@ -2429,6 +2429,12 @@ editor side by side (use `AURORA_WINDOW_SIZE=1600,1000`, capture after frame 740
 The material has a dirty, isolated draft; test its parameters, map pickers, Save,
 Save As and Cancel, and close it with unsaved changes. `preview-controls-stretch`
 switches aspect preservation off for the image. Resize either window and check
+that the material window stays at its released size for several seconds, including
+with narrow wrapped controls. Its shape selector offers the importer's sphere,
+cube and Aurora model, with independent orbit/reset controls. The
+`preview-controls-cube` and `preview-controls-aurora` variants select those models
+for offline captures. All four assigned maps must show their pixels in the large
+map thumbnails, including textures already resident in the world. Check
 the image fitting, native 100% scroll view, ratio presets/custom ratio, dimensions,
 description, UUID, refresh and permission-gated PNG/TGA export. Local map uploads
 open the texture import inspector to review and confirm their fee before replacing

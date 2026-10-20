@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub(super) struct Editor {
     pub asset: Uuid,
+    pub shape: crate::imports::preview::MaterialShape,
     pub original: Arc<PbrMaterial>,
     pub draft: Arc<PbrMaterial>,
     pub saving: Option<Uuid>,
@@ -19,11 +20,13 @@ pub(super) struct Editor {
     pub close_after_save: bool,
     pub close_ready: bool,
     deferred_maps: Vec<(usize, Uuid)>,
+    map_names: [(Option<Uuid>, u64, String); 4],
 }
 impl Editor {
     pub fn new(asset: Uuid, material: Arc<PbrMaterial>) -> Self {
         Self {
             asset,
+            shape: Default::default(),
             original: material.clone(),
             draft: material,
             saving: None,
@@ -36,6 +39,7 @@ impl Editor {
             close_after_save: false,
             close_ready: false,
             deferred_maps: Vec::new(),
+            map_names: std::array::from_fn(|_| (None, u64::MAX, String::new())),
         }
     }
     pub fn dirty(&self) -> bool {
@@ -75,96 +79,164 @@ impl Editor {
         item: &aurora_net::inventory::InvItem,
         world: &World,
         images: &HashMap<Uuid, egui::TextureHandle>,
+        thumbnails: &previews::Thumbnails,
+        model: Option<Arc<aurora_render::preview::Model>>,
+        view: &mut aurora_render::preview::View,
+        path: &str,
         actions: &mut Vec<Action>,
     ) {
+        // Allocate the chosen window size once. Scroll contents and wrapped
+        // footer rows must not feed a larger minimum back into the floater.
+        let (bounds, _) = ui.allocate_exact_size(ui.available_size().max(Vec2::ZERO), egui::Sense::hover());
+        let mut footer = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("material_footer")
+                .max_rect(bounds)
+                .layout(egui::Layout::bottom_up(egui::Align::Min)),
+        );
+        footer.set_clip_rect(bounds.intersect(ui.clip_rect()));
+        let first_action = actions.len();
+        self.footer(&mut footer, p, item, world, actions);
+        let body = egui::Rect::from_min_max(
+            bounds.min,
+            egui::pos2(
+                bounds.right(),
+                (footer.min_rect().top() - ui.spacing().item_spacing.y).max(bounds.top()),
+            ),
+        );
+        let mut content = ui.new_child(egui::UiBuilder::new().id_salt("material_content").max_rect(body));
+        content.set_clip_rect(body.intersect(ui.clip_rect()));
         let editable = can_edit(world, item);
         let mut value = (*self.draft).clone();
-        let height = (ui.available_height() - 92.0).max(40.0);
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .id_salt("material_settings")
             .auto_shrink([false; 2])
-            .max_height(height)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.add_enabled_ui(editable && self.saving.is_none(), |ui| {
-                    widgets::switch_labeled(ui, p, &mut value.double_sided, aurora_i18n::tr!("import-double-sided"));
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(aurora_i18n::tr!("import-base-color"));
-                        crate::imports::ui::factor_swatch(ui, p, "base_factor", &mut value.base_color_factor, false);
-                        scalar(ui, aurora_i18n::tr!("common-alpha"), &mut value.base_color_factor[3]);
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(aurora_i18n::tr!("import-alpha-mode"));
-                        egui::ComboBox::from_id_salt("alpha_mode")
-                            .selected_text(alpha_label(value.alpha_mode))
-                            .show_ui(ui, |ui| {
-                                for mode in [AlphaMode::Opaque, AlphaMode::Blend, AlphaMode::Mask] {
-                                    ui.selectable_value(&mut value.alpha_mode, mode, alpha_label(mode));
-                                }
-                            });
-                        ui.add_enabled_ui(value.alpha_mode == AlphaMode::Mask, |ui| {
-                            scalar(ui, aurora_i18n::tr!("import-alpha-cutoff"), &mut value.alpha_cutoff)
-                        });
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        scalar(ui, aurora_i18n::tr!("import-metallic"), &mut value.metallic_factor);
-                        scalar(ui, aurora_i18n::tr!("import-roughness"), &mut value.roughness_factor);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(aurora_i18n::tr!("import-emissive"));
-                        crate::imports::ui::factor_swatch(ui, p, "emissive_factor", &mut value.emissive_factor, false);
-                    });
-                    for slot in [0, 2, 3, 1] {
-                        let map = map_mut(&mut value, slot);
-                        ui.push_id(slot, |ui| {
-                            ui.horizontal(|ui| {
-                                let response =
-                                    widgets::picture(ui, p, map.and_then(|id| images.get(&id)), Vec2::splat(44.0), "photo-filled", "");
-                                if response.clicked() {
-                                    self.picker.open_with_defaults(map_label(slot), map.unwrap_or_default(), None, true);
-                                    self.map_slot = Some(slot);
-                                }
-                                ui.vertical(|ui| {
-                                    ui.label(map_label(slot));
-                                    ui.horizontal(|ui| {
-                                        if widgets::icon_button(
-                                            ui,
-                                            p,
-                                            "folder-open-filled",
-                                            aurora_i18n::tr!("resource-preview-upload-map"),
-                                            true,
-                                        ) {
-                                            actions.push(Action::MaterialMapFile { item: item.id, slot });
-                                        }
-                                        if ui.small_button(aurora_i18n::tr!("common-inventory")).clicked() {
-                                            self.picker.open_with_defaults(map_label(slot), map.unwrap_or_default(), None, true);
-                                            self.map_slot = Some(slot);
-                                        }
-                                        if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-remove"), map.is_some()) {
-                                            *map = None;
-                                        }
-                                        if widgets::icon_button(
-                                            ui,
-                                            p,
-                                            "copy-filled",
-                                            aurora_i18n::tr!("resource-preview-copy-uuid"),
-                                            map.is_some(),
-                                        ) {
-                                            ui.ctx().copy_text(map.unwrap_or_default().to_string());
-                                        }
-                                    });
+            .min_scrolled_height(0.0)
+            .max_height(body.height())
+            .show(&mut content, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let choice = egui::ComboBox::from_id_salt("material_shape")
+                        .selected_text(self.shape.label())
+                        .show_ui(ui, |ui| {
+                            for shape in crate::imports::preview::MaterialShape::ALL {
+                                let response = ui.selectable_value(&mut self.shape, shape, shape.label());
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(egui::Id::new(("resource_material_shape", item.id, shape)), response.rect)
                                 });
-                            });
+                            }
+                        });
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::new(("resource_material_shape_choice", item.id)), choice.response.rect)
+                    });
+                    if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("import-preview-reset-view"), true) {
+                        view.reset_camera();
+                    }
+                    ui.add_enabled_ui(editable && self.saving.is_none(), |ui| {
+                        widgets::switch_labeled(ui, p, &mut value.double_sided, aurora_i18n::tr!("import-double-sided"));
+                    });
+                });
+                let side = ui.available_width().min((body.height() * 0.33).clamp(96.0, 240.0));
+                ui.horizontal(|ui| {
+                    ui.add_space(((ui.available_width() - side) * 0.5).max(0.0));
+                    view.background = previews::view(p).background;
+                    let response = if let Some(model) = model {
+                        aurora_render::preview::paint(ui, ui.id().with(item.id), model, view, Vec2::splat(side))
+                    } else {
+                        widgets::picture(ui, p, None, Vec2::splat(side), "cube-3d-sphere", "")
+                    }
+                    .on_hover_text(aurora_i18n::tr!("import-preview-gestures"));
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new(("resource_material_scene", item.id)), response.rect));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    let label = aurora_i18n::tr!("texture-library-material-drag");
+                    let width = widgets::action_button_fit(ui, "grip-vertical", label).min(ui.available_width());
+                    let path_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(0.0);
+                    ui.add_sized(
+                        [path_width, 24.0],
+                        egui::Label::new(RichText::new(path).small().color(p.muted)).truncate(),
+                    )
+                    .on_hover_text(path);
+                    let drag = widgets::action_button(ui, p, "grip-vertical", label, ActionKind::Flat, Vec2::new(width, 24.0))
+                        .interact(egui::Sense::click_and_drag())
+                        .on_hover_cursor(egui::CursorIcon::Grab)
+                        .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
+                    drag.dnd_set_drag_payload(InvDrag(item.id));
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new(("resource_material_handle", item.id)), drag.rect));
+                });
+                ui.add_enabled_ui(editable && self.saving.is_none(), |ui| {
+                    for slot in [0, 2, 3, 1] {
+                        ui.push_id(slot, |ui| {
+                            self.map_row(ui, p, item, world, &mut value, slot, images, thumbnails, actions)
                         });
                     }
                 });
                 if !editable {
                     ui.label(RichText::new(aurora_i18n::tr!("resource-preview-read-only")).small().color(p.muted));
                 }
+                ui.label(
+                    RichText::new(if item.owner_mask & rules::COPY != 0 {
+                        aurora_i18n::tr!("texture-library-copy")
+                    } else {
+                        aurora_i18n::tr!("texture-library-no-copy")
+                    })
+                    .small()
+                    .color(p.muted),
+                );
             });
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new(("resource_material_viewport", item.id)),
+                (output.inner_rect, output.content_size),
+            )
+        });
         if value != *self.draft {
             self.draft = Arc::new(value);
             self.message.clear();
+        }
+        // The bottom-anchored footer is laid out first. Include numeric edits
+        // committed on focus loss by this frame's click on Save / Save As.
+        for action in &mut actions[first_action..] {
+            if let Action::SaveMaterial {
+                item: target, material, ..
+            } = action
+                && *target == item.id
+            {
+                *material = (*self.draft).clone();
+            }
+        }
+    }
+    fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, item: &aurora_net::inventory::InvItem, world: &World, actions: &mut Vec<Action>) {
+        let editable = can_edit(world, item);
+        if self.saving.is_some() {
+            ui.label(aurora_i18n::tr!("resource-preview-saving"));
+        } else if !self.message.is_empty() {
+            ui.label(&self.message);
+        } else if self.dirty() {
+            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-unsaved")).small().color(p.warn));
+        } else {
+            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-no-fee")).small().color(p.muted));
+        }
+        if let Some(name) = &mut self.save_as {
+            let mut submit = false;
+            let mut cancel = false;
+            ui.horizontal_wrapped(|ui| {
+                ui.add(egui::TextEdit::singleline(name).desired_width((ui.available_width() - 130.0).max(0.0)));
+                submit = ui
+                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
+                    .clicked();
+                cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+            });
+            if submit {
+                actions.push(Action::SaveMaterial {
+                    item: item.id,
+                    material: (*self.draft).clone(),
+                    name: self.save_as.take(),
+                });
+            } else if cancel {
+                self.save_as = None;
+            }
         }
         ui.horizontal_wrapped(|ui| {
             let save = ui.add_enabled(
@@ -201,35 +273,124 @@ impl Editor {
                 self.picker.open = false;
             }
         });
-        if let Some(name) = &mut self.save_as {
-            let mut submit = false;
-            let mut cancel = false;
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(name).desired_width((ui.available_width() - 130.0).max(60.0)));
-                submit = ui
-                    .add_enabled(!name.trim().is_empty(), egui::Button::new(aurora_i18n::tr!("common-save")))
-                    .clicked();
-                cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+    }
+    fn map_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        p: &Palette,
+        item: &aurora_net::inventory::InvItem,
+        world: &World,
+        value: &mut PbrMaterial,
+        slot: usize,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+        thumbnails: &previews::Thumbnails,
+        actions: &mut Vec<Action>,
+    ) {
+        let map = *map_mut(value, slot);
+        let texture = thumbnails[slot]
+            .as_ref()
+            .filter(|(id, _)| Some(*id) == map)
+            .map(|(_, image)| image)
+            .or_else(|| map.and_then(|id| images.get(&id)));
+        let side = if ui.available_width() >= 350.0 { 95.0 } else { 56.0 };
+        let width = (ui.available_width() - side - ui.spacing().item_spacing.x).max(0.0);
+        ui.horizontal_top(|ui| {
+            let response = widgets::picture(ui, p, texture, Vec2::splat(side), "photo-filled", "");
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    egui::Id::new(("resource_material_map", item.id, slot)),
+                    (map, texture.map(egui::TextureHandle::id), response.rect),
+                )
             });
-            if submit {
-                actions.push(Action::SaveMaterial {
-                    item: item.id,
-                    material: (*self.draft).clone(),
-                    name: self.save_as.take(),
-                });
-            } else if cancel {
-                self.save_as = None;
+            if response.clicked() {
+                self.open_map(slot, map);
             }
-        }
-        if self.saving.is_some() {
-            ui.label(aurora_i18n::tr!("resource-preview-saving"));
-        } else if !self.message.is_empty() {
-            ui.label(&self.message);
-        } else if self.dirty() {
-            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-unsaved")).small().color(p.warn));
-        } else {
-            ui.label(RichText::new(aurora_i18n::tr!("resource-preview-no-fee")).small().color(p.muted));
-        }
+            ui.allocate_ui_with_layout(Vec2::new(width, side), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(width);
+                ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                ui.horizontal_wrapped(|ui| {
+                    let title_width = (width - 4.0 * 24.0 - 4.0 * ui.spacing().item_spacing.x).max(0.0);
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(title_width, 20.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_size(Vec2::new(title_width, 20.0));
+                            ui.add(egui::Label::new(RichText::new(map_label(slot)).strong()).truncate())
+                        },
+                    )
+                    .inner
+                    .on_hover_text(map_label(slot));
+                    if widgets::icon_button(ui, p, "folder-open-filled", aurora_i18n::tr!("resource-preview-upload-map"), true) {
+                        actions.push(Action::MaterialMapFile { item: item.id, slot });
+                    }
+                    if widgets::icon_button(ui, p, "archive-filled", aurora_i18n::tr!("common-inventory"), true) {
+                        self.open_map(slot, map);
+                    }
+                    if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-remove"), map.is_some()) {
+                        *map_mut(value, slot) = None;
+                    }
+                    if widgets::icon_button(ui, p, "copy-filled", aurora_i18n::tr!("resource-preview-copy-uuid"), map.is_some()) {
+                        ui.ctx().copy_text(map.unwrap_or_default().to_string());
+                    }
+                });
+                let cached = &mut self.map_names[slot];
+                if cached.0 != map || cached.1 != world.inventory.generation {
+                    *cached = (
+                        map,
+                        world.inventory.generation,
+                        map.map(|id| {
+                            world
+                                .inventory
+                                .items
+                                .values()
+                                .find(|it| it.asset_id == id)
+                                .map(|it| it.name.clone())
+                                .unwrap_or_else(|| id.to_string())
+                        })
+                        .unwrap_or_else(|| aurora_i18n::tr!("import-no-map").into()),
+                    );
+                }
+                ui.add(egui::Label::new(RichText::new(&cached.2).small().color(p.muted)).truncate())
+                    .on_hover_text(&cached.2);
+                ui.horizontal_wrapped(|ui| match slot {
+                    0 => {
+                        ui.label(aurora_i18n::tr!("build-ui-texture-tint"));
+                        crate::imports::ui::factor_swatch(ui, p, "base_factor", &mut value.base_color_factor, true);
+                        scalar(ui, aurora_i18n::tr!("common-alpha"), &mut value.base_color_factor[3]);
+                    }
+                    2 => {
+                        scalar(ui, aurora_i18n::tr!("import-metallic"), &mut value.metallic_factor);
+                        scalar(ui, aurora_i18n::tr!("import-roughness"), &mut value.roughness_factor);
+                    }
+                    3 => {
+                        ui.label(aurora_i18n::tr!("build-ui-texture-tint"));
+                        crate::imports::ui::factor_swatch(ui, p, "emissive_factor", &mut value.emissive_factor, false);
+                    }
+                    _ => {}
+                });
+                if slot == 0 {
+                    ui.horizontal_wrapped(|ui| {
+                        egui::ComboBox::from_id_salt("alpha_mode")
+                            .width(120.0)
+                            .selected_text(alpha_label(value.alpha_mode))
+                            .show_ui(ui, |ui| {
+                                for mode in [AlphaMode::Opaque, AlphaMode::Blend, AlphaMode::Mask] {
+                                    ui.selectable_value(&mut value.alpha_mode, mode, alpha_label(mode));
+                                }
+                            })
+                            .response
+                            .on_hover_text(aurora_i18n::tr!("import-alpha-mode"));
+                        if value.alpha_mode == AlphaMode::Mask {
+                            scalar(ui, aurora_i18n::tr!("import-alpha-cutoff-short"), &mut value.alpha_cutoff);
+                        }
+                    });
+                }
+            });
+        });
+    }
+    fn open_map(&mut self, slot: usize, map: Option<Uuid>) {
+        self.picker.open_with_defaults(map_label(slot), map.unwrap_or_default(), None, true);
+        self.map_slot = Some(slot);
     }
     pub fn show_picker(
         &mut self,
