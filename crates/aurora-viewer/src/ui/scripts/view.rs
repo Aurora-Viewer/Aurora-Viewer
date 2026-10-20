@@ -475,7 +475,11 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                 let insensitive = e.tools.search.insensitive;
                 let color_editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
                 let editable = color_editable && !e.colors.active();
-                egui::ScrollArea::both()
+                let mut scroll = egui::ScrollArea::new([!settings.word_wrap, true]);
+                if settings.word_wrap {
+                    scroll = scroll.horizontal_scroll_offset(0.0);
+                }
+                scroll
                     .id_salt((id, "source"))
                     .auto_shrink([false, false])
                     .max_height(height)
@@ -483,8 +487,10 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                         ui.horizontal_top(|ui| {
                             let (gutter, _) = ui.allocate_exact_size(Vec2::new(56.0, 1.0), egui::Sense::hover());
                             let interactive = e.loaded && (e.can_read || !e.source.is_empty());
-                            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _wrap: f32| {
+                            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
                                 let mut job = e.highlighter.custom(text.as_str(), p, font.clone(), settings, &query, insensitive);
+                                // panel_script_ed.xml enables wrapping; only the visual rows change.
+                                job.wrap.max_width = if settings.word_wrap { wrap } else { f32::INFINITY };
                                 e.folding.sync(text.as_str());
                                 e.folding.layout(&mut job);
                                 ui.fonts_mut(|f| f.layout_job(job))
@@ -559,12 +565,13 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             let painter = ui.painter().with_clip_rect(clip);
                             painter.rect_filled(clip, 0.0, settings.color(ColorRole::Background, p));
                             let mut line = 0;
+                            let mut line_start = true;
                             for row in &output.galley.rows {
                                 let y = output.galley_pos.y + row.pos.y;
                                 if y > clip.bottom() {
                                     break;
                                 }
-                                if row.height() >= 1.0 && y + row.height() >= clip.top() {
+                                if line_start && row.height() >= 1.0 && y + row.height() >= clip.top() {
                                     painter.text(
                                         egui::pos2(left + 50.0, y),
                                         egui::Align2::RIGHT_TOP,
@@ -580,6 +587,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                 if row.ends_with_newline {
                                     line += 1;
                                 }
+                                line_start = row.ends_with_newline;
                             }
                             painter.line_segment(
                                 [egui::pos2(left + 55.0, clip.top()), egui::pos2(left + 55.0, clip.bottom())],
@@ -871,6 +879,97 @@ fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSett
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_wrap_reflows_without_changing_source_selection_or_line_numbers() {
+        use crate::theme::Theme;
+        use aurora_net::scripts::ScriptTarget;
+        use uuid::Uuid;
+
+        let original = format!(
+            "// {}\nstring value = \"{}\";\nllOwnerSay(value);",
+            "é long comment ".repeat(12),
+            "x".repeat(140)
+        );
+        for (object, editable, processed) in [(false, true, false), (true, true, false), (false, false, false), (true, true, true)] {
+            let ctx = egui::Context::default();
+            let theme = Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let target = ScriptTarget {
+                object: if object { Uuid::from_u128(9) } else { Uuid::nil() },
+                item: Uuid::from_u128(10),
+            };
+            let mut editors = super::super::Editors::default();
+            let request = editors.open(target, "Wrapping".into(), true, editable).expect("load");
+            editors.loaded(request, target, Ok(original.clone()));
+            let e = &mut editors.documents[0];
+            e.tools.reset_history = false;
+            e.tools.processed = processed;
+            e.tools.processed_source.clone_from(&original);
+            let id = Id::new("wrapping_source");
+            let text_id = visible_id(id, processed);
+            editing::select(&ctx, text_id, 3..12, true);
+            let selection = editing::cursor(&ctx, text_id);
+            let mut narrow_rows = 0;
+            for (wrap, width) in [(false, 320.0), (true, 320.0), (true, 540.0), (false, 320.0), (true, 320.0)] {
+                let settings = ScriptSettings {
+                    word_wrap: wrap,
+                    ..Default::default()
+                };
+                let mut frame = || {
+                    ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(width, 900.0))),
+                            focused: true,
+                            ..Default::default()
+                        },
+                        |ui| source(ui, &p, e, id, &settings, 800.0),
+                    )
+                };
+                for _ in 0..2 {
+                    frame().textures_delta.clear();
+                }
+                let mut output = frame();
+                let texts: Vec<_> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::epaint::Shape::Text(text) => Some(text),
+                        _ => None,
+                    })
+                    .collect();
+                let galley = &texts
+                    .iter()
+                    .find(|text| text.galley.job.text == original)
+                    .expect("source galley")
+                    .galley;
+                if wrap {
+                    assert!(galley.size().x <= width - 64.0, "wrapped width: {:?} / {width}", galley.size());
+                    assert!(galley.rows.len() > 3);
+                    if width == 320.0 {
+                        narrow_rows = galley.rows.len();
+                    } else {
+                        assert!(galley.rows.len() < narrow_rows, "resizing must reflow the source");
+                    }
+                } else {
+                    assert_eq!(galley.rows.len(), 3);
+                    assert!(galley.size().x > width);
+                }
+                let numbers: Vec<_> = texts.iter().filter_map(|text| text.galley.job.text.parse::<usize>().ok()).collect();
+                assert_eq!(numbers, [0, 1, 2], "one number per source line, never on a continuation");
+                assert_eq!(
+                    editing::cursor(&ctx, text_id),
+                    selection,
+                    "wrap={wrap}, width={width}, editable={editable}, processed={processed}"
+                );
+                assert_eq!(e.source, original);
+                assert!(!e.dirty());
+                output.textures_delta.clear();
+            }
+        }
+    }
+
     #[test]
     fn resizing_fills_the_editor_without_painting_the_gutter_over_the_footer() {
         use crate::theme::Theme;

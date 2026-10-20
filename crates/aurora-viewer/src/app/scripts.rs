@@ -41,6 +41,17 @@ default
 }
 "#;
 
+const WORD_WRAP_DEMO_SOURCE: &str = r#"// A long comment stays readable when the editor is resized: each continuation belongs to the same source line, and saving or copying keeps the original text exactly as written.
+string message = "This long string wraps visually inside the script editor without inserting any newline into the script or changing the string sent to nearby chat.";
+default
+{
+    state_entry()
+    {
+        llSay(PUBLIC_CHANNEL, message);
+    }
+}
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -161,9 +172,15 @@ impl App {
                 | "multiline-outdent"
                 | "folding"
                 | "object-folding"
+                | "word-wrap"
+                | "no-word-wrap"
+                | "word-wrap-preferences"
         );
         if self.frame_count == 280 {
             self.panels.perf = false;
+            if matches!(mode.as_str(), "word-wrap" | "no-word-wrap" | "word-wrap-preferences") {
+                self.settings.script_editor.word_wrap = mode != "no-word-wrap";
+            }
             if matches!(mode.as_str(), "colors" | "color-picker" | "color-accept" | "color-cancel") {
                 self.world.notifications.list.clear();
             }
@@ -205,6 +222,8 @@ impl App {
                         target,
                         if matches!(mode.as_str(), "colors" | "color-picker" | "color-accept" | "color-cancel") {
                             COLORS_DEMO_SOURCE
+                        } else if matches!(mode.as_str(), "word-wrap" | "no-word-wrap" | "word-wrap-preferences") {
+                            WORD_WRAP_DEMO_SOURCE
                         } else {
                             SYNTAX_DEMO_SOURCE
                         }
@@ -286,7 +305,14 @@ impl App {
         if self.frame_count == 320
             && matches!(
                 mode.as_str(),
-                "search" | "preferences" | "help" | "preprocessor" | "processed" | "object-preprocessor" | "preprocessor-error"
+                "search"
+                    | "preferences"
+                    | "word-wrap-preferences"
+                    | "help"
+                    | "preprocessor"
+                    | "processed"
+                    | "object-preprocessor"
+                    | "preprocessor-error"
             )
             && let Some(target) = self.script_editors.documents.first().map(|e| e.target)
         {

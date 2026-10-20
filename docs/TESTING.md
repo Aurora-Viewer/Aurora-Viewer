@@ -847,7 +847,7 @@ tests compare the complete physical trajectories at 30–500 fps, variable
 rates, the smoothing between steps, the anchoring, the change of origin and
 the catch-up after a long frame.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`**:
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`**:
 opens a script editor from the inventory, the contents of an object or both
 at frame 280. `save` and `object-save` save a modified source then close and
 reopen the editor at frame 360 with a masked asset UUID, to check the
@@ -894,6 +894,12 @@ block. The Edit menu contains Collapse all / Expand all. The source stays
 identical, including when saving or copying; searching and navigating to a
 hidden character reopen its block. The blocks of strings and comments have
 no arrow.
+`word-wrap` shows a long comment and string wrapping to the editor width;
+`no-word-wrap` shows the same source with horizontal scrolling. Resizing or
+switching "Wrap long lines" in File > Script editor preferences must leave
+the source and line numbers unchanged. The preference is on by default,
+including for profiles saved before it existed. `word-wrap-preferences`
+also opens these preferences for an immediate toggle and localisation check.
 `experience` chooses and saves the simulated experience of an object script;
 `experience-save` then closes the editor and reopens it with this
 association. The other object demos start with "None". The selector also
