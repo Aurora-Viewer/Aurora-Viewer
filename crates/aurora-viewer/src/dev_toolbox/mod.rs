@@ -8,6 +8,7 @@
 //! `app/dev_toolbox.rs`; the agents' guide is docs/DEV_TOOLBOX.md.
 
 pub mod anonymize;
+pub mod legend;
 pub mod tools;
 
 /// GitHub refuses a comment longer than this (characters): a longer copy

@@ -20,9 +20,21 @@ const COLUMNS: usize = 4;
 const TOOL_H: f32 = 48.0;
 const GAP: f32 = 6.0;
 /// Width of "Send a diagnostic".
-const SEND_W: f32 = 390.0;
+const SEND_W: f32 = 420.0;
+/// The Copy button's narrowest beside Save and Log; narrower, they go on a
+/// row of their own.
+const COPY_MIN_W: f32 = 120.0;
+/// Room around a button's content (`widgets::action_button_keyed_content`).
+const KEYED_PAD: f32 = 24.0;
 /// "Copied" stays on the button this long.
 const COPIED_FOR: Duration = Duration::from_secs(2);
+/// The window's default place: under the top bar, above the bottom one.
+const TOP: f32 = 56.0;
+const BOTTOM: f32 = 64.0;
+const SIDE: f32 = 20.0;
+/// Under this height, "Send a diagnostic" gives its options' hints on
+/// hover, so that the preview and its buttons keep their room.
+const SEND_TIGHT_H: f32 = 460.0;
 
 /// What the app gives the window each frame.
 #[derive(Default)]
@@ -155,13 +167,15 @@ pub fn show(
     view: &View,
     open: &mut bool,
 ) -> (Vec<Action>, bool) {
+    // between the top bar and the bottom one, whatever the screen
     let screen = ctx.content_rect();
-    let size = Vec2::new(1320.0, 780.0).min(screen.size() - Vec2::splat(40.0));
-    let pos = Pos2::new(screen.center().x - size.x / 2.0, screen.top() + 60.0);
+    let room = Vec2::new(screen.width() - 2.0 * SIDE, screen.height() - TOP - BOTTOM);
+    let size = Vec2::new(1440.0, 900.0).min(room);
+    let pos = Pos2::new(screen.center().x - size.x / 2.0, screen.top() + TOP);
     let mut floater = widgets::Floater::new(WINDOW, tr!("dev-toolbox-title"), pos, size)
         .help(tr!("dev-toolbox-help"))
         .steady_size();
-    floater.min_size = Vec2::new(900.0, 560.0);
+    floater.min_size = Vec2::new(760.0, 480.0).min(room);
     floater.show(ctx, p, open, |ui| body(ui, p, st, layout, view));
     let changed = match st.pending.take() {
         Some(edit) => {
@@ -610,7 +624,10 @@ fn send_panel(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
         ui.label(RichText::new(tools::label(id)).size(14.0).strong().color(p.ink));
         ui.label(RichText::new(id).size(10.0).color(p.muted));
     });
-    ui.add(egui::Label::new(RichText::new(what(id)).size(12.0).color(p.muted)).wrap());
+    let tight = ui.available_height() < SEND_TIGHT_H;
+    if !tight {
+        ui.add(egui::Label::new(RichText::new(what(id)).size(12.0).color(p.muted)).wrap());
+    }
     ui.add_space(6.0);
     option_switch(
         ui,
@@ -618,6 +635,7 @@ fn send_panel(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
         &mut st.hide_names,
         tr!("dev-toolbox-hide-names"),
         tr!("dev-toolbox-hide-names-hint"),
+        tight,
     );
     option_switch(
         ui,
@@ -625,6 +643,7 @@ fn send_panel(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
         &mut st.with_system,
         tr!("dev-toolbox-with-system"),
         tr!("dev-toolbox-with-system-hint"),
+        tight,
     );
     ui.add_space(6.0);
     let text = view.preview.as_deref();
@@ -638,59 +657,25 @@ fn send_panel(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
             });
         }
     });
-    // room left for the fit line, the buttons and the note under the box
-    let box_h = (ui.available_height() - 96.0).max(80.0);
-    egui::Frame::new()
-        .fill(p.bar)
-        .corner_radius(ui.visuals().widgets.inactive.corner_radius)
-        .inner_margin(egui::Margin::symmetric(8, 6))
-        .show(ui, |ui| {
-            ui.set_min_height(box_h);
-            egui::ScrollArea::both()
-                .id_salt("dev_toolbox_preview")
-                .auto_shrink([false, false])
-                .max_height(box_h)
-                .show(ui, |ui| match text {
-                    Some(text) => {
-                        let mut lines = text.lines();
-                        if let Some(first) = lines.next() {
-                            ui.label(RichText::new(first).font(FontId::monospace(11.0)).color(p.violet_light));
-                        }
-                        let rest: String = lines.take(400).collect::<Vec<_>>().join("\n");
-                        ui.add(egui::Label::new(RichText::new(rest).font(FontId::monospace(11.0)).color(p.ink)).extend());
-                    }
-                    None => {
-                        let note = if view.waiting {
-                            tr!("dev-toolbox-waiting")
-                        } else {
-                            tr!("dev-toolbox-press-hint")
-                        };
-                        ui.label(RichText::new(note).size(12.0).color(p.muted));
-                    }
-                });
-        });
-    let fits = text.is_none_or(crate::dev_toolbox::fits_comment);
-    ui.horizontal(|ui| {
-        if fits {
-            widgets::glyph(ui, "check", p.muted, 12.0);
-            ui.label(RichText::new(tr!("dev-toolbox-fits")).size(11.0).color(p.muted));
-        } else {
-            widgets::glyph(ui, "alert-triangle-filled", p.warn, 12.0);
-            ui.label(RichText::new(tr!("dev-toolbox-too-long")).size(11.0).color(p.warn));
-        }
-    });
-    ui.add_space(4.0);
+    // the note, the buttons and the fit line are laid from the bottom up:
+    // they always show, and the preview takes the height left above them
+    let save_w = widgets::action_button_keyed_content(ui, "download-filled", tr!("dev-toolbox-save"), None) + KEYED_PAD;
+    let log_w = widgets::action_button_keyed_content(ui, "file-text-filled", tr!("dev-toolbox-log"), None) + KEYED_PAD;
+    let gap = ui.spacing().item_spacing.x;
+    let two_rows = ui.available_width() - save_w - log_w - 2.0 * gap < COPY_MIN_W;
     let ready = text.is_some();
-    ui.horizontal(|ui| {
-        let copied = st.copied_at.is_some_and(|t| t.elapsed() < COPIED_FOR);
-        let copy_label = if copied {
-            tr!("dev-toolbox-copied")
-        } else {
-            tr!("dev-toolbox-copy")
-        };
-        let save_w = 150.0;
-        let log_w = 70.0;
-        let copy_w = (ui.available_width() - save_w - log_w - 2.0 * ui.spacing().item_spacing.x).max(80.0);
+    let copied = st.copied_at.is_some_and(|t| t.elapsed() < COPIED_FOR);
+    let copy_label = if copied {
+        tr!("dev-toolbox-copied")
+    } else {
+        tr!("dev-toolbox-copy")
+    };
+    let copy_w = if two_rows {
+        ui.available_width()
+    } else {
+        ui.available_width() - save_w - log_w - 2.0 * gap
+    };
+    let copy = |ui: &mut egui::Ui, st: &mut DevToolboxUi| {
         if widgets::action_button_if(
             ui,
             p,
@@ -705,44 +690,99 @@ fn send_panel(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
             st.copied_at = Some(Instant::now());
             st.actions.push(Action::Copy);
         }
-        if widgets::action_button_if(
-            ui,
-            p,
-            "download-filled",
-            tr!("dev-toolbox-save"),
-            widgets::ActionKind::Flat,
-            Vec2::new(save_w, 30.0),
-            ready,
-        )
-        .clicked()
-        {
-            st.actions.push(Action::Save);
+    };
+    let fits = text.is_none_or(crate::dev_toolbox::fits_comment);
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+        ui.label(RichText::new(tr!("dev-toolbox-nothing-sent")).size(11.0).color(p.muted_dim));
+        ui.horizontal(|ui| {
+            if !two_rows {
+                copy(ui, st);
+            }
+            if widgets::action_button_if(
+                ui,
+                p,
+                "download-filled",
+                tr!("dev-toolbox-save"),
+                widgets::ActionKind::Flat,
+                Vec2::new(save_w, 30.0),
+                ready,
+            )
+            .clicked()
+            {
+                st.actions.push(Action::Save);
+            }
+            if widgets::action_button_if(
+                ui,
+                p,
+                "file-text-filled",
+                tr!("dev-toolbox-log"),
+                widgets::ActionKind::Flat,
+                Vec2::new(log_w, 30.0),
+                ready,
+            )
+            .on_hover_text(tr!("dev-toolbox-log-help"))
+            .clicked()
+            {
+                st.actions.push(Action::Log);
+            }
+        });
+        if two_rows {
+            copy(ui, st);
         }
-        if widgets::action_button_if(
-            ui,
-            p,
-            "file-text-filled",
-            tr!("dev-toolbox-log"),
-            widgets::ActionKind::Flat,
-            Vec2::new(log_w, 30.0),
-            ready,
-        )
-        .on_hover_text(tr!("dev-toolbox-log-help"))
-        .clicked()
-        {
-            st.actions.push(Action::Log);
-        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if fits {
+                widgets::glyph(ui, "check", p.muted, 12.0);
+                ui.label(RichText::new(tr!("dev-toolbox-fits")).size(11.0).color(p.muted));
+            } else {
+                widgets::glyph(ui, "alert-triangle-filled", p.warn, 12.0);
+                ui.label(RichText::new(tr!("dev-toolbox-too-long")).size(11.0).color(p.warn));
+            }
+        });
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            let box_h = (ui.available_height() - 16.0).max(24.0);
+            egui::Frame::new()
+                .fill(p.bar)
+                .corner_radius(ui.visuals().widgets.inactive.corner_radius)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_min_height(box_h);
+                    egui::ScrollArea::both()
+                        .id_salt("dev_toolbox_preview")
+                        .auto_shrink([false, false])
+                        .max_height(box_h)
+                        .show(ui, |ui| match text {
+                            Some(text) => {
+                                let mut lines = text.lines();
+                                if let Some(first) = lines.next() {
+                                    ui.label(RichText::new(first).font(FontId::monospace(11.0)).color(p.violet_light));
+                                }
+                                let rest: String = lines.take(400).collect::<Vec<_>>().join("\n");
+                                ui.add(egui::Label::new(RichText::new(rest).font(FontId::monospace(11.0)).color(p.ink)).extend());
+                            }
+                            None => {
+                                let note = if view.waiting {
+                                    tr!("dev-toolbox-waiting")
+                                } else {
+                                    tr!("dev-toolbox-press-hint")
+                                };
+                                ui.label(RichText::new(note).size(12.0).color(p.muted));
+                            }
+                        });
+                });
+        });
     });
-    ui.label(RichText::new(tr!("dev-toolbox-nothing-sent")).size(11.0).color(p.muted_dim));
 }
 
-/// A switch with its label and, below, its hint.
-fn option_switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: &str, hint: &str) {
+/// A switch with its label and, below, its hint (on hover when `tight`).
+fn option_switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: &str, hint: &str, tight: bool) {
     ui.horizontal(|ui| {
-        widgets::switch(ui, p, on);
+        widgets::switch(ui, p, on).on_hover_text(hint);
         ui.vertical(|ui| {
-            ui.label(RichText::new(label).size(12.0).color(p.ink));
-            ui.add(egui::Label::new(RichText::new(hint).size(11.0).color(p.muted)).wrap());
+            ui.label(RichText::new(label).size(12.0).color(p.ink)).on_hover_text(hint);
+            if !tight {
+                ui.add(egui::Label::new(RichText::new(hint).size(11.0).color(p.muted)).wrap());
+            }
         });
     });
 }
@@ -752,34 +792,32 @@ fn live_strip(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
     widgets::divider(ui, p);
     ui.horizontal(|ui| {
         ui.label(RichText::new(tr!("dev-toolbox-live")).size(12.0).strong().color(p.ink));
-        let link = tr!("dev-toolbox-see-warnings");
-        let link_w = ui
-            .painter()
-            .layout_no_wrap(link.to_owned(), FontId::proportional(12.0), p.ink)
-            .size()
-            .x
-            + 30.0;
-        let w = (ui.available_width() - link_w - ui.spacing().item_spacing.x).max(60.0);
-        ui.allocate_ui(Vec2::new(w, 36.0), |ui| {
-            ui.set_width(w);
-            ui.vertical(|ui| {
-                if view.warnings.is_empty() {
-                    ui.label(RichText::new(tr!("dev-toolbox-no-warning")).size(12.0).color(p.muted));
-                }
-                for (clock, error, text) in view.warnings.iter().rev().take(2).rev() {
-                    ui.horizontal(|ui| {
-                        let mark = if *error { p.danger } else { p.warn };
-                        ui.label(RichText::new("!").size(12.0).strong().color(mark));
-                        ui.label(RichText::new(clock).size(12.0).color(p.muted_dim));
-                        ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.ink)).truncate());
+        // the button first, on the right edge: the warnings take what is left
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if widgets::flat_button(ui, p, tr!("dev-toolbox-see-warnings")).clicked() {
+                st.selected = "J3";
+                st.copied_at = None;
+                st.actions.push(Action::Press("J3"));
+            }
+            let w = (ui.available_width() - ui.spacing().item_spacing.x).max(60.0);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.allocate_ui(Vec2::new(w, 36.0), |ui| {
+                    ui.set_width(w);
+                    ui.vertical(|ui| {
+                        if view.warnings.is_empty() {
+                            ui.label(RichText::new(tr!("dev-toolbox-no-warning")).size(12.0).color(p.muted));
+                        }
+                        for (clock, error, text) in view.warnings.iter().rev().take(2).rev() {
+                            ui.horizontal(|ui| {
+                                let mark = if *error { p.danger } else { p.warn };
+                                ui.label(RichText::new("!").size(12.0).strong().color(mark));
+                                ui.label(RichText::new(clock).size(12.0).color(p.muted_dim));
+                                ui.add(egui::Label::new(RichText::new(text).size(12.0).color(p.ink)).truncate());
+                            });
+                        }
                     });
-                }
+                });
             });
         });
-        if widgets::flat_button(ui, p, link).clicked() {
-            st.selected = "J3";
-            st.copied_at = None;
-            st.actions.push(Action::Press("J3"));
-        }
     });
 }

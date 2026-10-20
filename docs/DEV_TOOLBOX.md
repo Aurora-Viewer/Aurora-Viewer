@@ -65,7 +65,9 @@ How to read a copy:
   triangles at the level of detail, no geometry). Faces of a prim that read
   the same are written once with their indices (`[0-3,6 … -> Mask]`), and
   prims that read the same once with how many more there are
-  (`prim <id> and 12 more alike …`). Whole prims left out for
+  (`prim <id> and 12 more alike …`). In the copy (not in the log), an id
+  named more than once is written `~n`: the legend at the end gives it
+  with its loading state. Whole prims left out for
   a texture-entry alpha of 0 usually mean a body HUD hid them on purpose;
   `-> Blend` on a part meant to be opaque points at the alpha mode or the
   texture's alpha class; a glTF material id on a `403` line is an asset the

@@ -609,8 +609,11 @@ impl Scene {
                     "no triangles at this level of detail"
                 }
                 Some(true) if te_invisible(o, fi) => {
+                    // its texture and material do not show: the alpha only
+                    // (0.004 is the smallest one a creator can set)
                     zero += 1;
-                    "texture-entry alpha 0"
+                    faces.push((fi, format!("left out: texture-entry alpha {:.3}", tf.color[3])));
+                    continue;
                 }
                 Some(true) => "not built",
             };
@@ -629,17 +632,32 @@ impl Scene {
                 ),
             ));
         }
-        let drawn = if g.faces.is_empty() {
+        // geometry and counts only when they say something
+        let geometry = match self.geom_state(g) {
+            "ready" => String::new(),
+            state => format!(", geometry {state}"),
+        };
+        let head = format!("({kind}, lod {}{geometry})", g.lod);
+        if count > 0 && zero == count {
+            // a prim a body HUD hid whole: one short line, merged with the
+            // others alike (see `merge_alike`)
+            return format!("{head}: all {count} faces left out for texture-entry alpha 0");
+        }
+        let mut counts = vec![if g.faces.is_empty() {
             "no faces drawn".to_string()
         } else {
             format!("{}/{count} faces drawn", g.faces.len())
-        };
-        format!(
-            "({kind}, lod {}, geometry {}): {drawn}, {zero} left out for texture-entry alpha 0, {none} without triangles, {hidden} hidden:{}",
-            g.lod,
-            self.geom_state(g),
-            grouped_faces(&faces)
-        )
+        }];
+        for (n, what) in [
+            (zero, "left out for texture-entry alpha 0"),
+            (none, "without triangles"),
+            (hidden, "hidden"),
+        ] {
+            if n > 0 {
+                counts.push(format!("{n} {what}"));
+            }
+        }
+        format!("{head}: {}:{}", counts.join(", "), grouped_faces(&faces))
     }
 
     /// A drawn face: texture entry as received, what the draw record holds,

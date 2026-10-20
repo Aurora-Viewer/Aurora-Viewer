@@ -458,7 +458,12 @@ impl App {
                 rest.push('\n');
             }
         }
-        rest.push_str(body);
+        // the faces of a mesh body name the same textures again and again
+        if matches!(id, "J1" | "J2") {
+            rest.push_str(&dev_toolbox::legend::shorten(body));
+        } else {
+            rest.push_str(body);
+        }
         // the header names the build: only what follows is anonymised
         if self.dev_toolbox.hide_names {
             rest = anonymize::anonymize(&rest, &self.residents(), Some(self.world.agent_id));
