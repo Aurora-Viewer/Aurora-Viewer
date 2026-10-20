@@ -631,13 +631,23 @@ pub fn edit_parent(world: &World, idx: usize, now: Instant) -> Option<(Vec3, Qua
     }
 }
 
-/// Root and all its children (recursively).
+/// Editable linkset, excluding seated avatars and everything they wear.
+/// LLViewerObject::addThisAndNonJointChildren (indra/newview/llviewerobject.cpp).
 pub fn family(world: &World, root: usize) -> Vec<usize> {
     let mut out = vec![root];
     let mut i = 0;
     while i < out.len() && out.len() < 4096 {
-        if let Some(o) = world.objects.get(out[i]) {
-            out.extend(world.objects.children_of(&o.key).iter().copied());
+        if let Some(o) = world.objects.get(out[i])
+            && !o.is_avatar()
+        {
+            out.extend(
+                world
+                    .objects
+                    .children_of(&o.key)
+                    .iter()
+                    .copied()
+                    .filter(|&child| world.objects.get(child).is_some_and(|o| !o.is_avatar())),
+            );
         }
         i += 1;
     }

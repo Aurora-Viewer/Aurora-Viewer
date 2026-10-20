@@ -22,6 +22,79 @@ fn selected(tool: &BuildTool) -> Vec<u32> {
     tool.selection.iter().map(|key| key.local_id).collect()
 }
 
+pub(super) fn seated_fixture(on_child: bool) -> (World, BuildTool, BuildSettings) {
+    let (mut world, tool, settings) = fixture();
+    for event in crate::demo::worn::events()
+        .into_iter()
+        .chain(crate::demo::hud::events())
+        .chain(crate::demo::sit_events(250))
+        .chain(crate::demo::sit_events(300))
+    {
+        let event = match event {
+            NetEvent::ObjectUpdates { handle, mut objects } => {
+                if on_child {
+                    for object in &mut objects {
+                        if object.full_id == world.agent_id {
+                            object.parent_id = 951;
+                        }
+                    }
+                }
+                NetEvent::ObjectUpdates { handle, objects }
+            }
+            event => event,
+        };
+        world.apply(event);
+    }
+    (world, tool, settings)
+}
+
+#[test]
+fn seated_linkset_selection_excludes_avatars_and_their_body_and_hud_attachments() {
+    for on_child in [false, true] {
+        let (mut world, mut tool, mut settings) = seated_fixture(on_child);
+        let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+        let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+        let root_key = world.objects.get(root).unwrap().key;
+        let child_key = world.objects.get(child).unwrap().key;
+        let now = Instant::now();
+        assert_eq!(family(&world, root), [root, child]);
+        assert_eq!(select_type(&world, root), SelectType::World);
+        assert_eq!(select_type(&world, child), SelectType::World);
+        for clicked in [root, child] {
+            tool.click_select(&mut world, &settings, Some(clicked), false);
+            tool.prune(&world, now);
+            assert_eq!(tool.selection, [root_key]);
+            assert_eq!(tool.highlighted(&world), [(root, true), (child, false)]);
+            assert_eq!(tool.linkset_prims(&world), [root, child]);
+            let bounds = tool.bounds(&world, now).unwrap();
+            assert!(bounds.half.max_element() <= 0.51, "Avatar and HUD bounds cannot enlarge the seat");
+            tool.set_edit_linked(&mut world, &mut settings, true);
+            assert_eq!(tool.selection.len(), 2);
+            assert!(tool.selection.contains(&root_key) && tool.selection.contains(&child_key));
+            tool.click_select(&mut world, &settings, Some(child), false);
+            assert_eq!(tool.selection, [child_key]);
+            tool.set_edit_linked(&mut world, &mut settings, false);
+            assert_eq!(tool.selection, [root_key]);
+            tool.deselect_all(&world);
+        }
+        assert!(tool.select_for_menu(&mut world, &settings, root));
+        tool.deselect_all(&world);
+        for command in &tool.out {
+            if let NetCommand::Build(BuildCmd::Select { local_ids, .. } | BuildCmd::Deselect { local_ids, .. }) = command {
+                assert!(
+                    local_ids.iter().all(|id| [950, 951].contains(id)),
+                    "Unexpected selected occupant: {local_ids:?}"
+                );
+            }
+        }
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        assert!(!selectable(&world, avatar));
+        let backpack = world.objects.index_of_uuid(&crate::demo::worn::item_id()).unwrap();
+        assert!(selectable(&world, backpack));
+        assert_eq!(select_type(&world, backpack), SelectType::Attachment);
+    }
+}
+
 #[test]
 fn reflection_probe_selection_toggle_controls_rectangles_and_resets_at_startup() {
     let (mut world, mut tool, mut settings) = fixture();

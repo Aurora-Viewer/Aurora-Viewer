@@ -994,6 +994,15 @@ Denied rights leave the object movable but its surfaces/properties read-only.
 The variant `mode,object:<local id>[,part,dx,dy]` selects an object of the
 demo without fixed click coordinates.
 
+**Seated object editing:** combine `AURORA_DEMO_CAMERA=sit`,
+`AURORA_DEMO_WORN=1` and `AURORA_DEMO_BUILD=linked-click-ready,object:950` (whole seat) or
+`linked-click,object:950` (root in linked editing); capture at frame 690,
+before the avatar stands at 700. Only the seat's prims are outlined (two in
+whole-object mode, one for its linked root), without the avatar or backpack. The selection
+regressions also add HUDs and seating on a child prim; the transform regressions
+cover move/rotate/stretch on the root and child in both selection modes,
+checking occupant/attachment local coordinates and outgoing transform targets.
+
 **Mesh Shape inspector:** `AURORA_DEMO_BUILD=mesh-inspector,object:99621`
 opens the native Shape section on a mesh with four different generated LODs.
 The counts come from its actual geometries. Capture after frame 710.
