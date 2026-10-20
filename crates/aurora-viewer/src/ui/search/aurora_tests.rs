@@ -6,7 +6,7 @@ use super::aurora::Kind;
 use super::{SearchAction, SearchUi, WebEnv};
 use crate::ui::place_details::Ctx;
 use crate::world::World;
-use crate::world::search::{Key, SearchSettings, Status, Tab};
+use crate::world::search::{Key, RowIcon, SearchSettings, Status, Tab};
 use egui::{Pos2, Rect, Shape, Vec2};
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -212,6 +212,29 @@ fn all_then_a_chip_rows_toggles_and_the_web() {
     assert_eq!(w.st.aurora_kind(), Kind::Web);
     assert_eq!(w.st.web_query(false), "aurora");
     assert_eq!(w.st.web_query(true), "", "the Legacy tab opens the page without a query");
+}
+
+#[test]
+fn a_place_is_for_sale_by_its_row_not_by_its_parcel_price() {
+    let mut world = world();
+    let mut w = Window::new("aurora");
+    apply(&mut world, w.st.aurora_requests(&w.settings).into_iter().map(SearchAction::Find).collect());
+    w.click(&mut world, aurora_i18n::tr!("common-places"));
+    w.settle(&mut world);
+    let list = world.search.list(Tab::Places).expect("places").clone();
+    let selected = list.sorted()[0].clone();
+    w.click(&mut world, &selected.name);
+    // ParcelInfoReply keeps the last asking price of parcels no longer for
+    // sale (L$10000 for one never sold)
+    for row in &list.rows {
+        let Key::Id(id) = row.key else { panic!("a parcel") };
+        world.profiles.parcels.get_mut(&id).expect("asked").sale_price = 10_000;
+    }
+    let texts = w.settle(&mut world);
+    let for_sale = |r: &crate::world::search::Row| r.icon == RowIcon::ForSale;
+    let expected = list.rows.iter().filter(|r| for_sale(r)).count() + usize::from(for_sale(&selected));
+    let drawn = texts.iter().filter(|(_, t)| t == aurora_i18n::tr!("search-aurora-for-sale")).count();
+    assert_eq!(drawn, expected, "only the rows the search reply marked for sale, and their details");
 }
 
 #[test]
