@@ -21,6 +21,27 @@ fn fixture() -> (World, Uuid, TaskItem) {
 }
 
 #[test]
+fn notecard_description_updates_task_metadata_without_replacing_the_asset_or_permissions() {
+    let (world, object, mut item) = fixture();
+    item.asset_type = 7;
+    item.inv_type = 7;
+    item.asset_id = Uuid::from_u128(99002);
+    item.name = "Instructions".into();
+    item.owner_mask |= perm::MODIFY;
+    let idx = world.objects.index_of_uuid(&object).expect("object");
+    let mut tool = BuildTool::default();
+    tool.contents.objects.entry(object).or_default().items.push(item.clone());
+    tool.describe_item(&world, idx, item.item_id, "Updated description");
+    assert_eq!(tool.contents.objects[&object].items[0].description, "Updated description");
+    assert!(
+        matches!(&tool.out[..], [aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::UpdateTaskInventory { item: updated, .. })]
+        if updated.item_id == item.item_id && updated.asset_id == item.asset_id
+            && updated.name == item.name && updated.owner_mask == item.owner_mask
+            && updated.description == "Updated description")
+    );
+}
+
+#[test]
 fn owner_can_copy_without_transfer_and_move_without_copy_but_foreign_items_need_both() {
     let (world, object, mut item) = fixture();
     item.owner_mask = perm::COPY;

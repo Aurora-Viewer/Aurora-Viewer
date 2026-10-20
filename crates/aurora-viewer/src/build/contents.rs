@@ -216,6 +216,23 @@ impl BuildTool {
         self.contents_changed(object_id);
     }
 
+    /// LLPreview::onCommit (indra/newview/llpreview.cpp): update metadata
+    /// through UpdateTaskInventory, keeping the notecard asset unchanged.
+    pub fn describe_item(&mut self, world: &World, idx: usize, item_id: Uuid, description: &str) {
+        let Some(o) = world.objects.get(idx) else { return };
+        let (handle, local_id, object_id) = (o.key.region, o.key.local_id, o.full_id);
+        let Some(inv) = self.contents.objects.get_mut(&object_id) else {
+            return;
+        };
+        let Some(item) = inv.items.iter_mut().find(|i| i.item_id == item_id) else {
+            return;
+        };
+        item.description = description.chars().filter(|c| *c != '|').take(127).collect();
+        let item = Box::new(item.clone());
+        self.send(BuildCmd::UpdateTaskInventory { handle, local_id, item });
+        self.contents_changed(object_id);
+    }
+
     /// MoveTaskInventory into the agent's inventory (drag out of the
     /// object: LLViewerObject::moveInventory). `folder`: the destination,
     /// nil for the default folder of the item's type.

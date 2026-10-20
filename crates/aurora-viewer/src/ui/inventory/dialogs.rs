@@ -712,6 +712,9 @@ pub(super) fn preview(
                 }
             }
         } else {
+            if it.asset_type == 7 {
+                notecard_description(ui, inv, st, it, prefs, actions);
+            }
             if it.asset_type == 7 && view.choose(ui, p) {
                 st.notecard_view = Some(view);
                 prefs.notecard_view = view;
@@ -904,6 +907,48 @@ pub(super) fn preview(
             });
         }
     }
+}
+
+/// LLPreview::refreshFromItem / onCommit (indra/newview/llpreview.cpp):
+/// descriptions are item metadata, independent of the notecard asset draft.
+fn notecard_description(
+    ui: &mut egui::Ui,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    it: &aurora_net::inventory::InvItem,
+    prefs: &InventoryPreferences,
+    actions: &mut Vec<InvAction>,
+) {
+    let description = st.preview_description.get_or_insert_with(|| super::document::Description {
+        item: it.id,
+        original: it.desc.clone(),
+        text: it.desc.clone(),
+    });
+    if description.item != it.id || description.text == description.original || description.text == it.desc {
+        description.item = it.id;
+        description.original.clone_from(&it.desc);
+        description.text.clone_from(&it.desc);
+    }
+    let can_edit =
+        rules::mutable(inv, it.id, &prefs.protected) && it.owner_mask & rules::MODIFY != 0 && st.pending.is_none() && !st.save_pending;
+    ui.horizontal(|ui| {
+        ui.label(aurora_i18n::tr!("common-description"));
+        let response = ui.add_enabled(
+            can_edit,
+            egui::TextEdit::singleline(&mut description.text)
+                .id(egui::Id::new(("notecard_description", st.ui_id, it.id)))
+                .interactive(can_edit)
+                .char_limit(127)
+                .desired_width(ui.available_width()),
+        );
+        if can_edit
+            && response.lost_focus()
+            && description.text != it.desc
+            && let Ok(change) = rules::patch(inv, it.id, llsd_map! { "desc" => description.text.clone() })
+        {
+            actions.push(InvAction::Edit(change));
+        }
+    });
 }
 
 fn animation(
@@ -1116,6 +1161,88 @@ mod tests {
         };
         st.load_document(7, true, &Ok(b"Avant".to_vec()));
         (inv, st)
+    }
+
+    #[test]
+    fn notecard_description_commits_metadata_in_every_view_without_saving_the_body() {
+        use aurora_net::inventory::operations::Operation;
+        for view in [NotecardView::Classic, NotecardView::Markdown, NotecardView::Edit] {
+            let ctx = egui::Context::default();
+            let (mut inv, mut st) = note_fixture();
+            let item = st.preview.expect("note");
+            inv.items.get_mut(&item).expect("item").desc = "Original description".into();
+            st.notecard_view = Some(view);
+            for _ in 0..5 {
+                document_frame(&ctx, &inv, &mut st, vec![]);
+            }
+            let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
+            label_center(&output, aurora_i18n::tr!("common-description"));
+            label_center(&output, "Original description");
+            let field = egui::Id::new(("notecard_description", st.ui_id, item));
+            ctx.memory_mut(|memory| memory.request_focus(field));
+            document_frame(&ctx, &inv, &mut st, vec![]);
+            document_frame(&ctx, &inv, &mut st, vec![egui::Event::Text(" revised".into())]);
+            let draft = st.preview_description.as_ref().expect("description").text.clone();
+            assert_ne!(draft, "Original description");
+            let (_, actions) = document_frame(
+                &ctx,
+                &inv,
+                &mut st,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Default::default(),
+                }],
+            );
+            assert!(matches!(&actions[..], [InvAction::Edit(change)]
+                if matches!(&change.operations[..], [Operation::Patch { id, folder: false, body }]
+                    if *id == item && body["desc"].as_str() == draft && body.as_map().expect("patch").len() == 1)));
+            assert!(!st.preview_dirty);
+            assert!(!st.save_pending);
+            assert_eq!(st.preview_text, Some(Ok("Avant".into())));
+            document_frame(&ctx, &inv, &mut st, vec![]);
+            assert_eq!(st.preview_description.as_ref().expect("pending draft").text, draft);
+            inv.items.get_mut(&item).expect("item").desc = draft;
+            document_frame(&ctx, &inv, &mut st, vec![]);
+            inv.items.get_mut(&item).expect("item").desc = "Updated elsewhere".into();
+            document_frame(&ctx, &inv, &mut st, vec![]);
+            assert_eq!(
+                st.preview_description.as_ref().expect("refreshed metadata").text,
+                "Updated elsewhere"
+            );
+        }
+    }
+
+    #[test]
+    fn notecard_description_uses_modify_rights_independently_of_content_copy_rights() {
+        for (mask, protected, pending, allowed) in [
+            (rules::COPY, false, false, false),
+            (rules::MODIFY, false, false, true),
+            (rules::COPY | rules::MODIFY, true, false, false),
+            (rules::COPY | rules::MODIFY, false, true, false),
+        ] {
+            let ctx = egui::Context::default();
+            let (mut inv, mut st) = note_fixture();
+            let item = st.preview.expect("note");
+            inv.items.get_mut(&item).expect("item").owner_mask = mask;
+            inv.items.get_mut(&item).expect("item").desc = "Visible description".into();
+            st.preview_can_edit = false;
+            st.pending = pending.then(Uuid::new_v4);
+            let mut prefs = InventoryPreferences::default();
+            if protected {
+                prefs.protected.insert(item);
+            }
+            for _ in 0..5 {
+                document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![]);
+            }
+            let field = egui::Id::new(("notecard_description", st.ui_id, item));
+            ctx.memory_mut(|memory| memory.request_focus(field));
+            document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![egui::Event::Text(" changed".into())]);
+            let changed = st.preview_description.as_ref().expect("description").text != "Visible description";
+            assert_eq!(changed, allowed, "mask={mask:#x}, protected={protected}, pending={pending}");
+        }
     }
 
     #[test]

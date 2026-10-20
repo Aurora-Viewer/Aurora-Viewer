@@ -4,6 +4,12 @@
 use super::*;
 use aurora_net::inventory::notecard::Notecard;
 
+pub(super) struct Description {
+    pub item: Uuid,
+    pub original: String,
+    pub text: String,
+}
+
 pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec<egui::Event> {
     let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY") else {
         return Vec::new();
@@ -225,6 +231,7 @@ impl InventoryUi {
         self.notecard_markdown = Default::default();
         self.attachment_preview = None;
         self.preview_original.clear();
+        self.preview_description = None;
         self.preview_message.clear();
         self.preview_dirty = false;
         self.save_pending = false;

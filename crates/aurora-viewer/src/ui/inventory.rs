@@ -365,6 +365,7 @@ pub struct InventoryUi {
     notecard_markdown: markdown::Cache,
     pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
+    preview_description: Option<document::Description>,
     pub preview_message: String,
     pub content_save: Option<(Uuid, Vec<u8>, String)>,
     pub close_after_save: bool,

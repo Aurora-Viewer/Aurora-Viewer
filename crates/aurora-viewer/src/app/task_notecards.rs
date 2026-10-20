@@ -167,6 +167,7 @@ impl App {
         let keys: Vec<_> = self.task_notecards.keys().copied().collect();
         let mut saves = Vec::new();
         let mut embedded = Vec::new();
+        let mut descriptions = Vec::new();
         let notecard_view = self.settings.inventory.notecard_view;
         for (object, item) in keys {
             let metadata = self.task_notecard_item(object, item);
@@ -178,6 +179,9 @@ impl App {
                 .is_some_and(|it| it.owner_mask & (rules::COPY | rules::MODIFY) == rules::COPY | rules::MODIFY);
             if let Some(model) = d.inventory.items.get_mut(&item) {
                 model.owner_mask = metadata.as_ref().map_or(0, |it| it.owner_mask);
+                if let Some(metadata) = &metadata {
+                    model.desc.clone_from(&metadata.desc);
+                }
             }
             if d.state.preview_source.is_some() {
                 d.state.preview_can_edit = allowed;
@@ -198,6 +202,15 @@ impl App {
             ) {
                 if let InvAction::SaveContent { text, close, .. } = action {
                     saves.push((object, item, text, close));
+                } else if let InvAction::Edit(change) = action {
+                    for operation in change.operations {
+                        if let aurora_net::inventory::operations::Operation::Patch { id, folder: false, body } = operation
+                            && id == item
+                            && body.has("desc")
+                        {
+                            descriptions.push((object, item, body["desc"].as_str().to_owned()));
+                        }
+                    }
                 } else if let InvAction::Embedded {
                     editor,
                     notecard,
@@ -217,6 +230,15 @@ impl App {
         }
         for (object, item, text, close) in saves {
             self.save_task_notecard(object, item, text, close);
+        }
+        for (object, item, description) in descriptions {
+            if self
+                .task_notecard_item(object, item)
+                .is_some_and(|it| it.owner_mask & rules::MODIFY != 0)
+                && let Some(idx) = self.world.objects.index_of_uuid(&object)
+            {
+                self.build.describe_item(&self.world, idx, item, &description);
+            }
         }
         self.task_notecards.retain(|_, d| d.state.preview.is_some());
     }
@@ -295,6 +317,7 @@ impl App {
                 parent_id: object,
                 owner_id: self.world.agent_id,
                 name: aurora_i18n::tr!("notecard-task-demo-title").into(),
+                description: aurora_i18n::tr!("notecard-demo-description").into(),
                 asset_type: 7,
                 inv_type: 7,
                 asset_id: Uuid::from_u128(8304),

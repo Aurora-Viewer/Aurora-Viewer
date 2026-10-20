@@ -4465,6 +4465,10 @@ offline; the files and snapshots uploaded in demo stay offline.
   the text must fill the available height, with Save (Ctrl+S),
   the counter and the message, if any, just below. Also check after
   resizing and after collapsing / restoring the window.
+  The item description is visible above the view tabs. Change it and
+  press Enter or click outside the field: only the metadata is saved,
+  leaving any content draft unchanged. Check the same field in Classic,
+  Markdown and Edit, in object contents, and disabled on a read-only item.
 - `note-task`, `note-task-readonly`, `note-task-save`, `note-task-error`:
   same editor for a note inside an object. The last two add
   text at frame 650 then send Ctrl+S at frame 670; the refusal keeps
