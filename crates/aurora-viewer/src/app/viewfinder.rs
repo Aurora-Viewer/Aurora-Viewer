@@ -43,6 +43,14 @@ impl App {
     pub(super) fn viewfinder_frame(&mut self, renderer: &mut Renderer) {
         // the focal length is the photo's: the view's own comes back when
         // the viewfinder closes
+        // the depth of field on, once, for the profiles that saved it off
+        // when that was the default; the user's choice after that stays
+        if self.viewfinder_on() && !self.settings.snapshot.viewfinder.dof_defaulted {
+            self.settings.snapshot.viewfinder.dof_defaulted = true;
+            self.settings.snapshot.dof.enabled = true;
+            self.settings.save();
+            log::info!("viewfinder: depth of field on (first opening)");
+        }
         match (self.viewfinder_on(), self.snapshots.fov_before) {
             (true, None) => self.snapshots.fov_before = Some(self.settings.camera.fov),
             (false, Some(fov)) => {

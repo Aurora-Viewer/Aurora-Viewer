@@ -141,6 +141,9 @@ pub struct Prefs {
     pub pad: bool,
     /// The self-timer (seconds, one of `TIMERS`).
     pub timer: u8,
+    /// The depth of field was turned on at the viewfinder's first opening
+    /// (it used to be off by default, and every profile saved it so).
+    pub dof_defaulted: bool,
 }
 
 impl Default for Prefs {
@@ -154,6 +157,7 @@ impl Default for Prefs {
             controls: OnScreen::Always,
             pad: false,
             timer: 0,
+            dof_defaulted: false,
         }
     }
 }
