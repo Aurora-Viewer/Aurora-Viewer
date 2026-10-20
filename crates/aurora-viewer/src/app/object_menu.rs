@@ -136,10 +136,13 @@ impl App {
         let wearer = crate::ui::context::wearer(w, idx);
         // object_is_wearable / object_selected_and_point_valid
         let r = flags_of(root);
-        // an avatar seated on it is one of its children
-        let seated_on = crate::build::family(w, root)
-            .iter()
-            .any(|&i| w.objects.get(i).is_some_and(|c| c.is_avatar()));
+        // Occupants are children of a prim, outside the editable linkset.
+        let seated_on = crate::build::family(w, root).iter().filter_map(|&i| w.objects.get(i)).any(|prim| {
+            w.objects
+                .children_of(&prim.key)
+                .iter()
+                .any(|&child| w.objects.get(child).is_some_and(|o| o.is_avatar()))
+        });
         f.wear = wearer.is_none()
             && roots.len() == 1
             && w.objects.get(root).is_some_and(|o| o.pcode == PCODE_VOLUME)

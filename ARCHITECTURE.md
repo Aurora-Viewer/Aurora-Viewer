@@ -980,6 +980,11 @@ are inline rather than collapsed.
 `build::can_transform` applies effective simulator
 Move / Modify flags to numeric controls and manipulators before any local echo,
 with whole-selection validation and checks during dragging and release.
+`build::family` follows `LLViewerObject::addThisAndNonJointChildren`: seated
+avatars and their attachments are outside the editable linkset. Selection
+bounds, highlights, packets and linked-root transform compensation share this
+boundary. Object menus inspect each prim's direct avatar children separately
+to keep attachment of occupied objects disabled.
 Blinn-Phong UV controls remain available for empty normal/specular channels;
 non-default map transforms remain in RenderMaterials even before assigning maps.
 Floating-point spinners in `build/ui/common.rs` retain the active drag value

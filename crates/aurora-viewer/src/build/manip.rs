@@ -1688,6 +1688,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn seated_linkset_transforms_preserve_occupant_and_attachment_local_transforms() {
+        for on_child in [false, true] {
+            for linked in [false, true] {
+                for edit_child in [false, true] {
+                    for mode in [EditMode::Move, EditMode::Rotate, EditMode::Stretch] {
+                        let (mut world, mut tool, mut settings) = super::super::selection_tests::seated_fixture(on_child);
+                        settings.snap = false;
+                        settings.edit_linked = linked;
+                        let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+                        let child = world.objects.index_of_uuid(&uuid::Uuid::from_u128(951)).unwrap();
+                        tool.click_select(&mut world, &settings, Some(if edit_child { child } else { root }), false);
+                        let occupants: Vec<_> = world
+                            .objects
+                            .iter()
+                            .filter(|(i, o)| o.is_avatar() || super::super::select_type(&world, *i) != super::super::SelectType::World)
+                            .map(|(i, o)| (i, o.position, o.rotation, o.scale))
+                            .collect();
+                        let now = Instant::now();
+                        let bounds = bounds_of(&world, &tool.selection, linked, now).unwrap();
+                        let center = bounds.center;
+                        let eye = center + Vec3::new(4.0, -6.0, 3.0);
+                        let fov = 60f32.to_radians();
+                        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 1280.0 / 720.0, 0.01);
+                        let cam = Cam::new(
+                            eye,
+                            center,
+                            projection * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z),
+                            fov,
+                            1280.0,
+                            720.0,
+                            1.0,
+                        );
+                        let start = cam.project_px(center + Vec3::X * cam.meters_for_pixels(center, 45.0)).unwrap();
+                        let mut manip = Manip::default();
+                        assert!(manip.try_grab(&mut world, &settings, &cam, &tool.selection, linked, EditMode::Move, start, now));
+                        let mut drag = manip.drag.take().unwrap();
+                        drag.mode = mode;
+                        let mover = &drag.movers[0];
+                        let target = match mode {
+                            EditMode::Move => (mover.pos + Vec3::X, mover.rot, mover.scale),
+                            EditMode::Rotate => (mover.pos, Quat::from_rotation_z(0.4) * mover.rot, mover.scale),
+                            _ => (mover.pos, mover.rot, mover.scale * 1.5),
+                        };
+                        let child_before = Scene::object_transform(&world, child, now, 0).unwrap();
+                        apply(&mut world, &drag, &[target]);
+                        for (i, pos, rot, scale) in occupants {
+                            let o = world.objects.get(i).unwrap();
+                            assert_eq!(
+                                (o.position, o.rotation, o.scale),
+                                (pos, rot, scale),
+                                "Occupant changed in {mode:?}, linked={linked}"
+                            );
+                        }
+                        let moved = Scene::object_transform(&world, mover.idx, now, 0).unwrap();
+                        assert!(moved.0.abs_diff_eq(target.0, 1e-4));
+                        assert!(moved.1.abs_diff_eq(target.1, 1e-4));
+                        assert_eq!(world.objects.get(mover.idx).unwrap().scale, target.2);
+                        if linked && !edit_child {
+                            let after = Scene::object_transform(&world, child, now, 0).unwrap();
+                            assert!(after.0.abs_diff_eq(child_before.0, 1e-4));
+                            assert!(after.1.abs_diff_eq(child_before.1, 1e-4));
+                        }
+                        let mut out = Vec::new();
+                        send_updates(&world, &drag, linked, &mut out);
+                        assert!(matches!(&out[..], [BuildCmd::Transform { updates, .. }]
+                            if updates.len() == 1 && updates[0].local_id == mover.key.local_id && updates[0].linked != linked));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn actual_root_pivot_follows_latest_prim_in_linked_editing_and_latest_whole_object_otherwise() {
         let mut world = hud_world();
         for event in crate::demo::face_selection_events(false) {
