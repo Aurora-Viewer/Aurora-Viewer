@@ -41,6 +41,20 @@ impl App {
     /// Each frame, before it is laid out: the depth that came back under
     /// the AF point, the hunt, the lens in AF-C and MF, the histogram.
     pub(super) fn viewfinder_frame(&mut self, renderer: &mut Renderer) {
+        // the focal length is the photo's: the view's own comes back when
+        // the viewfinder closes
+        match (self.viewfinder_on(), self.snapshots.fov_before) {
+            (true, None) => self.snapshots.fov_before = Some(self.settings.camera.fov),
+            (false, Some(fov)) => {
+                self.snapshots.fov_before = None;
+                if (self.settings.camera.fov - fov).abs() > 1e-6 {
+                    self.settings.camera.fov = fov;
+                    self.settings.save();
+                    log::info!("viewfinder: field of view back to {:.1}°", fov.to_degrees());
+                }
+            }
+            _ => {}
+        }
         if !self.viewfinder_on() {
             let v = &mut self.snapshots.vf;
             if v.menu || v.help || v.drawer || v.pressed || v.pick.is_some() {

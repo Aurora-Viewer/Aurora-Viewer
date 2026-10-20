@@ -162,6 +162,9 @@ pub(super) struct Snapshots {
     pub(super) vf: crate::ui::viewfinder::Viewfinder,
     /// The focus beep, made on first use.
     pub(super) beep: Option<aurora_audio::SoundClip>,
+    /// The field of view before the viewfinder opened: its focal length
+    /// is the photo's, the view gets this back when it closes.
+    pub(super) fov_before: Option<f32>,
     /// The last photo's card in the viewfinder: what it says, what it
     /// offers, its thumbnail (made on a worker for the inventory and the
     /// profile feed).
@@ -256,6 +259,7 @@ impl Default for Snapshots {
             demo: None,
             vf: Default::default(),
             beep: None,
+            fov_before: None,
             review: None,
             review_tex: None,
             review_rx: None,
