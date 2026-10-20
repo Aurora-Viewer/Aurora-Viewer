@@ -546,6 +546,60 @@ impl Viewfinder {
             line(&mut y, "bulb-off", aurora_i18n::tr!("photo-vf-lights-off"), p.amber);
         }
 
+        // the controls, under the light
+        if s.viewfinder.hints && !self.menu && !self.help && !self.drawer {
+            y += 14.0;
+            let dial = match self.dial {
+                Dial::Focal => aurora_i18n::tr!("photo-vf-dial-focal"),
+                Dial::Aperture => aurora_i18n::tr!("photo-vf-dial-aperture"),
+                Dial::Exposure => aurora_i18n::tr!("photo-vf-dial-exposure"),
+                Dial::Distance => aurora_i18n::tr!("photo-vf-dial-distance"),
+            };
+            let rows: [(&str, String); 7] = [
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-click-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-click").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-enter-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-enter").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-wheel-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-wheel").to_owned(),
+                ),
+                (aurora_i18n::tr!("photo-vf-cheat-alt-wheel-key"), dial.to_owned()),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-alt-shift-wheel-key"),
+                    aurora_i18n::tr!("photo-vf-dial-aperture").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-alt-ctrl-wheel-key"),
+                    aurora_i18n::tr!("photo-vf-dial-exposure").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-camera-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-camera").to_owned(),
+                ),
+            ];
+            let x = screen.left() + GAP;
+            for (key, text) in rows {
+                let r = shadow_text(back, p, Pos2::new(x, y), Align2::LEFT_CENTER, key, bold(ctx, 12.0), p.ink);
+                shadow_text(
+                    back,
+                    p,
+                    Pos2::new(r.right() + 7.0, y),
+                    Align2::LEFT_CENTER,
+                    &text,
+                    regular(12.0),
+                    p.muted,
+                );
+                y += 20.0;
+            }
+            let keys = aurora_i18n::tr!("photo-vf-cheat-keys", menu = f.keys.menu, af = f.keys.af_mode);
+            shadow_text(back, p, Pos2::new(x, y), Align2::LEFT_CENTER, &keys, regular(12.0), p.muted);
+        }
+
         // the histogram
         let h = Rect::from_min_size(Pos2::new(screen.right() - GAP - 150.0, screen.top() + 52.0), Vec2::new(150.0, 62.0));
         back.rect_filled(h, ctx.global_style().visuals.window_corner_radius, p.navy.gamma_multiply(0.45));
@@ -1071,8 +1125,8 @@ impl Viewfinder {
         f: &Frame,
         out: &mut Vec<Out>,
     ) {
-        let cols = 8.0;
-        let width = (screen.width() - 2.0 * GAP - 120.0).min(1180.0);
+        let cols = 9.0;
+        let width = (screen.width() - 2.0 * GAP - 120.0).min(1300.0);
         egui::Area::new(Id::new("vf_menu"))
             .order(Order::Foreground)
             .fade_in(false)
@@ -1176,16 +1230,16 @@ impl Viewfinder {
                                     aurora_i18n::tr!("photo-vf-help-wheel-text"),
                                 ),
                                 (
-                                    aurora_i18n::tr!("photo-vf-help-shift-wheel").to_owned(),
-                                    aurora_i18n::tr!("photo-vf-help-shift-wheel-text"),
-                                ),
-                                (
                                     aurora_i18n::tr!("photo-vf-help-alt-wheel").to_owned(),
                                     aurora_i18n::tr!("photo-vf-help-alt-wheel-text"),
                                 ),
                                 (
-                                    aurora_i18n::tr!("photo-vf-help-ctrl-wheel").to_owned(),
-                                    aurora_i18n::tr!("photo-vf-help-ctrl-wheel-text"),
+                                    aurora_i18n::tr!("photo-vf-help-alt-shift-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-alt-shift-wheel-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-alt-ctrl-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-alt-ctrl-wheel-text"),
                                 ),
                                 (
                                     aurora_i18n::tr!("photo-vf-help-digits").to_owned(),
@@ -1673,6 +1727,19 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         Box::new(|_, panel| {
             panel.freeze = !panel.freeze;
             Some(Out::Panel(Action::Freeze(panel.freeze)))
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-hints"),
+        on_off(
+            s.viewfinder.hints,
+            aurora_i18n::tr!("photo-vf-shown"),
+            aurora_i18n::tr!("photo-vf-hidden-one"),
+        )
+        .to_owned(),
+        Box::new(|s, _| {
+            s.viewfinder.hints = !s.viewfinder.hints;
+            None
         }),
     ));
     let first = f.first_person;

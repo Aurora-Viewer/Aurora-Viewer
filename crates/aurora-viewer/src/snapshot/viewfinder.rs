@@ -113,6 +113,8 @@ pub struct Prefs {
     pub peaking: Peaking,
     /// The two beeps when the focus locks.
     pub beep: bool,
+    /// The list of the controls, under the light (display Full).
+    pub hints: bool,
 }
 
 impl Default for Prefs {
@@ -122,6 +124,7 @@ impl Default for Prefs {
             area: AfArea::Avatar,
             peaking: Peaking::White,
             beep: true,
+            hints: true,
         }
     }
 }

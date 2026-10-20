@@ -451,9 +451,11 @@ the **viewfinder**: the world full screen under a camera's overlay, its
 display switched between Full, Essential and Hidden with **I**. Click the
 subject to focus: the lens hunts, the AF point turns green on the avatar's
 face and beeps twice. **Enter** is a two-stage shutter (held: the focus,
-released: the photo), the wheel drives the focal length, Shift + wheel the
-aperture, Alt + wheel the exposure and Ctrl + wheel the distance (manual
-focus, with focus peaking). **N** switches AF-S, AF-C and MF, **V** the
+released: the photo), the wheel zooms the camera as usual, Alt + wheel
+drives the underlined value of the bottom bar (the focal length at first,
+the distance for manual focus with focus peaking), Alt + Shift + wheel the
+aperture and Alt + Ctrl + wheel the exposure; Alt + click and the camera's
+drags work as everywhere. **N** switches AF-S, AF-C and MF, **V** the
 avatar or point area, **Tab** opens the quick menu, **H** the help, and
 the dock on the right holds the same for the mouse, with every setting of
 the photo panel in a drawer. The photo panel anchored on the right and the

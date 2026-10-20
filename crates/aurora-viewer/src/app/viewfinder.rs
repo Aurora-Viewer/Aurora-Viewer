@@ -255,11 +255,12 @@ impl App {
         true
     }
 
-    /// The wheel while the viewfinder shows: the underlined value, the
-    /// aperture with Shift, the exposure with Alt, the distance with Ctrl
-    /// (which turns to manual focus). True when taken.
+    /// The wheel while the viewfinder shows: alone it zooms the camera as
+    /// outside the viewfinder (Ctrl and Shift keep their camera heights);
+    /// with Alt it drives the underlined value of the bottom bar, with Alt +
+    /// Shift the aperture, with Alt + Ctrl the exposure. True when taken.
     pub(super) fn viewfinder_wheel(&mut self, steps: f32) -> bool {
-        if !self.viewfinder_on() || steps == 0.0 {
+        if !self.viewfinder_on() || steps == 0.0 || !self.alt {
             return false;
         }
         let v = &self.snapshots.vf;
@@ -269,10 +270,8 @@ impl App {
         let dir = if steps > 0.0 { 1 } else { -1 };
         let dial = if self.shift {
             Dial::Aperture
-        } else if self.alt {
-            Dial::Exposure
         } else if self.ctrl {
-            Dial::Distance
+            Dial::Exposure
         } else {
             v.dial
         };
