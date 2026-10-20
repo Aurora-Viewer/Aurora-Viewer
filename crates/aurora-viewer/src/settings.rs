@@ -191,7 +191,7 @@ pub enum GridChoice {
     Custom,
 }
 
-/// Debug overlays (Preferences › Debug), not saved: they reset at each launch.
+/// Debug overlays (the Dev Toolbox's toggles), not saved: they reset at each launch.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DebugView {
     /// Complexity under the name tags, green to red (Firestorm FSTagShowARW).
@@ -226,6 +226,8 @@ pub struct DebugView {
     /// and the radius it comes from (Firestorm: Develop › Render Metadata ›
     /// LOD Info).
     pub lod_info: bool,
+    /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
+    pub pass_view: bool,
 }
 
 impl DebugView {
@@ -284,6 +286,9 @@ pub struct Settings {
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
+    /// The Dev Toolbox's arrangement (Customize); None: the default one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev_toolbox: Option<crate::dev_toolbox::tools::Layout>,
     /// Build tools (grid, snap, create, land brush).
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
@@ -1161,6 +1166,7 @@ impl Default for Settings {
             sun_beacon: false,
             moon_beacon: false,
             debug: DebugView::default(),
+            dev_toolbox: None,
             build: Default::default(),
             camera: Default::default(),
             auto_hover_height: false,

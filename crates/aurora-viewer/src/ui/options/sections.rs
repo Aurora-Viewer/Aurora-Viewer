@@ -88,7 +88,6 @@ sections! {
     6 => [bandwidth_kbps, no_neighbour_regions, cache_size_mb, cache_location],
     TAB_AUDIO => [audio, media],
     TAB_SHORTCUTS => [keybinds],
-    9 => [debug],
     TAB_CAMERA => [camera],
     TAB_COMMANDS => [chat_commands],
     TAB_PRIVACY => [
@@ -211,7 +210,6 @@ mod tests {
         pages[1].1.extend(accessed(body(inventory, "preferences"), "prefs", "inventory."));
         pages[TAB_AUDIO].1.extend(accessed(body(include_str!("audio.rs"), "page"), "s", ""));
         pages[TAB_SHORTCUTS].1.extend(accessed(body(options, "keys_page"), "s", ""));
-        pages[9].1.extend(accessed(body(options, "debug_page"), "s", ""));
         pages[TAB_CAMERA].1.extend(accessed(include_str!("camera.rs"), "s", ""));
         pages[TAB_COMMANDS].1.insert("chat_commands".into());
         pages[TAB_PRIVACY].1.extend(accessed(include_str!("privacy.rs"), "s", "lookat."));
@@ -240,6 +238,10 @@ mod tests {
     fn every_setting_a_page_shows_is_reset_with_its_section() {
         let listed = listed();
         for (tab, paths) in shown() {
+            // the former Debug page is the Dev Toolbox now: no page there
+            if tab == super::super::TAB_RETIRED_DEBUG {
+                continue;
+            }
             let list = &listed[tab].1;
             assert!(!paths.is_empty(), "page {tab}: nothing found in its code");
             for path in paths {

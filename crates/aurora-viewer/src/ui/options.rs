@@ -46,11 +46,6 @@ pub struct OptionsUi {
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
-    /// Set by the "Debug to log" / "Debug to clipboard" buttons of Debug ›
-    /// Logs, cleared by the app (app/describe.rs).
-    pub describe_nearby: Option<crate::app::DescribeOutput>,
-    /// Where the last press stands (waiting for names, copied), set by the app.
-    pub describe_note: Option<String>,
     /// Audio devices (set by the app) and microphone level (0..1).
     pub output_devices: Vec<String>,
     pub input_devices: Vec<String>,
@@ -245,7 +240,7 @@ fn tab_count() -> usize {
 }
 
 /// Order of the tabs in the sidebar.
-const ORDER: [usize; 15] = [
+const ORDER: [usize; 14] = [
     TAB_AURORA,
     0,
     1,
@@ -260,7 +255,6 @@ const ORDER: [usize; 15] = [
     5,
     TAB_PRIVACY,
     6,
-    9,
 ];
 
 pub const TAB_GRAPHICS: usize = 0;
@@ -275,6 +269,9 @@ pub const TAB_PRIVACY: usize = 12;
 pub const TAB_AURORA: usize = 13;
 /// Colour blindness (#418), and what helps reading the interface.
 pub const TAB_ACCESSIBILITY: usize = 14;
+/// The former Debug page, now the Dev Toolbox (ui/dev_toolbox.rs): its index
+/// stays reserved so that the other pages keep theirs; it is never shown.
+pub const TAB_RETIRED_DEBUG: usize = 9;
 
 const LABEL_W: f32 = 180.0;
 
@@ -583,174 +580,6 @@ fn format_bytes(b: u64) -> String {
     }
 }
 
-/// Debug overlays (not saved: off again at the next launch).
-fn debug_page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
-    let mut c = false;
-    let before = s.debug;
-    let d = &mut s.debug;
-    ui.label(
-        RichText::new(aurora_i18n::tr!(
-            "ui-options-diagnostic-tools-drawn-over-the-view-disabled-next-time"
-        ))
-        .size(12.0)
-        .color(p.muted),
-    );
-    ui.add_space(6.0);
-    group(ui, p, aurora_i18n::tr!("ui-options-avatars"), |ui| {
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-complexity-in-name-tags"),
-            aurora_i18n::tr!("ui-options-below-the-name-from-green-to-red-based-on-2"),
-            |ui| toggle(ui, p, &mut d.complexity_tags),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-skeletons"),
-            aurora_i18n::tr!("ui-options-nearby-avatar-bones-32-m-after-animation"),
-            |ui| toggle(ui, p, &mut d.skeletons),
-        );
-    });
-    group(ui, p, aurora_i18n::tr!("common-rendering"), |ui| {
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-show-transparency"),
-            aurora_i18n::tr!("ui-options-ctrl-alt-t-transparent-masked-and-invisible-faces-in"),
-            |ui| toggle(ui, p, &mut d.show_alpha),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-rigged-objects-too"),
-            aurora_i18n::tr!("ui-options-includes-rigged-bodies-clothes-and-attachments"),
-            |ui| toggle(ui, p, &mut d.show_alpha_rigged),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-wireframe"),
-            aurora_i18n::tr!("ui-options-triangle-edges-over-the-scene"),
-            |ui| toggle(ui, p, &mut d.wireframe),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-show-glow"),
-            aurora_i18n::tr!("ui-options-glow-amount-instead-of-the-image-red-glow-10"),
-            |ui| toggle(ui, p, &mut d.glow_view),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-show-shadow-cascades"),
-            aurora_i18n::tr!("ui-options-shadow-cascade-each-pixel-reads-instead-of-the-image"),
-            |ui| toggle(ui, p, &mut d.shadow_view),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-show-ambient-occlusion"),
-            aurora_i18n::tr!("ui-options-ambient-occlusion-alone-instead-of-the-image"),
-            |ui| toggle(ui, p, &mut d.ao_view),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-objects-with-glow"),
-            aurora_i18n::tr!("ui-options-outlines-objects-with-glowing-faces-in-orange"),
-            |ui| toggle(ui, p, &mut d.glow_objects),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-lights"),
-            aurora_i18n::tr!("ui-options-light-positions-and-radii-in-their-colors"),
-            |ui| toggle(ui, p, &mut d.lights),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-reflection-probes"),
-            aurora_i18n::tr!("ui-options-probe-influence-turquoise-for-automatic-purple-for-manual-gray"),
-            |ui| toggle(ui, p, &mut d.probes),
-        );
-    });
-    group(ui, p, aurora_i18n::tr!("ui-options-objects-and-culling"), |ui| {
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-bounding-boxes"),
-            aurora_i18n::tr!("ui-options-bounding-box-of-each-object-within-96-m"),
-            |ui| toggle(ui, p, &mut d.bounds),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-detail-levels"),
-            aurora_i18n::tr!("ui-options-detail-level-of-the-objects-around-the-pointer"),
-            |ui| toggle(ui, p, &mut d.lod_info),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("common-culling"),
-            aurora_i18n::tr!("ui-options-each-object-s-tested-sphere-green-drawn-red-outside"),
-            |ui| toggle(ui, p, &mut d.culling),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-freeze-culling"),
-            aurora_i18n::tr!("ui-options-keep-the-current-culling-view-move-the-camera-to"),
-            |ui| toggle(ui, p, &mut d.freeze_culling),
-        );
-    });
-    group(ui, p, aurora_i18n::tr!("ui-options-checks"), |ui| {
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-sort-of-the-local-lights"),
-            aurora_i18n::tr!("ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed"),
-            |ui| toggle(ui, p, &mut d.check_light_sets),
-        );
-        c |= row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-sort-of-the-reflection-probes"),
-            aurora_i18n::tr!("ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed"),
-            |ui| toggle(ui, p, &mut d.check_probe_sets),
-        );
-    });
-    group(ui, p, aurora_i18n::tr!("ui-options-logs"), |ui| {
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("ui-options-nearby-objects"),
-            aurora_i18n::tr!("ui-options-write-faces-lights-and-materials-within-12-m-to"),
-            |ui| {
-                use crate::app::DescribeOutput;
-                let help = aurora_i18n::tr!("ui-options-describe-help");
-                for (label, output) in [
-                    (aurora_i18n::tr!("ui-options-describe"), DescribeOutput::Log),
-                    (aurora_i18n::tr!("ui-options-describe-clipboard"), DescribeOutput::Clipboard),
-                ] {
-                    if ui.button(RichText::new(label).color(p.ink)).on_hover_text(help).clicked() {
-                        st.describe_nearby = Some(output);
-                    }
-                }
-                false
-            },
-        );
-        if let Some(note) = &st.describe_note {
-            ui.label(RichText::new(note).size(11.5).color(p.muted));
-        }
-    });
-    d.keep_one_view(&before);
-    c
-}
-
 /// The content ratings an account may choose (LLFloaterPreference: the
 /// list without "Adult" for an account that is not adult; no choice at all
 /// below Moderate), most open first.
@@ -865,6 +694,9 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
 
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
     let mut r = OptionsResult::default();
+    if st.tab == TAB_RETIRED_DEBUG {
+        st.tab = TAB_AURORA;
+    }
     let screen = ctx.content_rect();
     Floater::new(
         "options",
@@ -957,7 +789,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
                         r.changed |= match st.tab {
                             TAB_AUDIO => audio::page(ui, p, s, st, &mut r.audio_changed, &mut r.refresh_devices),
                             8 => keys_page(ui, p, s, st),
-                            9 => debug_page(ui, p, s, st),
+                            TAB_RETIRED_DEBUG => false,
                             TAB_CAMERA => camera::page(ui, p, s, &mut r.reset_camera),
                             TAB_COMMANDS => commands::page(ui, p, &mut s.chat_commands),
                             TAB_PRIVACY => privacy::page(

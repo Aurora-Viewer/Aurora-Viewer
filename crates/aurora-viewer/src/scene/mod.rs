@@ -788,6 +788,8 @@ pub struct Scene {
     complexity_rules: u64,
     /// Debug "Show transparency": Some(rigged faces too).
     debug_alpha: Option<bool>,
+    /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
+    pass_view: bool,
     /// Culling view of the last lists (debug overlay).
     pub last_cull: Option<CullView>,
     complexity_at: Option<Instant>,
@@ -1086,6 +1088,66 @@ impl Scene {
         self.debug_alpha = debug_alpha;
     }
 
+    /// Dev Toolbox P4 "What changes when still" (AURORA_STILL_CHECK).
+    pub fn set_still_check(&mut self, on: bool) {
+        if on != self.still.is_some() {
+            self.still = on.then(still_check::StillCheck::start);
+        }
+    }
+
+    /// Dev Toolbox P5 "What the sync visits" (AURORA_SYNC_CHECK).
+    pub fn set_sync_check(&mut self, on: bool) {
+        if on != self.sync_check.is_some() {
+            self.sync_check = on.then(sync_check::SyncCheck::start);
+        }
+    }
+
+    pub fn sync_check_on(&self) -> bool {
+        self.sync_check.is_some()
+    }
+
+    /// Dev Toolbox P3 "Slow frames" (AURORA_SYNC_SLOW): the limit in ms.
+    pub fn set_slow_sync(&mut self, limit_ms: Option<f32>) {
+        self.sync_slow = limit_ms;
+    }
+
+    pub fn slow_sync(&self) -> Option<f32> {
+        self.sync_slow
+    }
+
+    /// Dev Toolbox O9 "Follow sculpts" (AURORA_SCULPT_WATCH) of an avatar.
+    pub fn set_sculpt_watch(&mut self, target: Option<Uuid>) {
+        if target != self.sculpt_watch.as_ref().map(|w| w.target()) {
+            self.sculpt_watch = target.map(sculpt_watch::SculptWatch::new);
+        }
+    }
+
+    pub fn sculpt_watch_target(&self) -> Option<Uuid> {
+        self.sculpt_watch.as_ref().map(|w| w.target())
+    }
+
+    /// Dev Toolbox R3 "Pass and alpha per face": opaque faces in green,
+    /// masked in blue, blended in red, fully transparent ones (built for it,
+    /// like the transparency overlay builds them) in yellow.
+    pub fn set_pass_view(&mut self, world: &mut World, on: bool) {
+        if self.pass_view == on {
+            return;
+        }
+        let invisible_built = self.debug_alpha.is_some() || self.pass_view;
+        self.pass_view = on;
+        if invisible_built != (self.debug_alpha.is_some() || on) {
+            for (idx, slot) in world.objects.slots.iter_mut().enumerate() {
+                let Some(object) = slot else { continue };
+                if object.is_avatar() || !(0..aurora_prim::te::MAX_TES).any(|face| te_invisible(object, face)) {
+                    continue;
+                }
+                object.material_dirty = true;
+                object.render.needs_records = true;
+                self.sets.dirty.insert(idx);
+            }
+        }
+    }
+
     /// Invisible selected faces get temporary records for their overlay only.
     /// Ordinary transparent faces keep their zero-record path. Changing an
     /// opaque face selection never rebuilds its geometry or material records.
@@ -1203,6 +1265,7 @@ impl Scene {
             selection_faces: HashMap::new(),
             selection_changed: None,
             debug_alpha: None,
+            pass_view: false,
             last_cull: None,
             impostors: Default::default(),
             far_avatars: HashMap::new(),
@@ -3022,7 +3085,8 @@ impl Scene {
             // a glTF material ignores the texture entry's color: its own base
             // color alpha decides, in `classify`
             let invisible = tf.color[3] < 0.004 && mat_id.is_none();
-            if invisible && self.debug_alpha.is_none() && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0 {
+            if invisible && self.debug_alpha.is_none() && !self.pass_view && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0
+            {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
                 continue;
@@ -3575,6 +3639,7 @@ impl Scene {
         self.last_cull = Some(*view);
         let gpu_mode = renderer.gpu_culling();
         let debug_alpha = self.debug_alpha;
+        let pass_view = self.pass_view;
         let dd = self.draw_distance;
         let shadow_dist = dd.min(256.0);
         // terrain
@@ -3740,7 +3805,7 @@ impl Scene {
         let mut visit = std::mem::take(&mut self.visit_tmp);
         visit.clear();
         if gpu_mode {
-            let debug = debug_alpha.is_some();
+            let debug = debug_alpha.is_some() || pass_view;
             let selection = &self.selection_wire;
             let captured = |g: &ObjGpu, i: usize| !plan.capture.is_empty() && g.avatar(i).is_some_and(|a| plan.capture.contains_key(&a));
             if by_index {
@@ -3805,6 +3870,8 @@ impl Scene {
             select_child: Vec<DrawCmd>,
             select_faces: Vec<DrawCmd>,
             debug_blue: Vec<DrawCmd>,
+            debug_green: Vec<DrawCmd>,
+            debug_yellow: Vec<DrawCmd>,
             casters: Vec<ShadowCaster>,
             refl: Vec<ShadowCaster>,
             probe: Vec<ShadowCaster>,
@@ -3825,6 +3892,8 @@ impl Scene {
             select_child: Vec::new(),
             select_faces: Vec::new(),
             debug_blue: Vec::new(),
+            debug_green: Vec::new(),
+            debug_yellow: Vec::new(),
             casters: Vec::new(),
             refl: Vec::new(),
             probe: Vec::new(),
@@ -3918,6 +3987,14 @@ impl Scene {
                         _ => {}
                     }
                 }
+                if pass_view && in_view {
+                    match pass {
+                        Pass::Opaque | Pass::OpaqueTwoSided => l.debug_green.push(cmd),
+                        Pass::Mask | Pass::MaskTwoSided => l.debug_blue.push(cmd),
+                        Pass::Blend => l.debug_red.push(cmd),
+                        Pass::Hidden => l.debug_yellow.push(cmd),
+                    }
+                }
                 if in_view {
                     match selection_wire.get(&idx) {
                         Some(true) => l.select_root.push(cmd),
@@ -3996,6 +4073,8 @@ impl Scene {
             a.impostor.append(&mut b.impostor);
             a.debug_red.append(&mut b.debug_red);
             a.debug_blue.append(&mut b.debug_blue);
+            a.debug_green.append(&mut b.debug_green);
+            a.debug_yellow.append(&mut b.debug_yellow);
             a.select_root.append(&mut b.select_root);
             a.select_child.append(&mut b.select_child);
             a.select_faces.append(&mut b.select_faces);
@@ -4039,6 +4118,8 @@ impl Scene {
         self.lists.impostor_sprites = std::mem::take(&mut plan.sprites);
         self.lists.debug_red = result.debug_red;
         self.lists.debug_blue = result.debug_blue;
+        self.lists.debug_green = result.debug_green;
+        self.lists.debug_yellow = result.debug_yellow;
         self.lists.select_root = result.select_root;
         self.lists.select_child = result.select_child;
         if gpu_mode {

@@ -239,6 +239,11 @@ impl App {
                     self.double_click.reset();
                     self.mouselook_press();
                 } else if !over_ui && self.in_world() && !self.camera.mouselook() {
+                    if self.toolbox_pick_press() {
+                        self.double_click.reset();
+                        self.double_press = false;
+                        return;
+                    }
                     if self.beacon_hover() {
                         self.world.map.clear_track();
                         self.beacon_hit = None;

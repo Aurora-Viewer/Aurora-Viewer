@@ -42,8 +42,8 @@ mod controls;
 mod cursor_hold;
 mod derender;
 mod describe;
+mod dev_toolbox;
 mod folders;
-pub use describe::DescribeOutput;
 use folders::chat_log_root;
 mod dof;
 mod double_click;
@@ -404,6 +404,9 @@ pub struct App {
     /// A "Debug to log" press waiting for the names it asked
     /// (app/describe.rs): when it is written, what, and where.
     describe: Option<describe::Pending>,
+    /// The Dev Toolbox: the window's state, and the app's (app/dev_toolbox.rs).
+    dev_toolbox: ui::dev_toolbox::DevToolboxUi,
+    toolbox: dev_toolbox::Toolbox,
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
@@ -969,6 +972,8 @@ impl App {
             stuck_logged: None,
             attachments_logged: 0,
             describe: None,
+            dev_toolbox: Default::default(),
+            toolbox: Default::default(),
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
@@ -2963,6 +2968,7 @@ impl App {
             Action::RegionEstate => ui::widgets::toggle_floater(&self.egui_ctx, ui::region::WINDOW, &mut self.panels.region_estate),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
+            Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
@@ -6053,6 +6059,7 @@ impl App {
                 _ => None,
             };
             self.scene.set_debug_alpha(&mut self.world, debug_alpha);
+            self.scene.set_pass_view(&mut self.world, self.settings.debug.pass_view);
             // finished jobs only leave cheap work to the main thread (their
             // data is staged for the GPU by the jobs): a short budget is
             // enough, and keeps a burst of results from stretching a frame
@@ -6398,9 +6405,6 @@ impl App {
                 self.scene
                     .log_attachments(&self.world, self.world.agent_id, &gfx.renderer, &|_| None, None);
                 self.scene.log_attachments_near(&self.world, 10.0, &gfx.renderer);
-            }
-            if let Some(output) = self.options_ui.describe_nearby.take() {
-                self.start_describe(output);
             }
             self.finish_describe(&gfx.renderer);
             let texture_budget = self
@@ -7089,6 +7093,7 @@ impl App {
                 }
             }
         }
+        self.track_toolbox_hover(&gfx.renderer);
         if self.plate_cursor() {
             full.platform_output.cursor_icon = egui::CursorIcon::PointingHand;
             full.platform_output.cursor_image = self.cursors.image(crate::interaction::Action::Touch, false);
@@ -8701,7 +8706,6 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
-            BarAction::Describe(output) => self.start_describe(output),
             BarAction::Import => {
                 self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
@@ -11437,6 +11441,7 @@ impl App {
                 let monitor_actions = ui::perf::show(&ctx, &p, &view, &mut self.monitor, &mut open);
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
+                self.dev_toolbox_window(&ctx, &p, renderer);
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
                 if self.panels.environment {
@@ -11792,6 +11797,24 @@ impl ApplicationHandler for App {
                 // The update preview stays offline on a synthetic login screen.
                 return;
             }
+            // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
+            // selection, 2 under the cursor; tool: the one "Send a diagnostic"
+            // shows, e.g. "0:J4"), or "edit" (Customize): the Dev Toolbox
+            if let Ok(v) = std::env::var("AURORA_DEMO_TOOLBOX") {
+                self.panels.dev_toolbox = true;
+                self.panels.perf = false;
+                if v == "edit" {
+                    self.dev_toolbox.edit = true;
+                } else if let Some((target, tool)) = v.split_once(':') {
+                    if let Some(t) = target.parse::<usize>().ok().and_then(|i| crate::dev_toolbox::Target::ALL.get(i)) {
+                        self.dev_toolbox.target = *t;
+                    }
+                    if let Some(t) = crate::dev_toolbox::tools::find(tool) {
+                        self.dev_toolbox.selected = t.id;
+                        self.toolbox.demo_press = Some(t.id);
+                    }
+                }
+            }
             // before the login scenarios: with AURORA_DEMO_LOGIN the
             // preferences open over the login screen (its cogwheel)
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
@@ -11800,6 +11823,11 @@ impl ApplicationHandler for App {
                 let value = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
                 let (tab, filter) = value.split_once(':').unwrap_or((&value, ""));
                 self.options_ui.tab = tab.parse().unwrap_or(0);
+                // the former Debug page: the Dev Toolbox
+                if self.options_ui.tab == ui::options::TAB_RETIRED_DEBUG {
+                    self.panels.settings = false;
+                    self.panels.dev_toolbox = true;
+                }
                 if self.options_ui.tab == 8 {
                     self.options_ui.shortcut_filter = filter.to_owned();
                 } else if filter == "reset" {
@@ -12080,6 +12108,7 @@ impl ApplicationHandler for App {
                         "ao" => d.ao_view = true,
                         "check_lights" => d.check_light_sets = true,
                         "check_probes" => d.check_probe_sets = true,
+                        "pass" => d.pass_view = true,
                         _ => {}
                     }
                 }

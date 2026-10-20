@@ -26,13 +26,22 @@ impl SculptWatch {
                 return None;
             }
         };
+        Some(Self::new(target))
+    }
+
+    /// The watch of one avatar (also the Dev Toolbox's O9, on its target).
+    pub(super) fn new(target: Uuid) -> Self {
         log::info!("sculpt watch: enabled for the configured avatar; attachment states are logged only when changed");
-        Some(Self {
+        Self {
             target,
             last_poll: None,
             found: None,
             previous: BTreeMap::new(),
-        })
+        }
+    }
+
+    pub(super) fn target(&self) -> Uuid {
+        self.target
     }
 
     pub(super) fn poll(&mut self, world: &World, gpu: &[ObjGpu], textures: &TextureStreamer, now: Instant) {

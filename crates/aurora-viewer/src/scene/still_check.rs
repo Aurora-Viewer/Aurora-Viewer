@@ -122,7 +122,14 @@ pub struct StillCheck {
 impl StillCheck {
     /// The check, when AURORA_STILL_CHECK asks for it.
     pub fn from_env() -> Option<StillCheck> {
-        std::env::var_os("AURORA_STILL_CHECK").filter(|v| v != "0").map(|_| StillCheck {
+        std::env::var_os("AURORA_STILL_CHECK")
+            .filter(|v| v != "0")
+            .map(|_| StillCheck::start())
+    }
+
+    /// The check started now (also the Dev Toolbox's P4).
+    pub fn start() -> StillCheck {
+        StillCheck {
             since: Instant::now(),
             frames: 0,
             last: None,
@@ -137,7 +144,7 @@ impl StillCheck {
             placed_max: 0.0,
             placed_examples: Vec::new(),
             worn: 0,
-        })
+        }
     }
 
     /// The faces of an object were rebuilt. `detail` describes the object

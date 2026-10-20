@@ -32,6 +32,7 @@ pub mod pack;
 pub mod pick;
 pub mod private_profile;
 mod update;
+pub use update::{debug_on, set_debug};
 
 use crate::scene::sync_sets::IndexSet;
 use crate::scene::textures::TextureStreamer;

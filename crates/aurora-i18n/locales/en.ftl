@@ -2071,15 +2071,160 @@ app-disconnected-lost = { "Disconnected: " }{ $reason } Log in again to go back 
 app-logging-out = Logging out…
 build-ui-object-profile-cut-begin-end = Profile cut (begin/end)
 build-ui-object-path-cut-begin-end = Path cut (begin/end)
-ui-options-describe = Debug to log
-ui-options-describe-clipboard = Debug to clipboard
-ui-options-describe-help = Stand within 3 m of the avatar whose outfit looks wrong (no need to aim at them), or select the object (right-click › Edit) to target it alone, then press. The objects within 12 m and what the avatars within 10 m wear are written; the avatars within 3 m, or the selected object, face by face. It takes about 3 s, while the names of the worn items arrive. "Debug to clipboard" copies the same lines, ready to paste in a message, instead of the whole log.
-ui-options-describe-waiting = Waiting for the names…
-ui-options-describe-written = Written to the log
-ui-options-describe-copied = { $lines ->
-    [one] { $lines } line copied
-   *[other] { $lines } lines copied
+dev-toolbox-title = Dev Toolbox
+dev-toolbox-menu = Dev Toolbox
+dev-toolbox-help = Debug tools in one place. Each button has an identifier (J2, L1…) that does not depend on the language: an agent or a developer can ask you to press one and to paste what it copies, instead of your whole log. Customize to move the buttons; right-click a button to pin it to Favorites.
+dev-toolbox-toggles-on = { $count ->
+    [one] { $count } toggle on
+   *[other] { $count } toggles on
     }
+dev-toolbox-search = Tool or identifier (J2, L1…)
+dev-toolbox-customize = Customize
+dev-toolbox-done = Done
+dev-toolbox-target = Target
+dev-toolbox-target-nearest = Nearest avatar
+dev-toolbox-target-selection = Selection
+dev-toolbox-target-cursor = Under the cursor
+dev-toolbox-target-nearest-hint = within 3 m, no need to aim
+dev-toolbox-target-selection-hint = right-click › Edit
+dev-toolbox-target-cursor-hint = last surface pointed at
+dev-toolbox-aim = Aim
+dev-toolbox-aim-frozen = Frozen
+dev-toolbox-aim-picking = Click a surface…
+dev-toolbox-aim-help = Press, then click a surface in the world: it becomes the target and stays (that click touches and moves nothing). Press again for the target to follow the pointer.
+dev-toolbox-target-avatar = { $name } · { $distance } m · { $worn } worn items
+dev-toolbox-target-nearest-none = No avatar within 3 m
+dev-toolbox-target-selected = { $name } · { $count ->
+    [one] { $count } linkset selected
+   *[other] { $count } linksets selected
+    }
+dev-toolbox-target-selection-none = Nothing selected — right-click › Edit
+dev-toolbox-target-surface = Prim { $id } · { $kind } · face { $face }
+dev-toolbox-target-cursor-none = Nothing pointed at yet: move the pointer over the world
+dev-toolbox-edit-hint = Drag a button to move it, in its group or to another. Drag a group by its title. The layout is saved.
+dev-toolbox-new-group = New group
+dev-toolbox-new-group-title = My tools
+dev-toolbox-default-layout = Default layout
+dev-toolbox-add-tool = + Add a tool
+dev-toolbox-removed = removed
+dev-toolbox-pin = Pin to Favorites
+dev-toolbox-unpin = Unpin from Favorites
+dev-toolbox-copy-id = Copy the identifier “{ $id }”
+dev-toolbox-remove = Remove from the Toolbox
+dev-toolbox-no-match = No tool matches “{ $query }”.
+dev-toolbox-on = On
+dev-toolbox-kind-toggle = Toggle
+dev-toolbox-kind-copy = Copy
+dev-toolbox-kind-live = Live view
+dev-toolbox-kind-window = Window
+dev-toolbox-group-favorites = Favorites
+dev-toolbox-group-favorites-hint = pinned
+dev-toolbox-group-reports = Reports
+dev-toolbox-group-reports-hint = what you paste for an agent
+dev-toolbox-group-live = Live views
+dev-toolbox-group-live-hint = kept up to date
+dev-toolbox-group-rendering = Rendering
+dev-toolbox-group-rendering-hint = drawn over the view
+dev-toolbox-group-objects = Objects and avatars
+dev-toolbox-group-objects-hint = act on the target
+dev-toolbox-group-network = Network and performance
+dev-toolbox-j1 = Debug to log
+dev-toolbox-j2 = Debug to clipboard
+dev-toolbox-j3 = Copy the warnings
+dev-toolbox-j4 = Copy the system configuration
+dev-toolbox-j5 = Copy a tool's output
+dev-toolbox-j6 = Open the logs folder
+dev-toolbox-j7 = Script errors
+dev-toolbox-l1 = Under the cursor
+dev-toolbox-l2 = Worn items of the target
+dev-toolbox-l3 = Live problems
+dev-toolbox-n3 = Loading
+dev-toolbox-r1 = Show transparency
+dev-toolbox-r2 = … rigged objects too
+dev-toolbox-r3 = Pass and alpha per face
+dev-toolbox-r4 = Wireframe
+dev-toolbox-r5 = Show glow
+dev-toolbox-r6 = Shadow cascades
+dev-toolbox-r7 = Ambient occlusion
+dev-toolbox-r8 = Objects with glow
+dev-toolbox-r9 = Lights
+dev-toolbox-r10 = Reflection probes
+dev-toolbox-r11 = Sort of the local lights
+dev-toolbox-r12 = Sort of the reflection probes
+dev-toolbox-o1 = Bounding boxes
+dev-toolbox-o2 = Detail levels (LOD)
+dev-toolbox-o3 = Culling
+dev-toolbox-o4 = Freeze culling
+dev-toolbox-o5 = Skeletons
+dev-toolbox-o6 = Complexity in name tags
+dev-toolbox-o7 = Inspect objects
+dev-toolbox-o8 = Avatar health
+dev-toolbox-o9 = Follow sculpts
+dev-toolbox-n1 = Network graph
+dev-toolbox-n2 = Region summary
+dev-toolbox-p1 = Performance
+dev-toolbox-p2 = Resource monitor
+dev-toolbox-p3 = Slow frames
+dev-toolbox-p4 = What changes when still
+dev-toolbox-p5 = What the sync visits
+dev-toolbox-p6 = Profile in the log
+dev-toolbox-m1 = Media debug
+dev-toolbox-live = Live
+dev-toolbox-see-warnings = View and copy (J3)
+dev-toolbox-no-warning = No warning since the start
+dev-toolbox-live-warnings = { $count } in 2 min
+dev-toolbox-live-warnings-total = { $count ->
+    [one] { $count } warning
+   *[other] { $count } warnings
+    }
+dev-toolbox-live-lines = { $count ->
+    [one] { $count } line in 60 s
+   *[other] { $count } lines in 60 s
+    }
+dev-toolbox-live-not-drawn = face not drawn
+dev-toolbox-live-nothing-pointed = nothing pointed at
+dev-toolbox-live-left-out = { $count ->
+    [one] { $count } face left out
+   *[other] { $count } faces left out
+    }
+dev-toolbox-live-frame = { $ms } ms · worst { $worst }
+dev-toolbox-live-threshold = threshold { $ms } ms
+dev-toolbox-live-on-target = on the target
+dev-toolbox-live-of-target = of the target
+dev-toolbox-live-health = rebake, refresh…
+dev-toolbox-send = Send a diagnostic
+dev-toolbox-what-j1 = The same text as J2, also written to the session log
+dev-toolbox-what-j2 = What the target wears, face by face, and the objects within 12 m
+dev-toolbox-what-j3 = The last 50 warnings and errors, without addresses
+dev-toolbox-what-j4 = Version, hardware and graphics settings
+dev-toolbox-what-j5 = What the diagnostics turned on wrote in the last 60 s (P3, P4, P5, P6, O9, M1)
+dev-toolbox-what-l1 = The prim last pointed at, every face
+dev-toolbox-what-l2 = The target's attachments, their faces drawn and left out
+dev-toolbox-what-l3 = The last 20 warnings, kept up to date
+dev-toolbox-what-n2 = Without the region's name nor any address
+dev-toolbox-what-n3 = Texture memory, downloads, meshes and materials
+dev-toolbox-hide-names = Hide residents' names
+dev-toolbox-hide-names-hint = Avatar 1, Avatar 2… in the copied text. Advised for a public issue.
+dev-toolbox-with-system = Attach the system configuration (J4)
+dev-toolbox-with-system-hint = Version, GPU, driver, graphics settings.
+dev-toolbox-preview = Preview
+dev-toolbox-stats = { $lines ->
+    [one] { $lines } line
+   *[other] { $lines } lines
+    } · { $kb } KB
+dev-toolbox-waiting = Waiting for the names of the worn items…
+dev-toolbox-press-hint = Press this tool to build its text.
+dev-toolbox-fits = Fits in a GitHub comment (65,536 characters)
+dev-toolbox-too-long = Too long for a GitHub comment: save it as .txt and attach the file
+dev-toolbox-copy = Copy
+dev-toolbox-copied = Copied
+dev-toolbox-save = Save as .txt
+dev-toolbox-log = Log
+dev-toolbox-log-help = Write this text to the session log
+dev-toolbox-nothing-sent = Aurora sends nothing: you choose where to paste this text.
+dev-toolbox-no-avatar-target = No avatar for this target: stand within 3 m of one, or select what it wears
+dev-toolbox-no-target = Nothing to inspect for this target
+dev-toolbox-no-tool-output = No diagnostic wrote anything in the last 60 s: turn on P3, P4, P5, P6, O9 or M1 first.
 common-default = Default
 demo-scrolling-smooth = Scrolling (SMOOTH)
 ui-land-options-set = Set
@@ -3312,7 +3457,6 @@ ui-options-objects-and-culling = Objects and culling
 ui-land-general-objects-included-in-sale = Objects included in sale
 ui-land-general-objects-not-included-in-sale = Objects not included in sale
 ui-minimap-physical-objects = Physical objects
-ui-options-nearby-objects = Nearby objects
 ui-inventory-controls-coalesced-objects-only = Coalesced objects only
 ui-minimap-scripted-objects = Scripted objects
 ui-minimap-temporary-objects = Temporary objects
@@ -5304,7 +5448,6 @@ common-personal-lighting = Personal lighting…
 ui-options-listen = Listen
 ui-audio-listen-to-parcel-music = Listen to parcel music
 keybinds-type-in-chat = Type in chat
-ui-options-write-faces-lights-and-materials-within-12-m-to = Faces, lights and materials within 12 m, and what the avatars around wear
 ui-land-options-education = Education
 build-ui-features-elasticity = Elasticity
 build-land-raise = Raise
