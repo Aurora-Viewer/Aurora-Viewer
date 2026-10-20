@@ -72,8 +72,8 @@ pub fn encode_thumbnail_j2k(width: u32, height: u32, components: u8, data: &[u8]
 
 /// LLImageJ2COJ::encodeImpl: reversible for small uploads, otherwise
 /// progressive quality layers with an 8:1 final compression ratio.
-/// Pixels are top-to-bottom, like the decoder; the upload caller flips rows
-/// to Second Life's bottom-to-top convention before encoding.
+/// Pixels and codestream rows are top-to-bottom, like the decoder. Callers
+/// using DecodedImage must keep its row order when preparing an upload.
 pub fn encode_texture_j2k(width: u32, height: u32, components: u8, data: &[u8], lossless: bool) -> Result<Vec<u8>, AssetError> {
     encode(width, height, components, data, lossless, 32 * 1024 * 1024)
 }

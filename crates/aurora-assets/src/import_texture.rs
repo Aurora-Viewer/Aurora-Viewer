@@ -175,20 +175,14 @@ pub fn prepare(source: &DecodedImage, options: Options) -> Result<DecodedImage, 
 
 pub fn encode(pixels: &DecodedImage, options: Options) -> Result<Vec<u8>, AssetError> {
     validate(pixels)?;
-    // LLImageRaw is bottom-to-top. Inventory image previews use top-to-bottom;
-    // flip a separate upload buffer, keeping the preview correct.
-    let row = pixels.width as usize * usize::from(pixels.components);
-    let mut data = pixels.data.clone();
-    for y in 0..pixels.height as usize / 2 {
-        let opposite = pixels.height as usize - y - 1;
-        let (head, tail) = data.split_at_mut(opposite * row);
-        head[y * row..(y + 1) * row].swap_with_slice(&mut tail[..row]);
-    }
+    // JPEG2KEncode::setImage (indra/llimagej2coj/llimagej2coj.cpp) converts
+    // bottom-up LLImageRaw rows to top-down codestream rows. DecodedImage
+    // already uses that order, so pass its pixels directly to OpenJPEG.
     crate::j2k::encode_texture_j2k(
         pixels.width,
         pixels.height,
         pixels.components,
-        &data,
+        &pixels.data,
         options.lossless_small && pixels.width * pixels.height <= 128 * 128,
     )
 }
@@ -217,12 +211,44 @@ mod tests {
         let pixels = prepare(&source, options).expect("prepare");
         assert_eq!(pixels.components, 3);
         let uploaded = crate::decode_j2k(&encode(&pixels, options).expect("encode"), 0).expect("decode");
-        assert_eq!(&uploaded.data[..12], &pixels.data[36..]);
+        assert_eq!(uploaded, pixels);
         assert_eq!(pixels.data[0], 0);
         let mut transparent = source;
         transparent.data[3] = 200;
         assert!(!empty_alpha(&transparent));
         assert_eq!(prepare(&transparent, options).expect("prepare").components, 4);
+    }
+    #[test]
+    fn imported_images_preserve_orientation_after_upload() {
+        for components in [3, 4] {
+            let rgba = image::RgbaImage::from_fn(8, 4, |x, y| {
+                image::Rgba([
+                    (x * 25) as u8,
+                    (y * 60) as u8,
+                    (x * 10 + y * 15) as u8,
+                    (80 + x * 10 + y * 20) as u8,
+                ])
+            });
+            let source = if components == 4 {
+                image::DynamicImage::ImageRgba8(rgba)
+            } else {
+                image::DynamicImage::ImageRgb8(image::DynamicImage::ImageRgba8(rgba).into_rgb8())
+            };
+            for format in [image::ImageFormat::Png, image::ImageFormat::Bmp] {
+                let mut file = Cursor::new(Vec::new());
+                source.write_to(&mut file, format).expect("source file");
+                let decoded = decode(file.get_ref()).expect("import image");
+                let options = Options::default();
+                let pixels = prepare(&decoded, options).expect("prepare image");
+                let original = pixels.clone();
+                let uploaded = encode(&pixels, options).expect("upload image");
+                assert_eq!(pixels, original, "encoding must preserve the preview");
+                let downloaded = crate::decode_j2k(&uploaded, 0).expect("download image");
+                assert_eq!(downloaded, pixels, "{format:?}, {components} channels");
+                assert_eq!(decode(&uploaded).expect("reimport image"), pixels);
+                assert_eq!(decode_map(&uploaded).expect("reimport material map"), pixels);
+            }
+        }
     }
     #[test]
     fn large_progressive_uploads_decode_at_every_resolution() {

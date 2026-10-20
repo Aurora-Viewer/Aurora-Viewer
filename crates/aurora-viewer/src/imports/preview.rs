@@ -39,7 +39,11 @@ fn material_geometry(shape: MaterialShape) -> Result<Vec<(Arc<[Vertex]>, Arc<[u3
                         .positions
                         .iter()
                         .enumerate()
-                        .map(|(i, p)| Vertex::new(*p, face.normals[i], face.uvs[i]))
+                        .map(|(i, p)| {
+                            // Prim UVs start at the bottom; preview images start at the top.
+                            let uv = face.uvs[i];
+                            Vertex::new(*p, face.normals[i], [uv[0], 1.0 - uv[1]])
+                        })
                         .collect::<Vec<_>>();
                     (
                         vertices.into(),
@@ -785,6 +789,12 @@ mod tests {
                 ));
                 assert!(part.indices.iter().all(|i| (*i as usize) < part.vertices.len()));
                 if shape == MaterialShape::Cube {
+                    for vertex in part.vertices.iter().filter(|v| v.normal[2].abs() < 0.5) {
+                        assert!(
+                            (vertex.uv[1] - (0.5 - vertex.position[2])).abs() < 0.00001,
+                            "cube side faces show the top image row at the top"
+                        );
+                    }
                     for triangle in part.indices.as_chunks::<3>().0 {
                         let vertices = triangle.map(|i| part.vertices[i as usize]);
                         let [a, b, c] = vertices.map(|v| Vec3::from_array(v.position));
