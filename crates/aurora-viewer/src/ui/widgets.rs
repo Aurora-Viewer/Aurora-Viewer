@@ -936,11 +936,18 @@ fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool) -> bool {
 }
 
 /// Movable toolbar without a common face. The body supplies its individual
-/// button surfaces and close action; layout placement remains shared.
-pub(crate) fn toolstrip<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+/// button surfaces and close action. Its default point is positioned after
+/// measurement; subsequent placement and movement remain shared.
+pub(crate) fn toolstrip<R>(
+    ctx: &egui::Context,
+    id: &str,
+    point: egui::Align2,
+    pos: egui::Pos2,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     let window_id = egui::Id::new(id);
     super::sound_cues::floater_shown(ctx, window_id);
-    let slot = super::layout::slot(ctx, window_id);
+    let slot = super::layout::slot(ctx, window_id).default_anchor(ctx, point, pos);
     let mut area = egui::Area::new(window_id)
         .order(egui::Order::Middle)
         .fade_in(false)

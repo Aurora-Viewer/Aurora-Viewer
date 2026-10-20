@@ -4,9 +4,10 @@
 //! lives in the settings.
 //!
 //! Each window retains one of eight invisible perimeter anchors and its
-//! signed offset in the room where windows may move. First opening and
-//! completed moves choose the shortest distance between corresponding
-//! corners or side midpoints; viewer resizing never changes that choice.
+//! signed offset in the room where windows may move. Existing default rects
+//! initialize these points and offsets directly; a window may supply an
+//! explicit default point. First opening and completed moves otherwise choose
+//! the closest corresponding corners or side midpoints, retained on resize.
 //! `Slot` shares this placement with floaters, toolstrips and the mini-map.
 //!
 //! The slots also make the windows of the frame known to the gestures
@@ -20,7 +21,7 @@ mod gesture;
 use super::snap;
 use crate::theme::Palette;
 use anchor::Anchor;
-use egui::{Id, Pos2, Rect, Vec2};
+use egui::{Align2, Id, Pos2, Rect, Vec2};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -450,6 +451,7 @@ pub(crate) struct Slot {
     /// frame only measures it, and its rect is not one to record.
     sized: bool,
     preserve_anchor: bool,
+    initial_anchor: Option<Align2>,
     /// The position the window takes this frame: it follows the window it
     /// is glued to, a snap is applied, or the screen changed since it was
     /// last shown and it follows its edges.
@@ -484,12 +486,31 @@ pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
         id,
         sized,
         preserve_anchor,
+        initial_anchor: None,
         pos,
         limits,
     }
 }
 
 impl Slot {
+    /// An explicit default is applied only after measurement and before the
+    /// first recorded placement. Saved layouts and requested moves take priority.
+    pub(crate) fn default_anchor(mut self, ctx: &egui::Context, point: Align2, at: Pos2) -> Self {
+        let key = self.id.value();
+        let fresh = windows(ctx, |w| {
+            !w.placed.contains_key(&key) && !w.live.reanchor_after_show.contains(&key) && !w.live.reanchor.contains(&key)
+        });
+        if fresh {
+            self.initial_anchor = Some(point);
+            if self.pos.is_none()
+                && let Some(size) = egui::AreaState::load(ctx, self.id).and_then(|s| s.size)
+            {
+                self.pos = Some(point.anchor_size(at, size).min);
+            }
+        }
+        self
+    }
+
     /// The window was shown at `rect`; `minimized`: reduced to its title.
     pub(crate) fn shown(self, ctx: &egui::Context, rect: Rect, minimized: bool) {
         let screen = ctx.content_rect();
@@ -519,7 +540,12 @@ impl Slot {
                         }
                     })
                 })
-                .or_else(|| (self.sized && usable(screen)).then(|| Anchor::nearest(room, rect)));
+                .or_else(|| {
+                    (self.sized && usable(screen)).then(|| {
+                        self.initial_anchor
+                            .map_or_else(|| Anchor::nearest(room, rect), |point| Anchor::new(point, room, rect))
+                    })
+                });
             let new = Placed {
                 rect,
                 screen,
@@ -740,6 +766,33 @@ mod tests {
                     .collect::<BTreeMap<_, _>>()),
                 anchors
             );
+        }
+    }
+
+    #[test]
+    fn factory_rects_initialize_eight_point_anchors_and_offsets_without_changing_opening_positions() {
+        for (width, height) in [(1280.0, 720.0), (1600.0, 900.0), (1920.0, 1080.0)] {
+            let screen = screen(width, height);
+            let work = Rect::from_min_max(Pos2::new(8.0, 53.0), Pos2::new(width - 8.0, height - 57.0));
+            let people = Rect::from_min_size(super::super::people::default_pos(work), super::super::people::AURORA_SIZE);
+            let map = super::super::minimap::default_rect(work);
+            let chat = super::super::chat::default_rect(work);
+            let (people_point, people_travel) = if height == 720.0 {
+                (Align2::LEFT_CENTER, Vec2::new(0.0, 90.0))
+            } else {
+                (Align2::LEFT_TOP, Vec2::ZERO)
+            };
+            for (rect, point, travel) in [
+                (people, people_point, people_travel),
+                (map, Align2::RIGHT_TOP, Vec2::new(320.0, 0.0)),
+                (chat, Align2::RIGHT_BOTTOM, Vec2::new(320.0, 180.0)),
+            ] {
+                let anchor = Anchor::nearest(screen, rect);
+                assert_eq!(anchor.point, point, "{width}x{height}: {rect:?}");
+                assert_eq!(anchor.position(screen, rect.size()), rect.min);
+                let larger = Rect::from_min_size(Pos2::ZERO, Vec2::new(width + 320.0, height + 180.0));
+                assert_eq!(anchor.position(larger, rect.size()), rect.min + travel);
+            }
         }
     }
 
