@@ -43,6 +43,8 @@ pub struct View {
     pub waiting: bool,
     /// The surface under the cursor is frozen (Aim).
     pub frozen: bool,
+    /// Aim waits for a click on a surface of the world.
+    pub picking: bool,
 }
 
 /// What the window asks the app to do.
@@ -53,8 +55,9 @@ pub enum Action {
     Copy,
     Save,
     Log,
-    /// Aim: freeze or follow the surface under the cursor.
-    Freeze,
+    /// Aim: wait for a click on a surface of the world (the target then
+    /// stays), or follow the pointer again.
+    Aim,
     /// One of Avatar health's actions (O8).
     Health(Health),
 }
@@ -260,6 +263,8 @@ fn target_row(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
         };
         let (label, kind) = if view.frozen {
             (tr!("dev-toolbox-aim-frozen"), widgets::ActionKind::Primary)
+        } else if view.picking {
+            (tr!("dev-toolbox-aim-picking"), widgets::ActionKind::Primary)
         } else {
             (tr!("dev-toolbox-aim"), widgets::ActionKind::Flat)
         };
@@ -283,7 +288,7 @@ fn target_row(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, view: &View
             .clicked()
         {
             st.target = Target::UnderCursor;
-            st.actions.push(Action::Freeze);
+            st.actions.push(Action::Aim);
         }
     });
 }

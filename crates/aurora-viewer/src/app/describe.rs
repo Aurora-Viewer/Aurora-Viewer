@@ -100,9 +100,11 @@ impl App {
             return;
         };
         let ((), text) = crate::logging::capture(|| {
-            // scene space: the agent avatar's drawn center
+            // scene space: the agent avatar's drawn center; the objects
+            // around only when the press has no target (a copy with a
+            // target stays short enough to paste)
             let me = self.scene.agent_idx.and_then(|i| self.scene.gpu.get(i)).map(|g| g.center);
-            if let Some(me) = me {
+            if let Some(me) = me.filter(|_| pending.scope.is_empty()) {
                 self.scene.log_nearby(&self.world, me, 12.0);
             }
             // what the avatars around wear: a missing part shows there

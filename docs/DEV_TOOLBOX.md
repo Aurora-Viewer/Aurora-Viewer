@@ -14,7 +14,8 @@ instead of asking for a whole log.
 1. Open the Dev Toolbox (Ctrl+Alt+D).
 2. Choose the **target**: *Nearest avatar* (stand within 3 m, no need to aim
    at it), *Selection* (right-click › Edit on the object) or *Under the
-   cursor* (the last surface pointed at in the world; *Aim* freezes it).
+   cursor* (the surface pointed at in the world; press *Aim*, then click
+   the surface: it stays the target, and that click does nothing else).
 3. Press the tool you were asked for. Its text appears in **Send a
    diagnostic** on the right.
 4. Keep **Hide residents' names** on (it is on by default): the names and
@@ -61,7 +62,10 @@ How to read a copy:
 - J1 / J2 write, for each prim of the target, every face: drawn ones as
   `[face tex … rgba … legacy/glTF alpha mode cutoff … tex alpha … -> Pass]`,
   the others as `left out:` with the reason (texture-entry alpha 0, no
-  triangles at the level of detail, no geometry). Whole prims left out for
+  triangles at the level of detail, no geometry). Faces of a prim that read
+  the same are written once with their indices (`[0-3,6 … -> Mask]`), and
+  prims that read the same once with how many more there are
+  (`prim <id> and 12 more alike …`). Whole prims left out for
   a texture-entry alpha of 0 usually mean a body HUD hid them on purpose;
   `-> Blend` on a part meant to be opaque points at the alpha mode or the
   texture's alpha class; a glTF material id on a `403` line is an asset the
@@ -89,7 +93,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | ID | Tool | Kind | What it gives |
 |---|---|---|---|
 | J1 | Debug to log | copy | The same text as J2, also written to the session log |
-| J2 | Debug to clipboard | copy | The target's worn items (or selection) face by face, and the objects within 12 m; copied as soon as the names of the worn items came (3 s) |
+| J2 | Debug to clipboard | copy | The target's worn items (or selection) face by face; with no avatar within 3 m and nothing selected, the objects within 12 m and the worn items around instead. Copied as soon as the names of the worn items came (3 s) |
 | J3 | Copy the warnings | copy | The last 50 warnings and errors of the session |
 | J4 | Copy the system configuration | copy | Version, commit, OS, CPU, memory, GPU and driver, screen, graphics settings |
 | J5 | Copy a tool's output | copy | What P3, P4, P5, P6, O9 and M1 wrote in the last 60 s |

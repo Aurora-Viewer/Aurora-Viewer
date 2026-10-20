@@ -1,8 +1,10 @@
-//! The "Debug to log" diagnostic (Preferences › Debug › Logs, Advanced menu):
-//! what the scene draws of the objects around and of what the avatars near
-//! us wear, face by face, so that a rendering report from the grid can be
-//! read from the log alone. It only reads the scene: nothing here changes
-//! what is drawn.
+//! The Dev Toolbox's "Debug to log" / "Debug to clipboard" (J1, J2): what
+//! the scene draws of the target (the avatars near us, or the selection),
+//! face by face, or of the objects and worn items around when there is no
+//! target, so that a rendering report from the grid can be read from the
+//! log or from a pasted copy alone. Faces and prims that read the same are
+//! written once. It only reads the scene: nothing here changes what is
+//! drawn.
 
 use super::jobs::AlphaKind;
 use super::{FaceDraw, GeomState, GpuGeom, ObjGpu, Pass, Scene, avatar, classify, legacy_mat, te_invisible};
@@ -39,6 +41,12 @@ pub struct DescribeScope {
 }
 
 impl DescribeScope {
+    /// Nothing to detail: the press then writes the objects and the worn
+    /// items around instead.
+    pub fn is_empty(&self) -> bool {
+        self.selected.is_empty() && self.avatars.is_empty()
+    }
+
     /// Roots of the linksets the press details.
     pub fn roots(&self, world: &World) -> Vec<usize> {
         let mut out = self.selected.clone();
@@ -107,6 +115,61 @@ fn rgba(c: [f32; 4]) -> String {
     format!("{:.2},{:.2},{:.2},{:.3}", c[0], c[1], c[2], c[3])
 }
 
+/// Face indices as ranges ("0-3,6"), from sorted indices.
+fn index_ranges(ix: &[usize]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < ix.len() {
+        let start = ix[i];
+        while i + 1 < ix.len() && ix[i + 1] == ix[i] + 1 {
+            i += 1;
+        }
+        if !out.is_empty() {
+            out.push(',');
+        }
+        if ix[i] == start {
+            out.push_str(&start.to_string());
+        } else {
+            out.push_str(&format!("{start}-{}", ix[i]));
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The faces of a prim, those that read the same written once with their
+/// indices: a mesh body's eight faces hidden alike make one bracket, which
+/// keeps a copy short enough to paste in a message.
+fn grouped_faces(faces: &[(usize, String)]) -> String {
+    let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (fi, desc) in faces {
+        match groups.iter_mut().find(|(d, _)| *d == desc.as_str()) {
+            Some((_, ix)) => ix.push(*fi),
+            None => groups.push((desc, vec![*fi])),
+        }
+    }
+    groups.iter().map(|(d, ix)| format!(" [{} {d}]", index_ranges(ix))).collect()
+}
+
+/// Prim lines that read the same but for the prim's id, written once with
+/// how many more there are (the prims of a mesh body hidden by its HUD).
+fn merge_alike(lines: Vec<(Uuid, String)>) -> Vec<String> {
+    let mut groups: Vec<(Uuid, String, usize)> = Vec::new();
+    for (id, body) in lines {
+        match groups.iter_mut().find(|(_, b, _)| *b == body) {
+            Some(g) => g.2 += 1,
+            None => groups.push((id, body, 0)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(id, body, more)| match more {
+            0 => format!("prim {id} {body}"),
+            n => format!("prim {id} and {n} more alike {body}"),
+        })
+        .collect()
+}
+
 impl Scene {
     /// Scene-space position of an object as drawn.
     fn drawn_position(world: &World, idx: usize) -> Option<Vec3> {
@@ -157,8 +220,8 @@ impl Scene {
     }
 
     /// The worn part of a press: the selected linksets face by face, then
-    /// the attachments of the avatars within [`WORN_RADIUS`], face by face
-    /// for those of `scope`.
+    /// the attachments of the avatars of `scope` face by face; with an empty
+    /// scope, those of the avatars within [`WORN_RADIUS`] summed up.
     pub fn describe_worn(&self, world: &World, renderer: &Renderer, scope: &DescribeScope, names: Names) {
         log::info!(
             "describe: {} selected linksets, {} avatars within {DETAIL_RADIUS} m detailed face by face",
@@ -171,6 +234,10 @@ impl Scene {
         }
         for (_, id) in Self::avatars_near(world, WORN_RADIUS) {
             let detail = scope.avatars.contains(&id);
+            // a press with a target writes that target only
+            if !detail && !scope.is_empty() {
+                continue;
+            }
             self.log_attachments(world, id, renderer, names, detail.then_some(&mut budget));
         }
     }
@@ -207,11 +274,14 @@ impl Scene {
                     o.full_id,
                     prims.len()
                 );
-                let lines: Vec<String> = prims
+                let lines: Vec<(Uuid, String)> = prims
                     .iter()
-                    .filter_map(|&i| Some(self.prim_faces_line(world, renderer, world.objects.get(i)?, self.gpu.get(i)?)))
+                    .filter_map(|&i| {
+                        let o = world.objects.get(i)?;
+                        Some((o.full_id, self.prim_faces_body(world, renderer, o, self.gpu.get(i)?)))
+                    })
                     .collect();
-                Self::log_prim_lines(&lines, Some(budget));
+                Self::log_prim_lines(&merge_alike(lines), Some(budget));
             }
         }
     }
@@ -294,8 +364,9 @@ impl Scene {
         let (mut meshes, mut rigged, mut faces, mut shown, mut pending, mut empty) = (0, 0, 0, 0, 0, 0);
         let (mut te_zero, mut no_tris) = (0, 0);
         let mut suspects: Vec<String> = Vec::new();
-        let mut gltf_faces: Vec<String> = Vec::new();
-        let mut prim_lines: Vec<String> = Vec::new();
+        // (prim, face, description): faces of a prim alike are written once
+        let mut gltf_faces: Vec<(Uuid, usize, String)> = Vec::new();
+        let mut prim_lines: Vec<(Uuid, String)> = Vec::new();
         let mut far = 0.0f32;
         for &i in &prims {
             let Some(o) = world.objects.get(i) else {
@@ -345,13 +416,16 @@ impl Scene {
                 }
                 if let Some(desc) = gltf {
                     let tf = o.te.as_ref().map(|t| *t.face(fi)).unwrap_or_default();
-                    gltf_faces.push(format!(
-                        "  glTF face {} #{fi}: {desc}, drawn with base {} ({}), maps {:?}, texture entry {} unused",
+                    gltf_faces.push((
                         o.full_id,
-                        f.tex_id,
-                        self.textures.describe(&f.tex_id),
-                        f.aux_tex,
-                        tf.texture
+                        fi,
+                        format!(
+                            "{desc}, drawn with base {} ({}), maps {:?}, texture entry {} unused",
+                            f.tex_id,
+                            self.textures.describe(&f.tex_id),
+                            f.aux_tex,
+                            tf.texture
+                        ),
                     ));
                 }
             }
@@ -359,7 +433,7 @@ impl Scene {
                 far = far.max(g.center.distance(apos));
             }
             if head_set || detail.is_some() {
-                prim_lines.push(self.prim_faces_line(world, renderer, o, g));
+                prim_lines.push((o.full_id, self.prim_faces_body(world, renderer, o, g)));
             }
         }
         log::info!(
@@ -370,7 +444,7 @@ impl Scene {
             root.position
         );
         // the head linkset is detailed outside the budget, as before
-        Self::log_prim_lines(&prim_lines, detail.filter(|_| !head_set));
+        Self::log_prim_lines(&merge_alike(prim_lines), detail.filter(|_| !head_set));
         // legacy materials of our own attachments (normal / specular maps)
         if wearer.is_some_and(|w| w.full_id == world.agent_id) {
             let mut seen: Vec<Uuid> = Vec::new();
@@ -411,10 +485,17 @@ impl Scene {
         }
         // glTF faces: material, whether it loaded, override (they are
         // drawn with the material's base color texture, never with the
-        // texture entry's)
-        let more = gltf_faces.len().saturating_sub(24);
-        for line in gltf_faces.iter().take(24) {
-            log::info!("{line}");
+        // texture entry's); the faces of a prim alike on one line
+        let mut grouped: Vec<(Uuid, &str, Vec<usize>)> = Vec::new();
+        for (id, fi, desc) in &gltf_faces {
+            match grouped.iter_mut().find(|(i, d, _)| i == id && *d == desc.as_str()) {
+                Some((_, _, ix)) => ix.push(*fi),
+                None => grouped.push((*id, desc, vec![*fi])),
+            }
+        }
+        let more = grouped.len().saturating_sub(24);
+        for (id, desc, ix) in grouped.iter().take(24) {
+            log::info!("  glTF face {id} #{}: {desc}", index_ranges(ix));
         }
         if more > 0 {
             log::info!("  … {more} more glTF faces");
@@ -494,7 +575,9 @@ impl Scene {
     /// One prim, every face of its texture entry: drawn (with everything
     /// that chose its pass) or left out (and why), so that a see-through or
     /// missing part can be told from a creator's choice.
-    fn prim_faces_line(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
+    /// The line after the prim's id (see [`merge_alike`]); the faces that
+    /// read the same are written once (see [`grouped_faces`]).
+    fn prim_faces_body(&self, world: &World, renderer: &Renderer, o: &Object, g: &ObjGpu) -> String {
         let geom = self.ready_geom(g);
         let te_faces = o.te.as_ref().map_or(0, |t| t.faces.len());
         let count = geom.map_or(te_faces, |geom| geom.faces.len());
@@ -507,7 +590,7 @@ impl Scene {
         };
         let alpha = &self.textures.alpha_by_slot;
         let (mut zero, mut none, mut hidden) = (0, 0, 0);
-        let mut line = String::new();
+        let mut faces: Vec<(usize, String)> = Vec::with_capacity(count);
         for fi in 0..count {
             let tf = o.visual_texture_face(fi);
             if let Some(f) = g.faces.iter().find(|f| f.te_index as usize == fi) {
@@ -516,7 +599,7 @@ impl Scene {
                 if pass == Pass::Hidden {
                     hidden += 1;
                 }
-                line.push_str(&self.drawn_face(world, renderer, o, fi, &tf, f, a, pass));
+                faces.push((fi, self.drawn_face(world, renderer, o, fi, &tf, f, a, pass)));
                 continue;
             }
             let why = match geom.map(|geom| geom.faces[fi].is_some()) {
@@ -537,10 +620,13 @@ impl Scene {
                 tf.material_id.to_string()
             };
             let gltf = o.visual_material(fi).map_or_else(|| "-".to_string(), |id| id.to_string());
-            line.push_str(&format!(
-                " [{fi} left out: {why}, tex {}, rgba {}, legacy material {legacy}, glTF material {gltf}]",
-                self.texture_label(&tf.texture),
-                rgba(tf.color)
+            faces.push((
+                fi,
+                format!(
+                    "left out: {why}, tex {}, rgba {}, legacy material {legacy}, glTF material {gltf}",
+                    self.texture_label(&tf.texture),
+                    rgba(tf.color)
+                ),
             ));
         }
         let drawn = if g.faces.is_empty() {
@@ -549,10 +635,10 @@ impl Scene {
             format!("{}/{count} faces drawn", g.faces.len())
         };
         format!(
-            "prim {} ({kind}, lod {}, geometry {}): {drawn}, {zero} left out for texture-entry alpha 0, {none} without triangles, {hidden} hidden:{line}",
-            o.full_id,
+            "({kind}, lod {}, geometry {}): {drawn}, {zero} left out for texture-entry alpha 0, {none} without triangles, {hidden} hidden:{}",
             g.lod,
-            self.geom_state(g)
+            self.geom_state(g),
+            grouped_faces(&faces)
         )
     }
 
@@ -607,7 +693,7 @@ impl Scene {
             String::new()
         };
         format!(
-            " [{fi} tex {tex} rgba {}{drawn_alpha} {material} tex alpha {tex_alpha:?}{} -> {pass:?}{cached}]",
+            "tex {tex} rgba {}{drawn_alpha} {material} tex alpha {tex_alpha:?}{} -> {pass:?}{cached}",
             rgba(tf.color),
             if f.two_sided { " two-sided" } else { "" }
         )
@@ -812,7 +898,12 @@ impl Scene {
     /// The Dev Toolbox's L1: one prim, every face, as "Debug to log" writes
     /// it for a detailed prim.
     pub fn describe_prim(&self, world: &World, renderer: &Renderer, idx: usize) -> Option<String> {
-        Some(self.prim_faces_line(world, renderer, world.objects.get(idx)?, self.gpu.get(idx)?))
+        let o = world.objects.get(idx)?;
+        Some(format!(
+            "prim {} {}",
+            o.full_id,
+            self.prim_faces_body(world, renderer, o, self.gpu.get(idx)?)
+        ))
     }
 
     /// The pass and drawn alpha of one face, for the L1 button ("Blend ·
@@ -868,5 +959,45 @@ impl Scene {
             .collect();
         rows.sort_by(|a, b| b.left_out.cmp(&a.left_out).then(b.prims.cmp(&a.prims)));
         rows
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_ranges_join_neighbours() {
+        assert_eq!(index_ranges(&[0, 1, 2, 3, 6]), "0-3,6");
+        assert_eq!(index_ranges(&[4]), "4");
+        assert_eq!(index_ranges(&[0, 2, 3]), "0,2-3");
+        assert_eq!(index_ranges(&[]), "");
+    }
+
+    #[test]
+    fn faces_alike_are_written_once() {
+        let hidden = "left out: texture-entry alpha 0".to_string();
+        let drawn = "tex a -> Mask".to_string();
+        let faces = vec![
+            (0, drawn.clone()),
+            (1, hidden.clone()),
+            (2, hidden.clone()),
+            (3, drawn),
+            (4, hidden),
+        ];
+        assert_eq!(
+            grouped_faces(&faces),
+            " [0,3 tex a -> Mask] [1-2,4 left out: texture-entry alpha 0]"
+        );
+    }
+
+    #[test]
+    fn prims_alike_are_written_once() {
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let lines = merge_alike(vec![(a, "(mesh): x".into()), (b, "(mesh): y".into()), (c, "(mesh): x".into())]);
+        assert_eq!(
+            lines,
+            vec![format!("prim {a} and 1 more alike (mesh): x"), format!("prim {b} (mesh): y")]
+        );
     }
 }

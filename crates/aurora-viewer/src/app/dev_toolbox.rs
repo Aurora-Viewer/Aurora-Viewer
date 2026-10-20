@@ -42,6 +42,10 @@ pub(super) struct Toolbox {
     hover: Option<(usize, Option<usize>)>,
     /// Aim: the surface under the cursor no longer follows the pointer.
     frozen: bool,
+    /// Aim: the next press on the world picks the surface under it.
+    picking: bool,
+    /// That press came: the next frame takes its surface.
+    pick_now: bool,
     /// What does not change during a session (OS, processor, memory).
     machine: Option<std::sync::Arc<std::sync::OnceLock<String>>>,
     /// Bumped with every result, so the preview is composed again only when
@@ -86,10 +90,11 @@ impl App {
         if !self.panels.dev_toolbox || self.toolbox.frozen {
             return;
         }
+        let pick = std::mem::take(&mut self.toolbox.pick_now);
         let Some((Some(idx), _)) = self.look_hover else {
             return;
         };
-        if self.toolbox.hover.is_some_and(|(i, _)| i == idx) && !self.frame_count.is_multiple_of(6) {
+        if !pick && self.toolbox.hover.is_some_and(|(i, _)| i == idx) && !self.frame_count.is_multiple_of(6) {
             return;
         }
         let face = renderer
@@ -97,6 +102,22 @@ impl App {
             .and_then(|ray| self.scene.touch_surface(&self.world, idx, ray))
             .and_then(|s| usize::try_from(s.face).ok());
         self.toolbox.hover = Some((idx, face));
+        if pick {
+            self.toolbox.picking = false;
+            self.toolbox.frozen = true;
+        }
+    }
+
+    /// Aim: a press on the world while it waits picks the surface under the
+    /// pointer for the toolbox and does nothing else (no touch, no walk);
+    /// true when it took the press. Pointing at a surface and then reaching
+    /// the window's button would cross the world and change the target.
+    pub(super) fn toolbox_pick_press(&mut self) -> bool {
+        if !self.panels.dev_toolbox || !self.toolbox.picking {
+            return false;
+        }
+        self.toolbox.pick_now = true;
+        true
     }
 
     /// The window, drawn with the interface; its actions run at once.
@@ -177,7 +198,12 @@ impl App {
                     log::info!("dev toolbox {}:\n{text}", self.dev_toolbox.selected);
                 }
             }
-            Action::Freeze => self.toolbox.frozen = !self.toolbox.frozen,
+            Action::Aim => {
+                // waiting or frozen: back to following the pointer
+                let follow = self.toolbox.frozen || self.toolbox.picking;
+                self.toolbox.frozen = false;
+                self.toolbox.picking = !follow;
+            }
             Action::Health(h) => {
                 use crate::ui::context::CtxAction;
                 let me = self.world.agent_id;
@@ -515,6 +541,7 @@ impl App {
         view.on = on;
         view.live = live;
         view.frozen = self.toolbox.frozen;
+        view.picking = self.toolbox.picking;
         view.shortcut = self.settings.keybinds.get(crate::keybinds::Action::DevToolbox)[0].clone();
         view.warnings = warnings
             .iter()
