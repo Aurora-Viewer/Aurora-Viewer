@@ -6209,6 +6209,7 @@ script-preferences-title = Préférences de l’éditeur de scripts
 script-preferences-colors = Couleurs de l’éditeur
 script-preferences-reset-colors = Couleurs du thème
 script-preferences-font-size = Taille de la police
+script-preferences-word-wrap = Retour automatique à la ligne
 script-preferences-convert-tabs = Remplacer les tabulations des fichiers par des espaces
 script-preferences-preprocessor = Activer le préprocesseur LSL
 script-preferences-optimize = Optimiseur de scripts

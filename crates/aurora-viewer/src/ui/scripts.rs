@@ -361,7 +361,7 @@ impl Editors {
                 e.tools.search.replacement = "llOwnerSay".into();
                 e.tools.search.find(ctx, text_id, &e.source);
             }
-            "preferences" => self.preferences.open = true,
+            "preferences" | "word-wrap-preferences" => self.preferences.open = true,
             "help" => {
                 e.tools.help.open = true;
                 e.tools.help.visit("llSay");
