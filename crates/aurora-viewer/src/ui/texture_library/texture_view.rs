@@ -13,6 +13,28 @@ struct Decoded {
     metadata: Metadata,
 }
 
+fn decode_source(ctx: &egui::Context, asset: Uuid, mut source: crate::scene::textures::PreviewSource) -> Decoded {
+    if source.bytes.is_empty()
+        && let Ok(bytes) = std::fs::read(&source.jpeg)
+    {
+        source.bytes = Arc::new(bytes);
+    }
+    let metadata = metadata(&source.bytes);
+    // Missing dimensions in a cache-only scene entry do not mean its pixels
+    // are full resolution. Only procedural images can arrive without a level.
+    let complete = source.decoded.is_none_or(|level| level == 0);
+    let image = source.inspector_image(asset).map(|image| {
+        let [w, h] = image.size;
+        let texture = ctx.load_texture(
+            format!("resource-full-{asset}"),
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &image.rgba),
+            egui::TextureOptions::LINEAR,
+        );
+        (texture, image, complete)
+    });
+    Decoded { metadata, image }
+}
+
 /// LLViewerFetchedTexture::createTexture parses `a=UUID&z=YYYYMMDDHHMMSS`
 /// in the JPEG2000 COM marker. Stop at the first tile, never scan image data.
 fn metadata(bytes: &[u8]) -> Metadata {
@@ -91,7 +113,7 @@ impl ImageView {
                 }
             }
         }
-        let mut source = scene.textures.preview_source(&asset);
+        let source = scene.textures.preview_source(&asset);
         let revision = source.revision();
         if self.pending.is_none() && self.revision != Some(revision) {
             self.revision = Some(revision);
@@ -99,23 +121,7 @@ impl ImageView {
             self.pending = Some(rx);
             let wake = ctx.clone();
             scene.jobs.execute(move || {
-                if source.bytes.is_empty()
-                    && let Ok(bytes) = std::fs::read(&source.jpeg)
-                {
-                    source.bytes = Arc::new(bytes);
-                }
-                let metadata = metadata(&source.bytes);
-                let complete = source.decoded == Some(0) || source.size.is_none();
-                let image = source.inspector_image(asset).map(|image| {
-                    let [w, h] = image.size;
-                    let texture = wake.load_texture(
-                        format!("resource-full-{asset}"),
-                        egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &image.rgba),
-                        egui::TextureOptions::LINEAR,
-                    );
-                    (texture, image, complete)
-                });
-                let _ = tx.send(Decoded { metadata, image });
+                let _ = tx.send(decode_source(&wake, asset, source));
                 wake.request_repaint();
             });
         }
@@ -359,6 +365,31 @@ fn checkerboard(ui: &egui::Ui, p: &Palette, image: egui::Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cache_only_coarse_pixels_are_previewed_but_never_accepted_for_full_resolution_export() {
+        let pixels = aurora_assets::DecodedImage {
+            width: 1024,
+            height: 512,
+            components: 3,
+            data: [48, 96, 144].repeat(1024 * 512),
+            discard: 0,
+        };
+        let bytes = Arc::new(aurora_assets::import_texture::encode(&pixels, Default::default()).expect("encode fixture"));
+        let ctx = egui::Context::default();
+        for level in [2, 0] {
+            let source = crate::scene::textures::PreviewSource {
+                bytes: bytes.clone(),
+                jpeg: Default::default(),
+                blocks: Default::default(),
+                decoded: Some(level),
+                size: None, // Cache-only entries can lack the original J2K dimensions.
+                procedural: false,
+            };
+            let (_, image, complete) = decode_source(&ctx, Uuid::from_u128(799), source).image.expect("decoded pixels");
+            assert_eq!(image.size, [1024 >> level, 512 >> level]);
+            assert_eq!(complete, level == 0, "a coarse preview must not unlock PNG/TGA export");
+        }
+    }
     #[test]
     fn image_fit_preserves_stretches_and_displays_native_pixels_at_any_dpi() {
         let source = Vec2::new(1024.0, 512.0);
