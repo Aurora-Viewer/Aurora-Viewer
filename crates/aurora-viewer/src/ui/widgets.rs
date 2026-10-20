@@ -511,6 +511,9 @@ impl<'a> Floater<'a> {
         // the viewer window changed size: the floater follows its edges;
         // a placement asked this frame and a resize in progress come after
         let slot = super::layout::slot(ctx, window_id);
+        if opening.is_some() {
+            super::layout::reanchor(ctx, window_id);
+        }
         let mut asked = opening.as_ref().map(|o| o.pos).or(slot.pos);
         // A window moves anywhere in the room the bars leave it
         // (`layout::move_area`: the whole screen with the islands, between
@@ -933,11 +936,18 @@ fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool) -> bool {
 }
 
 /// Movable toolbar without a common face. The body supplies its individual
-/// button surfaces and close action; layout placement remains shared.
-pub(crate) fn toolstrip<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+/// button surfaces and close action. Its default point is positioned after
+/// measurement; subsequent placement and movement remain shared.
+pub(crate) fn toolstrip<R>(
+    ctx: &egui::Context,
+    id: &str,
+    point: egui::Align2,
+    pos: egui::Pos2,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     let window_id = egui::Id::new(id);
     super::sound_cues::floater_shown(ctx, window_id);
-    let slot = super::layout::slot(ctx, window_id);
+    let slot = super::layout::slot(ctx, window_id).default_anchor(ctx, point, pos);
     let mut area = egui::Area::new(window_id)
         .order(egui::Order::Middle)
         .fade_in(false)
@@ -957,6 +967,7 @@ pub(crate) fn toolstrip<R>(ctx: &egui::Context, id: &str, pos: egui::Pos2, body:
 
 /// Move a dependent floater without changing its size or minimized state.
 pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
+    super::layout::reanchor(ctx, egui::Id::new(id));
     ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(PLACE_POS), pos));
 }
 
@@ -965,6 +976,7 @@ pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
 /// same thing whatever layout the previous run left in ui_layout.ron.
 pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2) {
     let window_id = egui::Id::new(id);
+    super::layout::reanchor(ctx, window_id);
     ctx.data_mut(|d| {
         d.insert_persisted(egui::Id::new((id, "minimized")), false);
         d.insert_persisted(window_id.with("expanded_size"), size);

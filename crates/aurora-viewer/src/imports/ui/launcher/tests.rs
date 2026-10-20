@@ -1,5 +1,63 @@
 use super::*;
 
+#[test]
+fn import_launcher_defaults_to_the_top_midpoint_and_keeps_custom_placement() {
+    let ctx = egui::Context::default();
+    let mut imports = Imports {
+        launcher_open: true,
+        ..Default::default()
+    };
+    let run = |ctx: &egui::Context, imports: &mut Imports, size| {
+        let theme = crate::theme::Theme::default();
+        theme.apply(ctx, 1.0);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                ..Default::default()
+            },
+            |ui| {
+                let screen = ui.ctx().content_rect();
+                crate::ui::layout::set_work_area(ui.ctx(), crate::ui::layout::default_work_area(screen));
+                crate::ui::layout::set_move_area(ui.ctx(), screen);
+                crate::ui::layout::frame(ui.ctx(), &theme.palette(), false);
+                show(ui.ctx(), &theme.palette(), imports, &mut Preferences::default());
+            },
+        );
+        output.textures_delta.clear();
+    };
+    for size in [Vec2::new(1280.0, 720.0), Vec2::new(1600.0, 900.0), Vec2::new(1000.0, 700.0)] {
+        for _ in 0..4 {
+            run(&ctx, &mut imports, size);
+        }
+        let bar = bounds(&ctx, WINDOW).expect("measured launcher");
+        assert!((bar.center().x - size.x * 0.5).abs() < 0.5, "top midpoint: {bar:?}");
+        assert_eq!(bar.top(), crate::ui::layout::work_area(&ctx).top());
+    }
+    let size = Vec2::new(1600.0, 900.0);
+    let custom = egui::pos2(80.0, 180.0);
+    widgets::move_floater(&ctx, WINDOW, custom);
+    for _ in 0..4 {
+        run(&ctx, &mut imports, size);
+    }
+    assert_eq!(bounds(&ctx, WINDOW).expect("moved launcher").min, custom);
+    imports.launcher_open = false;
+    for _ in 0..3 {
+        run(&ctx, &mut imports, size);
+    }
+    imports.open_launcher(&ctx);
+    for _ in 0..4 {
+        run(&ctx, &mut imports, size);
+    }
+    assert_eq!(bounds(&ctx, WINDOW).expect("reopened launcher").min, custom);
+    let saved = ron::to_string(&ctx.memory(|m| m.clone())).expect("saved custom placement");
+    let next = egui::Context::default();
+    next.memory_mut(|m| *m = ron::from_str(&saved).expect("restored placement"));
+    for _ in 0..4 {
+        run(&next, &mut imports, Vec2::new(1920.0, 1080.0));
+    }
+    assert_eq!(bounds(&next, WINDOW).expect("custom placement after restart").min, custom);
+}
+
 fn frame(ctx: &egui::Context, imports: &mut Imports, events: Vec<egui::Event>) -> egui::FullOutput {
     let theme = crate::theme::Theme::default();
     theme.apply(ctx, 1.0);

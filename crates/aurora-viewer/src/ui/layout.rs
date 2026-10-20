@@ -3,24 +3,25 @@
 //! `ui_layout.ron` on exit and restored at startup. Which panels are open
 //! lives in the settings.
 //!
-//! egui remembers the top left corner of a window. When the viewer window
-//! changes size, live or between two sessions, each window keeps instead its
-//! distance to the screen edges it is nearest to (`follow_edges`): the
-//! mini-map stays in its top right corner, what stands on the left stays on
-//! the left. Every window the user places goes through a `Slot` for that
-//! (`widgets::Floater`, the mini-map): the slot records where the window
-//! stood and in which screen, with the layout.
+//! Each window retains one of eight invisible perimeter anchors and its
+//! signed offset in the room where windows may move. Existing default rects
+//! initialize these points and offsets directly; a window may supply an
+//! explicit default point. First opening and completed moves otherwise choose
+//! the closest corresponding corners or side midpoints, retained on resize.
+//! `Slot` shares this placement with floaters, toolstrips and the mini-map.
 //!
 //! The slots also make the windows of the frame known to the gestures
 //! (`gesture`): a window moved with Alt or resized snaps to the others and to the
 //! work area (`snap`), and windows snapped side by side are glued: they
 //! move as one block, saved with the layout too.
 
+mod anchor;
 mod gesture;
 
 use super::snap;
 use crate::theme::Palette;
-use egui::{Id, Pos2, Rect, Vec2};
+use anchor::Anchor;
+use egui::{Align2, Id, Pos2, Rect, Vec2};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -53,6 +54,8 @@ fn restore(ctx: &egui::Context, saved: &str) -> Result<(), String> {
 }
 
 pub fn save(ctx: &egui::Context) {
+    let room = move_area(ctx);
+    windows(ctx, |w| w.refresh_anchors(room));
     let mem = ctx.memory(|m| m.clone());
     match ron::to_string(&mem) {
         Ok(text) => {
@@ -299,38 +302,16 @@ fn usable(screen: Rect) -> bool {
     screen.is_finite() && screen.width() >= MIN_SCREEN.x && screen.height() >= MIN_SCREEN.y
 }
 
-/// How far `window` moves when the screen it stood in goes from `old` to
-/// `new`: it keeps its distance to the nearer of the left and right edges,
-/// and to the nearer of the top and bottom ones, as Firestorm's floaters
-/// follow the edge they are closest to when the viewer window is resized
-/// (LLFloaterView::reshape, indra/llui/llfloater.cpp). At equal distances
-/// (a centered window) it stays with the left and top edges. An unusable
-/// screen on either side moves nothing.
-pub(crate) fn follow_edges(old: Rect, new: Rect, window: Rect) -> Vec2 {
-    if !usable(old) || !usable(new) {
-        return Vec2::ZERO;
-    }
-    let near_right = old.right() - window.right() < window.left() - old.left();
-    let near_bottom = old.bottom() - window.bottom() < window.top() - old.top();
-    Vec2::new(
-        if near_right {
-            new.right() - old.right()
-        } else {
-            new.left() - old.left()
-        },
-        if near_bottom {
-            new.bottom() - old.bottom()
-        } else {
-            new.top() - old.top()
-        },
-    )
-}
-
 /// Where a window stood the last time it was shown, and in which screen.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 struct Placed {
     rect: Rect,
     screen: Rect,
+    /// Absent in older layouts, which recorded only the full screen.
+    #[serde(default)]
+    room: Option<Rect>,
+    #[serde(default)]
+    anchor: Option<Anchor>,
 }
 
 /// A window shown this frame or the last one.
@@ -351,7 +332,7 @@ struct Live {
     shown: BTreeMap<u64, Shown>,
     /// The screen the targets of `follow` were computed for, and where each
     /// window recorded in another screen goes in it.
-    followed: Option<Rect>,
+    followed: Option<(Rect, Rect)>,
     follow: BTreeMap<u64, Pos2>,
     /// Positions the gestures give this frame: the windows glued to the one
     /// dragged, a snap applied.
@@ -367,6 +348,12 @@ struct Live {
     snap: bool,
     moved: Option<gesture::Move>,
     resized: Option<gesture::Resize>,
+    /// Completed gestures or explicit placements, recorded after every
+    /// member has drawn its final rect, including any applied snap.
+    reanchor: BTreeSet<u64>,
+    /// Explicit placements may be requested before layout::frame runs;
+    /// wait until Slot::shown has recorded their actual result.
+    reanchor_after_show: BTreeSet<u64>,
 }
 
 /// The windows the user places, by `Id::value`; persisted with egui's
@@ -383,27 +370,67 @@ struct Windows {
 }
 
 impl Windows {
-    /// Where the windows recorded in another screen go in `screen`: each
-    /// follows its edges, a group of glued windows as one block (the edges
-    /// nearest to its bounds), so that its windows stay side by side.
-    /// Computed once per screen, before any of them is recorded in it.
-    fn follow(&mut self, window: u64, screen: Rect) -> Option<Pos2> {
-        if self.live.followed != Some(screen) {
-            self.live.followed = Some(screen);
-            self.live.follow = self
-                .placed
-                .iter()
-                .filter(|(_, placed)| placed.screen != screen)
-                .map(|(id, placed)| {
-                    let block = snap::group(&self.links, *id)
-                        .iter()
-                        .filter_map(|member| self.placed.get(member))
-                        .filter(|member| member.screen == placed.screen)
-                        .fold(Rect::NOTHING, |all, member| all.union(member.rect));
-                    (*id, placed.rect.min + follow_edges(placed.screen, screen, block))
-                })
-                .collect();
+    fn anchor_group(&mut self, window: u64, room: Rect) {
+        let members = snap::group(&self.links, window);
+        let block = members
+            .iter()
+            .filter_map(|id| self.placed.get(id))
+            .fold(Rect::NOTHING, |all, placed| all.union(placed.rect));
+        if !block.is_finite() {
+            return;
         }
+        let point = Anchor::nearest(room, block).point;
+        for id in members {
+            if let Some(placed) = self.placed.get_mut(&id) {
+                placed.anchor = Some(Anchor::new(point, room, placed.rect));
+            }
+        }
+        self.live.followed = None;
+    }
+
+    fn refresh_anchors(&mut self, room: Rect) {
+        for id in std::mem::take(&mut self.live.reanchor) {
+            self.anchor_group(id, room);
+        }
+    }
+
+    /// Reconstruct positions from saved anchors, including closed windows.
+    /// Compute once before any window is recorded in the new room.
+    fn follow(&mut self, window: u64, screen: Rect, room: Rect) -> Option<Pos2> {
+        if self.live.followed == Some((screen, room)) {
+            return self.live.follow.remove(&window);
+        }
+        // Migrate old layouts before any member moves to the current room.
+        let missing: Vec<_> = self
+            .placed
+            .iter()
+            .filter(|(_, p)| p.anchor.is_none() && usable(p.screen) && p.rect.is_finite())
+            .map(|(id, p)| (*id, *p))
+            .collect();
+        for (id, placed) in missing {
+            if self.placed[&id].anchor.is_none() {
+                // Old layouts knew the screen but not the movement room.
+                // Transfer the current bar insets to that screen so migration
+                // does not add the bars' height to an existing window offset.
+                let old_room = placed.room.unwrap_or_else(|| {
+                    Rect::from_min_max(
+                        placed.screen.min + (room.min - screen.min),
+                        placed.screen.max + (room.max - screen.max),
+                    )
+                });
+                self.anchor_group(id, old_room);
+            }
+        }
+        self.live.followed = Some((screen, room));
+        self.live.follow = self
+            .placed
+            .iter()
+            .filter(|(_, placed)| placed.screen != screen || placed.room != Some(room))
+            .filter_map(|(id, placed)| {
+                let pos = placed.anchor?.position(room, placed.rect.size());
+                pos.is_finite().then_some((*id, pos))
+            })
+            .collect();
         self.live.follow.remove(&window)
     }
 }
@@ -423,6 +450,8 @@ pub(crate) struct Slot {
     /// the first frame of a window, shown or restored from the layout: that
     /// frame only measures it, and its rect is not one to record.
     sized: bool,
+    preserve_anchor: bool,
+    initial_anchor: Option<Align2>,
     /// The position the window takes this frame: it follows the window it
     /// is glued to, a snap is applied, or the screen changed since it was
     /// last shown and it follows its edges.
@@ -435,10 +464,12 @@ pub(crate) struct Slot {
 /// The slot of window `id` (the id given to `egui::Window::id`).
 pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
     let screen = ctx.content_rect();
+    let room = move_area(ctx);
     let sized = egui::AreaState::load(ctx, id).is_some_and(|s| s.size.is_some());
     let key = id.value();
-    let (pos, limits) = windows(ctx, |w| {
-        let followed = usable(screen).then(|| w.follow(key, screen)).flatten();
+    let (pos, limits, preserve_anchor) = windows(ctx, |w| {
+        let followed = usable(screen).then(|| w.follow(key, screen, room)).flatten();
+        let preserve_anchor = followed.is_some() || !sized || w.live.settle.contains_key(&key);
         let limits = w.live.limits.filter(|(window, _)| *window == key).map(|(_, limits)| limits);
         let mut pos = w.live.places.remove(&key).or(followed);
         if sized {
@@ -449,15 +480,41 @@ pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
         } else if let Some(target) = pos.or_else(|| w.placed.get(&key).map(|placed| placed.rect.min)) {
             w.live.settle.insert(key, target);
         }
-        (pos, limits)
+        (pos, limits, preserve_anchor)
     });
-    Slot { id, sized, pos, limits }
+    Slot {
+        id,
+        sized,
+        preserve_anchor,
+        initial_anchor: None,
+        pos,
+        limits,
+    }
 }
 
 impl Slot {
+    /// An explicit default is applied only after measurement and before the
+    /// first recorded placement. Saved layouts and requested moves take priority.
+    pub(crate) fn default_anchor(mut self, ctx: &egui::Context, point: Align2, at: Pos2) -> Self {
+        let key = self.id.value();
+        let fresh = windows(ctx, |w| {
+            !w.placed.contains_key(&key) && !w.live.reanchor_after_show.contains(&key) && !w.live.reanchor.contains(&key)
+        });
+        if fresh {
+            self.initial_anchor = Some(point);
+            if self.pos.is_none()
+                && let Some(size) = egui::AreaState::load(ctx, self.id).and_then(|s| s.size)
+            {
+                self.pos = Some(point.anchor_size(at, size).min);
+            }
+        }
+        self
+    }
+
     /// The window was shown at `rect`; `minimized`: reduced to its title.
     pub(crate) fn shown(self, ctx: &egui::Context, rect: Rect, minimized: bool) {
         let screen = ctx.content_rect();
+        let room = move_area(ctx);
         windows(ctx, |w| {
             let key = self.id.value();
             let recorded = w.placed.get(&key).copied();
@@ -470,9 +527,36 @@ impl Slot {
                 }
                 _ => rect,
             };
-            let new = Placed { rect, screen };
+            let anchor = recorded
+                .and_then(|old| {
+                    old.anchor.map(|anchor| {
+                        // Content growth and collapse change the window's own
+                        // anchor point. Keep its current position and chosen
+                        // point; viewer resize constraints never rewrite offsets.
+                        if !self.preserve_anchor && old.room == Some(room) && old.screen == screen && old.rect.size() != rect.size() {
+                            Anchor::new(anchor.point, room, rect)
+                        } else {
+                            anchor
+                        }
+                    })
+                })
+                .or_else(|| {
+                    (self.sized && usable(screen)).then(|| {
+                        self.initial_anchor
+                            .map_or_else(|| Anchor::nearest(room, rect), |point| Anchor::new(point, room, rect))
+                    })
+                });
+            let new = Placed {
+                rect,
+                screen,
+                room: Some(room),
+                anchor,
+            };
             if usable(screen) && (self.sized || recorded.is_some()) && recorded != Some(new) {
                 w.placed.insert(key, new);
+            }
+            if usable(screen) && self.sized && w.live.reanchor_after_show.remove(&key) {
+                w.live.reanchor.insert(key);
             }
             let frame = w.live.frame;
             w.live.shown.insert(
@@ -486,6 +570,13 @@ impl Slot {
             );
         });
     }
+}
+
+/// An explicit placement follows the same rule as a completed mouse move.
+pub(crate) fn reanchor(ctx: &egui::Context, id: Id) {
+    windows(ctx, |w| {
+        w.live.reanchor_after_show.insert(id.value());
+    });
 }
 
 /// The gestures of the frame on the windows: call it once per frame, after
@@ -545,82 +636,6 @@ mod tests {
         Rect::from_min_size(Pos2::ZERO, Vec2::new(width, height))
     }
 
-    /// A 200 x 100 window whose top left corner is at (x, y).
-    fn window(x: f32, y: f32) -> Rect {
-        Rect::from_min_size(Pos2::new(x, y), Vec2::new(200.0, 100.0))
-    }
-
-    #[test]
-    fn a_window_near_the_right_edge_keeps_its_gap_to_it() {
-        let old = screen(1280.0, 720.0);
-        let map = window(1064.0, 56.0);
-        for width in [1600.0, 1920.0, 1000.0] {
-            let new = screen(width, 720.0);
-            let moved = map.translate(follow_edges(old, new, map));
-            assert_eq!(new.right() - moved.right(), 16.0, "{width}");
-            assert_eq!(moved.top(), 56.0, "{width}");
-        }
-    }
-
-    #[test]
-    fn a_window_near_the_left_or_top_edge_does_not_move() {
-        let old = screen(1280.0, 720.0);
-        for new in [screen(1600.0, 900.0), screen(1024.0, 600.0)] {
-            assert_eq!(follow_edges(old, new, window(8.0, 56.0)), Vec2::ZERO);
-        }
-    }
-
-    #[test]
-    fn a_window_near_the_bottom_edge_follows_it() {
-        let old = screen(1280.0, 720.0);
-        let chat = window(8.0, 580.0);
-        for height in [900.0, 600.0] {
-            let new = screen(1280.0, height);
-            let moved = chat.translate(follow_edges(old, new, chat));
-            assert_eq!(new.bottom() - moved.bottom(), 40.0, "{height}");
-            assert_eq!(moved.left(), 8.0);
-        }
-        // the bottom right corner follows both
-        let corner = window(1072.0, 580.0);
-        let new = screen(1600.0, 900.0);
-        let moved = corner.translate(follow_edges(old, new, corner));
-        assert_eq!((new.right() - moved.right(), new.bottom() - moved.bottom()), (8.0, 40.0));
-    }
-
-    /// At the same distance from both edges, the left and the top ones win:
-    /// a centered window stays where it is, on each axis.
-    #[test]
-    fn a_centered_window_stays_put() {
-        let old = screen(1280.0, 720.0);
-        let centered = window(540.0, 310.0);
-        assert_eq!(follow_edges(old, screen(1600.0, 900.0), centered), Vec2::ZERO);
-        // one pixel nearer the right edge, it follows that one
-        let right = window(541.0, 310.0);
-        assert_eq!(follow_edges(old, screen(1600.0, 900.0), right), Vec2::new(320.0, 0.0));
-    }
-
-    #[test]
-    fn nothing_moves_in_an_unchanged_or_unusable_screen() {
-        let old = screen(1280.0, 720.0);
-        let map = window(1064.0, 56.0);
-        assert_eq!(follow_edges(old, old, map), Vec2::ZERO);
-        // minimized viewer window, first frames
-        for tiny in [screen(0.0, 0.0), screen(120.0, 28.0), screen(1280.0, 0.0), screen(f32::NAN, 720.0)] {
-            assert!(!usable(tiny));
-            assert_eq!(follow_edges(old, tiny, map), Vec2::ZERO);
-            assert_eq!(follow_edges(tiny, old, map), Vec2::ZERO);
-        }
-    }
-
-    /// The origin of the screen moves too when a side bar takes room.
-    #[test]
-    fn edges_are_those_of_the_screen_rect() {
-        let old = screen(1280.0, 720.0);
-        let new = Rect::from_min_max(Pos2::new(40.0, 20.0), Pos2::new(1640.0, 920.0));
-        assert_eq!(follow_edges(old, new, window(8.0, 56.0)), Vec2::new(40.0, 20.0));
-        assert_eq!(follow_edges(old, new, window(1064.0, 580.0)), Vec2::new(360.0, 200.0));
-    }
-
     /// Frames of the windows of a session: a floater against the left edge,
     /// one in the bottom right corner, and a bare `egui::Window` in the top
     /// right one, like the mini-map.
@@ -653,6 +668,7 @@ mod tests {
             };
             let mut output = self.ctx.run_ui(input, |ui| {
                 let ctx = ui.ctx();
+                frame(ctx, &palette, false);
                 let floater = |id, pos| {
                     crate::ui::widgets::Floater::new(id, "Window", pos, Vec2::new(300.0, 200.0))
                         .silent()
@@ -722,6 +738,144 @@ mod tests {
             let now = s.gaps(MAP, width, height);
             assert_eq!((now[1], now[2]), (map[1], map[2]), "{width} x {height}");
         }
+    }
+
+    #[test]
+    fn first_opening_initializes_anchors_without_a_manual_move() {
+        let mut s = Session::new();
+        s.frames(3, 1280.0, 720.0);
+        for (id, point) in [
+            (LEFT, egui::Align2::LEFT_TOP),
+            (CORNER, egui::Align2::RIGHT_BOTTOM),
+            (MAP, egui::Align2::RIGHT_TOP),
+        ] {
+            let placed = windows(&s.ctx, |w| w.placed[&Id::new(id).value()]);
+            assert_eq!(placed.anchor.expect("initialized at measured opening").point, point);
+            assert_eq!(placed.room, Some(move_area(&s.ctx)));
+        }
+        let anchors = windows(&s.ctx, |w| {
+            w.placed.iter().map(|(id, p)| (*id, p.anchor)).collect::<BTreeMap<_, _>>()
+        });
+        for (width, height) in [(640.0, 480.0), (1920.0, 1080.0), (1280.0, 720.0)] {
+            s.frames(3, width, height);
+            assert_eq!(
+                windows(&s.ctx, |w| w
+                    .placed
+                    .iter()
+                    .map(|(id, p)| (*id, p.anchor))
+                    .collect::<BTreeMap<_, _>>()),
+                anchors
+            );
+        }
+    }
+
+    #[test]
+    fn factory_rects_initialize_eight_point_anchors_and_offsets_without_changing_opening_positions() {
+        for (width, height) in [(1280.0, 720.0), (1600.0, 900.0), (1920.0, 1080.0)] {
+            let screen = screen(width, height);
+            let work = Rect::from_min_max(Pos2::new(8.0, 53.0), Pos2::new(width - 8.0, height - 57.0));
+            let people = Rect::from_min_size(super::super::people::default_pos(work), super::super::people::AURORA_SIZE);
+            let map = super::super::minimap::default_rect(work);
+            let chat = super::super::chat::default_rect(work);
+            let (people_point, people_travel) = if height == 720.0 {
+                (Align2::LEFT_CENTER, Vec2::new(0.0, 90.0))
+            } else {
+                (Align2::LEFT_TOP, Vec2::ZERO)
+            };
+            for (rect, point, travel) in [
+                (people, people_point, people_travel),
+                (map, Align2::RIGHT_TOP, Vec2::new(320.0, 0.0)),
+                (chat, Align2::RIGHT_BOTTOM, Vec2::new(320.0, 180.0)),
+            ] {
+                let anchor = Anchor::nearest(screen, rect);
+                assert_eq!(anchor.point, point, "{width}x{height}: {rect:?}");
+                assert_eq!(anchor.position(screen, rect.size()), rect.min);
+                let larger = Rect::from_min_size(Pos2::ZERO, Vec2::new(width + 320.0, height + 180.0));
+                assert_eq!(anchor.position(larger, rect.size()), rect.min + travel);
+            }
+        }
+    }
+
+    #[test]
+    fn an_explicit_placement_is_anchored_after_drawing_and_survives_temporary_clamping() {
+        let mut s = Session::new();
+        s.frames(3, 1600.0, 900.0);
+        crate::ui::widgets::move_floater(&s.ctx, CORNER, Pos2::new(900.0, 70.0));
+        s.frames(3, 1600.0, 900.0);
+        let rect = s.rect(CORNER);
+        assert_eq!(rect.min, Pos2::new(900.0, 70.0));
+        let anchor = windows(&s.ctx, |w| w.placed[&Id::new(CORNER).value()].anchor.expect("explicit placement"));
+        assert_eq!(anchor.point, egui::Align2::CENTER_TOP);
+        s.frames(3, 640.0, 480.0);
+        assert_ne!(
+            s.rect(CORNER).min,
+            anchor.position(move_area(&s.ctx), rect.size()),
+            "temporarily clamped"
+        );
+        assert_eq!(windows(&s.ctx, |w| w.placed[&Id::new(CORNER).value()].anchor), Some(anchor));
+        s.frames(3, 1600.0, 900.0);
+        assert_eq!(s.rect(CORNER), rect, "the original offset was retained");
+    }
+
+    #[test]
+    fn older_layouts_initialize_an_anchor_and_keep_their_rects() {
+        #[derive(serde::Serialize)]
+        struct LegacyPlaced {
+            rect: Rect,
+            screen: Rect,
+        }
+        #[derive(serde::Serialize)]
+        struct LegacyWindows {
+            placed: BTreeMap<u64, LegacyPlaced>,
+        }
+        let screen = screen(1280.0, 720.0);
+        let rect = Rect::from_min_size(Pos2::new(1000.0, 70.0), Vec2::new(240.0, 200.0));
+        let saved = ron::to_string(&LegacyWindows {
+            placed: BTreeMap::from([(1, LegacyPlaced { rect, screen })]),
+        })
+        .expect("legacy serialization");
+        let mut windows: Windows = ron::from_str(&saved).expect("backward-compatible layout");
+        assert!(windows.placed[&1].anchor.is_none());
+        assert_eq!(
+            windows.follow(1, screen, default_work_area(screen)),
+            Some(rect.min),
+            "bar insets must not shift an old layout"
+        );
+        let anchor = windows.placed[&1].anchor.expect("migration initialized the anchor");
+        assert_eq!(anchor.point, egui::Align2::RIGHT_TOP);
+        let wider = Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 900.0));
+        assert_eq!(
+            windows.follow(1, wider, default_work_area(wider)),
+            Some(rect.min + Vec2::new(320.0, 0.0))
+        );
+    }
+
+    #[test]
+    fn the_allowed_movement_room_drives_anchors_and_clamping_does_not_rewrite_them() {
+        let screen = screen(1600.0, 900.0);
+        let old = Rect::from_min_max(Pos2::new(40.0, 60.0), Pos2::new(1500.0, 800.0));
+        let rect = Rect::from_min_size(Pos2::new(900.0, 570.0), Vec2::new(300.0, 200.0));
+        let anchor = Anchor::nearest(old, rect);
+        assert_eq!(anchor.point, egui::Align2::CENTER_BOTTOM);
+        let mut w = Windows::default();
+        w.placed.insert(
+            1,
+            Placed {
+                rect,
+                screen,
+                room: Some(old),
+                anchor: Some(anchor),
+            },
+        );
+        let small = Rect::from_min_size(Pos2::new(100.0, 80.0), Vec2::new(400.0, 300.0));
+        let asked = w.follow(1, screen, small).expect("room changed without a native resize");
+        let constrained = keep_title_in(small, asked, rect.size(), Edges::default());
+        assert_ne!(constrained, asked);
+        // Model the actual constrained rect being recorded by Slot::shown.
+        w.placed.get_mut(&1).expect("placed").rect = Rect::from_min_size(constrained, rect.size());
+        w.placed.get_mut(&1).expect("placed").room = Some(small);
+        assert_eq!(w.follow(1, screen, old), Some(rect.min));
+        assert_eq!(w.placed[&1].anchor, Some(anchor));
     }
 
     /// A screen too small to lay windows out in (egui itself squeezes them

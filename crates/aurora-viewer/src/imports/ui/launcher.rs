@@ -28,7 +28,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, pref
     let mut settings = false;
     // the hidden interface hides the strip too (it stays open)
     if open && !widgets::interface_hidden(ctx) {
-        widgets::toolstrip(ctx, WINDOW, egui::pos2(240.0, 32.0), |ui| {
+        let work = crate::ui::layout::work_area(ctx);
+        let room = crate::ui::layout::move_area(ctx);
+        let top = egui::pos2(room.center().x, work.top() + crate::ui::layout::GAP);
+        widgets::toolstrip(ctx, WINDOW, egui::Align2::CENTER_TOP, top, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
                 for (choice, icon, formats) in [

@@ -2687,7 +2687,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   an inspector is displayed, even when a narrow viewport causes overlap.
   Build › Import performs the same toggle; Contents has no Import entry.
   The glass variant has eight independent frosted buttons with clear gaps,
-  no group background, and a plain close cross at the right.
+  no group background, and a plain close cross at the right. A fresh profile opens
+  the strip centered below the top bars, retaining its top-midpoint offset
+  while the viewer is resized. Move it, close/reopen and restart: personalized
+  placement must take priority over this default.
   The Settings icon toggles the permissions/payment window, closing it on the
   second click even if its title bar was minimized.
 - **`AURORA_DEMO_IMPORTS=inspectors`** opens the chooser with fixtures already
