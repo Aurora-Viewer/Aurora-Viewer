@@ -4488,6 +4488,7 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         )
     };
     ev.push(NetEvent::ScriptDialog {
+        sender: ([127, 0, 0, 1], 13000).into(),
         object_id: Uuid::from_u128(0xF0),
         object_name: object_name.into(),
         owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),

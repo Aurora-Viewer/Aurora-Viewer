@@ -1343,6 +1343,7 @@ impl Session<'_> {
                 self.send_main(&m, true);
             }
             NetCommand::ScriptDialogReply {
+                sender,
                 object_id,
                 channel,
                 index,
@@ -1355,7 +1356,23 @@ impl Session<'_> {
                 m.data.chat_channel = channel;
                 m.data.button_index = index;
                 m.data.button_label = str_field(&label);
-                self.send_main(&m, true);
+                // callback_script_dialog (indra/newview/llviewermessage.cpp)
+                // answers the exact sender, even when it is a neighbour or
+                // the agent has changed regions while the menu stayed open.
+                if let Some(to) = sender.or(self.main) {
+                    if self.sims.contains_key(&to) {
+                        if sender.is_some() {
+                            log::info!(
+                                "script dialog reply: channel={channel}, button={index}, label_bytes={}, sender_is_main={}",
+                                label.len(),
+                                self.main == Some(to),
+                            );
+                        }
+                        self.send(to, &m, true);
+                    } else {
+                        log::warn!("script dialog reply not sent: source circuit is closed (channel={channel}, button={index})");
+                    }
+                }
             }
             NetCommand::ScriptAnswer {
                 task_id,
@@ -3447,10 +3464,17 @@ impl Session<'_> {
         } else if id == ScriptDialog::ID {
             let m: ScriptDialog = pkt.decode()?;
             let d = &m.data;
+            log::info!(
+                "script dialog received: channel={}, buttons={}, sender_is_main={}",
+                d.chat_channel,
+                m.buttons.len(),
+                self.main == Some(from),
+            );
             let owner = format!("{} {}", field_str(&d.first_name), field_str(&d.last_name));
             emit(
                 self.sh,
                 NetEvent::ScriptDialog {
+                    sender: from,
                     object_id: d.object_id,
                     object_name: field_str(&d.object_name),
                     owner_name: owner.trim().to_owned(),
@@ -4909,5 +4933,185 @@ mod event_queue_tests {
         let (_, event) = received.try_recv().expect("disconnection");
         // a lost link, not a kick: the viewer offers to reconnect
         assert!(matches!(event, NetEvent::Disconnected { lost: true, .. }), "{event:?}");
+    }
+}
+
+#[cfg(test)]
+mod script_dialog_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn script_dialog_replies_reach_the_original_simulator_with_exact_wire_fields() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("object simulator");
+        let main_addr = main.local_addr().expect("main address");
+        let neighbour_addr = neighbour.local_addr().expect("object address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = Shared {
+            http: reqwest::Client::new(),
+            caps_http: reqwest::Client::new(),
+            events: crate::EventSender(events),
+            controls: Arc::new(Mutex::new(AgentControls::default())),
+            stats: Arc::new(NetStats::default()),
+            object_cache_dir: Arc::new(Mutex::new(None)),
+            agent_language: Arc::new(Mutex::new(("en".into(), false))),
+            bandwidth_kbps: Default::default(),
+        };
+        let login = Arc::new(LoginResponse {
+            agent_id: Uuid::from_u128(1),
+            session_id: Uuid::from_u128(2),
+            secure_session_id: Uuid::nil(),
+            first_name: String::new(),
+            last_name: String::new(),
+            sim_ip: Ipv4Addr::LOCALHOST,
+            sim_port: main_addr.port(),
+            circuit_code: 0,
+            region_x: 0,
+            region_y: 0,
+            region_size_x: 256,
+            region_size_y: 256,
+            seed_capability: String::new(),
+            look_at: Vec3::ZERO,
+            message: String::new(),
+            agent_appearance_service: String::new(),
+            inventory_root: Uuid::nil(),
+            mfa_hash: None,
+            raw: Llsd::Undef,
+        });
+        let (eq_tx, _) = mpsc::unbounded_channel();
+        let (caps_tx, _) = mpsc::unbounded_channel();
+        let (notecard_copy_tx, _) = mpsc::unbounded_channel();
+        let (inventory_move_tx, _) = mpsc::unbounded_channel();
+        let mut session = Session {
+            sh: &sh,
+            sock: sock.clone(),
+            login,
+            sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
+            main: Some(main_addr),
+            eq_tx,
+            caps_tx,
+            notecard_copy_tx,
+            inventory_move_tx,
+            notecard_copies: HashMap::new(),
+            agent_update: AgentUpdateRule::new(Instant::now()),
+            control_flags: 0,
+            one_shot: 0,
+            cam_warned: false,
+            far: 128.0,
+            refuse_neighbours: false,
+            fov: DEFAULT_FOV,
+            logout_started: None,
+            finished: false,
+            agent_moved: false,
+            cam_requested_at: None,
+            agent_parcel: None,
+            pending_named_tp: None,
+            object_cache: super::object_cache::ObjectCaches::new(None).0,
+            throttle: crate::throttle::Throttle::new(crate::throttle::DEFAULT_KBPS, Instant::now()),
+            social: Default::default(),
+            tasks: Default::default(),
+            land: Default::default(),
+            estate_invoice: uuid::Uuid::nil(),
+            terrain_raw: Default::default(),
+            decode_failures: HashMap::new(),
+            inventory_uploads: Default::default(),
+            asset_imports: Default::default(),
+            inventory_previews: Default::default(),
+            script_transfers: Default::default(),
+            inventory_callbacks: HashMap::new(),
+            inventory_copies: super::inventory_copies::Pending::default(),
+            inventory_merchant_pending: false,
+            next_inventory_callback: 0,
+        };
+
+        sock.writable().await.expect("socket ready");
+        let object = Uuid::from_u128(3);
+        // Main-region HUD, neighbouring object's menu and a menu answered
+        // after crossing all retain the actual packet sender.
+        for (origin, current) in [(&main, main_addr), (&neighbour, main_addr), (&main, neighbour_addr)] {
+            session.main = Some(current);
+            let origin_addr = origin.local_addr().expect("origin");
+            for channel in [i32::MIN, -42, 0, 42, i32::MAX] {
+                let mut menu = ScriptDialog::default();
+                menu.data.object_id = object;
+                menu.data.chat_channel = channel;
+                menu.data.object_name = str_field("HUD");
+                menu.buttons = ["  Keep spaces  ", "✓ Sélection", " "]
+                    .into_iter()
+                    .map(|label| msgs::script_dialog::Buttons {
+                        button_label: str_field(label),
+                    })
+                    .collect();
+                let mut bytes = Vec::new();
+                aurora_msg::build_packet(&menu, 1, true, false, &[], &mut bytes);
+                session
+                    .dispatch(origin_addr, &parse_packet(&bytes).expect("menu packet"))
+                    .expect("dispatch menu");
+                let NetEvent::ScriptDialog {
+                    sender,
+                    object_id,
+                    channel: received_channel,
+                    buttons,
+                    ..
+                } = received.try_recv().expect("menu event").1
+                else {
+                    panic!("script menu")
+                };
+                assert_eq!(sender, origin_addr);
+                assert_eq!((object_id, received_channel), (object, channel));
+                for (index, label) in buttons.into_iter().enumerate() {
+                    session.on_command(NetCommand::ScriptDialogReply {
+                        sender: Some(sender),
+                        object_id,
+                        channel,
+                        index: index as i32,
+                        label: label.clone(),
+                    });
+                    let mut datagram = [0; 1200];
+                    let (size, _) = tokio::time::timeout(Duration::from_secs(2), origin.recv_from(&mut datagram))
+                        .await
+                        .expect("reply reaches menu sender")
+                        .expect("reply packet");
+                    let packet = parse_packet(&datagram[..size]).expect("reply datagram");
+                    assert!(packet.reliable());
+                    let reply: ScriptDialogReply = packet.decode().expect("dialog reply");
+                    assert_eq!(reply.agent_data.agent_id, Uuid::from_u128(1));
+                    assert_eq!(reply.agent_data.session_id, Uuid::from_u128(2));
+                    assert_eq!(reply.data.object_id, object);
+                    assert_eq!(reply.data.chat_channel, channel);
+                    assert_eq!(reply.data.button_index, index as i32);
+                    assert_eq!(reply.data.button_label, str_field(&label));
+                    assert!(session.sims[&sender].circuit.is_unacked(packet.sequence));
+                }
+                let other = if origin_addr == main_addr { &neighbour } else { &main };
+                assert!(other.try_recv_from(&mut [0; 1200]).is_err(), "no reply to the other simulator");
+            }
+        }
+        // Avatar chat on negative channels (bridge discovery) is still
+        // intentionally sent through the current simulator.
+        session.main = Some(main_addr);
+        session.on_command(NetCommand::ScriptDialogReply {
+            sender: None,
+            object_id: Uuid::from_u128(1),
+            channel: -42,
+            index: 0,
+            label: "probe".into(),
+        });
+        let mut datagram = [0; 1200];
+        tokio::time::timeout(Duration::from_secs(2), main.recv_from(&mut datagram))
+            .await
+            .expect("bridge probe reaches main")
+            .expect("probe packet");
+        // A closed source must never redirect an old menu's answer to main.
+        session.sims.remove(&neighbour_addr);
+        session.on_command(NetCommand::ScriptDialogReply {
+            sender: Some(neighbour_addr),
+            object_id: object,
+            channel: -42,
+            index: 0,
+            label: "old menu".into(),
+        });
+        assert!(main.try_recv_from(&mut datagram).is_err());
     }
 }

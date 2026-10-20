@@ -134,6 +134,7 @@ pub enum Data {
         offline: bool,
     },
     Dialog {
+        sender: std::net::SocketAddr,
         object: Uuid,
         object_name: String,
         own_object: bool,
@@ -141,6 +142,7 @@ pub enum Data {
         buttons: Vec<String>,
     },
     TextBox {
+        sender: std::net::SocketAddr,
         object: Uuid,
         channel: i32,
     },
@@ -591,12 +593,17 @@ impl Notifications {
             (Data::Group { group, tx, offline }, _) => out.push(group_answer(*group, *tx, *offline, accept)),
             (
                 Data::Dialog {
-                    object, channel, buttons, ..
+                    sender,
+                    object,
+                    channel,
+                    buttons,
+                    ..
                 },
                 Response::Button(i),
             ) => {
                 if let Some(label) = buttons.get(*i) {
                     out.push(NetCommand::ScriptDialogReply {
+                        sender: Some(*sender),
                         object_id: *object,
                         channel: *channel,
                         index: *i as i32,
@@ -604,8 +611,9 @@ impl Notifications {
                     });
                 }
             }
-            (Data::TextBox { object, channel }, Response::SendText) => {
+            (Data::TextBox { sender, object, channel }, Response::SendText) => {
                 out.push(NetCommand::ScriptDialogReply {
+                    sender: Some(*sender),
                     object_id: *object,
                     channel: *channel,
                     index: 0,
@@ -740,6 +748,7 @@ mod tests {
             "Menu",
             "Choisis",
             Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
                 object: obj,
                 object_name: "Menu".into(),
                 own_object: false,

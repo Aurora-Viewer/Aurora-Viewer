@@ -94,6 +94,7 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             b"",
         ),
         1060 => NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
             object_id: OBJECT,
             object_name: aurora_i18n::tr!("demo-attention-object-name").into(),
             owner_name: "Nova Exemple".into(),

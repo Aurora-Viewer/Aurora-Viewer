@@ -138,6 +138,7 @@ impl Demo {
                 channel,
                 index,
                 label,
+                ..
             } if *object_id == world.agent_id
                 && *channel == DISCOVERY_CHANNEL
                 && *index == 0

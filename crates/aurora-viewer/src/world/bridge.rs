@@ -536,6 +536,7 @@ impl Bridge {
         // request. A quiet attachment can be rediscovered after any login.
         self.probe = Some((self.object, now));
         self.commands.push(NetCommand::ScriptDialogReply {
+            sender: None,
             object_id: self.agent,
             channel: DISCOVERY_CHANNEL,
             index: 0,

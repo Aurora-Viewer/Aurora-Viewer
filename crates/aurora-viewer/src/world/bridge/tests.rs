@@ -182,6 +182,7 @@ fn discovery_simulator_rejects_negative_chatfromviewer_and_misaddressed_dialog_r
     let mut sim = Simulator::new();
     sim.ready();
     let request = |object_id, label| NetCommand::ScriptDialogReply {
+        sender: None,
         object_id,
         channel: DISCOVERY_CHANNEL,
         index: 0,
@@ -236,7 +237,7 @@ fn quiet_bridge_discovery_is_addressed_throttled_and_requires_the_current_worn_r
     let commands = std::mem::take(&mut sim.bridge.commands);
     assert_eq!(commands.len(), 1);
     assert!(
-        matches!(&commands[0], NetCommand::ScriptDialogReply { object_id, channel, index, label }
+        matches!(&commands[0], NetCommand::ScriptDialogReply { sender: None, object_id, channel, index, label }
         if *object_id == sim.world.agent_id && *channel == DISCOVERY_CHANNEL && *channel < 0 && *index == 0
         && *label == format!("auroraHello|{}", sim.bridge.object))
     );

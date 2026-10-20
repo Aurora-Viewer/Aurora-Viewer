@@ -680,6 +680,8 @@ pub enum NetEvent {
     },
     /// llDialog / llTextBox menu from a script.
     ScriptDialog {
+        /// Exact simulator endpoint retained by process_script_dialog.
+        sender: std::net::SocketAddr,
         object_id: Uuid,
         object_name: String,
         owner_name: String,
@@ -1406,6 +1408,9 @@ pub enum NetCommand {
         folder: Option<Uuid>,
     },
     ScriptDialogReply {
+        /// Reply to the menu's sender (callback_script_dialog). None is
+        /// reserved for viewer-originated avatar chat, e.g. bridge discovery.
+        sender: Option<std::net::SocketAddr>,
         object_id: Uuid,
         channel: i32,
         index: i32,

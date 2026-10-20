@@ -739,6 +739,81 @@ mod tests {
         assert_eq!(script_rows(0).count(), 0);
     }
 
+    #[test]
+    fn script_dialog_pointer_clicks_return_the_original_button_in_both_styles() {
+        for aurora in [false, true] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let ratings = RegionRatings::default();
+            let labels: Vec<_> = (0..12).map(|i| format!("Choice {i:02}")).collect();
+            let mut list = Notifications::default();
+            list.push(
+                Kind::Script,
+                "HUD",
+                "Choose a button",
+                Data::Dialog {
+                    sender: ([127, 0, 0, 1], 13000).into(),
+                    object: Uuid::from_u128(3),
+                    object_name: "HUD".into(),
+                    own_object: false,
+                    channel: -42,
+                    buttons: labels.clone(),
+                },
+            );
+            let mut time = 0.0;
+            let mut frame = |events| {
+                time += 0.1;
+                let mut answer = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(390.0);
+                        answer = card(ui, &p, &icons, &ratings, &mut list.list[0], !aurora, aurora);
+                    },
+                );
+                output.textures_delta.clear();
+                (output, answer)
+            };
+            for _ in 0..3 {
+                frame(vec![]);
+            }
+            for (index, label) in labels.iter().enumerate() {
+                let (output, _) = frame(vec![]);
+                let pos = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() * 0.5),
+                        _ => None,
+                    })
+                    .expect("button visible");
+                frame(vec![egui::Event::PointerMoved(pos)]);
+                let click = |pressed| {
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }]
+                };
+                assert!(frame(click(true)).1.is_none());
+                let (_, answer) = frame(click(false));
+                assert!(
+                    matches!(answer, Some(Response::Button(i)) if i == index),
+                    "aurora={aurora}, button={index}: {answer:?}"
+                );
+            }
+        }
+    }
+
     const JANE: Uuid = Uuid::from_u128(2);
 
     /// A friend's notice lives as long as its toast; a message's entry
