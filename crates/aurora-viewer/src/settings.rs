@@ -1225,7 +1225,7 @@ impl Default for Settings {
             windows_stop_bottom: true,
             // First launch (no settings file): the radar (People on its
             // first tab, top left), the mini-map (top right) and
-            // Conversations (bottom left) are open, as asked by the human;
+            // Conversations (bottom right) are open, as asked by the human;
             // the other windows wait for their button. A saved file keeps
             // what was open at exit, Performance aside (`show_perf`).
             show_perf: false,

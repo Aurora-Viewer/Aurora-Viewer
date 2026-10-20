@@ -785,7 +785,7 @@ mod tests {
             for (rect, point, travel) in [
                 (people, people_point, people_travel),
                 (map, Align2::RIGHT_TOP, Vec2::new(320.0, 0.0)),
-                (chat, Align2::LEFT_BOTTOM, Vec2::new(0.0, 180.0)),
+                (chat, Align2::RIGHT_BOTTOM, Vec2::new(320.0, 180.0)),
             ] {
                 let anchor = Anchor::nearest(screen, rect);
                 assert_eq!(anchor.point, point, "{width}x{height}: {rect:?}");

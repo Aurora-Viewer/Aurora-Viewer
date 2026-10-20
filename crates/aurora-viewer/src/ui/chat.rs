@@ -2068,15 +2068,18 @@ const DEFAULT_SIZE: egui::Vec2 = egui::vec2(700.0, 440.0);
 /// The least height it opens with, in a small viewer window.
 const DEFAULT_MIN_H: f32 = 240.0;
 
-/// The window before the user moves or resizes it: the bottom left corner
-/// of the work area (`layout::work_area`), as requested by the human.
-/// Keep its existing responsive height and clearance above the bottom bar.
+/// The window before the user moves or resizes it: the bottom right corner
+/// of the work area (`layout::work_area`), above the bottom bar and on the
+/// right edge of the mini-map and Performance windows of a first launch. In
+/// a viewer window too low for its whole height under Performance
+/// (`perf::default_pos`), it opens lower rather than over it (284 px in a
+/// 1280 x 720 window; FSFloaterIMContainer opens at 396 x 390).
 pub(crate) fn default_rect(work: egui::Rect) -> egui::Rect {
     let gap = super::layout::GAP;
     let performance_bottom = super::perf::default_pos(work, super::perf::COMPACT_W).y + super::perf::COMPACT_H;
     let room = work.bottom() - gap - (performance_bottom + gap);
     let size = egui::vec2(DEFAULT_SIZE.x, room.clamp(DEFAULT_MIN_H, DEFAULT_SIZE.y));
-    egui::Rect::from_min_size(egui::pos2(work.left() + gap, work.bottom() - gap - size.y), size)
+    egui::Rect::from_min_size(work.right_bottom() - egui::Vec2::splat(gap) - size, size)
 }
 
 /// Conversations floater (FSFloaterIMContainer): the tabs on the left
