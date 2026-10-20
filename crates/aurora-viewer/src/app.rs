@@ -1932,6 +1932,10 @@ impl App {
         }
         self.scene.jobs.discard(imports);
         self.record_inventory_logout();
+        if !self.demo {
+            self.settings.release_hover_account();
+        }
+        self.hover_height_ui = Default::default();
         self.inventory_ui = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
@@ -2395,6 +2399,10 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                if !self.demo {
+                    self.settings.select_hover_account(l.agent_id);
+                    self.settings.save();
+                }
                 self.bridge_runtime = Default::default();
                 self.native_anchor = Default::default();
                 self.anchor_stands = Default::default();

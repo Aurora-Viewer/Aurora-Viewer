@@ -484,6 +484,61 @@ mod tests {
     }
 
     #[test]
+    fn all_posture_heights_and_separate_switches_remain_independent_between_accounts() {
+        let root = std::env::temp_dir().join(format!("aurora-hover-accounts-{}", uuid::Uuid::new_v4()));
+        let first_path = root.join("first").join(FILE);
+        let second_path = root.join("second").join(FILE);
+        for (path, standing, object, ground, ground_separate) in
+            [(&first_path, 0.2, -0.15, 0.4, true), (&second_path, -0.1, 0.3, -0.2, false)]
+        {
+            let mut height = HoverHeight::load(path.clone());
+            height.preview(standing);
+            height.commit();
+            height.set_separate(Posture::OnObject, true);
+            height.preview_seated(Posture::OnObject, object);
+            height.commit_seated(Posture::OnObject);
+            height.set_separate(Posture::OnGround, true);
+            height.preview_seated(Posture::OnGround, ground);
+            height.commit_seated(Posture::OnGround);
+            height.set_separate(Posture::OnGround, ground_separate);
+            drop(height);
+        }
+        for (path, standing, object, ground, ground_separate) in
+            [(&second_path, -0.1, 0.3, -0.2, false), (&first_path, 0.2, -0.15, 0.4, true)]
+        {
+            let mut height = HoverHeight::load(path.clone());
+            for _ in 0..1000 {
+                let _ = height.next_update(None);
+                if height.ready() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert!(height.ready(), "account height loaded");
+            assert_eq!(height.value(), standing);
+            assert_eq!(
+                height.seated(Posture::OnObject),
+                SeatedHeight {
+                    separate: true,
+                    height: Some(object)
+                }
+            );
+            assert_eq!(
+                height.seated(Posture::OnGround),
+                SeatedHeight {
+                    separate: ground_separate,
+                    height: Some(ground)
+                }
+            );
+            height.set_posture(Posture::OnObject);
+            assert_eq!(height.effective(), object);
+            height.set_posture(Posture::OnGround);
+            assert_eq!(height.effective(), if ground_separate { ground } else { standing });
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn persisted_heights_are_per_account_and_the_latest_commit_survives_restart() {
         let root = std::env::temp_dir().join(format!("aurora-hover-{}", uuid::Uuid::new_v4()));
         let path = root.join("first").join(FILE);

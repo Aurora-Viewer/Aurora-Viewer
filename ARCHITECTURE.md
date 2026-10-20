@@ -374,8 +374,16 @@ Avatar full/terse updates retain the simulator foot plane in `world/objects.rs` 
 Calibration reconstructs the standing physical box in an empty world. Its SL height is `clamp(shape_body_height + shape_hover, 1.1, 2.45) + 0.2`: the shape body height precedes mesh overrides, and the extra 0.2 m is the standing physical bounding-box padding documented by [llGetAgentSize](https://wiki.secondlife.com/wiki/LlGetAgentSize). OpenSim uses the shape body height without SL hover/padding, matching the Legacy Viewer's AgentSetAppearance branch. `AvatarSkeleton` retains shape body height/hover and `neutral_root_height`, the actual neutral pelvis minus the standing rendered root correction (`hover + pelvis_fixup - height/2 + pelvis_to_foot`). Subtracting the physical half-height gives the box bottom in neutral skeleton space. This reference follows arbitrary mesh pelvis translations just like the measured vertices; it never reads seated/standing streamed size, contact or the current animated palette.
 Foot-influenced rigged vertices count at every attachment point; the regression iterates all points declared by the library, including HUD points. An ordinary HUD without avatar foot skin cannot invalidate calibration. Rigid geometry counts under the knee/ankle/foot chains, including lower-leg attachment offsets and linked children. If no rigged foot geometry replaces the system feet, their morphed and skinned lower-body vertices also enter the minimum. The raw hover is physical-box bottom minus the lowest selected neutral vertex. Numeric `auto hover standing model`, `auto hover estimate`, `auto hover rigid surface` and `auto hover height` logs expose the box, root reference, lowest point, rigid size/transform, raw result, offset and bounded height without identifiers. Decoding, system morphing, skinning and vertex scans remain background jobs.
 
+`settings/hover_height.rs` binds automatic hover ON/OFF, its offset, camera
+following and foot grounding options to the logged-in avatar UUID in
+`Settings::hover_height_accounts`. Login restores the account before world
+updates; every settings save snapshots the active account. Former shared
+options migrate once to the first account, including across pre-login saves;
+other new accounts use defaults. Reset keeps other accounts' options.
+Standing and both sitting heights remain in each account's `hover_height.json`.
+
 `ui/hover_height.rs` exposes the avatar's -3..3 m hover adjustment and the
-shared camera preference. `world/hover_height.rs` owns local preview, the
+account's camera preference. `world/hover_height.rs` owns local preview, the
 committed value, ordered background persistence in the account's
 `hover_height.json`, and one outstanding server write at a time. The app
 resends after region changes only when SimulatorFeatures and AgentPreferences

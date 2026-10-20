@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+mod hover_height;
+
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
@@ -300,6 +302,12 @@ pub struct Settings {
     pub auto_hover_height: bool,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
     pub auto_hover_offset: f32,
+    /// None keeps the former shared hover options until the first login.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hover_height_accounts: Option<std::collections::HashMap<uuid::Uuid, hover_height::Preferences>>,
+    /// Runtime hover options belong to this account after login.
+    #[serde(skip)]
+    pub(crate) hover_height_account: Option<uuid::Uuid>,
     /// Contacts window (Friends / Groups / Contact sets).
     pub contacts: crate::ui::contacts::ContactsSettings,
     /// Radar of the People window.
@@ -1174,6 +1182,8 @@ impl Default for Settings {
             camera: Default::default(),
             auto_hover_height: false,
             auto_hover_offset: 0.0,
+            hover_height_accounts: None,
+            hover_height_account: None,
             contacts: Default::default(),
             radar: Default::default(),
             friends_list: Default::default(),
@@ -1950,6 +1960,9 @@ impl Settings {
             window_maximized: old.window_maximized,
             // a newer build's own values are not this build's to reset
             newer_file: old.newer_file,
+            // Reset this avatar's hover options while keeping other accounts.
+            hover_height_accounts: old.hover_height_accounts,
+            hover_height_account: old.hover_height_account,
             ..Settings::default()
         };
     }
@@ -1967,6 +1980,7 @@ impl Settings {
     /// the photo quality raises them, no user name unless remembered.
     pub(crate) fn to_saved(&self) -> Settings {
         let mut copy = self.clone();
+        copy.remember_hover_account();
         if let Some(mut held) = copy.photo_held.take() {
             // a setting changed since the last frame is the user's too
             held.sync(&copy);
