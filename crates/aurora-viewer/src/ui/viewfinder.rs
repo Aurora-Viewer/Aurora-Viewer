@@ -1151,6 +1151,10 @@ impl Viewfinder {
                                     aurora_i18n::tr!("photo-vf-help-click-text"),
                                 ),
                                 (
+                                    aurora_i18n::tr!("photo-vf-help-alt-click").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-alt-click-text"),
+                                ),
+                                (
                                     aurora_i18n::tr!("photo-vf-help-enter-down").to_owned(),
                                     aurora_i18n::tr!("photo-vf-help-enter-down-text"),
                                 ),

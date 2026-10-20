@@ -231,7 +231,10 @@ impl App {
     /// the AF point moves there and focuses; a menu open closes instead.
     /// True when taken.
     pub(super) fn viewfinder_click(&mut self) -> bool {
-        if !self.viewfinder_on() || self.camera.mouselook() {
+        // Alt + click (focus the camera), Ctrl + Alt (orbit), Ctrl + Alt +
+        // Shift (pan) and the Controls window's object view stay the
+        // camera's: the photographer frames with them
+        if !self.viewfinder_on() || self.camera.mouselook() || self.alt || self.object_view {
             return false;
         }
         let v = &mut self.snapshots.vf;
