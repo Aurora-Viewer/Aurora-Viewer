@@ -247,7 +247,8 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             aspect: Aspect::Window,
-            resolution: Resolution::Window,
+            // 4K: a photo, not a screenshot of the window
+            resolution: Resolution::Uhd,
             custom: [1920, 1080],
             keep_ratio: true,
             format: FileFormat::Png,

@@ -40,9 +40,11 @@ pub fn reveal(folder: &Path, file: Option<&Path>) {
     let result = if cfg!(windows) {
         let mut cmd = std::process::Command::new("explorer");
         match file {
-            Some(f) => cmd.arg(format!("/select,{}", f.display())),
-            None => cmd.arg(folder),
-        };
+            Some(f) => select_arg(&mut cmd, f),
+            None => {
+                cmd.arg(folder);
+            }
+        }
         cmd.spawn()
     } else if cfg!(target_os = "macos") {
         let mut cmd = std::process::Command::new("open");
@@ -57,6 +59,21 @@ pub fn reveal(folder: &Path, file: Option<&Path>) {
     if let Err(e) = result {
         log::warn!("photo: cannot open {}: {e}", folder.display());
     }
+}
+
+/// Explorer's `/select,"<file>"`, written as it reads it: given as one
+/// argument, the standard quoting wraps the whole of it in quotes, which
+/// Explorer misreads when the path holds a space (the pictures folder's
+/// "Aurora Viewer") and opens another folder instead.
+#[cfg(windows)]
+fn select_arg(cmd: &mut std::process::Command, file: &Path) {
+    use std::os::windows::process::CommandExt;
+    cmd.raw_arg(format!("/select,\"{}\"", file.display()));
+}
+
+#[cfg(not(windows))]
+fn select_arg(cmd: &mut std::process::Command, file: &Path) {
+    cmd.arg(format!("/select,{}", file.display()));
 }
 
 /// Open a photo with the system's viewer.
