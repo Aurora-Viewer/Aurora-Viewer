@@ -204,9 +204,14 @@ says), with the depth of field on at f/1.8 in AF-S on the Avatar area;
 words joined by `-` add to it: `essential` or `hidden` the display level,
 `menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
-peaking), `point` the Point area, `focus` the own avatar's face aimed at
+peaking), `point` the Point area, `pad` the camera pad shown, `timer` the
+2 s self-timer, `ael` AE-L on, `hover` or `nocontrols` the on-screen controls
+on hover or hidden (the lens ring and the AF choices show otherwise), `focus`
+the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
-same then released two frames later (the photo saved to disk). With
+same then released two frames later (the photo saved to disk; with `timer`
+the log gives `viewfinder: self-timer, 2 s`, then `viewfinder: shutter` two
+seconds after the lock, and the countdown shows at the top). With
 `viewfinder-focus` the log gives `viewfinder: focus asked at <m>` then,
 about 0.36 s later, `viewfinder: locked at <m>`: capture at frame 760 with
 `AURORA_FPS_LIMIT=60` to see the green face box, the distance under it,

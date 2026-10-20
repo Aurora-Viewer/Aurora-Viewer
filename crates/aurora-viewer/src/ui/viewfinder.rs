@@ -15,6 +15,9 @@ use crate::snapshot::{Aspect, FileFormat, Guide, Resolution, Settings};
 use crate::theme::Palette;
 use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
+mod controls;
+pub use controls::{CamMode, Pad, ROLL_MAX, roll_text};
+
 /// The value the mouse wheel drives (the underlined one of the bottom bar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Dial {
@@ -61,6 +64,18 @@ pub struct Viewfinder {
     pub message: Option<(String, bool, f64)>,
     /// The shutter button is held by the mouse.
     mouse_down: bool,
+    /// AE-L: the automatic exposure held.
+    pub ae_lock: bool,
+    /// The self-timer runs: when the photo goes (egui's clock).
+    pub countdown: Option<f64>,
+    /// The camera pad this frame.
+    pub pad: Pad,
+    /// The lens ring dragged: its value and the pointer's x at the start.
+    ring_drag: Option<(f32, f32)>,
+    /// The ring's mark last crossed (a click at each).
+    ring_mark: Option<i32>,
+    /// The pointer was last near the controls (OnScreen::Hover).
+    hover_seen: f64,
 }
 
 /// What the app gives the viewfinder each frame.
@@ -73,6 +88,10 @@ pub struct Frame<'a> {
     pub focal_mm: f32,
     /// Stops from Preferences' exposure.
     pub ev: f32,
+    /// Preferences' exposure, which the exposure ring counts from.
+    pub base_exposure: f32,
+    /// The camera's tilt (degrees, positive clockwise).
+    pub roll: f32,
     /// The zone the lens keeps sharp (m).
     pub sharp: (f32, f32),
     /// The AF point (points).
@@ -125,6 +144,15 @@ pub enum Out {
     ToggleArea,
     /// The view from the avatar's eyes, or back behind it.
     FirstPerson(bool),
+    /// The focus mode and area chosen on screen.
+    SetAf(PhotoFocus),
+    SetArea(AfArea),
+    /// What the camera pad drives.
+    Camera(CamMode),
+    /// The camera's tilt (degrees).
+    Roll(f32),
+    /// A lens ring passed a mark: its click.
+    Detent,
     /// Out of the photo mode.
     Exit,
 }
@@ -346,12 +374,15 @@ impl Viewfinder {
             panel::guide_lines(&back, frame, s.guide, p.ink.gamma_multiply(0.4));
         }
 
+        // the on-screen controls (lens ring, AF choices, camera pad)
+        let ctl = shows && !self.menu && self.controls_shown(ctx, s, screen, f.now);
+        let pad = ctl && s.viewfinder.pad;
         if full {
             self.top_bar(ctx, p, &back, screen, s, panel, f, &mut out);
         }
         self.af_point(ctx, p, &front, s, f);
         if shows && !self.hinted && !self.menu && !self.help {
-            hint(ctx, p, screen, f);
+            hint(ctx, p, screen, if ctl { 156.0 } else { 128.0 }, ctl && !pad);
         }
         if let Some((text, error, until)) = &self.message {
             if f.now < *until {
@@ -362,18 +393,26 @@ impl Viewfinder {
         }
         let manual = s.dof.focus == PhotoFocus::Manual;
         let active = matches!(self.af.phase, Phase::Hunt | Phase::Fail) || (self.af.recent(f.now) && shows);
-        if !self.menu && (manual || active || full) {
+        if ctl {
+            self.ring_deck(ctx, p, screen, s, panel, fov, f, &mut out);
+        } else if !self.menu && (manual || active || full) {
             self.scale(ctx, p, &front, screen, s, f);
         }
         if shows {
-            self.bottom_bar(ctx, p, &back, screen, s, f);
+            self.bottom_bar(ctx, p, &back, screen, s, f, ctl, &mut out);
             self.dock(ctx, p, screen, s, f, &mut out);
         } else if ghost_disp(ctx, p, screen) {
             s.viewfinder.display = display.next();
         }
-        if f.now < self.review_until && !self.menu {
-            review(ctx, p, screen, f, &mut out);
+        if pad {
+            self.camera_pad(ctx, p, screen, f, &mut out);
+        } else {
+            self.pad = Pad::default();
         }
+        if f.now < self.review_until && !self.menu {
+            review(ctx, p, screen, f, &mut out, if pad { 300.0 } else { 132.0 });
+        }
+        self.countdown(ctx, p, screen, f.now);
         if self.menu {
             self.quick_menu(ctx, p, screen, s, panel, f, &mut out);
         }
@@ -474,6 +513,13 @@ impl Viewfinder {
                     .clicked()
                     {
                         s.guide = next_guide(s.guide);
+                    }
+                    if s.viewfinder.timer > 0 {
+                        let text = format!("{} s", s.viewfinder.timer);
+                        icon_text_button(ui, p, "clock-filled", &text, p.amber, aurora_i18n::tr!("photo-vf-timer"));
+                    }
+                    if self.ae_lock {
+                        text_button(ui, p, "AE-L", bold(ctx, 13.0), p.teal, aurora_i18n::tr!("photo-vf-ael-on"));
                     }
                     if f.free_camera {
                         icon_text_button(ui, p, "video-filled", aurora_i18n::tr!("photo-free-camera"), p.teal, "");
@@ -660,19 +706,25 @@ impl Viewfinder {
             }
         }
 
-        // the level: the camera's pitch (0: verticals stay straight)
+        // the level: the camera's tilt, else its pitch (0: verticals stay
+        // straight)
         let c = screen.center();
-        let level = if f.pitch.abs() < 0.5 { p.success } else { p.ink };
+        let level = controls::level_color(p, f.roll, f.pitch);
+        let along = Vec2::angled(f.roll.to_radians());
         for side in [-1.0, 1.0] {
-            let a = Pos2::new(c.x + side * 35.0, c.y);
-            let b = Pos2::new(c.x + side * 105.0, c.y);
+            let a = c + along * side * 35.0;
+            let b = c + along * side * 105.0;
             back.line_segment(
                 [a + Vec2::new(0.0, 1.0), b + Vec2::new(0.0, 1.0)],
                 Stroke::new(1.5, p.navy.gamma_multiply(0.5)),
             );
             back.line_segment([a, b], Stroke::new(1.5, level.gamma_multiply(0.8)));
         }
-        let pitch = format!("{}°", aurora_i18n::number(f64::from(f.pitch.round()), 0).replace('-', "−"));
+        let pitch = if f.roll != 0.0 {
+            roll_text(f.roll)
+        } else {
+            format!("{}°", aurora_i18n::number(f64::from(f.pitch.round()), 0).replace('-', "−"))
+        };
         shadow_text(
             back,
             p,
@@ -844,7 +896,18 @@ impl Viewfinder {
     /// focal length, aperture, exposure and distance in the middle (the
     /// one the wheel drives underlined; a click chooses it); the zone kept
     /// sharp on the right.
-    fn bottom_bar(&mut self, ctx: &egui::Context, p: &Palette, back: &egui::Painter, screen: Rect, s: &Settings, f: &Frame) {
+    #[allow(clippy::too_many_arguments)]
+    fn bottom_bar(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        back: &egui::Painter,
+        screen: Rect,
+        s: &Settings,
+        f: &Frame,
+        ctl: bool,
+        out: &mut Vec<Out>,
+    ) {
         gradient(
             back,
             Rect::from_min_max(Pos2::new(screen.left(), screen.bottom() - 110.0), screen.right_bottom()),
@@ -872,17 +935,22 @@ impl Viewfinder {
                 back.circle_stroke(dot, 5.25, Stroke::new(1.5, p.muted.gamma_multiply(0.8)));
             }
         }
+        if ctl {
+            self.af_choices(ctx, p, screen, s, Pos2::new(dot.x + 6.0 + 10.0, y), out);
+        }
         let c = af_color(p, self.af.phase, false);
         let r = shadow_text(
             back,
             p,
             Pos2::new(dot.x + 6.0 + 14.0, y),
             Align2::LEFT_CENTER,
-            af_label(s.dof.focus),
+            if ctl { "" } else { af_label(s.dof.focus) },
             bold(ctx, 15.0),
             c,
         );
-        let area = if s.dof.focus == PhotoFocus::Manual {
+        let area = if ctl {
+            ""
+        } else if s.dof.focus == PhotoFocus::Manual {
             aurora_i18n::tr!("photo-vf-area-manual")
         } else if s.viewfinder.area == AfArea::Avatar {
             aurora_i18n::tr!("photo-vf-area-avatar-eye")
@@ -1034,6 +1102,37 @@ impl Viewfinder {
                     {
                         self.dial = Dial::Exposure;
                     }
+                    // AE-L: the automatic exposure held where it is
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(44.0, 26.0), Sense::click());
+                    let color = if self.ae_lock {
+                        p.teal
+                    } else if resp.hovered() {
+                        p.ink
+                    } else {
+                        p.ink.gamma_multiply(0.45)
+                    };
+                    ui.painter().rect_stroke(
+                        rect,
+                        widgets::inner_radius(ui.visuals()),
+                        Stroke::new(1.5, color),
+                        StrokeKind::Inside,
+                    );
+                    ui.painter()
+                        .text(rect.center(), Align2::CENTER_CENTER, "AE-L", bold(ctx, 12.0), color);
+                    keep_keys(&resp);
+                    if resp
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(aurora_i18n::tr!("photo-vf-ael-tip"))
+                        .clicked()
+                    {
+                        self.ae_lock = !self.ae_lock;
+                        let text = if self.ae_lock {
+                            aurora_i18n::tr!("photo-vf-ael-on")
+                        } else {
+                            aurora_i18n::tr!("photo-vf-ael-off")
+                        };
+                        self.say(text, false, f.now);
+                    }
                     let d = self.af.distance();
                     let text = if d >= vf::INFINITY {
                         "∞".to_owned()
@@ -1076,6 +1175,15 @@ impl Viewfinder {
                     }
                     if dock_button(ui, p, Face::Text("DISP"), aurora_i18n::tr!("photo-vf-disp-tip"), false) {
                         s.viewfinder.display = s.viewfinder.display.next();
+                    }
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Icon("device-gamepad-filled"),
+                        aurora_i18n::tr!("photo-vf-pad-toggle-tip"),
+                        s.viewfinder.pad,
+                    ) {
+                        s.viewfinder.pad = !s.viewfinder.pad;
                     }
                     if dock_button(
                         ui,
@@ -1269,6 +1377,7 @@ impl Viewfinder {
                             let mut v = vec![
                                 (af.to_owned(), aurora_i18n::tr!("photo-vf-help-af-text")),
                                 ("V".to_owned(), aurora_i18n::tr!("photo-vf-help-area-text")),
+                                ("L".to_owned(), aurora_i18n::tr!("photo-vf-help-ael-text")),
                                 ("I".to_owned(), aurora_i18n::tr!("photo-vf-help-disp-text")),
                                 ("G".to_owned(), aurora_i18n::tr!("photo-vf-help-guide-text")),
                                 (menu.to_owned(), aurora_i18n::tr!("photo-vf-help-menu-text")),
@@ -1380,13 +1489,13 @@ fn brackets(painter: &egui::Painter, c: Pos2, scale: f32, stroke: Stroke, shadow
 }
 
 /// The first hint: how to focus and take the photo.
-fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame) {
+fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, bottom: f32, pad_hint: bool) {
     egui::Area::new(Id::new("vf_hint"))
         .order(Order::Foreground)
         .fade_in(false)
         .interactable(false)
         .pivot(Align2::CENTER_BOTTOM)
-        .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 128.0))
+        .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - bottom))
         .show(ctx, |ui| {
             widgets::overlay(ui, p, egui::Margin::symmetric(16, 9), |ui| {
                 ui.horizontal(|ui| {
@@ -1399,7 +1508,10 @@ fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame) {
                     t(ui, aurora_i18n::tr!("photo-vf-hint-enter"));
                     ui.label(egui::RichText::new("·").color(p.muted_dim));
                     t(ui, aurora_i18n::tr!("photo-vf-hint-help"));
-                    let _ = f;
+                    if pad_hint {
+                        ui.label(egui::RichText::new("·").color(p.muted_dim));
+                        t(ui, aurora_i18n::tr!("photo-vf-hint-pad"));
+                    }
                 });
             });
         });
@@ -1436,7 +1548,7 @@ fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
 }
 
 /// The card of the photo just taken.
-fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>) {
+fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut Vec<Out>, bottom: f32) {
     let Some((texture, label, kind)) = &f.review else {
         return;
     };
@@ -1444,7 +1556,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
         .order(Order::Foreground)
         .fade_in(false)
         .pivot(Align2::LEFT_BOTTOM)
-        .fixed_pos(Pos2::new(screen.left() + GAP, screen.bottom() - 132.0))
+        .fixed_pos(Pos2::new(screen.left() + GAP, screen.bottom() - bottom))
         .show(ctx, |ui| {
             widgets::overlay(ui, p, egui::Margin::same(8), |ui| {
                 ui.horizontal(|ui| {
@@ -1757,6 +1869,20 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         .to_owned(),
         Box::new(|s, _| {
             s.viewfinder.hints = !s.viewfinder.hints;
+            None
+        }),
+    ));
+    let timer = s.viewfinder.timer;
+    v.push((
+        aurora_i18n::tr!("photo-vf-timer"),
+        if timer == 0 {
+            aurora_i18n::tr!("photo-vf-timer-off").to_owned()
+        } else {
+            format!("{timer} s")
+        },
+        Box::new(move |s, _| {
+            let i = vf::TIMERS.iter().position(|t| *t == timer).unwrap_or(0);
+            s.viewfinder.timer = vf::TIMERS[(i + 1) % vf::TIMERS.len()];
             None
         }),
     ));

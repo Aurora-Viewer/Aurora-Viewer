@@ -10,7 +10,7 @@ use crate::keybinds::{Action as Bind, Input, Mods};
 use crate::settings::PhotoWindowStyle;
 use crate::snapshot::viewfinder::{self as vf, AfArea, Event, Phase};
 use crate::ui::snapshot::Action;
-use crate::ui::viewfinder::{Dial, Frame, Keys, Out};
+use crate::ui::viewfinder::{CamMode, Dial, Frame, Keys, Out};
 use aurora_render::Renderer;
 use egui::{Pos2, Rect, Vec2};
 use std::time::Instant;
@@ -56,7 +56,11 @@ impl App {
             _ => {}
         }
         if !self.viewfinder_on() {
+            self.camera.roll = 0.0;
             let v = &mut self.snapshots.vf;
+            v.ae_lock = false;
+            v.countdown = None;
+            v.pad = Default::default();
             if v.menu || v.help || v.drawer || v.pressed || v.pick.is_some() {
                 v.menu = false;
                 v.help = false;
@@ -68,14 +72,33 @@ impl App {
             return;
         }
         let now = self.vf_now();
+        if let Some(end) = self.snapshots.vf.countdown {
+            let left = end - now;
+            if left <= 0.0 {
+                self.snapshots.vf.countdown = None;
+                self.vf_fire(renderer);
+            } else {
+                // a beep a second, two a second for the last two
+                let step = if left <= 2.0 { 0.5 } else { 1.0 };
+                let slot = (left / step).ceil() as i64;
+                if self.snapshots.vf_tick_slot != Some((slot, step.to_bits())) {
+                    self.snapshots.vf_tick_slot = Some((slot, step.to_bits()));
+                    if self.settings.snapshot.viewfinder.beep {
+                        self.vf_play(VfSound::Tick);
+                    }
+                }
+            }
+        }
         if self.settings.snapshot.viewfinder.display == vf::Display::Full {
             renderer.histogram_request = Some(self.photo_exposure());
         }
+        // the shutter pressed, then released (a quick click: both in one
+        // frame, the release after the press)
         if std::mem::take(&mut self.snapshots.vf.half_press) {
             self.vf_half_press(renderer);
-            if std::mem::take(&mut self.snapshots.vf.release) {
-                self.vf_release(renderer);
-            }
+        }
+        if std::mem::take(&mut self.snapshots.vf.release) {
+            self.vf_release(renderer);
         }
         let eye = self.camera.position;
         let at = self.camera.target - self.camera.position;
@@ -166,23 +189,33 @@ impl App {
     /// The two beeps of a locked focus (`snapshot::viewfinder::beep_wav`),
     /// on the interface channel.
     fn vf_beep(&mut self) {
+        self.vf_play(VfSound::Beep);
+    }
+
+    /// One of the viewfinder's sounds, made on first use.
+    fn vf_play(&mut self, sound: VfSound) {
         if !self.settings.audio.ui_sounds {
             return;
         }
         let Some(engine) = self.audio_engine.as_ref() else {
             return;
         };
-        if self.snapshots.beep.is_none() {
-            match aurora_audio::SoundClip::decode(&vf::beep_wav()) {
-                Ok(clip) => self.snapshots.beep = Some(clip),
+        let (slot, make, gain): (&mut Option<aurora_audio::SoundClip>, fn() -> Vec<u8>, f32) = match sound {
+            VfSound::Beep => (&mut self.snapshots.beep, vf::beep_wav, 0.6),
+            VfSound::Tick => (&mut self.snapshots.tick, vf::tick_wav, 0.45),
+            VfSound::Click => (&mut self.snapshots.click, vf::click_wav, 0.5),
+        };
+        if slot.is_none() {
+            match aurora_audio::SoundClip::decode(&make()) {
+                Ok(clip) => *slot = Some(clip),
                 Err(e) => {
-                    log::warn!("viewfinder: beep not made: {e}");
+                    log::warn!("viewfinder: sound not made: {e}");
                     return;
                 }
             }
         }
-        if let Some(clip) = &self.snapshots.beep {
-            engine.play_clip(aurora_audio::Channel::Ui, clip, 0.6);
+        if let Some(clip) = slot.as_ref() {
+            engine.play_clip(aurora_audio::Channel::Ui, clip, gain);
         }
     }
 
@@ -200,8 +233,24 @@ impl App {
         self.snapshots.vf.hinted = true;
     }
 
-    /// The photo, with the shutter's blackout.
+    /// The photo: at once, or when the self-timer has counted down.
     fn vf_shoot(&mut self, renderer: &Renderer) {
+        let secs = self.settings.snapshot.viewfinder.timer;
+        if secs == 0 {
+            self.vf_fire(renderer);
+            return;
+        }
+        if self.snapshots.vf.countdown.is_none() {
+            let now = self.vf_now();
+            log::info!("viewfinder: self-timer, {secs} s");
+            self.snapshots.vf.countdown = Some(now + f64::from(secs));
+            self.snapshots.vf.hinted = true;
+            self.snapshots.vf_tick_slot = None;
+        }
+    }
+
+    /// The photo, with the shutter's blackout.
+    fn vf_fire(&mut self, renderer: &Renderer) {
         let now = self.vf_now();
         let v = &mut self.snapshots.vf;
         v.flash_at = Some(now);
@@ -214,6 +263,12 @@ impl App {
     /// locked).
     fn vf_half_press(&mut self, renderer: &mut Renderer) {
         let v = &self.snapshots.vf;
+        if v.countdown.is_some() {
+            self.snapshots.vf.countdown = None;
+            let now = self.vf_now();
+            self.snapshots.vf.say(aurora_i18n::tr!("photo-vf-timer-cancelled"), false, now);
+            return;
+        }
         if v.menu || v.help || v.pressed {
             return;
         }
@@ -326,12 +381,20 @@ impl App {
 
     /// AF-S, AF-C, MF in turn.
     fn vf_cycle_af(&mut self) {
-        let s = &mut self.settings.snapshot;
-        s.dof.focus = match s.dof.focus {
+        let next = match self.settings.snapshot.dof.focus {
             PhotoFocus::Click => PhotoFocus::Pointer,
             PhotoFocus::Pointer => PhotoFocus::Manual,
             PhotoFocus::Manual => PhotoFocus::Click,
         };
+        self.vf_set_af(next);
+    }
+
+    fn vf_set_af(&mut self, focus: PhotoFocus) {
+        let s = &mut self.settings.snapshot;
+        if s.dof.focus == focus {
+            return;
+        }
+        s.dof.focus = focus;
         let v = &mut self.snapshots.vf;
         match s.dof.focus {
             PhotoFocus::Manual => {
@@ -350,13 +413,87 @@ impl App {
     }
 
     fn vf_toggle_area(&mut self) {
-        let a = &mut self.settings.snapshot.viewfinder.area;
-        *a = match a {
+        let next = match self.settings.snapshot.viewfinder.area {
             AfArea::Avatar => AfArea::Point,
             AfArea::Point => AfArea::Avatar,
         };
+        self.vf_set_area(next);
+    }
+
+    fn vf_set_area(&mut self, area: AfArea) {
+        self.settings.snapshot.viewfinder.area = area;
         self.snapshots.vf.subject = None;
         self.settings.save();
+    }
+
+    /// What the camera pad drives: the viewer's camera, the free camera,
+    /// or the avatar's eyes.
+    fn vf_camera(&mut self, mode: CamMode) {
+        match mode {
+            CamMode::Orbit => {
+                if self.camera.free().is_some() {
+                    self.snapshots.ui.free.on = false;
+                    self.photo_free_camera();
+                }
+                if self.camera.mouselook() {
+                    self.toggle_mouselook();
+                }
+            }
+            CamMode::Free => {
+                if self.camera.mouselook() {
+                    self.toggle_mouselook();
+                }
+                self.snapshots.ui.free.on = true;
+                self.photo_free_camera();
+            }
+            CamMode::First => self.vf_first_person(true),
+        }
+    }
+
+    /// The camera pad this frame (`dt` seconds): the free camera's flight
+    /// and look, the eyes' look and focal length in the first person
+    /// view; around the avatar, the rates of the camera keys it holds
+    /// (orbit right, left, over, under, zoom in, out, pan left, right, up,
+    /// down, like `CameraKeys`).
+    pub(super) fn viewfinder_pad(&mut self, dt: f32) -> Option<[f32; 10]> {
+        if !self.viewfinder_on() {
+            return None;
+        }
+        let pad = self.snapshots.vf.pad;
+        if self.camera.free().is_some() {
+            // Regarder, Glisser (and rise), the rocker forward and back
+            self.controls_free = (egui::Vec2::new(pad.pan.x, -pad.rocker), egui::Vec2::new(pad.orbit.x, -pad.orbit.y));
+            self.snapshots.vf_free_up = -pad.pan.y;
+            return None;
+        }
+        self.snapshots.vf_free_up = 0.0;
+        if self.camera.mouselook() {
+            // look around (about 90° a second at full tilt), the rocker on
+            // the focal length
+            let a = &mut self.world.agent;
+            a.yaw -= pad.orbit.x * 1.6 * dt;
+            a.pitch = (a.pitch - pad.orbit.y * 1.2 * dt).clamp(-1.5, 1.5);
+            if pad.rocker != 0.0 {
+                let mm = crate::snapshot::focal_of_fov(self.settings.camera.fov);
+                let range = crate::ui::snapshot::FOCAL_RANGE;
+                let next = (mm * (-pad.rocker * 0.9 * dt).exp()).clamp(*range.start(), *range.end());
+                self.settings.camera.fov = crate::snapshot::fov_of_focal(next);
+            }
+            return None;
+        }
+        let pos = |v: f32| v.max(0.0);
+        Some([
+            pos(pad.orbit.x),
+            pos(-pad.orbit.x),
+            pos(-pad.orbit.y),
+            pos(pad.orbit.y),
+            pos(-pad.rocker),
+            pos(pad.rocker),
+            pos(-pad.pan.x),
+            pos(pad.pan.x),
+            pos(-pad.pan.y),
+            pos(pad.pan.y),
+        ])
     }
 
     /// The first person view (mouselook) on or off.
@@ -405,7 +542,10 @@ impl App {
             KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
             KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
             KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
-            _ if free => letter.chars().next().filter(|c| matches!(c, 'q' | 'i' | 'n' | 'v' | 'g' | 'h')),
+            _ if free => letter
+                .chars()
+                .next()
+                .filter(|c| matches!(c, 'q' | 'i' | 'n' | 'v' | 'g' | 'h' | 'l')),
             _ => None,
         };
         let Some(which) = which else {
@@ -435,6 +575,16 @@ impl App {
             }
             'n' => self.vf_cycle_af(),
             'v' => self.vf_toggle_area(),
+            'l' => {
+                v.ae_lock = !v.ae_lock;
+                let text = if v.ae_lock {
+                    aurora_i18n::tr!("photo-vf-ael-on")
+                } else {
+                    aurora_i18n::tr!("photo-vf-ael-off")
+                };
+                let now = self.vf_now();
+                self.snapshots.vf.say(text, false, now);
+            }
             d => {
                 let i = d.to_digit(10).unwrap_or(3) as usize;
                 let mm = vf::FOCAL_PRESETS[i.clamp(1, 5) - 1];
@@ -564,6 +714,8 @@ impl App {
             histogram: renderer.histogram.as_deref(),
             review: review.as_ref().map(|(t, l, k)| (t, l.clone(), k.clone())),
             first_person: self.camera.mouselook(),
+            base_exposure: self.settings.exposure,
+            roll: self.camera.roll.to_degrees(),
             free_camera: self.camera.free().is_some(),
             keys: Keys {
                 menu: &menu_key,
@@ -617,8 +769,32 @@ impl App {
                 Out::CycleAf => self.vf_cycle_af(),
                 Out::ToggleArea => self.vf_toggle_area(),
                 Out::FirstPerson(on) => self.vf_first_person(on),
+                Out::SetAf(focus) => self.vf_set_af(focus),
+                Out::SetArea(area) => self.vf_set_area(area),
+                Out::Camera(mode) => self.vf_camera(mode),
+                Out::Roll(deg) => {
+                    self.camera.roll = deg
+                        .clamp(-crate::ui::viewfinder::ROLL_MAX, crate::ui::viewfinder::ROLL_MAX)
+                        .to_radians()
+                }
+                Out::Detent => {
+                    if self.settings.snapshot.viewfinder.beep {
+                        self.vf_play(VfSound::Click);
+                    }
+                }
                 Out::Exit => self.panels.snapshot = false,
             }
         }
     }
+}
+
+/// The viewfinder's sounds (`snapshot::viewfinder`).
+#[derive(Debug, Clone, Copy)]
+enum VfSound {
+    /// The focus locked: two beeps.
+    Beep,
+    /// The self-timer: one beep.
+    Tick,
+    /// A lens ring's detent.
+    Click,
 }

@@ -103,6 +103,26 @@ impl Sounds {
     }
 }
 
+/// When the on-screen controls show (the lens rings, the AF choices, the
+/// camera pad): for the people who would rather not learn the shortcuts,
+/// which stay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum OnScreen {
+    #[default]
+    Always,
+    /// When the pointer comes near the bottom of the screen or the pad.
+    Hover,
+    /// The keyboard and the wheel only.
+    Hidden,
+}
+
+impl OnScreen {
+    pub const ALL: [OnScreen; 3] = [OnScreen::Always, OnScreen::Hover, OnScreen::Hidden];
+}
+
+/// The self-timer's delays (seconds; 0: off).
+pub const TIMERS: [u8; 3] = [0, 2, 10];
+
 /// The viewfinder's settings kept between sessions (the rest of the photo
 /// is `snapshot::Settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -115,6 +135,12 @@ pub struct Prefs {
     pub beep: bool,
     /// The list of the controls, under the light (display Full).
     pub hints: bool,
+    /// The on-screen controls.
+    pub controls: OnScreen,
+    /// The camera pad shows (off at first: less on the picture).
+    pub pad: bool,
+    /// The self-timer (seconds, one of `TIMERS`).
+    pub timer: u8,
 }
 
 impl Default for Prefs {
@@ -125,6 +151,9 @@ impl Default for Prefs {
             peaking: Peaking::White,
             beep: true,
             hints: true,
+            controls: OnScreen::Always,
+            pad: false,
+            timer: 0,
         }
     }
 }
@@ -445,21 +474,28 @@ pub fn histogram_curve(bins: &[u32]) -> Vec<f32> {
         .collect()
 }
 
+const RATE: u32 = 48_000;
+
 /// The focus beep, made here rather than fetched (the interface sounds are
 /// grid assets, none of them a camera's): two short tones at 2.75 kHz, a
 /// mono 16-bit WAV at 48 kHz.
 pub fn beep_wav() -> Vec<u8> {
-    const RATE: u32 = 48_000;
+    tones_wav(&[(0.0, 0.066), (0.11, 0.066)], 0.2)
+}
+
+/// One beep of the same tone: the self-timer's.
+pub fn tick_wav() -> Vec<u8> {
+    tones_wav(&[(0.0, 0.06)], 0.1)
+}
+
+/// Beeps at (start, length) seconds in a sound `length` long.
+fn tones_wav(beeps: &[(f32, f32)], length: f32) -> Vec<u8> {
     const TONE: f32 = 2750.0;
-    // (start, length) of each beep, seconds
-    const BEEPS: [(f32, f32); 2] = [(0.0, 0.066), (0.11, 0.066)];
-    let length = 0.2;
     let n = (length * RATE as f32) as usize;
-    let mut samples = Vec::with_capacity(n);
-    for i in 0..n {
+    let samples = (0..n).map(|i| {
         let t = i as f32 / RATE as f32;
         let mut v = 0.0;
-        for (start, len) in BEEPS {
+        for &(start, len) in beeps {
             let u = t - start;
             if (0.0..len).contains(&u) {
                 // 5 ms up, 11 ms down: no click
@@ -467,8 +503,43 @@ pub fn beep_wav() -> Vec<u8> {
                 v += (u * TONE * std::f32::consts::TAU).sin() * env * 0.35;
             }
         }
-        samples.push((v.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16);
-    }
+        v
+    });
+    wav(samples.collect())
+}
+
+/// A lens ring's detent: a small metal click (two damped modes at 2.1 and
+/// 4.6 kHz over a few milliseconds of noise), quiet.
+pub fn click_wav() -> Vec<u8> {
+    let n = (0.04 * RATE as f32) as usize;
+    // a fixed seed: the same click every time
+    let mut seed = 0x2545_f491_u32;
+    let mut noise = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as f32 / u32::MAX as f32 * 2.0 - 1.0
+    };
+    let mut last = 0.0;
+    let samples = (0..n).map(|i| {
+        let t = i as f32 / RATE as f32;
+        let tau = std::f32::consts::TAU;
+        let modes = (-t / 0.004).exp() * (tau * 2100.0 * t).sin() + 0.5 * (-t / 0.003).exp() * (tau * 4600.0 * t).sin();
+        let white = noise();
+        // the noise high-passed (its difference), gone in about a millisecond
+        let grain = (white - last) * (-t / 0.0012).exp();
+        last = white;
+        (modes + 0.3 * grain) * 0.2
+    });
+    wav(samples.collect())
+}
+
+/// Mono 16-bit samples (−1 to 1) as a WAV at 48 kHz.
+fn wav(samples: Vec<f32>) -> Vec<u8> {
+    let samples: Vec<i16> = samples
+        .into_iter()
+        .map(|v| (v.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16)
+        .collect();
     let data = (samples.len() * 2) as u32;
     let mut wav = Vec::with_capacity(44 + data as usize);
     wav.extend_from_slice(b"RIFF");
@@ -507,6 +578,18 @@ mod tests {
         assert!(loud(0.075, 0.105) == 0, "gap");
         assert!(loud(0.13, 0.16) > 8000, "second beep");
         assert!(aurora_audio::SoundClip::decode(&wav).is_ok());
+        // the self-timer's beep and the ring's click decode too
+        assert!(aurora_audio::SoundClip::decode(&tick_wav()).is_ok());
+        let click = click_wav();
+        assert!(aurora_audio::SoundClip::decode(&click).is_ok());
+        let peak = click[44..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes(*b).unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        assert!(peak > 2000 && peak < 12000, "a quiet click: {peak}");
     }
 
     fn run(af: &mut Autofocus, from: f64, to: f64) -> Vec<Event> {

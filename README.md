@@ -458,7 +458,12 @@ aperture and Alt + Ctrl + wheel the exposure; Alt + click and the camera's
 drags work as everywhere. **N** switches AF-S, AF-C and MF, **V** the
 avatar or point area, **Tab** opens the quick menu, **H** the help, and
 the dock on the right holds the same for the mouse, with every setting of
-the photo panel in a drawer. The photo panel anchored on the right and the
+the photo panel in a drawer. Without the keyboard: the value chosen in the
+bottom bar becomes a lens ring to drag (or − and +), the focus mode and
+area are choices at the start of the bar, and the dock's joystick button
+shows a camera pad (turn, slide, a spring-loaded zoom rocker, the tilt, and
+orbit, free or first person). **L** or the AE-L button holds the automatic
+exposure, and the quick menu has a 2 s or 10 s self-timer. The photo panel anchored on the right and the
 Legacy Viewer's floater remain in Preferences › Aurora › Photo window.
 
 In the panel, choose a

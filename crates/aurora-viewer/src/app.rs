@@ -5067,6 +5067,12 @@ impl App {
                 self.cam_key_since[n] = None;
             }
         }
+        // the photo viewfinder's camera pad, held like the keys
+        if let Some(pad) = self.viewfinder_pad(dt) {
+            for (r, p) in rate.iter_mut().zip(pad) {
+                *r = r.max(p);
+            }
+        }
         let keys = crate::camera::CameraKeys {
             orbit_right: rate[0],
             orbit_left: rate[1],
@@ -6740,6 +6746,7 @@ impl App {
             fog_color: env.fog_color,
             fog_density: env.fog_density,
             exposure: self.photo_exposure(),
+            exposure_lock: self.viewfinder_on() && self.snapshots.vf.ae_lock,
             tonemap_mix: self.settings.tonemap_mix,
             sharpen: self.settings.sharpen,
             glow: self.settings.glow,

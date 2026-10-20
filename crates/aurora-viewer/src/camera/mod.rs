@@ -263,6 +263,9 @@ pub struct Camera {
     /// `world::region_restart::view_shake`): the eye and what it looks at
     /// move together, the camera itself does not.
     pub shake: Vec3,
+    /// Roll of the view around its direction (radians, positive turns the
+    /// picture clockwise): the photo viewfinder's tilt, 0 elsewhere.
+    pub roll: f32,
 }
 
 impl Default for Camera {
@@ -322,6 +325,7 @@ impl Default for Camera {
             initialized: false,
             free: None,
             shake: Vec3::ZERO,
+            roll: 0.0,
         }
     }
 }
@@ -1580,6 +1584,11 @@ impl Camera {
             Vec3::Y
         } else {
             Vec3::Z
+        };
+        let up = if self.roll != 0.0 {
+            glam::Quat::from_axis_angle(direction.normalize_or(Vec3::X), self.roll) * up
+        } else {
+            up
         };
         glam::camera::rh::view::look_to_mat4(self.position + self.shake, direction, up)
     }

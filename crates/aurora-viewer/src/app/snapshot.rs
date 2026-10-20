@@ -160,8 +160,15 @@ pub(super) struct Snapshots {
     demo: Option<DemoPhoto>,
     /// The viewfinder's state for the session (`ui::viewfinder`).
     pub(super) vf: crate::ui::viewfinder::Viewfinder,
-    /// The focus beep, made on first use.
+    /// The focus beep, the self-timer's beep and a lens ring's click, made
+    /// on first use.
     pub(super) beep: Option<aurora_audio::SoundClip>,
+    pub(super) tick: Option<aurora_audio::SoundClip>,
+    pub(super) click: Option<aurora_audio::SoundClip>,
+    /// The self-timer's last beep: (its slot, its beat).
+    pub(super) vf_tick_slot: Option<(i64, u64)>,
+    /// The camera pad rises or lowers the free camera (−1 to 1).
+    pub(super) vf_free_up: f32,
     /// The field of view before the viewfinder opened: its focal length
     /// is the photo's, the view gets this back when it closes.
     pub(super) fov_before: Option<f32>,
@@ -211,6 +218,12 @@ struct DemoViewfinder {
     point: bool,
     focus: bool,
     shoot: bool,
+    /// The camera pad, the self-timer (2 s), AE-L, the controls on hover
+    /// or hidden.
+    pad: bool,
+    timer: bool,
+    ael: bool,
+    controls: crate::snapshot::viewfinder::OnScreen,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -259,6 +272,10 @@ impl Default for Snapshots {
             demo: None,
             vf: Default::default(),
             beep: None,
+            tick: None,
+            click: None,
+            vf_tick_slot: None,
+            vf_free_up: 0.0,
             fov_before: None,
             review: None,
             review_tex: None,
@@ -1368,7 +1385,11 @@ impl App {
     pub(super) fn photo_escape(&mut self) -> bool {
         if self.viewfinder_on() {
             let v = &mut self.snapshots.vf;
-            if v.menu || v.help || v.drawer {
+            if v.countdown.is_some() {
+                v.countdown = None;
+                let now = self.egui_ctx.input(|i| i.time);
+                self.snapshots.vf.say(aurora_i18n::tr!("photo-vf-timer-cancelled"), false, now);
+            } else if v.menu || v.help || v.drawer {
                 v.menu = false;
                 v.help = false;
                 v.drawer = false;
@@ -1456,7 +1477,7 @@ impl App {
             forward: axis(i.forward, i.back) + stick.y,
             // the turn keys slide: the free camera turns with the mouse
             left: axis(i.turn_left || i.strafe_left, i.turn_right || i.strafe_right) - stick.x,
-            up: axis(i.up, i.down),
+            up: axis(i.up, i.down) + self.snapshots.vf_free_up,
             fast: self.shift,
             slow: self.ctrl,
         };
@@ -1651,6 +1672,16 @@ impl App {
                     point: has("point"),
                     focus: has("focus"),
                     shoot: has("shoot"),
+                    pad: has("pad"),
+                    timer: has("timer"),
+                    ael: has("ael"),
+                    controls: if has("hover") {
+                        crate::snapshot::viewfinder::OnScreen::Hover
+                    } else if has("nocontrols") {
+                        crate::snapshot::viewfinder::OnScreen::Hidden
+                    } else {
+                        crate::snapshot::viewfinder::OnScreen::Always
+                    },
                 }
             });
             let style = if kind == "classic" {
@@ -1730,7 +1761,11 @@ impl App {
                 if v.point {
                     s.viewfinder.area = crate::snapshot::viewfinder::AfArea::Point;
                 }
+                s.viewfinder.pad = v.pad;
+                s.viewfinder.timer = if v.timer { 2 } else { 0 };
+                s.viewfinder.controls = v.controls;
                 let vf = &mut self.snapshots.vf;
+                vf.ae_lock = v.ael;
                 vf.menu = v.menu;
                 vf.help = v.help;
                 vf.drawer = v.drawer;

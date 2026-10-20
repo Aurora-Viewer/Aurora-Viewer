@@ -381,6 +381,31 @@ fn photo_window_choice(ui: &mut egui::Ui, p: &Palette, style: &mut PhotoWindowSt
     )
 }
 
+/// The viewfinder's on-screen controls: always, when the pointer comes
+/// near them, or never (the shortcuts stay).
+fn viewfinder_controls_choice(ui: &mut egui::Ui, p: &Palette, on: &mut crate::snapshot::viewfinder::OnScreen) -> bool {
+    use crate::snapshot::viewfinder::OnScreen;
+    let options = [
+        (aurora_i18n::tr!("ui-options-aurora-vf-controls-always"), true),
+        (aurora_i18n::tr!("ui-options-aurora-vf-controls-hover"), true),
+        (aurora_i18n::tr!("ui-options-aurora-vf-controls-hidden"), false),
+    ];
+    let size = widgets::segmented_size(ui, &options);
+    item(
+        ui,
+        p,
+        aurora_i18n::tr!("ui-options-aurora-vf-controls"),
+        aurora_i18n::tr!("ui-options-aurora-vf-controls-help"),
+        size,
+        |ui| {
+            let mut selected = OnScreen::ALL.iter().position(|o| o == on).unwrap_or(0);
+            let changed = widgets::segmented(ui, p, &mut selected, &options);
+            *on = OnScreen::ALL[selected];
+            changed
+        },
+    )
+}
+
 /// The Conversations window's four looks: Aurora's workspace, its compact
 /// rows, the bubbles, Firestorm's lines (the two Aurora ones in the accent).
 fn chat_style_choice(ui: &mut egui::Ui, p: &Palette, style: &mut ChatStyle) -> bool {
@@ -539,6 +564,10 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
         );
         between(ui, p);
         c |= photo_window_choice(ui, p, &mut s.photo_window);
+        if s.photo_window == PhotoWindowStyle::Aurora {
+            between(ui, p);
+            c |= viewfinder_controls_choice(ui, p, &mut s.snapshot.viewfinder.controls);
+        }
         between(ui, p);
         c |= look_choice(
             ui,

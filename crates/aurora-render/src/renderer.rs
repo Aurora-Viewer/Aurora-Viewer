@@ -6422,7 +6422,7 @@ impl Backend {
             &crate::exposure::FrameExposure {
                 tone_mapped: !f.sky.no_post,
                 hdr_scale: f.sky.hdr_scale,
-                hold: snapshot.is_some(),
+                hold: snapshot.is_some() || f.exposure_lock,
                 glow: self.glow_drawn,
                 inv_view_proj: unjittered_vp.inverse(),
             },
