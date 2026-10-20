@@ -28,9 +28,11 @@ pub(crate) struct Frame {
     pub velocity_z: f32,
     pub sole_height: Option<f32>,
     pub max_height: f32,
+    /// Our confirmed native ground-sit anchor is drawn with a verified stand.
+    pub standing_anchor: bool,
 }
 
-pub(super) fn unplanted(id: Uuid) -> bool {
+pub(super) fn unplanted(id: Uuid, standing_anchor: bool) -> bool {
     [
         State::Sitting,
         State::GroundSit,
@@ -43,7 +45,7 @@ pub(super) fn unplanted(id: Uuid) -> bool {
         State::Hovering,
     ]
     .iter()
-    .any(|state| state.motion() == id)
+    .any(|state| state.motion() == id && (!standing_anchor || matches!(*state, State::Sitting | State::GroundSit)))
 }
 
 pub(super) struct Pose<'a> {
@@ -571,8 +573,8 @@ impl Placement {
             .zip(pose.rotations)
             .map(|(&placed, &raw)| placed * raw.inverse())
             .collect();
-        log::trace!(target: "aurora_viewer::foot_placement", "terrain body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?}",
-            height.value, self.feet.each_ref().map(|foot| foot.contact));
+        log::trace!(target: "aurora_viewer::foot_placement", "terrain anchor={} body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?}",
+            frame.standing_anchor, height.value, self.feet.each_ref().map(|foot| foot.contact));
         self.held = Some(result.clone());
         Some(result)
     }
@@ -607,6 +609,7 @@ mod tests {
                 velocity_z: 0.0,
                 sole_height: None,
                 max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
+                standing_anchor: false,
             }
         }
 
@@ -1570,6 +1573,40 @@ mod tests {
     }
 
     #[test]
+    fn grounding_confirmed_standing_anchor_ignores_stale_airborne_state() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        for (state, anchored, expected) in [
+            (State::Falling, false, false),
+            (State::Falling, true, true),
+            (State::Sitting, true, false),
+            (State::GroundSit, true, false),
+        ] {
+            let mut frame = f.frame(Vec3::Z * 0.2, 0.0);
+            frame.standing_anchor = anchored;
+            frame.velocity_z = -2.0;
+            let mut controller = Controller {
+                ground: Some(frame),
+                ..Default::default()
+            };
+            let signal = PlayingAnimation::from_signal(state.motion(), 1, now, None);
+            let clip = Arc::new(BoundAnim::bind(crate::demo::idle_animation(), &f.rig));
+            controller.sync(&[signal], now, |_| Some(clip.clone()));
+            let queries = std::cell::Cell::new(0);
+            let mut output = vec![Mat4::IDENTITY.to_cols_array_2d(); f.rig.len()];
+            controller.evaluate_on_ground(&f.rig, now, Some(&f.base), &mut output, |p| {
+                queries.set(queries.get() + 1);
+                flat(p)
+            });
+            assert_eq!(
+                queries.get() > 0,
+                expected,
+                "the standing anchor supersedes stale flight, never a sitting pose"
+            );
+        }
+    }
+
+    #[test]
     fn grounding_rewrite_honours_protected_poses_and_airborne_states() {
         let f = Fixture::new();
         let now = Instant::now();
@@ -1605,7 +1642,7 @@ mod tests {
             State::FlyingSlow,
             State::Hovering,
         ] {
-            assert!(unplanted(state.motion()));
+            assert!(unplanted(state.motion(), false));
         }
     }
 }

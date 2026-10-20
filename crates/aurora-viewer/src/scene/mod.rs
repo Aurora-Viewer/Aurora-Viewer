@@ -662,7 +662,12 @@ pub struct Scene {
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
+    pub ground_feet_while_moving: bool,
     pub ground_feet_max_height: f32,
+    /// Verified native Movelock standing pose, not a manually requested seat.
+    pub(crate) ground_feet_native_stand: bool,
+    /// Current movement input/AO semantics, before simulator velocity arrives.
+    pub(crate) ground_feet_own_moving: bool,
     /// Avatar rendering complexity by avatar id (complexity.rs).
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
@@ -1156,7 +1161,10 @@ impl Scene {
             paused_skeletons: HashSet::new(),
             synchronize_animations: false,
             ground_avatar_feet: false,
+            ground_feet_while_moving: false,
             ground_feet_max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
+            ground_feet_native_stand: false,
+            ground_feet_own_moving: false,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             sets: SyncSets::default(),

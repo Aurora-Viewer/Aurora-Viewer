@@ -1135,11 +1135,11 @@ impl Controller {
         let frame = self.ground.filter(|frame| {
             !self.control
                 && self.preview_start.is_none()
-                && frame.velocity_z.abs() < 0.5
+                && (frame.standing_anchor || frame.velocity_z.abs() < 0.5)
                 && !self
                     .motions
                     .iter()
-                    .any(|motion| motion.stop.is_none() && grounding::unplanted(motion.id))
+                    .any(|motion| motion.stop.is_none() && grounding::unplanted(motion.id, frame.standing_anchor))
         });
         let fallback;
         let skeleton = match base {

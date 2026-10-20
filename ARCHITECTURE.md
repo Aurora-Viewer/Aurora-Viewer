@@ -164,6 +164,15 @@ and [Daniel Holden's foot IK](https://www.theorangeduck.com/page/inverse-kinemat
 defaulting to 0.4 m. It bounds each foot's vertical terrain offset relative
 to animation and the accompanying body offset, including retained smoothing
 state when reduced live. Support traces cover the full one-metre range.
+`Settings::ground_feet_while_moving` is off by default: walk/run/crouch-walk
+signals, physical motion and the drawn stopping glide release placement through
+its existing fade. Current input and the AO's movement state cover our avatar
+before a velocity update; turning in place retains support. Enabling the
+setting keeps placement active during grounded movement.
+An owned native Movelock ground sit with its verified standing AO actually
+masking the sit is treated as standing. Only that context supersedes stale
+airborne signals or velocity; manual ground sits, chairs and flight remain
+excluded. The application supplies this context anew with every AO update.
 For large corrections, the body constraint keeps an upright source hip above
 its planted ankle so that the knee hinge cannot turn backward.
 

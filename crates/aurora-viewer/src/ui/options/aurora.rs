@@ -663,6 +663,15 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             c |= item(
                 ui,
                 p,
+                aurora_i18n::tr!("ui-options-aurora-ground-feet-moving"),
+                aurora_i18n::tr!("ui-options-aurora-ground-feet-moving-help"),
+                widgets::SWITCH_SIZE,
+                |ui| toggle(ui, p, &mut s.ground_feet_while_moving),
+            );
+            between(ui, p);
+            c |= item(
+                ui,
+                p,
                 aurora_i18n::tr!("ui-options-aurora-ground-feet-height"),
                 aurora_i18n::tr!("ui-options-aurora-ground-feet-height-help"),
                 Vec2::new(SLIDER_W + 70.0, 26.0),
@@ -829,18 +838,22 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").expect("older settings");
         assert!(!Settings::default().ground_avatar_feet);
         assert!(!old.ground_avatar_feet);
+        assert!(!old.ground_feet_while_moving);
         assert_eq!(old.ground_feet_max_height, 0.4);
         for enabled in [false, true] {
             let settings = Settings {
                 ground_avatar_feet: enabled,
+                ground_feet_while_moving: !enabled,
                 ground_feet_max_height: 1.0,
                 ..Settings::default()
             };
             let mut back: Settings = serde_json::from_str(&serde_json::to_string(&settings).expect("save")).expect("load");
             assert_eq!(back.ground_avatar_feet, enabled);
+            assert_eq!(back.ground_feet_while_moving, !enabled);
             assert_eq!(back.ground_feet_max_height, 1.0);
             super::super::sections::reset(super::super::TAB_AURORA, &mut back);
             assert!(!back.ground_avatar_feet);
+            assert!(!back.ground_feet_while_moving);
             assert_eq!(back.ground_feet_max_height, 0.4);
         }
     }
@@ -995,7 +1008,9 @@ mod tests {
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 2400.0))),
+                // Render the entire settings page, including the groups below
+                // animations; section headers outside the viewport are culled.
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(620.0, 3200.0))),
                 ..Default::default()
             },
             |ui| {
@@ -1057,6 +1072,9 @@ mod tests {
             "ui-options-aurora-own-motion",
             "ui-options-aurora-animations",
             "ui-options-aurora-animation-clock",
+            "ui-options-aurora-ground-feet",
+            "ui-options-aurora-ground-feet-moving",
+            "ui-options-aurora-ground-feet-height",
             "ui-options-aurora-avatar-plates",
             "ui-options-plates-hover-expand",
             "ui-options-full-plates-friends-only",
