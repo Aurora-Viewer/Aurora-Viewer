@@ -1439,8 +1439,20 @@ To check with these scenarios:
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
 different-height steps (`steps`). `landing` starts with a synthetic standing-up
-clip on the ramp. The avatar is placed only once: walk, strafe, turn, crouch,
-fly or jump with the normal controls, then stop on either support. Jumps
+clip on the ramp.
+The “Also while moving” preference defaults off. Append `-moving` to enable
+it in a grounding demo; compare `steps-front-motion` with
+`steps-front-motion-moving` at the same frames. Movement releases placement
+over 0.5 s when off and restores it at rest; an in-place turn keeps support.
+For native standing Movelock, combine `steps-front` with
+`AURORA_DEMO_MOVELOCK=native`: verify standing correction after the confirmed
+anchor. The terrain fixture preserves that confirmed sit when it installs the
+steps. Walk and stop on the supports to check release and rearming; adding
+`-motion` also exercises release during scripted movement. Manual ground sits
+and chairs must never acquire standing placement.
+
+The avatar is placed only once: walk, strafe, turn, crouch, fly or jump with
+the normal controls, then stop on either support. Jumps
 trigger recovery on actual return to the surface; walking uses the demo's
 normal gait clips. Append `-off` to compare the original keyframes, or
 `-motion` for an automated side-step/stop/return/jump input sequence. Compare

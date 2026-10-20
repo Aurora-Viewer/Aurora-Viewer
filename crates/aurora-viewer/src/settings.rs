@@ -605,6 +605,8 @@ pub struct Settings {
     /// Project standing feet onto support and adapt landing recovery to its
     /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
     pub ground_avatar_feet: bool,
+    /// Also adapt walking, running and crouch-walking feet. Off by default.
+    pub ground_feet_while_moving: bool,
     /// Maximum vertical terrain correction in metres, relative to animation.
     pub ground_feet_max_height: f32,
     /// The region restart alert (Preferences › Interface › Region restart).
@@ -1307,6 +1309,7 @@ impl Default for Settings {
             predict_own_motion: false,
             synchronize_animations: false,
             ground_avatar_feet: false,
+            ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
             region_restart: Default::default(),
             reduce_motion: false,

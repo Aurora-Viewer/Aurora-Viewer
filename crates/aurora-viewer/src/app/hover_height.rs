@@ -14,6 +14,7 @@ impl App {
                 }
                 if self.frame_count == 600 {
                     self.settings.ground_avatar_feet = !mode.ends_with("-off");
+                    self.settings.ground_feet_while_moving = mode.contains("-moving");
                     self.settings.ground_feet_max_height = crate::settings::DEFAULT_GROUND_FEET_HEIGHT;
                     self.panels.chat = false;
                     self.panels.people = false;

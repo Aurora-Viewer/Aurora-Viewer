@@ -7,14 +7,40 @@ use super::*;
 impl Scene {
     pub(super) fn grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
         let object = world.objects.get(idx)?;
+        let own = object.full_id == world.agent_id;
+        let standing_anchor = own && self.ground_feet_native_stand && world.agent.ground_sit && !world.agent.seated;
         if !self.ground_avatar_feet
             || crate::settings::foot_height_limit(self.ground_feet_max_height) == 0.0
             || !object.is_avatar()
             || object.parent_id != 0
-            || (object.full_id == world.agent_id
-                && (world.agent.flying || world.agent.is_sitting() || world.animation_preview_clock.is_some()))
+            || (own && (world.agent.flying || (world.agent.is_sitting() && !standing_anchor) || world.animation_preview_clock.is_some()))
         {
             return None;
+        }
+        if !self.ground_feet_while_moving {
+            let moving_clip = |id| {
+                matches!(
+                    crate::ao::State::from_motion(id),
+                    Some(crate::ao::State::Walking | crate::ao::State::Running | crate::ao::State::CrouchWalk)
+                )
+            };
+            // Stock clips cover walking in place; velocity also covers custom
+            // AOs and pushes. Include the drawn stop glide, with a small noise
+            // tolerance. An owned standing anchor ignores stale raw locomotion.
+            let signals = if own {
+                world.own_signals()
+            } else {
+                world.animations_of(&object.full_id)
+            };
+            let velocity = if own { world.agent.velocity } else { object.velocity };
+            let moving = (own && self.ground_feet_own_moving)
+                || (!standing_anchor
+                    && (signals.iter().any(|a| moving_clip(a.id))
+                        || velocity.truncate().length_squared() > 0.05f32.powi(2)
+                        || (own && world.agent.settling_velocity().truncate().length_squared() > 0.05f32.powi(2))));
+            if moving {
+                return None;
+            }
         }
         let (position, rotation, _) = Self::object_transform(world, idx, now, 0)?;
         let velocity_z = if object.full_id == world.agent_id {
@@ -34,6 +60,7 @@ impl Scene {
             velocity_z,
             sole_height: self.grounding_sole_height(world, object.full_id),
             max_height: crate::settings::foot_height_limit(self.ground_feet_max_height),
+            standing_anchor,
         })
     }
 
@@ -124,6 +151,7 @@ mod tests {
             velocity_z: 0.0,
             sole_height: None,
             max_height: crate::settings::DEFAULT_GROUND_FEET_HEIGHT,
+            standing_anchor: false,
         };
         let ankle = Vec3::new(3.0, 0.0, 50.7);
         let now = Instant::now();
@@ -141,6 +169,106 @@ mod tests {
         world.objects.get_mut(front).unwrap().update_flags = 0;
         scene.gpu[front].owner_avatar = Some(front);
         assert!(scene.ground_surface(&world, frame, ankle, now).is_none());
+    }
+
+    #[test]
+    fn grounding_movement_scope_covers_signals_custom_motion_and_immediate_input() {
+        let (mut world, mut scene, _, _) = super::super::picking::tests::scene_with_two_objects();
+        let now = Instant::now();
+        world.agent.flying = false;
+        scene.ground_avatar_feet = true;
+        let own = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
+        let remote = world
+            .objects
+            .iter()
+            .find(|(_, o)| o.is_avatar() && o.full_id != world.agent_id)
+            .map(|(i, _)| i)
+            .expect("other avatar");
+        let remote_id = world.objects.get(remote).expect("remote").full_id;
+        for (idx, id) in [(own, world.agent_id), (remote, remote_id)] {
+            for state in [crate::ao::State::Walking, crate::ao::State::Running, crate::ao::State::CrouchWalk] {
+                world
+                    .animations
+                    .insert(id, vec![crate::world::PlayingAnimation::from_signal(state.motion(), 1, now, None)]);
+                assert!(scene.grounding_frame(&world, idx, now).is_none(), "locomotion should be opt-in");
+                scene.ground_feet_while_moving = true;
+                assert!(scene.grounding_frame(&world, idx, now).is_some());
+                scene.ground_feet_while_moving = false;
+            }
+            world.animations.insert(id, Vec::new());
+            if idx == own {
+                world.agent.velocity = Vec3::X * 0.2;
+            } else {
+                world.objects.get_mut(idx).expect("remote").velocity = Vec3::X * 0.2;
+            }
+            assert!(scene.grounding_frame(&world, idx, now).is_none(), "custom AO or a push still moves");
+            if idx == own {
+                world.agent.velocity = Vec3::ZERO;
+            } else {
+                world.objects.get_mut(idx).expect("remote").velocity = Vec3::ZERO;
+            }
+            world.animations.insert(
+                id,
+                vec![crate::world::PlayingAnimation::from_signal(
+                    crate::ao::State::TurningLeft.motion(),
+                    1,
+                    now,
+                    None,
+                )],
+            );
+            assert!(
+                scene.grounding_frame(&world, idx, now).is_some(),
+                "turning in place retains support"
+            );
+        }
+        scene.ground_feet_own_moving = true;
+        assert!(scene.grounding_frame(&world, own, now).is_none(), "input precedes velocity");
+        assert!(
+            scene.grounding_frame(&world, remote, now).is_some(),
+            "own input does not suppress others"
+        );
+        scene.ground_feet_own_moving = false;
+        assert!(scene.grounding_frame(&world, own, now).is_some(), "support returns at rest");
+    }
+
+    #[test]
+    fn grounding_native_standing_anchor_is_not_a_manual_or_object_seat() {
+        let (mut world, mut scene, _, _) = super::super::picking::tests::scene_with_two_objects();
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("own avatar");
+        let now = Instant::now();
+        scene.ground_avatar_feet = true;
+        world.agent.flying = false;
+        world.agent.ground_sit = true;
+        assert!(scene.grounding_frame(&world, idx, now).is_none(), "manual ground sit");
+        scene.ground_feet_native_stand = true;
+        world.agent.velocity = Vec3::new(0.2, 0.0, -2.0);
+        assert!(
+            scene
+                .grounding_frame(&world, idx, now)
+                .expect("owned standing anchor")
+                .standing_anchor
+        );
+        scene.ground_feet_own_moving = true;
+        assert!(
+            scene.grounding_frame(&world, idx, now).is_none(),
+            "voluntary departure still releases IK"
+        );
+        scene.ground_feet_own_moving = false;
+        world.agent.seated = true;
+        assert!(scene.grounding_frame(&world, idx, now).is_none(), "an actual seat always wins");
+        world.agent.seated = false;
+        world.objects.get_mut(idx).expect("own").parent_id = 970;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        world.objects.get_mut(idx).expect("own").parent_id = 0;
+        world.agent.flying = true;
+        assert!(scene.grounding_frame(&world, idx, now).is_none());
+        world.agent.flying = false;
+        world.agent.ground_sit = false;
+        world.agent.velocity = Vec3::ZERO;
+        assert!(
+            !scene.grounding_frame(&world, idx, now).expect("standing normally").standing_anchor,
+            "stale anchor flag must not escape ground sit"
+        );
     }
 
     #[test]

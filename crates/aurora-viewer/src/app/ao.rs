@@ -243,6 +243,8 @@ impl App {
     }
 
     pub(super) fn update_ao(&mut self, now: Instant) {
+        self.scene.ground_feet_native_stand = false;
+        self.scene.ground_feet_own_moving = false;
         if self.world.teleporting || !self.world.movement_complete {
             return;
         }
@@ -346,6 +348,23 @@ impl App {
             self.ao_runtime
                 .reconcile_loops(raw, now, |id| anims.get(id).is_some_and(|a| a.anim.loop_range().is_some())),
         );
+        // A simulator ground sit can render as the verified standing group.
+        // Only our owned anchor with its system sit actually masked qualifies;
+        // manual ground sits and chairs keep their ordinary seated treatment.
+        self.scene.ground_feet_native_stand = anchor_hold.is_some()
+            && self.native_anchor.owns_sit()
+            && self.world.agent.ground_sit
+            && !on_object
+            && self.ao_runtime.current == Some(crate::ao::State::Standing)
+            && !pose.iter().any(|a| a.id == crate::ao::State::GroundSit.motion());
+        self.scene.ground_feet_own_moving = self.input.forward
+            || self.input.back
+            || self.input.strafe_left
+            || self.input.strafe_right
+            || matches!(
+                self.ao_runtime.current,
+                Some(crate::ao::State::Walking | crate::ao::State::Running | crate::ao::State::CrouchWalk)
+            );
         self.world.ao_pose = Some(pose);
         for (anim, start) in &commands {
             log::debug!("AO animation {} {anim}", if *start { "start" } else { "stop" });

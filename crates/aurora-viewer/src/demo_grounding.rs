@@ -290,7 +290,10 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
         avatar.velocity = Vec3::ZERO;
         avatar.foot_plane = None;
     }
-    {
+    // Combining this terrain fixture with native Movelock must retain the
+    // confirmed ground sit. Replacing its raw signal would stand the avatar
+    // up behind the anchor controller's back and invalidate the scenario.
+    if !world.agent.ground_sit {
         let state = if landing { State::StandingUp } else { State::Standing };
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
@@ -385,7 +388,7 @@ pub fn update_motion(world: &mut crate::world::World, scene: &Scene, frame: u64,
 
 /// Explicit offline input fixture; ordinary modes always keep human controls.
 pub fn scripted_input(mode: &str, frame: u64) -> Option<crate::agent::MoveInput> {
-    mode.ends_with("-motion").then(|| crate::agent::MoveInput {
+    mode.contains("-motion").then(|| crate::agent::MoveInput {
         strafe_left: (720..744).contains(&frame),
         strafe_right: (880..904).contains(&frame),
         up: (1040..1042).contains(&frame),
