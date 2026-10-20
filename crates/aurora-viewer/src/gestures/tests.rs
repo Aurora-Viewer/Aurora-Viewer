@@ -297,6 +297,71 @@ fn first_word_trigger_replacement_case_and_global_disable() {
 }
 
 #[test]
+fn numeric_gesture_shortcuts_accept_both_keyboard_rows() {
+    use winit::keyboard::{Key, KeyCode, NamedKey, NativeKey};
+
+    // winit removes NumLock in key_without_modifiers, so keypad digits can
+    // arrive as navigation keys or as an unidentified key (keypad 5).
+    for (digit, row, pad, unmodified) in [
+        (b'0', KeyCode::Digit0, KeyCode::Numpad0, Key::Named(NamedKey::Insert)),
+        (b'1', KeyCode::Digit1, KeyCode::Numpad1, Key::Named(NamedKey::End)),
+        (b'2', KeyCode::Digit2, KeyCode::Numpad2, Key::Named(NamedKey::ArrowDown)),
+        (b'3', KeyCode::Digit3, KeyCode::Numpad3, Key::Named(NamedKey::PageDown)),
+        (b'4', KeyCode::Digit4, KeyCode::Numpad4, Key::Named(NamedKey::ArrowLeft)),
+        (b'5', KeyCode::Digit5, KeyCode::Numpad5, Key::Unidentified(NativeKey::Windows(0x0c))),
+        (b'6', KeyCode::Digit6, KeyCode::Numpad6, Key::Named(NamedKey::ArrowRight)),
+        (b'7', KeyCode::Digit7, KeyCode::Numpad7, Key::Named(NamedKey::Home)),
+        (b'8', KeyCode::Digit8, KeyCode::Numpad8, Key::Named(NamedKey::ArrowUp)),
+        (b'9', KeyCode::Digit9, KeyCode::Numpad9, Key::Named(NamedKey::PageUp)),
+    ] {
+        let id = Uuid::from_u128(u128::from(digit));
+        let mut manager = Manager::default();
+        manager.active.insert(id);
+        for mask in [0, 1, 4, 5] {
+            let definition = Gesture {
+                key: digit,
+                mask,
+                steps: vec![
+                    Step::Wait {
+                        seconds: 0.0,
+                        flags: WAIT_RELEASE,
+                    },
+                    chat("released"),
+                ],
+                ..Default::default()
+            };
+            manager.entries.insert(
+                id,
+                Entry {
+                    asset: Uuid::nil(),
+                    definition,
+                },
+            );
+            for (code, key) in [
+                (row, &unmodified),
+                (pad, &unmodified),
+                (pad, &Key::Character(char::from(digit).to_string().into())),
+            ] {
+                let translated = keys::from_key(code, key);
+                assert_eq!(translated, Some(digit), "{code:?} with {key:?}");
+                let translated = translated.expect("numeric shortcut");
+                assert_eq!(manager.key_trigger(translated, mask ^ 1), None);
+                assert_eq!(manager.key_trigger(translated, mask), Some(id));
+                let definition = manager.entries[&id].definition.clone();
+                manager.play(id, definition, Some(translated));
+                let now = Instant::now();
+                assert!(manager.tick(now, &BTreeSet::new()).is_empty());
+                assert_eq!(manager.key_trigger(translated, mask), None, "wait for the triggering key");
+                manager.release(keys::from_key(code, key));
+                assert_eq!(manager.tick(now, &BTreeSet::new()), [Effect::Chat("released".into())]);
+                assert_eq!(manager.key_trigger(translated, mask), Some(id), "allow the next press");
+            }
+        }
+    }
+    assert_eq!(keys::from_key(KeyCode::ArrowRight, &Key::Named(NamedKey::ArrowRight)), Some(0x83));
+}
+
+#[test]
 fn firestorm_key_codes_and_ctrl_g_default() {
     use winit::keyboard::{Key, NamedKey};
     assert_eq!(keys::from_event(&Key::Character("g".into())), Some(b'G'));
