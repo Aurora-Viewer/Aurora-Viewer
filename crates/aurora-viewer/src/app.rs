@@ -1450,6 +1450,9 @@ impl App {
                     .map(|mut it| {
                         it.id = uuid::Uuid::new_v4();
                         it.owner = self.world.agent_id;
+                        if !copy.name.is_empty() {
+                            it.name.clone_from(&copy.name);
+                        }
                         it.parent = if copy.parent.is_nil() {
                             crate::world::inventory::actions::system(inv, it.asset_type).unwrap_or(inv.root)
                         } else {
@@ -2064,7 +2067,11 @@ impl App {
                 self.photo_uploaded(result);
                 return;
             }
+            let material_map = self.imports.uploading_entry(request);
             if let Some(item) = self.imports.uploaded(request, result) {
+                if let Some(entry) = material_map {
+                    self.texture_library.map_uploaded(entry, &item);
+                }
                 let id = item.id;
                 self.world.inventory.add_items(vec![item]);
                 self.inventory_ui.show_original(&self.world.inventory, id);
@@ -2102,6 +2109,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.texture_library.material_save_pending(request) {
+                self.resource_material_saved(request, result);
+                return;
+            }
             if self.env_editor.saving == Some(request) {
                 self.env_editor_saved(result);
                 return;
@@ -2132,6 +2143,10 @@ impl App {
             return;
         }
         if let NetEvent::InventoryItemCopied { request, result } = ev {
+            if self.texture_library.material_save_pending(request) {
+                self.resource_material_copied(request, result);
+                return;
+            }
             self.wear_copied(request, result);
             return;
         }
@@ -3952,7 +3967,8 @@ impl App {
     }
 
     fn confirm_exit(&mut self, action: ui::exit::Action) {
-        if action != ui::exit::Action::Cancel && !self.script_editors.prepare_exit() {
+        if action != ui::exit::Action::Cancel && (!self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
+        {
             self.exit_prompt.open = false;
             return;
         }

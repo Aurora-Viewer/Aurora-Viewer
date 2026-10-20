@@ -4,7 +4,7 @@ use aurora_assets::gesture::{Gesture, Step};
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
 
-async fn server(stale: bool, reject: bool) -> (String, tokio::task::JoinHandle<Vec<Vec<u8>>>) {
+async fn server(stale: bool, reject: bool, material: bool) -> (String, tokio::task::JoinHandle<Vec<Vec<u8>>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
     let url = format!("http://{}", listener.local_addr().expect("address"));
@@ -16,7 +16,7 @@ async fn server(stale: bool, reject: bool) -> (String, tokio::task::JoinHandle<V
         ),
         (
             200,
-            llsd_map! { "items" => Llsd::Array(vec![llsd_map! { "item_id" => Uuid::from_u128(3), "parent_id" => Uuid::from_u128(1), "type" => 21, "inv_type" => 20, "asset_id" => Uuid::from_u128(if stale { 4 } else { 40 }), "name" => "Gesture" }]) },
+            llsd_map! { "items" => Llsd::Array(vec![llsd_map! { "item_id" => Uuid::from_u128(3), "parent_id" => Uuid::from_u128(1), "type" => if material {57} else {21}, "inv_type" => if material {26} else {20}, "asset_id" => Uuid::from_u128(if stale { 4 } else { 40 }), "name" => "Content", "permissions" => llsd_map! { "owner_id" => Uuid::from_u128(2) } }]) },
         ),
     ];
     let task = tokio::spawn(async move {
@@ -73,7 +73,7 @@ async fn gesture_upload_preserves_bytes_and_requires_matching_inventory_asset() 
     .encode()
     .expect("encode");
     for (stale, reject) in [(false, false), (true, false), (false, true)] {
-        let (url, task) = server(stale, reject).await;
+        let (url, task) = server(stale, reject, false).await;
         let result = save_content(
             &reqwest::Client::new(),
             &url,
@@ -93,4 +93,47 @@ async fn gesture_upload_preserves_bytes_and_requires_matching_inventory_asset() 
             assert_eq!(result.expect("saved").asset_id, Uuid::from_u128(40));
         }
     }
+}
+
+#[tokio::test]
+async fn material_upload_preserves_asset_bytes_and_requires_matching_inventory_asset() {
+    let material = aurora_assets::PbrMaterial {
+        roughness_factor: 0.35,
+        normal_texture: Some(Uuid::from_u128(50)),
+        ..Default::default()
+    };
+    let data = material.encode_asset().expect("material asset");
+    for (stale, reject) in [(false, false), (true, false), (false, true)] {
+        let (url, task) = server(stale, reject, true).await;
+        let result = save_content(
+            &reqwest::Client::new(),
+            &url,
+            &format!("{url}/fetch"),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            57,
+            data.clone(),
+        )
+        .await;
+        assert_eq!(result.is_ok(), !stale && !reject, "{result:?}");
+        let requests = task.await.expect("server");
+        assert_eq!(requests[1], data);
+        assert_eq!(aurora_assets::parse_material_asset(&requests[1]).expect("read upload"), material);
+        let negotiation = aurora_llsd::from_xml(&requests[0]).expect("LLSD");
+        assert_eq!(negotiation["item_id"].as_uuid(), Uuid::from_u128(3));
+        assert!(!negotiation.has("target"));
+    }
+    assert!(
+        save_content(
+            &reqwest::Client::new(),
+            "invalid",
+            "invalid",
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            57,
+            b"invalid".to_vec()
+        )
+        .await
+        .is_err()
+    );
 }

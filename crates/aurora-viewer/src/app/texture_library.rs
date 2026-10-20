@@ -378,6 +378,28 @@ impl App {
                 );
             }
         }
+        if self.demo
+            && self.library_demo_seeded
+            && let Ok(mode) = std::env::var("AURORA_DEMO_TEXTURE_LIBRARY")
+            && mode.starts_with("preview-controls")
+            && matches!(self.frame_count, 620 | 700)
+        {
+            self.panels.texture_library = false;
+            self.settings.texture_library.texture_display = Default::default();
+            let items = crate::demo::texture_library::preview_items();
+            for (index, item) in [items[0], items[2]].into_iter().enumerate() {
+                self.texture_library.open_preview(ctx, &self.world, item);
+                ui::widgets::place_floater(
+                    ctx,
+                    &library::preview_window_id(item),
+                    egui::pos2(24.0 + index as f32 * 660.0, 60.0),
+                    egui::vec2(620.0, 720.0),
+                );
+            }
+            if self.frame_count == 700 {
+                self.texture_library.demo_preview_controls(&mode);
+            }
+        }
         let preferences = self.settings.texture_library.clone();
         let actions = self.texture_library.show(
             ctx,
@@ -416,10 +438,137 @@ impl App {
                     self.inventory_ui.show_folder(&self.world.inventory, id);
                     ui::widgets::open_floater(ctx, "inventory", &mut self.panels.inventory);
                 }
+                library::Action::SaveMaterial { item, material, name } => self.resource_material_save(item, material, name),
+                library::Action::RefreshTexture(asset) => {
+                    self.ui_images.remove(&asset);
+                    self.scene.textures.refresh(&asset);
+                    self.texture_library.refresh_texture(&self.world, asset);
+                }
+                library::Action::ExportTexture { item, png } => {
+                    let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+                    if self.world.inventory.items.get(&item).is_some_and(|it| it.owner_mask & full == full) {
+                        self.texture_library.export_texture(item, png);
+                    }
+                }
+                library::Action::Profile(resident) => self.apply_inventory_action(ui::inventory::InvAction::Profile(resident)),
+                library::Action::MaterialMapFile { item, slot } => {
+                    if !self.world.inventory.items.get(&item).is_some_and(|it| {
+                        it.owner == self.world.agent_id
+                            && !it.group_owned
+                            && it.owner_mask & rules::MODIFY != 0
+                            && !rules::library(&self.world.inventory, item)
+                    }) {
+                        continue;
+                    }
+                    if let Some(entry) = self
+                        .imports
+                        .choose_material_map_upload(&self.scene.jobs, ctx, self.settings.imports.texture())
+                    {
+                        self.texture_library.track_map_upload(entry, item, slot);
+                    }
+                }
+                library::Action::Discard(item) => {
+                    if let Some(trash) = rules::system(&self.world.inventory, 14)
+                        && let Ok(change) = rules::move_selection(
+                            &self.world.inventory,
+                            &[item],
+                            trash,
+                            &self.settings.inventory.protected,
+                            &HashSet::new(),
+                        )
+                        && self.texture_library.pending.is_none()
+                    {
+                        let request = Uuid::new_v4();
+                        self.texture_library.pending = Some(request);
+                        self.texture_library.pending_refresh.clone_from(&change.refresh);
+                        self.texture_library.close_texture(item);
+                        self.send(NetCommand::EditInventory { request, change });
+                    }
+                }
             }
         }
         if self.settings.texture_library != preferences {
             self.settings.save();
+        }
+    }
+    fn resource_material_save(&mut self, id: Uuid, material: aurora_assets::PbrMaterial, name: Option<String>) {
+        let Some(item) = self.world.inventory.items.get(&id).cloned() else {
+            return;
+        };
+        let own = item.owner == self.world.agent_id && !item.group_owned;
+        let editable = own && item.owner_mask & rules::MODIFY != 0 && !rules::library(&self.world.inventory, id);
+        let copy = name.is_some();
+        if item.asset_type != 57 || if copy { item.owner_mask & rules::COPY == 0 } else { !editable } {
+            return;
+        }
+        if !editable && self.texture_library.material_draft_dirty(id) {
+            return;
+        }
+        let name = match name.map(|name| rules::clean_name(&name)).transpose() {
+            Ok(name) => name,
+            Err(reason) => {
+                self.texture_library.material_message(id, reason);
+                return;
+            }
+        };
+        let request = Uuid::new_v4();
+        if !self.texture_library.begin_material_save(id, request) {
+            return;
+        }
+        if let Some(name) = name {
+            self.send(NetCommand::CopyInventoryItem {
+                request,
+                copy: aurora_net::inventory::operations::CopyItem {
+                    item: id,
+                    owner: item.owner,
+                    parent: if rules::library(&self.world.inventory, id) || rules::in_type(&self.world.inventory, id, 53) {
+                        rules::system(&self.world.inventory, 57).unwrap_or(self.world.inventory.root)
+                    } else {
+                        item.parent
+                    },
+                    name,
+                },
+            });
+        } else {
+            match material.encode_asset() {
+                Ok(data) => self.send(NetCommand::SaveInventoryContent {
+                    request,
+                    item: id,
+                    asset_type: 57,
+                    data,
+                }),
+                Err(reason) => self.resource_material_saved(request, Err(reason.to_string())),
+            }
+        }
+    }
+    pub(super) fn resource_material_copied(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        match result {
+            Ok(item) => {
+                self.world.inventory.add_items(vec![item.clone()]);
+                if let Some(material) = self.texture_library.material_copy_ready(request, item.id) {
+                    match material.encode_asset() {
+                        Ok(data) => self.send(NetCommand::SaveInventoryContent {
+                            request,
+                            item: item.id,
+                            asset_type: 57,
+                            data,
+                        }),
+                        Err(reason) => self.resource_material_saved(request, Err(reason.to_string())),
+                    }
+                } else {
+                    self.resource_material_saved(request, Ok(item));
+                }
+            }
+            Err(reason) => self.resource_material_saved(request, Err(reason)),
+        }
+    }
+    pub(super) fn resource_material_saved(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
+        let material = self.texture_library.material_saved(request, &result);
+        if let Ok(item) = result {
+            if let Some(material) = material {
+                self.scene.materials.insert(item.asset_id, material);
+            }
+            self.world.inventory.add_items(vec![item]);
         }
     }
     pub(super) fn texture_library_result(

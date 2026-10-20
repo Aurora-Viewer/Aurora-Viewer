@@ -67,7 +67,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, label: &str, enabled: bool) -> eg
 /// alpha, edited as the sRGB bytes of the shared color picker. The factor is
 /// written only when the user changes it, so an untouched one keeps its
 /// exact value.
-fn factor_swatch(ui: &mut egui::Ui, p: &Palette, id_salt: impl egui::AsIdSalt, factor: &mut [f32], alpha: bool) {
+pub(crate) fn factor_swatch(ui: &mut egui::Ui, p: &Palette, id_salt: impl egui::AsIdSalt, factor: &mut [f32], alpha: bool) {
     use egui::ecolor::{gamma_u8_from_linear_f32, linear_f32_from_gamma_u8, linear_u8_from_linear_f32};
     let mut srgba = [255u8; 4];
     for (byte, linear) in srgba.iter_mut().zip(factor.iter()).take(3) {

@@ -5,7 +5,7 @@ use super::*;
 use aurora_render::preview::{Image, Material, Model, Part, Vertex};
 use glam::Vec3;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum MaterialShape {
     #[default]
     Sphere,
@@ -23,7 +23,7 @@ impl MaterialShape {
     }
 }
 
-fn material_geometry(shape: MaterialShape) -> Result<Vec<(Arc<[Vertex]>, Arc<[u32]>)>, aurora_assets::AssetError> {
+pub(crate) fn material_geometry(shape: MaterialShape) -> Result<Vec<(Arc<[Vertex]>, Arc<[u32]>)>, aurora_assets::AssetError> {
     match shape {
         MaterialShape::Sphere => {
             let (vertices, indices) = sphere();
@@ -168,7 +168,7 @@ pub(crate) fn sphere() -> (Vec<Vertex>, Vec<u32>) {
     }
     (vertices, indices)
 }
-fn bounds(parts: &[Part]) -> (Vec3, f32) {
+pub(crate) fn bounds(parts: &[Part]) -> (Vec3, f32) {
     let point = |part: &Part, vertex: &Vertex| {
         let point = Vec3::from_array(vertex.position);
         let mut p = Vec3::ZERO;

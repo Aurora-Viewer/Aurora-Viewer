@@ -835,6 +835,12 @@ impl Imports {
             }
         }
     }
+    pub(crate) fn uploading_entry(&self, request: Uuid) -> Option<Uuid> {
+        self.current
+            .as_ref()
+            .filter(|(id, _)| *id == request)
+            .and_then(|(_, step)| step.entry)
+    }
     fn price(&self, prices: &Prices, kind: Kind, dimensions: (u32, u32)) -> Option<i32> {
         self.cost_overrides
             .get(&(kind, u64::from(dimensions.0) * u64::from(dimensions.1) > 1024 * 1024))

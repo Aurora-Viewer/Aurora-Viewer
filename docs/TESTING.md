@@ -2424,8 +2424,23 @@ without the window; `sidemenu`: Radar's right click at frame 650, the
 vertical toolbar's menu), `right` (them in the right toolbar), `labels` (the
 dock in icons and labels, the left toolbar in labels). Capture at frame 780.
 
-`AURORA_DEMO_TEXTURE_LIBRARY`: `vertical` and `horizontal` open the corresponding
-presentation at frame 600; `types` and `types-horizontal` also open the checked
+`AURORA_DEMO_TEXTURE_LIBRARY`: `preview-controls` opens a 620 × 720 texture inspector and material
+editor side by side (use `AURORA_WINDOW_SIZE=1600,1000`, capture after frame 740).
+The material has a dirty, isolated draft; test its parameters, map pickers, Save,
+Save As and Cancel, and close it with unsaved changes. `preview-controls-stretch`
+switches aspect preservation off for the image. Resize either window and check
+that the material window stays at its released size for several seconds, including
+with narrow wrapped controls. Its shape selector offers the importer's sphere,
+cube and Aurora model, with independent orbit/reset controls. The
+`preview-controls-cube` and `preview-controls-aurora` variants select those models
+for offline captures. All four assigned maps must show their pixels in the large
+map thumbnails, including textures already resident in the world. Check
+the image fitting, native 100% scroll view, ratio presets/custom ratio, dimensions,
+description, UUID, refresh and permission-gated PNG/TGA export. Local map uploads
+open the texture import inspector to review and confirm their fee before replacing
+the map. These modes are offline; inventory save/copy acknowledgements are simulated.
+`vertical` and `horizontal` open the corresponding presentation at frame 600;
+`types` and `types-horizontal` also open the checked
 type menu at frame 650 for screenshots; `inventory` also reveals the actual library folder
 in inventory, `search` filters stone PBR materials (including a nested polished
 folder), and `empty` keeps the sample resources outside the empty library. `drop` performs a real card drag onto the
