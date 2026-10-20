@@ -340,6 +340,20 @@ when unfocused") is ignored during a screenshot.
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
   switch for the manual check. On the grid, also verify other viewers see
   the committed adjustment, then teleport and reconnect to check persistence.
+  For account isolation, set different Standing / Sitting on an object /
+  Sitting on the ground heights and separate-height switches on two accounts.
+  Also give them different automatic ON/OFF, automatic offset, Affect camera
+  view and foot grounding preferences. Alternate accounts, then restart the
+  viewer: each must restore all its own choices. Resetting preferences on one
+  account must leave the other's height options intact. Former shared options
+  migrate only to the first account used after the update; new accounts start
+  with defaults, including automatic mode OFF.
+  The avatar's Appearance › Hover Height entry must remain available after
+  changing accounts, even while region features are pending: automatic and
+  camera options can still be saved. Manual height controls require the region's
+  advertised support; server writes also wait for AgentPreferences. Transient
+  SimulatorFeatures failures must recover without another login; an explicitly
+  unsupported region must still block manual edits and all height writes.
   `auto-static` adds two rigid soles with a linked heel at frame 620;
   the `auto-*` scenarios frame the feet at 600, after the login camera reset.
   Their avatar deliberately reports a 1.68 m streamed size; the fixture places

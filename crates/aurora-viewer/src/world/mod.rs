@@ -1422,8 +1422,15 @@ impl World {
     }
 
     pub fn hover_height_available(&self) -> bool {
+        // LLFloaterHoverHeight::updateEditEnabled gates local editing on the
+        // feature, independently of sendHoverHeight's capability lookup.
+        self.main().is_some_and(|region| region.avatar_hover_height)
+    }
+
+    pub fn hover_height_target(&self) -> Option<RegionHandle> {
         self.main()
-            .is_some_and(|region| region.avatar_hover_height && region.caps.contains_key("AgentPreferences"))
+            .filter(|region| region.avatar_hover_height && region.caps.contains_key("AgentPreferences"))
+            .map(|region| region.handle)
     }
 
     /// COF version of the last appearance received for an avatar.
@@ -5609,6 +5616,56 @@ mod motion_tests {
         assert_eq!(world.agent.velocity, Vec3::new(-15.0, 0.0, 0.0));
         assert_eq!(world.agent.yaw, yaw);
         assert_eq!(world.take_origin_shift(), Vec3::ZERO);
+    }
+
+    #[test]
+    fn hover_editing_and_sending_recover_in_either_order_after_an_account_switch() {
+        use aurora_net::NetCommand;
+        let (mut world, here) = teleport_fixture();
+        for account in [1, 2] {
+            world.reset();
+            world.agent_id = Uuid::from_u128(account);
+            world.apply(NetEvent::MainRegionChanged { handle: here });
+            assert!(!world.hover_height_available());
+            assert_eq!(world.hover_height_target(), None);
+            let caps = Arc::new(HashMap::from([("AgentPreferences".into(), "http://127.0.0.1/preferences".into())]));
+            if account == 1 {
+                world.apply(NetEvent::Capabilities {
+                    handle: here,
+                    caps: caps.clone(),
+                });
+                assert!(!world.hover_height_available());
+                assert_eq!(world.hover_height_target(), None);
+            }
+            let features = |enabled| NetEvent::SimulatorFeatures {
+                handle: here,
+                voice_server_type: String::new(),
+                avatar_hover_height: enabled,
+                materials_rate: None,
+                materials_max: None,
+            };
+            world.apply(features(true));
+            assert!(world.hover_height_available());
+            let value = if account == 1 { 0.2 } else { -0.1 };
+            world.hover_height.preview(value);
+            world.hover_height.commit();
+            assert_eq!(world.appearance_hover(&world.agent_id), value);
+            if account == 2 {
+                // Local editing works before the new session's write cap.
+                assert_eq!(world.hover_height_target(), None);
+                assert!(world.hover_height.next_update(None).is_none());
+                world.apply(NetEvent::Capabilities { handle: here, caps });
+            }
+            assert_eq!(world.hover_height_target(), Some(here));
+            let target = world.hover_height_target();
+            assert!(
+                matches!(world.hover_height.next_update(target), Some(NetCommand::SetHoverHeight { value: sent, .. }) if sent == value)
+            );
+            world.apply(features(false));
+            assert!(!world.hover_height_available());
+            assert_eq!(world.hover_height_target(), None);
+            assert_eq!(world.appearance_hover(&world.agent_id), 0.0);
+        }
     }
 
     #[test]

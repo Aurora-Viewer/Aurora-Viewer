@@ -299,6 +299,12 @@ pub struct SeedRetry {
 }
 
 impl SeedRetry {
+    /// LLViewerRegionImpl::requestSimulatorFeatureCoro stops after 30 attempts.
+    pub const SIMULATOR_FEATURES: SeedRetry = SeedRetry {
+        attempts: 30,
+        ..Self::FIRESTORM
+    };
+
     pub const FIRESTORM: SeedRetry = SeedRetry {
         attempts: 31,
         timeout: Duration::from_secs(30),
@@ -372,6 +378,37 @@ pub async fn resolve_seed(
         }
     }
     Err(last_err)
+}
+
+/// LLViewerRegionImpl::requestSimulatorFeatureCoro (llviewerregion.cpp):
+/// retry failed GETs rather than disabling region-dependent tools for the
+/// rest of a session. The owning simulator aborts this future on logout or
+/// seed replacement; a valid map with hover explicitly disabled is final.
+pub async fn simulator_features(http: &reqwest::Client, url: &str, retry: SeedRetry) -> Result<Llsd, CapsError> {
+    let mut last = CapsError::Http("no SimulatorFeatures request attempted".into());
+    for attempt in 1..=retry.attempts {
+        let reply = tokio::time::timeout(retry.timeout, get_llsd(http, url)).await;
+        last = match reply {
+            Ok(Ok(features)) if features.as_map().is_some() => return Ok(features),
+            Ok(Ok(_)) => CapsError::Http("malformed SimulatorFeatures response".into()),
+            Ok(Err(error)) => error,
+            Err(_) => CapsError::Http("SimulatorFeatures request timed out".into()),
+        };
+        // No capability URL or server response body in diagnostics.
+        let reason = match &last {
+            CapsError::Status(status) => format!("HTTP {status}"),
+            CapsError::Http(_) => "transport failure or malformed response".into(),
+            CapsError::Llsd(_) => "malformed LLSD".into(),
+        };
+        log::warn!(
+            "SimulatorFeatures request failed (attempt {attempt} of {}): {reason}",
+            retry.attempts
+        );
+        if attempt < retry.attempts {
+            tokio::time::sleep(jittered(retry.wait(attempt))).await;
+        }
+    }
+    Err(last)
 }
 
 #[derive(Debug, Clone)]
@@ -804,6 +841,95 @@ mod tests {
 
     fn client() -> reqwest::Client {
         reqwest::Client::builder().no_proxy().build().expect("HTTP client")
+    }
+
+    /// Each request must be a GET; unlike a seed POST, it has no LLSD body.
+    async fn features_server(replies: Vec<(u16, Vec<u8>)>) -> (String, tokio::task::JoinHandle<usize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local feature server");
+        let url = format!("http://{}/features", listener.local_addr().expect("local address"));
+        let task = tokio::spawn(async move {
+            let count = replies.len();
+            for (status, body) in replies {
+                let (mut socket, _) = listener.accept().await.expect("feature request");
+                let mut request = Vec::new();
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let mut bytes = [0; 2048];
+                    let size = socket.read(&mut bytes).await.expect("GET headers");
+                    assert_ne!(size, 0);
+                    request.extend_from_slice(&bytes[..size]);
+                }
+                let headers = String::from_utf8(request).expect("HTTP headers");
+                assert!(headers.starts_with("GET /features HTTP/1.1\r\n"));
+                assert!(headers.to_ascii_lowercase().contains("accept: application/llsd+xml"));
+                assert!(headers.ends_with("\r\n\r\n"));
+                let head = format!(
+                    "HTTP/1.1 {status} Reply\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                socket.write_all(head.as_bytes()).await.expect("response headers");
+                socket.write_all(&body).await.expect("feature response");
+            }
+            count
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn simulator_features_retry_status_xml_and_non_map_failures_before_enabling_hover() {
+        let (url, server) = features_server(vec![
+            (503, Vec::new()),
+            (200, b"not XML".to_vec()),
+            (200, to_xml(&Llsd::from("not a map"))),
+            (
+                200,
+                to_xml(&llsd_map! { "AvatarHoverHeightEnabled" => true, "VoiceServerType" => "webrtc" }),
+            ),
+        ])
+        .await;
+        let features = simulator_features(&client(), &url, quick(6)).await.expect("recovered features");
+        assert!(features["AvatarHoverHeightEnabled"].as_bool());
+        assert_eq!(features["VoiceServerType"].as_str(), "webrtc");
+        assert_eq!(server.await.expect("feature server"), 4);
+    }
+
+    #[tokio::test]
+    async fn simulator_features_do_not_retry_a_region_that_explicitly_disables_hover() {
+        let (url, server) = features_server(vec![(200, to_xml(&llsd_map! { "AvatarHoverHeightEnabled" => false }))]).await;
+        let features = simulator_features(&client(), &url, quick(6)).await.expect("unsupported region");
+        assert!(!features["AvatarHoverHeightEnabled"].as_bool());
+        assert_eq!(server.await.expect("feature server"), 1);
+    }
+
+    #[tokio::test]
+    async fn simulator_features_stop_after_the_retry_limit() {
+        let (url, server) = features_server(vec![(503, Vec::new()); 3]).await;
+        let error = simulator_features(&client(), &url, quick(3)).await.expect_err("bounded retries");
+        assert!(matches!(error, CapsError::Status(503)));
+        assert_eq!(server.await.expect("feature server"), 3);
+        assert_eq!(SeedRetry::SIMULATOR_FEATURES.attempts, 30);
+    }
+
+    #[tokio::test]
+    async fn simulator_features_retry_a_request_that_never_answers() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local feature server");
+        let url = format!("http://{}/features", listener.local_addr().expect("local address"));
+        let count = std::sync::Arc::new(AtomicU32::new(0));
+        let seen = count.clone();
+        let server = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                seen.fetch_add(1, Ordering::SeqCst);
+                held.push(socket);
+            }
+        });
+        let retry = SeedRetry {
+            timeout: Duration::from_millis(60),
+            ..quick(3)
+        };
+        assert!(simulator_features(&client(), &url, retry).await.is_err());
+        assert_eq!(count.load(Ordering::SeqCst), 3);
+        server.abort();
     }
 
     #[test]
