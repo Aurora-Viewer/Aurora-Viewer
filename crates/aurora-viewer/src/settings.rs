@@ -484,7 +484,7 @@ pub struct Settings {
     pub flash_unread_conversations: bool,
     /// The Conversations button flashes when an IM, a group chat or a
     /// conference message arrives while the window is closed, then stays
-    /// lit until it is opened; minimized, its bar pulses instead
+    /// lit until it is opened; minimized, its bar flashes instead
     /// (FSNotifyIMFlash, on).
     pub flash_conversations_button: bool,
     /// Flash the taskbar button when a message, an offer or a mention

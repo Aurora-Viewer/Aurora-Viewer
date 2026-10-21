@@ -3723,9 +3723,8 @@ impl App {
         // the Conversations button goes out once the window is shown
         // (FSFloaterIMContainer::setVisible), or with its preference off
         let flash = &mut self.chat_ui.button_flash;
-        if !self.settings.flash_conversations_button {
-            *flash = Default::default();
-        } else if self.panels.chat {
+        flash.set_on(self.settings.flash_conversations_button);
+        if self.panels.chat {
             flash.shown();
         }
         let now = self.egui_ctx.input(|i| i.time);
@@ -3734,7 +3733,7 @@ impl App {
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
-            // closed: the button flashes; minimized: the window's bar pulses
+            // closed: the button flashes; minimized: the window's bar
             if self.settings.flash_conversations_button && (!self.panels.chat || minimized) && w.message_flashes_conversations(&m) {
                 self.chat_ui.button_flash.message(now, !self.panels.chat);
             }

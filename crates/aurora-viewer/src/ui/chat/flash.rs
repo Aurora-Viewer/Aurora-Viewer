@@ -93,17 +93,29 @@ fn breathe(start: Option<f64>, now: f64) -> (f32, bool) {
 /// when a message arrives with the window closed, FlashCount rises every
 /// FlashPeriod, then the button keeps the flash colour until the window is
 /// shown (setVisible clears the flashing sessions). There a minimized window
-/// is still visible and nothing flashes; here its bar pulses instead, for
-/// the same eight rises.
+/// is still visible and nothing flashes; here its bar flashes instead, the
+/// same eight rises, then keeps the button's tint while unread messages
+/// wait inside: a cue that is hard to miss.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ButtonFlash {
     /// When the latest message that flashes arrived.
     since: Option<f64>,
     /// A message came while the window was closed: the button stays tinted.
     lit: bool,
+    /// Preferences › Chat › "Flash the Conversations button" is on.
+    on: bool,
 }
 
 impl ButtonFlash {
+    /// Follow the preference, given every frame: off, nothing flashes nor
+    /// stays tinted.
+    pub fn set_on(&mut self, on: bool) {
+        if !on {
+            *self = ButtonFlash::default();
+        }
+        self.on = on;
+    }
+
     /// A message that flashes arrived (`World::message_flashes_conversations`),
     /// the window `closed` or else minimized.
     pub fn message(&mut self, now: f64, closed: bool) {
@@ -127,9 +139,15 @@ impl ButtonFlash {
         (BUTTON * wash, moving)
     }
 
-    /// How far into a rise the minimized bar's pulse stands, while it lasts.
-    pub fn pulse(&self, now: f64) -> Option<f32> {
-        rise(self.since, now)
+    /// The violet of the minimized bar while unread messages wait inside,
+    /// and whether it moves: the button's flash when one just arrived, its
+    /// tint otherwise.
+    pub fn bar(&self, now: f64) -> (f32, bool) {
+        if !self.on {
+            return (0.0, false);
+        }
+        let (wash, moving) = breathe(self.since, now);
+        (BUTTON * wash, moving)
     }
 }
 
@@ -175,21 +193,25 @@ mod tests {
 
     /// A message with the window closed flashes the button eight times,
     /// then leaves it tinted until the window is shown; minimized, only the
-    /// bar pulses, for the same time.
+    /// bar flashes, then stays tinted like the button.
     #[test]
-    fn the_button_flashes_while_closed_and_the_minimized_bar_pulses() {
+    fn the_button_flashes_while_closed_and_the_minimized_bar_flashes() {
         let mut b = ButtonFlash::default();
-        assert_eq!((b.button(0.0), b.pulse(0.0)), ((0.0, false), None));
+        assert_eq!(b.bar(0.0), (0.0, false), "the preference off");
+        b.set_on(true);
+        assert_eq!(b.button(0.0), (0.0, false));
+        assert_eq!(b.bar(0.0), (BUTTON * REST, false), "unread before: tinted");
         b.message(1.0, true);
         let (top, moving) = b.button(1.25);
         assert!(moving && (top - BUTTON * PEAK).abs() < 1e-3, "{top}");
         assert_eq!(b.button(5.1), (BUTTON * REST, false), "over: tinted");
         b.shown();
         assert_eq!(b.button(5.2), (0.0, false), "shown: out");
-        // minimized: the bar pulses, the button stays out
+        // minimized: the bar flashes, the button stays out
         b.message(10.0, false);
         assert_eq!(b.button(10.25), (0.0, false));
-        assert!(b.pulse(10.25).is_some_and(|r| (r - 1.0).abs() < 1e-3));
-        assert_eq!(b.pulse(14.1), None, "the pulse ends with the rises");
+        let (top, moving) = b.bar(10.25);
+        assert!(moving && (top - BUTTON * PEAK).abs() < 1e-3, "{top}");
+        assert_eq!(b.bar(14.1), (BUTTON * REST, false), "over: tinted");
     }
 }

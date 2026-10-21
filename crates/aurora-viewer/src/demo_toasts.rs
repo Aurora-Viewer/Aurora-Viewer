@@ -3,7 +3,7 @@
 //! the messages toast only, `bell`: they stay listed) and, with `click` /
 //! `minimized`, a click on the resident's entry (the Conversations window
 //! closed / minimized before it). The Conversations button flashes while
-//! the window is closed, its bar pulses while it is minimized.
+//! the window is closed, its bar while it is minimized.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;

@@ -253,9 +253,9 @@ pub struct Floater<'a> {
     /// Something new waits inside (unread messages): the minimized bar shows
     /// it, as Firestorm flashes the conversations button.
     pub attention: bool,
-    /// How far into a rise of its flash the minimized bar stands (0 to 1),
-    /// while something new just arrived: it pulses over the outline.
-    pub attention_pulse: Option<f32>,
+    /// The violet laid over the minimized bar while `attention` (its
+    /// strength, and whether it moves: a flash under way).
+    pub attention_flash: Option<(f32, bool)>,
     /// Minimized, the window keeps a compact body under its title bar
     /// instead of the bar alone, at this width: the body is still drawn and
     /// asks `floater_minimized` what to show.
@@ -289,7 +289,7 @@ impl<'a> Floater<'a> {
             auto_height: false,
             compact_header: false,
             attention: false,
-            attention_pulse: None,
+            attention_flash: None,
             compact_minimized: None,
             flush_body: false,
             steady_size: false,
@@ -382,10 +382,10 @@ impl<'a> Floater<'a> {
         self
     }
 
-    /// Pulse the minimized bar's mark while `rise` lasts (a flash's rise,
-    /// 0 to 1): something new just arrived inside.
-    pub fn attention_pulse(mut self, rise: Option<f32>) -> Self {
-        self.attention_pulse = rise;
+    /// Tint the minimized bar's mark with `flash` (the violet's strength,
+    /// and whether it moves), as `ButtonFlash::bar` gives it.
+    pub fn attention_flash(mut self, flash: (f32, bool)) -> Self {
+        self.attention_flash = Some(flash);
         self
     }
 
@@ -772,19 +772,21 @@ impl<'a> Floater<'a> {
                 ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
             } else if self.attention {
                 // the bar lights up in the accent while something waits
-                // inside, and breathes as the Conversations button would
-                // flash when news just arrived
+                // inside, tinted and flashing like the Conversations button
+                // when asked for, its outline widening with the violet
                 let painter = ctx.layer_painter(response.response.layer_id);
                 let radius = ctx.global_style().visuals.window_corner_radius;
-                let rise = self.attention_pulse.unwrap_or(0.0);
-                if self.attention_pulse.is_some() {
-                    painter.rect_filled(response.response.rect, radius, p.violet.gamma_multiply(0.17 * rise));
+                let (wash, moving) = self.attention_flash.unwrap_or((0.0, false));
+                if wash > 0.0 {
+                    painter.rect_filled(response.response.rect, radius, p.violet.gamma_multiply(wash));
+                }
+                if moving {
                     ctx.request_repaint();
                 }
                 painter.rect_stroke(
                     response.response.rect,
                     radius,
-                    Stroke::new(1.5 + rise, p.violet_light),
+                    Stroke::new(1.5 + 4.0 * wash, p.violet_light),
                     egui::StrokeKind::Inside,
                 );
             }

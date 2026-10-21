@@ -3097,8 +3097,8 @@ failure. Grid validation and any paid upload are performed by the human.
   listed (Preferences › Chat › Toasts › "Keep messages under the bell",
   off). `bell` keeps them under the bell: the two conversations are listed,
   never the presence notices. `click` (window closed) and `minimized`
-  (window minimized at start: its bar pulses at each IM instead of the
-  button) also keep them, and click the first IM card at frame 1250: the
+  (window minimized at start: its bar flashes at each IM instead of the
+  button, then stays tinted while they wait unread) also keep them, and click the first IM card at frame 1250: the
   Conversations window opens or expands, comes to the front on that
   conversation, and its card leaves the list. Capture with
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and

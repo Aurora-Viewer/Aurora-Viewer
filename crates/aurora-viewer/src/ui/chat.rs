@@ -2162,7 +2162,7 @@ pub fn show(
     let mut tear_off = false;
     let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
         .attention(conversations_waiting(world))
-        .attention_pulse(st.button_flash.pulse(ctx.input(|i| i.time)))
+        .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
