@@ -2496,6 +2496,11 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 if !self.demo {
+                    let root = self.world.inventory.root;
+                    self.inventory_ui.load_received(
+                        crate::settings::account_dir(&l.agent_id).join(format!("received-{root}.json")),
+                        root,
+                    );
                     self.settings.select_hover_account(l.agent_id);
                     self.settings.save();
                 }
@@ -5900,6 +5905,8 @@ impl App {
             self.camera.shift(shift);
         }
         self.world.poll_inventory_cache();
+        let receipts = std::mem::take(&mut self.world.received_items.receipts);
+        self.inventory_ui.update_received(&mut self.world.inventory, receipts);
         self.world.poll_transcripts();
         self.update_hover_height();
         self.update_avatar_health();

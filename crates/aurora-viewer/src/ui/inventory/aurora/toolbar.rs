@@ -91,7 +91,7 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
     }
 }
 
-/// The Marketplace and sender deliveries not shown yet this session.
+/// The Marketplace and sender deliveries not acknowledged by this account.
 pub(super) fn unseen_received(inv: &Inventory, st: &mut InventoryUi) -> usize {
     st.received_badge.unseen(inv)
 }

@@ -406,6 +406,15 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    pub(crate) fn load_received(&mut self, path: std::path::PathBuf, root: Uuid) {
+        self.received_badge = received::Badge::load(path, root);
+    }
+
+    pub(crate) fn update_received(&mut self, inv: &mut Inventory, receipts: Vec<crate::world::received_items::Receipt>) {
+        self.received_badge.receive(receipts);
+        self.received_badge.update(inv);
+    }
+
     pub fn begin_move_to(&mut self, id: Uuid) {
         self.move_to = Some(move_to::MoveTo::new(self.selected_ids(id)));
     }

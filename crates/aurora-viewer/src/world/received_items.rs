@@ -16,6 +16,12 @@ pub const FOLDER: &str = "Received items";
 const LIMIT: usize = 256;
 const TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Exact receipt information protects new offers during the first unread baseline.
+pub(crate) enum Receipt {
+    Item(Uuid),
+    Scripted { parent: Uuid, previous: HashSet<Uuid> },
+}
+
 /// Find a real ordinary child, never an inventory link or a Library folder.
 fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
     inv.folders
@@ -101,6 +107,7 @@ pub struct ReceivedItems {
     /// destination while the simulator is still populating it.
     awaiting: HashMap<Uuid, Instant>,
     cleanup_at: Option<Instant>,
+    pub(crate) receipts: Vec<Receipt>,
 }
 
 impl ReceivedItems {
@@ -389,6 +396,14 @@ impl ReceivedItems {
             };
             parent = id;
         }
+        // A scripted offer does not identify the delivered UUID. Its initial
+        // contents distinguish the new receipt from older gifts in this folder.
+        if matches!(pending.delivery, Delivery::Accept(_)) {
+            inv.request(parent);
+            if !inv.folders.get(&parent).is_some_and(|f| f.state == FetchState::Fetched) {
+                return out;
+            }
+        }
         let Some(pending) = self.pending.pop_front() else { return out };
         match pending.delivery {
             Delivery::Accept(mut command) => {
@@ -396,9 +411,24 @@ impl ReceivedItems {
                     *bucket = parent.as_bytes().to_vec();
                 }
                 self.awaiting.insert(parent, now);
+                if self.receipts.len() < LIMIT {
+                    self.receipts.push(Receipt::Scripted {
+                        parent,
+                        previous: inv
+                            .folders
+                            .get(&parent)
+                            .into_iter()
+                            .flat_map(|f| f.children.iter().chain(&f.items))
+                            .copied()
+                            .collect(),
+                    });
+                }
                 out.push(*command);
             }
             Delivery::Item { id, folder, answer } => {
+                if self.receipts.len() < LIMIT {
+                    self.receipts.push(Receipt::Item(id));
+                }
                 // Keep also reports this destination: the type's default folder
                 // must never override filing, whichever answer/move arrives first.
                 if let Some(mut command) = answer {
