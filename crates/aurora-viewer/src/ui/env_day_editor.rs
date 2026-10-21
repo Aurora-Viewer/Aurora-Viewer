@@ -426,10 +426,15 @@ impl DayEditorUi {
             self.track_row(ui, p, inv, &mut out);
             self.frame_row(ui, p, inv, &mut out);
             widgets::divider(ui, p);
-            let body_h = (ui.available_height() - 64.0).max(120.0);
-            self.frame_panels(ui, p, images, body_h, &mut out);
-            widgets::divider(ui, p);
-            self.footer(ui, p, access, &mut out);
+            // the panels in exactly the room the footer leaves (a guessed
+            // footer grew the window at every frame with a larger text)
+            let (mut panels, foot) = widgets::above_footer(ui);
+            let body_h = panels.available_height();
+            self.frame_panels(&mut panels, p, images, body_h, &mut out);
+            foot.show(ui, |ui| {
+                widgets::divider(ui, p);
+                self.footer(ui, p, access, &mut out);
+            });
         });
         if !open {
             if self.dirty {
@@ -1106,5 +1111,30 @@ impl DayEditorUi {
                 self.track_source = None;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    /// The day editor keeps its size.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let inv = Inventory::default();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(640.0, 760.0), Vec2::new(600.0, 600.0)],
+            aurora_i18n::tr!("common-cancel"),
+            || {
+                let mut ui = DayEditorUi::default();
+                let doc = DayDoc::from_llsd(aurora_llsd::llsd_map! {"type" => "daycycle"}).expect("day");
+                ui.start(doc, None, Rights::default());
+                ui
+            },
+            |ui, ctx, p| {
+                ui.show(ctx, p, &inv, &HashMap::new(), EditorAccess::default());
+            },
+        );
     }
 }

@@ -1042,3 +1042,28 @@ pub fn frames(doc: &SettingsDoc) -> (Option<SkyFrame>, Option<WaterFrame>) {
         _ => (Some(doc.sky()), None),
     }
 }
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    /// The editor keeps its size, with the note of a region without
+    /// inventory settings beside its buttons.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let inv = Inventory::default();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(560.0, 600.0), Vec2::new(500.0, 480.0)],
+            aurora_i18n::tr!("common-cancel"),
+            || {
+                let mut ui = EnvEditorUi::default();
+                ui.start(SettingsDoc::snapshot_sky(&SkyFrame::default(), "Test"), None, Rights::default());
+                ui
+            },
+            |ui, ctx, p| {
+                ui.show(ctx, p, &inv, &HashMap::new(), EditorAccess::default());
+            },
+        );
+    }
+}
