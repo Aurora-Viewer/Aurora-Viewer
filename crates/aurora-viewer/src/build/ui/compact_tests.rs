@@ -834,6 +834,8 @@ struct Inspector {
     media: crate::media::MediaManager,
     frame: u32,
     inventory_surface: Option<egui::Rect>,
+    numeric_drag: Option<crate::ui::numeric_drag::NumericDrag>,
+    native_pixels_per_point: f32,
 }
 
 impl Inspector {
@@ -853,6 +855,8 @@ impl Inspector {
             media: Default::default(),
             frame: 0,
             inventory_surface: None,
+            numeric_drag: None,
+            native_pixels_per_point: 1.0,
         }
     }
 
@@ -867,34 +871,39 @@ impl Inspector {
             })
             .unwrap_or_default();
         events.insert(0, egui::Event::ModifiersChanged(modifiers));
-        let mut output = self.ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
-                time: Some(self.frame as f64 / 60.0),
-                events,
-                focused: true,
-                ..Default::default()
-            },
-            |ui| {
-                super::super::shortcuts(ui.ctx(), &mut self.tool, &mut self.world, &mut self.settings);
-                let mut env = Env {
-                    images: &Default::default(),
-                    media: &mut self.media,
-                    scene: &mut self.scene,
-                    zoom_fraction: 0.0,
-                    demo: false,
-                };
-                super::super::show(
-                    ui.ctx(),
-                    &crate::theme::Theme::default().palette(),
-                    &mut self.tool,
-                    &mut self.world,
-                    &mut self.settings,
-                    Mods::default(),
-                    &mut env,
-                );
-            },
-        );
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+            time: Some(self.frame as f64 / 60.0),
+            events,
+            focused: true,
+            ..Default::default()
+        };
+        input.viewports.get_mut(&egui::ViewportId::ROOT).unwrap().native_pixels_per_point = Some(self.native_pixels_per_point);
+        if let Some(drag) = &mut self.numeric_drag {
+            drag.before(&mut input, self.ctx.pixels_per_point());
+        }
+        let mut output = self.ctx.run_ui(input, |ui| {
+            super::super::shortcuts(ui.ctx(), &mut self.tool, &mut self.world, &mut self.settings);
+            let mut env = Env {
+                images: &Default::default(),
+                media: &mut self.media,
+                scene: &mut self.scene,
+                zoom_fraction: 0.0,
+                demo: false,
+            };
+            super::super::show(
+                ui.ctx(),
+                &crate::theme::Theme::default().palette(),
+                &mut self.tool,
+                &mut self.world,
+                &mut self.settings,
+                Mods::default(),
+                &mut env,
+            );
+        });
+        if let Some(drag) = &mut self.numeric_drag {
+            drag.after(&self.ctx, &output.platform_output.events, true);
+        }
         output.textures_delta.clear();
         fn inventory_surface(shape: &egui::Shape) -> Option<egui::Rect> {
             match shape {
@@ -913,6 +922,293 @@ impl Inspector {
         let rect = self.ctx.memory(|m| m.area_rect(egui::Id::new(super::super::INSPECTOR_ID)).unwrap());
         (rect, texts)
     }
+}
+
+#[test]
+fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
+    for (native, zoom, text_scale) in [
+        (1.0, 1.0, 1.0),
+        (1.25, 1.0, 1.0),
+        (1.0, 1.125, 1.0),
+        (1.25, 1.125, 1.0),
+        (1.0, 1.25, 1.0),
+        (1.0, 1.0, 1.4),
+    ] {
+        for width in [344.0, 390.0] {
+            let mut inspector = Inspector::new();
+            inspector.numeric_drag = Some(Default::default());
+            inspector.native_pixels_per_point = native;
+            crate::theme::Theme::default().apply(&inspector.ctx, text_scale);
+            inspector.ctx.set_zoom_factor(zoom);
+            inspector.tool.tab = 3;
+            inspector.tool.ui.tex_tab = 1;
+            inspector.tool.edit_mode = EditMode::Face;
+            let key = inspector.tool.selection[0];
+            inspector.tool.faces.insert(key, vec![0]);
+            let idx = inspector.world.objects.index_of(&key).unwrap();
+            let asset = uuid::Uuid::from_u128(0x7992);
+            inspector.world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(u8::MAX, asset)];
+            inspector.scene.materials.insert(
+                asset,
+                aurora_assets::PbrMaterial {
+                    metallic_factor: 0.5,
+                    roughness_factor: 0.5,
+                    ..Default::default()
+                },
+            );
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(width, 684.0));
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let initial = inspector.show(vec![]).0;
+            for label in [
+                aurora_i18n::tr!("build-ui-texture-metallic"),
+                aurora_i18n::tr!("build-ui-texture-roughness"),
+            ] {
+                let (_, texts) = inspector.show(vec![]);
+                let caption = texts.iter().find(|(text, _)| text == label).unwrap().1;
+                let point = texts
+                    .iter()
+                    .find(|(text, rect)| {
+                        aurora_i18n::parse_number(text).is_some()
+                            && rect.left() > caption.right()
+                            && (rect.center().y - caption.center().y).abs() < 8.0
+                    })
+                    .unwrap()
+                    .1
+                    .center();
+                inspector.show(vec![egui::Event::PointerMoved(point)]);
+                inspector.show(vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }]);
+                let mut end = point;
+                inspector.tool.out.clear();
+                for frame in 0..60 {
+                    if frame < 20 {
+                        end = point + egui::vec2(frame as f32 + 4.0, 0.0);
+                    } else if frame >= 40 {
+                        end = point + egui::vec2(71.0 - frame as f32, 0.0);
+                    }
+                    let delta = if frame < 20 {
+                        20.0
+                    } else if frame >= 40 {
+                        -20.0
+                    } else {
+                        0.0
+                    };
+                    let (rect, _) = inspector.show(vec![
+                        egui::Event::PointerMoved(end),
+                        egui::Event::MouseMoved(egui::vec2(delta, 0.0)),
+                    ]);
+                    if frame == 15 {
+                        assert!(
+                            inspector.numeric_drag.as_ref().unwrap().active(),
+                            "The real numeric drag must be active: native={native}, zoom={zoom}, text={text_scale}"
+                        );
+                    }
+                    assert!(
+                        (rect.size() - initial.size()).length() < 1.0,
+                        "Scrubbing {label} changed the window at frame {frame}, native={native}, zoom={zoom}, text={text_scale}, width={width}: {initial:?} -> {rect:?}"
+                    );
+                }
+                inspector.show(vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }]);
+                assert!(!inspector.numeric_drag.as_ref().unwrap().active());
+                assert_eq!(
+                    inspector
+                        .tool
+                        .out
+                        .iter()
+                        .filter(|command| matches!(command,
+                            aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams"
+                        ))
+                        .count(),
+                    1,
+                    "The scrub must commit its PBR value once"
+                );
+                for _ in 0..180 {
+                    let rect = inspector.show(vec![]).0;
+                    assert!(
+                        (rect.size() - initial.size()).length() < 1.0,
+                        "The released inspector must retain its chosen size"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
+    for label in [
+        aurora_i18n::tr!("build-ui-texture-shininess"),
+        aurora_i18n::tr!("common-environment"),
+    ] {
+        for finish in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
+            let mut inspector = Inspector::new();
+            inspector.tool.tab = 3;
+            inspector.tool.edit_mode = EditMode::Face;
+            inspector.tool.faces.insert(inspector.tool.selection[0], vec![0]);
+            let idx = inspector.tool.sel_prims(&inspector.world)[0];
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            let id = object.full_id;
+            let material_id = uuid::Uuid::from_u128(0x7990);
+            Arc::make_mut(object.te.as_mut().unwrap()).faces[0].material_id = material_id;
+            inspector.scene.legacy_mats.insert(
+                material_id,
+                crate::scene::legacy_mat::LegacyMaterial {
+                    specular_map: texture::DEFAULT_SPECULAR,
+                    ..Default::default()
+                },
+            );
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (window, texts) = inspector.show(vec![]);
+            let caption = texts
+                .iter()
+                .filter(|(text, _)| text == label)
+                .max_by(|a, b| a.1.top().total_cmp(&b.1.top()))
+                .unwrap()
+                .1;
+            let field = texts
+                .iter()
+                .find(|(text, rect)| {
+                    aurora_i18n::parse_number(text).is_some()
+                        && (rect.center().y - caption.center().y).abs() < 8.0
+                        && rect.left() > caption.right()
+                })
+                .unwrap()
+                .1;
+            let point = field.center();
+            inspector.show(vec![egui::Event::PointerMoved(point)]);
+            for pressed in [true, false] {
+                inspector.show(vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }]);
+            }
+            let focus = inspector.ctx.memory(|m| m.focused());
+            assert!(focus.is_some(), "Number entry must have focus");
+            inspector.tool.out.clear();
+            for digit in ["1", "2", "3"] {
+                let (rect, _) = inspector.show(vec![egui::Event::Text(digit.into())]);
+                assert!(
+                    inspector.tool.ui.legacy_pending.is_empty(),
+                    "Typing {label} must not submit a material"
+                );
+                assert_eq!(inspector.ctx.memory(|m| m.focused()), focus);
+                assert!((rect.size() - window.size()).length() < 1.0);
+            }
+            inspector.show(vec![egui::Event::Key {
+                key: finish,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]);
+            inspector.show(vec![]);
+            if finish == egui::Key::Escape {
+                assert!(inspector.tool.ui.legacy_pending.is_empty());
+                continue;
+            }
+            let material = inspector.tool.ui.legacy_pending[&(id, 0)].1.as_ref().unwrap();
+            if label == aurora_i18n::tr!("common-environment") {
+                assert_eq!((material.specular_exp, material.env_intensity), (51, 123));
+            } else {
+                assert_eq!((material.specular_exp, material.env_intensity), (123, 0));
+            }
+            let (rect, _) = inspector.show(vec![]);
+            assert!((rect.size() - window.size()).length() < 1.0);
+            assert_eq!(
+                inspector
+                    .tool
+                    .out
+                    .iter()
+                    .filter(|command| matches!(command,
+                        aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, .. }) if cap == "RenderMaterials"
+                    ))
+                    .count(),
+                1,
+                "One material submission per completed edit"
+            );
+        }
+    }
+}
+
+#[test]
+fn material_update_keeps_controls_and_focus_until_the_new_material_loads() {
+    let mut inspector = Inspector::new();
+    inspector.tool.tab = 3;
+    inspector.tool.edit_mode = EditMode::Face;
+    inspector.tool.faces.insert(inspector.tool.selection[0], vec![0]);
+    let idx = inspector.tool.sel_prims(&inspector.world)[0];
+    let object = inspector.world.objects.get_mut(idx).unwrap();
+    let id = object.full_id;
+    let old_id = uuid::Uuid::from_u128(0x7990);
+    let new_id = uuid::Uuid::from_u128(0x7991);
+    Arc::make_mut(object.te.as_mut().unwrap()).faces[0].material_id = old_id;
+    let material = crate::scene::legacy_mat::LegacyMaterial {
+        specular_map: texture::DEFAULT_SPECULAR,
+        specular_exp: 123,
+        env_intensity: 45,
+        ..Default::default()
+    };
+    inspector.scene.legacy_mats.insert(old_id, material.clone());
+    inspector.tool.ui.legacy_pending.insert((id, 0), (old_id, Some(material.clone())));
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let (window, texts) = inspector.show(vec![]);
+    let field = texts.iter().find(|(text, _)| text == "123").unwrap().1;
+    let point = field.center();
+    inspector.show(vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    let focus = inspector.ctx.memory(|m| m.focused());
+    assert!(focus.is_some());
+    Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = new_id;
+    for loaded in [false, true] {
+        if loaded {
+            let mut confirmed = material.clone();
+            confirmed.env_intensity = 46;
+            inspector.scene.legacy_mats.insert(new_id, confirmed);
+        }
+        for _ in 0..4 {
+            let (rect, texts) = inspector.show(vec![]);
+            assert!(
+                texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")),
+                "Material controls disappeared during the simulator update (loaded={loaded})"
+            );
+            assert_eq!(inspector.ctx.memory(|m| m.focused()), focus);
+            assert!((rect.size() - window.size()).length() < 1.0);
+            let environment = texts.iter().find(|(text, _)| text == if loaded { "46" } else { "45" }).unwrap().1;
+            assert!(environment.top() > field.top());
+        }
+    }
+    assert!(
+        inspector.tool.ui.legacy_pending.is_empty(),
+        "A loaded server material supersedes the pending edit"
+    );
+    Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = uuid::Uuid::nil();
+    let (_, texts) = inspector.show(vec![]);
+    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
 }
 
 #[test]

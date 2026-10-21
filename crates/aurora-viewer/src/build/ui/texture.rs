@@ -206,19 +206,27 @@ impl BuildTool {
     }
 
     /// Blinn-Phong material of a face as the panel sees it: the one just
-    /// sent (until the simulator's new material id arrives), else the
+    /// sent (until the simulator's new material is loaded), else the
     /// region's, else none.
-    pub(super) fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
+    pub(super) fn face_legacy(&mut self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
         let id = world.objects.get(idx)?.full_id;
         if let Some((old, m)) = self.ui.legacy_pending.get(&(id, face))
             && *old == te.material_id
         {
             return m.clone();
         }
-        if te.material_id.is_nil() {
-            return None;
+        let current = if te.material_id.is_nil() {
+            None
+        } else {
+            env.scene.legacy_mats.peek(&te.material_id)
+        };
+        if !te.material_id.is_nil() && current.is_none() {
+            // ObjectUpdate can precede RenderMaterials. Keep the submitted
+            // maps/controls and the focused input while the new ID loads.
+            return self.ui.legacy_pending.get(&(id, face)).and_then(|(_, m)| m.clone());
         }
-        env.scene.legacy_mats.peek(&te.material_id).map(|m| (*m).clone())
+        self.ui.legacy_pending.remove(&(id, face));
+        current.map(|m| (*m).clone())
     }
 
     /// Change the Blinn-Phong material of the selected faces (LLSelectedTEMaterial::
@@ -680,11 +688,20 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 tool.edit_gltf(world, sel, |o| o.double_sided = Some(v));
             }
             ui.add_enabled_ui(editable, |ui| {
-                let width = (ui.available_width() - 59.0).max(65.0);
+                // LLPanelFace keeps its numeric controls inside the fixed panel.
+                // Scaled fonts can make DragValue wider than the nominal 54 pts;
+                // reserve its measured text, padding and increment buttons first.
+                let value_text = RichText::new(aurora_i18n::number_text("0.000")).text_style(ui.style().drag_value_text_style.clone());
+                let value_width = egui::WidgetText::from(value_text)
+                    .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+                    .size()
+                    .x;
+                let field_width = (value_width + 2.0 * ui.spacing().button_padding.x + 13.0).max(54.0);
+                let width = (ui.available_width() - field_width - ui.spacing().item_spacing.x).max(0.0);
                 let bc = mat.base_color_factor;
                 let mut alpha = bc[3];
                 row(ui, p, aurora_i18n::tr!("common-alpha"), width, |ui| {
-                    if spin(ui, &mut alpha, 0.1, 0.0..=1.0, 3, 54.0, false).commit {
+                    if spin(ui, &mut alpha, 0.1, 0.0..=1.0, 3, field_width, false).commit {
                         tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([bc[0], bc[1], bc[2], alpha]));
                     }
                 });
@@ -708,7 +725,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 if mat.alpha_mode == AlphaMode::Mask {
                     let mut cutoff = mat.alpha_cutoff;
                     row(ui, p, aurora_i18n::tr!("build-ui-texture-cut"), width, |ui| {
-                        if spin(ui, &mut cutoff, 0.1, 0.0..=1.0, 3, 54.0, false).commit {
+                        if spin(ui, &mut cutoff, 0.1, 0.0..=1.0, 3, field_width, false).commit {
                             tool.edit_gltf(world, sel, |o| o.alpha_cutoff = Some(cutoff));
                         }
                     });
@@ -719,7 +736,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 ] {
                     let mut v = value;
                     row(ui, p, name, width, |ui| {
-                        if spin(ui, &mut v, 0.1, 0.0..=1.0, 3, 54.0, false).commit {
+                        if spin(ui, &mut v, 0.1, 0.0..=1.0, 3, field_width, false).commit {
                             tool.edit_gltf(world, sel, |o| {
                                 if metallic {
                                     o.metallic_factor = Some(v)

@@ -1082,6 +1082,12 @@ footer in Edit and Create. Linked-prim and face navigation have separate arrows.
 The shared Floater supports a compact status row in its title; construction
 uses independent lock, no-mod and ownership states. Material projection/options
 are inline rather than collapsed.
+Construction uses the shared Floater's steady body sizing: content cannot widen
+the chosen inspector, including during or after PBR numeric scrubbing. PBR rows
+reserve the measured number field and its step buttons before truncating labels,
+so enlarged fonts fit without feeding minimum-width growth back into the window.
+The shared footer keeps its own bounded viewport so wider section content cannot
+push its coordinate buttons outside the inspector.
 `build::can_transform` applies effective simulator
 Move / Modify flags to numeric controls and manipulators before any local echo,
 with whole-selection validation and checks during dragging and release.
@@ -1096,6 +1102,12 @@ Floating-point spinners in `build/ui/common.rs` retain the active drag value
 until release, so panels that submit only committed edits do not reset it each
 frame. Drafts are used only while their original widget is dragging or releasing;
 numeric transform previews still report their final commit on release.
+Typed float/integer build values commit on Enter or focus loss, with Escape
+canceling the draft; text-only changes never submit unchanged object values.
+The texture panel retains a submitted Blinn-Phong material until the simulator's
+replacement material is loaded, keeping map controls and their input focus stable
+between ObjectUpdate and RenderMaterials. Loaded replacements and explicit
+material removal supersede the pending edit.
 Float/integer build fields and color fields share themed increment/decrement
 buttons; steps respect bounds and disabled permissions and commit once per click.
 After confirmed simulator parent updates, whole-object selection and highlighting

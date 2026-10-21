@@ -44,7 +44,7 @@ pub(super) struct Session {
 }
 
 impl Session {
-    fn capture(tool: &BuildTool, world: &World, env: &Env, target: PickTarget) -> Self {
+    fn capture(tool: &mut BuildTool, world: &World, env: &Env, target: PickTarget) -> Self {
         let mut saved = Vec::new();
         for s in super::texture::selected(tool, world) {
             let Some(object) = world.objects.get(s.idx) else { continue };

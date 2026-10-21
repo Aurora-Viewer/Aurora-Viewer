@@ -112,8 +112,10 @@ pub fn spin_with_min_decimals(
         } else {
             1.0
         };
+    let before = *v;
     let mut dv = egui::DragValue::new(v)
         .speed(speed)
+        .update_while_editing(false)
         .range(range.clone())
         .custom_parser(aurora_i18n::parse_number)
         .max_decimals(decimals)
@@ -139,7 +141,8 @@ pub fn spin_with_min_decimals(
         changed: step != 0,
         commit: step != 0,
     };
-    if r.changed() {
+    // TextEdit also reports changed while only its uncommitted text changed.
+    if r.changed() && *v != before {
         e.changed = true;
         if !r.dragged() {
             e.commit = true;
@@ -154,12 +157,14 @@ pub fn spin_with_min_decimals(
 
 /// Integer spinner.
 pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i32>, width: f32) -> Edit {
+    let before = *v;
     let (r, step) = ui
         .horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let r = ui.add_sized(
                 [(width - 13.0).max(16.0), 26.0],
                 egui::DragValue::new(&mut *v)
+                    .update_while_editing(false)
                     .custom_parser(aurora_i18n::parse_number)
                     .speed(0.25)
                     .range(range.clone()),
@@ -171,8 +176,8 @@ pub fn spin_i(ui: &mut egui::Ui, v: &mut i32, range: std::ops::RangeInclusive<i3
         *v = v.saturating_add(step as i32).clamp(*range.start(), *range.end());
     }
     Edit {
-        changed: r.changed() || step != 0,
-        commit: step != 0 || (r.changed() && !r.dragged()) || r.drag_stopped(),
+        changed: (r.changed() && *v != before) || step != 0,
+        commit: step != 0 || (r.changed() && *v != before && !r.dragged()) || r.drag_stopped(),
     }
 }
 
