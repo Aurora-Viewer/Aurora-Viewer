@@ -656,7 +656,10 @@ mod tests {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         world.agent_id = crate::demo::DEMO_AGENT;
-        for ev in crate::demo::events().into_iter().chain(crate::demo::cloud_self_events(&lib.shape_params)) {
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::cloud_self_events(&lib.shape_params))
+        {
             world.apply(ev);
         }
         let mut scene = Scene::new(std::path::PathBuf::new(), lib);
@@ -720,7 +723,10 @@ mod tests {
         assert!(world.objects.index_of_uuid(&own).is_none());
         scene.update_loading(&world, t0 + secs(20.0));
         // the destination sends everyone as new objects
-        for ev in crate::demo::events().into_iter().chain(crate::demo::cloud_self_events(&world.avatar_lib.shape_params)) {
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::cloud_self_events(&world.avatar_lib.shape_params))
+        {
             world.apply(ev);
         }
         scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);

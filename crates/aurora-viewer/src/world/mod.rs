@@ -4067,7 +4067,9 @@ enum AppearanceVerdict {
     Stale,
     /// One visual parameter or none; `refresh` for our own once one was
     /// received (we may show as a cloud).
-    Empty { refresh: bool },
+    Empty {
+        refresh: bool,
+    },
 }
 
 /// The checks of LLVOAvatar::processAvatarAppearance

@@ -661,10 +661,7 @@ mod tests {
     #[test]
     fn a_sculpt_with_a_missing_map_waits_for_its_placeholder() {
         let map = Uuid::from_u128(7);
-        let (sculpt, placeholder) = (
-            GeomKey::Sculpt { hash: 1, lod: 2 },
-            GeomKey::SculptPlaceholder { hash: 1, lod: 2 },
-        );
+        let (sculpt, placeholder) = (GeomKey::Sculpt { hash: 1, lod: 2 }, GeomKey::SculptPlaceholder { hash: 1, lod: 2 });
         let mut gpu = vec![ObjGpu {
             wanted_geom: Some(sculpt),
             sculpt_wait: Some(map),

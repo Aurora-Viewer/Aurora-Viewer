@@ -1209,11 +1209,7 @@ impl TextureStreamer {
     /// Diagnostic: why a face drawn with `slot` for texture `id` would not
     /// show that texture (None when it should).
     pub fn face_problem(&self, id: &Uuid, slot: u32, table: &aurora_render::textures::TextureTable) -> Option<&'static str> {
-        if id.is_nil()
-            || *id == aurora_prim::te::BLANK_TEXTURE
-            || is_builtin_transparent(id)
-            || self.local_slots.contains_key(id)
-        {
+        if id.is_nil() || *id == aurora_prim::te::BLANK_TEXTURE || is_builtin_transparent(id) || self.local_slots.contains_key(id) {
             return None;
         }
         let Some(e) = self.entries.get(id) else {
@@ -1404,11 +1400,7 @@ impl TextureStreamer {
     /// transparent, those of the demo) are left alone, as Firestorm leaves
     /// IMG_DEFAULT and its default textures. Returns whether it was asked.
     pub fn refresh(&mut self, id: &Uuid) -> bool {
-        if id.is_nil()
-            || is_builtin_transparent(id)
-            || *id == aurora_prim::te::BLANK_TEXTURE
-            || self.local_slots.contains_key(id)
-        {
+        if id.is_nil() || is_builtin_transparent(id) || *id == aurora_prim::te::BLANK_TEXTURE || self.local_slots.contains_key(id) {
             return false;
         }
         match self.entries.get_mut(id) {
