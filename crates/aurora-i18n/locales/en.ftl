@@ -10025,6 +10025,7 @@ anti-spam-sound-multiplier = Sound allowance multiplier
 anti-spam-preload-multiplier = Sound preload allowance multiplier
 anti-spam-multiplier-hint = Multiply the event allowance for this category, since sounds are more frequent.
 anti-spam-session-hint = Blocks last until logout or reset. Changing these settings clears the counters and blocks. Your permanent block list is separate.
+anti-spam-session-blocks = Session blocks
 anti-spam-reset = Reset counters and blocks
 anti-spam-unblock = Unblock
 anti-spam-all = All categories

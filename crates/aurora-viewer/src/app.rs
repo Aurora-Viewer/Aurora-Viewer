@@ -12415,7 +12415,7 @@ impl ApplicationHandler for App {
                 };
                 self.world.anti_spam.configure(self.settings.anti_spam);
                 self.panels.settings = true;
-                self.options_ui.tab = ui::options::TAB_PROTECTIONS;
+                self.options_ui.open(ui::options::Page::Protections, 0);
             }
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
                 self.panels.settings = true;

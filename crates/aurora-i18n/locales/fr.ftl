@@ -10021,6 +10021,7 @@ anti-spam-sound-multiplier = Multiplicateur pour les sons
 anti-spam-preload-multiplier = Multiplicateur pour les préchargements de sons
 anti-spam-multiplier-hint = Multiplier le nombre autorisé pour cette catégorie, car les sons sont plus fréquents.
 anti-spam-session-hint = Les blocages durent jusqu’à la déconnexion ou la remise à zéro. Modifier ces réglages efface les compteurs et blocages. Votre liste de blocage permanente est indépendante.
+anti-spam-session-blocks = Blocages de la session
 anti-spam-reset = Réinitialiser les compteurs et blocages
 anti-spam-unblock = Débloquer
 anti-spam-all = Toutes les catégories
