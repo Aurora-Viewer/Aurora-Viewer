@@ -934,10 +934,19 @@ pub struct MirrorParams {
 }
 
 /// Camera and environment for one frame.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct OverlayEffect {
+    pub color: [f32; 4],
+    pub texture: [u32; 4],
+}
+
+/// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
     /// Session-local scripted vision effects; empty keeps the normal render path.
     pub rlva_spheres: Vec<SphereEffect>,
+    pub rlva_overlays: Vec<OverlayEffect>,
     /// Linear RGBA from the UI palette for selected-face overlays.
     pub selection_color: [f32; 4],
     /// The rez effect's colors (`rez_apply` in object.wgsl): the brand

@@ -1374,6 +1374,7 @@ pub(crate) struct Backend {
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
     rlva_spheres: Option<crate::rlva::Spheres>,
+    rlva_overlays: Option<crate::rlva::overlay::Overlays>,
     smaa: Smaa,
     smaa_targets: Option<SmaaTargets>,
     targets: Targets,
@@ -2648,6 +2649,7 @@ impl Backend {
             glow,
             dof: None,
             rlva_spheres: None,
+            rlva_overlays: None,
             smaa,
             smaa_targets: None,
             targets,
@@ -6394,7 +6396,7 @@ impl Backend {
         match &f.dof {
             Some(params) => {
                 let dof = self.dof.get_or_insert_with(|| crate::dof::Dof::new(&self.device, HDR_FORMAT));
-                (post_bg, post_src) = dof.encode(
+                post_bg = dof.encode(
                     &self.device,
                     &self.queue,
                     &mut encoder,
@@ -6419,30 +6421,6 @@ impl Backend {
             }
         }
         self.prev_view_proj = Some(unjittered_vp);
-        if !f.rlva_spheres.is_empty() {
-            let effects = self
-                .rlva_spheres
-                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, HDR_FORMAT));
-            (post_bg, _) = effects.encode(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                post_src,
-                &self.targets.depth_ss,
-                unjittered_vp.inverse(),
-                (self.config.width, self.config.height),
-                &f.rlva_spheres,
-                HDR_FORMAT,
-                &crate::dof::PostInputs {
-                    layout: &self.post_layout,
-                    sampler: &self.post_sampler,
-                    buffer: &self.post_buffer,
-                    glow: &self.glow.views[1],
-                },
-            );
-        } else {
-            self.rlva_spheres = None;
-        }
         self.last_inv_vp = unjittered_vp.inverse();
 
         // ---- automatic exposure, from the resolved scene and the glow of
@@ -6480,6 +6458,14 @@ impl Backend {
         mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
+        let scene_target = if !f.rlva_spheres.is_empty() {
+            self.rlva_spheres
+                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, self.config.format))
+                .prepare(&self.device, (self.config.width, self.config.height), self.config.format)
+        } else {
+            self.rlva_spheres = None;
+            &surface_view
+        };
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
@@ -6493,7 +6479,7 @@ impl Backend {
             // with SMAA the post pass fills its gamma-encoded input image
             let (post_view, post_pipe, post_ts, smaa_ts) = match &self.smaa_targets {
                 Some(st) => (&st.ldr, &self.smaa.post_ldr, None, ts),
-                None => (&surface_view, &self.pipelines.post, ts, None),
+                None => (scene_target, &self.pipelines.post, ts, None),
             };
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -6518,7 +6504,7 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             if let Some(st) = &self.smaa_targets {
-                self.smaa.encode(&mut encoder, st, &surface_view, smaa_ts);
+                self.smaa.encode(&mut encoder, st, scene_target, smaa_ts);
             }
         }
 
@@ -6537,16 +6523,25 @@ impl Backend {
                 }),
                 _ => None,
             };
-            selection.encode(&mut encoder, &surface_view, timestamps);
+            selection.encode(&mut encoder, scene_target, timestamps);
             calls.set(calls.get() + 2);
         }
 
-        // scene only (no interface): copied before egui draws on top
-        let mut capture = None;
-        if wanted == Some(Capture::Scene) {
-            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
-            capture = self.encode_capture(&mut encoder, source, false);
+        if let Some(effects) = &mut self.rlva_spheres {
+            let passes = effects.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.targets.depth_ss,
+                unjittered_vp.inverse(),
+                (self.config.width, self.config.height),
+                &f.rlva_spheres,
+                &surface_view,
+            );
+            calls.set(calls.get() + passes as u32);
         }
+
+        let mut capture = None;
 
         prof.mark("post");
         // ---- egui: its meshes, and what it painted for the world (name
@@ -6669,6 +6664,19 @@ impl Backend {
                 multiview_mask: None,
             });
             self.label_depth.render(&mut pass, &self.egui);
+        }
+        if !f.rlva_overlays.is_empty() {
+            self.rlva_overlays
+                .get_or_insert_with(|| crate::rlva::overlay::Overlays::new(&self.device, self.config.format, &self.tex_layout))
+                .encode(&self.queue, &mut encoder, &surface_view, &scene.textures, &f.rlva_overlays);
+            calls.set(calls.get() + 1);
+        } else {
+            self.rlva_overlays = None;
+        }
+        // Vision restrictions also apply to photos without the viewer UI.
+        if wanted == Some(Capture::Scene) {
+            let source = self.ui_blur.as_ref().map_or(surface_tex.texture(), |blur| &blur.source);
+            capture = self.encode_capture(&mut encoder, source, false);
         }
         // HUDs retain their original texture colors and never inherit world
         // depth, fog, shadows, exposure or post effects (render_hud_attachments).

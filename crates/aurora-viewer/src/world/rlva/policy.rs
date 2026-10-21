@@ -228,20 +228,33 @@ impl World {
                     })
             }
             NetCommand::DetachAttachments(items) => items.iter().all(|item| self.rlva_can_remove(*item, actor)),
-            NetCommand::RezAttachments(items) => items.iter().all(|item| {
-                let at = if item.point == 0 {
-                    self.inventory.items.get(&item.item_id).map_or(0, |it| (it.flags & 0xff) as u8)
-                } else {
-                    item.point
-                };
-                self.rlva_can_add(item.item_id, item.point, actor)
-                    && (item.add
-                        || self
-                            .worn_attachment_points()
-                            .iter()
-                            .filter(|(_, p)| **p == at && at != 0)
-                            .all(|(id, _)| self.rlva_can_remove(*id, actor)))
-            }),
+            NetCommand::DetachObject { handle, local_id } => self
+                .objects
+                .index_of(&super::super::objects::ObjKey {
+                    region: *handle,
+                    local_id: *local_id,
+                })
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|object| {
+                    self.rlva_temporary_attachment(object.full_id) == Some(object.key) && self.rlva_can_remove(object.full_id, actor)
+                }),
+            // Rez is sent as ADD while RLVa is enabled. The watchdog replaces
+            // only removable predecessors once the actual point is known.
+            NetCommand::RezAttachments(items) => {
+                let worn = self.rlva_worn_attachment_points();
+                items.iter().all(|item| {
+                    let at = if item.point == 0 {
+                        self.inventory.items.get(&item.item_id).map_or(0, |it| (it.flags & 0xff) as u8)
+                    } else {
+                        item.point
+                    };
+                    self.rlva_can_add(item.item_id, item.point, actor)
+                        && (actor == super::watchdog::ACTOR
+                            || worn
+                                .get(&item.item_id)
+                                .is_none_or(|old| at == 0 || at == *old || self.rlva_can_remove(item.item_id, actor)))
+                })
+            }
             NetCommand::UpdateOutfit { change, .. } => {
                 let Some(cof) = super::super::appearance::cof(&self.inventory) else {
                     return true;
@@ -337,6 +350,22 @@ impl World {
                     self.rlva.pending.push((source, c));
                     self.rlva.pending.extend(pending);
                     break;
+                }
+                continue;
+            }
+            if c.behaviour == "detachme"
+                && c.option.is_empty()
+                && let Some(item) = self.rlva_attachment_item(source)
+                && let Some(key) = self.rlva_temporary_attachment(item)
+            {
+                if self.rlva_can_remove(item, source) {
+                    commands.push((
+                        source,
+                        NetCommand::DetachObject {
+                            handle: key.region,
+                            local_id: key.local_id,
+                        },
+                    ));
                 }
                 continue;
             }

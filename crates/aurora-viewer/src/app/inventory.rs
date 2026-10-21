@@ -668,6 +668,44 @@ impl App {
     }
 
     pub(super) fn apply_appearance_action_from(&mut self, action: crate::world::appearance::Action, actor: Uuid) {
+        use crate::world::appearance::Action;
+        // Temporary attachments have no COF link. Use ObjectDetach directly,
+        // retaining the issuer through the same native policy as other wears.
+        let action = match action {
+            Action::Remove(item) if self.world.rlva_temporary_attachment(item).is_some() => {
+                if let Some(key) = self.world.rlva_temporary_attachment(item) {
+                    self.send_from(
+                        NetCommand::DetachObject {
+                            handle: key.region,
+                            local_id: key.local_id,
+                        },
+                        actor,
+                    );
+                }
+                return;
+            }
+            Action::RemoveItems(items) => {
+                let mut regular = Vec::new();
+                for item in items {
+                    if let Some(key) = self.world.rlva_temporary_attachment(item) {
+                        self.send_from(
+                            NetCommand::DetachObject {
+                                handle: key.region,
+                                local_id: key.local_id,
+                            },
+                            actor,
+                        );
+                    } else {
+                        regular.push(item);
+                    }
+                }
+                if regular.is_empty() {
+                    return;
+                }
+                Action::RemoveItems(regular)
+            }
+            other => other,
+        };
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
             ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             self.inventory_ui.show_original(&self.world.inventory, id);
@@ -713,7 +751,8 @@ impl App {
                 self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
                 self.appearance_ui.message.clear();
-                let command = NetCommand::UpdateOutfit { request, change };
+                let mut command = NetCommand::UpdateOutfit { request, change };
+                self.world.rlva_prepare_outfit(&mut command, actor);
                 if !self.world.rlva_allows_command(&command, actor) {
                     self.appearance_ui.pending = None;
                     self.appearance_ui.attachments.clear();

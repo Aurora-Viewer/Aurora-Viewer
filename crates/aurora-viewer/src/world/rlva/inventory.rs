@@ -209,7 +209,7 @@ impl World {
     }
 
     fn rlva_context_folders(&self, source: Uuid, option: &str) -> Vec<Uuid> {
-        let worn = self.worn_attachment_points();
+        let worn = self.rlva_worn_attachment_points();
         let items: Vec<_> = if option.is_empty() {
             self.rlva_attachment_item(source).into_iter().collect()
         } else if let Some(p) = point(option) {
@@ -234,7 +234,7 @@ impl World {
         folders
     }
 
-    fn rlva_folder_allowed(&self, folder: Uuid, add: bool, actor: Uuid) -> bool {
+    pub(super) fn rlva_folder_allowed(&self, folder: Uuid, add: bool, actor: Uuid) -> bool {
         self.rlva_folder_signature(folder, add, actor).is_empty()
     }
 
@@ -510,7 +510,7 @@ impl World {
             self.rlva.out.extend(appearance::prepare(&mut self.inventory, self.agent_id, &worn));
             return false;
         }
-        let worn = self.worn_attachment_points();
+        let worn = self.rlva_worn_attachment_points();
         let action = if name == "detachme" {
             self.rlva_attachment_item(source).map(|item| {
                 self.rlva.self_detach = Some((source, item));
@@ -621,6 +621,7 @@ impl World {
                         continue;
                     }
                     if replace_item
+                        && it.asset_type != 6
                         && current
                             .iter()
                             .filter(|l| l.target != item)
@@ -658,11 +659,14 @@ impl World {
 
     pub fn rlva_can_remove(&self, item: Uuid, actor: Uuid) -> bool {
         let r = &self.rlva;
+        if r.enabled() && actor == super::watchdog::ACTOR {
+            return r.watchdog.rejected.contains(&item);
+        }
         if !r.enabled() || (actor.is_nil() && !r.inventory_locked()) {
             return true;
         }
         let Some(it) = self.inventory.items.get(&item) else {
-            return false;
+            return self.rlva_temporary_removable(item, actor);
         };
         // Nostrip is the user's override of scripted undressing. It does not
         // prevent the user manually removing an item.
@@ -686,18 +690,14 @@ impl World {
             }
         }
         if it.asset_type == 6 {
-            let p = self.worn_attachment_points().get(&item).copied().unwrap_or((it.flags & 0xff) as u8);
-            if self.rlva_point_locked("remattach", p, actor) {
+            let p = self
+                .worn_attachment_points()
+                .get(&item)
+                .copied()
+                .or_else(|| r.watchdog.point(item))
+                .unwrap_or((it.flags & 0xff) as u8);
+            if !self.rlva_attachment_remove_at(item, p, actor) {
                 return false;
-            }
-            for (source, option) in r.rules_for("detach", actor) {
-                if option.is_empty() {
-                    if self.rlva_attachment_item(source) == Some(item) {
-                        return false;
-                    }
-                } else if point(option) == Some(p) {
-                    return false;
-                }
             }
         } else if matches!(it.asset_type, 5 | 13) && self.rlva_layer_locked("remoutfit", (it.flags & 0xff) as u8, actor) {
             return false;
@@ -707,11 +707,17 @@ impl World {
 
     pub fn rlva_can_add(&self, item: Uuid, at: u8, actor: Uuid) -> bool {
         let r = &self.rlva;
+        if r.enabled() && actor == super::watchdog::ACTOR {
+            return r.watchdog.restore_allowed(item, at);
+        }
+        if r.enabled() && at != 0 && r.watchdog.pending.iter().any(|(id, p)| *id != item && p.attachment.point == at) {
+            return false;
+        }
         if !r.enabled() || !r.inventory_locked() {
             return true;
         }
         let Some(it) = self.inventory.items.get(&item) else {
-            return false;
+            return self.rlva_temporary_addable(item, at, actor);
         };
         if it.asset_type == 6 {
             let at = if at == 0 { (it.flags & 0xff) as u8 } else { at };
@@ -731,18 +737,33 @@ impl World {
     }
 
     pub fn rlva_attachment_item(&self, object: Uuid) -> Option<Uuid> {
-        let mut index = self.objects.index_of_uuid(&object)?;
-        for _ in 0..64 {
-            let o = self.objects.get(index)?;
-            if let Some(item) = o.attachment_item_id() {
-                return Some(item);
+        if let Some(mut index) = self.objects.index_of_uuid(&object) {
+            for _ in 0..64 {
+                let Some(o) = self.objects.get(index) else {
+                    break;
+                };
+                if o.attachment_point() != 0
+                    && self
+                        .objects
+                        .parent_of(o)
+                        .and_then(|i| self.objects.get(i))
+                        .is_some_and(|p| p.is_avatar())
+                {
+                    return Some(o.attachment_item_id().filter(|item| !item.is_nil()).unwrap_or(o.full_id));
+                }
+                if let Some(item) = o.attachment_item_id().filter(|item| !item.is_nil()) {
+                    return Some(item);
+                }
+                let Some(parent) = self.objects.parent_of(o) else {
+                    break;
+                };
+                index = parent;
             }
-            index = self.objects.parent_of(o)?;
         }
-        None
+        self.rlva.watchdog.sources.get(&object).copied()
     }
 
-    fn rlva_point_locked(&self, name: &str, p: u8, actor: Uuid) -> bool {
+    pub(super) fn rlva_point_locked(&self, name: &str, p: u8, actor: Uuid) -> bool {
         self.rlva
             .rules_for(name, actor)
             .any(|(_, option)| option.is_empty() || point(option) == Some(p))
@@ -751,6 +772,49 @@ impl World {
         self.rlva
             .rules_for(name, actor)
             .any(|(_, option)| option.is_empty() || layer(option) == Some(kind))
+    }
+
+    /// RlvAttachmentLocks::canAttach and RLVaWearReplaceUnlocked (default true):
+    /// replacement keeps locked attachments and removes unlocked predecessors.
+    /// Clothing and explicit removal still use the ordinary lock checks.
+    pub fn rlva_prepare_outfit(&self, command: &mut aurora_net::NetCommand, actor: Uuid) {
+        if !self.rlva.enabled() || actor == super::watchdog::ACTOR {
+            return;
+        }
+        let aurora_net::NetCommand::UpdateOutfit { change, .. } = command else {
+            return;
+        };
+        let Some(cof) = appearance::cof(&self.inventory) else {
+            return;
+        };
+        let links = if change.folder == cof {
+            &mut change.links
+        } else if let Some((id, links)) = &mut change.cof {
+            if *id != cof {
+                return;
+            }
+            links
+        } else {
+            return;
+        };
+        // Only a transaction adding an attachment is a replacement. Removing
+        // an outfit must fail when it contains an attachment locked in place.
+        let before = appearance::folder_links(&self.inventory, cof);
+        if !links.iter().any(|link| {
+            !before.iter().any(|old| old.target == link.target)
+                && self.inventory.items.get(&link.target).is_some_and(|it| it.asset_type == 6)
+        }) {
+            return;
+        }
+        for old in before {
+            if !old.folder
+                && !links.iter().any(|link| link.target == old.target)
+                && self.inventory.items.get(&old.target).is_some_and(|it| it.asset_type == 6)
+                && !self.rlva_can_remove(old.target, actor)
+            {
+                links.push(old);
+            }
+        }
     }
 
     pub fn rlva_outfit_allowed(&self, before: &[OutfitLink], after: &[OutfitLink], actor: Uuid) -> bool {
@@ -765,7 +829,7 @@ impl World {
     }
 
     pub fn rlva_inventory_query(&mut self, c: &Command, source: Uuid) -> Option<String> {
-        let worn_points = self.worn_attachment_points();
+        let worn_points = self.rlva_worn_attachment_points();
         let cof = appearance::cof(&self.inventory)
             .map(|id| appearance::folder_links(&self.inventory, id))
             .unwrap_or_default();

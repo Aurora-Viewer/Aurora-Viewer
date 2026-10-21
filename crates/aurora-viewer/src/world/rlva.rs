@@ -17,6 +17,8 @@ mod events;
 mod inventory;
 mod policy;
 pub mod privacy;
+mod temporary;
+pub mod watchdog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Param {
@@ -417,6 +419,8 @@ pub struct Rlva {
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
     pub visuals: effects::Visuals,
+    pub watchdog: watchdog::Watchdog,
+    pub recovery: Vec<NetCommand>,
     pub environment: Option<(Uuid, super::eep::SkyFrame)>,
     pub environment_water: Option<super::eep::WaterFrame>,
     pub environment_day: Option<std::sync::Arc<super::eep::DayCycle>>,
@@ -501,6 +505,8 @@ impl Rlva {
         self.viewer.clear();
         self.camera_values.clear();
         self.visuals = Default::default();
+        self.watchdog = Default::default();
+        self.recovery.clear();
         self.clear_environment();
         self.pseudo_sex = None;
         self.appearance_busy = false;
@@ -515,6 +521,7 @@ impl Rlva {
     }
 
     pub fn forget(&mut self, source: Uuid) {
+        self.watchdog.sources.remove(&source);
         self.visuals.forget(source);
         if self.self_detach.is_some_and(|(id, _)| id == source) {
             self.self_detach = None;

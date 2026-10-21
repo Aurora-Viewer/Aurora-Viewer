@@ -2364,6 +2364,15 @@ impl Session<'_> {
                     self.send_main(&m, true);
                 }
             }
+            NetCommand::DetachObject { handle, local_id } => {
+                if let Some(addr) = self.sim_for_handle(handle) {
+                    self.send(
+                        addr,
+                        &crate::attachment_detach::packet(self.agent_id(), self.session_id(), local_id),
+                        true,
+                    );
+                }
+            }
             NetCommand::DetachAttachments(items) => {
                 for item_id in items {
                     let mut m = DetachAttachmentIntoInv::default();
@@ -3626,6 +3635,11 @@ impl Session<'_> {
                     buttons: m.buttons.iter().map(|b| field_str(&b.button_label)).collect(),
                 },
             );
+        } else if id == SaveAssetIntoInventory::ID {
+            let message: SaveAssetIntoInventory = pkt.decode()?;
+            if message.agent_data.agent_id == self.agent_id() {
+                emit(self.sh, NetEvent::AttachmentAssetSaved(message.inventory_data.item_id));
+            }
         } else if id == ScriptQuestion::ID {
             let m: ScriptQuestion = pkt.decode()?;
             let d = &m.data;

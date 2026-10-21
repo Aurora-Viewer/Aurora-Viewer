@@ -1,0 +1,77 @@
+//! Temporary attachments have no inventory record. Their point and source
+//! locks still apply, and detaching addresses the object in its simulator.
+use super::super::{World, objects::ObjKey};
+use uuid::Uuid;
+
+impl World {
+    pub(super) fn rlva_worn_attachment_points(&self) -> std::collections::HashMap<Uuid, u8> {
+        let Some(agent) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return Default::default();
+        };
+        self.objects
+            .children_of(&agent.key)
+            .iter()
+            .filter_map(|i| self.objects.get(*i))
+            .filter(|o| o.attachment_point() != 0)
+            .map(|o| {
+                (
+                    o.attachment_item_id().filter(|id| !id.is_nil()).unwrap_or(o.full_id),
+                    o.attachment_point(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn rlva_temporary_attachment(&self, item: Uuid) -> Option<ObjKey> {
+        if self.inventory.items.contains_key(&item) {
+            return None;
+        }
+        let agent = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i))?;
+        self.objects
+            .children_of(&agent.key)
+            .iter()
+            .filter_map(|i| self.objects.get(*i))
+            .find(|o| o.full_id == item && o.attachment_point() != 0 && o.attachment_item_id().is_none_or(|id| id.is_nil() || id == item))
+            .map(|o| o.key)
+    }
+
+    pub(super) fn rlva_attachment_remove_at(&self, item: Uuid, point: u8, actor: Uuid) -> bool {
+        !self.rlva_point_locked("remattach", point, actor)
+            && !self.rlva.rules_for("detach", actor).any(|(source, option)| {
+                if option.is_empty() {
+                    self.rlva_attachment_item(source) == Some(item)
+                } else {
+                    super::inventory::point(option) == Some(point)
+                }
+            })
+    }
+
+    pub(super) fn rlva_temporary_removable(&self, item: Uuid, actor: Uuid) -> bool {
+        let point = self
+            .rlva_temporary_attachment(item)
+            .and_then(|key| self.objects.index_of(&key))
+            .and_then(|i| self.objects.get(i))
+            .map(|o| o.attachment_point())
+            .or_else(|| self.rlva.watchdog.known.get(&item).filter(|a| a.root == item).map(|a| a.point));
+        point.is_some_and(|point| self.rlva_attachment_remove_at(item, point, actor))
+    }
+
+    pub(super) fn rlva_temporary_addable(&self, item: Uuid, point: u8, actor: Uuid) -> bool {
+        let Some(key) = self.rlva_temporary_attachment(item) else {
+            return false;
+        };
+        let point = if point == 0 {
+            self.objects
+                .index_of(&key)
+                .and_then(|i| self.objects.get(i))
+                .map_or(0, |o| o.attachment_point())
+        } else {
+            point
+        };
+        !self.rlva_point_locked("addattach", point, actor)
+            && !self
+                .rlva
+                .rules_for("detach", actor)
+                .any(|(_, option)| !option.is_empty() && super::inventory::point(option) == Some(point))
+    }
+}

@@ -1105,6 +1105,8 @@ pub enum NetEvent {
         item: Uuid,
         result: Result<crate::inventory::InvItem, String>,
     },
+    /// SaveAssetIntoInventory confirms that a detached object's asset is saved.
+    AttachmentAssetSaved(Uuid),
     OutfitUpdated {
         request: Uuid,
         result: Result<Vec<crate::inventory::FolderContents>, String>,
@@ -2012,6 +2014,11 @@ pub enum NetCommand {
         change: crate::outfits::categories::Mutation,
     },
     DetachAttachments(Vec<Uuid>),
+    /// Detach an attachment without an inventory item, in its simulator.
+    DetachObject {
+        handle: RegionHandle,
+        local_id: u32,
+    },
     SetInventoryFavorite {
         item: Uuid,
         favorite: bool,

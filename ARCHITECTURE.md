@@ -32,10 +32,21 @@ canonical cache records, transcript file identities and region coordinates
 intact. Privacy commands remain unadvertised until the UI audit is complete.
 `effects.rs` owns per-object sphere/overlay modifiers, tween targets and
 overlay linkset arbitration. `aurora-render/src/rlva.rs` runs at most six
-depth-aware sphere effects with two reusable HDR targets; separable blur
+depth-aware sphere effects after glow, tonemapping, antialiasing and scene
+selection, with two reusable composed-scene targets; separable blur
 uses distinct per-pass uniforms. No effect means no targets or GPU passes.
-Overlay textures use the native UI streamer and a compact CPU alpha mask
-for click filtering; they are drawn below viewer controls.
+`rlva/overlay.rs` composes bindless overlay textures after world labels and
+before HUD attachments, including photos without an interface. The native
+texture streamer also supplies a compact CPU alpha mask for object clicks;
+terrain navigation, HUDs and transparent holes remain usable.
+`watchdog.rs` tracks attachment items across object replacement, restores a
+locked lost inventory item after SaveAssetIntoInventory (15-second fallback,
+30-second retries), and rolls back a wear whose actual point is locked.
+Replacement adds first, then removes only unlocked predecessors, preserving
+locked COF links. Its internal actor authorizes only the exact pending item
+and point or rejected predecessor. `temporary.rs` applies point/source locks
+to attachments with no inventory record; `aurora-net/src/attachment_detach.rs`
+addresses ObjectDetach to their simulator. Disabling clears all recovery work.
 Script replies use `NetCommand::ChatReply` and `aurora-net/src/chat_reply.rs`:
 one reliable shout, including an empty response, UTF-8 truncated to the
 protocol's 1023-byte limit. They bypass user chat splitting and redirection.

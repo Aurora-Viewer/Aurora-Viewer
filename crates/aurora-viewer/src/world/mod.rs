@@ -2865,6 +2865,12 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::AttachmentAssetSaved(item) => {
+                if self.rlva.enabled() {
+                    self.rlva.watchdog.saved(item, Instant::now());
+                }
+                None
+            }
             NetEvent::InventoryUpdated { folders, items } => {
                 self.inventory.server_updated(folders, items);
                 None
@@ -2988,6 +2994,7 @@ impl World {
             }
             self.inventory.rlva_preview_mask = self.rlva.preview_mask();
             self.refresh_rlva_privacy();
+            self.rlva_watchdog_tick(Instant::now());
             return;
         }
         let mut c = c;

@@ -2783,6 +2783,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   remain available, opaque texels block them, and HUD/UI clicks stay usable.
   Capture after frame 800; compare the same scene with `disabled` and close
   Preferences for the unobstructed baseline. These modes never contact a grid.
+  Vision modes close Conversations and use the same fixed camera framing
+  around the avatar so its body and attachments remain visible.
   `baseline` shows the unobstructed scene directly. `textures`, `silhouette`,
   `self` and `head` exercise forced world textures, distant avatar silhouettes
   and own-avatar visibility. Append `-released` to an effect mode to disable

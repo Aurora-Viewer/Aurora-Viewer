@@ -49,6 +49,12 @@ script authors; the command lists below describe this branch specifically.
   Folded point folders choose the attachment point. Sequential outfit
   transactions retain their issuer until attachment sync finishes; later
   queries wait. Missing shared originals are fetched with bounded retries.
+  The attachment watchdog preserves locked COF links during replacement,
+  adds before resolving an unknown point and removes only unlocked previous
+  attachments. Lost locked inventory items are restored at their exact point
+  after the simulator saves their asset (15-second fallback, 30-second
+  retries). Temporary attachments use simulator-local ObjectDetach and never
+  attempt an inventory restore. Disabling clears all pending recovery.
 - Camera: setcam exclusive ownership, avatar/origin min/max distances,
   eyeoffset/scale, focusoffset, fov min/max, mouselook and unlock; forced
   offsets, fov, focus and camera mode, with distance/FOV queries.
@@ -61,7 +67,9 @@ script authors; the command lists below describe this branch specifically.
   the GPU. Variable Gaussian kernels have a maximum radius of 256 pixels to prevent
   unbounded shader workloads from external commands.
   setoverlay supports image, opacity, tint, tween, linkset priority and
-  alpha-mask touch filtering, drawn below viewer controls.
+  alpha-mask touch filtering. GPU composition follows world labels, precedes
+  HUD attachments and also applies to photos without the interface; opaque
+  overlay texels suppress object hits while terrain navigation remains usable.
   setcam_textures/camtextures temporarily replace world diffuse/PBR base
   textures and particle textures, leaving avatars and attachments intact;
   getcam_textures reads the active override. showself/showselfhead preserve
@@ -106,7 +114,7 @@ than asserting a complete RLV specification version.
   writes), wearable/attachment/sit notifications and permission notifications.
 - Complete linked/folded-folder conformance, attachment-point groups for
   every command, shared inventory offers and rename-on-wear, queue timeout
-  behavior, locked attachment restoration and reattachment across crossings.
+  behavior and live confirmation of attachment recovery across crossings.
 - Every media/touch interaction path and surface-distance checks; all edit,
   inventory and document entry points must be audited against live scripts.
 - Visual conformance of sphere/overlay effects, forced textures and
@@ -125,15 +133,20 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PR #805: `scripts/check.ps1` passes with 4,304 workspace
-tests passed, zero failures and 26 ignored; scripts, formatting and Clippy
-are clean. This includes 29 RLVa logic/integration/shader tests, covering
+Validation on 2026-10-22, including merged PR #805: `scripts/check.ps1` passes with 4,311 workspace
+tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
+are clean. This includes 36 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
 compatibility, IM ranges, stand returns, visual-effect lifecycle/tweens,
 alpha masks, shader validation, display-only privacy, surface distances,
-local teleports across region edges and encoded empty/UTF-8 replies. It does not
+local teleports across region edges, encoded empty/UTF-8 replies, attachment
+recovery timing, saved-asset ordering, locked/nostrip replacement, temporary
+attachments and changing attachment points. The additional Vulkan test
+`cargo test --workspace rlva_gpu --locked -- --ignored` passes: five sphere
+modes, chained masks and overlay alpha holes are checked from real GPU pixels
+without egui. It does not
 validate the unfinished command families or live-grid behavior.
 
 Initial native preference validation (`4e22e952`): the dev viewer builds

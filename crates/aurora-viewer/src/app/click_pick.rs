@@ -312,11 +312,8 @@ impl App {
     /// run. None: just asked from the renderer; the caller returns, and its
     /// click is run again when the answer is there.
     pub(super) fn click_pick(&mut self) -> Option<Picked> {
-        if self.rlva_overlay_blocks() {
-            return None;
-        }
         if let Some(picked) = self.clicks.in_hand {
-            return Some(picked);
+            return self.rlva_filter_pick(picked);
         }
         let (x, y) = self.cursor_pos;
         let g = self.gfx.as_mut()?;
@@ -328,12 +325,13 @@ impl App {
             self.note_pick(format_args!("the read waited {:.2} ms", t.elapsed().as_secs_f32() * 1000.0));
             // (the read that waits knows nothing of the faces drawn: a
             // rigged mesh is not designated, as before)
-            return Some(Picked {
+            let picked = Picked {
                 ray,
                 depth,
                 drawn: Default::default(),
                 tag: super::plate_click::visible_tag(&self.name_tag_candidates(ray), depth, ray),
-            });
+            };
+            return self.rlva_filter_pick(picked);
         };
         let check = (mode == PickMode::Check).then(|| {
             let t = Instant::now();
@@ -371,6 +369,34 @@ impl App {
             check,
         });
         None
+    }
+
+    // RlvOverlayEffect::blockTouch removes object hits only: transparent
+    // holes, HUD attachments and terrain navigation retain normal behavior.
+    fn rlva_filter_pick(&self, picked: Picked) -> Option<Picked> {
+        if !self.rlva_overlay_blocks() {
+            return Some(picked);
+        }
+        let object = picked
+            .drawn
+            .blend
+            .or(picked.drawn.opaque)
+            .and_then(|face| self.scene.record_object(face.record).map(|(idx, _)| idx))
+            .or_else(|| {
+                if pick_mode() == PickMode::Wait {
+                    picked
+                        .depth
+                        .zip(picked.ray)
+                        .and_then(|(point, ray)| self.scene.interaction_at_ray(&self.world, point, ray, true))
+                } else {
+                    None
+                }
+            });
+        if picked.tag.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
+            None
+        } else {
+            Some(picked)
+        }
     }
 
     /// The click that waited is run again when its depth has come back,

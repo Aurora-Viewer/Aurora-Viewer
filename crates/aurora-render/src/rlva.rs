@@ -1,8 +1,9 @@
 //! RLVa sphere post effects (rlveffects.cpp and deferred/rlvF.glsl,
 //! originally LGPL 2.1). Targets and passes exist only while an effect is active.
-use crate::{SphereEffect, dof::PostInputs};
+use crate::SphereEffect;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
+pub(crate) mod overlay;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -18,7 +19,6 @@ struct Params {
 struct Targets {
     size: (u32, u32),
     views: [wgpu::TextureView; 2],
-    post: [wgpu::BindGroup; 2],
 }
 
 pub(crate) struct Spheres {
@@ -122,20 +122,7 @@ impl Spheres {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn encode(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        input: &wgpu::TextureView,
-        depth: &wgpu::TextureView,
-        inv_vp: Mat4,
-        size: (u32, u32),
-        effects: &[SphereEffect],
-        format: wgpu::TextureFormat,
-        post: &PostInputs,
-    ) -> (&wgpu::BindGroup, &wgpu::TextureView) {
+    pub fn prepare(&mut self, device: &wgpu::Device, size: (u32, u32), format: wgpu::TextureFormat) -> &wgpu::TextureView {
         if self.targets.as_ref().is_none_or(|t| t.size != size) {
             let views = std::array::from_fn(|_| {
                 crate::renderer::make_view(
@@ -149,34 +136,32 @@ impl Spheres {
                 )
                 .1
             });
-            let groups = std::array::from_fn(|i| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("post (RLVa)"),
-                    layout: post.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&views[i]),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(post.sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: post.buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(post.glow),
-                        },
-                    ],
-                })
-            });
-            self.targets = Some(Targets { size, views, post: groups });
+            self.targets = Some(Targets { size, views });
         }
-        let targets = self.targets.as_ref().expect("targets made above");
-        let mut source = input;
+        &self.targets.as_ref().expect("targets made above").views[0]
+    }
+
+    /// Runs on the composed scene, after exposure/glow/tonemapping. Scene alpha
+    /// carries glow before that stage, so it must never contain a vision mask.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        depth: &wgpu::TextureView,
+        inv_vp: Mat4,
+        size: (u32, u32),
+        effects: &[SphereEffect],
+        output: &wgpu::TextureView,
+    ) -> usize {
+        let targets = self.targets.as_ref().expect("prepare called before scene composition");
+        let total = effects
+            .iter()
+            .take(6)
+            .map(|effect| if matches!(effect.mode, 1 | 2) { 2 } else { 1 })
+            .sum::<usize>();
+        let mut source = &targets.views[0];
         let mut count = 0;
         for effect in effects.iter().take(6) {
             let passes = if matches!(effect.mode, 1 | 2) { 2 } else { 1 };
@@ -212,7 +197,11 @@ impl Spheres {
                         },
                     ],
                 });
-                let target = &targets.views[count % 2];
+                let target = if count + 1 == total {
+                    output
+                } else {
+                    &targets.views[(count + 1) % 2]
+                };
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("RLVa sphere"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -237,7 +226,10 @@ impl Spheres {
                 count += 1;
             }
         }
-        let last = count.saturating_sub(1) % 2;
-        (&targets.post[last], &targets.views[last])
+        total
     }
 }
+
+#[cfg(test)]
+#[path = "rlva/tests.rs"]
+mod tests;

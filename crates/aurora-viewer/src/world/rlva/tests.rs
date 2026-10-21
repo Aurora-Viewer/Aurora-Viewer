@@ -4,6 +4,94 @@ const A: Uuid = Uuid::from_u128(1);
 const B: Uuid = Uuid::from_u128(2);
 const TARGET: Uuid = Uuid::from_u128(3);
 
+#[test]
+fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_is_denied() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        inventory::{InvFolder, InvItem},
+        outfits::{OutfitLink, OutfitMutation},
+    };
+    let mut w = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    w.rlva.configure(true);
+    let cof = Uuid::from_u128(10);
+    let old = Uuid::from_u128(11);
+    let new = Uuid::from_u128(12);
+    let link = Uuid::from_u128(13);
+    w.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                type_default: 46,
+                ..Default::default()
+            },
+            items: vec![link],
+            children: vec![],
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    for id in [old, new] {
+        w.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                asset_type: 6,
+                flags: 5,
+                ..Default::default()
+            },
+        );
+    }
+    w.inventory.items.insert(
+        link,
+        InvItem {
+            id: link,
+            parent: cof,
+            asset_id: old,
+            asset_type: 24,
+            ..Default::default()
+        },
+    );
+    command(&mut w.rlva, A, "@remattach:left hand=n");
+    let mut cmd = aurora_net::NetCommand::UpdateOutfit {
+        request: TARGET,
+        change: OutfitMutation {
+            folder: cof,
+            create: None,
+            cof: None,
+            links: vec![OutfitLink {
+                target: new,
+                name: "new".into(),
+                desc: String::new(),
+                folder: false,
+                inv_type: 6,
+            }],
+        },
+    };
+    assert!(!w.rlva_allows_command(&cmd, Uuid::nil()));
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    let aurora_net::NetCommand::UpdateOutfit { change, .. } = &cmd else {
+        unreachable!()
+    };
+    assert_eq!(change.links.len(), 2, "preparation is idempotent");
+    assert!(!w.rlva_can_remove(old, Uuid::nil()));
+    assert!(!w.rlva_can_remove(old, watchdog::ACTOR));
+    assert!(!w.rlva_can_add(new, 5, watchdog::ACTOR));
+    let aurora_net::NetCommand::UpdateOutfit { change, .. } = &mut cmd else {
+        unreachable!()
+    };
+    change.links.clear();
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    assert!(
+        !w.rlva_allows_command(&cmd, Uuid::nil()),
+        "explicit removal remains subject to locks"
+    );
+    w.rlva.configure(false);
+    assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
+}
+
 fn chat(text: &str) -> ChatMessage {
     ChatMessage {
         from_name: "RLVa test object".to_owned(),
@@ -14,6 +102,94 @@ fn chat(text: &str) -> ChatMessage {
         position: glam::Vec3::ZERO,
         message: text.to_owned(),
     }
+}
+
+#[test]
+fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof() {
+    use aurora_net::{AttachRequest, NetCommand};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let region = world.main_region.unwrap();
+    let mut temporary = crate::demo::outfit_attachment(&AttachRequest {
+        item_id: A,
+        owner_id: world.agent_id,
+        point: 5,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: String::new(),
+        desc: String::new(),
+    });
+    temporary.name_values.clear();
+    world.objects.upsert(region, temporary);
+    let key = world.rlva_temporary_attachment(A).unwrap();
+    assert_eq!(world.rlva_worn_attachment_points().get(&A), Some(&5));
+    assert_eq!(world.rlva_attachment_item(A), Some(A));
+    command(&mut world.rlva, A, "@detach=n");
+    let detach = NetCommand::DetachObject {
+        handle: key.region,
+        local_id: key.local_id,
+    };
+    assert!(!world.rlva_allows_command(&detach, Uuid::nil()));
+    assert!(world.rlva_allows_command(&detach, A));
+    command(&mut world.rlva, A, "@detachme=force");
+    assert!(
+        world
+            .rlva_pending()
+            .iter()
+            .any(|(actor, cmd)| *actor == A && matches!(cmd, NetCommand::DetachObject { .. }))
+    );
+    command(&mut world.rlva, B, "@remattach:left hand=n");
+    assert!(
+        !world.rlva_allows_command(&detach, A),
+        "another source's point lock remains authoritative"
+    );
+    world.inventory.items.insert(
+        A,
+        aurora_net::inventory::InvItem {
+            id: A,
+            asset_type: 6,
+            flags: 5,
+            ..Default::default()
+        },
+    );
+    let move_to_other_point = NetCommand::RezAttachments(vec![AttachRequest {
+        item_id: A,
+        owner_id: world.agent_id,
+        point: 6,
+        add: true,
+        flags: 5,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: String::new(),
+        desc: String::new(),
+    }]);
+    assert!(
+        !world.rlva_allows_command(&move_to_other_point, A),
+        "changing points would remove a locked attachment"
+    );
+    command(&mut world.rlva, B, "@clear");
+    assert!(
+        world.rlva_allows_command(&move_to_other_point, A),
+        "a forced move bypasses only its own source"
+    );
+    assert!(!world.rlva_allows_command(&move_to_other_point, Uuid::nil()));
+    world.inventory.items.remove(&A);
+    world.rlva_watchdog_tick(std::time::Instant::now());
+    world.objects.remove(&key);
+    world.rlva_watchdog_tick(std::time::Instant::now());
+    assert!(
+        world.rlva.watchdog.pending.is_empty(),
+        "a temporary object has no inventory asset to restore"
+    );
+    world.rlva.configure(false);
+    assert!(world.rlva.watchdog.known.is_empty() && world.rlva.watchdog.sources.is_empty());
 }
 
 fn command(r: &mut Rlva, source: Uuid, text: &str) {

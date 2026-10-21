@@ -3,31 +3,6 @@ use super::*;
 use uuid::Uuid;
 
 impl App {
-    pub(super) fn draw_rlva_overlays(&self, ui: &egui::Ui) {
-        if !self.world.rlva.has("setoverlay") {
-            return;
-        }
-        let painter = ui.painter();
-        for frame in self.world.rlva_overlay_frames(Instant::now()) {
-            if let Some(texture) = self.ui_images.get(&frame.texture) {
-                let [r, g, b, a] = frame.color;
-                // theme-guard: content — script-controlled image tint, not UI decoration.
-                let color = egui::Color32::from_rgba_unmultiplied(
-                    (r.clamp(0.0, 1.0) * 255.0) as u8,
-                    (g.clamp(0.0, 1.0) * 255.0) as u8,
-                    (b.clamp(0.0, 1.0) * 255.0) as u8,
-                    (a * 255.0) as u8,
-                );
-                painter.image(
-                    texture.id(),
-                    ui.ctx().content_rect(),
-                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                    color,
-                );
-            }
-        }
-    }
-
     pub(super) fn rlva_overlay_blocks(&self) -> bool {
         let size = self.gfx.as_ref().map(|g| g.window.inner_size());
         let Some(size) = size.filter(|s| s.width > 0 && s.height > 0) else {
@@ -54,10 +29,17 @@ impl App {
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
+        self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some();
+        if !self.world.rlva.appearance_busy && self.world.rlva.appearance.is_empty() {
+            self.world.rlva.self_detach = None;
+        }
+        self.world.rlva_watchdog_tick(Instant::now());
+        for command in std::mem::take(&mut self.world.rlva.recovery) {
+            self.send_from(command, crate::world::rlva::watchdog::ACTOR);
+        }
         self.world
             .rlva
             .collect(Instant::now(), |id| self.world.objects.index_of_uuid(&id).is_some());
-        self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some();
         if !self.world.rlva.appearance_busy && self.world.rlva.appearance.is_empty() {
             self.world.rlva.self_detach = None;
         }
@@ -139,6 +121,21 @@ impl App {
             self.settings.rlva_enabled = mode != "disabled";
             self.world.rlva.configure(self.settings.rlva_enabled);
             let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
+            if scenario == "baseline"
+                || scenario.starts_with("sphere-")
+                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head")
+            {
+                // Keep the avatar and the world visible in offline visual
+                // comparisons; a conversation otherwise covers the subject.
+                self.panels.chat = false;
+                let focus = self.world.agent.position + Vec3::Z;
+                self.camera.set_view(
+                    focus + Vec3::new(-4.0, -6.0, 2.5),
+                    focus,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
             let message = if scenario == "baseline" {
                 self.panels.settings = false;
                 "@clear".to_owned()

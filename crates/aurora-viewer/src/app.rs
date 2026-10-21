@@ -586,6 +586,7 @@ pub struct App {
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
     ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
+    rlva_overlay_slots: std::collections::HashMap<uuid::Uuid, u32>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
     /// "Location details" windows (standalone place profiles).
@@ -1111,6 +1112,7 @@ impl App {
             avatar_pic_images: Default::default(),
             ui_images: Default::default(),
             ui_image_masks: Default::default(),
+            rlva_overlay_slots: Default::default(),
             profile_ui: Default::default(),
             place_ui: Default::default(),
             places_ui: Default::default(),
@@ -1210,11 +1212,20 @@ impl App {
         self.send_from(cmd, uuid::Uuid::nil());
     }
 
-    fn send_from(&mut self, cmd: NetCommand, actor: uuid::Uuid) {
+    fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
         self.world.rlva.configure(self.settings.rlva_enabled);
+        self.world.rlva_prepare_outfit(&mut cmd, actor);
         if !self.world.rlva_allows_command(&cmd, actor) {
             self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
             return;
+        }
+        self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
+        if self.world.rlva.enabled()
+            && let NetCommand::RezAttachments(items) = &mut cmd
+        {
+            for item in items {
+                item.add = true;
+            }
         }
         let cmd = if let NetCommand::Chat {
             message,
@@ -5728,6 +5739,21 @@ impl App {
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
+        let overlays = self.world.rlva_overlay_frames(Instant::now());
+        self.rlva_overlay_slots.retain(|id, _| {
+            let keep = overlays.iter().any(|frame| frame.texture == *id);
+            if !keep {
+                self.scene.textures.release(id);
+            }
+            keep
+        });
+        for frame in &overlays {
+            self.rlva_overlay_slots.entry(frame.texture).or_insert_with(|| {
+                self.scene
+                    .textures
+                    .acquire(renderer, frame.texture, crate::scene::textures::TexSource::Asset)
+            });
+        }
         images.extend(
             self.world
                 .rlva_overlay_frames(Instant::now())
@@ -7173,6 +7199,19 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let fp = FrameParams {
+            rlva_overlays: self
+                .world
+                .rlva_overlay_frames(Instant::now())
+                .into_iter()
+                .filter_map(|frame| {
+                    self.rlva_overlay_slots
+                        .get(&frame.texture)
+                        .map(|slot| aurora_render::OverlayEffect {
+                            color: frame.color,
+                            texture: [*slot, 0, 0, 0],
+                        })
+                })
+                .collect(),
             rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
             selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
             rez_gradient: {
@@ -10337,7 +10376,6 @@ impl App {
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
         self.world.refresh_rlva_privacy();
         self.notif_ui.privacy = self.world.rlva_privacy.clone();
-        self.draw_rlva_overlays(ui);
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
