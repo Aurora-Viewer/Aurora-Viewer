@@ -591,7 +591,8 @@ fn line_job(
         _ => None,
     };
     let body_only = matches!(look, JobLook::Body);
-    let col = color_for(line.kind, p);
+    // a line that holds a keyword takes its colour, name included
+    let col = super::colors::keyword_color(line).unwrap_or_else(|| color_for(line.kind, p));
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
         color: p.muted_dim,

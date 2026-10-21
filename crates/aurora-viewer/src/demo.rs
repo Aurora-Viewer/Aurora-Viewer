@@ -84,6 +84,9 @@ pub mod group;
 pub mod home;
 #[path = "demo_hud.rs"]
 pub mod hud;
+/// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
+#[path = "demo_keywords.rs"]
+pub mod keywords;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;

@@ -2570,6 +2570,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
+| `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -2589,6 +2590,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
@@ -2678,6 +2680,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Payments). `sent`: the end of a payment, with its message. `group`: the
   demo group as the payee, without a message field. An object's payment
   is `AURORA_DEMO_ACTIONS=pay`.
+- **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
+  made-up transactions of the last 75 minutes (tips through an object,
+  gifts, a sale and a purchase, an upload fee, a group's joining fee).
+  `aurora`: the Aurora look (totals, filter, newest first). `legacy`: the
+  Legacy Viewer's Time / Name / Amount list. `select`: two rows selected,
+  "Copy 2 (CSV)". `undo`: two rows removed and the bar that puts them back.
+  `empty`: nothing recorded yet. A resident paid with the Pay window during
+  the demo is added as a paid gift while the tracker records.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top
@@ -3129,6 +3139,20 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds.
+- **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
+  (the two keywords of `demo-keywords-words`, "party, builders" in English,
+  "fête, constructeurs" in French; colour change and sound on), with the
+  Conversations window open on the nearby chat. A resident says a line
+  holding a keyword at frame 700, another sends one in an IM (760), a third
+  writes one in the Aurora Builders group chat (820), an object sends one in
+  an IM (880), and a line without one is said (940); capture with
+  `AURORA_FPS_LIMIT=60` at frame 1010. The four keyword lines are drawn in
+  orange in every chat style and play the keyword sound (silent in captures unless
+  `AURORA_DEMO_SOUND=1`); with the system notifications on, each is told as
+  a "Keyword alert". `AURORA_DEMO_OPTIONS=3:keywords` opens Preferences ›
+  Chat on the group (it shows the saved settings, not the run's). `prefs`
+  keeps the settings of Preferences › Chat › Keyword alerts, to try them by
+  hand, and sends the same five lines again every 1200 frames.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer

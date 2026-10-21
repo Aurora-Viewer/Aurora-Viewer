@@ -77,7 +77,7 @@ sections! {
         flash_on_message, flash_on_object_im, flash_on_script_dialog, system_notifications, system_notifications_when_active,
         warn_external_links, show_chat, show_contacts_tab, send_typing_state, play_typing_anim, type_during_emote, typing_in_name_tags, typing_chevron, flash_unread_conversations, flash_conversations_button, log_im, log_nearby,
         log_show_history, reopen_ims, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
-        report_blocks, show_joined_group_invitations, friend_request_prompt,
+        report_blocks, show_joined_group_invitations, keywords, friend_request_prompt,
     ],
     4 => [
         mouse_sensitivity, invert_mouse, arrows_strafe, arrow_keys_always_move, letter_keys_move, walk_backwards_without_turning, double_click, lookat.head_yaw, lookat.head_pitch,
@@ -97,7 +97,7 @@ sections! {
     TAB_AURORA => [
         water_effects,
         chat_style, classic_chat_lines, classic_name_tags, lookat.style, notifications_style, classic_bars, world_map_style, classic_people, classic_profiles, photo_window, snapshot.viewfinder.controls,
-        classic_about_land, classic_search, classic_region_estate, classic_places, classic_inventory, classic_pay_window, classic_controls, classic_restart_alert, classic_rez_effect,
+        classic_about_land, classic_search, classic_region_estate, classic_places, classic_inventory, classic_pay_window, legacy_money_tracker, classic_controls, classic_restart_alert, classic_rez_effect,
         lookat.aim, predict_own_motion, synchronize_animations, ground_avatar_feet, ground_feet_while_moving, ground_feet_max_height, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
     TAB_ACCESSIBILITY => [color_blindness, color_blindness_strength],
@@ -204,6 +204,7 @@ mod tests {
         }
         pages[TAB_CHAT].1.extend(accessed(body(options, "chat_page_head"), "s", ""));
         pages[TAB_CHAT].1.extend(accessed(body(options, "chat_logs_group"), "s", ""));
+        pages[TAB_CHAT].1.extend(accessed(body(options, "keyword_alerts_group"), "s", ""));
         // the inventory block of the Interface page edits `prefs`
         let inventory = include_str!("../inventory/controls.rs");
         pages[1].1.remove("inventory");
