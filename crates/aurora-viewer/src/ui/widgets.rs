@@ -22,6 +22,8 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 pub(crate) mod pills;
+#[cfg(test)]
+pub(crate) mod steady_tests;
 mod resize;
 mod unread;
 mod workspace;
@@ -1007,6 +1009,40 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
         d.insert_temp(window_id.with("restore_size"), true);
         d.insert_temp(window_id.with(PLACE_POS), pos);
     });
+}
+
+/// Lay `footer` out at the bottom of what is left of `ui`, and give back a
+/// child for what goes above it (a list), exactly as tall as the rest. A
+/// list of `available_height()` minus a guessed footer height made the
+/// window taller at every frame once the footer measured more (a larger
+/// text, a wrapped label, a message): egui's Resize grew to the body, the
+/// list took the new room, and the body overflowed again. The footer keeps
+/// its own order, top down: it is placed with the height it measured last,
+/// and the pass is laid out again when that height changes. `ui` takes the
+/// whole rest and nothing more, whatever the footer and the list measure.
+pub fn footer_first(ui: &mut egui::Ui, footer: impl FnOnce(&mut egui::Ui)) -> egui::Ui {
+    let rest = ui.available_rect_before_wrap();
+    let id = ui.id().with("footer_first");
+    let height = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    let top = (rest.bottom() - height).max(rest.top());
+    let mut foot = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(egui::Rect::from_min_max(egui::pos2(rest.left(), top), rest.max))
+            .layout(*ui.layout()),
+    );
+    footer(&mut foot);
+    let measured = foot.min_rect().height();
+    if (measured - height).abs() > 0.5 {
+        ui.ctx().data_mut(|d| d.insert_temp(id, measured));
+        ui.ctx().request_discard("footer height");
+    }
+    let gap = if height > 0.0 { ui.spacing().item_spacing.y } else { 0.0 };
+    let bottom = (top - gap).max(rest.top());
+    let above = egui::Rect::from_min_max(rest.min, egui::pos2(rest.right(), bottom));
+    ui.allocate_rect(rest, Sense::hover());
+    let mut list = ui.new_child(egui::UiBuilder::new().max_rect(above).layout(*ui.layout()));
+    list.set_clip_rect(above.intersect(ui.clip_rect()));
+    list
 }
 
 /// Set an expanded window's size once, preserving its independent position.

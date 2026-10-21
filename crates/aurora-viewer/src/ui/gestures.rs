@@ -182,12 +182,111 @@ pub fn show(
                 }
             });
             state.refresh_rows(inv, manager, preferences);
+            let empty = state.rows.is_empty();
+            let mut list = widgets::footer_first(ui, |ui| {
+                if empty {
+                    ui.label(RichText::new(aurora_i18n::tr!("gesture-empty")).color(p.muted));
+                }
+                ui.horizontal(|ui| {
+                    ui.menu_button(aurora_i18n::tr!("gesture-options"), |ui| {
+                        if super::menu::item(ui, p, "circle-plus-filled", aurora_i18n::tr!("ui-inventory-context-new-gesture")) {
+                            out.push(Action::Create);
+                        }
+                        if super::menu::item_if(
+                            ui,
+                            p,
+                            "shirt-filled",
+                            aurora_i18n::tr!("gesture-add-outfit"),
+                            !state.selected.is_empty(),
+                        ) {
+                            out.push(Action::AddToOutfit(state.selected.iter().copied().collect()));
+                        }
+                        if super::menu::item_if(
+                            ui,
+                            p,
+                            "briefcase-filled",
+                            aurora_i18n::tr!("gesture-show-inventory"),
+                            state.selected.len() == 1,
+                        ) && let Some(id) = state.selected.first()
+                        {
+                            out.push(Action::ShowInventory(*id));
+                        }
+                        if super::menu::item(ui, p, "refresh", aurora_i18n::tr!("gesture-refresh")) {
+                            out.push(Action::Refresh);
+                        }
+                    });
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "circle-plus-filled",
+                        aurora_i18n::tr!("ui-inventory-context-new-gesture"),
+                        true,
+                    ) {
+                        out.push(Action::Create);
+                    }
+                    let activate = state.selected.iter().any(|id| !manager.active.contains(id));
+                    if widgets::icon_button(
+                        ui,
+                        p,
+                        "check",
+                        if activate {
+                            aurora_i18n::tr!("gesture-activate")
+                        } else {
+                            aurora_i18n::tr!("gesture-deactivate")
+                        },
+                        !state.selected.is_empty(),
+                    ) {
+                        out.push(Action::Active(state.selected.iter().copied().collect(), activate));
+                    }
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.filter)
+                            .hint_text(aurora_i18n::tr!("gesture-filter"))
+                            .desired_width(ui.available_width() - 30.0),
+                    );
+                    if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), !state.selected.is_empty()) {
+                        out.push(Action::Delete(state.selected.iter().copied().collect()));
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    widgets::checkbox(ui, p, &mut preferences.only_active, aurora_i18n::tr!("gesture-only-active"));
+                    widgets::checkbox(ui, p, &mut preferences.enabled, aurora_i18n::tr!("gesture-enabled"));
+                });
+                ui.horizontal(|ui| {
+                    let one = state.selected.len() == 1;
+                    if ui.add_enabled(one, egui::Button::new(aurora_i18n::tr!("gesture-edit"))).clicked()
+                        && let Some(id) = state.selected.first()
+                    {
+                        out.push(Action::Open(*id));
+                    }
+                    let playing = state.selected.iter().any(|id| manager.is_playing(*id));
+                    if ui
+                        .add_enabled(
+                            !state.selected.is_empty() && preferences.enabled,
+                            egui::Button::new(if playing {
+                                aurora_i18n::tr!("gesture-stop")
+                            } else {
+                                aurora_i18n::tr!("common-play")
+                            }),
+                        )
+                        .clicked()
+                    {
+                        out.extend(
+                            state
+                                .selected
+                                .iter()
+                                .map(|id| if playing { Action::Stop(*id) } else { Action::Play(*id) }),
+                        );
+                    }
+                });
+                if !state.message.is_empty() {
+                    ui.label(RichText::new(&state.message).color(p.warn));
+                }
+            });
             let rows = &state.rows;
-            let height = (ui.available_height() - 120.0).max(100.0);
             egui::ScrollArea::vertical()
-                .max_height(height)
+                .max_height(list.available_height())
                 .auto_shrink([false, false])
-                .show_rows(ui, 24.0, rows.len(), |ui, range| {
+                .show_rows(&mut list, 24.0, rows.len(), |ui, range| {
                     for index in range {
                         let id = rows[index];
                         let it = &inv.items[&id];
@@ -291,103 +390,6 @@ pub fn show(
                         });
                     }
                 });
-            if rows.is_empty() {
-                ui.label(RichText::new(aurora_i18n::tr!("gesture-empty")).color(p.muted));
-            }
-            ui.horizontal(|ui| {
-                ui.menu_button(aurora_i18n::tr!("gesture-options"), |ui| {
-                    if super::menu::item(ui, p, "circle-plus-filled", aurora_i18n::tr!("ui-inventory-context-new-gesture")) {
-                        out.push(Action::Create);
-                    }
-                    if super::menu::item_if(
-                        ui,
-                        p,
-                        "shirt-filled",
-                        aurora_i18n::tr!("gesture-add-outfit"),
-                        !state.selected.is_empty(),
-                    ) {
-                        out.push(Action::AddToOutfit(state.selected.iter().copied().collect()));
-                    }
-                    if super::menu::item_if(
-                        ui,
-                        p,
-                        "briefcase-filled",
-                        aurora_i18n::tr!("gesture-show-inventory"),
-                        state.selected.len() == 1,
-                    ) && let Some(id) = state.selected.first()
-                    {
-                        out.push(Action::ShowInventory(*id));
-                    }
-                    if super::menu::item(ui, p, "refresh", aurora_i18n::tr!("gesture-refresh")) {
-                        out.push(Action::Refresh);
-                    }
-                });
-                if widgets::icon_button(
-                    ui,
-                    p,
-                    "circle-plus-filled",
-                    aurora_i18n::tr!("ui-inventory-context-new-gesture"),
-                    true,
-                ) {
-                    out.push(Action::Create);
-                }
-                let activate = state.selected.iter().any(|id| !manager.active.contains(id));
-                if widgets::icon_button(
-                    ui,
-                    p,
-                    "check",
-                    if activate {
-                        aurora_i18n::tr!("gesture-activate")
-                    } else {
-                        aurora_i18n::tr!("gesture-deactivate")
-                    },
-                    !state.selected.is_empty(),
-                ) {
-                    out.push(Action::Active(state.selected.iter().copied().collect(), activate));
-                }
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.filter)
-                        .hint_text(aurora_i18n::tr!("gesture-filter"))
-                        .desired_width(ui.available_width() - 30.0),
-                );
-                if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), !state.selected.is_empty()) {
-                    out.push(Action::Delete(state.selected.iter().copied().collect()));
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                widgets::checkbox(ui, p, &mut preferences.only_active, aurora_i18n::tr!("gesture-only-active"));
-                widgets::checkbox(ui, p, &mut preferences.enabled, aurora_i18n::tr!("gesture-enabled"));
-            });
-            ui.horizontal(|ui| {
-                let one = state.selected.len() == 1;
-                if ui.add_enabled(one, egui::Button::new(aurora_i18n::tr!("gesture-edit"))).clicked()
-                    && let Some(id) = state.selected.first()
-                {
-                    out.push(Action::Open(*id));
-                }
-                let playing = state.selected.iter().any(|id| manager.is_playing(*id));
-                if ui
-                    .add_enabled(
-                        !state.selected.is_empty() && preferences.enabled,
-                        egui::Button::new(if playing {
-                            aurora_i18n::tr!("gesture-stop")
-                        } else {
-                            aurora_i18n::tr!("common-play")
-                        }),
-                    )
-                    .clicked()
-                {
-                    out.extend(
-                        state
-                            .selected
-                            .iter()
-                            .map(|id| if playing { Action::Stop(*id) } else { Action::Play(*id) }),
-                    );
-                }
-            });
-            if !state.message.is_empty() {
-                ui.label(RichText::new(&state.message).color(p.warn));
-            }
         });
     }
     editor::show(ctx, p, inv, manager, state, &mut out);

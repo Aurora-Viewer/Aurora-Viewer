@@ -1195,6 +1195,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
+- 🔧 Resizable windows growing taller at every frame (human report on the money tracker, 2026-10-21; task `window-growth`): audit every window whose list takes `available_height()` minus a guessed footer height, with a shared frames test (`ui::widgets::steady_tests::assert_window_steady`: 30 frames, zooms 1 / 1.25 / 1.5, two sizes, the window's rect unchanged and its bottom button inside it), and lay the footer out first in the windows that grow.
+
 - ✅ Preferences › Graphics › Light: the time of day did not change (#742, task `options-time-of-day`; validated by the human in demo on 2026-10-21): the menu wrote the settings, but the World menu's time of day (`Panels::time_of_day`) wrote its own value back over them later in the same frame. A change made in the preferences (or by a reset) now goes to the panels first.
 
 - ✅ Eight-point default window data and import toolbar placement (human request, 2026-10-20; validated by the human on 2026-10-21): convert existing default positions/sizes directly into valid eight-point anchors and signed offsets, preserving their opening geometry; the same eight-point rule applies to first opening, old-layout migration and completed moves. Center the Ctrl+U import icon strip at the top of the allowed movement room, below the bars, using its measured width and an explicit top-midpoint default. Preserve personalized layouts and moves; Conversations retains its bottom-right default. Full checks green: 4,013 passed, 26 ignored; scripts, formatting and Clippy clean. Offline maximized first-launch preview and the normal-mode test build validated by the human.
