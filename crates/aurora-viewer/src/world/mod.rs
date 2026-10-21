@@ -2256,6 +2256,7 @@ impl World {
                 };
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
+                self.link_object_notification(id, object_id, &object_name, &owner_name);
                 // LLScriptFloater ("script_floater") opening
                 self.ui_sounds.push(UiSound::ScriptFloaterOpen);
                 // FSFlashOnScriptDialog and the ScriptDialog notification
@@ -2298,7 +2299,7 @@ impl World {
                         owner_name = owner_name.to_string(),
                         value0 = lines.join("\n• ").to_string()
                     );
-                    self.notifications.push(
+                    let id = self.notifications.push(
                         notifications::Kind::Permissions,
                         aurora_i18n::tr!("world-mod-requested-permissions"),
                         body,
@@ -2310,6 +2311,7 @@ impl World {
                             experience: None,
                         },
                     );
+                    self.link_object_notification(id, task_id, &object_name, &owner_name);
                 }
                 None
             }
@@ -2365,10 +2367,12 @@ impl World {
                     self.social.avatar_names.on_legacy(id, &first, &last);
                     self.social.names.insert(id, social::format_name(&first, &last));
                 }
+                self.refresh_task_inventory_offers();
                 None
             }
             NetEvent::DisplayNames { names, bad_ids, max_age } => {
                 self.social.avatar_names.on_display_names(&names, &bad_ids, max_age);
+                self.refresh_task_inventory_offers();
                 None
             }
             NetEvent::DisplayNamesFailed(ids) => {
@@ -2377,6 +2381,7 @@ impl World {
             }
             NetEvent::DisplayNameUpdate { name, old_display_name } => {
                 let notice = self.social.avatar_names.on_update(&name, &old_display_name);
+                self.refresh_task_inventory_offers();
                 log::info!("display name update: {notice}");
                 if self.social.avatar_names.notify_changes {
                     self.system_message(notice);
@@ -2726,6 +2731,7 @@ impl World {
             }
             NetEvent::GroupProfile(g) => {
                 self.search.groups.insert(g.id, *g);
+                self.refresh_task_inventory_offers();
                 None
             }
             NetEvent::ProductInfo(types) => {
@@ -3118,18 +3124,15 @@ impl World {
                     },
                 );
             }
-            d::INVENTORY_OFFERED | d::TASK_INVENTORY_OFFERED => {
+            d::TASK_INVENTORY_OFFERED => self.on_task_inventory_offer(im, &from),
+            d::INVENTORY_OFFERED => {
                 self.ui_sounds.push(UiSound::InventoryOffer);
-                let task = im.dialog == d::TASK_INVENTORY_OFFERED;
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 // A resident's offer is in our inventory before we answer:
                 // prefetch it (inventory_offer_handler, llimprocessing.cpp),
                 // or it stays unseen until the next login. A folder cannot be
                 // fetched by id; it lands in the root, reloaded instead.
-                let object = (!task)
-                    .then(|| notifications::offered_object(&im.binary_bucket))
-                    .flatten()
-                    .map_or(Uuid::nil(), |(_, id)| id);
+                let object = notifications::offered_object(&im.binary_bucket).map_or(Uuid::nil(), |(_, id)| id);
                 if !object.is_nil() {
                     self.groups.out.push(if asset_type == notifications::AT_CATEGORY {
                         aurora_net::NetCommand::FetchInventory {
@@ -3154,13 +3157,11 @@ impl World {
                         tx: im.session_id,
                         asset_type,
                         object,
-                        task,
+                        task: false,
+                        task_offer: None,
                     },
                 );
-                // UserGiveItem logs to IM, an object's offer does not
-                if !task {
-                    self.on_inventory_offer_card(im, &from, asset_type, entry);
-                }
+                self.on_inventory_offer_card(im, &from, asset_type, entry);
                 self.received_items.offer(im, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
@@ -3245,6 +3246,19 @@ impl World {
                 | d::MESSAGEBOX
         );
         let last = self.notifications.last_id();
+        if last != before
+            && !matches!(
+                im.dialog,
+                d::TASK_INVENTORY_OFFERED | d::GROUP_NOTICE | d::FROM_TASK_AS_ALERT | d::GOTO_URL | d::MESSAGEBOX
+            )
+        {
+            let target = if im.from_group || im.dialog == d::GROUP_INVITATION {
+                notifications::NameTarget::Group(im.from_agent_id)
+            } else {
+                notifications::NameTarget::Avatar(im.from_agent_id)
+            };
+            self.notifications.link_name(last, im.from_name.clone(), target);
+        }
         let notice = if told && last != before {
             self.notice_of(last, attention::Open::Notifications)
         } else {
@@ -3273,6 +3287,30 @@ impl World {
             .find(|f| !f.library && f.info.type_default == i32::from(asset_type))
             .map_or(inv.root, |f| f.info.id);
         self.group_data.save_attachment(group, folder);
+    }
+
+    fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
+        use notifications::NameTarget;
+        self.notifications.link_name(id, name, NameTarget::Object(object));
+        if let Some(owner) = self
+            .objects
+            .index_of_uuid(&object)
+            .and_then(|i| self.objects.get(i))
+            .map(|o| o.owner_id)
+        {
+            let group = self.groups.groups.iter().any(|g| g.id == owner)
+                || self.land.group_names.contains_key(&owner)
+                || self.search.groups.contains_key(&owner);
+            self.notifications.link_name(
+                id,
+                owner_name,
+                if group {
+                    NameTarget::Group(owner)
+                } else {
+                    NameTarget::Avatar(owner)
+                },
+            );
+        }
     }
 
     /// The Calling Cards folder, sent with a friendship offer
@@ -3310,7 +3348,7 @@ impl World {
             experience = name.clone(),
             questions = lines.join("\n• ")
         );
-        self.notifications.push(
+        let id = self.notifications.push(
             notifications::Kind::Permissions,
             aurora_i18n::tr!("world-experiences-question-title", name = name.clone()),
             body,
@@ -3321,11 +3359,14 @@ impl World {
                 region: q.region,
                 experience: Some(notifications::ExperiencePrompt {
                     id: q.experience,
-                    name,
-                    object_name: q.object_name,
+                    name: name.clone(),
+                    object_name: q.object_name.clone(),
                 }),
             },
         );
+        self.notifications
+            .link_name(id, name, notifications::NameTarget::Experience(q.experience));
+        self.link_object_notification(id, q.task, &q.object_name, owner);
         // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
         self.ui_sounds.push(UiSound::ScriptFloaterOpen);
     }
@@ -3379,6 +3420,15 @@ impl World {
                 .insert(prompt.id, aurora_net::experience::ExperiencePermission::Allowed);
         }
         if matches!(r, notifications::Response::Block) {
+            if let Some(notifications::Data::Inventory {
+                from,
+                task: true,
+                task_offer: Some(offer),
+                ..
+            }) = &data
+            {
+                return (self.mute_task_inventory_owner(id, *from, offer), None);
+            }
             if let Some(notifications::Data::Dialog {
                 object,
                 object_name,
@@ -3550,7 +3600,9 @@ impl World {
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
-                self.notifications.push_presence(id, n.clone(), online);
+                let notification = self.notifications.push_presence(id, n.clone(), online);
+                self.notifications
+                    .link_name(notification, self.social.name_of(&id), notifications::NameTarget::Avatar(id));
             }
             // FriendOnlineOffline for the system (never during login)
             if self.notifications.started && !self.mutes.is_muted_id(&id) {
@@ -3615,7 +3667,16 @@ impl World {
         } else {
             (line.from.clone(), text)
         };
-        self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
+        let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
+        self.notifications
+            .link_name(notification, self.social.name_of(&from), notifications::NameTarget::Avatar(from));
+        if m.kind == ImKind::Group {
+            self.notifications.link_name(
+                notification,
+                self.session_title(&m.session),
+                notifications::NameTarget::Group(m.session),
+            );
+        }
     }
 
     /// A friend's or a message's card clicked: it is acknowledged (gone from

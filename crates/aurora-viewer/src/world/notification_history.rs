@@ -73,6 +73,22 @@ pub enum Follow {
     Restore,
 }
 
+/// Identity behind a notification's visible name, retained in its history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameTarget {
+    Avatar(Uuid),
+    Group(Uuid),
+    Experience(Uuid),
+    Object(Uuid),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NameLink {
+    pub name: String,
+    pub target: NameTarget,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     /// When it arrived (seconds since the epoch).
@@ -83,6 +99,8 @@ pub struct Entry {
     pub title: String,
     #[serde(default)]
     pub body: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub name_links: Vec<NameLink>,
     #[serde(default = "read")]
     pub outcome: Outcome,
     #[serde(default)]
@@ -284,6 +302,7 @@ mod tests {
             look: Look::Info,
             title: title.into(),
             body: String::new(),
+            name_links: Vec::new(),
             outcome: Outcome::Read,
             follow: Follow::Restore,
         }

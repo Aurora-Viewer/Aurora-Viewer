@@ -83,6 +83,38 @@ fn notice(agent: Uuid, text: &str) -> NetEvent {
 /// The events of `frame`.
 pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_NOVA, DEMO_TESS};
+    if let Some(mode) = mode().filter(|m| {
+        matches!(
+            m.as_str(),
+            "object" | "object-own" | "legacy-object" | "object-group" | "object-history"
+        )
+    }) {
+        return if frame == 700 {
+            let mut event = im(
+                agent,
+                if mode == "object-own" {
+                    agent
+                } else if mode == "object-group" {
+                    super::DEMO_GROUP1
+                } else {
+                    friend()
+                },
+                "Aurora gift box",
+                crate::world::notifications::im::TASK_INVENTORY_OFFERED,
+                Uuid::from_u128(0x6170_0000_0000_0000_0000_0000_0000_2000),
+                aurora_i18n::tr!("demo-notifs-lantern"),
+                &[6],
+            );
+            if mode == "object-group"
+                && let NetEvent::InstantMessage(im) = &mut event
+            {
+                im.from_group = true;
+            }
+            vec![event]
+        } else {
+            Vec::new()
+        };
+    }
     // the mockup's times from frame 700, at 60 frames a second
     match frame {
         // Orion goes offline during the loading screen (no toast then), to

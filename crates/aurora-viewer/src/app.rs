@@ -7832,6 +7832,16 @@ impl App {
                     self.on_app_event(e);
                 }
             }
+            if self.frame_count == 850 && mode == "object-history" {
+                if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Decline);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.notif_ui.open = true;
+                self.notif_ui.center.tab = ui::notification_center::Tab::History;
+            }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
                 let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
