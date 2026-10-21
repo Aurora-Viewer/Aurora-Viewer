@@ -15,6 +15,9 @@
 //! * LLViewerMediaFocus: click a media face to focus it; mouse, wheel and
 //!   keyboard then go to the page; Escape or a click elsewhere releases it.
 //!
+//! * The media filter (`filter.rs`): nothing loads from a site the
+//!   account's list does not allow before the resident answered.
+//!
 //! Plugins run out of process through `aurora-media` (SLPlugin + the
 //! CEF / LibVLC plugins of Aurora's pack, `pack.rs`, or of a folder chosen
 //! in the preferences).
@@ -25,6 +28,7 @@
 //! originally LGPL 2.1.
 
 pub mod entry;
+pub mod filter;
 mod interact;
 pub mod keys;
 pub mod openid;
@@ -146,6 +150,9 @@ pub struct MediaImpl {
     pub looping: bool,
     /// Started by the user, autoplay or a script; otherwise unloaded.
     pub wanted: bool,
+    /// Wanted, but the media filter waits for the resident's answer: it
+    /// stays unloaded meanwhile.
+    pub filter_hold: bool,
     pub paused: bool,
     pub failed: Option<String>,
     texture: MediaTexture,
@@ -187,6 +194,7 @@ impl MediaImpl {
             auto_scale: false,
             looping: false,
             wanted: false,
+            filter_hold: false,
             paused: false,
             failed: None,
             texture: MediaTexture {
@@ -338,6 +346,12 @@ pub struct MediaSettings {
     pub first_click_interact: bool,
     /// MediaAutoPlayHuds: media on HUDs plays by itself.
     pub autoplay_huds: bool,
+    /// MediaEnableFilter: media and music ask before a site not in the
+    /// account's list (on by default, as there).
+    pub filter: bool,
+    /// FirstMediaFilter, inverted: the filter's first question was
+    /// answered, its explanation is no longer shown.
+    pub filter_explained: bool,
     /// Folder with SLPlugin and llplugin\ (empty: automatic).
     pub plugin_dir: String,
 }
@@ -352,6 +366,8 @@ impl Default for MediaSettings {
             allow_scripted: false,
             first_click_interact: true,
             autoplay_huds: true,
+            filter: true,
+            filter_explained: false,
             plugin_dir: String::new(),
         }
     }

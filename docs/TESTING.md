@@ -4718,6 +4718,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
@@ -4903,6 +4904,18 @@ What the inventory must show with these scenarios:
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
+- **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
+  `ask` (or `1`) starts a parcel media on `media.example.com`, which the
+  filter asks about (the question is up from the first frames; nothing
+  loads until it is answered), `first` the same with the first use's
+  explanation and its "Do not filter media" button, `music` starts the
+  parcel music on `radio.example.org` (the log has no `parcel music:` line
+  before the answer), `list` puts three sites in the list of Preferences ›
+  Sound and voice › Media (`AURORA_DEMO_OPTIONS=7:end`). In the demo the
+  list and the answers stay in memory: no run changes the demo account's
+  `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
+  `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
+  profile's filter is on.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends

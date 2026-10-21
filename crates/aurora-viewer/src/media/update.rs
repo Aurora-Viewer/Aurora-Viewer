@@ -1,6 +1,7 @@
 //! The per-frame media update (LLViewerMedia::updateMedia and the media
 //! texture updates of LLViewerMediaImpl).
 
+use super::filter::{Source, Verdict};
 use super::*;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +32,7 @@ impl MediaManager {
         self.fetch_media_data(f);
         self.reconcile_prims(world, f);
         self.update_parcel(world, f);
+        self.apply_filter(world, f);
         self.compute_interest(world, scene, f);
         self.assign_priorities(f);
         let navs = self.drive_plugins(f, now);
@@ -324,6 +326,30 @@ impl MediaManager {
         }
     }
 
+    /// The media filter (filterMediaUrl), before any plugin or type request
+    /// reaches the site: a wanted media whose site has no answer yet waits
+    /// unloaded, a refused one is no longer wanted.
+    fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
+        for m in &mut self.impls {
+            m.filter_hold = false;
+            if !f.settings.filter || !m.wanted {
+                continue;
+            }
+            let source = match m.key {
+                MediaKey::Parcel => Source::ParcelMedia,
+                MediaKey::Prim { .. } => Source::PrimMedia,
+            };
+            match world.media_filter.check(&m.url, source) {
+                Verdict::Allow => {}
+                Verdict::Ask => m.filter_hold = true,
+                Verdict::Deny => {
+                    log::info!("media: {} refused by the media filter", sanitize(&m.url));
+                    m.wanted = false;
+                }
+            }
+        }
+    }
+
     /// Interest (pixels on screen, LLViewerMediaImpl::calculateInterest) and
     /// distance to the camera.
     fn compute_interest(&mut self, world: &World, scene: &Scene, f: &MediaFrame) {
@@ -396,7 +422,7 @@ impl MediaManager {
                 let (w, h) = m.plugin.as_ref().map(|p| p.full_size()).unwrap_or((1024, 1024));
                 m.interest < (w.max(1) * h.max(1)) as f32 / 4.0
             };
-            let mut p = if !m.wanted || m.failed.is_some() || !f.settings.enabled || total >= max_instances {
+            let mut p = if !m.wanted || m.filter_hold || m.failed.is_some() || !f.settings.enabled || total >= max_instances {
                 Priority::Unloaded
             } else if !is_parcel && m.interest <= 0.0 && Some(m.key) != focus {
                 // not visible
