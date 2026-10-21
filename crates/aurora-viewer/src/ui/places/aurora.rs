@@ -1290,26 +1290,40 @@ impl PlacesUi {
                 .zip(world.main_origin())
                 .is_some_and(|(parcel, origin)| crate::world::landmarks::in_parcel(&parcel.bitmap, origin, g))
         });
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(aurora_i18n::tr!("ui-places-visited-no-landmark"))
-                    .size(12.5)
-                    .color(p.muted),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let label = aurora_i18n::tr!("ui-places-create-landmark");
-                let w = widgets::action_button_fit(ui, "plus", label);
-                let resp = ui
-                    .add_enabled_ui(there && !self.landmark_here, |ui| {
-                        widgets::action_button(ui, p, "plus", label, widgets::ActionKind::Flat, Vec2::new(w, 26.0))
-                    })
-                    .inner
-                    .on_disabled_hover_text(aurora_i18n::tr!("ui-places-create-only-there"));
-                if resp.clicked() {
-                    actions.push(PlacesAction::CreateLandmark(None));
-                }
-            });
-        });
+        let enabled = there && !self.landmark_here;
+        let label = aurora_i18n::tr!("ui-places-create-landmark");
+        let w = widgets::action_button_fit(ui, "plus", label);
+        let button = |ui: &mut egui::Ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                widgets::action_button(ui, p, "plus", label, widgets::ActionKind::Flat, Vec2::new(w, 26.0))
+            })
+            .inner
+            .on_disabled_hover_text(aurora_i18n::tr!("ui-places-create-only-there"))
+            .clicked()
+        };
+        let text = egui::RichText::new(aurora_i18n::tr!("ui-places-visited-no-landmark"))
+            .size(12.5)
+            .color(p.muted);
+        let text_w = egui::WidgetText::from(text.clone())
+            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+            .size()
+            .x;
+        // side by side when both fit, else the button under the text (the
+        // narrow preview column of the wide window)
+        let clicked = if text_w + ui.spacing().item_spacing.x + w <= ui.available_width() {
+            ui.horizontal(|ui| {
+                ui.label(text);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), button).inner
+            })
+            .inner
+        } else {
+            ui.label(text);
+            ui.add_space(4.0);
+            button(ui)
+        };
+        if clicked {
+            actions.push(PlacesAction::CreateLandmark(None));
+        }
     }
 
     // -------------------------------------------------------------- narrow
