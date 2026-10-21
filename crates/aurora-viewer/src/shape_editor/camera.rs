@@ -6,16 +6,18 @@ use glam::{Quat, Vec3};
 use std::time::Instant;
 
 /// Where the camera looks from, in the frame of the avatar's face (+X the
-/// way it faces, +Y its left): the subparts' camera offset minus their
+/// way it faces): the height of the subparts' camera offset over their
 /// target offset, the face being on the negative side of their root frame
 /// (the customise animation turns the avatar around). The whole body is
-/// seen from above and a little from its right, the head nearly level.
+/// seen from above, the head nearly level. Straight in front: the subparts'
+/// small sideways offsets are taken up, on the Legacy Viewer's screen, by
+/// the end of the turn, which leaves the avatar facing the camera.
 fn direction(group: usize) -> Vec3 {
     match group {
-        1..=6 => Vec3::new(0.5, -0.05, 0.02),
-        7 => Vec3::new(1.0, -0.15, 0.0),
-        8 => Vec3::new(1.6, -0.15, 0.0),
-        _ => Vec3::new(2.5, -0.5, 0.7),
+        1..=6 => Vec3::new(0.5, 0.0, 0.02),
+        7 => Vec3::X,
+        8 => Vec3::X,
+        _ => Vec3::new(2.5, 0.0, 0.7),
     }
     .normalize()
 }
@@ -40,7 +42,7 @@ pub fn view(world: &World, scene: &Scene, group: usize, fov: f32, turned: bool) 
             let height = (head.z - foot.z + 0.35).max(1.0);
             (
                 pelvis.with_z((head.z + foot.z) * 0.5 + 0.07),
-                (height * 0.65 / (fov * 0.5).tan().max(0.1)).max(2.4),
+                (height * 0.6 / (fov * 0.5).tan().max(0.1)).max(2.2),
             )
         }
     };
@@ -55,12 +57,16 @@ pub fn view(world: &World, scene: &Scene, group: usize, fov: f32, turned: bool) 
     Some((target + face * direction(group) * distance, target))
 }
 
-/// Keep the edited part in the larger free area beside the editor, including
-/// narrow viewports. Shift eye and focus together to retain the front angle.
+/// The avatar stays in the middle of the window, as the Legacy Viewer shows
+/// it; only when the editor covers that middle (a narrow window, an editor
+/// moved there) is the edited part moved to the larger free area beside
+/// it. Eye and focus shift together to retain the front angle.
 pub fn beside_editor((eye, target): (Vec3, Vec3), fov: f32, viewport: egui::Rect, editor: egui::Rect) -> (Vec3, Vec3) {
     let left = (editor.left() - viewport.left()).max(0.0);
     let right = (viewport.right() - editor.right()).max(0.0);
-    if viewport.width() < 1.0 || viewport.height() < 1.0 || left.max(right) < 180.0 {
+    let middle = viewport.width() * 0.15;
+    let covered = editor.right() > viewport.center().x - middle && editor.left() < viewport.center().x + middle;
+    if viewport.width() < 1.0 || viewport.height() < 1.0 || left.max(right) < 180.0 || !covered {
         return (eye, target);
     }
     let x = if right >= left {
@@ -117,11 +123,11 @@ mod tests {
         for group in [0, 1, 7, 8] {
             let (eye, target) = view(&world, &scene, group, 1.05, false).expect("front");
             assert!((eye - target).normalize().dot(at) > 0.9, "in front of the root");
-            assert!((eye - target).dot(left) < 0.0, "a little on the avatar's right");
+            assert!((eye - target).dot(left).abs() < 1e-3, "straight in front");
             let (eye, turned) = view(&world, &scene, group, 1.05, true).expect("turned");
             assert_eq!(turned, target);
             assert!((eye - target).normalize().dot(at) < -0.9, "behind the root, before the turned face");
-            assert!((eye - target).dot(left) > 0.0, "on the turned avatar's right");
+            assert!((eye - target).dot(left).abs() < 1e-3, "straight in front of the turned face");
         }
         let (eye, target) = view(&world, &scene, 0, 1.05, true).expect("body");
         assert!(eye.z - target.z > 0.2 * eye.distance(target), "the whole body seen from above");
@@ -142,5 +148,9 @@ mod tests {
         let right = left.translate(egui::vec2(320.0, 0.0));
         let shifted = beside_editor((eye, Vec3::ZERO), 1.05, viewport, right);
         assert!(project(shifted.0, shifted.1) < right.left());
+        // a wide window: the editor leaves the middle free, the avatar stays there
+        let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2000.0, 1080.0));
+        let editor = egui::Rect::from_min_size(egui::pos2(65.0, 300.0), egui::vec2(340.0, 520.0));
+        assert_eq!(beside_editor((eye, Vec3::ZERO), 1.05, wide, editor), (eye, Vec3::ZERO));
     }
 }

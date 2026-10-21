@@ -4515,9 +4515,11 @@ The animation turns the avatar half a turn: once its motion is loaded (on
 the grid), the camera frames it from behind its root as drawn, which is
 then its front, again 2 s later on the pose the turn ends with, and the
 hints drop the pelvis turn of their frozen pose. Without the motion (demo)
-the camera stays in front of the root. Its directions are the Legacy
-Viewer's: the whole body from about 15° above and 11° on the avatar's
-right, the head nearly level, torso and legs level. Preferences › Avatars ›
+the camera stays in front of the root. As in the Legacy Viewer the avatar
+is seen straight from the front, in the middle of the window, the whole
+body from about 15° above, the head nearly level, torso and legs level;
+it moves beside the editor only when the editor covers the middle of the
+window (a narrow window). Preferences › Avatars ›
 Animations › "Play the customise animation" (on) turned off: no stand up,
 no animation, the camera in front; changing it while the editor is open
 applies at once. Every 10 s the log says `shape hints: built again for
