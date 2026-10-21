@@ -122,9 +122,9 @@ fn the_place_is_saved_and_defaults_to_the_top_right() {
     };
     let back: Settings = serde_json::from_str(&serde_json::to_string(&s).expect("serialize")).expect("read back");
     assert_eq!(back.presence_position, PresencePosition::BottomLeft);
-    // Preferences › Chat › "Reset this section" puts it back
+    // the reset of Preferences › Chat puts it back
     let mut s = back;
-    crate::ui::options::sections::reset(crate::ui::options::TAB_CHAT, &mut s);
+    crate::ui::options::reset_page_settings(crate::ui::options::Page::Chat, &mut s);
     assert_eq!(s.presence_position, PresencePosition::TopRight);
 }
 

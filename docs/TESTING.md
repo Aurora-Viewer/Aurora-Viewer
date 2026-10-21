@@ -2581,7 +2581,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
-| `AURORA_DEMO_OPTIONS=<section>` | Opens the preferences on a section |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
@@ -3215,63 +3215,68 @@ failure. Grid validation and any paid upload are performed by the human.
   configuration, `0:N3` for the loads. Prefer J1 to J2 in automated runs:
   J2 copies to the clipboard of the PC. Capture after frame 1000 when names
   are asked (3 s).
-- **`AURORA_DEMO_OPTIONS=<section>`**: section 9, the former Debug page,
-  opens the Dev Toolbox instead. `7:voice`, `7:processing` and `7:indicators`
-  jump to the corresponding Sound and voice card for offline captures;
-  `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
-  Synchronized clock selected for avatars and animesh. Combine with
+- **`AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]`**: opens the preferences
+  on a page by its name (`aurora`, `graphics`, `camera`, `avatars`, `chat`,
+  `sound`, `media`, `privacy`, `layout`, `appearance`, `accessibility`,
+  `confirmations`, `inventory`, `controls`, `shortcuts`, `commands`,
+  `system`, `network`) and one of its tabs counted from 0 (`chat/2`: Chat ›
+  Keywords). The numbers of the window before its reorganisation still work
+  (`0` Graphics, `1` Layout, `2` Appearance, `3` Chat, `4` Mouse and
+  keyboard, `5` Appearance › Colours, `6` Network and cache, `7` Sound and
+  voice, `8` Shortcuts, `10` Camera, `11` Commands, `12` Privacy, `13`
+  Aurora, `14` Accessibility); `9`, the former Debug page, opens the Dev
+  Toolbox instead. `<what>`:
+  - `search=<text>`: the window's search filled in. Every row whose name,
+    help or choices have a word starting with each word typed shows under
+    its page and group, its control live, its "go to" arrow and the group's
+    "Open the page" lighting it on its page; the sidebar counts the hits per
+    page and dims the others. Accents and case do not count (`ombre` finds
+    "Ombres", not "Nombre"); a shortcut is found by its keys (`Ctrl+M`), a
+    command by its name (`gtp`). `zzzz` shows the empty result.
+  - `modified`: the settings that differ from their defaults, all pages
+    together, with "Reset them all" (and its Undo).
+  - `cogs`: every cog open (the rows behind the cog of a row: the twelve
+    effects of Aurora's water, the eight of the depth of field…), for
+    captures; each opened block has its own darker face.
+  - `reset`: the page reset at once, with its Undo at the bottom; the chat
+    says it was reset once the Undo is gone (8 s) or the window closed.
+  - the rows of the former filters, lit a moment and scrolled to:
+    `0:tonemap` (Graphics › Image › Tone mapping), `0:occlusion` (Light ›
+    Indirect light, its cog opened), `0:bloom`, `name-tags`, `attention`
+    (Chat › Notifications), `keywords`, `7:voice`, `7:processing`,
+    `7:indicators` (Sound and voice › Voice), `13:animations` /
+    `13:animations-sync` (Aurora › Behaviour, Legacy / Synchronized clock).
+    `8:<text>` searches the shortcuts (`8:Ctrl`, `8:HUD`).
+
+  What to look for: the sidebar's sections, each page's tabs, the rows in
+  two columns (one under 660 points), a violet dot before a modified row
+  (under the pointer, its reset), the cogs with their number of rows,
+  greyed and dimmed while their row is off. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
-  `<n>:new`, `<n>:new2` and `<n>:new3` open a page on its first, second or
-  third marked row
-  (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
-  version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
-  group titles, `3:new` the reopened
-  conversations, `3:new2` the ignored conferences, `3:new3` the invitations
-  to joined groups, `7:new` the music
-  title and the mute when minimised.
-  `2:text-size` opens Fonts and cycles the text-size preference through
+  `2:text-size` opens Appearance and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
   700, 880, 1060 and 1240 to compare the preview, navigation, window titles,
   world labels and conversations, including inline emoji. Changes use the
   normal live preference path and only affect the demo profile.
-  The Preferences window must retain its height throughout the cycle,
-  including after a manual resize to a shorter height. Categories scroll
-  independently of the settings, and Reset everything remains at the bottom.
-  `0:tonemap` opens Graphics scrolled to the Tone mapping row, `0:occlusion`
-  to the Indirect light row (contact shadows and ambient occlusion around
-  it) and `0:bloom` to the Bloom row, the rows the Deluxe level turns on
-  (with `AURORA_GRAPHICS_PRESET=deluxe` or `high` to compare). Changes
-  apply live, persist, and reset with the audio page. The microphone popup
-  exposes camera/avatar ears and all five noise levels; its processing shortcut
-  opens the same card. `AURORA_DEMO_VOICE=cycle` exercises the world indicators
-  and GPU lip sync; disable each preference and check the other indicators
-  (call participants and nearby people) remain functional. Private/group call
-  spatial audio and real microphone quality require human grid testing.
-  For example `8` for Shortcuts
-  (HUD move key). `8:<query>` opens Shortcuts with its search filled in,
-  for example `8:Ctrl` for assigned keys or `8:HUD` for a category;
-  `8:zzzz` shows the empty result. The field stays above the scrolling list,
-  and its clear button restores all actions. Search follows the selected language.
-  `13` opens the Aurora page: the aurora entry at the top of the list, the
-  page head with "All in Firestorm version" / "All in Aurora version", then
-  the Appearance, Gaze, Movement (its choice marked experimental by a
-  warning triangle, whose tooltip says why: `AURORA_DEMO_POINTER` on it)
-  and Avatar plates groups; each choice changes its
-  element at once (conversations, name tags, look-at targets with
-  `AURORA_DEMO_LOOKAT=own`, gaze under the cursor). `<section>:end` (other
-  than `8`) opens the page scrolled to its end, for example `13:end` for the
-  Avatar plates group. `<section>:reset` (other than `8`) opens the "Reset
-  this section" confirmation of that page, for example `0:reset` ("Reset
-  Graphics?"). `0` shows the Presets row at the top of the Graphics page:
+  The Preferences window must retain its size throughout the cycle,
+  including after a manual resize to a shorter height. The sidebar scrolls
+  independently of the settings; the footer keeps "Reset everything…", the
+  page's reset and Close. `0` shows the Presets row at the top of Graphics:
   with `AURORA_GRAPHICS_PRESET` its level is lit, otherwise (the defaults)
-  no segment is and "Custom" follows the row.
+  no segment is and "Custom" follows the row. The microphone popup
+  exposes camera/avatar ears and all five noise levels; its processing
+  shortcut opens Sound and voice › Voice. `AURORA_DEMO_VOICE=cycle`
+  exercises the world indicators and GPU lip sync; disable each preference
+  and check the other indicators (call participants and nearby people)
+  remain functional. Private/group call spatial audio and real microphone
+  quality require human grid testing.
   `1:scale` profiles live UI scaling: from frame 600, resize from 1.0× to
   1.5× and back over 600 frames, repeating through the same setting action
   as the slider. Combine with `AURORA_PROFILE=1`, `AURORA_FPS_LIMIT=60` and
   captures at frames 600, 900 and 1200. It does not take the native pointer.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
-  works before login, and Chat › Conversation logs says that the folder
+  works before login, and Chat › History says that the folder
   belongs to an account.
 - **`AURORA_DEMO_COLORBLIND=protan|deutan|tritan|mono[:strength]`**: the
   interface adapted to a colour vision deficiency for this run, as
@@ -3288,8 +3293,8 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_DEMO_PEOPLE=rows` or `AURORA_DEMO_CONTACTS=friends`.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
-  drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Colors): the
-  panel opens under "My name", with the saturation / value field, the
+  drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›
+  Colours): the panel opens under "My messages", with the saturation / value field, the
   hue bar, the new colour above the old one, the
   R G B and hexadecimal fields, and the eyedropper.
 - **`AURORA_DEMO_GLYPHS=1|2`**: eight residents in two rows in front of
@@ -4891,7 +4896,7 @@ What the inventory must show with these scenarios:
     selects the visibility scenario at startup. Combine with `AURORA_DEMO_TAGS=voice`
     for a row containing a friend and other residents. Temporary modes use
     ten seconds and the final one-second fade; turn away and return to check
-    a fresh interval. `AURORA_DEMO_OPTIONS=1:name-tags` opens the new controls.
+    a fresh interval. `AURORA_DEMO_OPTIONS=avatars` opens the new controls.
     These explicit scenarios use a 64 m tag distance and close the AO panel
     so earlier demo preferences cannot hide the fixture. Only the isolated
     demo preferences are affected.
@@ -4984,7 +4989,7 @@ What the inventory must show with these scenarios:
   explanation and its "Do not filter media" button, `music` starts the
   parcel music on `radio.example.org` (the log has no `parcel music:` line
   before the answer), `list` puts three sites in the list of Preferences ›
-  Sound and voice › Media (`AURORA_DEMO_OPTIONS=7:end`). In the demo the
+  Preferences › Media (`AURORA_DEMO_OPTIONS=media`). In the demo the
   list and the answers stay in memory: no run changes the demo account's
   `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
@@ -6387,7 +6392,7 @@ The enhanced-water master is disabled by default (2026-10-19), including missing
 
 Experimental water defaults validation (2026-10-19): final `scripts/check.ps1` green, 3,576 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Regressions cover fresh/missing/partial defaults, disabled render flags, saved choices, all graphics presets, Aurora section reset and explicit bulk opt-in. Built the default dev viewer and inspected `.scratch/ao-water-spacing-final-fr.png`, `ao-water-spacing-final-en.png` (1024x768), `water-experimental-off-fr.png` and `water-experimental-on-en.png`, compared with `ao-optional-water-controls-fr.png` and `water-experimental-before-fr.png`. The two gesture gaps are wider and scrolling remains available. Water preferences show exactly one warning on global activation, with ordinary individual controls and readable disabled choices. Both water modes are explicit offline fixtures; they do not verify a real user's saved preference. Last-five disabled-water preferences before/after medians: 60 FPS, UI 0.83/0.80 ms and GPU 1.95/1.59 ms; baseline compilation and desktop load vary, so no isolated performance gain is claimed. Preferences captures have zero warnings/errors/panics; AO captures have no errors/panics and only the baseline synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=13` for Preferences › Aurora › Water; `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
+Modes `off`, `low`, `medium`, `high`, `ultra` explicitly select the demo's initial master/quality, overriding the normal disabled default; `medium:underwater` (or another quality with `:underwater`) starts the camera below the surface. The `cycle` mode (also `cycle:window` for the underwater camera) switches the master and each individual effect, cycling all four qualities every 60 frames; its log records each transition. Camera suffixes `:shore` and `:close` inspect grazing reflections/shore breakers and detailed hull/foot contacts; `:foam` inspects close shoreline coverage and reflected highlights, and `:avatar` inspects wading droplets (`:avatar:run` raises horizontal speed to exercise running) (also test with `AURORA_DEMO_TOD=3` for sunset lighting); `:underwater` inspects refracted caustics and bubble lighting. `:surface` follows a horizontal swimmer; `:window` looks up through the water at a colored above-water crossbar, and `:window-grazing` inspects internal reflection at shallow angles. Only demo mode reads it. The inspection view stays fixed across frames unless free camera is active; action scenarios retain their own framing. Preferences remain editable. Combine with `AURORA_DEMO_OPTIONS=graphics/3:cogs` for Preferences › Graphics › Reflections and water (Aurora water); `AURORA_AO=gtao:2` for the GTAO integration; `AURORA_PROFILE=1` for CPU/GPU timings. Capture several settled frames: shoreline and pillar foam should persist, the moving hull should leave an expanding wake, immersed avatar motion should emit bubbles, and droplets should fall back into the water. From above, submerged particles enter the refracted scene; below, they are seen directly through water fog. Switch each effect independently, change quality, and disable/enable the master switch: saved choices remain intact, physics and motion do not change. Also test MSAA 4×, SMAA, TAA, a night sky, a region crossing, and a teleport (no stale trails). Grid validation requires the human: boats, scripted objects, attachments, animated/custom avatars and region water at different heights. These effects target native region water, not arbitrary mesh pools.
 
 With `AURORA_DEMO_WATER_SHADERS=1`, an offline viewer loads common/spectrum, scene object/environment, water simulation, swept-wake and caustics WGSL from its own source checkout when pipelines are created. Restart the demo after editing shaders; no build is needed for each visual comparison. This switch is ignored without `AURORA_DEMO`; normal viewers and final acceptance runs use baked shaders. Missing source files fall back to the baked version.
 
@@ -6845,8 +6850,8 @@ observations do not establish a general speedup or a busy-grid cost.
 
 ### Received inventory filing
 
-`AURORA_DEMO_INVENTORY=received-filing` exercises new direct deliveries, an offline delivery, an intact folder and an accepted scripted gift below their sender/owner legacy names. `aurora-received-filing` shows the same fixture in Aurora's wide inventory. Both use the real filing state machine and synthetic inventory acknowledgements; at frame 700 the Received tree expands for capture. `aurora-received-unread` and `aurora-received-unread-compact` leave the Received tab unopened to show the combined red badge in the sidebar and compact tabs. Use `AURORA_CAPTURE_FRAMES=900`. Preferences > Aurora (`AURORA_DEMO_OPTIONS=13`) shows the OFF-by-default switch with the shared experimental icon; there is no warning paragraph below it. No grid access or old-inventory classification. On the grid, the human checks enabled/disabled direct and object-owner deliveries, offline retrieval, rejection, folder contents, and Marketplace purchases above the sender folders. Check another gift from the same sender raises the red badge after opening Received, that type destinations never override sender filing, and that empty sender folders move to Trash (MarketPlace and nonempty/unloaded folders stay).
+`AURORA_DEMO_INVENTORY=received-filing` exercises new direct deliveries, an offline delivery, an intact folder and an accepted scripted gift below their sender/owner legacy names. `aurora-received-filing` shows the same fixture in Aurora's wide inventory. Both use the real filing state machine and synthetic inventory acknowledgements; at frame 700 the Received tree expands for capture. `aurora-received-unread` and `aurora-received-unread-compact` leave the Received tab unopened to show the combined red badge in the sidebar and compact tabs. Use `AURORA_CAPTURE_FRAMES=900`. Preferences › Inventory (`AURORA_DEMO_OPTIONS=inventory`) shows the OFF-by-default switch with the shared experimental icon; there is no warning paragraph below it. No grid access or old-inventory classification. On the grid, the human checks enabled/disabled direct and object-owner deliveries, offline retrieval, rejection, folder contents, and Marketplace purchases above the sender folders. Check another gift from the same sender raises the red badge after opening Received, that type destinations never override sender filing, and that empty sender folders move to Trash (MarketPlace and nonempty/unloaded folders stay).
 
-The Aurora page starts with Appearance. Received items and Water are its final two sections, in that order; use `AURORA_DEMO_OPTIONS=13:end` to capture the end of the page.
+Received items are the last group of Preferences › Inventory; Aurora's water is on Graphics › Reflections and water (`AURORA_DEMO_OPTIONS=graphics/3:cogs`).
 
 Unread state is account-specific and survives reconnecting, restarting and clearing the inventory cache. On first use, existing history establishes a baseline without a red total. Check that reading Received and reconnecting shows no red badge, a new offline gift counts once, and an unread gift stays unread after restart. Automated regressions use real isolated state files and fresh inventory models, including old creation dates, late folder metadata, arrivals during initialization and a read before disk loading completes.
