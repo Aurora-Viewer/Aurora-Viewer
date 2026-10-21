@@ -22,9 +22,9 @@ pub mod demo;
 pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 pub(crate) mod pills;
+mod resize;
 #[cfg(test)]
 pub(crate) mod steady_tests;
-mod resize;
 mod unread;
 mod workspace;
 pub use color::color_button;
@@ -1025,11 +1025,13 @@ pub fn footer_first(ui: &mut egui::Ui, footer: impl FnOnce(&mut egui::Ui)) -> eg
     let id = ui.id().with("footer_first");
     let height = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
     // a footer taller than the whole rest keeps its bottom (its buttons) in
-    // view, cut at the top
+    // view, cut at the top; it is laid out with no height to fill, so that
+    // a row filling what it is given (a centered row) measures what it
+    // holds, not the room it was given
     let top = rest.bottom() - height;
     let mut foot = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(egui::Rect::from_min_max(egui::pos2(rest.left(), top), rest.max))
+            .max_rect(egui::Rect::from_min_max(egui::pos2(rest.left(), top), egui::pos2(rest.right(), top)))
             .layout(*ui.layout()),
     );
     foot.set_clip_rect(rest.intersect(ui.clip_rect()));

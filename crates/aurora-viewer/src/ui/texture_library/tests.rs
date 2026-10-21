@@ -789,3 +789,47 @@ fn library_multiple_type_selector_toggles_closed() {
         }
     }
 }
+
+/// The vertical library keeps its size with a full grid, a folder that
+/// failed to load and a message under it.
+#[test]
+fn the_vertical_library_keeps_its_size_with_its_warnings() {
+    use aurora_net::inventory::InvItem;
+    use std::sync::Arc;
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    widgets::steady_tests::assert_window_steady(
+        VERTICAL,
+        &[Vec2::new(252.0, 560.0), Vec2::new(252.0, 300.0)],
+        aurora_i18n::tr!("texture-library-retry"),
+        || {
+            let (mut inv, library, _) = inventory();
+            inv.add_items(
+                (0..12)
+                    .map(|n| InvItem {
+                        id: Uuid::from_u128(800 + n),
+                        parent: library,
+                        asset_id: Uuid::from_u128(900 + n),
+                        asset_type: 0,
+                        name: format!("Resource {n}"),
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+            let broken = folder(&mut inv, 72, library, -1, "Broken");
+            inv.folders.get_mut(&broken).expect("folder").state = FetchState::Unknown;
+            inv.failed(&[broken]);
+            let mut world = World::new(avatars.clone());
+            world.agent_id = Uuid::from_u128(70);
+            world.inventory = inv;
+            let ui = LibraryUi {
+                agent: world.agent_id,
+                message: "The library could not be prepared: the inventory did not answer.".into(),
+                ..Default::default()
+            };
+            (ui, world, Scene::new(std::env::temp_dir(), avatars.clone()), Preferences::default())
+        },
+        |(ui, world, scene, prefs), ctx, p| {
+            ui.show(ctx, p, world, scene, &HashMap::new(), prefs, &mut true);
+        },
+    );
+}

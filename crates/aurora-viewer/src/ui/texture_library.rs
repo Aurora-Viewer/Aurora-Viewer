@@ -315,11 +315,45 @@ impl LibraryUi {
                 } else {
                     let row_height = 148.0;
                     let rows = entries.len().div_ceil(2);
-                    let room = (ui.available_height() - 34.0).max(80.0);
+                    // the selection and the warnings first, the cards in
+                    // exactly the rest
+                    let mut list = widgets::footer_first(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if let Some(entry) = self
+                                .selected
+                                .and_then(|id| self.catalogue.entries.iter().find(|e| e.id == id))
+                                .cloned()
+                            {
+                                ui.add_sized(
+                                    [ui.available_width() - 25.0, 21.0],
+                                    egui::Label::new(RichText::new(&entry.name).size(10.0)).truncate(),
+                                )
+                                .on_hover_text(&entry.name);
+                                if !entry.kind.object()
+                                    && icon_button(ui, p, "arrows-maximize", aurora_i18n::tr!("texture-library-preview")).clicked()
+                                {
+                                    if entry.kind.surface() {
+                                        self.open_preview(ctx, world, entry.id);
+                                    } else {
+                                        actions.push(Action::Open(entry.id));
+                                    }
+                                }
+                            } else {
+                                let hint = if self.kind == Kind::Object {
+                                    aurora_i18n::tr!("texture-library-object-drag-hint")
+                                } else {
+                                    aurora_i18n::tr!("texture-library-click-hint")
+                                };
+                                ui.add(egui::Label::new(RichText::new(hint).size(10.0).color(p.muted)).truncate())
+                                    .on_hover_text(hint);
+                            }
+                        });
+                        self.warnings(ui, p, world, empty);
+                    });
                     egui::ScrollArea::vertical()
                         .id_salt("library_grid")
-                        .max_height(room)
-                        .show_rows(ui, row_height, rows, |ui, visible| {
+                        .max_height(list.available_height())
+                        .show_rows(&mut list, row_height, rows, |ui, visible| {
                             for row in visible {
                                 ui.horizontal(|ui| {
                                     for index in entries.iter().skip(row * 2).take(2) {
@@ -342,78 +376,9 @@ impl LibraryUi {
                                 });
                             }
                         });
-                    ui.horizontal(|ui| {
-                        if let Some(entry) = self
-                            .selected
-                            .and_then(|id| self.catalogue.entries.iter().find(|e| e.id == id))
-                            .cloned()
-                        {
-                            ui.add_sized(
-                                [ui.available_width() - 25.0, 21.0],
-                                egui::Label::new(RichText::new(&entry.name).size(10.0)).truncate(),
-                            )
-                            .on_hover_text(&entry.name);
-                            if !entry.kind.object()
-                                && icon_button(ui, p, "arrows-maximize", aurora_i18n::tr!("texture-library-preview")).clicked()
-                            {
-                                if entry.kind.surface() {
-                                    self.open_preview(ctx, world, entry.id);
-                                } else {
-                                    actions.push(Action::Open(entry.id));
-                                }
-                            }
-                        } else {
-                            let hint = if self.kind == Kind::Object {
-                                aurora_i18n::tr!("texture-library-object-drag-hint")
-                            } else {
-                                aurora_i18n::tr!("texture-library-click-hint")
-                            };
-                            ui.add(egui::Label::new(RichText::new(hint).size(10.0).color(p.muted)).truncate())
-                                .on_hover_text(hint);
-                        }
-                    });
                 }
-                if empty {
-                    ui.label(
-                        RichText::new(if self.catalogue.loading {
-                            aurora_i18n::tr!("texture-library-loading")
-                        } else if self.catalogue.entries.is_empty() {
-                            aurora_i18n::tr!("texture-library-empty")
-                        } else {
-                            aurora_i18n::tr!("texture-library-no-results")
-                        })
-                        .size(10.0)
-                        .color(p.muted),
-                    );
-                }
-                if !self.catalogue.failed.is_empty() {
-                    ui.horizontal(|ui| {
-                        let width = (ui.available_width() - 70.0).max(80.0);
-                        ui.add_sized(
-                            [width, 20.0],
-                            egui::Label::new(
-                                RichText::new(aurora_i18n::tr!("texture-library-folder-error"))
-                                    .size(10.0)
-                                    .color(p.warn),
-                            )
-                            .truncate(),
-                        )
-                        .on_hover_text(aurora_i18n::tr!("texture-library-folder-error"));
-                        if widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked() {
-                            for id in &self.catalogue.failed {
-                                world.inventory.request(*id);
-                            }
-                            self.catalogue.invalidate();
-                        }
-                    });
-                }
-                if !self.message.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(&self.message).size(10.0).color(p.warn)).truncate())
-                        .on_hover_text(&self.message);
-                    if self.pending.is_none() && widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked() {
-                        self.prepared = false;
-                        self.message.clear();
-                    }
+                if horizontal {
+                    self.warnings(ui, p, world, empty);
                 }
             });
             if flip {
@@ -546,6 +511,55 @@ impl LibraryUi {
         }
         entries
     }
+    /// What waits under the cards: nothing found, folders that failed to
+    /// load, the last message, with their retries.
+    fn warnings(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World, empty: bool) {
+        if empty {
+            ui.label(
+                RichText::new(if self.catalogue.loading {
+                    aurora_i18n::tr!("texture-library-loading")
+                } else if self.catalogue.entries.is_empty() {
+                    aurora_i18n::tr!("texture-library-empty")
+                } else {
+                    aurora_i18n::tr!("texture-library-no-results")
+                })
+                .size(10.0)
+                .color(p.muted),
+            );
+        }
+        if !self.catalogue.failed.is_empty() {
+            // the button first, from the right: the note takes what it
+            // leaves (a guessed button width widened the window at every
+            // frame)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked() {
+                    for id in &self.catalogue.failed {
+                        world.inventory.request(*id);
+                    }
+                    self.catalogue.invalidate();
+                }
+                ui.add_sized(
+                    [ui.available_width(), 20.0],
+                    egui::Label::new(
+                        RichText::new(aurora_i18n::tr!("texture-library-folder-error"))
+                            .size(10.0)
+                            .color(p.warn),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text(aurora_i18n::tr!("texture-library-folder-error"));
+            });
+        }
+        if !self.message.is_empty() {
+            ui.add(egui::Label::new(RichText::new(&self.message).size(10.0).color(p.warn)).truncate())
+                .on_hover_text(&self.message);
+            if self.pending.is_none() && widgets::flat_button(ui, p, aurora_i18n::tr!("texture-library-retry")).clicked() {
+                self.prepared = false;
+                self.message.clear();
+            }
+        }
+    }
+
     fn controls(&mut self, ui: &mut egui::Ui, p: &Palette, prefs: &Preferences, horizontal: bool) -> Option<Uuid> {
         let mut reveal = None;
         let mut row = |this: &mut Self, ui: &mut egui::Ui| {

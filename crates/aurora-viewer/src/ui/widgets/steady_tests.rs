@@ -50,7 +50,11 @@ pub(crate) fn assert_window_steady<S>(
             );
             let first = last;
             let found: Vec<_> = texts.iter().filter(|t| t.source == bottom).collect();
-            assert!(!found.is_empty(), "{case}: {bottom:?} is drawn");
+            assert!(
+                !found.is_empty(),
+                "{case}: {bottom:?} is drawn, among {:?}",
+                texts.iter().map(|t| t.source.as_str()).collect::<Vec<_>>()
+            );
             for t in found {
                 assert!(t.rect.bottom() <= first.bottom(), "{case}: {bottom:?} at {:?} in {first:?}", t.rect);
             }
@@ -68,7 +72,7 @@ fn changes(rects: &[egui::Rect]) -> Vec<(usize, egui::Rect)> {
         .collect()
 }
 
-const SIZES:[egui::Vec2; 2] = [egui::vec2(360.0, 520.0), egui::vec2(300.0, 260.0)];
+const SIZES: [egui::Vec2; 2] = [egui::vec2(360.0, 520.0), egui::vec2(300.0, 260.0)];
 
 /// A list over a footer of three rows, the footer's height guessed (the
 /// defect) or laid out first from the bottom up (the fix).
@@ -102,15 +106,23 @@ fn window(ctx: &egui::Context, p: &Palette, id: &str, guessed: bool) {
 
 #[test]
 fn a_footer_laid_out_first_keeps_the_window_still() {
-    assert_window_steady("steady-test-fixed", &SIZES, "Last", || (), |_, ctx, p| {
-        window(ctx, p, "steady-test-fixed", false)
-    });
+    assert_window_steady(
+        "steady-test-fixed",
+        &SIZES,
+        "Last",
+        || (),
+        |_, ctx, p| window(ctx, p, "steady-test-fixed", false),
+    );
 }
 
 #[test]
 #[should_panic(expected = "the window grew")]
 fn a_guessed_footer_is_caught() {
-    assert_window_steady("steady-test-guessed", &SIZES, "Last", || (), |_, ctx, p| {
-        window(ctx, p, "steady-test-guessed", true)
-    });
+    assert_window_steady(
+        "steady-test-guessed",
+        &SIZES,
+        "Last",
+        || (),
+        |_, ctx, p| window(ctx, p, "steady-test-guessed", true),
+    );
 }
