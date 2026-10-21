@@ -6,9 +6,25 @@ use action_marker::Action;
 
 fn visible(shape: &egui::Shape, texts: &mut Vec<String>) {
     match shape {
-        egui::Shape::Text(t) => texts.push(t.galley.text().replace('\u{a0}', " ")),
+        egui::Shape::Text(t) => texts.push(
+            t.galley
+                .job
+                .sections
+                .iter()
+                .filter(|s| s.format.color.a() != 0)
+                .map(|s| &t.galley.job.text[s.byte_range.start.0..s.byte_range.end.0])
+                .collect(),
+        ),
         egui::Shape::Vec(v) => v.iter().for_each(|s| visible(s, texts)),
         _ => {}
+    }
+}
+
+fn icon_count(shape: &egui::Shape) -> usize {
+    match shape {
+        egui::Shape::Mesh(_) => 1,
+        egui::Shape::Vec(v) => v.iter().map(icon_count).sum(),
+        _ => 0,
     }
 }
 
@@ -31,21 +47,15 @@ fn check_action(ctx: &egui::Context, verb: &str, id: uuid::Uuid) {
 fn native_action_markers_are_visible_without_hover_and_keep_copy_and_click_targets() {
     let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     let id = crate::demo::DEMO_LOUP;
-    for (verb, key) in [
-        ("about", "ui-chat-link-action-profile"),
-        ("im", "ui-chat-link-action-im"),
-        ("pay", "ui-chat-link-action-pay"),
-        ("offerteleport", "ui-chat-link-action-offer-teleport"),
-        ("requestfriend", "ui-chat-link-action-add-friend"),
-        ("reportAbuse", "ui-chat-link-action-report"),
-    ] {
-        // The icon, action label and resident name all activate the same
+    for verb in ["about", "im", "pay", "offerteleport", "requestfriend", "reportAbuse"] {
+        // The icon and resident name both activate the same
         // parsed command. Selection records only the original link label.
-        for part in [0.03, 0.35, 0.95] {
+        for part in [0.03, 0.95] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
             theme.apply(&ctx, 1.0);
             let p = theme.palette();
+            let _icons = crate::ui::icons::Icons::load(&ctx, None);
             let mut emoji = crate::ui::emoji::Emoji::load();
             let text = format!("[secondlife:///app/agent/{id}/{verb} Resident]");
             let mut point = egui::Pos2::ZERO;
@@ -87,13 +97,13 @@ fn native_action_markers_are_visible_without_hover_and_keep_copy_and_click_targe
                 point = egui::pos2(r.left() + r.width() * part, r.center().y);
                 if frame == 2 {
                     out.shapes.iter().for_each(|s| visible(&s.shape, &mut shown));
+                    assert!(
+                        out.shapes.iter().map(|s| icon_count(&s.shape)).sum::<usize>() > 0,
+                        "visible action icon"
+                    );
                 }
             }
-            let label = aurora_i18n::text(key);
-            assert!(
-                shown.iter().any(|t| t.contains(&format!("{label}: Resident"))),
-                "verb={verb}: {shown:?}"
-            );
+            assert_eq!(shown, ["Resident"], "no added action text: verb={verb}");
             check_action(&ctx, verb, id);
         }
     }
@@ -144,19 +154,19 @@ fn native_action_markers_wrap_and_are_clickable_in_console_lines_and_bubbles() {
                     |ui| {
                         let rendered = line_job(&line, &p, &world, &mut HashSet::new(), width, 14.0, false, look);
                         assert_eq!(rendered.links.len(), 3);
-                        for ((range, _), key) in
-                            rendered
-                                .links
-                                .iter()
-                                .zip(["ui-chat-link-action-profile", "ui-chat-link-action-im", "ui-chat-link-action-pay"])
-                        {
+                        for (range, _) in &rendered.links {
                             let shown: String = rendered.job.text.chars().skip(range.start).take(range.len()).collect();
-                            assert!(
-                                shown
-                                    .replace('\u{a0}', " ")
-                                    .contains(&format!("{}: Resident", aurora_i18n::text(key)))
-                            );
+                            assert_eq!(shown, "MResident", "one invisible icon slot, unchanged destination text");
                         }
+                        let icons: Vec<_> = rendered
+                            .badges
+                            .iter()
+                            .filter_map(|(_, b)| match b {
+                                LinkBadge::Action(a) => Some(a.icon()),
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(icons, ["user-filled", "message-circle-filled", "coin-filled"]);
                         let galley = ui.fonts_mut(|f| f.layout_job(rendered.job));
                         assert!(galley.size().x <= width + 1.0, "wrapping stays bounded: {:?}", galley.size());
                         let origin = egui::pos2(12.0, 20.0);
@@ -191,7 +201,7 @@ fn native_action_markers_wrap_and_are_clickable_in_console_lines_and_bubbles() {
 }
 
 #[test]
-fn every_native_action_uses_an_available_icon_and_distinct_core_labels() {
+fn every_native_action_uses_an_available_icon_and_distinct_core_icons() {
     let ctx = egui::Context::default();
     let icons = crate::ui::icons::Icons::load(&ctx, None);
     for action in [
@@ -222,9 +232,11 @@ fn every_native_action_uses_an_available_icon_and_distinct_core_labels() {
         Action::Teleport,
     ] {
         assert!(icons.get(action.icon()).is_some(), "missing icon for {action:?}: {}", action.icon());
-        assert!(!action.label().is_empty());
     }
-    assert_ne!(Action::Profile.label(), Action::Im.label());
-    assert_ne!(Action::Profile.label(), Action::Pay.label());
-    assert_ne!(Action::Im.label(), Action::Pay.label());
+    assert_ne!(Action::Profile.icon(), Action::Im.icon());
+    assert_ne!(Action::Profile.icon(), Action::Pay.icon());
+    assert_ne!(Action::Im.icon(), Action::Pay.icon());
+    assert_ne!(Action::Im.icon(), Action::Channel.icon());
+    assert_ne!(Action::OfferTeleport.icon(), Action::Teleport.icon());
+    assert_ne!(Action::Place.icon(), Action::Teleport.icon());
 }

@@ -735,7 +735,9 @@ fn line_job(
         };
         if let Some(action) = link.as_ref().and_then(Link::action) {
             badges.push((at, LinkBadge::Action(action)));
-            at += action.append(&mut job, size, fmt.color, std::mem::take(&mut lead));
+            action_marker::reserve_icon(&mut job, size, std::mem::take(&mut lead));
+            at += 1;
+            lead = 2.0;
         }
         let n = piece.chars().count();
         job.append(&piece, std::mem::take(&mut lead), fmt);

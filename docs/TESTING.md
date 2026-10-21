@@ -3813,9 +3813,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   regression also exercises standalone place details and both profile looks.
   `actions` shows identical avatar labels linking to profile, IM, payment,
   teleport offer, friendship and report actions, followed by other native
-  targets. Compare their persistent icon/label markers in the conversation
+  targets. Compare their persistent action icons in the conversation
   and local chat overlays without hovering, in English/French and each chat
-  style. Custom link text must not hide the action; copying a transcript
+  style. There must be no added action words before the original link text.
+  Custom link text must not hide the action; copying a transcript
   must retain the message content without its visual markers.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per

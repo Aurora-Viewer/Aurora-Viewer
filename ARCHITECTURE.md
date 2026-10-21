@@ -1,7 +1,7 @@
 # Aurora Viewer architecture
 
 Native links share `ui/chat/action_marker.rs`: a parsed action chooses its
-Tabler icon and localized short label before the destination. Wrapping text
+Tabler icon before the unchanged destination text. Wrapping text
 and console/bubble LayoutJobs share that prefix; the marker is part of the
 link's hit area while transcript selection keeps the original message text.
 

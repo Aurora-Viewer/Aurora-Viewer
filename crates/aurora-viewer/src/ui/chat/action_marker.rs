@@ -71,16 +71,18 @@ impl Action {
     pub fn icon(self) -> &'static str {
         match self {
             Self::Profile => "user-filled",
-            Self::Im | Self::Channel => "message-circle-filled",
+            Self::Im => "message-circle-filled",
+            Self::Channel => "speakerphone",
             Self::Pay => "coin-filled",
-            Self::OfferTeleport | Self::Teleport => "send-filled",
+            Self::OfferTeleport => "send-filled",
+            Self::Teleport => "location-filled",
             Self::AddFriend => "user-plus",
             Self::RemoveFriend => "user-minus",
             Self::BlockResident | Self::BlockObject | Self::Blocked => "ban",
             Self::UnblockResident | Self::UnblockObject => "circle-check-filled",
             Self::Report => "flag-filled",
             Self::Group => "users-group",
-            Self::Parcel | Self::Place => "location-filled",
+            Self::Parcel | Self::Place => "map-pin-filled",
             Self::Object => "zoom-scan-filled",
             Self::Inventory => "briefcase-filled",
             Self::Experience => "layout-grid-filled",
@@ -90,62 +92,6 @@ impl Action {
             Self::Search => "search-filled",
             Self::Unsupported => "help-circle-filled",
         }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Profile => aurora_i18n::tr!("ui-chat-link-action-profile"),
-            Self::Im => aurora_i18n::tr!("ui-chat-link-action-im"),
-            Self::Pay => aurora_i18n::tr!("ui-chat-link-action-pay"),
-            Self::OfferTeleport => aurora_i18n::tr!("ui-chat-link-action-offer-teleport"),
-            Self::AddFriend => aurora_i18n::tr!("ui-chat-link-action-add-friend"),
-            Self::RemoveFriend => aurora_i18n::tr!("ui-chat-link-action-remove-friend"),
-            Self::BlockResident => aurora_i18n::tr!("ui-chat-link-action-block-resident"),
-            Self::UnblockResident => aurora_i18n::tr!("ui-chat-link-action-unblock-resident"),
-            Self::BlockObject => aurora_i18n::tr!("ui-chat-link-action-block-object"),
-            Self::UnblockObject => aurora_i18n::tr!("ui-chat-link-action-unblock-object"),
-            Self::Report => aurora_i18n::tr!("ui-chat-link-action-report"),
-            Self::Group => aurora_i18n::tr!("ui-chat-link-action-group"),
-            Self::Parcel => aurora_i18n::tr!("ui-chat-link-action-parcel"),
-            Self::Object => aurora_i18n::tr!("ui-chat-link-action-object"),
-            Self::Inventory => aurora_i18n::tr!("ui-chat-link-action-inventory"),
-            Self::Experience => aurora_i18n::tr!("ui-chat-link-action-experience"),
-            Self::Classified => aurora_i18n::tr!("ui-chat-link-action-classified"),
-            Self::Event => aurora_i18n::tr!("ui-chat-link-action-event"),
-            Self::Map => aurora_i18n::tr!("ui-chat-link-action-map"),
-            Self::Channel => aurora_i18n::tr!("ui-chat-link-action-channel"),
-            Self::Search => aurora_i18n::tr!("ui-chat-link-action-search"),
-            Self::Blocked => aurora_i18n::tr!("ui-chat-link-action-blocked"),
-            Self::Unsupported => aurora_i18n::tr!("ui-chat-link-action-unsupported"),
-            Self::Place => aurora_i18n::tr!("ui-chat-link-action-place"),
-            Self::Teleport => aurora_i18n::tr!("ui-chat-link-action-teleport"),
-        }
-    }
-
-    /// An invisible glyph reserves the icon, as web trust badges do. The
-    /// nonbreaking spaces keep the action with the start of its destination.
-    pub fn append(self, job: &mut LayoutJob, size: f32, color: Color32, lead: f32) -> usize {
-        job.append(
-            "M",
-            lead,
-            TextFormat {
-                font_id: FontId::proportional(size * 1.15),
-                color: Color32::TRANSPARENT,
-                ..Default::default()
-            },
-        );
-        let label = format!("{}:\u{a0}", self.label().replace(' ', "\u{a0}"));
-        let len = 1 + label.chars().count();
-        job.append(
-            &label,
-            2.0,
-            TextFormat {
-                font_id: FontId::proportional((size * 0.85).max(10.0)),
-                color: color.gamma_multiply(0.85),
-                ..Default::default()
-            },
-        );
-        len
     }
 
     pub fn paint(self, painter: &egui::Painter, rect: egui::Rect, color: Color32) {
@@ -160,15 +106,29 @@ impl Action {
     }
 }
 
+/// The same invisible glyph as web trust badges: it reserves the icon
+/// without adding a word or a break before the original link text.
+pub(super) fn reserve_icon(job: &mut LayoutJob, size: f32, lead: f32) {
+    job.append(
+        "M",
+        lead,
+        TextFormat {
+            font_id: FontId::proportional(size * 1.15),
+            color: Color32::TRANSPARENT,
+            ..Default::default()
+        },
+    );
+}
+
 /// One wrapping, clickable atom: marker and destination share interaction
 /// and cannot separate into unrelated controls. Selection copies `text`.
 pub(super) fn link(ui: &mut Ui, action: Action, text: &str, size: f32, color: Color32, background: Option<Color32>) -> Response {
     let behind = super::select::atom_begin(ui);
     let mut job = LayoutJob::default();
-    action.append(&mut job, size, color, 0.0);
+    reserve_icon(&mut job, size, 0.0);
     job.append(
         text,
-        0.0,
+        2.0,
         TextFormat {
             font_id: FontId::proportional(size),
             color,
@@ -177,7 +137,7 @@ pub(super) fn link(ui: &mut Ui, action: Action, text: &str, size: f32, color: Co
         },
     );
     let (origin, galley, response) = egui::Label::new(job).sense(egui::Sense::click()).layout_in_ui(ui);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, ui.is_enabled(), format!("{}: {text}", action.label())));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, ui.is_enabled(), text));
     if ui.is_rect_visible(response.rect) {
         let underline = if response.hovered() || response.has_focus() {
             egui::Stroke::new(1.0, color)
