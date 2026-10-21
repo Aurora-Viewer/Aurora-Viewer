@@ -799,6 +799,7 @@ impl App {
             ui::layout::load(&egui_ctx);
         }
         ui::colors::set(&settings.colors);
+        crate::keywords::set(&settings.keywords);
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
@@ -2476,6 +2477,9 @@ impl App {
                 }
                 // interface sounds ready when needed (init_audio preloads)
                 for id in self.settings.audio.ui.preload() {
+                    self.scene.sounds.want(id);
+                }
+                if let Some(id) = attention::keyword_sound(&self.settings, &self.settings.keywords) {
                     self.scene.sounds.want(id);
                 }
                 // remembered password: the hash of the one typed (kept when
@@ -4211,7 +4215,11 @@ impl App {
                     crate::world::notifications::Data::None,
                 );
             } else {
-                // the name is a link to the resident, as in Firestorm's chat
+                // the name is a link to the resident, as in Firestorm's chat;
+                // checked for keywords as nearby chat (FSRadar::radarAlertMsg)
+                let name = ui::people::radar_name(&self.world, &id, s.name_format);
+                self.world
+                    .keyword_alert(id, &name, &text, true, crate::world::attention::Open::NearbyChat);
                 self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
             }
         }
@@ -7245,6 +7253,7 @@ impl App {
             }
             self.skin.theme.apply(&self.egui_ctx, self.settings.font_scale);
             ui::colors::set(&self.settings.colors);
+            crate::keywords::set(&self.keyword_settings());
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
@@ -7585,6 +7594,14 @@ impl App {
                     self.frame_count,
                     self.window_behind()
                 );
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::keywords::active() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::keywords::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -11901,6 +11918,7 @@ impl ApplicationHandler for App {
                         _ => 0,
                     };
                     self.options_ui.scroll_to_attention = filter == "attention";
+                    self.options_ui.scroll_to_keywords = filter == "keywords";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
@@ -13435,6 +13453,12 @@ impl ApplicationHandler for App {
             if std::env::var_os("AURORA_DEMO_CONV_REORDER").is_some() {
                 self.panels.chat = true;
                 self.chat_ui.demo_reorder = true;
+            }
+            // AURORA_DEMO_KEYWORDS: the alerts on for the run, with the
+            // Conversations window open on the nearby chat
+            if crate::demo::keywords::active() {
+                crate::keywords::set(&self.keyword_settings());
+                self.panels.chat = true;
             }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
