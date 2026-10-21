@@ -66,7 +66,7 @@ fn received_filing_view_pins_marketplace_and_scopes_sender_search_without_server
     for by_date in [false, true] {
         for system_first in [false, true] {
             let prefs = InventoryPreferences {
-                sort: Sort {
+                received_sort: Sort {
                     by_date,
                     folders_by_name: !by_date,
                     system_first,
@@ -1482,7 +1482,7 @@ mod tests {
             prefs.received_sort.folders_by_name = folders_by_name;
             cache.search(
                 &inv,
-                inbox,
+                inv.root,
                 "",
                 &prefs,
                 &Filters::default(),
@@ -1498,6 +1498,7 @@ mod tests {
                 [id(8_300_020), id(8_300_010), id(8_300_001)]
             };
             assert_eq!(cache.result_children[&inbox], expected, "the actual demo must visibly change order");
+            assert_eq!(cache.result_children[&inv.root][0], inbox, "Marketplace stays above sender folders");
             assert!(expected.iter().all(|id| cache.folder_date(*id) > 0));
         }
     }
