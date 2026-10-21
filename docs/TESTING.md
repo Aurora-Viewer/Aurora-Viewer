@@ -2612,7 +2612,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop` | Inventory carried to the IM shown: its drop hint, or the give confirmation (with `AURORA_DEMO_CONV=aurora`) |
+| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
@@ -3240,7 +3240,7 @@ failure. Grid validation and any paid upload are performed by the human.
   chat styles. Order lasts while those conversations remain open; closing
   and reopening a conversation appends it again. No grid is needed.
 
-- **`AURORA_DEMO_CONV_GIVE=away|over|many|drop`**: with `AURORA_DEMO_CONV=aurora`
+- **`AURORA_DEMO_CONV_GIVE=away|over|many|drop|give`**: with `AURORA_DEMO_CONV=aurora`
   (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
   frame 700 and is never released. `away` leaves the pointer outside the
   window: the friend's messages fade behind the gift and "Drop here to
@@ -3252,7 +3252,10 @@ failure. Grid validation and any paid upload are performed by the human.
   name, five entries and "and 2 more", the no-copy object tagged with the
   amber warning, the no-transfer one greyed and tagged with the line
   saying it is left out (its reason on hover), then Cancel / Give. Capture at
-  frame 780 with `AURORA_FPS_LIMIT=60`. The field has no attach button.
+  frame 780 with `AURORA_FPS_LIMIT=60`. `give` answers that confirmation
+  with Enter at frame 740: the conversation then shows one muted notice
+  per given root, "Inventory item « … » offered" (or "Inventory folder"),
+  without counting as unread (#736). The field has no attach button.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.

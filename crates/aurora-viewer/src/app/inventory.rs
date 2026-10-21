@@ -450,13 +450,16 @@ impl App {
                                         .map(|_| id)
                                 })
                                 .collect();
+                            let name = rules::name(&self.world.inventory, id);
+                            let folder = self.world.inventory.folders.contains_key(&id);
                             self.send(NetCommand::SendImDialog {
                                 to: resident,
                                 dialog: 4,
                                 id: Uuid::new_v4(),
-                                message: rules::name(&self.world.inventory, id),
+                                message: name.clone(),
                                 bucket,
                             });
+                            self.world.inventory_offer_sent(resident, &name, folder);
                             self.world.inventory.remove(&removed);
                         }
                         Err(reason) => self.inventory_ui.message = reason,

@@ -136,6 +136,21 @@ impl World {
         self.transcript_only(im.from_agent_id, &line);
     }
 
+    /// Our offer of an item or a folder went out
+    /// (LLGiveInventory::logInventoryOffer, indra/newview/llgiveinventory.cpp):
+    /// "Inventory item 'X' offered" in the conversation with the resident
+    /// without counting as unread, or only in their transcript when none is
+    /// open.
+    pub fn inventory_offer_sent(&mut self, to: Uuid, name: &str, folder: bool) {
+        let item = item_label(name);
+        let text = if folder {
+            aurora_i18n::tr!("world-inventory-offers-folder-sent", item = item)
+        } else {
+            aurora_i18n::tr!("world-inventory-offers-item-sent", item = item)
+        };
+        self.note_with(to, text);
+    }
+
     /// Answer an offer from its card: through its entry, as its Keep or
     /// Reject button would (the same reply, Trash and history), which
     /// closes the entry and leaves the card with its answer.
@@ -394,6 +409,48 @@ mod tests {
         assert!(w.inventory_offers.list.is_empty());
         assert!(w.social.ims.is_empty());
         assert!(transcript(&mut w).is_empty());
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn our_offer_is_noted_in_the_open_conversation() {
+        let root = temp();
+        let mut w = world(&root);
+        let mut hello = offer(0, "hello");
+        hello.binary_bucket.clear();
+        w.on_im(hello);
+        w.social.ims[0].unread = 0;
+        w.inventory_offer_sent(JANE, "Welcome note", false);
+        w.inventory_offer_sent(JANE, "Outfits", true);
+        let s = &w.social.ims[0];
+        assert_eq!(s.unread, 0);
+        let notes: Vec<_> = s
+            .lines
+            .iter()
+            .filter(|l| l.kind == ChatKind::System)
+            .map(|l| l.text.clone())
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                aurora_i18n::tr!("world-inventory-offers-item-sent", item = item_label("Welcome note")),
+                aurora_i18n::tr!("world-inventory-offers-folder-sent", item = item_label("Outfits")),
+            ]
+        );
+        assert!(w.chat.is_empty());
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn our_offer_without_a_conversation_goes_to_the_transcript_only() {
+        let root = temp();
+        let mut w = world(&root);
+        w.inventory_offer_sent(JANE, "Welcome note", false);
+        assert!(w.social.ims.is_empty());
+        assert!(w.chat.is_empty());
+        let log = transcript(&mut w);
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert!(log[0].contains("Welcome note"), "{log:?}");
         clean(&w, &root);
     }
 
