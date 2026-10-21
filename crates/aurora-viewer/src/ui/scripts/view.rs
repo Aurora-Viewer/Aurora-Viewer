@@ -3,7 +3,7 @@
 
 use super::{
     Action, Editor,
-    dialogs::{Help, Preferences, Search},
+    dialogs::{Help, Panels, Search},
     editing, files, indent, reference,
     settings::{ColorRole, ScriptSettings},
 };
@@ -18,7 +18,7 @@ use egui::{Id, RichText, Vec2};
 
 #[derive(Default)]
 pub(super) struct Tools {
-    pub search: Search,
+    pub focus_start: bool,
     pub help: Help,
     pub insert_filter: String,
     pub insert_button: Option<egui::Rect>,
@@ -44,6 +44,15 @@ pub(super) struct Tools {
     can_undo: bool,
     can_redo: bool,
     history_cursor: Option<egui::text::CCursorRange>,
+}
+
+impl Tools {
+    pub fn opening() -> Self {
+        Self {
+            focus_start: true,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -86,8 +95,10 @@ fn focus_frame_id() -> Id {
 /// same keys, as a floater's accelerators do in Firestorm.
 pub fn editor_focused(ctx: &egui::Context) -> bool {
     let now = ctx.cumulative_frame_nr();
-    ctx.data(|d| d.get_temp::<u64>(focus_frame_id()))
-        .is_some_and(|frame| frame + 1 >= now)
+    Search::focused(ctx)
+        || ctx
+            .data(|d| d.get_temp::<u64>(focus_frame_id()))
+            .is_some_and(|frame| frame + 1 >= now)
 }
 
 fn visible_id(id: Id, processed: bool) -> Id {
@@ -125,12 +136,13 @@ fn run(
     ctx: &egui::Context,
     id: Id,
     settings: &ScriptSettings,
-    prefs: &mut Preferences,
+    prefs: &mut Panels,
     actions: &mut Vec<Action>,
 ) {
     if !enabled(command, e, ctx, id) {
         return;
     }
+    let owner = id;
     let id = visible_id(id, e.tools.processed);
     match command {
         Command::Save => {
@@ -151,7 +163,7 @@ fn run(
             e.tools.file_job = Some(files::open(settings.convert_tabs));
         }
         Command::Export => e.tools.file_job = Some(files::save(e.name.clone(), e.source.clone())),
-        Command::Preferences => prefs.open = true,
+        Command::Preferences => prefs.preferences.open = true,
         Command::External => {
             e.tools.file_snapshot.clone_from(&e.source);
             e.tools.file_job = Some(files::external(
@@ -179,10 +191,7 @@ fn run(
             let at = editing::cursor(ctx, id).primary.index.0;
             editing::select(ctx, id, at..at, true);
         }
-        Command::Find => e
-            .tools
-            .search
-            .begin(ctx, id, if e.tools.processed { &e.tools.processed_source } else { &e.source }),
+        Command::Find => prefs.search.begin(ctx, owner, id, text(e)),
         Command::Goto => e.tools.goto = true,
         Command::Help => ctx.open_url(egui::OpenUrl::new_tab(reference::url(""))),
         Command::Keyword => {
@@ -222,7 +231,7 @@ pub(super) fn body(
     e: &mut Editor,
     id: Id,
     settings: &ScriptSettings,
-    prefs: &mut Preferences,
+    prefs: &mut Panels,
     actions: &mut Vec<Action>,
 ) {
     let ctx = ui.ctx().clone();
@@ -329,7 +338,7 @@ pub(super) fn body(
         155.0
     };
     let height = (ui.available_height() - footer_height - ui.spacing().item_spacing.y - 8.0).max(120.0);
-    source(ui, p, e, id, settings, height);
+    source(ui, p, e, id, settings, height, &prefs.search);
     let footer = ui.scope(|ui| footer(ui, p, e, id, actions));
     if (e.tools.footer_height - footer.response.rect.height()).abs() > 0.5 {
         e.tools.footer_height = footer.response.rect.height();
@@ -446,7 +455,7 @@ fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Op
     }
 }
 
-fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &ScriptSettings, height: f32) {
+fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &ScriptSettings, height: f32, search: &Search) {
     if std::mem::take(&mut e.tools.reset_history) {
         egui::text_edit::TextEditState::default().store(ui.ctx(), id);
         egui::text_edit::TextEditState::default().store(ui.ctx(), visible_id(id, true));
@@ -456,6 +465,14 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
     }
     let base_id = id;
     let id = visible_id(id, e.tools.processed);
+    // A new floater first lays out an invisible, disabled sizing pass.
+    // Keep the request until the source can actually take the keyboard.
+    if e.loaded && !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut e.tools.focus_start) {
+        editing::select(ui.ctx(), id, 0..0, true);
+        e.tools.scroll_to_cursor = true;
+        let frame = ui.ctx().cumulative_frame_nr();
+        ui.ctx().data_mut(|d| d.insert_temp(focus_frame_id(), frame));
+    }
     e.folding
         .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
     e.folding.reveal(editing::cursor(ui.ctx(), id).primary);
@@ -467,12 +484,12 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                 ui.visuals_mut().selection.bg_fill = settings.color(ColorRole::Selection, p);
                 ui.visuals_mut().text_cursor.stroke.color = settings.color(ColorRole::Cursor, p);
                 let font = egui::FontId::monospace(settings.font_size.clamp(8.0, 32.0));
-                let query = if e.tools.search.open {
-                    e.tools.search.query.clone()
+                let query = if search.owns(base_id) {
+                    search.query.clone()
                 } else {
                     String::new()
                 };
-                let insensitive = e.tools.search.insensitive;
+                let insensitive = search.insensitive;
                 let color_editable = e.loaded && e.can_edit && e.saving.is_none() && e.loading.is_none() && !e.tools.processed;
                 let editable = color_editable && !e.colors.active();
                 let mut scroll = egui::ScrollArea::new([!settings.word_wrap, true]);
@@ -677,7 +694,7 @@ pub(super) fn dialogs(
     e: &mut Editor,
     id: Id,
     settings: &mut ScriptSettings,
-    prefs: &mut Preferences,
+    prefs: &mut Panels,
     actions: &mut Vec<Action>,
 ) {
     poll_files(ctx, e, id, settings, actions);
@@ -685,21 +702,7 @@ pub(super) fn dialogs(
         run(command, e, ctx, id, settings, prefs, actions);
     }
     let original_id = id;
-    let editable = e.can_edit && e.loaded && e.saving.is_none() && !e.tools.processed;
     let id = visible_id(id, e.tools.processed);
-    let previous_cursor = editing::cursor(ctx, id);
-    e.tools.search.show(
-        ctx,
-        p,
-        id,
-        if e.tools.processed {
-            &mut e.tools.processed_source
-        } else {
-            &mut e.source
-        },
-        editable,
-    );
-    e.tools.scroll_to_cursor |= previous_cursor != editing::cursor(ctx, id);
     if e.tools.help.show(
         ctx,
         p,
@@ -827,6 +830,25 @@ pub(super) fn dialogs(
     }
 }
 
+pub(super) fn search(ctx: &egui::Context, p: &Palette, e: &mut Editor, id: Id, search: &mut Search, parent: egui::Rect) {
+    let id = visible_id(id, e.tools.processed);
+    let cursor = editing::cursor(ctx, id);
+    let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed && !e.colors.active();
+    search.show(
+        ctx,
+        p,
+        id,
+        if e.tools.processed {
+            &mut e.tools.processed_source
+        } else {
+            &mut e.source
+        },
+        editable,
+        parent,
+    );
+    e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
+}
+
 fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSettings, actions: &mut Vec<Action>) {
     if let Some(done) = e.tools.file_job.as_ref().and_then(|j| j.0.try_recv().ok()) {
         e.tools.file_job = None;
@@ -905,6 +927,7 @@ mod tests {
             editors.loaded(request, target, Ok(original.clone()));
             let e = &mut editors.documents[0];
             e.tools.reset_history = false;
+            e.tools.focus_start = false;
             e.tools.processed = processed;
             e.tools.processed_source.clone_from(&original);
             let id = Id::new("wrapping_source");
@@ -924,7 +947,7 @@ mod tests {
                             focused: true,
                             ..Default::default()
                         },
-                        |ui| source(ui, &p, e, id, &settings, 800.0),
+                        |ui| source(ui, &p, e, id, &settings, 800.0, &Search::default()),
                     )
                 };
                 for _ in 0..2 {
@@ -987,7 +1010,7 @@ mod tests {
             editors.loaded(request, target, Ok("default {\n    event() {\n        code;\n    }\n}".into()));
             let e = &mut editors.documents[0];
             let settings = ScriptSettings::default();
-            let mut prefs = Preferences::default();
+            let mut prefs = Panels::default();
             let short_source = "default {\n    event() {\n        code;\n    }\n}";
             let long_source = format!("// {}\n{short_source}", "long line ".repeat(100));
             for size in [Vec2::new(660.0, 440.0), Vec2::new(1100.0, 880.0), Vec2::new(520.0, 380.0)] {
@@ -1068,7 +1091,7 @@ mod tests {
         let ctx = egui::Context::default();
         let id = Id::new("commands");
         let settings = ScriptSettings::default();
-        let mut prefs = Preferences::default();
+        let mut prefs = Panels::default();
         let mut actions = vec![];
         editing::select(&ctx, id, 0..2, false);
         assert!(enabled(Command::Copy, e, &ctx, id));

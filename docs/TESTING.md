@@ -975,6 +975,10 @@ colours/options with preview and the local help of `llSay` with its
 signature. The typing commands use the native history; the settings are
 never saved on the PC in demo. The file pickers and the external editor
 remain explicit actions of the tester.
+With `both`, open Find in each editor in turn: the same search window and
+its query, replacement and options must follow the selected script. Move
+and resize that script: search stays at its upper-right corner, within the
+work area. Opening either script focuses its text before character zero.
 `preprocessor` and `object-preprocessor` save a script using an include from
 the inventory, a macro, an extended list and a `switch`, then reopen it: the
 original text must be kept. `processed` shows the result sent to the

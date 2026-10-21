@@ -593,6 +593,13 @@ disabled.
 clickable diagnostics. `editing.rs` shares the native cursor and history
 between the commands and typing; `dialogs.rs` carries search/replace, the
 preferences and the keyword help.
+`Editors` owns one search/replace panel shared by all scripts, following
+`LLFloaterSearchReplace::show`. Opening search rebinds its editor, retaining
+the query, replacement and options. It is drawn once after all editors have
+handled commands, anchored beside the owner's upper-right corner and kept
+inside the available work area; minimizing or closing its owner hides it.
+Opening an editor focuses character zero once its source is ready; only the
+latest explicit opening may take focus after an asynchronous load.
 `settings.rs` keeps the editor's colours and options in the common settings.
 `reference.rs` exposes the signatures and descriptions of the Firestorm
 catalogue embedded in `assets/lsl/reference.json`.

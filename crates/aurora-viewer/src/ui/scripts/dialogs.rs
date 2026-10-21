@@ -12,6 +12,12 @@ use crate::{
 use egui::{Id, RichText, Vec2};
 
 #[derive(Default)]
+pub(super) struct Panels {
+    pub preferences: Preferences,
+    pub search: Search,
+}
+
+#[derive(Default)]
 pub(super) struct Search {
     pub open: bool,
     pub query: String,
@@ -19,12 +25,25 @@ pub(super) struct Search {
     pub insensitive: bool,
     pub up: bool,
     pub focus: bool,
+    pub owner: Option<Id>,
     status: String,
 }
 
 impl Search {
-    pub fn begin(&mut self, ctx: &egui::Context, id: Id, source: &str) {
-        if !self.open {
+    pub const WINDOW: &str = "script_search";
+
+    pub fn owns(&self, id: Id) -> bool {
+        self.open && self.owner == Some(id)
+    }
+
+    pub fn focused(ctx: &egui::Context) -> bool {
+        let window = Id::new(Self::WINDOW);
+        ctx.memory(|m| m.has_focus(window.with("query")) || m.has_focus(window.with("replacement")))
+    }
+
+    // LLFloaterSearchReplace::show rebinds one shared search to its editor.
+    pub fn begin(&mut self, ctx: &egui::Context, owner: Id, id: Id, source: &str) {
+        if self.owner.is_none() {
             self.insensitive = true;
         }
         let selection = editing::bytes(source, editing::cursor(ctx, id));
@@ -33,33 +52,55 @@ impl Search {
         }
         self.open = true;
         self.focus = true;
+        self.owner = Some(owner);
+        self.status.clear();
+        crate::ui::widgets::expand_floater(ctx, Self::WINDOW);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, id: Id, source: &mut String, editable: bool) {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, id: Id, source: &mut String, editable: bool, parent: egui::Rect) {
         if !self.open {
             return;
         }
+        if Self::focused(ctx) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+            self.focus = true;
+        }
+        let window = Id::new(Self::WINDOW);
+        let size = ctx.memory(|m| m.area_rect(window)).map_or(Vec2::new(420.0, 185.0), |r| r.size());
+        // Requested improvement: attach to the script's upper-right corner.
+        // Keep the search reachable when there is less room beside the script.
+        let room = crate::ui::layout::work_area(ctx);
+        let pos = egui::pos2(parent.right().min(room.right() - size.x).max(room.left()), parent.top());
+        crate::ui::widgets::move_floater(ctx, Self::WINDOW, pos);
+        if self.focus {
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window));
+        }
         let mut open = true;
-        Floater::new(
-            &format!("{id:?}_search"),
-            aurora_i18n::tr!("script-search-title"),
-            ctx.content_rect().center() + Vec2::new(120.0, -160.0),
-            Vec2::new(420.0, 185.0),
-        )
-        .show(ctx, p, &mut open, |ui| {
+        Floater::new(Self::WINDOW, aurora_i18n::tr!("script-search-title"), pos, Vec2::new(420.0, 185.0)).show(ctx, p, &mut open, |ui| {
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("script-search-query"));
-                let response = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(280.0));
-                if std::mem::take(&mut self.focus) {
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.query)
+                        .id(window.with("query"))
+                        .desired_width(280.0),
+                );
+                if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
                     response.request_focus();
                 }
-                if response.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+                if (response.has_focus() || response.lost_focus())
+                    && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                {
                     self.find(ctx, id, source);
+                    response.request_focus();
                 }
             });
             ui.horizontal(|ui| {
                 ui.label(aurora_i18n::tr!("script-search-replacement"));
-                ui.add_enabled(editable, egui::TextEdit::singleline(&mut self.replacement).desired_width(280.0));
+                ui.add_enabled(
+                    editable,
+                    egui::TextEdit::singleline(&mut self.replacement)
+                        .id(window.with("replacement"))
+                        .desired_width(280.0),
+                );
             });
             ui.horizontal(|ui| {
                 crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));

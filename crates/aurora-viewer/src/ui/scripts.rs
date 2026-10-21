@@ -153,7 +153,7 @@ impl Editor {
 #[derive(Default)]
 pub struct Editors {
     pub documents: Vec<Editor>,
-    preferences: dialogs::Preferences,
+    panels: dialogs::Panels,
     debug: debug::Debug,
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
@@ -356,12 +356,12 @@ impl Editors {
         let text_id = egui::Id::new((&id, "source_text"));
         match mode {
             "search" => {
-                e.tools.search.begin(ctx, text_id, &e.source);
-                e.tools.search.query = "llSay".into();
-                e.tools.search.replacement = "llOwnerSay".into();
-                e.tools.search.find(ctx, text_id, &e.source);
+                self.panels.search.begin(ctx, text_id, text_id, &e.source);
+                self.panels.search.query = "llSay".into();
+                self.panels.search.replacement = "llOwnerSay".into();
+                self.panels.search.find(ctx, text_id, &e.source);
             }
-            "preferences" | "word-wrap-preferences" => self.preferences.open = true,
+            "preferences" | "word-wrap-preferences" => self.panels.preferences.open = true,
             "help" => {
                 e.tools.help.open = true;
                 e.tools.help.visit("llSay");
@@ -421,8 +421,12 @@ impl Editors {
     }
 
     pub fn open(&mut self, target: ScriptTarget, name: String, can_read: bool, can_edit: bool) -> Option<Uuid> {
+        for editor in &mut self.documents {
+            editor.tools.focus_start = false;
+        }
         if let Some(editor) = self.documents.iter_mut().find(|e| e.target == target) {
             editor.raise = true;
+            editor.tools.focus_start = true;
             return None;
         }
         let request = can_read.then(Uuid::new_v4);
@@ -455,7 +459,7 @@ impl Editors {
             close_after_save: false,
             closed: false,
             raise: true,
-            tools: view::Tools::default(),
+            tools: view::Tools::opening(),
             recompile_allowed: false,
             processor_settings: settings::ScriptSettings::default(),
             processor_environment: preprocessor::Environment::default(),
@@ -600,7 +604,7 @@ impl Editors {
     ) -> Vec<Action> {
         let colors_before = color_prefs.clone();
         let mut actions = Vec::new();
-        if self.preferences.show(ctx, p, settings) {
+        if self.panels.preferences.show(ctx, p, settings) {
             actions.push(Action::SettingsChanged);
         }
         for e in &mut self.documents {
@@ -670,8 +674,7 @@ impl Editors {
                 }
             }
             if std::mem::take(&mut e.raise) {
-                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&id)));
-                ctx.data_mut(|data| data.insert_persisted(egui::Id::new((&id, "minimized")), false));
+                super::widgets::expand_floater(ctx, &id);
             }
             let mut open = true;
             let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
@@ -689,7 +692,7 @@ impl Editors {
                     e,
                     egui::Id::new((&id, "source_text")),
                     settings,
-                    &mut self.preferences,
+                    &mut self.panels,
                     &mut actions,
                 );
             });
@@ -699,7 +702,7 @@ impl Editors {
                 e,
                 egui::Id::new((&id, "source_text")),
                 settings,
-                &mut self.preferences,
+                &mut self.panels,
                 &mut actions,
             );
             let source_id = egui::Id::new((&id, "source_text"));
@@ -765,6 +768,27 @@ impl Editors {
             }
         }
         self.documents.retain(|e| !e.closed);
+        // Draw the singleton after every editor has handled its commands. A
+        // search opened in a later document must not also draw on the old one.
+        let search = &mut self.panels.search;
+        let mut bound = false;
+        for e in &mut self.documents {
+            let window = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            let id = egui::Id::new((&window, "source_text"));
+            if search.owns(id) {
+                bound = true;
+                let minimized = ctx
+                    .data_mut(|d| d.get_persisted::<bool>(egui::Id::new((&window, "minimized"))))
+                    .unwrap_or(false);
+                if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::new(&window))) {
+                    view::search(ctx, p, e, id, search, parent);
+                }
+                break;
+            }
+        }
+        if !bound {
+            search.open = false;
+        }
         if *color_prefs != colors_before {
             actions.push(Action::SettingsChanged);
         }
@@ -775,6 +799,228 @@ impl Editors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn window(target: ScriptTarget) -> String {
+        format!("script_editor_{}_{}", target.object, target.item)
+    }
+
+    fn source_id(target: ScriptTarget) -> egui::Id {
+        egui::Id::new((window(target), "source_text"))
+    }
+
+    fn frame(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
+        let theme = crate::theme::Theme::default();
+        theme.apply(ctx, 1.0);
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                editors.show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    &mut settings::ScriptSettings::default(),
+                    &mut super::super::color_picker::Preferences::default(),
+                );
+            },
+        )
+    }
+
+    fn settle(ctx: &egui::Context, editors: &mut Editors) {
+        for _ in 0..3 {
+            frame(ctx, editors, vec![]).textures_delta.clear();
+        }
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn click_label(ctx: &egui::Context, editors: &mut Editors, label: &str) {
+        let output = frame(ctx, editors, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos + t.galley.size() * 0.5),
+                _ => None,
+            })
+            .expect("visible button");
+        for pressed in [true, false] {
+            frame(
+                ctx,
+                editors,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn opening_scripts_focuses_character_zero_and_late_loads_do_not_steal_focus() {
+        for object in [Uuid::nil(), Uuid::from_u128(22)] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let first = ScriptTarget {
+                object,
+                item: Uuid::from_u128(1),
+            };
+            let second = ScriptTarget {
+                object,
+                item: Uuid::from_u128(2),
+            };
+            let pending = editors.open(first, "First".into(), true, true).unwrap();
+            settle(&ctx, &mut editors);
+            let load = editors.open(second, "Second".into(), true, true).unwrap();
+            editors.loaded(load, second, Ok("é source".into()));
+            settle(&ctx, &mut editors);
+            assert!(ctx.memory(|m| m.has_focus(source_id(second))));
+            assert_eq!(editing::cursor(&ctx, source_id(second)).as_sorted_char_range(), 0.into()..0.into());
+            frame(&ctx, &mut editors, vec![egui::Event::Text("//".into())]);
+            assert_eq!(editors.documents[1].source, "//é source");
+            editors.loaded(pending, first, Ok("late source".into()));
+            settle(&ctx, &mut editors);
+            assert!(ctx.memory(|m| m.has_focus(source_id(second))));
+
+            editing::select(&ctx, source_id(first), 3..7, false);
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(first), "minimized")), true));
+            settle(&ctx, &mut editors);
+            editors.open(first, "First".into(), true, true);
+            settle(&ctx, &mut editors);
+            assert!(!super::super::widgets::floater_minimized(&ctx, &window(first)));
+            assert!(ctx.memory(|m| m.has_focus(source_id(first))));
+            assert_eq!(editing::cursor(&ctx, source_id(first)).as_sorted_char_range(), 0.into()..0.into());
+            assert_eq!(editors.documents[0].source, "late source");
+        }
+    }
+
+    #[test]
+    fn script_search_reuses_its_window_and_options_and_finds_in_the_new_owner() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let first = target(1);
+        let second = ScriptTarget {
+            object: Uuid::from_u128(22),
+            item: Uuid::from_u128(2),
+        };
+        for target in [first, second] {
+            let load = editors.open(target, "Search owner".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("first needle\nsecond needle".into()));
+        }
+        settle(&ctx, &mut editors);
+        editors.open(first, "Search owner".into(), true, true);
+        settle(&ctx, &mut editors);
+        frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        settle(&ctx, &mut editors);
+        assert!(editors.panels.search.owns(source_id(first)));
+        editors.panels.search.query = "needle".into();
+        editors.panels.search.replacement = "replacement".into();
+        editors.panels.search.insensitive = false;
+        editors.panels.search.up = true;
+        // Rebind the still-open search, then reopen it after closing/minimizing.
+        for closed in [false, true] {
+            if closed {
+                editors.panels.search.open = false;
+                ctx.data_mut(|d| d.insert_persisted(egui::Id::new((dialogs::Search::WINDOW, "minimized")), true));
+            }
+            editors.open(second, "Search owner".into(), true, true);
+            settle(&ctx, &mut editors);
+            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            settle(&ctx, &mut editors);
+            assert!(editors.panels.search.owns(source_id(second)));
+            assert!(!editors.panels.search.owns(source_id(first)));
+            assert_eq!(editors.panels.search.query, "needle");
+            assert_eq!(editors.panels.search.replacement, "replacement");
+            assert!(!editors.panels.search.insensitive);
+            assert!(editors.panels.search.up);
+            assert!(!super::super::widgets::floater_minimized(&ctx, dialogs::Search::WINDOW));
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::new(dialogs::Search::WINDOW).with("query"))));
+            let output = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            assert!(editor_focused(&ctx));
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
+                    .count(),
+                1
+            );
+            frame(&ctx, &mut editors, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+            assert_eq!(
+                editing::cursor(&ctx, source_id(second)).as_sorted_char_range(),
+                20.into()..26.into()
+            );
+            assert!(editing::cursor(&ctx, source_id(first)).is_empty());
+        }
+        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[0].source, "first needle\nsecond needle");
+        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
+        editors.documents[1].can_edit = false;
+        editors.panels.search.query = "replacement".into();
+        editors.panels.search.replacement = "blocked".into();
+        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
+        editors.documents[1].can_edit = true;
+        editors.documents[1].tools.processed = true;
+        editors.documents[1].tools.processed_source = "replacement".into();
+        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[1].tools.processed_source, "replacement");
+        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
+    }
+
+    #[test]
+    fn script_search_follows_its_owners_upper_right_corner_and_hides_with_it() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let target = target(1);
+        let load = editors.open(target, "Anchored".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok("source".into()));
+        settle(&ctx, &mut editors);
+        frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        for (pos, size) in [
+            (egui::pos2(100.0, 70.0), Vec2::new(660.0, 520.0)),
+            (egui::pos2(430.0, 190.0), Vec2::new(660.0, 520.0)),
+            (egui::pos2(260.0, 120.0), Vec2::new(900.0, 650.0)),
+        ] {
+            super::super::widgets::place_floater(&ctx, &window(target), pos, size);
+            settle(&ctx, &mut editors);
+            let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
+            let search = ctx.memory(|m| m.area_rect(egui::Id::new(dialogs::Search::WINDOW))).unwrap();
+            let expected = egui::pos2(parent.right().min(1600.0 - search.width()), parent.top());
+            assert!((search.left_top() - expected).length() < 1.5, "{parent:?} / {search:?}");
+        }
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(target), "minimized")), true));
+        settle(&ctx, &mut editors);
+        let output = frame(&ctx, &mut editors, vec![]);
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
+        );
+        editors.open(target, "Anchored".into(), true, true);
+        settle(&ctx, &mut editors);
+        assert!(editors.panels.search.open);
+        editors.demo_close_clean(target);
+        settle(&ctx, &mut editors);
+        assert!(!editors.panels.search.open);
+    }
 
     fn target(n: u128) -> ScriptTarget {
         ScriptTarget {
