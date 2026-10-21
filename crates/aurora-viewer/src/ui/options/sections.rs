@@ -77,7 +77,7 @@ sections! {
         flash_on_message, flash_on_object_im, flash_on_script_dialog, system_notifications, system_notifications_when_active,
         warn_external_links, show_chat, show_contacts_tab, send_typing_state, play_typing_anim, type_during_emote, typing_in_name_tags, typing_chevron, flash_unread_conversations, log_im, log_nearby,
         log_show_history, reopen_ims, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
-        report_blocks, show_joined_group_invitations,
+        report_blocks, show_joined_group_invitations, friend_request_prompt,
     ],
     4 => [
         mouse_sensitivity, invert_mouse, arrows_strafe, arrow_keys_always_move, letter_keys_move, walk_backwards_without_turning, double_click, lookat.head_yaw, lookat.head_pitch,

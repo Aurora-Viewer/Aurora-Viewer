@@ -486,6 +486,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
+    /// A friendship offer in the middle of the screen (#465).
+    friend_prompt: ui::friend_prompt::FriendPromptUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
     /// Taskbar flashes and system notifications (app/attention.rs).
@@ -1026,6 +1028,7 @@ impl App {
             options_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
+            friend_prompt: Default::default(),
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
@@ -7563,6 +7566,19 @@ impl App {
                 }
             }
         }
+        if self.demo
+            && let Some(mode) = crate::demo::friend_prompt::mode()
+        {
+            let agent = self.world.agent_id;
+            for event in crate::demo::friend_prompt::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if mode == "later" && self.frame_count == crate::demo::friend_prompt::LATER_AT {
+                self.friend_prompt.put_off();
+            }
+        }
         if self.demo && crate::demo::object_im::settings().is_some() {
             let agent = self.world.agent_id;
             for event in crate::demo::object_im::events(self.frame_count, agent) {
@@ -11038,6 +11054,28 @@ impl App {
                 let dnd = self.world.status.dnd;
                 let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
                 self.world.notifications.aurora = aurora;
+                // #465: a friendship offer in the middle of the screen, before
+                // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)
+                let prompt_on = self.settings.friend_request_prompt || (self.demo && crate::demo::friend_prompt::mode().is_some());
+                let prompt_allowed = !toasts_hidden && !dnd && self.world.notifications.started;
+                let mut prompt_action = None;
+                if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, prompt_allowed) {
+                    self.notif_ui.wanted_pics.insert(from);
+                    let name = Some(self.world.social.display_name_of(&from))
+                        .filter(|n| n != "…")
+                        .or_else(|| self.world.avatar_name(&from));
+                    if name.is_none() {
+                        self.world.social.want_name(from);
+                    }
+                    let env = ui::friend_prompt::PromptEnv {
+                        pics: &self.avatar_pics,
+                        name,
+                        motion: !self.settings.reduce_motion,
+                    };
+                    prompt_action = self
+                        .friend_prompt
+                        .show(&ctx, &p, &self.skin.icons, &self.world.notifications, id, &env);
+                }
                 let restart = self.restart_bell_info(&p);
                 // AURORA_DEMO_PRESENCE: a place for this run only
                 let presence_at = crate::demo::presence::position()
@@ -11053,7 +11091,7 @@ impl App {
                     presence_at,
                     classic_bars,
                 };
-                let (answers, asks) = if aurora {
+                let (mut answers, asks) = if aurora {
                     ui::notification_center::show(
                         &ctx,
                         &p,
@@ -11083,6 +11121,11 @@ impl App {
                 self.order_region_restart(&ctx, aurora);
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);
+                }
+                match prompt_action {
+                    Some(ui::friend_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
+                    Some(ui::friend_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
+                    None => {}
                 }
                 for (id, r) in answers {
                     if self.region_restart_bell_answer(id, &r) {

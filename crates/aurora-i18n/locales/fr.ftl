@@ -2033,6 +2033,16 @@ ui-options-friends-online-in-chat-hint = Écrire aussi une ligne dans le chat lo
 ui-options-toast-friends-position = Place des toasts en ligne / hors ligne
 ui-options-toast-friends-position-hint = À côté des barres, jamais dessus ; en haut à droite, ils attendent tant que les cartes ou la liste de la cloche sont ouvertes
 ui-options-toast-friends-position-legacy = Les toasts du Legacy Viewer les montrent dans leur propre pile (Préférences › Aurora › Notifications)
+ui-options-friend-request-prompt = Offres d'amitié au milieu de l'écran
+ui-options-friend-request-prompt-hint = Une grande carte avec la photo du résident au lieu d'un toast ; Plus tard laisse l'offre sous la cloche
+ui-friend-prompt-wants = vous propose son amitié
+ui-friend-prompt-note = Vous pourrez voir quand l'autre est en ligne.
+ui-friend-prompt-later = Plus tard
+ui-friend-prompt-later-hint = Garder l'offre sous la cloche pour y répondre plus tard
+ui-friend-prompt-more = { $count ->
+    [one] Une autre offre d'amitié attend
+   *[other] { $count } autres offres d'amitié attendent
+    }
 ui-options-position-top-left = En haut à gauche
 ui-options-position-top-center = En haut au milieu
 ui-options-position-top-right = En haut à droite
@@ -4778,6 +4788,7 @@ demo-toast-hello = Coucou ! Je suis sur la place 😄
 demo-restart-toast = Tu viens au concert ce soir ?
 demo-toast-are-you-there = Tu es là ? Viens voir la nouvelle fontaine ✨
 demo-toast-group-message = La réunion commence dans dix minutes sur la scène
+demo-friend-prompt-message = Coucou ! On s'est croisés à la fête du lagon hier soir, on reste en contact ? 🌊
 demo-attention-im = Tu es toujours là ? Je t'attends à la fontaine
 demo-attention-mention = tu viens au concert ?
 demo-attention-group = tu peux ouvrir les portes de la scène ?

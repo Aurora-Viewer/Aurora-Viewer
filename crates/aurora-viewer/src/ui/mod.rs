@@ -30,6 +30,7 @@ pub mod exit;
 pub mod experience_profile;
 pub mod find_shortcut;
 pub mod fonts;
+pub mod friend_prompt;
 pub mod gestures;
 pub mod group_profile;
 pub mod hover_height;

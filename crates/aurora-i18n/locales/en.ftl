@@ -2030,6 +2030,16 @@ ui-options-friends-online-in-chat-hint = Also write a line in nearby chat when a
 ui-options-toast-friends-position = Place of the online / offline toasts
 ui-options-toast-friends-position-hint = Beside the bars, never over them; at the top right they wait while the bell's cards or list are open
 ui-options-toast-friends-position-legacy = the Legacy Viewer's toasts show them in their own stack (Preferences › Aurora › Notifications)
+ui-options-friend-request-prompt = Friendship offers in the middle of the screen
+ui-options-friend-request-prompt-hint = A large card with the resident's picture instead of a toast; Later leaves the offer under the bell
+ui-friend-prompt-wants = wants to be your friend
+ui-friend-prompt-note = You will be able to see each other's online status.
+ui-friend-prompt-later = Later
+ui-friend-prompt-later-hint = Keep the offer under the bell and answer it later
+ui-friend-prompt-more = { $count ->
+    [one] One more friendship offer is waiting
+   *[other] { $count } more friendship offers are waiting
+    }
 ui-options-position-top-left = Top left
 ui-options-position-top-center = Top middle
 ui-options-position-top-right = Top right
@@ -4773,6 +4783,7 @@ demo-toast-hello = Hi! I'm at the plaza 😄
 demo-restart-toast = Are you coming to the concert tonight?
 demo-toast-are-you-there = Are you there? Come and see the new fountain ✨
 demo-toast-group-message = The meeting starts in ten minutes at the stage
+demo-friend-prompt-message = Hi! We met at the lagoon party last night, want to stay in touch? 🌊
 demo-attention-im = Are you still there? I'm waiting for you at the fountain
 demo-attention-mention = are you coming to the concert?
 demo-attention-group = can you open the doors of the stage?
