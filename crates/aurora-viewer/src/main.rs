@@ -30,6 +30,7 @@ mod demo;
 mod dev_toolbox;
 mod disk_io;
 mod dof;
+mod external_url;
 mod frame_par;
 mod frame_profile;
 mod gestures;
@@ -57,6 +58,7 @@ mod settings;
 mod shape_editor;
 mod slapp;
 mod slurl;
+mod slurl_handoff;
 mod snapshot;
 mod sys_probe;
 mod system_notify;
@@ -65,6 +67,7 @@ mod tolerant;
 mod ui;
 mod ui_sound;
 mod updater;
+mod url_scheme;
 mod voice;
 mod window_hold;
 mod window_show;
@@ -84,6 +87,14 @@ fn main() -> anyhow::Result<()> {
         "update fixture binary requires an isolated test installation"
     );
     if crash::helper()? {
+        return Ok(());
+    }
+    // a link opened while a viewer runs goes to it, before this one opens
+    // anything (LLAppViewer::initConfiguration, SLURLPassToOtherInstance)
+    if let Some(url) = cli::get().url.as_deref()
+        && external_url::classify(url) != external_url::Request::Ignored
+        && slurl_handoff::hand_off(url)
+    {
         return Ok(());
     }
     aurora_i18n::select("default", cli::get().language.as_deref());

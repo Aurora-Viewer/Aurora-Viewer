@@ -50,6 +50,7 @@ mod double_click;
 mod env_apply;
 mod env_day_editor;
 mod env_editor;
+mod external_links;
 mod gestures;
 mod hover_height;
 mod hover_tips;
@@ -398,6 +399,8 @@ pub struct App {
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
+    /// The media filter's question on screen.
+    media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -505,6 +508,8 @@ pub struct App {
     /// After the link with the region was lost: the grid, the user and the
     /// place "Reconnect" goes back to (ui/link_health.rs).
     reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
+    /// SLURLs from outside and the command line's login (app/external_links.rs).
+    external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
     demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
@@ -783,6 +788,7 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
             && std::env::var_os("AURORA_DEMO_AO").is_none()
@@ -982,6 +988,7 @@ impl App {
             object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
+            media_filter_prompt: Default::default(),
             script_dialogs_were: 0,
             beacon_sound_at: None,
             wind_sound: Default::default(),
@@ -1047,6 +1054,7 @@ impl App {
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
+            external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
             remote_object: None,
@@ -1459,6 +1467,9 @@ impl App {
             if let NetCommand::EditInventory { request, change } = &cmd {
                 let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone());
                 self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
+            if crate::world::received_items::demo_accept(&mut self.world, &cmd) {
                 return;
             }
             if let NetCommand::UploadInventoryThumbnail {
@@ -1905,6 +1916,9 @@ impl App {
             if let Some((_, _, place)) = self.reconnect_place.take() {
                 log::info!("demo login: reconnect to {}", place.to_login_string());
             }
+            if let Some(l) = &self.login_form.start_slurl {
+                log::info!("demo login: start at {}", crate::external_url::place_label(l));
+            }
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
@@ -1924,7 +1938,14 @@ impl App {
             .take()
             .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
             .map(|(_, _, place)| place);
-        let start = reconnect.unwrap_or_else(|| match self.settings.start_location.as_str() {
+        // then a SLURL given from outside (LLStartUp::getStartSLURL)
+        let slurl = self.login_form.start_slurl.as_ref().map(|l| StartLocation::Region {
+            name: l.region.clone(),
+            x: l.pos.x.round() as u32,
+            y: l.pos.y.round() as u32,
+            z: l.pos.z.round() as u32,
+        });
+        let start = reconnect.or(slurl).unwrap_or_else(|| match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
                 name: self.settings.start_region.trim().to_owned(),
@@ -2072,6 +2093,9 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if self.world.received_items_event(&ev) {
+            return;
+        }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
             if self.bridge_services.owns(request) {
@@ -2490,6 +2514,11 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 if !self.demo {
+                    let root = self.world.inventory.root;
+                    self.inventory_ui.load_received(
+                        crate::settings::account_dir(&l.agent_id).join(format!("received-{root}.json")),
+                        root,
+                    );
                     self.settings.select_hover_account(l.agent_id);
                     self.settings.save();
                 }
@@ -2537,6 +2566,8 @@ impl App {
                 self.login_form.adding = false;
                 self.login_form.add_return = None;
                 self.login_form.editing = false;
+                // a start SLURL serves one login
+                self.login_form.start_slurl = None;
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
@@ -3953,6 +3984,87 @@ impl App {
         self.wind_sound.update(self.audio_engine.as_ref(), &input, dt);
     }
 
+    /// The media filter's question while one waits (the alerts of
+    /// filterMediaUrl / filterAudioUrl), its answer kept as asked. The first
+    /// one explains the filter and offers to turn it off (EnableMediaFilter).
+    fn media_filter_question(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        use crate::media::filter::Remember;
+        use ui::media_filter::Answer;
+        if !self.settings.media.filter {
+            return;
+        }
+        let first_use = !self.settings.media.filter_explained;
+        let Some(q) = self.world.media_filter.question() else {
+            return;
+        };
+        let Some(answer) = ui::media_filter::prompt(ctx, p, q, first_use, &mut self.media_filter_prompt) else {
+            return;
+        };
+        let url = q.url.clone();
+        let filter = &mut self.world.media_filter;
+        match answer {
+            Answer::Allow(remember) => filter.answer(&url, true, remember),
+            Answer::Deny(remember) => filter.answer(&url, false, remember),
+            Answer::TurnOff => {
+                log::info!("media filter: turned off from its first question");
+                self.settings.media.filter = false;
+                filter.answer(&url, true, Remember::Once);
+            }
+        }
+        if first_use || !self.settings.media.filter {
+            self.settings.media.filter_explained = true;
+            // the demo leaves the shared demo profile alone
+            if !self.demo {
+                self.settings.save();
+            }
+        }
+    }
+
+    /// The demo's media filter stays in memory: the demo account's file
+    /// would carry one run's answers into the next.
+    /// AURORA_DEMO_MEDIA_FILTER: `ask` (or `1`) starts a parcel media on a
+    /// site the list does not know, `first` the same with the first use's
+    /// explanation, `music` the parcel music on such a site, `list` puts a
+    /// few sites in the list (Preferences › Sound and voice › Media).
+    fn demo_media_filter(&mut self) {
+        use crate::media::filter::{Action, Edit, MediaFilter};
+        self.world.media_filter = MediaFilter::default();
+        let Ok(mode) = std::env::var("AURORA_DEMO_MEDIA_FILTER") else {
+            return;
+        };
+        // the scenario shows the filter whatever the demo profile says
+        self.settings.media.filter = true;
+        self.settings.media.filter_explained = mode != "first";
+        match mode.as_str() {
+            "ask" | "1" | "first" => {
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    let pc = Arc::make_mut(parcel);
+                    pc.media_url = "https://media.example.com/welcome/index.html".into();
+                    pc.media.mime = "text/html".into();
+                    pc.media.media_id = crate::demo::parcel_media_texture();
+                    pc.media.auto_scale = true;
+                }
+                self.media.play_parcel(&self.world, &self.settings.media);
+            }
+            "music" => {
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    Arc::make_mut(parcel).music_url = "http://radio.example.org:8000/live".into();
+                }
+                self.music_playing = true;
+            }
+            "list" => {
+                for (site, action) in [
+                    ("video.example.com", Action::Allow),
+                    ("tracker.example.net", Action::Deny),
+                    ("https://radio.example.org/live.mp3", Action::Allow),
+                ] {
+                    self.world.media_filter.apply(Edit::Set(site.into(), action));
+                }
+            }
+            _ => log::warn!("AURORA_DEMO_MEDIA_FILTER: unknown mode {mode}"),
+        }
+    }
+
     fn update_audio(&mut self) {
         let in_world = self.in_world();
         let url = if in_world {
@@ -3984,7 +4096,21 @@ impl App {
             Some(u) if u.starts_with("http://") || u.starts_with("https://") => u.clone(),
             _ => url,
         };
-        let want = if self.music_playing { url } else { String::new() };
+        let mut want = if self.music_playing { url } else { String::new() };
+        // the media filter (filterAudioUrl): nothing reaches the station
+        // before the resident answered; a refusal turns the radio off
+        if !want.is_empty() && self.settings.media.filter {
+            use crate::media::filter::{Source, Verdict};
+            match self.world.media_filter.check(&want, Source::Music) {
+                Verdict::Allow => {}
+                Verdict::Ask => want.clear(),
+                Verdict::Deny => {
+                    self.music_playing = false;
+                    self.music_override = None;
+                    want.clear();
+                }
+            }
+        }
         if want != self.stream_url {
             if want.is_empty() {
                 engine.stop_stream();
@@ -5807,6 +5933,15 @@ impl App {
         }
         self.options_ui.media_pack = self.plugin_pack.state();
         ui::web_view::set_plugins_status(&self.egui_ctx, self.plugin_pack.state());
+        // the media filter's list in the preferences: the account's while
+        // logged in, and the changes made there
+        for edit in std::mem::take(&mut self.options_ui.media_filter_edits) {
+            self.world.media_filter.apply(edit);
+        }
+        let rules = self.in_world().then(|| self.world.media_filter.rules());
+        if self.options_ui.media_filter.as_deref() != rules {
+            self.options_ui.media_filter = rules.map(<[_]>::to_vec);
+        }
         self.poll_inventory_images();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
@@ -5859,6 +5994,14 @@ impl App {
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
+        self.world.received_items.enabled = self.settings.sort_received_items;
+        self.world.received_items.enabled_since = self.settings.received_items_since;
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode.ends_with("received-filing"))
+        {
+            self.inventory_ui.expand_all = Some(true);
+        }
         self.sync_chat_log();
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
@@ -5886,12 +6029,17 @@ impl App {
             self.camera.shift(shift);
         }
         self.world.poll_inventory_cache();
+        let receipts = std::mem::take(&mut self.world.received_items.receipts);
+        self.inventory_ui.update_received(&mut self.world.inventory, receipts);
         self.world.poll_transcripts();
         self.update_hover_height();
         self.update_avatar_health();
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
+            if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
@@ -5979,6 +6127,9 @@ impl App {
             }
             // Background inventory changes, whatever the inventory window does.
             self.update_marketplace_listings();
+            for command in self.world.file_received_items(Instant::now()) {
+                self.send(command);
+            }
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -6493,6 +6644,9 @@ impl App {
                     .unwrap_or_default();
                 self.options_ui.media_running = self.media.loaded_count();
                 for msg in self.media.messages.drain(..) {
+                    self.world.system_message(msg);
+                }
+                for msg in std::mem::take(&mut self.world.media_filter.messages) {
                     self.world.system_message(msg);
                 }
                 // mouse moves over the focused media
@@ -10028,12 +10182,13 @@ impl App {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 }
                 self.sync_remembered_password();
-                let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
                 self.login_form.block_reason = self
                     .updater
                     .login_block_reason()
                     .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
+                self.command_line_login();
+                let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 a.login = ui::login::show(
                     ui,
                     &p,
@@ -11191,6 +11346,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }
+                self.media_filter_question(&ctx, &p);
                 ui::media::show(
                     &ctx,
                     &p,
@@ -13302,6 +13458,10 @@ impl ApplicationHandler for App {
                         | "received-sort-name"
                         | "aurora-received-sort"
                         | "aurora-received-sort-name"
+                        | "received-filing"
+                        | "aurora-received-filing"
+                        | "aurora-received-unread"
+                        | "aurora-received-unread-compact"
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
@@ -13355,6 +13515,12 @@ impl ApplicationHandler for App {
                         self.inventory_ui.selected = None;
                         self.inventory_ui.selection.clear();
                         self.settings.inventory.received_sort.folders_by_name = view.ends_with("-name");
+                    }
+                    if view.ends_with("received-filing") || view.starts_with("aurora-received-unread") {
+                        self.settings.sort_received_items = true;
+                        self.settings.received_items_since = 0;
+                        crate::world::received_items::demo(&mut self.world);
+                        self.inventory_ui.tab = usize::from(view.ends_with("received-filing"));
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;
@@ -13892,6 +14058,7 @@ impl ApplicationHandler for App {
                 }
                 self.media.play_parcel(&self.world, &self.settings.media);
             }
+            self.demo_media_filter();
         }
     }
 
@@ -14243,6 +14410,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.record_window_geometry();
         self.attention_window();
+        self.external_links();
         if self.gfx.as_ref().is_some_and(|g| !g.shown) {
             // Hidden windows may receive no RedrawRequested event. Keep
             // producing frames until a real presentation makes it visible,

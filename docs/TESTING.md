@@ -2635,11 +2635,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
+| `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
@@ -3225,7 +3227,8 @@ failure. Grid validation and any paid upload are performed by the human.
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
   version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
   group titles, `3:new` the reopened
-  conversations, `3:new2` the invitations to joined groups, `7:new` the music
+  conversations, `3:new2` the ignored conferences, `3:new3` the invitations
+  to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
@@ -3353,6 +3356,16 @@ failure. Grid validation and any paid upload are performed by the human.
   unread count only. Combine with `AURORA_DEMO_CONV=aurora:group` (or
   `bubbles:group`) so that her conversation is not the one shown.
 
+- **`AURORA_DEMO_CONFERENCE=1|<seconds>`**: every 20 seconds (or every
+  `<seconds>`) a conference invitation arrives, from Tess Touch (not a
+  friend) then from Orion (a friend) in turn, each in a new conference.
+  Settings off: each opens in Conversations › Conferences. With Preferences
+  › Chat › Groups and blocking › Ignore conferences (or Online status › Ad
+  hoc conferences › Ignore all and exit automatically) on, none opens;
+  "Report ignored conferences" adds a nearby chat line naming the inviter,
+  "Except from my friends" lets Orion's through and still ignores Tess's.
+  The log says `ignoring conference (ad-hoc) chat from <name>` for each.
+
 - **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's
   conversation), forty earlier messages come before the scenario's lines and
@@ -3377,6 +3390,14 @@ failure. Grid validation and any paid upload are performed by the human.
   (`aurora:conference`): Close, Hang up during its call, the transcript;
   `local`: the transcript only. The transcript rows are greyed in the demo
   (no transcript folder).
+- **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
+  `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
+  conversation holds two more messages of emoji alone: Nova's three
+  (🎉🎶🐺) after her "join me", our 👍 before "On my way!". What to see: in
+  the Aurora, Compact and Bubbles styles their pictures about 40 points
+  tall (2.4 times the text, sharp: the font's own bitmap), the messages
+  that mix text and emoji at the text's size; in the Legacy lines every
+  message at the text's size. Capture at frame 900.
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
@@ -4774,6 +4795,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
@@ -4968,6 +4990,18 @@ What the inventory must show with these scenarios:
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
+- **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
+  `ask` (or `1`) starts a parcel media on `media.example.com`, which the
+  filter asks about (the question is up from the first frames; nothing
+  loads until it is answered), `first` the same with the first use's
+  explanation and its "Do not filter media" button, `music` starts the
+  parcel music on `radio.example.org` (the log has no `parcel music:` line
+  before the answer), `list` puts three sites in the list of Preferences ›
+  Sound and voice › Media (`AURORA_DEMO_OPTIONS=7:end`). In the demo the
+  list and the answers stay in memory: no run changes the demo account's
+  `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
+  `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
+  profile's filter is on.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
@@ -6821,3 +6855,11 @@ screen-only/half/quarter exterior are Water 0.151/0.155/0.128 ms and total GPU
 1.16/1.08/1.17 ms, all at the 60 FPS cap. CPU parameter work is
 0.10/0.09/0.10 ms. Shared desktop load varies; these local simple-scene
 observations do not establish a general speedup or a busy-grid cost.
+
+### Received inventory filing
+
+`AURORA_DEMO_INVENTORY=received-filing` exercises new direct deliveries, an offline delivery, an intact folder and an accepted scripted gift below their sender/owner legacy names. `aurora-received-filing` shows the same fixture in Aurora's wide inventory. Both use the real filing state machine and synthetic inventory acknowledgements; at frame 700 the Received tree expands for capture. `aurora-received-unread` and `aurora-received-unread-compact` leave the Received tab unopened to show the combined red badge in the sidebar and compact tabs. Use `AURORA_CAPTURE_FRAMES=900`. Preferences > Aurora (`AURORA_DEMO_OPTIONS=13`) shows the OFF-by-default switch with the shared experimental icon; there is no warning paragraph below it. No grid access or old-inventory classification. On the grid, the human checks enabled/disabled direct and object-owner deliveries, offline retrieval, rejection, folder contents, and Marketplace purchases above the sender folders. Check another gift from the same sender raises the red badge after opening Received, that type destinations never override sender filing, and that empty sender folders move to Trash (MarketPlace and nonempty/unloaded folders stay).
+
+The Aurora page starts with Appearance. Received items and Water are its final two sections, in that order; use `AURORA_DEMO_OPTIONS=13:end` to capture the end of the page.
+
+Unread state is account-specific and survives reconnecting, restarting and clearing the inventory cache. On first use, existing history establishes a baseline without a red total. Check that reading Received and reconnecting shows no red badge, a new offline gift counts once, and an unread gift stays unread after restart. Automated regressions use real isolated state files and fresh inventory models, including old creation dates, late folder metadata, arrivals during initialization and a read before disk loading completes.

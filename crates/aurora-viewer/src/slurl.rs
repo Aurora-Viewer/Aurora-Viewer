@@ -4,7 +4,8 @@
 //!
 //! Accepted: `http(s)://maps.secondlife.com/secondlife/Region/x/y/z`,
 //! `slurl.com/secondlife/...`, `secondlife://Region/x/y/z`,
-//! `secondlife:///app/teleport/Region/x/y/z`, `Region/x/y/z`,
+//! `secondlife:///app/teleport/Region/x/y/z`,
+//! `secondlife:///secondlife/Region/x/y/z`, `Region/x/y/z`,
 //! `Region (x, y, z)`, `Region, x, y, z` and a bare region name.
 
 use glam::Vec3;
@@ -90,6 +91,8 @@ pub fn parse(input: &str) -> Option<Location> {
         "secondlife:///app/teleport/",
         "secondlife://app/teleport/",
         "secondlife:///app/region/",
+        // LLSLURL: the path "secondlife" names a place of the main grid
+        "secondlife:///secondlife/",
         "secondlife://",
         "https://maps.secondlife.com/secondlife/",
         "http://maps.secondlife.com/secondlife/",

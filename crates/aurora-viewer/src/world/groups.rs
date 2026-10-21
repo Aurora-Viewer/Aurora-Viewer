@@ -735,6 +735,83 @@ mod tests {
         ));
     }
 
+    /// Online status › Ad hoc conferences (LLIMMgr::addMessage, FSIgnoreAdHocSessions):
+    /// a stranger's conference is left unopened, a friend's opens when allowed,
+    /// a Linden's and a group's always do.
+    #[test]
+    fn ignored_conferences_are_left_unless_a_friend_or_a_linden_started_them() {
+        let (stranger, pal) = (Uuid::from_u128(7), Uuid::from_u128(8));
+        let invite = |n: u128, from: Uuid, name: &str| aurora_net::SessionInvite {
+            session: Uuid::from_u128(n),
+            from,
+            from_name: name.into(),
+            message: "hi".into(),
+            session_name: "Chat".into(),
+            offline: false,
+            timestamp: 0,
+        };
+        let left = |w: &mut World| -> Vec<Uuid> {
+            let out = std::mem::take(&mut w.groups.out);
+            out.into_iter()
+                .filter_map(|c| match c {
+                    NetCommand::SendImDialog { dialog, id, .. } if dialog == dialog::SESSION_LEAVE => Some(id),
+                    _ => None,
+                })
+                .collect()
+        };
+        let system_lines = |w: &World| w.chat.iter().filter(|l| l.kind == ChatKind::System).count();
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.social.friends = vec![crate::world::social::Friend {
+            id: pal,
+            online: true,
+            rights_given: 1,
+            rights_has: 1,
+        }];
+        // off (the default): every conference opens
+        w.on_session_invite(invite(1, stranger, "Tess Touch"));
+        assert!(w.groups.sessions.contains_key(&Uuid::from_u128(1)));
+        assert!(left(&mut w).is_empty());
+        w.status.cfg.ignore_adhoc = true;
+        w.on_session_invite(invite(2, stranger, "Tess Touch"));
+        assert!(!w.groups.sessions.contains_key(&Uuid::from_u128(2)), "not opened");
+        assert_eq!(left(&mut w), vec![Uuid::from_u128(2)]);
+        assert_eq!(system_lines(&w), 0, "silent unless reported");
+        // a friend is ignored too until "except my friends" is on
+        w.on_session_invite(invite(3, pal, "Pal Friend"));
+        assert_eq!(left(&mut w), vec![Uuid::from_u128(3)]);
+        w.status.cfg.adhoc_from_friends = true;
+        w.on_session_invite(invite(4, pal, "Pal Friend"));
+        assert!(w.groups.sessions.contains_key(&Uuid::from_u128(4)));
+        assert!(left(&mut w).is_empty());
+        w.on_session_invite(invite(5, stranger, "Tess Touch"));
+        assert_eq!(left(&mut w), vec![Uuid::from_u128(5)]);
+        // the report names who invited us, in nearby chat
+        w.status.cfg.report_ignored_adhoc = true;
+        w.on_session_invite(invite(6, stranger, "Tess Touch"));
+        assert_eq!(left(&mut w), vec![Uuid::from_u128(6)]);
+        assert_eq!(system_lines(&w), 1);
+        assert!(w.chat.back().is_some_and(|l| l.text.contains("Tess Touch")));
+        // a Linden always gets through
+        w.on_session_invite(invite(7, Uuid::from_u128(9), "Oz Linden"));
+        assert!(w.groups.sessions.contains_key(&Uuid::from_u128(7)));
+        assert!(left(&mut w).is_empty());
+        // a group's chat is not a conference
+        let group = Uuid::from_u128(10);
+        w.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Builders".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        w.on_session_invite(invite(10, stranger, "Tess Touch"));
+        assert!(w.groups.sessions.contains_key(&group));
+        assert!(left(&mut w).is_empty());
+    }
+
     #[test]
     fn splitting() {
         assert_eq!(split_im("hello"), vec!["hello"]);

@@ -53,6 +53,7 @@ pub mod map_tiles;
 pub mod marketplace;
 pub mod marketplace_listings;
 pub mod media;
+pub mod media_filter;
 pub mod menu;
 pub mod minimap;
 pub mod money_tracker;

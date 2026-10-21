@@ -699,6 +699,9 @@ pub struct Settings {
     /// elapsed time, including late loading and edit release. Off by default:
     /// the Legacy Viewer starts at asset activation and suspends during edits.
     pub synchronize_animations: bool,
+    /// Experimental filing of new deliveries by the sender's legacy name.
+    pub sort_received_items: bool,
+    pub received_items_since: i64,
     /// Project standing feet onto support and adapt landing recovery to its
     /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
     pub ground_avatar_feet: bool,
@@ -1420,6 +1423,8 @@ impl Default for Settings {
             classic_hover_tips: false,
             predict_own_motion: false,
             synchronize_animations: false,
+            sort_received_items: false,
+            received_items_since: 0,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,

@@ -57,6 +57,12 @@ pub struct OptionsUi {
     /// (cleared by the app).
     pub media_pack: crate::media::pack::PackState,
     pub media_pack_retry: bool,
+    /// The account's media filter list while logged in (set by the app when
+    /// it changes); the changes made here, applied by the app; the site
+    /// being typed.
+    pub media_filter: Option<Vec<crate::media::filter::Rule>>,
+    pub media_filter_edits: Vec<crate::media::filter::Edit>,
+    media_filter_typed: String,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
@@ -297,6 +303,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-image") => "photo-filled",
         value if value == aurora_i18n::text("ui-options-smoothness") => "dashboard-filled",
         value if value == aurora_i18n::text("ui-options-layout") => "layout-filled",
+        value if value == aurora_i18n::text("ui-options-slurl-links") => "link-filled",
         value if value == aurora_i18n::text("preferences-group-skin") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-size",
         value if value == aurora_i18n::text("ui-options-bundled-fonts") => "typography",
@@ -697,6 +704,41 @@ fn response_text(ui: &mut egui::Ui, p: &Palette, label: &str, text: &mut String)
 
 fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
     super::widgets::switch(ui, p, v).changed()
+}
+
+/// Whether the `secondlife:` links of web pages open in this viewer
+/// (`url_scheme.rs`): the system's state, not a saved setting, so outside
+/// the page's reset. The Legacy Viewer's installer asks it once.
+fn slurl_links(ui: &mut egui::Ui, p: &Palette) {
+    use crate::url_scheme::Handler;
+    group(ui, p, aurora_i18n::tr!("ui-options-slurl-links"), |ui| {
+        let handler = crate::url_scheme::handler();
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-slurl-links-open"),
+            aurora_i18n::tr!("ui-options-slurl-links-open-help"),
+            |ui| {
+                let mut on = handler == Handler::This;
+                if toggle(ui, p, &mut on) {
+                    let done = if on {
+                        crate::url_scheme::register()
+                    } else {
+                        crate::url_scheme::unregister()
+                    };
+                    if let Err(e) = done {
+                        log::warn!("secondlife links: {e}");
+                    }
+                    crate::url_scheme::refresh();
+                }
+                false
+            },
+        );
+        if let Handler::Other(program) = handler {
+            let note = aurora_i18n::tr!("ui-options-slurl-links-other", program = program);
+            ui.label(RichText::new(note).size(11.5).color(p.muted));
+        }
+    });
 }
 
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
@@ -2196,6 +2238,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     },
                 );
             });
+            if crate::url_scheme::supported() {
+                slurl_links(ui, p);
+            }
             group(ui, p, aurora_i18n::tr!("ui-options-layout"), |ui| {
                 c |= row(ui, p, aurora_i18n::tr!("bug-toolbar"), aurora_i18n::tr!("bug-toolbar-help"), |ui| {
                     toggle(ui, p, &mut s.show_bug_report)
@@ -2820,6 +2865,33 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-groups-without-notices"),
                     aurora_i18n::tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                     |ui| toggle(ui, p, &mut s.mute_groups_without_notices),
+                );
+                // Legacy Viewer › Chat (FSIgnoreAdHocSessions, FSReportIgnoredAdHocSession,
+                // FSDontIgnoreAdHocFromFriends): the same switches as Online status ›
+                // Ad hoc conferences
+                scroll_mark(ui, st);
+                let a = &mut s.autoresponse;
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-hint"),
+                    |ui| toggle(ui, p, &mut a.ignore_adhoc),
+                );
+                let on = a.ignore_adhoc;
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences-report"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-report-hint"),
+                    |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, &mut a.report_ignored_adhoc)).inner,
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences-friends"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-friends-hint"),
+                    |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, &mut a.adhoc_from_friends)).inner,
                 );
                 c |= row(
                     ui,

@@ -48,6 +48,10 @@ pub mod classifieds;
 /// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
 #[path = "demo_collisions.rs"]
 pub mod collisions;
+/// Conference invitations from a stranger and a friend in turn
+/// (AURORA_DEMO_CONFERENCE).
+#[path = "demo_conference.rs"]
+pub mod conference;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -893,7 +897,15 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         Bubbles::Friend | Bubbles::Legacy => {
             let friend = DEMO_FRIEND;
             let name = "Nova Example";
-            for l in [
+            // AURORA_DEMO_CONV_EMOJI=1: messages of emoji alone, drawn large
+            // (#483), among the others
+            let emoji_lines = std::env::var("AURORA_DEMO_CONV_EMOJI").is_ok().then(|| {
+                [
+                    line(ago(10), name, friend, ChatKind::Im, "🎉🎶🐺"),
+                    line(ago(3), &me, Uuid::nil(), ChatKind::Own, "👍"),
+                ]
+            });
+            let mut lines = vec![
                 line(
                     ago(26 * 60),
                     &me,
@@ -906,7 +918,11 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                 line(ago(11), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-join")),
                 line(ago(2), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-coming")),
                 line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-send-tp")),
-            ] {
+            ];
+            if let Some(extra) = emoji_lines {
+                lines.splice(4..4, extra);
+            }
+            for l in lines {
                 world.conversation_line(friend, l);
             }
         }
