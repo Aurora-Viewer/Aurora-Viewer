@@ -1003,6 +1003,12 @@ Text beside an icon, a badge or in a box is placed where epaint draws it
 the face's vertical shift rounded to the pixel); `ui/widgets/alignment_tests.rs`
 checks the shared widgets with every embedded font and a system font at
 several scales.
+A list over a footer (buttons, a note) goes through `widgets::above_footer`:
+the list gets exactly the room the footer measured, so the window never
+grows from frame to frame; `ui/widgets/steady_tests.rs`
+(`assert_window_steady`) runs a window's real `show` over frames, zooms and
+a larger text and checks that its rect stays put with its bottom button
+inside.
 `ui/widgets/keycap.rs` draws the keys of a shortcut (list of
 shortcuts, microphone panel). `ui/widgets/color.rs` is the compact colour picker (`color_button`,
 `color_panel`, RGB / HSV / hexadecimal conversions) and the eyedropper it shares

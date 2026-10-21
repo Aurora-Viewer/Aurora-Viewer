@@ -44,8 +44,10 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                 events,
                 ..Default::default()
             },
+            // every pass's actions, as the app handles them (a pass laid out
+            // again has no input of its own)
             |host| {
-                actions = show(
+                let pass = show(
                     host.ctx(),
                     &crate::theme::Theme::default().palette(),
                     &Icons::default(),
@@ -58,11 +60,12 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     &Default::default(),
                     true,
                 );
-                for action in &actions {
+                for action in &pass {
                     if let InvAction::Preview(item) = action {
                         resources.open_preview(host.ctx(), &world, *item);
                     }
                 }
+                actions.extend(pass);
                 resources.show(
                     host.ctx(),
                     &crate::theme::Theme::default().palette(),
