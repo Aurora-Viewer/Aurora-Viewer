@@ -109,6 +109,27 @@ pub fn show(
 mod tests {
     use super::*;
 
+    /// The window keeps its size with a long transcript over its field.
+    #[test]
+    fn the_window_keeps_its_size() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(600.0, 400.0), Vec2::new(300.0, 200.0)],
+            aurora_i18n::tr!("sim-console-hint"),
+            || {
+                let mut console = SimConsole::default();
+                for i in 0..20 {
+                    console.send(&format!("stats {i}"));
+                    console.reply(Ok(format!("Line {i} of the simulator's answer")));
+                }
+                (console, ConsoleInput::default())
+            },
+            |(console, input), ctx, p| {
+                show(ctx, p, &mut true, "Aurora", true, console, input);
+            },
+        );
+    }
+
     #[test]
     fn the_arrow_keys_walk_the_history() {
         let history = ["help".to_owned(), "stats".to_owned()];
