@@ -650,7 +650,7 @@ impl App {
 
     pub(super) fn apply_appearance_action(&mut self, action: crate::world::appearance::Action) {
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
-            self.panels.inventory = true;
+            ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             self.inventory_ui.show_original(&self.world.inventory, id);
             return;
         }
