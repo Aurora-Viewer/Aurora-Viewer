@@ -628,7 +628,8 @@ pub struct Settings {
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
-    /// stand still (the region restart alert, for now).
+    /// stand still (the region restart alert, the rez effect, the bounce of
+    /// a hovered name plate).
     pub reduce_motion: bool,
     /// Preferences › Accessibility › Colour blindness: the interface's
     /// colours adapted to a colour vision deficiency (`crate::colorblind`),
