@@ -33,6 +33,7 @@ pub mod fonts;
 pub mod gestures;
 pub mod group_profile;
 pub mod hover_height;
+pub mod hover_tips;
 pub mod hud;
 pub mod icons;
 pub mod inspect;

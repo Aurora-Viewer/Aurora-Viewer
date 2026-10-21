@@ -929,6 +929,21 @@ impl Session<'_> {
             }
             return;
         }
+        if info.sequence_id == crate::land::HOVERED_PARCEL_SEQ_ID {
+            // the hover tips' parcel (LLViewerParcelMgr::processParcelProperties
+            // keeps it apart from the agent's and the selection's)
+            if info.request_result != crate::land::PARCEL_RESULT_NO_DATA {
+                let handle = self.handle_of(sim);
+                emit(
+                    self.sh,
+                    NetEvent::HoverParcel {
+                        handle,
+                        parcel: Arc::new(info),
+                    },
+                );
+            }
+            return;
+        }
         if info.sequence_id >= BUILD_PARCEL_SEQ {
             // the build tools' requests (capacity line, land tool), any region
             let handle = self.handle_of(sim);

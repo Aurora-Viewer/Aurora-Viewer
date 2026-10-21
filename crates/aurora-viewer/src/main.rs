@@ -35,6 +35,7 @@ mod frame_profile;
 mod gestures;
 mod graphics_presets;
 mod imports;
+mod hover_tips;
 mod interaction;
 mod keybinds;
 mod link_trust;

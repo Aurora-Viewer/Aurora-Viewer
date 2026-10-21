@@ -1119,6 +1119,12 @@ pub enum NetEvent {
         sequence: i32,
         parcel: std::sync::Arc<ParcelInfo>,
     },
+    /// ParcelProperties of the parcel under the pointer
+    /// (HOVERED_PARCEL_SEQ_ID: the world's hover tips), any region.
+    HoverParcel {
+        handle: RegionHandle,
+        parcel: std::sync::Arc<ParcelInfo>,
+    },
 }
 
 /// One avatar record of the People API (GetDisplayNames "agents" entries,

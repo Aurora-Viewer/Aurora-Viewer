@@ -52,6 +52,7 @@ mod env_day_editor;
 mod env_editor;
 mod gestures;
 mod hover_height;
+mod hover_tips;
 mod hud_drag;
 mod imports;
 mod inspect;
@@ -351,6 +352,8 @@ pub struct App {
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
+    /// The world's hover tips (`app/hover_tips.rs`).
+    hover_tips: hover_tips::HoverTipsState,
     /// Fade-in of the look-at targets (`ui::lookat_targets`).
     look_at_fades: ui::lookat_targets::Fades,
     /// Offline demo: eye tracking on without touching the saved settings.
@@ -942,6 +945,7 @@ impl App {
             look_at_privacy: None,
             static_eyes_sent: None,
             look_hover: None,
+            hover_tips: Default::default(),
             look_at_fades: Default::default(),
             demo_look_at: false,
             demo_look_at_targets: false,
@@ -2375,6 +2379,7 @@ impl App {
                 }
             }
             NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),
+            NetEvent::HoverParcel { handle, parcel } => self.on_hover_parcel(handle, parcel),
             NetEvent::LoginProgress { message, fraction } => {
                 self.loading_stage = message.clone();
                 self.login_progress = Some((message, fraction));
@@ -2996,6 +3001,7 @@ impl App {
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
+            Action::HoverTips => self.toggle_hover_tips(),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -7088,6 +7094,8 @@ impl App {
             }
         }
         self.look_hover = None;
+        self.hover_tips.avatar = None;
+        let tips_on = self.hover_tips_on();
         if matches!(self.screen, Screen::World)
             && !self.build.open
             && !self.alt
@@ -7101,14 +7109,21 @@ impl App {
         {
             let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
+                let ray = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1);
                 let (point, idx) = self.scene.hover_pick(
                     &self.world,
-                    gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
+                    ray,
                     gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                     self.settings.draw_distance,
                 );
                 // the same pick gives the look-at its point
                 self.look_hover = point.map(|p| (idx, p));
+                // the hover tips name the avatars the search leaves out,
+                // in front of what it found
+                if tips_on && let Some(ray) = ray {
+                    let far = point.map_or(self.settings.draw_distance, |p| (p - ray.0).length() + 0.05);
+                    self.hover_tips.avatar = self.scene.avatar_on_ray(&self.world, ray, far);
+                }
                 idx
             });
             if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
@@ -8869,6 +8884,13 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
+            BarAction::HoverTips(menu) => {
+                let tips = &mut self.settings.hover_tips;
+                tips.enabled = menu.enabled;
+                tips.land = menu.land;
+                tips.all_objects = menu.all_objects;
+                self.settings.save();
+            }
             BarAction::SystemIsland(shown) => {
                 self.settings.system_island = shown;
                 self.settings.save();
@@ -9992,6 +10014,11 @@ impl App {
                 if !self.camera.mouselook() && !held {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
+                // the hover tips of what the pointer rested on (none in
+                // mouselook nor over a held photo)
+                if let Some(action) = self.draw_hover_tips(&ctx, &p, !self.camera.mouselook() && !held) {
+                    a.ctx_action = Some(action);
+                }
                 ui::sky_beacons::draw(
                     &ctx,
                     &p,
@@ -10091,6 +10118,11 @@ impl App {
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),
                     health: self.health_menu(),
+                    hover_tips: ui::bars::HoverTipsMenu {
+                        enabled: self.settings.hover_tips.enabled,
+                        land: self.settings.hover_tips.land,
+                        all_objects: self.settings.hover_tips.all_objects,
+                    },
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),

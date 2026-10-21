@@ -1012,6 +1012,7 @@ mod tests {
             interface_hidden: false,
             interface_keys: String::new(),
             health: Default::default(),
+            hover_tips: Default::default(),
         }
     }
 
