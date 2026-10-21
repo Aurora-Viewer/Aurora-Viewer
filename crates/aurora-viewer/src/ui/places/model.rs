@@ -23,6 +23,10 @@ const ASSET_LANDMARK: i32 = 3;
 /// visit of it: a parcel's landing point puts the arrival away from the
 /// landmark's own position.
 pub const VISIT_RADIUS: f64 = 64.0;
+/// It also has to be this close in height: a floor above or a skybox over
+/// the landmark is another spot of the parcel, which the history keeps as
+/// its own place (#759).
+pub const VISIT_HEIGHT: f64 = 5.0;
 
 /// How the landmarks are ordered (Preferences › Aurora keeps the choice).
 pub use crate::settings::PlacesSort;
@@ -114,8 +118,10 @@ impl Catalog {
             Key::Visit(i) => {
                 let entry = history.get(i)?;
                 match self.owner.get(&i).and_then(|a| self.landmark(*a)) {
-                    // a visit of a landmark: the landmark, at that date
+                    // a visit of a landmark: the landmark, at that date and
+                    // at the spot of the arrival
                     Some(lm) => Some(Place {
+                        global: Some(entry.global),
                         last_visit: Some(entry.date),
                         history: Some(i),
                         ..lm.clone()
@@ -225,7 +231,7 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
         });
     }
     // the visits: each history entry goes to the nearest landmark of its
-    // region within VISIT_RADIUS
+    // region within VISIT_RADIUS and VISIT_HEIGHT
     for (i, entry) in history.iter().enumerate() {
         let nearest = cat
             .landmarks
@@ -234,7 +240,7 @@ pub fn catalog(inv: &Inventory, landmarks: &Landmarks, map: &WorldMap, history: 
             .filter_map(|(n, p)| {
                 let g = p.global?;
                 let d = (g.truncate() - entry.global.truncate()).length();
-                (d <= VISIT_RADIUS).then_some((n, d))
+                (d <= VISIT_RADIUS && (g.z - entry.global.z).abs() <= VISIT_HEIGHT).then_some((n, d))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1));
         match nearest {
@@ -534,11 +540,30 @@ mod tests {
             [(4, "Place de l'Horloge", "Brumevale"), (5, "Clairvent", "Brumevale")],
             "the region of a known cell comes from the map"
         );
-        // a history line of a landmark shows the landmark at that date
+        // a history line of a landmark shows the landmark at that date, at
+        // the spot of the arrival
         let line = cat.place(Key::Visit(0), &history).expect("line");
         assert_eq!((line.item, line.last_visit), (Some(id(100)), Some(10.0)));
+        assert_eq!(line.global, Some(history[0].global));
         let line = cat.place(Key::Visit(3), &history).expect("line");
         assert!(!line.is_landmark());
+    }
+
+    #[test]
+    fn a_visit_at_another_height_is_its_own_place() {
+        // the landmark is at 22 m; the other spot of the parcel is a meter
+        // beside it, 30 m higher (#759)
+        let mut deck = visit("Plage, Brumevale", 241.0, 20.0, 20.0);
+        deck.global.z = 52.0;
+        let history = vec![visit("Plage, Brumevale", 240.0, 21.0, 10.0), deck];
+        let cat = catalog(&inventory(), &resolved(), &map(), &history, false);
+        assert_eq!(cat.owner.get(&0), Some(&id(1003)));
+        assert_eq!(cat.owner.get(&1), None);
+        assert_eq!(cat.landmark(id(1003)).and_then(|p| p.last_visit), Some(10.0));
+        let line = cat.place(Key::Visit(1), &history).expect("line");
+        assert!(!line.is_landmark());
+        assert_eq!((line.name.as_str(), line.global), ("Plage", Some(history[1].global)));
+        assert_eq!(cat.visits.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [1]);
     }
 
     #[test]

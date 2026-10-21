@@ -646,6 +646,13 @@ pub fn history() -> Vec<HistoryItem> {
             12.0 * DAY,
         ),
         item(aurora_i18n::tr!("common-pine-grove"), at((999, 1000), 200.0, 30.0, 24.0), 3.2 * DAY),
+        // the same parcel as the lagoon's landmark, on a deck above it: a
+        // place of its own in the history
+        item(
+            aurora_i18n::tr!("demo-place-aurora-lagoon-boreal-lagoon"),
+            at((1001, 1000), 64.0, 196.0, 60.0),
+            2.0 * DAY,
+        ),
         item(
             aurora_i18n::tr!("demo-place-nordheim-hall-nordheim"),
             at((1000, 1001), 128.0, 64.0, 40.0),
