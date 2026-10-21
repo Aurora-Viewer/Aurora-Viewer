@@ -357,3 +357,221 @@ fn the_banner_is_a_few_soft_pixels_of_the_picture() {
     let img = banner_image(8, 4, &[]);
     assert_eq!(img.size, [12, 6]);
 }
+
+struct PhotoFixture {
+    ctx: egui::Context,
+    world: World,
+    profiles: super::super::ProfileUi,
+    images: HashMap<Uuid, egui::TextureHandle>,
+    pics: HashMap<Uuid, egui::TextureHandle>,
+    emoji: Emoji,
+    id: Uuid,
+    classic: bool,
+    time: f64,
+}
+
+impl PhotoFixture {
+    fn new(classic: bool, compact: bool) -> Self {
+        let (mut world, id) = friend_world();
+        let ctx = egui::Context::default();
+        let main = Uuid::from_u128(7001);
+        let first = Uuid::from_u128(7002);
+        let texture = |name| ctx.load_texture(name, egui::ColorImage::filled([128, 64], Color32::GRAY), Default::default());
+        let (main_texture, first_texture) = (texture("main photo"), texture("first life photo"));
+        world.profiles.insert(aurora_net::AvatarProfile {
+            id,
+            sl_image: main,
+            fl_image: first,
+            fl_about: "First life biography".into(),
+            ..Default::default()
+        });
+        let mut profiles = super::super::ProfileUi::default();
+        let mut window = Window::new(id);
+        window.tab = TAB_RL;
+        profiles.windows.push(window);
+        if compact {
+            profiles.demo(&ctx, id, "compact:4");
+        }
+        Self {
+            ctx,
+            world,
+            profiles,
+            images: HashMap::from([(main, main_texture.clone()), (first, first_texture)]),
+            pics: HashMap::from([(id, main_texture)]),
+            emoji: Emoji::load(),
+            id,
+            classic,
+            time: 0.0,
+        }
+    }
+
+    fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
+        self.time += 1.0 / 60.0;
+        let browser = crate::media::browser_settings(std::path::Path::new("."), "en");
+        let web = WebContext {
+            paths: None,
+            browser: &browser,
+            cookie: None,
+            profile_base: None,
+        };
+        let mut output = self.ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            },
+            |host| {
+                let actions = self.profiles.show(
+                    host.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    &mut self.emoji,
+                    &self.pics,
+                    &self.images,
+                    &mut self.world,
+                    &mut HashSet::new(),
+                    &web,
+                    self.classic,
+                );
+                assert!(actions.is_empty(), "previewing a picture never changes the profile");
+            },
+        );
+        output.textures_delta.clear();
+        output
+    }
+
+    fn settle(&mut self) -> egui::FullOutput {
+        for _ in 0..7 {
+            self.frame(Vec::new());
+        }
+        self.frame(Vec::new())
+    }
+
+    fn click(&mut self, point: Pos2) {
+        for pressed in [true, false] {
+            self.frame(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
+    }
+
+    fn image_rect(&self) -> Rect {
+        self.ctx
+            .data(|data| data.get_temp(egui::Id::new(("profile_photo_preview", self.id))))
+            .expect("preview image")
+    }
+}
+
+fn photo_shape(output: &egui::FullOutput, find: impl Fn(&egui::Shape) -> Option<Rect>) -> Rect {
+    fn visit(shape: &egui::Shape, find: &impl Fn(&egui::Shape) -> Option<Rect>) -> Option<Rect> {
+        find(shape).or_else(|| match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| visit(shape, find)),
+            _ => None,
+        })
+    }
+    output
+        .shapes
+        .iter()
+        .find_map(|shape| visit(&shape.shape, &find))
+        .expect("visible photo control")
+}
+
+#[test]
+fn profile_photo_click_opens_the_right_asset_in_both_profile_styles_and_compact_layout() {
+    for (classic, compact) in [(false, false), (false, true), (true, false)] {
+        for first_life in [false, true] {
+            let mut f = PhotoFixture::new(classic, compact);
+            f.profiles.windows[0].tab = if first_life { TAB_RL } else { TAB_SL };
+            let output = f.settle();
+            let asset = Uuid::from_u128(if first_life { 7002 } else { 7001 });
+            let texture = f.images[&asset].id();
+            let rect = photo_shape(&output, |shape| match shape {
+                egui::Shape::Mesh(mesh) if mesh.texture_id == texture => Some(mesh.calc_bounds()),
+                egui::Shape::Rect(rect) if rect.brush.as_ref().is_some_and(|brush| brush.fill_texture_id == texture) => Some(rect.rect),
+                _ => None,
+            });
+            f.click(rect.center());
+            let photo = f.profiles.windows[0].photo.as_ref().expect("photo opens on click");
+            assert_eq!(matches!(photo.slot, PictureSlot::FirstLife), first_life);
+            assert_eq!(photo.asset, asset);
+            f.settle();
+            assert!((f.image_rect().aspect_ratio() - 2.0).abs() < 0.01);
+        }
+    }
+}
+
+#[test]
+fn changing_or_removing_a_profile_photo_drops_old_pixels_and_retains_display_options() {
+    let mut f = PhotoFixture::new(false, false);
+    f.profiles.windows[0].open_photo(PictureSlot::FirstLife, Uuid::from_u128(7002));
+    let view = &mut f.profiles.windows[0].photo.as_mut().expect("preview").view;
+    view.display.ratio = 6;
+    view.dimensions = Some((1024, 512));
+    view.image = Some(f.images[&Uuid::from_u128(7002)].clone());
+    let mut scene = crate::scene::Scene::new(std::env::temp_dir(), f.world.avatar_lib.clone());
+    let replacement = Uuid::from_u128(7003);
+    f.world.profiles.insert(aurora_net::AvatarProfile {
+        id: f.id,
+        fl_image: replacement,
+        ..Default::default()
+    });
+    f.profiles.prepare_photos(&f.ctx, &mut scene, &f.world);
+    let photo = f.profiles.windows[0].photo.as_ref().expect("replacement preview");
+    assert_eq!(photo.asset, replacement);
+    assert_eq!(photo.view.display.ratio, 6);
+    assert!(photo.view.dimensions.is_none());
+    assert!(photo.view.image.is_none());
+    assert!(f.profiles.wanted_images.contains(&replacement));
+    f.world.profiles.insert(aurora_net::AvatarProfile {
+        id: f.id,
+        ..Default::default()
+    });
+    f.profiles.prepare_photos(&f.ctx, &mut scene, &f.world);
+    assert!(f.profiles.windows[0].photo.is_none());
+}
+
+#[test]
+fn profile_photo_controls_change_ratio_and_use_full_dimensions_for_native_pixels() {
+    let mut f = PhotoFixture::new(false, false);
+    f.profiles.windows[0].open_photo(PictureSlot::FirstLife, Uuid::from_u128(7002));
+    let full = f.ctx.load_texture(
+        "full photo",
+        egui::ColorImage::filled([1024, 512], Color32::GRAY),
+        Default::default(),
+    );
+    let view = &mut f.profiles.windows[0].photo.as_mut().expect("preview").view;
+    view.image = Some(full);
+    view.dimensions = Some((1024, 512));
+    let output = f.settle();
+    let text = |output: &egui::FullOutput, label: &str| {
+        photo_shape(output, |shape| match shape {
+            egui::Shape::Text(text) if text.galley.text() == label => Some(Rect::from_min_size(text.pos, text.galley.size())),
+            _ => None,
+        })
+    };
+    text(
+        &output,
+        &aurora_i18n::tr!("resource-preview-dimensions", width = "1024", height = "512"),
+    );
+    f.click(text(&output, aurora_i18n::tr!("resource-preview-original-ratio")).center());
+    let output = f.settle();
+    f.click(text(&output, "16:9").center());
+    let output = f.settle();
+    assert!((f.image_rect().aspect_ratio() - 16.0 / 9.0).abs() < 0.01);
+    f.click(text(&output, aurora_i18n::tr!("resource-preview-actual")).center());
+    f.settle();
+    assert_eq!(f.image_rect().size(), Vec2::new(1024.0, 512.0));
+    f.ctx.set_pixels_per_point(2.0);
+    f.settle();
+    assert_eq!(f.image_rect().size(), Vec2::new(512.0, 256.0));
+    assert!(
+        egui::DragAndDrop::payload::<crate::ui::inventory::InvDrag>(&f.ctx).is_none(),
+        "photos are not inventory cargo"
+    );
+}
