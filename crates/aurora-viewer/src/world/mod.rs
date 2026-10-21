@@ -320,6 +320,8 @@ pub struct World {
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
     pub rlva: rlva::Rlva,
+    pub rlva_privacy: rlva::privacy::TextFilter,
+    pub rlva_hover_privacy: rlva::privacy::TextFilter,
     /// Derendered objects and residents, and the asset blacklist.
     pub derender: derender::Derender,
     /// Our groups and the group / conference chat sessions.
@@ -575,6 +577,8 @@ impl World {
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             rlva: rlva::Rlva::default(),
+            rlva_privacy: Default::default(),
+            rlva_hover_privacy: Default::default(),
             derender: derender::Derender::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
@@ -670,6 +674,9 @@ impl World {
         let Some((global, _)) = self.tp_record.take() else {
             return;
         };
+        if self.rlva.has("showloc") {
+            return;
+        }
         let region = self
             .main_region
             .and_then(|h| self.regions.get(&h))
@@ -2980,9 +2987,13 @@ impl World {
                 self.rlva.environment = Some((actor, self.eep.current().0));
             }
             self.inventory.rlva_preview_mask = self.rlva.preview_mask();
+            self.refresh_rlva_privacy();
             return;
         }
         let mut c = c;
+        if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
+            c.message = text;
+        }
         self.rlva.receive_chat(&mut c, self.agent_id);
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
@@ -3665,6 +3676,9 @@ impl World {
 
     /// Name of an avatar by id (from its object name-values).
     pub fn avatar_name(&self, id: &Uuid) -> Option<String> {
+        if !id.is_nil() && !self.rlva_can_name(*id) {
+            return Some(rlva::privacy::anonymous(*id).display_name.clone());
+        }
         let idx = self.objects.index_of_uuid(id)?;
         self.objects.get(idx)?.display_name()
     }
@@ -3820,7 +3834,11 @@ impl World {
 
     /// `id` talked with us now (LLRecentPeople::add), here.
     pub fn met(&mut self, id: Uuid) {
-        let region = self.region_name();
+        let region = if self.rlva.has("showloc") {
+            String::new()
+        } else {
+            self.region_name()
+        };
         let group = self.groups.is_member(&id);
         self.recent.add(self.agent_id, id, group, &region, std::time::SystemTime::now());
     }

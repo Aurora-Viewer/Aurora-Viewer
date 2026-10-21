@@ -31,6 +31,19 @@ pub fn height_offset(text: &str, pelvis_to_foot: f32) -> Option<f32> {
 }
 
 impl Rlva {
+    pub fn silhouette_distance(&self) -> Option<f32> {
+        self.camera_value("setcam_avdist")
+            .map(|_| self.camera_limit("setcam_avdist", 0.0, true))
+    }
+    pub fn camera_texture(&self) -> Option<Uuid> {
+        self.camera_value("setcam_textures").and_then(|value| {
+            if value.is_empty() {
+                Some(aurora_prim::te::DEFAULT_TEXTURE)
+            } else {
+                Uuid::parse_str(value).ok()
+            }
+        })
+    }
     pub fn camera_owner(&self) -> Option<Uuid> {
         self.rules_for("setcam", Uuid::nil()).next().map(|(id, _)| id)
     }
@@ -81,5 +94,41 @@ impl Rlva {
         let hi = self.camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false).max(lo);
         s.fov = s.fov.clamp(lo, hi);
         s
+    }
+}
+
+impl super::super::World {
+    /// LLAgent::needsRenderAvatar/Head and own attachment visibility. HUDs
+    /// stay visible; showselfhead uses the native attachment group, not names.
+    pub fn rlva_object_visible(&self, index: usize) -> bool {
+        if !self.rlva.has("showself") && !self.rlva.has("showselfhead") {
+            return true;
+        }
+        let mut root = index;
+        for _ in 0..64 {
+            let Some(object) = self.objects.get(root) else {
+                return true;
+            };
+            let Some(parent) = self.objects.parent_of(object).and_then(|p| self.objects.get(p).map(|o| (p, o))) else {
+                return true;
+            };
+            if parent.1.is_avatar() {
+                if parent.1.full_id != self.agent_id {
+                    return true;
+                }
+                let point = self.avatar_lib.attach_points.get(&object.attachment_point());
+                if point.is_some_and(|p| p.hud) {
+                    return true;
+                }
+                return !self.rlva.has("showself") && !(self.rlva.has("showselfhead") && point.is_some_and(|p| p.group == 3));
+            }
+            root = parent.0;
+        }
+        true
+    }
+
+    pub fn rlva_body_part_visible(&self, own: bool, part: &str) -> bool {
+        !own || (!self.rlva.has("showself")
+            && !(self.rlva.has("showselfhead") && matches!(part, "head" | "hair" | "eyelashes" | "eye_left" | "eye_right")))
     }
 }

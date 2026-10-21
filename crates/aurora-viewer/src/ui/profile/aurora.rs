@@ -190,6 +190,9 @@ fn status_of(world: &World, id: &Uuid, own: bool, profile: Option<&AvatarProfile
 
 /// The region of a resident the viewer sees (its coarse location), or ours.
 fn region_of(world: &World, id: &Uuid, own: bool) -> Option<String> {
+    if world.rlva.has("showloc") {
+        return None;
+    }
     if own {
         return Some(world.region_name()).filter(|n| !n.is_empty());
     }

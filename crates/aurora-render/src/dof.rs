@@ -227,7 +227,7 @@ impl Dof {
         params: &DepthOfField,
         hdr: wgpu::TextureFormat,
         post: &PostInputs,
-    ) -> &wgpu::BindGroup {
+    ) -> (&wgpu::BindGroup, &wgpu::TextureView) {
         let (hw, hh) = (size.0.div_ceil(2), size.1.div_ceil(2));
         let u = DofU {
             inv_proj: proj.inverse().to_cols_array_2d(),
@@ -322,6 +322,6 @@ impl Dof {
         run(encoder, "dof dilate", &[&t.dilated], dilate, &bg(&t.tiles, &t.half, &t.half));
         run(encoder, "dof blur", &[&t.far, &t.near], blur, &bg(&t.half, &t.dilated, &t.tiles));
         run(encoder, "dof composite", &[&t.out], composite, &bg(input, &t.far, &t.near));
-        &t.post_bg
+        (&t.post_bg, &t.out)
     }
 }

@@ -29,6 +29,7 @@ const MESSAGE_CHARS: usize = 160;
 
 #[derive(Default)]
 pub struct NotifUi {
+    pub privacy: crate::world::rlva::privacy::TextFilter,
     pub open: bool,
     /// Bottom-left of the bell (where the list opens).
     pub anchor: Option<egui::Pos2>,
@@ -666,6 +667,7 @@ pub fn show(
                                 &mut nui.center.query,
                                 ctx.content_rect().height() * 0.7,
                                 &mut asks,
+                                &nui.privacy,
                             );
                             return;
                         }

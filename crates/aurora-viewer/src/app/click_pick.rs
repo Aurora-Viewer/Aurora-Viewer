@@ -312,6 +312,9 @@ impl App {
     /// run. None: just asked from the renderer; the caller returns, and its
     /// click is run again when the answer is there.
     pub(super) fn click_pick(&mut self) -> Option<Picked> {
+        if self.rlva_overlay_blocks() {
+            return None;
+        }
         if let Some(picked) = self.clicks.in_hand {
             return Some(picked);
         }

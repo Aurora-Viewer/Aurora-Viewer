@@ -1373,6 +1373,12 @@ pub enum NetCommand {
         channel: i32,
         chat_type: ChatType,
     },
+    /// One bounded script-protocol answer, including an empty answer.
+    /// Unlike user chat this must never be split or redirected.
+    ChatReply {
+        message: String,
+        channel: i32,
+    },
     RequestObjects {
         handle: RegionHandle,
         local_ids: Vec<u32>,

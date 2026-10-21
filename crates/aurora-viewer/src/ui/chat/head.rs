@@ -27,9 +27,9 @@ struct Identity {
 fn identity(world: &World, st: &ChatUi) -> Identity {
     let Some(id) = st.selected else {
         // where we stand: the parcel (the location bar's name), else the region
-        let region = Some(world.parcel_name.clone())
+        let region = Some(world.rlva_parcel_label())
             .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| world.region_name());
+            .unwrap_or_else(|| world.rlva_region_label());
         let near = aurora_i18n::tr!("ui-chat-head-in-earshot", n = st.nearby_count);
         return Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),

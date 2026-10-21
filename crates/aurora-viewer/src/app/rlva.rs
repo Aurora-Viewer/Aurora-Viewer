@@ -3,9 +3,47 @@ use super::*;
 use uuid::Uuid;
 
 impl App {
+    pub(super) fn draw_rlva_overlays(&self, ui: &egui::Ui) {
+        if !self.world.rlva.has("setoverlay") {
+            return;
+        }
+        let painter = ui.painter();
+        for frame in self.world.rlva_overlay_frames(Instant::now()) {
+            if let Some(texture) = self.ui_images.get(&frame.texture) {
+                let [r, g, b, a] = frame.color;
+                // theme-guard: content — script-controlled image tint, not UI decoration.
+                let color = egui::Color32::from_rgba_unmultiplied(
+                    (r.clamp(0.0, 1.0) * 255.0) as u8,
+                    (g.clamp(0.0, 1.0) * 255.0) as u8,
+                    (b.clamp(0.0, 1.0) * 255.0) as u8,
+                    (a * 255.0) as u8,
+                );
+                painter.image(
+                    texture.id(),
+                    ui.ctx().content_rect(),
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    color,
+                );
+            }
+        }
+    }
+
+    pub(super) fn rlva_overlay_blocks(&self) -> bool {
+        let size = self.gfx.as_ref().map(|g| g.window.inner_size());
+        let Some(size) = size.filter(|s| s.width > 0 && s.height > 0) else {
+            return false;
+        };
+        let (u, v) = (self.cursor_pos.0 / size.width as f32, self.cursor_pos.1 / size.height as f32);
+        self.world
+            .rlva_overlay_frames(Instant::now())
+            .iter()
+            .any(|frame| frame.blocks_touch && self.ui_image_masks.get(&frame.texture).is_none_or(|mask| mask.hit(u, v)))
+    }
+
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         self.world.rlva.configure(self.settings.rlva_enabled);
+        self.media.enforce_focus(&self.world);
         if !self.settings.rlva_enabled && !self.appearance_ui.pending_actor.is_nil() {
             if let Some((_, sync)) = self.appearance_ui.pending.as_mut() {
                 *sync = false;
@@ -45,7 +83,7 @@ impl App {
         // Protocol replies are not user chat and must bypass chat redirection
         // and sendchannel, as RlvUtil::sendChatReply does.
         for command in std::mem::take(&mut self.world.rlva.out) {
-            if matches!(command, NetCommand::Chat { .. }) {
+            if matches!(command, NetCommand::ChatReply { .. }) {
                 self.net.send(command);
             } else {
                 self.send(command);
@@ -100,6 +138,39 @@ impl App {
         if self.frame_count == 700 {
             self.settings.rlva_enabled = mode != "disabled";
             self.world.rlva.configure(self.settings.rlva_enabled);
+            let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
+            let message = if scenario == "baseline" {
+                self.panels.settings = false;
+                "@clear".to_owned()
+            } else if let Some(effect) = scenario.strip_prefix("sphere-") {
+                let (number, params, strength) = match effect {
+                    "blur" => (1, "0/0/0/0", 8.0),
+                    "variable" => (2, "15/0/0/0", 4.0),
+                    "chromatic" => (3, "12/0/-12/0", 1.0),
+                    "pixel" => (4, "16/16/0/0", 1.0),
+                    _ => (0, "0/0/0/0", 0.9),
+                };
+                self.panels.settings = false;
+                format!(
+                    "@setsphere=n,setsphere_mode:{number}=force,setsphere_origin:1=force,setsphere_distmin:2=force,setsphere_distmax:15=force,setsphere_valuemin:0=force,setsphere_valuemax:{strength}=force,setsphere_param:{params}=force"
+                )
+            } else if scenario == "overlay" {
+                self.panels.settings = false;
+                format!(
+                    "@setoverlay=n,setoverlay_texture:{}=force,setoverlay_alpha:0.7=force,setoverlay_touch=n",
+                    crate::demo::TEX_HOLES
+                )
+            } else if matches!(scenario, "textures" | "silhouette" | "self" | "head") {
+                self.panels.settings = false;
+                match scenario {
+                    "textures" => format!("@setcam_textures:{}=n", crate::demo::TEX_GRADIENT),
+                    "silhouette" => "@camavdist:0=n".to_owned(),
+                    "self" => "@showself=n".to_owned(),
+                    _ => "@showselfhead=n".to_owned(),
+                }
+            } else {
+                "@fly=n,jump=n,unsit=n,sendchat=n,pay=n".to_owned()
+            };
             let event = aurora_net::ChatMessage {
                 from_name: "RLVa demo object".to_owned(),
                 source_id: Uuid::from_u128(0x726c7661),
@@ -107,7 +178,7 @@ impl App {
                 source_type: aurora_net::ChatSourceType::Object,
                 chat_type: aurora_net::ChatType::OwnerSay,
                 position: Vec3::ZERO,
-                message: "@fly=n,jump=n,unsit=n,sendchat=n,pay=n".to_owned(),
+                message,
             };
             self.world.apply(NetEvent::Chat(event));
             log::info!(
@@ -119,7 +190,7 @@ impl App {
                 self.world.rlva.has("sendchat")
             );
         }
-        if mode == "released" && self.frame_count == 760 {
+        if (mode == "released" || mode.ends_with("-released")) && self.frame_count == 760 {
             self.settings.rlva_enabled = false;
             self.world.rlva.configure(false);
             log::info!(
@@ -285,6 +356,15 @@ impl App {
                 continue;
             }
             if let Param::Reply(channel) = c.param {
+                if c.behaviour == "getcam_textures" {
+                    if c.option.is_empty() {
+                        self.world.rlva.reply(
+                            channel,
+                            self.world.rlva.camera_texture().map(|id| id.to_string()).unwrap_or_default(),
+                        );
+                    }
+                    continue;
+                }
                 let value = match c.behaviour.as_str() {
                     "getcam_avdist" => self.camera.position.distance(self.world.agent.position),
                     "getcam_fov" => self.camera.fov_y,

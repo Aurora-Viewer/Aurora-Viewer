@@ -29,6 +29,40 @@ fn enabled() -> Rlva {
 }
 
 #[test]
+fn rlva_visual_effect_lifetimes_capacity_and_disable_follow_the_issuing_object() {
+    let mut r = enabled();
+    command(
+        &mut r,
+        A,
+        "@setsphere=n,setsphere_color:0.1/0.2/0.3=force,setoverlay=n,setoverlay_texture:00000000-0000-0000-0000-000000000003=force",
+    );
+    assert_eq!(r.visuals.spheres[&A].sample(std::time::Instant::now()).0, [0.1, 0.2, 0.3, 0.0]);
+    assert_eq!(r.visuals.overlays[&A].texture, TARGET);
+    command(&mut r, B, "@setsphere_color:1/0/0=force");
+    assert!(!r.visuals.spheres.contains_key(&B), "modifiers require an active issuing object");
+    for i in 10..16 {
+        command(&mut r, Uuid::from_u128(i), "@setsphere=n");
+    }
+    assert_eq!(r.visuals.sphere_order.len(), 6);
+    command(&mut r, A, "@clear=setsphere");
+    assert!(!r.visuals.spheres.contains_key(&A));
+    assert!(r.visuals.overlays.contains_key(&A));
+    r.configure(false);
+    assert!(r.visuals.spheres.is_empty() && r.visuals.overlays.is_empty());
+}
+
+#[test]
+fn rlva_overlay_touch_mask_keeps_transparent_holes_and_matches_the_reference_threshold() {
+    let mut rgba = vec![0; 4 * 2 * 4];
+    rgba[3] = 32;
+    rgba[2 * 4 + 3] = 33;
+    let mask = effects::AlphaMask::from_rgba(4, 2, &rgba).unwrap();
+    assert!(!mask.hit(0.1, 0.5));
+    assert!(mask.hit(0.9, 0.5));
+    assert!(effects::AlphaMask::from_rgba(4, 2, &[0]).is_none());
+}
+
+#[test]
 fn rlva_is_explicitly_opt_in_and_disable_releases_everything() {
     assert!(!crate::settings::Settings::default().rlva_enabled);
     let decoded: crate::settings::Settings = serde_json::from_str("{}").expect("old settings");
@@ -119,6 +153,7 @@ fn sent(commands: Vec<NetCommand>) -> Vec<(String, i32, ChatType)> {
                 channel,
                 chat_type,
             } => (message, channel, chat_type),
+            NetCommand::ChatReply { message, channel } => (message, channel, ChatType::Shout),
             _ => panic!("chat"),
         })
         .collect()
@@ -164,7 +199,7 @@ fn rlva_queries_report_only_consumed_commands_and_object_scoped_status() {
     command(&mut r, B, "@getstatus=997");
     let replies = sent(std::mem::take(&mut r.out));
     assert_eq!(replies[0].0, "/fly");
-    assert_eq!(replies[1].0, "");
+    assert!(replies[1].0.split(';').any(|name| name == "setoverlay"));
     assert_eq!(replies[2].0, "");
 }
 
@@ -327,14 +362,14 @@ fn rlva_world_receives_commands_before_chat_and_blocks_real_action_variants() {
 fn rlva_notifications_include_duplicate_and_rejected_commands_and_stop_on_release() {
     let mut r = enabled();
     command(&mut r, A, "@notify:123;fly=n");
-    assert!(matches!(r.out.last(), Some(NetCommand::Chat { message, .. }) if message == "/notify:123;fly=n"));
+    assert!(matches!(r.out.last(), Some(NetCommand::ChatReply { message, .. }) if message == "/notify:123;fly=n"));
     r.out.clear();
     command(&mut r, B, "@fly=n,fly=n,fly:invalid=n,jump=n,fly=y");
     let messages: Vec<_> = r
         .out
         .iter()
         .filter_map(|c| match c {
-            NetCommand::Chat { channel: 123, message, .. } => Some(message.as_str()),
+            NetCommand::ChatReply { channel: 123, message, .. } => Some(message.as_str()),
             _ => None,
         })
         .collect();
@@ -600,7 +635,7 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
     assert_eq!(w.rlva.pending.len(), 1);
     w.rlva.appearance_busy = false;
     w.rlva_pending();
-    assert!(matches!(w.rlva.out.last(), Some(NetCommand::Chat { channel: 123, message, .. }) if message == "none"));
+    assert!(matches!(w.rlva.out.last(), Some(NetCommand::ChatReply { channel: 123, message, .. }) if message == "none"));
 }
 
 #[test]
@@ -679,4 +714,68 @@ fn rlva_stand_return_waits_for_a_successful_sit_and_is_cancelled_by_disabling() 
     w.rlva.stand_origin = Some(origin);
     w.rlva.configure(false);
     assert!(w.rlva.stand_origin.is_none() && w.rlva.stand_return.is_none());
+}
+
+#[test]
+fn rlva_local_teleports_use_global_xy_and_sit_radius_uses_xyz_across_region_edges() {
+    use glam::Vec3;
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    world.agent.position = Vec3::new(250.0, 128.0, 30.0);
+    let handle = world.main_region.unwrap();
+    let (x, y) = aurora_net::handle_to_origin(handle);
+    let neighbor = aurora_net::origin_to_handle(x + 256, y);
+    command(&mut world.rlva, A, "@tploc=n,tplocal:20=n,sittp:10=n");
+    let teleport = |handle, position| NetCommand::TeleportTo {
+        handle,
+        position,
+        look_at: Vec3::X,
+    };
+    assert!(world.rlva_allows_command(&teleport(neighbor, Vec3::new(0.0, 128.0, 30.0)), Uuid::nil()));
+    assert!(!world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 41.0)), Uuid::nil()));
+    assert!(
+        !world.rlva_allows_command(&teleport(neighbor, Vec3::new(4.0, 128.0, 30.0)), Uuid::nil()),
+        "the radius is exclusive"
+    );
+    command(&mut world.rlva, A, "@sittp=y");
+    command(&mut world.rlva, A, "@sittp:10=y");
+    assert!(
+        world.rlva_allows_command(&teleport(handle, Vec3::new(250.0, 128.0, 1000.0)), Uuid::nil()),
+        "tplocal measures XY, not height"
+    );
+    assert!(!world.rlva_allows_command(&teleport(neighbor, Vec3::new(250.0, 128.0, 30.0)), Uuid::nil()));
+    assert!(
+        world.rlva_allows_command(&teleport(neighbor, Vec3::new(250.0, 128.0, 30.0)), A),
+        "a forced action bypasses its own issuer"
+    );
+}
+
+#[test]
+fn rlva_render_aliases_release_without_mutating_saved_settings_and_touch_measures_the_surface() {
+    let mut r = enabled();
+    command(&mut r, A, "@camtextures=n,camavdist:4=n,showselfhead=n");
+    assert_eq!(r.camera_texture(), Some(aurora_prim::te::DEFAULT_TEXTURE));
+    assert_eq!(r.silhouette_distance(), Some(4.0));
+    command(&mut r, A, "@camtextures=y,camavdist:4=y");
+    assert_eq!(r.camera_texture(), None);
+    assert_eq!(r.silhouette_distance(), None);
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    command(&mut world.rlva, A, "@fartouch:2=n");
+    let key = world
+        .objects
+        .iter()
+        .find(|(_, o)| !o.is_avatar() && o.parent_id == 0)
+        .map(|(_, o)| o.key)
+        .unwrap();
+    assert!(world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X)));
+    assert!(!world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 2.0)));
+    world.rlva.configure(false);
+    assert!(world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 100.0)));
 }

@@ -451,6 +451,7 @@ pub struct MediaManager {
     pick_cache: HashMap<Uuid, (u64, std::sync::Arc<Vec<Option<interact::CpuFace>>>)>,
     /// Last media pixel under the cursor (focused media).
     last_pixel: Option<(i32, i32)>,
+    last_surface: Option<Vec3>,
     /// OpenID cookie of the web profiles (login token).
     pub openid: openid::OpenId,
 }
@@ -490,6 +491,7 @@ impl Default for MediaManager {
             last_diag: Instant::now() - Duration::from_secs(15),
             pick_cache: HashMap::new(),
             last_pixel: None,
+            last_surface: None,
             openid: openid::OpenId::default(),
         }
     }

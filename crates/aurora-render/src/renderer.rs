@@ -1373,6 +1373,7 @@ pub(crate) struct Backend {
     glow: Glow,
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
+    rlva_spheres: Option<crate::rlva::Spheres>,
     smaa: Smaa,
     smaa_targets: Option<SmaaTargets>,
     targets: Targets,
@@ -2646,6 +2647,7 @@ impl Backend {
             shadow_sampler,
             glow,
             dof: None,
+            rlva_spheres: None,
             smaa,
             smaa_targets: None,
             targets,
@@ -6392,7 +6394,7 @@ impl Backend {
         match &f.dof {
             Some(params) => {
                 let dof = self.dof.get_or_insert_with(|| crate::dof::Dof::new(&self.device, HDR_FORMAT));
-                post_bg = dof.encode(
+                (post_bg, post_src) = dof.encode(
                     &self.device,
                     &self.queue,
                     &mut encoder,
@@ -6417,6 +6419,30 @@ impl Backend {
             }
         }
         self.prev_view_proj = Some(unjittered_vp);
+        if !f.rlva_spheres.is_empty() {
+            let effects = self
+                .rlva_spheres
+                .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, HDR_FORMAT));
+            (post_bg, _) = effects.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                post_src,
+                &self.targets.depth_ss,
+                unjittered_vp.inverse(),
+                (self.config.width, self.config.height),
+                &f.rlva_spheres,
+                HDR_FORMAT,
+                &crate::dof::PostInputs {
+                    layout: &self.post_layout,
+                    sampler: &self.post_sampler,
+                    buffer: &self.post_buffer,
+                    glow: &self.glow.views[1],
+                },
+            );
+        } else {
+            self.rlva_spheres = None;
+        }
         self.last_inv_vp = unjittered_vp.inverse();
 
         // ---- automatic exposure, from the resolved scene and the glow of

@@ -1337,6 +1337,11 @@ impl Session<'_> {
                     self.request_objects(addr, &local_ids);
                 }
             }
+            NetCommand::ChatReply { message, channel } => {
+                if let Some(packet) = crate::chat_reply::packet(self.agent_id(), self.session_id(), channel, &message) {
+                    self.send_main(&packet, true);
+                }
+            }
             NetCommand::TeleportHome => {
                 let mut m = TeleportLandmarkRequest::default();
                 m.info.agent_id = self.agent_id();

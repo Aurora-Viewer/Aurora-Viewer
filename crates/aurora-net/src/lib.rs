@@ -6,6 +6,7 @@ mod agent_update;
 pub mod bridge;
 pub mod build;
 pub mod caps;
+mod chat_reply;
 pub mod circuit;
 pub mod currency;
 pub mod estate;

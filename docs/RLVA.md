@@ -17,6 +17,8 @@ script authors; the command lists below describe this branch specifically.
 - OwnerSay parsing, comma-separated commands, n/y and add/rem, clear with a
   filter, per-object idempotent restrictions, numeric reply channels,
   strict communication exceptions and periodic issuer garbage collection.
+  Protocol replies use a dedicated one-packet send path, including empty
+  replies and UTF-8 truncation at 1023 bytes, without user chat splitting.
 - Chat: sendchat, emote, recvchat/from, recvemote/from, chatwhisper/normal/shout,
   redirchat, rediremote, sendchannel and sendchannel_except. Redirection
   deduplicates channels, obeys channel locks and never falls back to public
@@ -53,6 +55,18 @@ script authors; the command lists below describe this branch specifically.
   camdistmin/max, camzoommin/max, camunlock and touchfar compatibility names
   preserve independent removal; adjustheight and getheightoffset use the
   native hover-height path.
+- Vision: per-object setsphere blend, fixed/variable blur, chromatic
+  aberration and pixelation; avatar/camera origins, distance/value extension
+  and tweened local modifiers. At most six sphere effects run in order on
+  the GPU. Variable Gaussian kernels have a maximum radius of 256 pixels to prevent
+  unbounded shader workloads from external commands.
+  setoverlay supports image, opacity, tint, tween, linkset priority and
+  alpha-mask touch filtering, drawn below viewer controls.
+  setcam_textures/camtextures temporarily replace world diffuse/PBR base
+  textures and particle textures, leaving avatars and attachments intact;
+  getcam_textures reads the active override. showself/showselfhead preserve
+  HUD visibility. setcam_avdist/camavdist silhouettes use the reference's
+  dark colour and take precedence over render exceptions.
 - Display: showinv, showminimap, showworldmap, shownametags and
   showhovertext/all/hud/world.
 - Queries: version/new/num, getcommand, getgroup, getsitid, getstatus/all.
@@ -80,6 +94,11 @@ than asserting a complete RLV specification version.
 
 ## Work still required before parity
 
+- Display-only privacy groundwork now covers the name cache, chat, hover
+  text, notifications/history, radar and map labels. Canonical names and
+  transcript filenames remain intact. These commands are deliberately not
+  registered yet: profile, application-link, location and clipboard paths
+  still need the final audit.
 - Location and identity filtering across every surface (showloc, shownames,
   nearby people, notifications, profiles, maps, hover tips, stored transcripts
   and application links).
@@ -90,8 +109,8 @@ than asserting a complete RLV specification version.
   behavior, locked attachment restoration and reattachment across crossings.
 - Every media/touch interaction path and surface-distance checks; all edit,
   inventory and document entry points must be audited against live scripts.
-- Vision sphere/overlay effects, forced textures, avatar silhouettes, camera
-  aliases, object focus details and every extended camera query.
+- Visual conformance of sphere/overlay effects, forced textures and
+  silhouettes; object focus details and every extended camera query.
 - Protocol conformance fixtures for every registered command and every UI
   entry point, source disappearance/reattachment across region crossings,
   and human grid validation with real scripts and attachments.
@@ -106,13 +125,15 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-21: `scripts/check.ps1` passes with 4,289 workspace
+Validation on 2026-10-22, including merged PR #805: `scripts/check.ps1` passes with 4,304 workspace
 tests passed, zero failures and 26 ignored; scripts, formatting and Clippy
-are clean. This includes twenty RLVa logic/integration tests, covering
+are clean. This includes 29 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
-compatibility, IM ranges and stand returns. It does not
+compatibility, IM ranges, stand returns, visual-effect lifecycle/tweens,
+alpha masks, shader validation, display-only privacy, surface distances,
+local teleports across region edges and encoded empty/UTF-8 replies. It does not
 validate the unfinished command families or live-grid behavior.
 
 Initial native preference validation (`4e22e952`): the dev viewer builds

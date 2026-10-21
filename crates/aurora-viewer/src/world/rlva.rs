@@ -11,10 +11,12 @@ use uuid::Uuid;
 
 pub mod camera;
 mod editing;
+pub mod effects;
 pub mod environment;
 mod events;
 mod inventory;
 mod policy;
+pub mod privacy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Param {
@@ -90,6 +92,23 @@ impl Rule {
         self.option.is_empty()
             || (matches!(self.behaviour.as_str(), "sendim" | "recvim" | "startim") && im_range(&self.option).is_some())
             || (self.behaviour == "shownametags" && self.option.parse::<f32>().is_ok())
+            || matches!(
+                canonical(&self.behaviour),
+                "setcam_avdist"
+                    | "setcam_textures"
+                    | "setcam_avdistmin"
+                    | "setcam_avdistmax"
+                    | "setcam_origindistmin"
+                    | "setcam_origindistmax"
+                    | "setcam_eyeoffset"
+                    | "setcam_eyeoffsetscale"
+                    | "setcam_focusoffset"
+                    | "setcam_fovmin"
+                    | "setcam_fovmax"
+                    | "fartouch"
+                    | "sittp"
+                    | "tplocal"
+            )
     }
 }
 
@@ -103,6 +122,15 @@ fn im_range(text: &str) -> Option<(f32, f32)> {
 /// Commands listed here have a consumer. Do not advertise unfinished handlers
 /// through @getcommand: scripts use it to decide whether a feature is safe.
 pub const RESTRICTIONS: &[&str] = &[
+    "setsphere",
+    "setcam_avdist",
+    "setcam_textures",
+    "camavdist",
+    "camtextures",
+    "showself",
+    "showselfhead",
+    "setoverlay",
+    "setoverlay_touch",
     "acceptpermission",
     "accepttp",
     "accepttprequest",
@@ -258,6 +286,7 @@ pub const FORCES: &[&str] = &[
     "unsit",
 ];
 pub const QUERIES: &[&str] = &[
+    "getcam_textures",
     "getdebug_avatarsex",
     "getdebug_aspectratio",
     "getdebug_renderresolutiondivisor",
@@ -322,6 +351,8 @@ fn supports_strict(name: &str) -> bool {
 fn canonical(name: &str) -> &str {
     match name {
         "camdistmin" => "setcam_avdistmin",
+        "camavdist" => "setcam_avdist",
+        "camtextures" => "setcam_textures",
         "camdistmax" => "setcam_avdistmax",
         "camzoommin" => "setcam_fovmin",
         "camzoommax" => "setcam_fovmax",
@@ -349,12 +380,16 @@ fn valid_option(c: &Command) -> bool {
             .option
             .parse::<f32>()
             .is_ok_and(|v| v.is_finite() && v > 0.0 && v < std::f32::consts::PI),
-        "setcam_avdistmin" | "setcam_avdistmax" | "setcam_origindistmin" | "setcam_origindistmax" | "setcam_eyeoffsetscale" => {
-            c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0)
-        }
+        "setcam_avdist"
+        | "setcam_avdistmin"
+        | "setcam_avdistmax"
+        | "setcam_origindistmin"
+        | "setcam_origindistmax"
+        | "setcam_eyeoffsetscale" => c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0),
         "setcam_eyeoffset" | "setcam_focusoffset" => camera::vector(&c.option).is_some(),
         "fartouch" | "sittp" | "tplocal" => c.option.is_empty() || c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0),
         "touchthis" | "editobj" => Uuid::parse_str(&c.option).is_ok(),
+        "setcam_textures" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "touchworld" | "touchattach" | "touchattachother" | "touchhud" | "edit" => {
             c.option.is_empty() || Uuid::parse_str(&c.option).is_ok()
         }
@@ -381,6 +416,7 @@ pub struct Rlva {
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
+    pub visuals: effects::Visuals,
     pub environment: Option<(Uuid, super::eep::SkyFrame)>,
     pub environment_water: Option<super::eep::WaterFrame>,
     pub environment_day: Option<std::sync::Arc<super::eep::DayCycle>>,
@@ -464,6 +500,7 @@ impl Rlva {
         self.appearance.clear();
         self.viewer.clear();
         self.camera_values.clear();
+        self.visuals = Default::default();
         self.clear_environment();
         self.pseudo_sex = None;
         self.appearance_busy = false;
@@ -478,6 +515,7 @@ impl Rlva {
     }
 
     pub fn forget(&mut self, source: Uuid) {
+        self.visuals.forget(source);
         if self.self_detach.is_some_and(|(id, _)| id == source) {
             self.self_detach = None;
         }
@@ -565,9 +603,22 @@ impl Rlva {
     }
 
     fn process(&mut self, source: Uuid, c: Command) {
+        if effects::MODIFIERS.contains(&c.behaviour.as_str()) {
+            if c.param == Param::Force && !c.strict && self.rules.get(&source).is_some_and(|r| !r.is_empty()) {
+                self.visuals.command(source, &c, std::time::Instant::now());
+            }
+            return;
+        }
         let was_environment_locked = self.has("setenv");
         match c.param {
             Param::Add | Param::Remove => {
+                if c.param == Param::Add
+                    && c.behaviour == "setsphere"
+                    && self.visuals.sphere_order.len() >= 6
+                    && !self.visuals.sphere_order.contains(&source)
+                {
+                    return;
+                }
                 if c.param == Param::Add
                     && matches!(c.behaviour.as_str(), "setcam" | "setenv" | "setdebug")
                     && self.has_except(&c.behaviour, source)
@@ -638,15 +689,18 @@ impl Rlva {
         if was_environment_locked && !self.has("setenv") {
             self.clear_environment();
         }
+        for name in ["setsphere", "setoverlay"] {
+            let active = self
+                .rules
+                .get(&source)
+                .is_some_and(|rs| rs.iter().any(|r| r.behaviour == name && r.option.is_empty()));
+            self.visuals.activate(source, name, active);
+        }
     }
 
     pub fn reply(&mut self, channel: i32, message: String) {
         if self.enabled && channel > 0 && channel != i32::MAX && self.out.len() < 256 {
-            self.out.push(NetCommand::Chat {
-                channel,
-                message,
-                chat_type: ChatType::Shout,
-            });
+            self.out.push(NetCommand::ChatReply { channel, message });
         }
     }
 
@@ -882,6 +936,14 @@ fn command_list(option: &str) -> String {
                 names.insert(name);
             }
         }
+    }
+    if matches!(kind, "" | "any" | "force") {
+        names.extend(
+            effects::MODIFIERS
+                .iter()
+                .filter(|name| name.contains(filter))
+                .map(|name| (*name).to_owned()),
+        );
     }
     names.into_iter().collect::<Vec<_>>().join(separator)
 }

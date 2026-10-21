@@ -27,6 +27,18 @@ temporary camera settings and exclusive ownership. `events.rs` handles
 permission/teleport consent, command notifications and stand returns;
 `editing.rs` checks linksets and material/media writes. `environment.rs`
 keeps scripted sky, water and day cycles separate from saved local choices.
+`privacy.rs` provides display-only identity/location projections, keeping
+canonical cache records, transcript file identities and region coordinates
+intact. Privacy commands remain unadvertised until the UI audit is complete.
+`effects.rs` owns per-object sphere/overlay modifiers, tween targets and
+overlay linkset arbitration. `aurora-render/src/rlva.rs` runs at most six
+depth-aware sphere effects with two reusable HDR targets; separable blur
+uses distinct per-pass uniforms. No effect means no targets or GPU passes.
+Overlay textures use the native UI streamer and a compact CPU alpha mask
+for click filtering; they are drawn below viewer controls.
+Script replies use `NetCommand::ChatReply` and `aurora-net/src/chat_reply.rs`:
+one reliable shout, including an empty response, UTF-8 truncated to the
+protocol's 1023-byte limit. They bypass user chat splitting and redirection.
 `app/rlva.rs` dispatches
 forced actions through the native application handlers. Camera constraints
 also cover the free camera; HUD text and avatar tags are filtered at drawing.

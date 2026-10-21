@@ -21,6 +21,12 @@ impl World {
         )
     }
     pub fn rlva_can_touch(&self, handle: aurora_net::RegionHandle, local_id: u32) -> bool {
+        self.rlva_can_touch_at(handle, local_id, None)
+    }
+
+    /// `position` is in the viewer's region-relative world, like a picking
+    /// ray. Measure the clicked surface, not the object's bounding-box centre.
+    pub fn rlva_can_touch_at(&self, handle: aurora_net::RegionHandle, local_id: u32, position: Option<Vec3>) -> bool {
         let r = &self.rlva;
         if !r.enabled() {
             return true;
@@ -28,6 +34,9 @@ impl World {
         let Some(index) = self.objects.index_of(&super::super::objects::ObjKey { region: handle, local_id }) else {
             return false;
         };
+        if !self.rlva_object_visible(index) {
+            return false;
+        }
         let mut root = index;
         let mut wearer = None;
         for _ in 0..64 {
@@ -94,13 +103,28 @@ impl World {
         if wearer != Some(self.agent_id) {
             let max = r.distance_limit("fartouch", 1.5, Uuid::nil());
             if max.is_finite()
-                && !crate::scene::Scene::object_transform_unshifted(self, index, std::time::Instant::now())
-                    .is_some_and(|(p, _, _)| p.distance(self.agent.position) <= max)
+                && !position
+                    .filter(|p| p.is_finite())
+                    .or_else(|| crate::scene::Scene::object_transform_unshifted(self, index, std::time::Instant::now()).map(|(p, _, _)| p))
+                    .is_some_and(|p| p.distance(self.agent.position) < max)
             {
                 return false;
             }
         }
         true
+    }
+
+    fn rlva_teleport_delta_allowed(&self, delta: Vec3, actor: Uuid) -> bool {
+        let r = &self.rlva;
+        if self.agent.is_sitting() && r.has_except("unsit", actor) {
+            return false;
+        }
+        if delta.truncate().length_squared() < 256.0 * 256.0 {
+            delta.length() < r.distance_limit("sittp", 1.5, actor)
+                && (!r.has_except("tplocal", actor) || delta.truncate().length() < r.distance_limit("tplocal", 256.0, actor).min(256.0))
+        } else {
+            !r.has_except("tploc", actor)
+        }
     }
     pub fn rlva_allows_command(&self, command: &NetCommand, actor: Uuid) -> bool {
         let r = &self.rlva;
@@ -136,25 +160,52 @@ impl World {
                 if r.stand_return == Some((*handle, *position)) {
                     return true;
                 }
-                let local = self.main_region == Some(*handle) && position.distance(self.agent.position) <= 256.0;
-                !blocked(if local { "tplocal" } else { "tploc" }) && !(self.agent.is_sitting() && blocked("unsit"))
+                let Some(main) = self.main_region else {
+                    return !blocked("tploc") && !(self.agent.is_sitting() && blocked("unsit"));
+                };
+                let (x, y) = aurora_net::handle_to_origin(*handle);
+                let (ox, oy) = aurora_net::handle_to_origin(main);
+                let shift = Vec3::new((x as f64 - ox as f64) as f32, (y as f64 - oy as f64) as f32, 0.0);
+                self.rlva_teleport_delta_allowed(*position + shift - self.agent.position, actor)
             }
             NetCommand::TeleportToRegion { name, position } => {
-                let local = self.main().is_some_and(|region| region.name.eq_ignore_ascii_case(name))
-                    && position.distance(self.agent.position) <= 256.0;
-                !blocked(if local { "tplocal" } else { "tploc" }) && !(self.agent.is_sitting() && blocked("unsit"))
+                let handle = self
+                    .regions
+                    .values()
+                    .find(|r| r.name.eq_ignore_ascii_case(name))
+                    .map(|r| r.handle)
+                    .or_else(|| {
+                        self.map
+                            .sims
+                            .iter()
+                            .find(|(_, r)| r.name.eq_ignore_ascii_case(name))
+                            .map(|(&(x, y), _)| aurora_net::origin_to_handle(x * 256, y * 256))
+                    });
+                if let Some(handle) = handle
+                    && let Some(main) = self.main_region
+                {
+                    let (x, y) = aurora_net::handle_to_origin(handle);
+                    let (ox, oy) = aurora_net::handle_to_origin(main);
+                    self.rlva_teleport_delta_allowed(
+                        *position + Vec3::new((x as f64 - ox as f64) as f32, (y as f64 - oy as f64) as f32, 0.0) - self.agent.position,
+                        actor,
+                    )
+                } else {
+                    !blocked("tploc") && !(self.agent.is_sitting() && blocked("unsit"))
+                }
             }
-            NetCommand::RequestSit { target, .. } => {
-                let limit = r.distance_limit("sittp", 1.5, actor);
+            NetCommand::RequestSit { target, offset, .. } => {
+                let limit = r.distance_limit("sittp", 1.5, actor).min(r.distance_limit("fartouch", 1.5, actor));
                 !blocked("sit")
                     && !(self.agent.is_sitting() && r.has("standtp"))
                     && !(self.agent.is_sitting() && blocked("unsit"))
-                    && (!limit.is_finite()
+                    && (!actor.is_nil()
+                        || !limit.is_finite()
                         || self
                             .objects
                             .index_of_uuid(target)
                             .and_then(|i| crate::scene::Scene::object_transform_unshifted(self, i, std::time::Instant::now()))
-                            .is_some_and(|(pos, _, _)| pos.distance(self.agent.position) <= limit))
+                            .is_some_and(|(pos, rot, _)| (pos + rot * *offset).distance(self.agent.position) < limit))
             }
             NetCommand::OneShotControl(flags) => {
                 (flags & control::STAND_UP == 0 || !blocked("unsit")) && (flags & control::SIT_ON_GROUND == 0 || !blocked("sitground"))
@@ -206,12 +257,28 @@ impl World {
                 }
             }
             NetCommand::Touch { local_id } => self.main_region.is_some_and(|h| self.rlva_can_touch(h, *local_id)),
-            NetCommand::ObjectGrab { handle, local_id, .. } => self.rlva_can_touch(*handle, *local_id),
-            NetCommand::ObjectGrabUpdate { object, .. } => self
+            NetCommand::ObjectGrab {
+                handle, local_id, surface, ..
+            } => self.rlva_can_touch_at(
+                *handle,
+                *local_id,
+                (surface.face >= 0)
+                    .then(|| self.region_offset(*handle).map(|shift| surface.position + shift))
+                    .flatten(),
+            ),
+            NetCommand::ObjectGrabUpdate { object, surface, .. } => self
                 .objects
                 .index_of_uuid(object)
                 .and_then(|i| self.objects.get(i))
-                .is_some_and(|o| self.rlva_can_touch(o.key.region, o.key.local_id)),
+                .is_some_and(|o| {
+                    self.rlva_can_touch_at(
+                        o.key.region,
+                        o.key.local_id,
+                        (surface.face >= 0)
+                            .then(|| self.region_offset(o.key.region).map(|shift| surface.position + shift))
+                            .flatten(),
+                    )
+                }),
             _ => true,
         }
     }

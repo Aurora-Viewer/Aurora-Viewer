@@ -2776,6 +2776,17 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   them, then switches RLVa off at frame 760. Capture after frame 800 in EN
   and FR: verify the switch, the active list and the empty released list.
   This scenario never saves the opt-in to the normal viewer's preferences.
+  `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
+  `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
+  mode to the same scene. `overlay` uses the demo's transparent-hole texture
+  with scripted opacity and touch blocking: world clicks through holes
+  remain available, opaque texels block them, and HUD/UI clicks stay usable.
+  Capture after frame 800; compare the same scene with `disabled` and close
+  Preferences for the unobstructed baseline. These modes never contact a grid.
+  `baseline` shows the unobstructed scene directly. `textures`, `silhouette`,
+  `self` and `head` exercise forced world textures, distant avatar silhouettes
+  and own-avatar visibility. Append `-released` to an effect mode to disable
+  RLVa at frame 760 and verify restoration in the same run.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
   its graph); `full` the resource monitor on its overview; `network` the

@@ -936,6 +936,8 @@ pub struct MirrorParams {
 /// Camera and environment for one frame.
 #[derive(Debug, Clone)]
 pub struct FrameParams {
+    /// Session-local scripted vision effects; empty keeps the normal render path.
+    pub rlva_spheres: Vec<SphereEffect>,
     /// Linear RGBA from the UI palette for selected-face overlays.
     pub selection_color: [f32; 4],
     /// The rez effect's colors (`rez_apply` in object.wgsl): the brand
@@ -1011,6 +1013,15 @@ pub struct FrameParams {
     pub debug: DebugRender,
     /// Depth of field (RenderDepthOfField); None: off, at no cost.
     pub dof: Option<DepthOfField>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SphereEffect {
+    pub origin: Vec3,
+    pub mode: u32,
+    pub extend: u32,
+    pub params: [f32; 4],
+    pub range: [f32; 4],
 }
 
 /// The lens of the depth of field, worked out by the viewer for the frame

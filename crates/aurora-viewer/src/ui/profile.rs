@@ -345,7 +345,7 @@ impl ProfileUi {
     /// LLAvatarActions::showProfile: one window per avatar, raised if open;
     /// each opening reloads the data (LLPanelProfile::updateData).
     pub fn open(&mut self, world: &mut World, id: Uuid) {
-        if id.is_nil() {
+        if id.is_nil() || !world.rlva_can_name(id) {
             return;
         }
         world.profiles.refresh(id);
@@ -419,6 +419,9 @@ impl ProfileUi {
         let screen = ctx.content_rect();
         let mut pick_picture: Option<(PictureSlot, Uuid)> = None;
         for (i, w) in self.windows.iter_mut().enumerate() {
+            if !world.rlva_can_name(w.id) {
+                continue;
+            }
             if !classic {
                 let profile = world.profiles.get(&w.id);
                 if let Some(pr) = profile {

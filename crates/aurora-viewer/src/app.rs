@@ -585,6 +585,7 @@ pub struct App {
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
     /// "Location details" windows (standalone place profiles).
@@ -1109,6 +1110,7 @@ impl App {
             avatar_pics: Default::default(),
             avatar_pic_images: Default::default(),
             ui_images: Default::default(),
+            ui_image_masks: Default::default(),
             profile_ui: Default::default(),
             place_ui: Default::default(),
             places_ui: Default::default(),
@@ -4459,7 +4461,11 @@ impl App {
         if !self.in_world() || self.world.teleporting || !self.radar.due(now) {
             return;
         }
-        let mut seen = crate::world::radar::sightings(&self.world);
+        let mut seen = if self.world.rlva.has("shownearby") {
+            Vec::new()
+        } else {
+            crate::world::radar::sightings(&self.world)
+        };
         let endpoint = self.sync_bridge_queries();
         if let Some(command) =
             self.bridge_services
@@ -4501,6 +4507,9 @@ impl App {
             events.extend(self.radar.age_alerts(i64::from(s.age_alert_days), |id| {
                 profiles.get(id).and_then(|p| ui::people::age_days(p, today))
             }));
+        }
+        if self.world.rlva.has("shownearby") {
+            events.clear();
         }
         for event in events {
             let meters = |d: f32| aurora_i18n::number(f64::from(d), 2);
@@ -5719,6 +5728,12 @@ impl App {
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
+        images.extend(
+            self.world
+                .rlva_overlay_frames(Instant::now())
+                .into_iter()
+                .map(|frame| frame.texture),
+        );
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -5731,6 +5746,9 @@ impl App {
                 && rgba.len() == (w * h * 4) as usize
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
+                    self.ui_image_masks.insert(image, mask);
+                }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(image, t);
             }
@@ -7155,6 +7173,7 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let fp = FrameParams {
+            rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
             selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
             rez_gradient: {
                 // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
@@ -8874,8 +8893,15 @@ impl App {
                     (KeyCode::KeyA, "a"),
                 ][k / 2];
                 let mods = aurora_media::Modifiers::default();
-                self.media
-                    .on_key(code, 0x1E, k.is_multiple_of(2), false, k.is_multiple_of(2).then_some(ch), mods);
+                self.media.on_key(
+                    &self.world,
+                    code,
+                    0x1E,
+                    k.is_multiple_of(2),
+                    false,
+                    k.is_multiple_of(2).then_some(ch),
+                    mods,
+                );
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -9710,6 +9736,9 @@ impl App {
     /// Place, the Places "add" entries and About Land's Landmark button;
     /// `dest` is the folder chosen in Places.
     pub(super) fn open_create_landmark(&mut self, dest: Option<uuid::Uuid>) {
+        if self.world.rlva.has("showloc") {
+            return;
+        }
         if let Some(cmd) = self.create_landmark_ui.open(&self.world, dest) {
             self.send(cmd);
         }
@@ -10306,6 +10335,9 @@ impl App {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
+        self.world.refresh_rlva_privacy();
+        self.notif_ui.privacy = self.world.rlva_privacy.clone();
+        self.draw_rlva_overlays(ui);
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
@@ -10584,6 +10616,7 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
+                    location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
                         ui::bars::demo::get().bug.unwrap_or(self.settings.show_bug_report)
                     } else {
@@ -10592,8 +10625,16 @@ impl App {
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
-                    region: &self.world.region_name(),
-                    parcel: parcel_name,
+                    region: if self.world.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-region")
+                    } else {
+                        &self.world.region_name()
+                    },
+                    parcel: if self.world.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-parcel")
+                    } else {
+                        parcel_name
+                    },
                     maturity,
                     position: self.world.agent.position,
                     fps: self.perf.fps,
@@ -10602,7 +10643,11 @@ impl App {
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance: self.world.balance,
                     voice: (self.voice.light, self.voice.status.clone()),
-                    slurl: crate::slurl::make(&self.world.region_name(), self.world.agent.position),
+                    slurl: if self.world.rlva.has("showloc") {
+                        String::new()
+                    } else {
+                        crate::slurl::make(&self.world.region_name(), self.world.agent.position)
+                    },
                     tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     status: self.world.status.modes(),
@@ -11701,7 +11746,7 @@ impl App {
                 }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
-                let mut open = self.panels.about_land;
+                let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
                 // the mini-map's image of the selection's region, for the header
                 let land_map = open
                     .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
@@ -11734,7 +11779,7 @@ impl App {
                     };
                     ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
-                let mut open = self.panels.region_estate;
+                let mut open = self.panels.region_estate && self.world.rlva_can_view_region();
                 if open {
                     self.feed_region_window();
                 }
@@ -14510,7 +14555,11 @@ impl ApplicationHandler for App {
                             alt: self.alt,
                             shift: self.shift,
                         };
-                        if self.media.on_key(code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods) && pressed {
+                        if self
+                            .media
+                            .on_key(&self.world, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
+                            && pressed
+                        {
                             return;
                         }
                     }
