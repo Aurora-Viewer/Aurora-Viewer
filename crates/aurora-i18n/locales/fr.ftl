@@ -1321,6 +1321,7 @@ common-no-parcel-selected = Aucune parcelle sélectionnée.
 voice-no-audio-output = Aucune sortie audio
 build-ui-tools-nothing-selected = Aucune sélection effectuée.
 world-appearance-no-saved-outfit-to-restore = Aucune tenue enregistrée à rétablir.
+world-appearance-cloud-fix = Le viewer a détecté que vous risquez d’apparaître sous forme de nuage et tente de corriger cela automatiquement.
 ui-appearance-no-outfits-to-display = Aucune tenue à afficher
 ui-texture-picker-no-textures-in-the-loaded-inventory = Aucune texture dans l'inventaire chargé.
 world-tphistory-today = Aujourd'hui

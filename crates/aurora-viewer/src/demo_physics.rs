@@ -177,6 +177,7 @@ pub fn events(shapes: &crate::scene::shape::ShapeParams, mode: Mode) -> Vec<NetE
                 texture_entry: None,
                 visual_params: shapes.values_with(&LAYER),
                 cof_version: 1,
+                appearance_version: 1,
                 hover_height: 0.0,
                 attachments: 0,
             })

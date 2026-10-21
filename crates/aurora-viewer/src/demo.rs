@@ -5207,6 +5207,7 @@ pub fn classic_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent
                 texture_entry: Some(bakes.clone()),
                 visual_params: shapes.values_with(changed),
                 cof_version: 1,
+                appearance_version: 1,
                 hover_height: 0.0,
                 attachments: 0,
             })
@@ -5224,7 +5225,7 @@ pub const CLOUD_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_000
 /// and lower bakes, and it wears a mesh that cannot be downloaded next to a
 /// plain hat. It must show a few seconds after its parts are there, without
 /// its head and without the mesh.
-pub fn cloud_self_events() -> Vec<NetEvent> {
+pub fn cloud_self_events(shapes: &crate::scene::shape::ShapeParams) -> Vec<NetEvent> {
     use crate::scene::avatar::{BAKES, IMG_DEFAULT_AVATAR, IMG_INVISIBLE};
     let mut bakes = TextureEntry::default();
     for (slot, name, _) in BAKES {
@@ -5281,8 +5282,9 @@ pub fn cloud_self_events() -> Vec<NetEvent> {
         NetEvent::Appearance(aurora_net::AvatarAppearance {
             avatar_id: DEMO_AGENT,
             texture_entry: Some(Arc::new(bakes)),
-            visual_params: Vec::new(),
+            visual_params: shapes.values_with(&[]),
             cof_version: 1,
+            appearance_version: 1,
             hover_height: 0.0,
             attachments: 0,
         }),

@@ -535,8 +535,7 @@ impl Scene {
             let Some(g) = self.gpu.get(m) else {
                 return true;
             };
-            let geometry = g.wanted_geom.is_none_or(|k| g.geom == Some(k)) && g.sculpt_wait.is_none();
-            geometry
+            g.geometry_built()
                 && g.faces.iter().all(|f| {
                     f.tex_id.is_nil()
                         || self.textures.is_loaded(&f.tex_id)
@@ -1375,7 +1374,7 @@ impl Scene {
                     return None;
                 }
                 let g = self.gpu.get(idx)?;
-                let built = !g.faces.is_empty() && g.wanted_geom.is_none_or(|w| g.geom == Some(w)) && g.sculpt_wait.is_none();
+                let built = !g.faces.is_empty() && g.geometry_built();
                 if !built || g.hud || g.owner_avatar.is_some() {
                     return None;
                 }

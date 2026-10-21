@@ -30,6 +30,7 @@ fn edit_then_cancel_restores_the_latest_authoritative_appearance() {
         visual_params: latest.clone(),
         texture_entry: None,
         cof_version: 4,
+        appearance_version: 1,
         hover_height: 0.0,
         attachments: 0,
     }));

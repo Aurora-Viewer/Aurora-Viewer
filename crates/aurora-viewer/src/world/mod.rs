@@ -2079,9 +2079,41 @@ impl World {
                 None
             }
             NetEvent::Appearance(a) => {
-                self.appearance_counter += 1;
                 let id = a.avatar_id;
-                if id == self.agent_id {
+                let own = id == self.agent_id;
+                let received = if own {
+                    self.appearance_cof_version(&id).max(self.outfit.stepped_cof_version())
+                } else {
+                    -1
+                };
+                match appearance_verdict(&a, own, received) {
+                    AppearanceVerdict::Apply => {}
+                    AppearanceVerdict::Stale => {
+                        log::warn!(
+                            "stale own appearance received: COF version {} after {received}, dropped",
+                            a.cof_version
+                        );
+                        return None;
+                    }
+                    AppearanceVerdict::Empty { refresh } => {
+                        // no reliable basis to know where the bakes are
+                        if refresh {
+                            log::info!("empty own appearance: forcing a refresh");
+                            self.notifications.push(
+                                notifications::Kind::Info,
+                                aurora_i18n::tr!("common-appearance"),
+                                aurora_i18n::tr!("world-appearance-cloud-fix"),
+                                notifications::Data::None,
+                            );
+                            self.rebake();
+                        } else {
+                            log::debug!("appearance of {id} without parameters ignored");
+                        }
+                        return None;
+                    }
+                }
+                self.appearance_counter += 1;
+                if own {
                     // (with the outfit restore lines: when our bakes came)
                     log::info!(
                         "own appearance received: COF version {}, bakes {}",
@@ -4024,6 +4056,108 @@ impl World {
                 }
             }
         }
+    }
+}
+
+/// What becomes of an AvatarAppearance message.
+#[derive(Debug, PartialEq, Eq)]
+enum AppearanceVerdict {
+    Apply,
+    /// Our own, for a COF version we already have (or stepped past).
+    Stale,
+    /// One visual parameter or none; `refresh` for our own once one was
+    /// received (we may show as a cloud).
+    Empty { refresh: bool },
+}
+
+/// The checks of LLVOAvatar::processAvatarAppearance
+/// (indra/newview/llvoavatar.cpp, originally LGPL 2.1): our own appearance
+/// never rolls back to a COF version already received (`received` also
+/// counts the version the IncrementCOFVersion answer slammed), server bakes
+/// only; a message with one parameter or none says nothing reliable and is
+/// dropped for everyone, with a forced refresh for ours.
+fn appearance_verdict(a: &AvatarAppearance, own: bool, received: i32) -> AppearanceVerdict {
+    if own && a.appearance_version > 0 && received >= a.cof_version {
+        return AppearanceVerdict::Stale;
+    }
+    if a.visual_params.len() <= 1 {
+        return AppearanceVerdict::Empty {
+            refresh: own && received != -1,
+        };
+    }
+    AppearanceVerdict::Apply
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+
+    fn appearance(cof_version: i32, params: usize) -> AvatarAppearance {
+        AvatarAppearance {
+            avatar_id: Uuid::from_u128(1),
+            texture_entry: None,
+            visual_params: vec![128; params],
+            cof_version,
+            appearance_version: 1,
+            hover_height: 0.0,
+            attachments: 0,
+        }
+    }
+
+    #[test]
+    fn own_appearance_never_rolls_back() {
+        assert_eq!(appearance_verdict(&appearance(7, 253), true, -1), AppearanceVerdict::Apply);
+        assert_eq!(appearance_verdict(&appearance(7, 253), true, 6), AppearanceVerdict::Apply);
+        assert_eq!(appearance_verdict(&appearance(7, 253), true, 7), AppearanceVerdict::Stale);
+        assert_eq!(appearance_verdict(&appearance(5, 253), true, 7), AppearanceVerdict::Stale);
+        // others are never compared, nor legacy (client) bakes
+        assert_eq!(appearance_verdict(&appearance(5, 253), false, 7), AppearanceVerdict::Apply);
+        let legacy = AvatarAppearance {
+            appearance_version: 0,
+            ..appearance(5, 253)
+        };
+        assert_eq!(appearance_verdict(&legacy, true, 7), AppearanceVerdict::Apply);
+    }
+
+    #[test]
+    fn appearance_without_parameters_is_dropped() {
+        for params in [0, 1] {
+            assert_eq!(
+                appearance_verdict(&appearance(3, params), false, -1),
+                AppearanceVerdict::Empty { refresh: false }
+            );
+            // ours forces a refresh once a version was received
+            assert_eq!(
+                appearance_verdict(&appearance(3, params), true, -1),
+                AppearanceVerdict::Empty { refresh: false }
+            );
+            assert_eq!(
+                appearance_verdict(&appearance(3, params), true, 2),
+                AppearanceVerdict::Empty { refresh: true }
+            );
+        }
+        assert_eq!(appearance_verdict(&appearance(3, 2), false, -1), AppearanceVerdict::Apply);
+    }
+
+    #[test]
+    fn world_keeps_the_newer_own_shape() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let own = world.agent_id;
+        let send = |world: &mut World, cof_version: i32, value: u8, params: usize| {
+            world.apply(NetEvent::Appearance(AvatarAppearance {
+                avatar_id: own,
+                visual_params: vec![value; params],
+                ..appearance(cof_version, params)
+            }));
+        };
+        send(&mut world, 4, 10, 253);
+        send(&mut world, 3, 20, 253);
+        send(&mut world, 4, 30, 253);
+        send(&mut world, 5, 40, 0);
+        assert_eq!(world.visual_params(&own).map(|v| v[0]), Some(10));
+        assert_eq!(world.appearance_cof_version(&own), 4);
+        send(&mut world, 5, 50, 253);
+        assert_eq!(world.visual_params(&own).map(|v| v[0]), Some(50));
     }
 }
 

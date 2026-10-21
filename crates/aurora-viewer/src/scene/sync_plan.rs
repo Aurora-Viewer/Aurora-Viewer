@@ -147,9 +147,20 @@ impl SyncState for FrameState<'_> {
             // still being built or downloaded; a failed one is asked again
             // once the geometry cache drops it
             Some(GeomState::Pending) | Some(GeomState::Failed) => false,
-            // a sculpt waits for its texture; anything else is asked for
+            // a sculpt waits for its texture, or its placeholder when the
+            // texture is missing; anything else is asked for
             None => match key {
-                GeomKey::Sculpt { .. } => g.sculpt_wait.is_some_and(|t| self.textures.sculpt_map(&t).is_some()),
+                GeomKey::Sculpt { hash, lod } => g.sculpt_wait.is_some_and(|t| {
+                    self.textures.sculpt_map(&t).is_some()
+                        || self.textures.is_unavailable(&t) && {
+                            let placeholder = GeomKey::SculptPlaceholder { hash, lod };
+                            g.geom != Some(placeholder)
+                                && !matches!(
+                                    self.geoms.get(&placeholder).map(|e| &e.state),
+                                    Some(GeomState::Pending) | Some(GeomState::Failed)
+                                )
+                        }
+                }),
                 _ => true,
             },
         })
@@ -268,6 +279,7 @@ impl SyncCtx<'_> {
             GeomKey::Prim { lod, .. }
             | GeomKey::Flexible { lod, .. }
             | GeomKey::Sculpt { lod, .. }
+            | GeomKey::SculptPlaceholder { lod, .. }
             | GeomKey::Mesh { lod, .. }
             | GeomKey::Tree { lod, .. } => Some(lod),
             GeomKey::Grass { .. } | GeomKey::AvatarPart(_) | GeomKey::AvatarMorph { .. } => None,
@@ -642,5 +654,54 @@ mod tests {
         assert_eq!(rank_radius(0.12, true), AVATAR_LOD_RADIUS);
         assert_eq!(rank_radius(4.0, true), 4.0);
         assert_eq!(rank_radius(0.12, false), 0.12);
+    }
+
+    /// LLVOVolume::sculpt: the sphere placeholder only for a missing map,
+    /// asked for once, and the sculpt as soon as its map decodes.
+    #[test]
+    fn a_sculpt_with_a_missing_map_waits_for_its_placeholder() {
+        let map = Uuid::from_u128(7);
+        let (sculpt, placeholder) = (
+            GeomKey::Sculpt { hash: 1, lod: 2 },
+            GeomKey::SculptPlaceholder { hash: 1, lod: 2 },
+        );
+        let mut gpu = vec![ObjGpu {
+            wanted_geom: Some(sculpt),
+            sculpt_wait: Some(map),
+            ..Default::default()
+        }];
+        let mut geoms = HashMap::new();
+        let mut textures = TextureStreamer::new(std::path::PathBuf::new());
+        let mat_changes = super::super::mat_changes::MatChanges::default();
+        let due = |gpu: &[ObjGpu], geoms: &HashMap<GeomKey, GeomEntry>, textures: &TextureStreamer| {
+            let state = FrameState {
+                gpu,
+                geoms,
+                textures,
+                mat_gen: 0,
+                mat_changes: &mat_changes,
+                still_huds: false,
+            };
+            state.pending_due(0)
+        };
+        // still loading: nothing to build, as there
+        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        textures.test_missing(map);
+        assert_eq!(due(&gpu, &geoms, &textures), Some(true));
+        let entry = |state| GeomEntry {
+            state,
+            refs: 0,
+            zero_since: 0,
+        };
+        geoms.insert(placeholder, entry(GeomState::Pending));
+        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        geoms.insert(placeholder, entry(GeomState::Failed));
+        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        geoms.remove(&placeholder);
+        gpu[0].geom = Some(placeholder);
+        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        // the map decoded: the sculpt replaces the sphere
+        textures.test_sculpt_map(map);
+        assert_eq!(due(&gpu, &geoms, &textures), Some(true));
     }
 }

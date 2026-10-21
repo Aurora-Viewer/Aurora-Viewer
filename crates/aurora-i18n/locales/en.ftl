@@ -1318,6 +1318,7 @@ common-no-parcel-selected = No parcel selected.
 voice-no-audio-output = No audio output
 build-ui-tools-nothing-selected = Nothing selected.
 world-appearance-no-saved-outfit-to-restore = No saved outfit to restore.
+world-appearance-cloud-fix = The viewer has detected that you may appear as a cloud and is attempting to fix this automatically.
 ui-appearance-no-outfits-to-display = No outfits to display
 ui-texture-picker-no-textures-in-the-loaded-inventory = No textures in the loaded inventory.
 world-tphistory-today = Today
