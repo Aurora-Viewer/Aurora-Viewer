@@ -362,28 +362,32 @@ where
 /// Only explicit metadata on the matching record is an acknowledgement;
 /// HTTP success, another object's record or an ID-only error is insufficient.
 fn favorite_from_ais(response: &Llsd, id: Uuid, folder: bool) -> Option<bool> {
-    let (key, collection) = if folder {
-        ("category_id", "categories")
+    let (key, collection, single) = if folder {
+        ("category_id", "categories", "category")
     } else {
-        ("item_id", "items")
+        ("item_id", "items", "item")
     };
-    let record = if response[key].as_uuid() == id {
-        response
-    } else {
-        &response["_embedded"][collection][id.to_string().as_str()]
-    };
-    if record[key].as_uuid() != id || record["parent_id"].as_uuid().is_nil() || !record.has("favorite") {
-        return None;
-    }
-    match &record["favorite"] {
-        Llsd::Undef => Some(false),
-        Llsd::Map(map) => match map.get("toggled") {
-            Some(Llsd::Boolean(value)) => Some(*value),
-            Some(Llsd::Integer(value)) => Some(*value != 0),
+    let id_text = id.to_string();
+    [
+        response,
+        &response["_embedded"][collection][id_text.as_str()],
+        &response["_embedded"][single],
+    ]
+    .into_iter()
+    .find_map(|record| {
+        if record[key].as_uuid() != id || record["parent_id"].as_uuid().is_nil() || !record.has("favorite") {
+            return None;
+        }
+        match &record["favorite"] {
+            Llsd::Undef => Some(false),
+            Llsd::Map(map) => match map.get("toggled") {
+                Some(Llsd::Boolean(value)) => Some(*value),
+                Some(Llsd::Integer(value)) => Some(*value != 0),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    }
+        }
+    })
 }
 
 fn sort_contents_parent_first(contents: &mut [FolderContents]) {
@@ -1464,15 +1468,19 @@ mod tests {
     async fn inventory_favorites_use_ais_metadata_when_legacy_readback_is_stale() {
         for folder in [false, true] {
             for favorite in [false, true] {
-                for embedded in [false, true] {
+                for embedded in 0..3 {
                     let fresh = favorite_readback(folder, favorite);
                     let kind = if folder { "categories" } else { "items" };
                     let record = fresh["folders"].at(0)[kind].at(0).clone();
-                    let response = if embedded {
+                    let response = if embedded == 1 {
                         let mut records = Llsd::new_map();
                         records.insert(id(3).to_string(), record);
                         let mut contents = Llsd::new_map();
                         contents.insert(kind, records);
+                        llsd_map! { "_embedded" => contents }
+                    } else if embedded == 2 {
+                        let mut contents = Llsd::new_map();
+                        contents.insert(if folder { "category" } else { "item" }, record);
                         llsd_map! { "_embedded" => contents }
                     } else {
                         record
