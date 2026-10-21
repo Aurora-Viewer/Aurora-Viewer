@@ -26,6 +26,7 @@ pub use document::document_demo_events;
 pub(crate) mod permissions;
 mod progress;
 pub(crate) mod properties;
+mod received;
 mod rows;
 pub(crate) mod task_drop;
 pub mod thumbnail;
@@ -330,7 +331,8 @@ pub struct InventoryUi {
     plain_scroll_restore: Option<f32>,
     roots_seen: HashSet<Uuid>,
     /// Received Items folders already shown once (closed on their arrival).
-    received_seen: HashSet<Uuid>,
+    received_shown: HashSet<Uuid>,
+    received_badge: received::Badge,
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     visible: Vec<Uuid>,
@@ -404,6 +406,15 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    pub(crate) fn load_received(&mut self, path: std::path::PathBuf, root: Uuid) {
+        self.received_badge = received::Badge::load(path, root);
+    }
+
+    pub(crate) fn update_received(&mut self, inv: &mut Inventory, receipts: Vec<crate::world::received_items::Receipt>) {
+        self.received_badge.receive(receipts);
+        self.received_badge.update(inv);
+    }
+
     pub fn begin_move_to(&mut self, id: Uuid) {
         self.move_to = Some(move_to::MoveTo::new(self.selected_ids(id)));
     }
@@ -811,6 +822,8 @@ fn folder_name(inv: &Inventory, id: Uuid) -> String {
         aurora_i18n::tr!("common-my-inventory").to_owned()
     } else if id == inv.lib_root {
         aurora_i18n::tr!("common-library").to_owned()
+    } else if inv.folders.get(&id).is_some_and(|f| f.info.type_default == 50) {
+        aurora_i18n::tr!("received-marketplace-folder").to_owned()
     } else {
         rules::name(inv, id)
     }
@@ -888,10 +901,12 @@ fn prepare_result_tree(st: &mut InventoryUi, inv: &Inventory, root: Uuid) {
     if let Some(id) = st.reveal {
         st.result_tree.reveal(inv, id, st.tab);
     }
-    if st
-        .result_tree
-        .prepare(&st.view, root, st.tab, root == inv.root && inv.folders.contains_key(&root))
-    {
+    if st.result_tree.prepare(
+        &st.view,
+        root,
+        st.tab,
+        st.tab != RECEIVED_TAB && root == inv.root && inv.folders.contains_key(&root),
+    ) {
         st.result_width = 0.0;
     }
 }
@@ -977,7 +992,8 @@ fn status(
 }
 
 fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences) {
-    let library = root == inv.root && prefs.search_library;
+    let received = st.tab == RECEIVED_TAB && st.scope.is_nil();
+    let library = !received && root == inv.root && prefs.search_library;
     let key = (root, inv.generation, library, prefs.search_trash, prefs.search_outfits);
     if st.fetch_generation == Some(key) && !st.fetch_all {
         return;
@@ -990,7 +1006,11 @@ fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: 
     }
     // Same bounded FetchInventoryDescendents2 batches as request_tree, with
     // explicit search scopes. Hidden trash/outfit subtrees aren't fetched.
-    let mut todo = vec![root];
+    let mut todo = if received {
+        crate::world::received_items::roots(inv)
+    } else {
+        vec![root]
+    };
     if library {
         todo.push(inv.lib_root);
     }
@@ -1005,7 +1025,10 @@ fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: 
             continue;
         };
         let kind = folder.info.type_default;
-        if (kind == 50 && id != root) || (kind == 14 && !prefs.search_trash) || (matches!(kind, 46 | 48) && !prefs.search_outfits) {
+        if (kind == 50 && id != root && !received)
+            || (kind == 14 && !prefs.search_trash)
+            || (matches!(kind, 46 | 48) && !prefs.search_outfits)
+        {
             continue;
         }
         complete &= folder.state == FetchState::Fetched;
@@ -1241,11 +1264,24 @@ fn next_owner_control(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
 
 /// Show `tab`, each tab keeping its own search when the preference says so.
 fn set_tab(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: usize) {
+    if st.tab != tab {
+        st.fetch_generation = None;
+    }
     if prefs.separate_searches && st.tab != tab {
         st.searches[st.tab.min(4)] = std::mem::take(&mut st.search);
         st.search.clone_from(&st.searches[tab.min(4)]);
     }
     st.tab = tab;
+}
+
+/// The combined Received view has no writable background folder. Individual
+/// real folder rows still accept the ordinary inventory actions.
+fn list_destination(st: &InventoryUi, root: Uuid) -> Uuid {
+    if st.tab == RECEIVED_TAB && st.scope.is_nil() {
+        Uuid::nil()
+    } else {
+        root
+    }
 }
 
 /// The root of the tab shown and whether its list is the result tree (a
@@ -1259,8 +1295,6 @@ fn list_scope(inv: &mut Inventory, st: &mut InventoryUi, prefs: &InventoryPrefer
     let root = if !st.scope.is_nil() {
         st.tab = 0;
         st.scope
-    } else if st.tab == RECEIVED_TAB {
-        rules::system(inv, 50).unwrap_or_default()
     } else {
         inv.root
     };
@@ -1326,11 +1360,12 @@ fn list(
             let fresh: Vec<Uuid> = st
                 .view
                 .result_folders()
-                .filter(|id| *id != root && st.received_seen.insert(*id))
+                .filter(|id| *id != root && st.received_shown.insert(*id))
                 .collect();
             if !fresh.is_empty() {
                 st.result_tree.collapse_folders(fresh, RECEIVED_TAB);
             }
+            st.received_badge.acknowledge(inv, &st.view.results);
         }
         prepare_result_tree(st, inv, root);
         return search_scroll(ui, p, icons, inv, st, prefs, facts, actions, list_h);
@@ -1374,10 +1409,11 @@ fn inventory_contents(
     let zone = tree::frame(ui, p, |ui| {
         list(ui, p, icons, inv, st, prefs, facts, actions, list_h, root, filtered, true);
     });
-    task_drop::target(ui, p, &zone.response, inv, root, prefs, actions);
-    drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
+    let target = list_destination(st, root);
+    task_drop::target(ui, p, &zone.response, inv, target, prefs, actions);
+    drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
-    clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
+    clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
 }
 
 pub fn show(
@@ -2654,16 +2690,24 @@ mod tests {
                 },
             ));
         };
+        assert!(st.received_badge.unseen(&inv) > 0);
+        frame(&mut inv, &mut st);
+        frame(&mut inv, &mut st);
+        assert_eq!(st.received_badge.unseen(&inv), 0, "showing Received acknowledges its deliveries");
+        let inbox = rules::system(&inv, 50).expect("Marketplace container");
+        assert_eq!(st.result_tree.rows.len(), 1, "Marketplace starts as one closed folder");
+        assert_eq!(st.result_tree.rows[0].id, inbox);
+        st.result_tree.toggle(inbox, RECEIVED_TAB);
         frame(&mut inv, &mut st);
         frame(&mut inv, &mut st);
         // the demo purchase and the 150 big ones, all closed
-        assert_eq!(st.result_tree.rows.len(), 151);
-        assert!(st.result_tree.rows.iter().all(|r| r.folder && !r.open));
+        assert_eq!(st.result_tree.rows.len(), 152);
+        assert!(st.result_tree.rows.iter().skip(1).all(|r| r.folder && !r.open));
         let first = Uuid::from_u128(8_400_000);
         st.result_tree.toggle(first, RECEIVED_TAB);
         frame(&mut inv, &mut st);
         frame(&mut inv, &mut st);
-        assert_eq!(st.result_tree.rows.len(), 171, "the opened purchase stays open");
+        assert_eq!(st.result_tree.rows.len(), 172, "the opened purchase stays open");
         st.expand_all = Some(true);
         frame(&mut inv, &mut st);
         frame(&mut inv, &mut st);
@@ -2723,7 +2767,7 @@ mod tests {
             assert!(!st.visible.contains(&Uuid::from_u128(8100)));
             assert!(!st.visible.contains(&inv.root));
             if !query.is_empty() {
-                assert_eq!(st.view.results, vec![Uuid::from_u128(8_300_003)]);
+                assert_eq!(st.view.results, vec![Uuid::from_u128(8_300_003), inbox]);
             }
         }
         assert!(inv.queue.iter().any(|(id, _)| *id == inbox));

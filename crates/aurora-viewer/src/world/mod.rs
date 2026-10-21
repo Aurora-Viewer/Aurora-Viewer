@@ -53,6 +53,7 @@ pub mod place_details;
 pub mod place_snapshots;
 pub mod profiles;
 pub mod radar;
+pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
 pub mod region_restart;
@@ -330,6 +331,7 @@ pub struct World {
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
+    pub received_items: received_items::ReceivedItems,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
     /// AO remapping applies only to our rendered pose, never movement signals.
@@ -575,6 +577,7 @@ impl World {
             active_gestures: Default::default(),
             inventory_cache: None,
             inventory_edits: Vec::new(),
+            received_items: Default::default(),
             animations: HashMap::new(),
             ao_pose: None,
             own_locomotion: Default::default(),
@@ -3158,6 +3161,7 @@ impl World {
                 if !task {
                     self.on_inventory_offer_card(im, &from, asset_type, entry);
                 }
+                self.received_items.offer(im, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for
@@ -3456,12 +3460,13 @@ impl World {
             .iter()
             .find(|n| n.id == id && matches!(n.data, notifications::Data::Inventory { task: false, .. }))
             .map(|n| notifications::outcome_of(n, &r));
-        let out = self.notifications.respond(
+        let mut out = self.notifications.respond(
             id,
             r,
             |t| folders.iter().find(|(ft, _)| *ft == t).map(|(_, f)| *f).unwrap_or(root),
             calling,
         );
+        self.received_items.answer(id, &mut out.0);
         if let Some((asset_type, object)) = discard {
             self.discard_offer(asset_type, object);
         }

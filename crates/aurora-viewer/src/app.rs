@@ -1464,6 +1464,9 @@ impl App {
                 self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
                 return;
             }
+            if crate::world::received_items::demo_accept(&mut self.world, &cmd) {
+                return;
+            }
             if let NetCommand::UploadInventoryThumbnail {
                 request,
                 item,
@@ -2075,6 +2078,9 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if self.world.received_items_event(&ev) {
+            return;
+        }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
             if self.bridge_services.owns(request) {
@@ -2493,6 +2499,11 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 if !self.demo {
+                    let root = self.world.inventory.root;
+                    self.inventory_ui.load_received(
+                        crate::settings::account_dir(&l.agent_id).join(format!("received-{root}.json")),
+                        root,
+                    );
                     self.settings.select_hover_account(l.agent_id);
                     self.settings.save();
                 }
@@ -5966,6 +5977,14 @@ impl App {
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
+        self.world.received_items.enabled = self.settings.sort_received_items;
+        self.world.received_items.enabled_since = self.settings.received_items_since;
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode.ends_with("received-filing"))
+        {
+            self.inventory_ui.expand_all = Some(true);
+        }
         self.sync_chat_log();
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
@@ -5993,6 +6012,8 @@ impl App {
             self.camera.shift(shift);
         }
         self.world.poll_inventory_cache();
+        let receipts = std::mem::take(&mut self.world.received_items.receipts);
+        self.inventory_ui.update_received(&mut self.world.inventory, receipts);
         self.world.poll_transcripts();
         self.update_hover_height();
         self.update_avatar_health();
@@ -6089,6 +6110,9 @@ impl App {
             }
             // Background inventory changes, whatever the inventory window does.
             self.update_marketplace_listings();
+            for command in self.world.file_received_items(Instant::now()) {
+                self.send(command);
+            }
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -13406,6 +13430,10 @@ impl ApplicationHandler for App {
                         | "received-sort-name"
                         | "aurora-received-sort"
                         | "aurora-received-sort-name"
+                        | "received-filing"
+                        | "aurora-received-filing"
+                        | "aurora-received-unread"
+                        | "aurora-received-unread-compact"
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
@@ -13459,6 +13487,12 @@ impl ApplicationHandler for App {
                         self.inventory_ui.selected = None;
                         self.inventory_ui.selection.clear();
                         self.settings.inventory.received_sort.folders_by_name = view.ends_with("-name");
+                    }
+                    if view.ends_with("received-filing") || view.starts_with("aurora-received-unread") {
+                        self.settings.sort_received_items = true;
+                        self.settings.received_items_since = 0;
+                        crate::world::received_items::demo(&mut self.world);
+                        self.inventory_ui.tab = usize::from(view.ends_with("received-filing"));
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;

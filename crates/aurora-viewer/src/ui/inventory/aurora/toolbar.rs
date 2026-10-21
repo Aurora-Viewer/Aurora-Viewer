@@ -38,7 +38,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, lit: bool)
 }
 
 /// The tabs of the narrow width: an icon over a short name each; the
-/// Received tab counts the purchases not looked at yet.
+/// Received tab counts deliveries not looked at yet.
 pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences) {
     let mut entries = vec![(0, "briefcase-filled", aurora_i18n::tr!("inventory-tab-all"))];
     for (tab, icon, label, shown) in [
@@ -91,11 +91,9 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
     }
 }
 
-/// The purchases of Received Items not shown yet this session.
-pub(super) fn unseen_received(inv: &Inventory, st: &InventoryUi) -> usize {
-    rules::system(inv, 50).and_then(|id| inv.folders.get(&id)).map_or(0, |f| {
-        f.children.iter().filter(|id| !st.received_seen.contains(id)).count() + f.items.len()
-    })
+/// The Marketplace and sender deliveries not acknowledged by this account.
+pub(super) fn unseen_received(inv: &Inventory, st: &mut InventoryUi) -> usize {
+    st.received_badge.unseen(inv)
 }
 
 /// The hint of the search field: what it searches.

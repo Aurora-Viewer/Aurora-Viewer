@@ -6833,3 +6833,11 @@ screen-only/half/quarter exterior are Water 0.151/0.155/0.128 ms and total GPU
 1.16/1.08/1.17 ms, all at the 60 FPS cap. CPU parameter work is
 0.10/0.09/0.10 ms. Shared desktop load varies; these local simple-scene
 observations do not establish a general speedup or a busy-grid cost.
+
+### Received inventory filing
+
+`AURORA_DEMO_INVENTORY=received-filing` exercises new direct deliveries, an offline delivery, an intact folder and an accepted scripted gift below their sender/owner legacy names. `aurora-received-filing` shows the same fixture in Aurora's wide inventory. Both use the real filing state machine and synthetic inventory acknowledgements; at frame 700 the Received tree expands for capture. `aurora-received-unread` and `aurora-received-unread-compact` leave the Received tab unopened to show the combined red badge in the sidebar and compact tabs. Use `AURORA_CAPTURE_FRAMES=900`. Preferences > Aurora (`AURORA_DEMO_OPTIONS=13`) shows the OFF-by-default switch with the shared experimental icon; there is no warning paragraph below it. No grid access or old-inventory classification. On the grid, the human checks enabled/disabled direct and object-owner deliveries, offline retrieval, rejection, folder contents, and Marketplace purchases above the sender folders. Check another gift from the same sender raises the red badge after opening Received, that type destinations never override sender filing, and that empty sender folders move to Trash (MarketPlace and nonempty/unloaded folders stay).
+
+The Aurora page starts with Appearance. Received items and Water are its final two sections, in that order; use `AURORA_DEMO_OPTIONS=13:end` to capture the end of the page.
+
+Unread state is account-specific and survives reconnecting, restarting and clearing the inventory cache. On first use, existing history establishes a baseline without a red total. Check that reading Received and reconnecting shows no red badge, a new offline gift counts once, and an unread gift stays unread after restart. Automated regressions use real isolated state files and fresh inventory models, including old creation dates, late folder metadata, arrivals during initialization and a read before disk loading completes.
