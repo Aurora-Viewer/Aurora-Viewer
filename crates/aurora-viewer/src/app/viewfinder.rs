@@ -139,7 +139,7 @@ impl App {
         if self.settings.snapshot.dof.focus == PhotoFocus::Click
             && let Some(id) = self.snapshots.vf.subject
         {
-            match self.scene.head_world(&self.world, &id, Instant::now()) {
+            match self.vf_head(&id, Instant::now()) {
                 Some(h) => self.snapshots.vf.af.follow(dof::distance_along(eye, at, h), now),
                 None => self.snapshots.vf.subject = None,
             }
@@ -192,8 +192,7 @@ impl App {
     }
 
     /// The avatar whose body holds `hit` (a column from its feet to above
-    /// its head), and its head (the mHead bone): what the lens takes,
-    /// whichever way the face is turned.
+    /// its head), and the point of its head the lens takes (`vf_head`).
     fn vf_avatar_at(&self, hit: glam::Vec3) -> Option<(uuid::Uuid, glam::Vec3)> {
         let now = Instant::now();
         self.world
@@ -203,10 +202,21 @@ impl App {
                 let head = self.scene.head_world(&self.world, &o.full_id, now)?;
                 let across = (hit.truncate() - head.truncate()).length();
                 let inside = across < 0.6 && hit.z > head.z - 1.9 && hit.z < head.z + 0.35;
-                inside.then_some((across, o.full_id, head))
+                inside.then_some((across, o.full_id))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, id, head)| (id, head))
+            .and_then(|(_, id)| Some((id, self.vf_head(&id, now)?)))
+    }
+
+    /// What the lens takes on an avatar's head, whichever way its face is
+    /// turned: the side of the head nearest the camera (the face, or the
+    /// back of the head), not the mHead bone, which sits at the base of the
+    /// skull a hand behind the face: at f/1.8 close up, the face would blur.
+    fn vf_head(&self, id: &uuid::Uuid, now: Instant) -> Option<glam::Vec3> {
+        // the head's middle, about where the face box is centred
+        let centre = self.scene.head_world(&self.world, id, now)? + glam::Vec3::Z * 0.09;
+        let toward = (self.camera.position - centre).normalize_or_zero();
+        Some(centre + toward * HEAD_RADIUS)
     }
 
     /// The name the AF frame shows over an avatar's head: its display name
@@ -838,6 +848,9 @@ impl App {
         }
     }
 }
+
+/// About half a head's depth (m): from its middle to the face.
+const HEAD_RADIUS: f32 = 0.09;
 
 /// The viewfinder's sounds (`snapshot::viewfinder`).
 #[derive(Debug, Clone, Copy)]
