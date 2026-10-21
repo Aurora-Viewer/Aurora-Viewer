@@ -164,6 +164,7 @@ const BEFORE: &[&str] = &[
     "mute_groups_without_notices",
     "report_blocks",
     "show_joined_group_invitations",
+    "link_previews",
     "keywords",
     "friend_request_prompt",
     // Controls

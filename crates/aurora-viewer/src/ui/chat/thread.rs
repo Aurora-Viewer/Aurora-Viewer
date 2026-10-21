@@ -321,6 +321,7 @@ fn roomy_row(
             let (text, color, italics) = body(env, line, name);
             let size = env.emoji.message_size(&text, TEXT);
             chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
+            super::previews::cards(ui, env, line, &text);
         });
     });
     row.response.rect
@@ -369,6 +370,7 @@ fn compact_row(
             ui.add_space(1.0);
             let size = env.emoji.message_size(&text, TEXT);
             chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
+            super::previews::cards(ui, env, line, &text);
         });
     });
     row.response.rect

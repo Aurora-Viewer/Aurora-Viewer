@@ -66,6 +66,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(flash_conversations_button),
                 );
             });
+            link_previews(cx);
         }
         1 => notifications(cx),
         2 => keyword_alerts(cx),
@@ -116,6 +117,90 @@ pub fn page(cx: &mut Cx, tab: usize) {
             );
         }),
     }
+}
+
+/// The pictures and videos shown under the links of the conversations
+/// (`link_preview.rs`): when they load, where, how large, the sites hidden.
+fn link_previews(cx: &mut Cx) {
+    use crate::link_preview::{Load, Player, Size};
+    use aurora_i18n::tr;
+    let p = cx.p;
+    cx.group(tr!("ui-options-link-previews"), |cx| {
+        cx.choice(
+            tr!("ui-options-link-previews-load"),
+            tr!("ui-options-link-previews-load-hint"),
+            &field!(link_previews.load),
+            &[
+                (Load::Never, tr!("ui-options-link-previews-never"), true),
+                (Load::Trusted, tr!("ui-options-link-previews-trusted"), true),
+                (Load::All, tr!("ui-options-link-previews-all"), true),
+            ],
+        );
+        cx.toggle(
+            tr!("ui-options-link-previews-ims"),
+            tr!("ui-options-link-previews-ims-hint"),
+            &field!(link_previews.ims),
+        );
+        cx.toggle(tr!("ui-options-link-previews-groups"), "", &field!(link_previews.groups));
+        let off = !cx.s.link_previews.groups;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-link-previews-blur"),
+                tr!("ui-options-link-previews-blur-hint"),
+                &field!(link_previews.blur_groups),
+            );
+        });
+        cx.toggle(
+            tr!("ui-options-link-previews-nearby"),
+            tr!("ui-options-link-previews-nearby-hint"),
+            &field!(link_previews.nearby),
+        );
+        cx.choice(
+            tr!("ui-options-link-previews-player"),
+            tr!("ui-options-link-previews-player-hint"),
+            &field!(link_previews.player),
+            &[
+                (Player::InCard, tr!("ui-options-link-previews-in-card"), true),
+                (Player::Window, tr!("ui-options-link-previews-in-window"), true),
+            ],
+        );
+        cx.choice(
+            tr!("ui-options-link-previews-size"),
+            "",
+            &field!(link_previews.size),
+            &[
+                (Size::Small, tr!("ui-options-link-previews-small"), true),
+                (Size::Medium, tr!("ui-options-link-previews-medium"), true),
+                (Size::Large, tr!("ui-options-link-previews-large"), true),
+            ],
+        );
+        if !cx.s.link_previews.hidden_sites.is_empty() {
+            let sites = cx.s.link_previews.hidden_sites.join(" ");
+            cx.below().keywords(&sites).row(
+                tr!("ui-options-link-previews-hidden-sites"),
+                tr!("ui-options-link-previews-hidden-sites-hint"),
+                &field!(link_previews.hidden_sites),
+                |ui, s| {
+                    let mut removed = None;
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, site) in s.link_previews.hidden_sites.iter().enumerate() {
+                            ui.label(egui::RichText::new(site).size(12.0).color(p.ink));
+                            let tip = tr!("ui-options-link-previews-unhide", site = site.as_str());
+                            if crate::ui::widgets::icon_button(ui, &p, "x", &tip, true) {
+                                removed = Some(i);
+                            }
+                        }
+                    });
+                    if let Some(i) = removed {
+                        s.link_previews.hidden_sites.remove(i);
+                    }
+                    removed.is_some()
+                },
+            );
+        } else {
+            cx.track(&field!(link_previews.hidden_sites));
+        }
+    });
 }
 
 /// The Legacy Viewer's Chat › Notifications (EnableIMChatPopups,

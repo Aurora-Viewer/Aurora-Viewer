@@ -409,6 +409,7 @@ impl HistoryUi {
             plain_history: true,
             menu: Some(menu),
             bubbles: None,
+            previews: None,
         };
         let wash = find::wash(p);
         let (lines, clock, view, selection) = (&self.lines, self.clock, &mut self.view, &mut self.selection);
