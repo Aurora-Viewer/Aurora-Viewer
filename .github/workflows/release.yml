@@ -82,7 +82,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # the version comes from the tag; a dry run keeps the one Git describes
       # (aurora-version refuses a tag that is not the checked-out commit's)
+      # debug info stays out of the binary, as the Windows exe leaves it in a
+      # .pdb that is not published (the binary is about 490 MB with it)
       - name: Build
+        env:
+          CARGO_PROFILE_RELEASE_STRIP: debuginfo
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then export AURORA_VERSION_TAG="$TAG"; fi
           cargo build --release --locked -p aurora-viewer
