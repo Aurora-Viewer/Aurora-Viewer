@@ -7058,6 +7058,8 @@ impl App {
         let mut windows_ms = 0.0;
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
+            // before any field reads its keys: Ctrl+W is the frontmost window's
+            ui::close_key::begin(ui.ctx());
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
