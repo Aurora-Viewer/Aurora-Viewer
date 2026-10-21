@@ -2584,6 +2584,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
+| `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -2692,6 +2693,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Payments). `sent`: the end of a payment, with its message. `group`: the
   demo group as the payee, without a message field. An object's payment
   is `AURORA_DEMO_ACTIONS=pay`.
+- **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
+  made-up transactions of the last 75 minutes (tips through an object,
+  gifts, a sale and a purchase, an upload fee, a group's joining fee).
+  `aurora`: the Aurora look (totals, filter, newest first). `legacy`: the
+  Legacy Viewer's Time / Name / Amount list. `select`: two rows selected,
+  "Copy 2 (CSV)". `undo`: two rows removed and the bar that puts them back.
+  `empty`: nothing recorded yet. A resident paid with the Pay window during
+  the demo is added as a paid gift while the tracker records.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top

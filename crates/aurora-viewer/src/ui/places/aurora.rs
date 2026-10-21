@@ -1390,33 +1390,10 @@ impl PlacesUi {
             Source::Folder(_) => Source::All,
             s => s,
         };
-        let (bar, _) = ui.allocate_exact_size(Vec2::new(w, 30.0), Sense::hover());
-        let radius = ui.visuals().widgets.inactive.corner_radius;
-        ui.painter().rect_filled(bar, radius, p.field);
-        let tab_w = (bar.width() - 4.0 - 4.0) / 3.0;
-        for (n, (source, label, count)) in tabs.into_iter().enumerate() {
-            let r = Rect::from_min_size(
-                Pos2::new(bar.left() + 2.0 + n as f32 * (tab_w + 2.0), bar.top() + 2.0),
-                Vec2::new(tab_w, bar.height() - 4.0),
-            );
-            let resp = ui.interact(r, egui::Id::new(("places-tab", n)), Sense::click());
-            let on = current == source;
-            if on {
-                ui.painter().rect_filled(r, radius, p.raised);
-            } else if resp.hovered() {
-                ui.painter().rect_filled(r, radius, p.raised.gamma_multiply(0.5));
-            }
-            let ink = if on { p.ink } else { p.muted };
-            let name = line(ui, label, 12.5, ink, on, tab_w - 30.0);
-            let num = line(ui, &count.to_string(), 11.0, p.muted, false, 30.0);
-            let total = name.size().x + 6.0 + num.size().x;
-            let x = r.center().x - total * 0.5;
-            let nw = name.size().x;
-            widgets::paint_row_text(ui.painter(), name, x, r.center().y, ink);
-            widgets::paint_row_text(ui.painter(), num, x + nw + 6.0, r.center().y, p.muted);
-            if resp.clicked() && current != source {
-                self.set_source(source);
-            }
+        let mut chosen = tabs.iter().position(|t| t.0 == current).unwrap_or(0);
+        let labels: Vec<(&str, usize)> = tabs.iter().map(|(_, label, count)| (&**label, *count)).collect();
+        if widgets::count_tabs(ui, p, "places-tab", &mut chosen, &labels) {
+            self.set_source(tabs[chosen].0);
         }
         ui.add_space(8.0);
         // the folders of the Landmarks tab, in chips

@@ -98,7 +98,7 @@ sections! {
     TAB_AURORA => [
         water_effects,
         chat_style, classic_chat_lines, classic_name_tags, lookat.style, notifications_style, classic_bars, world_map_style, classic_people, classic_profiles, photo_window, snapshot.viewfinder.controls,
-        classic_about_land, classic_search, classic_region_estate, classic_places, classic_inventory, classic_pay_window, classic_controls, classic_restart_alert, classic_rez_effect, classic_hover_tips,
+        classic_about_land, classic_search, classic_region_estate, classic_places, classic_inventory, classic_pay_window, legacy_money_tracker, classic_controls, classic_restart_alert, classic_rez_effect, classic_hover_tips,
         lookat.aim, predict_own_motion, synchronize_animations, ground_avatar_feet, ground_feet_while_moving, ground_feet_max_height, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
     TAB_ACCESSIBILITY => [color_blindness, color_blindness_strength],

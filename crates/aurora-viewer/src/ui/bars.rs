@@ -568,6 +568,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
             *action = BarAction::BuyCurrency;
         }
+        // menu_viewer.xml: Avatar › Money Tracker
+        let tracker = aurora_i18n::tr!("money-tracker-title");
+        if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
+            super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
+        }
         menu::separator(ui, p);
         if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;

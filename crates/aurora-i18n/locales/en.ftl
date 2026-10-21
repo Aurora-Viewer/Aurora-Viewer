@@ -7187,6 +7187,7 @@ ui-options-aurora-pay-window = Pay window
 ui-options-aurora-pay-window-help = Paying residents, groups and objects.
 ui-options-aurora-pay-aurora = Aurora
 ui-options-aurora-pay-classic = Classic window (Legacy)
+ui-options-aurora-money-tracker-help = The L$ received and paid during the session.
 ui-options-aurora-controls = Camera and movement controls
 ui-options-aurora-controls-help = The Camera and Movement windows.
 ui-options-aurora-controls-aurora = Aurora
@@ -8645,6 +8646,57 @@ group-ability-experience-contributor-help = Members in a role with this ability 
 ## Buying L$
 currency-title = Buy L$
 currency-menu = Buy L$…
+money-tracker-title = Money tracker
+money-tracker-legacy-title = Money Tracker
+money-tracker-received = Received
+money-tracker-paid = Paid
+money-tracker-net = Net
+money-tracker-since = Since { $time } · { $count ->
+    [one] { $count } transaction
+   *[other] { $count } transactions
+    }
+money-tracker-all = All
+money-tracker-tab-received = Received
+money-tracker-tab-paid = Paid
+money-tracker-empty = No payment yet.
+money-tracker-empty-help = The L$ you receive and pay will show here.
+money-tracker-profile = View profile
+money-tracker-group-profile = Group profile
+money-tracker-pay = Pay…
+money-tracker-copy-selection = Copy the selection (CSV)
+money-tracker-remove = Remove from the list
+money-tracker-removed = { $count ->
+    [one] { $count } row removed
+   *[other] { $count } rows removed
+    }
+money-tracker-undo = Undo
+money-tracker-always = Also track while the window is closed
+money-tracker-always-help = Always track payments, even if the money tracker is closed.
+money-tracker-copy-all = Copy all (CSV)
+money-tracker-copy-some = Copy { $count } (CSV)
+money-tracker-clear = Clear
+money-tracker-quoted = “{ $text }”
+money-tracker-kind-sale = Object sale
+money-tracker-kind-purchase = Object purchase
+money-tracker-kind-gift = Gift
+money-tracker-kind-pay-object = Object payment
+money-tracker-kind-object-pays = Paid by an object
+money-tracker-kind-land = Land
+money-tracker-kind-land-pass = Land access pass
+money-tracker-kind-land-deed = Land deed
+money-tracker-kind-group-create = Group creation
+money-tracker-kind-group-join = Group joining fee
+money-tracker-kind-upload = Upload fee
+money-tracker-kind-classified = Classified ad
+money-tracker-kind-other = Transaction
+money-tracker-system = Paid to the system
+money-tracker-legacy-time = Time
+money-tracker-legacy-name = Name
+money-tracker-legacy-amount = Amount
+money-tracker-legacy-summary = Paid: L$ { $paid } - Received: L$ { $received }
+money-tracker-legacy-always = Track when closed
+money-tracker-legacy-copy = Copy as CSV
+money-tracker-legacy-delete = Delete
 ui-bars-balance-click-to-buy-l = Balance: click to buy L$
 currency-you-have = You now have
 currency-you-want-to-buy = Choose amount to buy
