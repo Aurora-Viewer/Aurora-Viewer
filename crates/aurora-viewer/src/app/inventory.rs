@@ -220,6 +220,12 @@ impl App {
     }
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
+        if let InvAction::Share { resident, .. } = &action
+            && !self.world.rlva.allows("share", &resident.to_string())
+        {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
         match action {
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::Edit(mut change) => {
@@ -649,6 +655,10 @@ impl App {
     }
 
     pub(super) fn apply_appearance_action(&mut self, action: crate::world::appearance::Action) {
+        self.apply_appearance_action_from(action, Uuid::nil());
+    }
+
+    pub(super) fn apply_appearance_action_from(&mut self, action: crate::world::appearance::Action, actor: Uuid) {
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
             ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             self.inventory_ui.show_original(&self.world.inventory, id);
@@ -693,7 +703,12 @@ impl App {
                 self.appearance_ui.pending = Some((request, sync));
                 self.appearance_ui.attachments = attachments;
                 self.appearance_ui.message.clear();
-                self.send(NetCommand::UpdateOutfit { request, change });
+                let command = NetCommand::UpdateOutfit { request, change };
+                if !self.world.rlva_allows_command(&command, actor) {
+                    self.appearance_ui.pending = None;
+                    self.appearance_ui.attachments.clear();
+                }
+                self.send_from(command, actor);
             }
             Err(reason) => {
                 self.inventory_ui.message.clone_from(&reason);

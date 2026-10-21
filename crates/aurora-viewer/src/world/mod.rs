@@ -58,6 +58,7 @@ pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
 pub mod region_restart;
+pub mod rlva;
 pub mod script_debug;
 pub mod search;
 pub mod sim_console;
@@ -318,6 +319,7 @@ pub struct World {
     pub mutes: mutes::MuteList,
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
+    pub rlva: rlva::Rlva,
     /// Derendered objects and residents, and the asset blacklist.
     pub derender: derender::Derender,
     /// Our groups and the group / conference chat sessions.
@@ -572,6 +574,7 @@ impl World {
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
+            rlva: rlva::Rlva::default(),
             derender: derender::Derender::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
@@ -2957,6 +2960,11 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        if self.rlva.receive(&c) {
+            return;
+        }
+        let mut c = c;
+        self.rlva.receive_chat(&mut c, self.agent_id);
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
         }
@@ -3023,6 +3031,13 @@ impl World {
     }
 
     fn on_im(&mut self, im: InstantMessage) {
+        if matches!(im.dialog, 0 | 17 | 41 | 42)
+            && !self
+                .rlva
+                .allows_im("recvim", if im.dialog == 17 { im.session_id } else { im.from_agent_id })
+        {
+            return;
+        }
         if self.im_blocked(&im) {
             return;
         }

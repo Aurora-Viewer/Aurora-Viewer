@@ -299,6 +299,7 @@ const UNDO_SECONDS: f64 = 8.0;
 
 #[derive(Default)]
 pub struct OptionsUi {
+    pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
     /// The page shown and its tab.

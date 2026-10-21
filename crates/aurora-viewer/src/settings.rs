@@ -621,6 +621,8 @@ pub struct Settings {
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
+    /// Global RLVa opt-in. Session restrictions are never persisted.
+    pub rlva_enabled: bool,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1406,6 +1408,7 @@ impl Default for Settings {
             sim_version_alert: true,
             object_im_filter: Default::default(),
             anti_spam: Default::default(),
+            rlva_enabled: false,
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),

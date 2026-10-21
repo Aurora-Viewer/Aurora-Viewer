@@ -76,6 +76,7 @@ mod region_restart;
 mod region_window;
 mod report_abuse;
 mod reset_skeleton;
+mod rlva;
 mod script_clicks;
 mod scripts;
 mod settings_backup;
@@ -1204,6 +1205,32 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        self.send_from(cmd, uuid::Uuid::nil());
+    }
+
+    fn send_from(&mut self, cmd: NetCommand, actor: uuid::Uuid) {
+        self.world.rlva.configure(self.settings.rlva_enabled);
+        if !self.world.rlva_allows_command(&cmd, actor) {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
+        let cmd = if let NetCommand::Chat {
+            message,
+            channel,
+            chat_type,
+        } = cmd
+        {
+            let mut outgoing = self.world.rlva.outgoing_chat(&message, channel, chat_type).into_iter();
+            let Some(first) = outgoing.next() else {
+                return;
+            };
+            for command in outgoing {
+                self.net.send(command);
+            }
+            first
+        } else {
+            cmd
+        };
         if let Some(flags) = self.native_anchor.observe(&cmd, self.world.agent.seated, Instant::now()) {
             let release = self.native_anchor.command(flags);
             self.send(release);
@@ -5111,6 +5138,9 @@ impl App {
 
     /// "Always run" (Ctrl+R, the Controls window's Walk and Run).
     fn set_always_run(&mut self, on: bool) {
+        if on && self.world.rlva.has("alwaysrun") {
+            return;
+        }
         if on == self.always_run {
             return;
         }
@@ -5134,6 +5164,9 @@ impl App {
     /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
     /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
+        if !self.world.agent.flying && self.world.rlva.has("fly") {
+            return;
+        }
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
@@ -5145,6 +5178,10 @@ impl App {
     /// LLFloater::setFocus → focusFirstItem). Openings that come from calls
     /// set `focus_im` alone and leave the keyboard where it is.
     pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
+        if !self.world.rlva.allows_im("startim", id) && !self.world.social.ims.iter().any(|im| im.other == id) {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
         self.world.social.focus_im = Some(id);
         self.chat_ui.conv_focus_request = true;
         self.show_conversations();
@@ -5325,6 +5362,12 @@ impl App {
             i.strafe_right = false;
         }
         i.run = self.temp_run.is_some();
+        if self.world.rlva.has("temprun") {
+            i.run = false;
+        }
+        if self.world.rlva.has("jump") && !self.world.agent.flying {
+            i.up = false;
+        }
         // nudge phase: the first 0.25 s of a press makes small steps
         let now = Instant::now();
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
@@ -5342,6 +5385,7 @@ impl App {
             let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
             if held > FLY_TIME
                 && self.movement_runtime.native_fly_allowed()
+                && !self.world.rlva.has("fly")
                 && !self.world.agent.flying
                 && !self.world.agent.seated
                 && self.in_world()
@@ -5921,6 +5965,7 @@ impl App {
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
+        self.update_rlva();
         if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_ANTI_SPAM").is_some() {
             for event in crate::demo::anti_spam::events(self.world.agent_id) {
                 if let Some(event) = self.world.apply(event) {
@@ -10137,6 +10182,7 @@ impl App {
                 })
                 .collect();
         }
+        self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)
@@ -10172,6 +10218,7 @@ impl App {
             self.world.anti_spam.unblock(queue, source);
         }
         self.world.anti_spam.configure(self.settings.anti_spam);
+        self.update_rlva();
         if let Some(change) = res.account
             && let Some(cmd) = self.world.change_user_info(change)
         {

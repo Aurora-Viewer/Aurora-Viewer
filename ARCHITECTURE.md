@@ -17,6 +17,22 @@ The reserved glyph uses the surrounding text's metrics, preserving the
 sentence baseline and line height. Unknown commands use a localized readable
 fallback; their actual URI stays available through the copy-link menu.
 
+RLVa is an experimental, explicit opt-in (`Settings::rlva_enabled`, false by
+default), exposed in Preferences > Protections with the session's active
+restrictions. `world/rlva.rs` owns parsing, object-scoped rules, strict
+exceptions, protocol replies and garbage collection. Its `policy.rs` checks
+the common action boundary; `inventory.rs` resolves #RLV paths and validates
+COF deltas, attachment/layer locks and scripted nostrip. `camera.rs` supplies
+temporary camera settings and exclusive ownership. `app/rlva.rs` dispatches
+forced actions through the native application handlers. Camera constraints
+also cover the free camera; HUD text and avatar tags are filtered at drawing.
+Disabling clears rules, queued commands and temporary camera values. No
+restriction is saved to settings or restored for a later account.
+
+This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
+lists the supported commands and remaining families; versionnum deliberately
+returns 0 until complete protocol compatibility can be claimed.
+
 Explicit profile openings restore their destination through the shared floater
 expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),
 groups, Places/standalone place details, experiences, payments, abuse reports

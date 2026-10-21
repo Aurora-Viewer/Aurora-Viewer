@@ -212,6 +212,9 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     };
     let painter = ctx.layer_painter(egui::LayerId::background());
     for (idx, o) in world.objects.texted() {
+        if !world.rlva.hover_visible(o.full_id, true) {
+            continue;
+        }
         if o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
             continue;
         }
@@ -373,7 +376,13 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
+        if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
+            continue;
+        }
         if o.is_avatar() {
+            if world.rlva.enabled() && !world.rlva.allows("shownametags", &o.full_id.to_string()) {
+                continue;
+            }
             let own = o.full_id == world.agent_id;
             if (own && !show_own) || !name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) {
                 continue;

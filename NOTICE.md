@@ -28,6 +28,12 @@ The Second Life message template (`crates/aurora-msg/message_template.msg`) and
 the avatar definition files (`crates/aurora-viewer/assets/character/`) come from
 the Second Life viewer sources (originally LGPL 2.1).
 
+The RLVa command parser, restriction rules, inventory conventions and camera
+behaviors in `crates/aurora-viewer/src/world/rlva/` and `world/rlva.rs` follow
+the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`: Copyright ©
+2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
+GPL-3.0-or-later as described above.
+
 ## Bundled assets
 
 | Asset | Location | License |

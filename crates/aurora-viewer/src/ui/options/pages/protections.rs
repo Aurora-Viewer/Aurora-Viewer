@@ -11,6 +11,32 @@ use uuid::Uuid;
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
+    cx.group(tr!("rlva-title"), |cx| {
+        cx.keywords("RLVa RLV RestrainedLove")
+            .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
+        cx.note(tr!("rlva-session-hint"));
+        cx.keywords("RLVa RLV RestrainedLove")
+            .below()
+            .row_with(tr!("rlva-active"), "", &Nothing, |ui, _, st, _| {
+                ui.vertical(|ui| {
+                    if st.rlva_restrictions.is_empty() {
+                        ui.label(tr!("rlva-none"));
+                    } else {
+                        egui::ScrollArea::vertical().id_salt("rlva-active").max_height(140.0).show_rows(
+                            ui,
+                            ui.spacing().interact_size.y,
+                            st.rlva_restrictions.len(),
+                            |ui, rows| {
+                                for (source, command) in &st.rlva_restrictions[rows] {
+                                    ui.label(format!("@{command}")).on_hover_text(source.to_string());
+                                }
+                            },
+                        );
+                    }
+                });
+                false
+            });
+    });
     cx.group(tr!("anti-spam-title"), |cx| {
         cx.keywords(tr!("anti-spam-title"))
             .toggle(tr!("anti-spam-enable"), tr!("anti-spam-enable-hint"), &field!(anti_spam.enabled));

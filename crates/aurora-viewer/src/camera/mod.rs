@@ -1210,6 +1210,39 @@ impl Camera {
 
     /// Once per frame, after the avatar moved (LLAgentCamera::updateCamera).
     pub fn update(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
+        if !world.rlva.enabled() {
+            self.update_unrestricted(world, s, f);
+            return;
+        }
+        let settings = world.rlva.camera_settings(s);
+        let no_mouselook =
+            world.rlva.camera_value("setcam_mouselook").is_some() || world.rlva.camera_limit("setcam_avdistmin", 0.0, true) > 0.0;
+        if self.mouselook() && no_mouselook {
+            self.change_to_default(&mut world.agent, &settings);
+        }
+        if world.rlva.camera_value("setcam_unlock").is_some() && !self.focus_on_avatar {
+            self.set_focus_on_avatar(true, false, false, &mut world.agent, &settings);
+        }
+        self.update_unrestricted(world, &settings, f);
+        for (origin, low, high) in [
+            (world.agent.position, "setcam_avdistmin", "setcam_avdistmax"),
+            (self.target, "setcam_origindistmin", "setcam_origindistmax"),
+        ] {
+            let min = world.rlva.camera_limit(low, 0.0, true);
+            let max = world.rlva.camera_limit(high, f32::INFINITY, false).max(min);
+            let offset = self.position - origin;
+            let distance = offset.length();
+            if distance < min || distance > max {
+                let direction = offset.try_normalize().unwrap_or(-Vec3::X);
+                self.position = origin + direction * distance.clamp(min, max);
+            }
+        }
+        let min = world.rlva.camera_limit("setcam_fovmin", 0.1, true);
+        let max = world.rlva.camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false).max(min);
+        self.fov_y = self.fov_y.clamp(min, max);
+    }
+
+    fn update_unrestricted(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
