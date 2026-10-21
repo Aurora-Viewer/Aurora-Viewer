@@ -5,7 +5,12 @@ use crate::{scene::Scene, world::World};
 use glam::{Quat, Vec3};
 use std::time::Instant;
 
-pub fn view(world: &World, scene: &Scene, group: usize, fov: f32) -> Option<(Vec3, Vec3)> {
+/// `turned`: the customise animation plays, which turns our avatar half a
+/// turn around its pelvis (ANIM_AGENT_CUSTOMIZE ends at 180°): its face is
+/// then behind the root, where the Legacy Viewer puts the camera
+/// (LLAgentCamera::changeCameraToCustomizeAvatar, the subparts' negative
+/// camera offsets).
+pub fn view(world: &World, scene: &Scene, group: usize, fov: f32, turned: bool) -> Option<(Vec3, Vec3)> {
     let now = Instant::now();
     let id = world.agent_id;
     let pelvis = scene.joint_world(world, &id, "mPelvis", now)?;
@@ -23,7 +28,7 @@ pub fn view(world: &World, scene: &Scene, group: usize, fov: f32) -> Option<(Vec
             )
         }
     };
-    let facing = Quat::from_rotation_z(world.agent.yaw);
+    let facing = Quat::from_rotation_z(world.agent.yaw + if turned { std::f32::consts::PI } else { 0.0 });
     Some((target + facing * Vec3::new(distance, 0.08 * distance, 0.04 * distance), target))
 }
 
@@ -56,23 +61,40 @@ mod tests {
             world.apply(event);
         }
         let scene = Scene::new(std::env::temp_dir().join("aurora-shape-camera"), world.avatar_lib.clone());
-        let body = view(&world, &scene, 0, 1.05).expect("body");
-        let head = view(&world, &scene, 1, 1.05).expect("head");
-        let torso = view(&world, &scene, 7, 1.05).expect("torso");
-        let legs = view(&world, &scene, 8, 1.05).expect("legs");
+        let body = view(&world, &scene, 0, 1.05, false).expect("body");
+        let head = view(&world, &scene, 1, 1.05, false).expect("head");
+        let torso = view(&world, &scene, 7, 1.05, false).expect("torso");
+        let legs = view(&world, &scene, 8, 1.05, false).expect("legs");
         assert!(head.1.z > torso.1.z && torso.1.z > legs.1.z);
         assert!(body.0.distance(body.1) > torso.0.distance(torso.1));
         assert!(head.0.distance(head.1) < torso.0.distance(torso.1));
         for category in 2..=6 {
-            assert_eq!(view(&world, &scene, category, 1.05), Some(head));
+            assert_eq!(view(&world, &scene, category, 1.05, false), Some(head));
         }
         world.avatar_poses.insert(
             world.agent_id,
             vec![glam::Mat4::from_translation(Vec3::Z * 2.0); world.avatar_lib.rig.len()],
         );
         world.avatar_shape_dz.insert(world.agent_id, 0.25);
-        let posed = view(&world, &scene, 1, 1.05).expect("posed head");
+        let posed = view(&world, &scene, 1, 1.05, false).expect("posed head");
         assert!((posed.1.z - head.1.z - 2.25).abs() < 1e-5, "use rendered pose and root height");
+    }
+    #[test]
+    fn the_customise_turn_puts_the_camera_behind_the_root() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.agent.yaw = 0.7;
+        let scene = Scene::new(std::env::temp_dir().join("aurora-shape-camera-turn"), world.avatar_lib.clone());
+        let at = Quat::from_rotation_z(world.agent.yaw) * Vec3::X;
+        for group in [0, 1, 7, 8] {
+            let (eye, target) = view(&world, &scene, group, 1.05, false).expect("front");
+            assert!((eye - target).dot(at) > 0.0, "in front of the root");
+            let (eye, turned) = view(&world, &scene, group, 1.05, true).expect("turned");
+            assert_eq!(turned, target);
+            assert!((eye - target).dot(at) < 0.0, "behind the root, before the turned face");
+        }
     }
     #[test]
     fn edited_head_stays_visible_beside_a_narrow_or_right_hand_editor() {

@@ -382,6 +382,11 @@ pub struct Settings {
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
+    /// The shape editor stands our avatar up and plays the customise
+    /// animation, which turns it to face the camera (on, as the Legacy
+    /// Viewer always does; Preferences › Avatars › Animations). Off, our
+    /// avatar keeps its pose and the camera frames it from the front.
+    pub customize_animation: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -1284,6 +1289,7 @@ impl Default for Settings {
             gestures: Default::default(),
             shape_show_hints: true,
             shape_height_feet: false,
+            customize_animation: true,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),

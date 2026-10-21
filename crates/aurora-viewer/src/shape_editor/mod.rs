@@ -99,6 +99,11 @@ pub struct State {
     snapshot_tx: mpsc::Sender<(u64, preview::Snapshot)>,
     snapshot_rx: mpsc::Receiver<(u64, preview::Snapshot)>,
     checked: Instant,
+    /// The parts of the last snapshot asked for, and how many times each
+    /// made it be built again since `rebuilds_since` (logged).
+    snapshot_parts: Option<[u64; 3]>,
+    rebuilds: [u32; 3],
+    rebuilds_since: Instant,
     generation: u64,
     model_pending: Option<(u64, u64)>,
     model_tx: mpsc::Sender<(u64, u64, Vec<Hint>)>,
@@ -138,6 +143,9 @@ impl Default for State {
             snapshot_tx,
             snapshot_rx,
             checked: Instant::now() - Duration::from_secs(1),
+            snapshot_parts: None,
+            rebuilds: [0; 3],
+            rebuilds_since: Instant::now(),
             generation: 1,
             model_pending: None,
             model_tx,
@@ -176,6 +184,7 @@ impl State {
         self.hint_keys.clear();
         self.snapshot = None;
         self.snapshot_ready_key = None;
+        self.snapshot_parts = None;
         self.group = 0;
         self.filter.clear();
         self.copy_name = None;
@@ -257,6 +266,7 @@ impl State {
         self.hint_keys.clear();
         self.snapshot = None;
         self.snapshot_ready_key = None;
+        self.snapshot_parts = None;
         self.close_confirmation = false;
         self.copy_name = None;
         self.close_after_save = false;
@@ -377,6 +387,12 @@ impl State {
             let input = preview::Input::capture(world, scene);
             self.snapshot_key = input.key;
             if self.snapshot_ready_key != Some(input.key) && self.snapshot_pending.is_none() {
+                if let Some(parts) = self.snapshot_parts {
+                    for (count, changed) in self.rebuilds.iter_mut().zip(parts.iter().zip(&input.parts).map(|(a, b)| a != b)) {
+                        *count += changed as u32;
+                    }
+                }
+                self.snapshot_parts = Some(input.parts);
                 let key = input.key;
                 self.snapshot_pending = Some(key);
                 let tx = self.snapshot_tx.clone();
@@ -387,6 +403,13 @@ impl State {
                     ctx.request_repaint();
                 });
             }
+        }
+        if self.rebuilds_since.elapsed() >= Duration::from_secs(10) {
+            let [bakes, meshes, textures] = std::mem::take(&mut self.rebuilds);
+            if bakes + meshes + textures > 0 {
+                log::info!("shape hints: built again for bakes {bakes}, worn meshes {meshes}, textures {textures} times in 10 s");
+            }
+            self.rebuilds_since = Instant::now();
         }
     }
 

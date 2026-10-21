@@ -67,6 +67,9 @@ pub struct Input {
     meshes: Vec<RawMesh>,
     pose: (Vec<Quat>, Vec<Vec3>),
     pub key: u64,
+    /// What the key covers, apart: the bakes, the worn meshes and the
+    /// textures (which of them made the hints be built again).
+    pub parts: [u64; 3],
 }
 pub struct Snapshot {
     textures: HashMap<Uuid, Arc<Image>>,
@@ -77,6 +80,20 @@ pub struct Snapshot {
     pose: (Vec<Quat>, Vec<Vec3>),
 }
 
+/// The hints look at the avatar from the front of its root, while the
+/// frozen pose may have turned the pelvis: the customise animation turns it
+/// half a turn, an AO stand a little. Only its turn about the vertical is
+/// dropped; its tilt stays.
+fn facing_front(mut pose: (Vec<Quat>, Vec<Vec3>), pelvis: Option<usize>) -> (Vec<Quat>, Vec<Vec3>) {
+    if let Some(rotation) = pelvis.and_then(|pelvis| pose.0.get_mut(pelvis)) {
+        let twist = Quat::from_xyzw(0.0, 0.0, rotation.z, rotation.w).normalize();
+        if twist.is_finite() {
+            *rotation = (*rotation * twist.inverse()).normalize();
+        }
+    }
+    pose
+}
+
 impl Input {
     pub fn capture(world: &World, scene: &Scene) -> Self {
         let mut out = Self {
@@ -84,14 +101,19 @@ impl Input {
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: Vec::new(),
-            pose: scene.preview_pose(&world.agent_id),
+            pose: facing_front(
+                scene.preview_pose(&world.agent_id),
+                world.avatar_lib.rig.names.get("mPelvis").copied(),
+            ),
             key: 0,
+            parts: [0; 3],
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        world.agent_id.hash(&mut hasher);
         // Hints freeze a pose. AO cycles and blink signals are not appearance
         // changes and must never invalidate the resident's comparison images.
         let Some(index) = world.objects.index_of_uuid(&world.agent_id) else {
+            world.agent_id.hash(&mut hasher);
+            out.key = hasher.finish();
             return out;
         };
         out.hidden_bakes = Scene::bom_mask(world, index);
@@ -103,6 +125,7 @@ impl Input {
                 out.body.insert(slot, id);
             }
         }
+        out.parts[0] = std::mem::take(&mut hasher).finish();
         let root = index;
         let mut stack = vec![(index, 0)];
         let mut visited = HashSet::new();
@@ -185,6 +208,7 @@ impl Input {
         }
         signatures.sort_unstable();
         signatures.hash(&mut hasher);
+        out.parts[1] = std::mem::take(&mut hasher).finish();
         let ids: HashSet<_> = out
             .body
             .values()
@@ -203,22 +227,25 @@ impl Input {
             }
             let source = scene.textures.preview_source(&id);
             id.hash(&mut hasher);
-            source.revision().hash(&mut hasher);
+            source.image_revision().hash(&mut hasher);
             out.textures.insert(id, source);
         }
-        out.key = hasher.finish();
+        out.parts[2] = hasher.finish();
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        (world.agent_id, out.parts).hash(&mut key);
+        out.key = key.finish();
         out
     }
 
     pub fn prepare(self, previous: Option<Arc<Snapshot>>) -> Snapshot {
-        let revisions = self.textures.iter().map(|(id, source)| (*id, source.revision())).collect();
+        let revisions = self.textures.iter().map(|(id, source)| (*id, source.image_revision())).collect();
         let textures = self
             .textures
             .into_par_iter()
             .filter_map(|(id, source)| {
                 let image = previous
                     .as_ref()
-                    .filter(|old| old.revisions.get(&id) == Some(&source.revision()))
+                    .filter(|old| old.revisions.get(&id) == Some(&source.image_revision()))
                     .and_then(|old| old.textures.get(&id).cloned())
                     .or_else(|| source.image(id))
                     .or_else(|| previous.as_ref().and_then(|snapshot| snapshot.textures.get(&id).cloned()));
@@ -843,6 +870,21 @@ mod tests {
     }
 
     #[test]
+    fn hints_drop_the_pelvis_turn_of_the_customise_animation_but_keep_its_tilt() {
+        let tilt = Quat::from_rotation_x(0.2);
+        let pose = (
+            vec![Quat::IDENTITY, tilt * Quat::from_rotation_z(std::f32::consts::PI)],
+            vec![Vec3::ZERO; 2],
+        );
+        let front = facing_front(pose, Some(1));
+        assert_eq!(front.0[0], Quat::IDENTITY);
+        assert!(front.0[1].abs_diff_eq(tilt, 1e-5), "{:?}", front.0[1]);
+        let forward = front.0[1] * Vec3::X;
+        assert!(forward.x > 0.9, "the pelvis faces the hints' camera again: {forward:?}");
+        assert_eq!(facing_front((Vec::new(), Vec::new()), Some(1)).0, Vec::<Quat>::new());
+    }
+
+    #[test]
     fn transient_sources_keep_ready_geometry_textures_and_the_frozen_pose() {
         let id = Uuid::from_u128(1);
         let image = Arc::new(Image {
@@ -901,6 +943,7 @@ mod tests {
             }],
             pose: (vec![Quat::from_rotation_z(1.0)], vec![Vec3::ONE]),
             key: 2,
+            parts: [0; 3],
         };
         let next = input.prepare(Some(Arc::new(previous)));
         assert!(Arc::ptr_eq(&next.textures[&id], &image));

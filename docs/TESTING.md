@@ -4511,6 +4511,16 @@ like the Legacy Viewer's): the log
 says `customise animation: start 038fcec9-…` on opening and, on closing, its
 stop then `start 6883a61a-…` (the "done" animation). In demo the animation
 is listed on our avatar but has no motion (no built-in animation assets).
+The animation turns the avatar half a turn: once its motion is loaded (on
+the grid), the camera frames it from behind its root, which is then its
+front, and the hints drop the pelvis turn of their frozen pose. Without the
+motion (demo) the camera stays in front of the root. Preferences › Avatars ›
+Animations › "Play the customise animation" (on) turned off: no stand up,
+no animation, the camera in front; changing it while the editor is open
+applies at once. Every 10 s the log says `shape hints: built again for
+bakes <n>, worn meshes <n>, textures <n> times in 10 s` when the hints were
+rebuilt; on a still avatar these counts stay at 0 (the levels the texture
+budget moves above the hints' 256 px no longer count).
 
 **`AURORA_DEMO_AVATAR_HEALTH=undeform|refresh`** runs one entry of Me ›
 Avatar health at frame 600, as its menu row would. `undeform`: our skeleton

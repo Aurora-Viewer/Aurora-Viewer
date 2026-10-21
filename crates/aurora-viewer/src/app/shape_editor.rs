@@ -97,7 +97,10 @@ impl App {
             self.shape_ui.camera_pending = true;
             return;
         }
-        if let Some((eye, target)) = crate::shape_editor::camera::view(&self.world, &self.scene, self.shape_ui.group, self.camera.fov_y) {
+        let turned = self.customize_turns();
+        if let Some((eye, target)) =
+            crate::shape_editor::camera::view(&self.world, &self.scene, self.shape_ui.group, self.camera.fov_y, turned)
+        {
             let (eye, target) = egui::AreaState::load(&self.egui_ctx, egui::Id::new("shape_editor"))
                 .map(|editor| {
                     crate::shape_editor::camera::beside_editor(

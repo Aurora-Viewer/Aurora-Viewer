@@ -39,6 +39,8 @@ const RETRY_AFTER: Duration = Duration::from_secs(5);
 pub(super) struct AvatarHealth {
     /// ANIM_AGENT_CUSTOMIZE asked for (LLAgent::mCustomAnim).
     customizing: bool,
+    /// The shape editor frames our avatar turned around (customize_turns).
+    turned: bool,
     /// When each item was last asked again (LLAttachmentsMgr::mAttachmentRequests).
     refreshed: HashMap<Uuid, Instant>,
 }
@@ -58,9 +60,10 @@ impl App {
     /// editors, and the `AURORA_DEMO_AVATAR_HEALTH` scenario. The physics
     /// layer editor does not count: its wearable type keeps the camera
     /// (LLWearableType WT_PHYSICS, disable_camera_switch), so the Legacy
-    /// Viewer never enters customise mode for it.
+    /// Viewer never enters customise mode for it. With the customise
+    /// animation turned off (an Aurora choice), our avatar keeps its pose.
     pub(super) fn update_avatar_health(&mut self) {
-        let editing = self.shape_ui.open && !self.world.agent_id.is_nil();
+        let editing = self.shape_ui.open && !self.world.agent_id.is_nil() && self.settings.customize_animation;
         if editing && !self.avatar_health.customizing {
             // changeCameraToCustomizeAvatar: "force stand up" first
             // (LLAgent::standUp, AGENT_CONTROL_STAND_UP)
@@ -70,6 +73,14 @@ impl App {
             log::info!("customise animation: {} {anim}", if start { "start" } else { "stop" });
             self.own_animation(anim, start);
         }
+        let turned = editing && self.customize_turns();
+        if turned != self.avatar_health.turned {
+            self.avatar_health.turned = turned;
+            if self.shape_ui.open {
+                // frame our avatar again from the side it now faces
+                self.shape_ui.camera_pending = true;
+            }
+        }
         if self.demo && self.frame_count == 600 {
             match std::env::var("AURORA_DEMO_AVATAR_HEALTH").as_deref() {
                 Ok("undeform") => self.undeform_avatar(),
@@ -77,6 +88,14 @@ impl App {
                 _ => {}
             }
         }
+    }
+
+    /// Whether the shape editor finds our avatar turned around: the
+    /// customise animation is chosen and its motion is loaded (none in the
+    /// demo, which has no built-in animation assets; a first download takes
+    /// a moment). Asking for it also starts its loading.
+    pub(super) fn customize_turns(&mut self) -> bool {
+        self.settings.customize_animation && self.scene.anims.get(&ANIM_CUSTOMIZE).is_some()
     }
 
     /// The customise animation is not asked for again after a logout.
