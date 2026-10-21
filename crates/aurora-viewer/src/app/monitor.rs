@@ -616,14 +616,17 @@ impl App {
                 Action::Compact => {}
                 Action::Export => self.export_monitor(),
                 Action::Preferences(page) => {
-                    ui::widgets::open_floater(&self.egui_ctx, "options", &mut self.panels.settings);
-                    self.options_ui.tab = match page {
-                        Page::Graphics => ui::options::TAB_GRAPHICS,
-                        Page::Interface => ui::options::TAB_INTERFACE,
-                        Page::Chat => ui::options::TAB_CHAT,
-                        Page::Network => ui::options::TAB_NETWORK,
-                        Page::Audio => ui::options::TAB_AUDIO,
-                    };
+                    ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                    self.options_ui.open(
+                        match page {
+                            Page::Graphics => ui::options::Page::Graphics,
+                            Page::Interface => ui::options::Page::Layout,
+                            Page::Chat => ui::options::Page::Chat,
+                            Page::Network => ui::options::Page::Network,
+                            Page::Audio => ui::options::Page::Sound,
+                        },
+                        0,
+                    );
                 }
                 Action::Inspect(id) => self.inspect_object(id),
                 Action::InspectAvatar(id) => self.inspect_avatar(id),
@@ -635,8 +638,8 @@ impl App {
                 Action::OpenCacheFolder => crate::snapshot::gallery::reveal(&crate::settings::cache_dir(), None),
                 // the Network page's button, with its confirmation
                 Action::ClearCache => {
-                    ui::widgets::open_floater(&self.egui_ctx, "options", &mut self.panels.settings);
-                    self.options_ui.tab = ui::options::TAB_NETWORK;
+                    ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                    self.options_ui.open(ui::options::Page::Network, 0);
                 }
             }
         }

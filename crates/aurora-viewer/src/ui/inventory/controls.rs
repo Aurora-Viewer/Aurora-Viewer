@@ -13,10 +13,6 @@ fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool 
     .inner
 }
 
-pub fn preferences(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences) -> bool {
-    preferences_for_tab(ui, p, prefs, 0)
-}
-
 pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, tab: usize) -> bool {
     let mut changed = false;
     let sort = if tab == super::RECEIVED_TAB {
