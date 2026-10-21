@@ -3192,7 +3192,8 @@ failure. Grid validation and any paid upload are performed by the human.
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
   version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
   group titles, `3:new` the reopened
-  conversations, `3:new2` the invitations to joined groups, `7:new` the music
+  conversations, `3:new2` the ignored conferences, `3:new3` the invitations
+  to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames

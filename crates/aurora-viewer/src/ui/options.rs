@@ -2751,6 +2751,33 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                     |ui| toggle(ui, p, &mut s.mute_groups_without_notices),
                 );
+                // Legacy Viewer › Chat (FSIgnoreAdHocSessions, FSReportIgnoredAdHocSession,
+                // FSDontIgnoreAdHocFromFriends): the same switches as Online status ›
+                // Ad hoc conferences
+                scroll_mark(ui, st);
+                let a = &mut s.autoresponse;
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-hint"),
+                    |ui| toggle(ui, p, &mut a.ignore_adhoc),
+                );
+                let on = a.ignore_adhoc;
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences-report"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-report-hint"),
+                    |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, &mut a.report_ignored_adhoc)).inner,
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences-friends"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-friends-hint"),
+                    |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, &mut a.adhoc_from_friends)).inner,
+                );
                 c |= row(
                     ui,
                     p,
