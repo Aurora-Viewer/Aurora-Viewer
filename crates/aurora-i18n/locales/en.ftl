@@ -3271,7 +3271,7 @@ ui-notifications-more = { $count ->
 }
 ui-notifications-paused-hint = paused while the pointer is on it
 ui-notifications-mark-all-read = Mark all read
-ui-notifications-mark-all-read-tip = Information goes to the history; what waits for an answer stays in To do
+ui-notifications-mark-all-read-tip = Information goes to the history; what waits for an answer stays in To do, marked read
 ui-notifications-dnd-banner = Do not disturb · notifications arrive without showing
 ui-notifications-dnd-off = Turn off
 ui-notifications-to-do = To do

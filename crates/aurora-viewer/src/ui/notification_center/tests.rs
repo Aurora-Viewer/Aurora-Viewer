@@ -274,3 +274,43 @@ fn a_script_menu_stays_out_until_answered() {
     update(&list, &mut c, at(SHOW_ANSWER * 4.0), 30.0);
     assert!(c.peek[0].folding.is_some());
 }
+
+/// "Mark all read" empties the bell's count: the information leaves, a
+/// script menu and an offer stay in "To do", read.
+#[test]
+fn mark_all_read_clears_the_count_and_keeps_what_waits() {
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    info(&mut list, "Lune paid you L$50");
+    let menu = list.push(
+        Kind::Script,
+        "Fountain",
+        "Pick a colour",
+        Data::Dialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object: Uuid::from_u128(9),
+            object_name: "Fountain".into(),
+            own_object: false,
+            channel: -5,
+            buttons: vec!["Violet".into()],
+        },
+    );
+    let offer = list.push(
+        Kind::Group,
+        "Join Aurora Builders?",
+        "",
+        Data::Group {
+            group: Uuid::from_u128(7),
+            tx: Uuid::from_u128(8),
+            offline: false,
+        },
+    );
+    update(&list, &mut c, at(0.0), 30.0);
+    // the list is open: no card out, everything counted
+    update(&list, &mut c, Moment { open: true, ..at(0.1) }, 30.0);
+    assert_eq!(bell_count(&list, &c), 3);
+    list.read_all();
+    assert_eq!(list.listed().map(|n| n.id).collect::<Vec<_>>(), vec![menu, offer]);
+    assert!(list.list.iter().all(|n| n.read));
+    assert_eq!(bell_count(&list, &c), 0);
+}

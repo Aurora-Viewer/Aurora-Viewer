@@ -525,7 +525,7 @@ fn full_list(
                 .color(p.ink),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let any = list.listed().any(|n| !n.interactive());
+            let any = list.listed().any(|n| !n.interactive() || !n.read);
             if ui
                 .add_enabled(
                     any,
@@ -539,8 +539,7 @@ fn full_list(
                 .on_hover_text(aurora_i18n::tr!("ui-notifications-mark-all-read-tip"))
                 .clicked()
             {
-                // information goes to the history, offers stay to be answered
-                list.clear_info();
+                list.read_all();
             }
         });
     });
