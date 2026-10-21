@@ -53,6 +53,7 @@ pub mod marketplace_listings;
 pub mod media;
 pub mod menu;
 pub mod minimap;
+pub mod money_tracker;
 pub mod monitor;
 pub mod movelock;
 pub mod movement;
@@ -139,6 +140,8 @@ pub struct Panels {
     pub search: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
+    /// "Money tracker" (Me menu): the L$ received and paid.
+    pub money_tracker: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
@@ -182,6 +185,7 @@ impl Panels {
             places: false,
             search: false,
             asset_blacklist: false,
+            money_tracker: false,
             bumps: false,
             camera_controls: false,
             movement_controls: false,

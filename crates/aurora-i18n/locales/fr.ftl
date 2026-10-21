@@ -7096,6 +7096,7 @@ ui-options-aurora-pay-window = Fenêtre Payer
 ui-options-aurora-pay-window-help = Paiement des résidents, des groupes et des objets.
 ui-options-aurora-pay-aurora = Aurora
 ui-options-aurora-pay-classic = Fenêtre classique (Legacy)
+ui-options-aurora-money-tracker-help = Les L$ reçus et payés pendant la session.
 ui-options-aurora-controls = Contrôles caméra et déplacement
 ui-options-aurora-controls-help = Les fenêtres Caméra et Déplacement.
 ui-options-aurora-controls-aurora = Aurora
@@ -8554,6 +8555,57 @@ group-ability-experience-contributor-help = Les membres dotés d’un rôle avec
 ## Achat de L$
 currency-title = Acheter des L$
 currency-menu = Acheter des L$…
+money-tracker-title = Suivi des L$
+money-tracker-legacy-title = Suivi des transactions
+money-tracker-received = Reçu
+money-tracker-paid = Payé
+money-tracker-net = Net
+money-tracker-since = Depuis { $time } · { $count ->
+    [one] { $count } transaction
+   *[other] { $count } transactions
+    }
+money-tracker-all = Tout
+money-tracker-tab-received = Reçus
+money-tracker-tab-paid = Payés
+money-tracker-empty = Aucun paiement pour l’instant.
+money-tracker-empty-help = Les L$ reçus et payés s’afficheront ici.
+money-tracker-profile = Voir le profil
+money-tracker-group-profile = Profil du groupe
+money-tracker-pay = Payer…
+money-tracker-copy-selection = Copier la sélection (CSV)
+money-tracker-remove = Retirer de la liste
+money-tracker-removed = { $count ->
+    [one] { $count } ligne retirée
+   *[other] { $count } lignes retirées
+    }
+money-tracker-undo = Annuler
+money-tracker-always = Suivre aussi quand la fenêtre est fermée
+money-tracker-always-help = Toujours suivre les transactions, même lorsque le suivi est fermé.
+money-tracker-copy-all = Copier tout (CSV)
+money-tracker-copy-some = Copier { $count } (CSV)
+money-tracker-clear = Effacer
+money-tracker-quoted = « { $text } »
+money-tracker-kind-sale = Vente d’objet
+money-tracker-kind-purchase = Achat d’objet
+money-tracker-kind-gift = Don
+money-tracker-kind-pay-object = Paiement d’objet
+money-tracker-kind-object-pays = Payé par un objet
+money-tracker-kind-land = Terrain
+money-tracker-kind-land-pass = Pass d’accès
+money-tracker-kind-land-deed = Cession de terrain
+money-tracker-kind-group-create = Création de groupe
+money-tracker-kind-group-join = Inscription au groupe
+money-tracker-kind-upload = Frais d’envoi
+money-tracker-kind-classified = Petite annonce
+money-tracker-kind-other = Transaction
+money-tracker-system = Payé au système
+money-tracker-legacy-time = Heure
+money-tracker-legacy-name = Nom
+money-tracker-legacy-amount = Montant
+money-tracker-legacy-summary = Payé : { $paid } L$ - Reçu : { $received } L$
+money-tracker-legacy-always = Suivre lorsque fermé
+money-tracker-legacy-copy = Copier au format CSV
+money-tracker-legacy-delete = Supprimer
 ui-bars-balance-click-to-buy-l = Solde : cliquer pour acheter des L$
 currency-you-have = Vous avez
 currency-you-want-to-buy = Vous voulez acheter

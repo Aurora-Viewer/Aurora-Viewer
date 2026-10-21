@@ -420,6 +420,9 @@ pub struct Settings {
     pub confirm_payments: bool,
     /// FSPaymentConfirmationThreshold: 200 L$ by default.
     pub payment_confirm_threshold: i32,
+    /// The money tracker records the payments even while it is closed
+    /// (FSAlwaysTrackPayments, off by default).
+    pub always_track_payments: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -582,6 +585,9 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// The Legacy Viewer's money tracker (floater_fs_money_tracker.xml)
+    /// instead of the Aurora look of `ui/money_tracker/aurora.rs`.
+    pub legacy_money_tracker: bool,
     /// The full-width top and bottom bars of Firestorm instead of the glass
     /// islands of `ui/bars/islands.rs`.
     pub classic_bars: bool,
@@ -1258,6 +1264,7 @@ impl Default for Settings {
             region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
+            always_track_payments: false,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1331,6 +1338,7 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            legacy_money_tracker: false,
             classic_bars: false,
             place_bar_stretch: true,
             place_bar_rights_text: false,
