@@ -79,6 +79,12 @@ tests passed, zero failures and 26 ignored; scripts, formatting and Clippy
 are clean. This includes thirteen RLVa logic/integration tests. It does not
 validate the unfinished command families or live-grid behavior.
 
+The native dev viewer builds successfully. Inspected offline captures
+`.scratch/rlva-disabled-fr.png`, `rlva-enabled-fr.png` and
+`rlva-released-en.png` (1440 × 1000, frame 850): the switch is off with no
+locks, on with the synthetic restrictions, then off with an empty list.
+Labels, hints and session controls fit the existing Protections layout.
+
 `AURORA_DEMO_RLVA=enabled|disabled|released` opens the native preference page
 and delivers synthetic object commands through `World::apply`. Capture after
 frame 800. The three modes show active locks, ignored commands and locks
