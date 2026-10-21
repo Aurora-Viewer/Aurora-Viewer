@@ -4015,7 +4015,10 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
-    // a mirror (box reflection probe flagged as mirror) with a polished face
+    // a mirror as built in SL: an invisible box reflection probe flagged as
+    // mirror (its plane through the center, along its +Z), and a shiny
+    // 10 cm panel through that plane, its face 5 cm in front of it, where
+    // the Legacy Viewer gives it almost the whole mirror (tapHeroProbe)
     {
         let probe = aurora_prim::extra::ReflectionProbeParams {
             ambiance: 0.0,
@@ -4023,17 +4026,29 @@ pub fn events() -> Vec<NetEvent> {
             flags: 0x1 | 0x4,
         };
         let rot = Quat::from_rotation_z(-1.2) * Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        let center = Vec3::new(cx + 2.0, cy - 9.0, g(cx, cy) + 2.0);
         add(prim(
             id,
-            Vec3::new(cx + 2.0, cy - 9.0, g(cx, cy) + 2.0),
+            center,
             rot,
-            Vec3::new(3.0, 2.6, 0.08),
+            Vec3::new(3.4, 3.0, 1.0),
             boxp,
-            te([0.85, 0.87, 0.9, 1.0], 3, false, 0.0),
+            te([1.0, 1.0, 1.0, 0.0], 0, false, 0.0),
             ExtraParams {
                 reflection_probe: Some(probe),
                 ..Default::default()
             },
+            "",
+        ));
+        id += 1;
+        add(prim(
+            id,
+            center,
+            rot,
+            Vec3::new(3.0, 2.6, 0.1),
+            boxp,
+            te([0.85, 0.87, 0.9, 1.0], 3, false, 0.0),
+            ExtraParams::default(),
             "",
         ));
         id += 1;

@@ -49,6 +49,7 @@ const SCAN_SLICES: usize = 8;
 const SCAN_MIN_SLICE: usize = 512;
 /// LL_PROBE flags (llprimitive.h LLReflectionProbeParams).
 const FLAG_BOX: u8 = 0x01;
+const FLAG_MIRROR: u8 = 0x04;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Key {
@@ -346,7 +347,10 @@ impl ProbeManager {
                 let Some(o) = world.objects.get(idx) else {
                     continue;
                 };
-                let Some(rp) = o.extra.reflection_probe else {
+                // a mirror is a hero probe only, never a cube map of its own
+                // (LLVOVolume::updateReflectionProbePtr): its box would show
+                // the place without avatars wherever the mirror fades out
+                let Some(rp) = o.extra.reflection_probe.filter(|rp| rp.flags & FLAG_MIRROR == 0) else {
                     continue;
                 };
                 let Some((pos, rot, hud)) = Scene::object_transform(world, idx, now, 0) else {
@@ -448,13 +452,26 @@ mod tests {
             world.apply(ev);
         }
         let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
-        let (probe, eye) = world
+        let (idx, probe, eye) = world
             .objects
             .iter()
             .find(|(_, o)| o.extra.reflection_probe.is_some() && o.parent_id == 0)
-            .map(|(_, o)| (o.full_id, o.position))
+            .map(|(idx, o)| (idx, o.full_id, o.position))
             .expect("demo reflection probe");
+        // the demo's only probe is the mirror's, which is no cube map: the
+        // whole scan passes over it
         let slots = world.objects.slots.len();
+        let mut m = ProbeManager::default();
+        let now = Instant::now();
+        for _ in 0..slots.div_ceil(SCAN_MIN_SLICE) {
+            m.update(&scene, &world, eye, 0.0, now);
+        }
+        assert!(m.pass.is_none(), "scan not finished");
+        assert!(!m.probes.contains_key(&Key::Object(probe)), "mirror probe made a cube map");
+        // as an ordinary box probe it is found at the end of the scan
+        if let Some(rp) = world.objects.get_mut(idx).and_then(|o| o.extra.reflection_probe.as_mut()) {
+            rp.flags &= !FLAG_MIRROR;
+        }
         let steps = slots.div_ceil(slots.div_ceil(SCAN_SLICES).max(SCAN_MIN_SLICE));
         assert!(steps > 1, "{slots} slots");
         let mut m = ProbeManager::default();

@@ -99,6 +99,7 @@ struct FrameU {
     water_air: [f32; 4],
     mirror_plane: [f32; 4],
     mirror_box: [[f32; 4]; 4],
+    mirror_view_proj: [[f32; 4]; 4],
     sky_light: [f32; 4],
     sky_sunlight: [f32; 4],
     sky_ambient: [f32; 4],
@@ -3138,7 +3139,8 @@ impl Backend {
             };
             [msaa("prepass msaa", Some(wgpu::Face::Back)), msaa("prepass msaa 2s", None)]
         });
-        // planar reflections (single sample, mirrored winding -> no culling)
+        // planar reflections (single sample; mirrored winding: no culling
+        // here, fs_reflect keeps the side facing the mirrored camera)
         let refl = |label: &'static str, vs: &'static str, fs: &'static str, vb: Vb| {
             pipe(PipeDesc {
                 vb,
@@ -4677,6 +4679,9 @@ impl Backend {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
             main.mirror_box = m.world_to_box.to_cols_array_2d();
+            // the camera of the mirror pass (refl_frame below), which
+            // mirror_tap projects the reflected rays through
+            main.mirror_view_proj = (f.proj * f.view * reflection_matrix(n, -n.dot(m.point))).to_cols_array_2d();
         }
         // local lights by screen tile and depth, for the main view (light_tiles.rs)
         let light_culling = LightCulling::from_env();
@@ -4834,7 +4839,8 @@ impl Backend {
             let mut rf = f.clone();
             rf.shadows = false;
             let mut u = this.frame_uniforms(&rf, f.view * m, None, &cascades, &splits);
-            u.misc = [0.0, 0.0, 0.0, 1.0];
+            // 2: a reflection pass whose view is mirrored (mirrored_pass, common.wgsl)
+            u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = n.extend(d + keep_offset).to_array();
             u
         };
