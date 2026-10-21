@@ -27,6 +27,7 @@ $ErrorActionPreference = 'Stop'
 $pages = @(
     @{ Section = $null; Page = 'Home'; Title = 'Home'; Source = 'README.md' }
     @{ Section = 'For testers'; Page = 'Reporting-bugs'; Title = 'Reporting bugs'; Source = 'docs/BUG_REPORTING.md' }
+    @{ Section = 'For testers'; Page = 'Installing-on-Linux'; Title = 'Installing on Linux'; Source = 'docs/LINUX.md' }
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
     @{ Section = 'For testers'; Page = 'Asset-imports'; Title = 'Asset imports'; Source = 'docs/IMPORTS.md' }
     @{ Section = 'For testers'; Page = 'Dev-Toolbox'; Title = 'Dev Toolbox'; Source = 'docs/DEV_TOOLBOX.md' }

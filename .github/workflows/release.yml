@@ -1,16 +1,26 @@
 name: Release
 
 # A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
-# viewer and publishes the release with notes grouped by PR label.
+# viewer and publishes the release with notes grouped by PR label: the
+# Windows zip (the one the updater installs), then the Linux archive.
+# A pull request that changes these release files gets a dry run of the
+# Linux job (built as v0.0.0, archive kept as the run's artifact, nothing
+# published): no agent can try the Linux build on its PC.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/package.ps1
+      - scripts/verify-version.ps1
 
 permissions:
   contents: write
 
 jobs:
   windows:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -46,3 +56,60 @@ jobs:
           $ghArgs = @($v, $env:ZIP, "$($env:ZIP).sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
           if ($v -match '-') { $ghArgs += '--prerelease' }   # v0.3.0-beta.1
           gh release create @ghArgs
+
+  # The Linux archive joins the release once it is published: a Linux build
+  # that fails leaves the Windows release in place and the run red (re-run
+  # this job alone after a passing failure; a fix in the code needs a new
+  # version). Ubuntu 24.04: glibc 2.39, so current distributions (Arch,
+  # Fedora, Ubuntu 24.04 and later) run it.
+  linux:
+    needs: windows
+    if: ${{ !cancelled() && (needs.windows.result == 'success' || (github.event_name == 'pull_request' && needs.windows.result == 'skipped')) }}
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || 'v0.0.0' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # ALSA for the sound, the rest for winit's X11 / Wayland back ends
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+      - name: Rust stable
+        run: rustup update stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        env:
+          AURORA_VERSION_TAG: ${{ env.TAG }}
+        run: cargo build --release --locked -p aurora-viewer
+      - name: Verify compiled version
+        shell: pwsh
+        run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer -Tag $env:TAG
+      # tar keeps the executable bit
+      - name: Package
+        shell: pwsh
+        run: |
+          $v = $env:TAG
+          $dir = "Aurora-Viewer-$v-linux-x64"
+          ./scripts/package.ps1 -Exe target/release/aurora-viewer -Out $dir
+          & tar -czf "$dir.tar.gz" $dir
+          if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
+          $hash = (Get-FileHash -LiteralPath "$dir.tar.gz" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $dir.tar.gz" | Set-Content -LiteralPath "$dir.tar.gz.sha256" -Encoding utf8NoBOM
+          "ARCHIVE=$dir.tar.gz" >> $env:GITHUB_ENV
+      - name: Publish
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256"
+      - name: Dry-run archive
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: viewer-linux-dry-run
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          compression-level: 0
