@@ -2997,8 +2997,10 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
-  time left, 6 s for information, 12 s for what waits for an answer), folds
-  back into it around frame 1180 and the red count bounces; Orion comes
+  time left, 6 s for information, 12 s for what waits for an answer) and
+  leaves around frame 1180 (a message toasts only by default: no count;
+  with Preferences › Chat › Toasts › "Keep messages under the bell" it
+  folds into the bell and the red count bounces); Orion comes
   online at 1190 (small toast at the top right by default, once the card
   has folded in; never in the center), a
   teleport offer at 1270 and an inventory offer at 1325 stack under the
