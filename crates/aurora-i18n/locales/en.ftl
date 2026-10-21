@@ -3917,6 +3917,7 @@ ui-options-when-the-window-is-not-in-the-foreground-the = When the window is not
 ui-options-glow-amount-instead-of-the-image-red-glow-10 = Glow amount instead of the image (red = glow × 10, green = × 2)
 world-mod-someone = Someone
 demo-has-anyone-seen-the-new-eep-sky = Has anyone seen the new EEP sky?
+demo-conference-invitation = Anyone up for a tour of the plaza?
 common-quit = Quit
 ui-bars-quit-aurora-viewer = Quit Aurora Viewer
 ui-options-camera-exit-with-mouse-wheel = Exit with mouse wheel

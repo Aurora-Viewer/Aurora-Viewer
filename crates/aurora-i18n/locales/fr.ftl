@@ -3920,6 +3920,7 @@ ui-options-when-the-window-is-not-in-the-foreground-the = Quand la fenêtre n'es
 ui-options-glow-amount-instead-of-the-image-red-glow-10 = Quantité de glow à la place de l'image (rouge = glow × 10, vert = × 2)
 world-mod-someone = Quelqu'un
 demo-has-anyone-seen-the-new-eep-sky = Quelqu'un a vu le nouveau ciel EEP ?
+demo-conference-invitation = Quelqu'un pour une visite de la place ?
 common-quit = Quitter
 ui-bars-quit-aurora-viewer = Quitter Aurora Viewer
 ui-options-camera-exit-with-mouse-wheel = Quitter avec la molette

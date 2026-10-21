@@ -124,6 +124,10 @@ pub mod rez;
 /// (AURORA_DEMO_RIGGED_PROP).
 #[path = "demo_rigged_prop.rs"]
 pub mod rigged_prop;
+/// Conference invitations from a stranger and a friend in turn
+/// (AURORA_DEMO_CONFERENCE).
+#[path = "demo_conference.rs"]
+pub mod conference;
 #[path = "demo_sculpt.rs"]
 pub mod sculpt;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).

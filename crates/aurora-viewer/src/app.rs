@@ -5819,6 +5819,9 @@ impl App {
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
+            if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
