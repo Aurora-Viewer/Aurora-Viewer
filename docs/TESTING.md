@@ -3813,7 +3813,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   regression also exercises standalone place details and both profile looks.
   `actions` shows identical avatar labels linking to profile, IM, payment,
   teleport offer, friendship and report actions, followed by other native
-  targets. Compare their persistent action icons in the conversation
+  targets, plus bare profile/IM/payment/group/unknown URLs inside sentences
+  as when pasting into the chat input. Their text must share the surrounding
+  words' baseline; the unknown command shows a localized "Unsupported link"
+  fallback, keeping its original URI in the context menu. Compare their
+  persistent action icons in the conversation
   and local chat overlays without hovering, in English/French and each chat
   style. There must be no added action words before the original link text.
   Custom link text must not hide the action; copying a transcript

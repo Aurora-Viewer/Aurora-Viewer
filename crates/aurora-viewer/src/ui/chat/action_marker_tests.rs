@@ -4,6 +4,125 @@
 use super::*;
 use action_marker::Action;
 
+fn baselines(shape: &egui::Shape, ys: &mut Vec<f32>) {
+    match shape {
+        egui::Shape::Text(t) => {
+            for row in &t.galley.rows {
+                // The transparent marker slot is the only M in this fixture.
+                for g in row.glyphs.iter().filter(|g| g.chr != 'M' && !g.chr.is_whitespace()) {
+                    ys.push(t.pos.y + row.pos.y + g.pos.y);
+                }
+            }
+        }
+        egui::Shape::Vec(v) => v.iter().for_each(|s| baselines(s, ys)),
+        _ => {}
+    }
+}
+
+#[test]
+fn pasted_native_links_align_with_the_surrounding_sentence() {
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let id = crate::demo::DEMO_LOUP;
+    world.social.names.insert(id, "Resident".into());
+    for font in [crate::ui::fonts::INTER, crate::ui::fonts::NOTO, crate::ui::fonts::ROBOTO] {
+        for (size, scale, pixels) in [(14.0, 1.0, 1.0), (14.0, 1.4, 1.5), (20.0, 1.0, 1.5)] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            crate::ui::fonts::apply(&ctx, font);
+            crate::ui::fonts::set_scale(&ctx, scale);
+            ctx.set_pixels_per_point(pixels);
+            let p = theme.palette();
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            for verb in ["about", "im", "pay", "unknown"] {
+                let url = if verb == "unknown" {
+                    "secondlife:///app/frobnicate/1".to_owned()
+                } else {
+                    format!("secondlife:///app/agent/{id}/{verb}")
+                };
+                let text = format!("Salut tu vas {url} bien ?");
+                let mut out = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1800.0, 300.0))),
+                        ..Default::default()
+                    },
+                    |ui| chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, size, p.ink, false),
+                );
+                out.textures_delta.clear();
+                let mut ys = Vec::new();
+                out.shapes.iter().for_each(|s| baselines(&s.shape, &mut ys));
+                assert!(!ys.is_empty());
+                let min = ys.iter().copied().fold(f32::INFINITY, f32::min);
+                let max = ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                assert!(
+                    max - min < 0.1,
+                    "a pasted link shares its sentence's baseline: font={font}, size={size}, scale={scale}, pixels={pixels}, verb={verb}, ys={ys:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn pasted_unknown_uri_shows_a_readable_label_and_keeps_its_target() {
+    let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let url = "secondlife:///app/frobnicate/1";
+    let sentence = format!("Salut tu vas {url} bien ?");
+    let parts = pieces(&sentence, |s| match s {
+        Seg::App(u, link) => app_links::label(&world, &mut HashSet::new(), u, link),
+        _ => unreachable!(),
+    });
+    assert_eq!(
+        parts,
+        [
+            ("Salut tu vas ".into(), None),
+            (
+                aurora_i18n::tr!("ui-chat-applink-unsupported-label").into(),
+                Some(Link::App(url.into(), crate::slapp::AppLink::Unsupported))
+            ),
+            (" bien ?".into(), None)
+        ]
+    );
+    let labelled = format!("[{url} Custom name]");
+    assert_eq!(pieces(&labelled, |_| unreachable!())[0].0, "Custom name");
+}
+
+#[test]
+fn pasted_native_links_preserve_console_line_height() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
+    let p = theme.palette();
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let id = crate::demo::DEMO_LOUP;
+    world.social.names.insert(id, "Resident".into());
+    let mut line = crate::world::ChatLine {
+        time: std::time::SystemTime::now(),
+        from: "Resident".into(),
+        source: id,
+        kind: ChatKind::Own,
+        origin: Origin::Live,
+        text: String::new(),
+    };
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let family = crate::ui::fonts::semibold(ui.ctx());
+        for look in [JobLook::Line, JobLook::Pill(&family), JobLook::Body] {
+            line.text = "Salut tu vas Resident bien ?".into();
+            let plain = line_job(&line, &p, &world, &mut HashSet::new(), 1800.0, 14.0, false, look);
+            let plain = ui.fonts_mut(|f| f.layout_job(plain.job));
+            for verb in ["about", "im", "pay"] {
+                line.text = format!("Salut tu vas secondlife:///app/agent/{id}/{verb} bien ?");
+                let linked = line_job(&line, &p, &world, &mut HashSet::new(), 1800.0, 14.0, false, look);
+                let linked = ui.fonts_mut(|f| f.layout_job(linked.job));
+                assert_eq!(linked.rows.len(), 1);
+                assert_eq!(linked.size().y, plain.size().y, "a marker must not raise a console row");
+            }
+        }
+    });
+    out.textures_delta.clear();
+}
+
 fn visible(shape: &egui::Shape, texts: &mut Vec<String>) {
     match shape {
         egui::Shape::Text(t) => texts.push(
@@ -45,19 +164,21 @@ fn check_action(ctx: &egui::Context, verb: &str, id: uuid::Uuid) {
 
 #[test]
 fn native_action_markers_are_visible_without_hover_and_keep_copy_and_click_targets() {
-    let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
     let id = crate::demo::DEMO_LOUP;
+    world.social.names.insert(id, "Resident".into());
     for verb in ["about", "im", "pay", "offerteleport", "requestfriend", "reportAbuse"] {
         // The icon and resident name both activate the same
         // parsed command. Selection records only the original link label.
-        for part in [0.03, 0.95] {
+        for (part, labelled) in [(0.03, false), (0.95, false), (0.03, true), (0.95, true)] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
             theme.apply(&ctx, 1.0);
             let p = theme.palette();
             let _icons = crate::ui::icons::Icons::load(&ctx, None);
             let mut emoji = crate::ui::emoji::Emoji::load();
-            let text = format!("[secondlife:///app/agent/{id}/{verb} Resident]");
+            let url = format!("secondlife:///app/agent/{id}/{verb}");
+            let text = if labelled { format!("[{url} Resident]") } else { url };
             let mut point = egui::Pos2::ZERO;
             let mut shown = Vec::new();
             for frame in 0..6 {

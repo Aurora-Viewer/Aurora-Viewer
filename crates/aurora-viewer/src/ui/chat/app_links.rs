@@ -119,6 +119,9 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
             place = format!("{region} ({},{},{})", pos.x as i32, pos.y as i32, pos.z as i32)
         ),
         AppLink::Blocked(Blocked::WearFolder) => aurora_i18n::tr!("ui-chat-applink-wear-label").to_owned(),
+        // Human-requested fallback: an unsupported URI has no destination
+        // name to resolve. Keep the actual address in the copy-link menu.
+        AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
         _ => unescape(url),
     }
 }

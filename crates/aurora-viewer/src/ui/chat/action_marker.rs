@@ -106,14 +106,15 @@ impl Action {
     }
 }
 
-/// The same invisible glyph as web trust badges: it reserves the icon
-/// without adding a word or a break before the original link text.
+/// Reserve the icon without a word or a break before the link text.
+/// Keep the text's own font metrics: a larger invisible glyph raises the
+/// row height and shifts a link away from the surrounding sentence.
 pub(super) fn reserve_icon(job: &mut LayoutJob, size: f32, lead: f32) {
     job.append(
         "M",
         lead,
         TextFormat {
-            font_id: FontId::proportional(size * 1.15),
+            font_id: FontId::proportional(size),
             color: Color32::TRANSPARENT,
             ..Default::default()
         },
@@ -133,6 +134,7 @@ pub(super) fn link(ui: &mut Ui, action: Action, text: &str, size: f32, color: Co
             font_id: FontId::proportional(size),
             color,
             background: background.unwrap_or(Color32::TRANSPARENT),
+            valign: ui.text_valign(),
             ..Default::default()
         },
     );

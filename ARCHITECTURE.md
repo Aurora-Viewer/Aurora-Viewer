@@ -4,6 +4,9 @@ Native links share `ui/chat/action_marker.rs`: a parsed action chooses its
 Tabler icon before the unchanged destination text. Wrapping text
 and console/bubble LayoutJobs share that prefix; the marker is part of the
 link's hit area while transcript selection keeps the original message text.
+The reserved glyph uses the surrounding text's metrics, preserving the
+sentence baseline and line height. Unknown commands use a localized readable
+fallback; their actual URI stays available through the copy-link menu.
 
 Explicit profile openings restore their destination through the shared floater
 expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),

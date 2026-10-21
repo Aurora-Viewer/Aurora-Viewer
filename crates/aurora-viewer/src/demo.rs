@@ -1565,7 +1565,20 @@ pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
             format!("[{app}/search/people/Orion%20Exemple {resident}]"),
             format!("[{app}/frobnicate/1 {resident}]"),
         ]);
-        return links.join(" · ");
+        let mut text = links.join(" · ");
+        // Bare URLs exercise the same path as pasting into the chat input;
+        // surrounding words expose any mismatch in the link's baseline.
+        for url in [
+            format!("{app}/agent/{DEMO_LOUP}/about"),
+            format!("{app}/agent/{DEMO_LOUP}/im"),
+            format!("{app}/agent/{DEMO_LOUP}/pay"),
+            format!("{app}/group/{DEMO_GROUP1}/about"),
+            format!("{app}/frobnicate/1"),
+        ] {
+            text.push('\n');
+            text.push_str(&aurora_i18n::tr!("demo-applinks-pasted", link = url));
+        }
+        return text;
     }
     let classified = Uuid::from_u128(0x5EA2_C1A5_0000_0000_0000_0000_0000_0001);
     // the region's treasure hunt (its name only) and the experience of
