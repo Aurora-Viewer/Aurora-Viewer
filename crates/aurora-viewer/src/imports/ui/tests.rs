@@ -1301,3 +1301,28 @@ fn popup_rows_keep_their_rectangles_when_hover_changes() {
     }
     assert_eq!(selected, 0);
 }
+
+/// The enlarged preview keeps its size, its camera hint wrapped in a narrow
+/// window.
+#[test]
+fn the_enlarged_preview_keeps_its_size() {
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    crate::ui::widgets::steady_tests::assert_window_steady(
+        "import_large_preview",
+        &[Vec2::new(760.0, 590.0), Vec2::new(420.0, 360.0)],
+        aurora_i18n::tr!("import-preview-reset-view"),
+        || {
+            let draft = crate::imports::tests::mesh_fixture();
+            let entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(draft))), Default::default());
+            Imports {
+                open: true,
+                preview_zoom: Some((entry.id, None)),
+                entries: vec![entry],
+                ..Default::default()
+            }
+        },
+        |imports, ctx, p| {
+            show(ctx, p, imports, &mut Preferences::default(), &world, &Default::default());
+        },
+    );
+}
