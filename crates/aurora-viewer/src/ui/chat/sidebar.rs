@@ -595,13 +595,20 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     let resp = ui.interact(rect, id, sense);
     let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(rect));
     let radius = ui.visuals().window_corner_radius;
+    // the entry's face, opaque: the status dot is cut in it, and a
+    // translucent cut let the picture and the crescent's disc through (#744)
+    let mut face = p.bar;
+    let mut wash = |color: Color32| {
+        ui.painter().rect_filled(rect, radius, color);
+        face = face.blend(color);
+    };
     if e.current {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.22));
+        wash(p.violet.gamma_multiply(0.22));
     } else if over {
-        ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.45));
+        wash(p.raised.gamma_multiply(0.45));
     }
     if e.flash > 0.0 && !e.current {
-        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(e.flash));
+        wash(p.violet.gamma_multiply(e.flash));
     }
     if e.unread > 0 && !e.current {
         // the mark of an unread conversation, against the column's edge
@@ -621,8 +628,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
         );
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
     }
-    let ring = if e.current { p.violet.gamma_multiply(0.22) } else { p.bar };
-    paint_picture(ui, p, &e.icon, e.name, pic, ring);
+    paint_picture(ui, p, &e.icon, e.name, pic, face);
     let tip_name = || e.name.to_owned();
     if rail {
         if e.unread > 0 {

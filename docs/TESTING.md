@@ -3492,7 +3492,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Private message, Group chat, Conference), `volume` (with `local`: the
   volume's menu open, above the field; with `narrow` the button keeps
   its icon), `channel` (the "/0" channel chip shown, as Preferences ›
-  Chat › Show the channel selector does). The calls are those of
+  Chat › Show the channel selector does), `friend-away` / `friend-offline`
+  (the friend of `im` away in the region or offline: the selected entry's
+  dot keeps its crescent or hollow ring, cut in the entry's violet face;
+  with `narrow` too). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act

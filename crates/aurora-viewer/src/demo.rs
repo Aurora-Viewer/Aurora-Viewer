@@ -924,7 +924,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
 /// to Tess), `conference` (a voice conference with Tess and Nova), `new`
 /// (the menu of the column's "new conversation" button open), `volume`
 /// (the menu of the nearby chat's volume open, with `local`), `channel`
-/// (its channel selector shown, as the preferences can).
+/// (its channel selector shown, as the preferences can), `friend-away` or
+/// `friend-offline` (the friend of `im` away in the region, or offline:
+/// their crescent or ring on the selected entry, #744).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -939,6 +941,9 @@ pub struct AuroraScene {
     pub volume_menu: bool,
     /// `channel`: the nearby chat's channel selector shown.
     pub channel: bool,
+    /// `friend-away` / `friend-offline`: the friend's status, online
+    /// otherwise.
+    pub friend: Option<crate::ui::presence::Status>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -973,6 +978,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         new_menu: false,
         volume_menu: false,
         channel: false,
+        friend: None,
     };
     let mut away = false;
     for flag in flags {
@@ -994,6 +1000,8 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "new" => scene.new_menu = true,
             "volume" => scene.volume_menu = true,
             "channel" => scene.channel = true,
+            "friend-away" => scene.friend = Some(crate::ui::presence::Status::Away),
+            "friend-offline" => scene.friend = Some(crate::ui::presence::Status::Offline),
             "call-away" => {
                 scene.call = Some(AuroraCall::InCall);
                 away = true;
@@ -1131,8 +1139,9 @@ fn world_name(id: Uuid) -> String {
 }
 
 /// The nearby chat of the scene: a shout, a whisper, our emote and a
-/// mention of us, after the bubbles scenario's lines.
-pub fn aurora_events() -> Vec<NetEvent> {
+/// mention of us, after the bubbles scenario's lines; then the friend's
+/// status of `friend-away` / `friend-offline`.
+pub fn aurora_events(scene: &AuroraScene) -> Vec<NetEvent> {
     let say = |from: Uuid, name: &str, text: String, chat_type| {
         NetEvent::Chat(aurora_net::ChatMessage {
             from_name: name.into(),
@@ -1145,7 +1154,7 @@ pub fn aurora_events() -> Vec<NetEvent> {
         })
     };
     use aurora_net::ChatType;
-    vec![
+    let mut ev = vec![
         say(
             DEMO_TESS,
             "Tess Touch",
@@ -1170,7 +1179,32 @@ pub fn aurora_events() -> Vec<NetEvent> {
             aurora_i18n::tr!("demo-aurora-mention", name = "Aurora Demo"),
             ChatType::Normal,
         ),
-    ]
+    ];
+    match scene.friend {
+        // in the region (with the bubbles scenario's residents), playing
+        // the away animation
+        Some(crate::ui::presence::Status::Away) => {
+            ev.push(NetEvent::CoarseLocations {
+                handle: HANDLE,
+                positions: vec![
+                    (DEMO_TESS, Vec3::new(96.0, 150.0, 28.0)),
+                    (DEMO_NOVA, Vec3::new(150.0, 140.0, 24.0)),
+                    (DEMO_FRIEND, Vec3::new(120.0, 110.0, 24.0)),
+                ],
+            });
+            ev.push(NetEvent::AvatarAnimations {
+                sources: Vec::new(),
+                avatar: DEMO_FRIEND,
+                anims: vec![(crate::world::status::ANIM_AWAY, 1)],
+            });
+        }
+        Some(crate::ui::presence::Status::Offline) => ev.push(NetEvent::FriendsOnline {
+            ids: vec![DEMO_FRIEND],
+            online: false,
+        }),
+        _ => {}
+    }
+    ev
 }
 
 /// AURORA_DEMO_CONV=tp[:sent|reject]: a conversation with a resident
@@ -4407,8 +4441,8 @@ pub fn events() -> Vec<NetEvent> {
     if chat_lines_scenario().is_some() {
         ev.extend(chat_lines_events());
     }
-    if aurora_scenario().is_some() {
-        ev.extend(aurora_events());
+    if let Some(scene) = aurora_scenario() {
+        ev.extend(aurora_events(&scene));
     }
     if teleport_offer_scenario() {
         ev.extend(teleport_offer_events(agent));
