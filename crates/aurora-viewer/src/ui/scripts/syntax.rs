@@ -1,6 +1,6 @@
 //! LSL token colors, following LLKeywords::findSegments / processTokensGroup
 //! (Firestorm indra/llui/llkeywords.cpp, originally LGPL 2.1). Built-in names
-//! come from the LSL keywords in use (`crate::lsl_keywords`: Firestorm's
+//! come from the LSL keywords in use (`crate::lsl_keywords`: the Legacy Viewer's
 //! keywords_lsl_default.xml, or the region's). Custom functions are also
 //! recognized at declarations and calls. This lexer never changes the source.
 
