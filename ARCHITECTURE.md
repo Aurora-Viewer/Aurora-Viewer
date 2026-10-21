@@ -28,7 +28,7 @@ UUIDs (`aurora-net::SoundPreload`). Newline floods follow the Legacy Viewer's
 LF threshold and shared IM block, including owner aggregation for nearby chat.
 Scripted inventory offers identify their owner; the own-object option includes
 those sent by our avatar's objects. Settings persist; blocks do not. Preferences
-› Privacy (`ui/options/anti_spam.rs`) resets counters or unblocks one source.
+› Protections (`ui/options/anti_spam.rs`) resets counters or unblocks one source.
 `demo_anti_spam.rs` supplies synthetic floods through the production event path.
 
 Aurora Viewer is a complete Second Life viewer written in Rust: login,

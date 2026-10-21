@@ -1,4 +1,4 @@
-//! Preferences › Privacy › Anti-spam. Blocks are local to this login.
+//! Preferences › Protections › Anti-spam. Blocks are local to this login.
 
 use super::{OptionsResult, group, row, toggle};
 use crate::theme::Palette;

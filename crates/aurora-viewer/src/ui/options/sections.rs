@@ -4,7 +4,7 @@
 //! fails when a setting it shows is missing from its list (or listed on the
 //! wrong page), so a new row cannot escape the reset of its section.
 
-use super::{TAB_ACCESSIBILITY, TAB_AUDIO, TAB_AURORA, TAB_CAMERA, TAB_CHAT, TAB_COMMANDS, TAB_PRIVACY};
+use super::{TAB_ACCESSIBILITY, TAB_AUDIO, TAB_AURORA, TAB_CAMERA, TAB_CHAT, TAB_COMMANDS, TAB_PRIVACY, TAB_PROTECTIONS};
 use crate::settings::Settings;
 
 /// Shortcuts page (index of its tab).
@@ -93,7 +93,7 @@ sections! {
     TAB_COMMANDS => [chat_commands],
     TAB_PRIVACY => [
         lookat.show_targets, lookat.show_names, lookat.hide_own, lookat.lines, lookat.private,
-        lookat.private_local, lookat.limit_distance, lookat.max_distance, object_im_filter, anti_spam,
+        lookat.private_local, lookat.limit_distance, lookat.max_distance, object_im_filter,
     ],
     TAB_AURORA => [
         water_effects,
@@ -103,6 +103,7 @@ sections! {
         lookat.aim, predict_own_motion, synchronize_animations, ground_avatar_feet, ground_feet_while_moving, ground_feet_max_height, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
     TAB_ACCESSIBILITY => [color_blindness, color_blindness_strength],
+    TAB_PROTECTIONS => [anti_spam],
 }
 
 #[cfg(test)]
@@ -218,7 +219,7 @@ mod tests {
         pages[TAB_CAMERA].1.extend(accessed(include_str!("camera.rs"), "s", ""));
         pages[TAB_COMMANDS].1.insert("chat_commands".into());
         pages[TAB_PRIVACY].1.extend(accessed(include_str!("privacy.rs"), "s", "lookat."));
-        pages[TAB_PRIVACY]
+        pages[TAB_PROTECTIONS]
             .1
             .extend(accessed(include_str!("anti_spam.rs"), "s", "anti_spam."));
         pages[TAB_PRIVACY]
@@ -286,6 +287,7 @@ mod tests {
         };
         s.lookat.style = crate::world::lookat::Style::Legacy;
         s.lookat.private = true;
+        s.anti_spam.enabled = true;
         s.lookat.head_yaw = 10.0;
         s.username = "kept".into();
         s.inventory.sort.by_date = false;
@@ -300,6 +302,11 @@ mod tests {
         assert_eq!(s.lookat.private, d.lookat.private);
         assert_eq!(s.lookat.style, crate::world::lookat::Style::Legacy);
         assert_eq!(s.lookat.head_yaw, 10.0);
+        assert!(s.anti_spam.enabled, "Privacy reset preserves Protections");
+        s.lookat.private = true;
+        reset(TAB_PROTECTIONS, &mut s);
+        assert_eq!(s.anti_spam, d.anti_spam);
+        assert!(s.lookat.private, "Protections reset preserves Privacy");
         reset(TAB_AURORA, &mut s);
         assert_eq!(s.lookat.style, d.lookat.style);
         assert_eq!(s.lookat.head_yaw, 10.0);
