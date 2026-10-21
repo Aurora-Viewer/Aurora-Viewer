@@ -703,3 +703,61 @@ fn create_asks_the_rating_then_sends_the_trimmed_name() {
     assert_eq!(sent, vec![("Lagoon Painters".to_owned(), true, true)], "sent once");
     assert!(has(&texts, "ui-group-create-creating"), "Create waits for the reply");
 }
+
+/// Draw the group windows with what `Ctx` needs, for the frames tests.
+fn show_group(st: &mut GroupProfileUi, world: &World, ctx: &egui::Context, p: &crate::theme::Palette) {
+    let images = HashMap::new();
+    let pics = HashMap::new();
+    let mut emoji = crate::ui::emoji::Emoji::load();
+    let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+    let env = Env {
+        avatar_pics: &pics,
+        classic: false,
+        now: 0.0,
+        group_calls: false,
+    };
+    let mut c = Ctx {
+        p,
+        world,
+        images: &images,
+        emoji: &mut emoji,
+        want_names: &mut names,
+        wanted_images: &mut wanted,
+        want_groups: &mut groups,
+    };
+    st.show(ctx, &mut c, &env);
+}
+
+/// The invitation keeps its size with residents to invite and its role.
+#[test]
+fn the_invitation_keeps_its_size() {
+    let world = world(true, MEMBER | powers::MEMBER_INVITE);
+    crate::ui::widgets::steady_tests::assert_window_steady(
+        invite::WINDOW,
+        &[egui::Vec2::new(380.0, 460.0), egui::Vec2::new(320.0, 360.0)],
+        aurora_i18n::tr!("ui-group-invite-send"),
+        || {
+            let mut st = GroupProfileUi::default();
+            st.invite.open(DEMO_GROUP1, (1..6).map(|i| Uuid::from_u128(0x7000 + i)).collect());
+            st
+        },
+        |st, ctx, p| show_group(st, &world, ctx, p),
+    );
+}
+
+/// The group picker of "Invite to group" keeps its size.
+#[test]
+fn the_group_picker_keeps_its_size() {
+    let world = world(true, MEMBER | powers::MEMBER_INVITE);
+    crate::ui::widgets::steady_tests::assert_window_steady(
+        "group_invite_choice",
+        &[egui::Vec2::new(300.0, 320.0), egui::Vec2::new(240.0, 220.0)],
+        aurora_i18n::tr!("common-ok"),
+        || {
+            let mut st = GroupProfileUi::default();
+            st.invite.choose_group(vec![Uuid::from_u128(0x7001)]);
+            st
+        },
+        |st, ctx, p| show_group(st, &world, ctx, p),
+    );
+}

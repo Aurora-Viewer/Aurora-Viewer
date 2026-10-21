@@ -327,101 +327,106 @@ impl InviteUi {
             {
                 self.picker.open(PICKER, true);
             }
-            // the invitees
-            let list_h = (ui.available_height() - 110.0).max(80.0);
-            egui::Frame::new()
+            // the invitees, in exactly the room the role and the buttons
+            // leave (a guessed footer grew the window at every frame with a
+            // larger text)
+            let (mut list, foot) = widgets::above_footer(ui);
+            let frame = egui::Frame::new()
                 .fill(p.field)
-                .corner_radius(ui.visuals().window_corner_radius)
-                .inner_margin(egui::Margin::same(6))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    egui::ScrollArea::vertical()
-                        .id_salt("group_invitees")
-                        .max_height(list_h)
-                        .min_scrolled_height(list_h)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            if self.invitees.is_empty() {
-                                ui.label(
-                                    egui::RichText::new(aurora_i18n::tr!("ui-group-invite-empty"))
-                                        .size(12.5)
-                                        .color(p.muted_dim),
-                                );
+                .corner_radius(list.visuals().window_corner_radius)
+                .inner_margin(egui::Margin::same(6));
+            let list_h = (list.available_height() - frame.total_margin().sum().y).max(0.0);
+            frame.show(&mut list, |ui| {
+                ui.set_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .id_salt("group_invitees")
+                    .max_height(list_h)
+                    .min_scrolled_height(list_h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.invitees.is_empty() {
+                            ui.label(
+                                egui::RichText::new(aurora_i18n::tr!("ui-group-invite-empty"))
+                                    .size(12.5)
+                                    .color(p.muted_dim),
+                            );
+                        }
+                        let mut remove = None;
+                        for id in &self.invitees {
+                            let name = c.world.social.display_name_of(id);
+                            if name == "…" {
+                                c.want_names.insert(*id);
                             }
-                            let mut remove = None;
-                            for id in &self.invitees {
-                                let name = c.world.social.display_name_of(id);
-                                if name == "…" {
-                                    c.want_names.insert(*id);
-                                }
-                                let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
-                                let pic = Rect::from_center_size(Pos2::new(row.left() + 12.0, row.center().y), Vec2::splat(22.0));
-                                widgets::avatar_disc(ui, p, pic, pics.get(id), &name, false);
-                                widgets::paint_elided(
-                                    ui,
-                                    &name,
-                                    Pos2::new(pic.right() + 8.0, row.center().y),
-                                    row.width() - 70.0,
-                                    FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx())),
-                                    p.ink,
-                                );
-                                let x = Rect::from_center_size(Pos2::new(row.right() - 14.0, row.center().y), Vec2::splat(22.0));
-                                let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(x));
-                                if widgets::icon_button(&mut slot, p, "x", aurora_i18n::tr!("ui-group-invite-remove"), true) {
-                                    remove = Some(*id);
-                                }
+                            let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
+                            let pic = Rect::from_center_size(Pos2::new(row.left() + 12.0, row.center().y), Vec2::splat(22.0));
+                            widgets::avatar_disc(ui, p, pic, pics.get(id), &name, false);
+                            widgets::paint_elided(
+                                ui,
+                                &name,
+                                Pos2::new(pic.right() + 8.0, row.center().y),
+                                row.width() - 70.0,
+                                FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx())),
+                                p.ink,
+                            );
+                            let x = Rect::from_center_size(Pos2::new(row.right() - 14.0, row.center().y), Vec2::splat(22.0));
+                            let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(x));
+                            if widgets::icon_button(&mut slot, p, "x", aurora_i18n::tr!("ui-group-invite-remove"), true) {
+                                remove = Some(*id);
                             }
-                            if let Some(id) = remove {
-                                self.invitees.retain(|i| *i != id);
-                            }
-                        });
-                });
-            // the role
-            ui.label(
-                egui::RichText::new(aurora_i18n::tr!("ui-group-invite-role"))
-                    .size(12.5)
-                    .color(p.ink),
-            );
-            let roles = Self::roles(v, c.world.agent_id);
-            if !roles.iter().any(|r| r.id == self.role) {
-                self.role = Uuid::nil();
-            }
-            let current = roles
-                .iter()
-                .find(|r| r.id == self.role)
-                .map_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned(), |r| role_name(&r.name));
-            ui.add_enabled_ui(!roles.is_empty(), |ui| {
-                egui::ComboBox::from_id_salt(("group_invite_role", v.id))
-                    .width(ui.available_width())
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        for r in &roles {
-                            if ui.selectable_label(r.id == self.role, role_name(&r.name)).clicked() {
-                                self.role = r.id;
-                            }
+                        }
+                        if let Some(id) = remove {
+                            self.invitees.retain(|i| *i != id);
                         }
                     });
             });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                let ready = !self.invitees.is_empty() && !roles.is_empty();
-                let label = aurora_i18n::tr!("ui-group-invite-send");
-                if widgets::action_button_if(ui, p, "send-filled", label, ActionKind::Primary, Vec2::new(0.0, 28.0), ready).clicked() {
-                    send = true;
+            foot.show(ui, |ui| {
+                // the role
+                ui.label(
+                    egui::RichText::new(aurora_i18n::tr!("ui-group-invite-role"))
+                        .size(12.5)
+                        .color(p.ink),
+                );
+                let roles = Self::roles(v, c.world.agent_id);
+                if !roles.iter().any(|r| r.id == self.role) {
+                    self.role = Uuid::nil();
                 }
-                if widgets::action_button(
-                    ui,
-                    p,
-                    "x",
-                    aurora_i18n::tr!("common-cancel"),
-                    ActionKind::Flat,
-                    Vec2::new(0.0, 28.0),
-                )
-                .clicked()
-                {
-                    self.open = false;
-                }
+                let current = roles
+                    .iter()
+                    .find(|r| r.id == self.role)
+                    .map_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned(), |r| role_name(&r.name));
+                ui.add_enabled_ui(!roles.is_empty(), |ui| {
+                    egui::ComboBox::from_id_salt(("group_invite_role", v.id))
+                        .width(ui.available_width())
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for r in &roles {
+                                if ui.selectable_label(r.id == self.role, role_name(&r.name)).clicked() {
+                                    self.role = r.id;
+                                }
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let ready = !self.invitees.is_empty() && !roles.is_empty();
+                    let label = aurora_i18n::tr!("ui-group-invite-send");
+                    if widgets::action_button_if(ui, p, "send-filled", label, ActionKind::Primary, Vec2::new(0.0, 28.0), ready).clicked() {
+                        send = true;
+                    }
+                    if widgets::action_button(
+                        ui,
+                        p,
+                        "x",
+                        aurora_i18n::tr!("common-cancel"),
+                        ActionKind::Flat,
+                        Vec2::new(0.0, 28.0),
+                    )
+                    .clicked()
+                    {
+                        self.open = false;
+                    }
+                });
             });
         });
         if !open {
