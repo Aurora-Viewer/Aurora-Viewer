@@ -176,7 +176,8 @@ impl Status {
 }
 
 /// A status mark of radius `r`: `shape` in `color`, its cuts in `hole`
-/// (the surface it lies on).
+/// (the surface it lies on, opaque: a translucent hole lets the mark show
+/// through and the crescent reads as a disc, #744).
 pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, r: f32, shape: Shape, color: Color32, hole: Color32) {
     match shape {
         Shape::Disc => {
@@ -199,7 +200,8 @@ pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, r: f32, shape: Sh
 }
 
 /// The dot on the bottom right edge of a round picture, ringed in `ring`
-/// (the surface under the picture) so that it reads over any picture.
+/// (the surface under the picture, opaque) so that it reads over any
+/// picture.
 pub fn paint_dot(painter: &egui::Painter, p: &Palette, picture: egui::Rect, status: Status, ring: Color32) {
     let r = (picture.width() * 0.16).clamp(3.0, 6.0);
     let c = picture.center() + egui::Vec2::splat(picture.width() * 0.5 * std::f32::consts::FRAC_1_SQRT_2);

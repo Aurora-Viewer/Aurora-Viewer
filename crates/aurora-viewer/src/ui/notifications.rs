@@ -178,7 +178,8 @@ pub(super) fn person_card(
             wanted.insert(who);
             super::widgets::avatar_disc(ui, p, pic, env.pics.get(&who), &n.title, false);
             if let Some(s) = status {
-                super::presence::paint_dot(ui.painter(), p, pic, s, surface);
+                // cut in the card's face as it shows over the panel (#744)
+                super::presence::paint_dot(ui.painter(), p, pic, s, p.panel.blend(surface));
             }
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {

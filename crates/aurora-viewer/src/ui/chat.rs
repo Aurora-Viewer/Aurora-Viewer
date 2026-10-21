@@ -2014,7 +2014,8 @@ fn list_entry(
             super::widgets::avatar_picture(ui, p, r, tex, name, false);
         }
         if let Some(s) = status {
-            presence::paint_dot(ui.painter(), p, r, s, fill);
+            // cut in the entry's face as it shows over the window (#744)
+            presence::paint_dot(ui.painter(), p, r, s, p.panel.blend(fill));
         }
         x += LIST_PIC + 6.0;
     }
