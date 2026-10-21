@@ -139,7 +139,9 @@ mod tests {
         };
         let mut ignored = false;
         frame(&mut frames, Vec::new(), &mut closed, &mut ignored);
-        frames.ctx.move_to_top(LayerId::new(Order::Middle, Id::new(if raise_left { "left" } else { "right" })));
+        frames
+            .ctx
+            .move_to_top(LayerId::new(Order::Middle, Id::new(if raise_left { "left" } else { "right" })));
         frame(&mut frames, Vec::new(), &mut closed, &mut ignored);
         frame(&mut frames, events, &mut closed, &mut left_to_fields);
         frame(&mut frames, Vec::new(), &mut closed, &mut left_to_fields);
@@ -168,6 +170,9 @@ mod tests {
     #[test]
     fn without_a_window_the_field_keeps_ctrl_w() {
         // egui's own Ctrl+W then: the word before the cursor
-        assert_eq!(press(false, false, vec![key(egui::Key::W, egui::Modifiers::COMMAND)]), (Vec::new(), true));
+        assert_eq!(
+            press(false, false, vec![key(egui::Key::W, egui::Modifiers::COMMAND)]),
+            (Vec::new(), true)
+        );
     }
 }

@@ -44,10 +44,12 @@ pub(super) fn step(order: &[Tab], current: Option<Tab>, forward: bool) -> Option
 /// What shows once `closed` is closed: the conversation below it in
 /// `order`, else the one above, else the nearby chat.
 pub(super) fn after_close(order: &[Tab], closed: Uuid) -> Tab {
-    let Some(i) = order.iter().position(|t| *t == Some(closed)) else {
-        return None;
-    };
-    order.get(i + 1).or_else(|| i.checked_sub(1).and_then(|i| order.get(i))).copied().flatten()
+    let i = order.iter().position(|t| *t == Some(closed))?;
+    order
+        .get(i + 1)
+        .or_else(|| i.checked_sub(1).and_then(|i| order.get(i)))
+        .copied()
+        .flatten()
 }
 
 /// The keys of this frame, before the window's field reads them. `order`:

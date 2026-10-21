@@ -303,7 +303,10 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
         h.settle();
         assert_eq!(h.st.selected, first, "{style:?}");
-        assert!(h.frames.ctx.memory(|m| m.has_focus(field(first))), "{style:?}: its field has the keyboard");
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(first))),
+            "{style:?}: its field has the keyboard"
+        );
         h.frame(key(egui::Key::ArrowUp, egui::Modifiers::ALT));
         h.settle();
         assert_eq!(h.st.selected, None, "{style:?}");
@@ -320,7 +323,10 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
         h.settle();
         let closed = last.expect("a conversation");
-        assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == closed)), "{style:?}");
+        assert!(
+            h.actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == closed)),
+            "{style:?}"
+        );
         assert_eq!(h.st.selected, first, "{style:?}");
         assert!(h.open, "{style:?}");
         // on the nearby chat, the window
