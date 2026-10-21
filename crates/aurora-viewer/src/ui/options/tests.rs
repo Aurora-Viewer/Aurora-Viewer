@@ -585,8 +585,11 @@ fn the_frame_rate_limits_show_under_their_switches() {
         ),
     ] {
         let switch = texts.iter().find(|t| t.source == switch).expect("the switch").rect;
-        let limit = texts.iter().find(|t| t.source == limit).expect("its limit, shown at once").rect;
-        assert!(limit.top() > switch.bottom(), "under its switch");
+        // in English the unfocused limit has its switch's name: look below it
+        assert!(
+            texts.iter().any(|t| t.source == limit && t.rect.top() > switch.bottom()),
+            "its limit, shown at once under its switch"
+        );
         assert!(
             !texts
                 .iter()
