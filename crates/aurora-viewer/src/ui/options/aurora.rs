@@ -467,22 +467,6 @@ fn received_filing_stays_opt_in_when_appearance_changes_and_resets_with_aurora()
 /// `reset`: "Reset this section…" was clicked in the page's head.
 pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) -> bool {
     let mut c = hero(ui, p, s, reset);
-    group(ui, p, aurora_i18n::tr!("received-filing-title"), |ui| {
-        let changed = super::row_experimental(
-            ui,
-            p,
-            aurora_i18n::tr!("received-filing-enabled"),
-            aurora_i18n::tr!("received-filing-help"),
-            |ui| toggle(ui, p, &mut s.sort_received_items),
-        );
-        if changed {
-            s.received_items_since = crate::ui::inventory::view::now();
-        }
-        c |= changed;
-    });
-    ui.add_space(14.0);
-    c |= water_page(ui, p, s);
-    ui.add_space(14.0);
     group(ui, p, aurora_i18n::tr!("ui-options-aurora-appearance"), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         c |= chat_style_choice(ui, p, &mut s.chat_style);
@@ -817,6 +801,22 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             );
         });
     });
+    ui.add_space(14.0);
+    group(ui, p, aurora_i18n::tr!("received-filing-title"), |ui| {
+        let changed = super::row_experimental(
+            ui,
+            p,
+            aurora_i18n::tr!("received-filing-enabled"),
+            aurora_i18n::tr!("received-filing-help"),
+            |ui| toggle(ui, p, &mut s.sort_received_items),
+        );
+        if changed {
+            s.received_items_since = crate::ui::inventory::view::now();
+        }
+        c |= changed;
+    });
+    ui.add_space(14.0);
+    c |= water_page(ui, p, s);
     c
 }
 
@@ -1123,7 +1123,7 @@ mod tests {
         texts.into_iter().map(|(_, t)| t).collect()
     }
 
-    /// The groups and settings of the mockup, in its order.
+    /// The groups and settings follow the requested order.
     #[test]
     fn the_page_shows_the_mockup_in_its_order() {
         let mut settings = Settings::default();
@@ -1131,20 +1131,6 @@ mod tests {
         let order = [
             "ui-options-aurora",
             "ui-options-aurora-intro",
-            "water-effects-title",
-            "water-effects-enabled",
-            "water-effects-quality",
-            "water-effects-waves",
-            "water-effects-absorption",
-            "water-effects-fresnel",
-            "water-effects-shore",
-            "water-effects-wet-ground",
-            "water-effects-contact",
-            "water-effects-crests",
-            "water-effects-interactions",
-            "water-effects-caustics",
-            "water-effects-splashes",
-            "water-effects-bubbles",
             "ui-options-aurora-appearance",
             "ui-options-aurora-conversations",
             "ui-options-aurora-name-tags",
@@ -1171,6 +1157,22 @@ mod tests {
             "ui-options-plates-hover-expand",
             "ui-options-full-plates-friends-only",
             "ui-options-plate-click",
+            "received-filing-title",
+            "received-filing-enabled",
+            "water-effects-title",
+            "water-effects-enabled",
+            "water-effects-quality",
+            "water-effects-waves",
+            "water-effects-absorption",
+            "water-effects-fresnel",
+            "water-effects-shore",
+            "water-effects-wet-ground",
+            "water-effects-contact",
+            "water-effects-crests",
+            "water-effects-interactions",
+            "water-effects-caustics",
+            "water-effects-splashes",
+            "water-effects-bubbles",
         ]
         .map(aurora_i18n::text);
         let mut at = 0;
