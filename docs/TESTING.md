@@ -1184,9 +1184,9 @@ The optional lock indicator is off by default. Enable it in the options,
 drag its body to another position, hide/show it and restart: the saved UI
 layout must retain its position. A click without dragging still opens the
 options; shrinking the viewer keeps the indicator inside the work area.
-The indicator says "Movelock active" for the classic method, native hold
-and bridge fallback; transient states retain their compact labels. Hover it for
-the full status.
+The indicator says "Position lock active" ("Verrouillage actif" in French)
+for the classic method, native hold and bridge fallback; transient states
+retain their compact labels. Hover it for the full status.
 
 Offline checks exercise control edges, bounded retries/late replies, manual
 seat ownership, region changes, per-channel priorities, complete standing
