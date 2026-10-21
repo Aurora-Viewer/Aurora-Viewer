@@ -32,6 +32,10 @@ pub(crate) const ANIM_CUSTOMIZE: Uuid = Uuid::from_u128(0x038fcec9_5ebd_8a8e_0e2
 pub(crate) const ANIM_CUSTOMIZE_DONE: Uuid = Uuid::from_u128(0x6883a61a_b27b_5914_a61e_dda118a9ee2c);
 /// FSUndeformUUID's default (app_settings/settings.xml).
 const ANIM_UNDEFORM: Uuid = Uuid::from_u128(0x44e98907_3764_119f_1c13_cba9945d2ff4);
+/// ANIM_AGENT_CUSTOMIZE's turn (1.35 s) with the round trip of its start to
+/// the simulator; the Legacy Viewer waits for it too before its camera
+/// settles (CUSTOMIZE_AVATAR_CAMERA_ANIM_SLOP after the motion).
+const TURN_TIME: Duration = Duration::from_millis(2000);
 /// MIN_RETRY_REQUEST_TIME of LLAttachmentsMgr's attachment requests.
 const RETRY_AFTER: Duration = Duration::from_secs(5);
 
@@ -41,6 +45,8 @@ pub(super) struct AvatarHealth {
     customizing: bool,
     /// The shape editor frames our avatar turned around (customize_turns).
     turned: bool,
+    /// When to frame it again, on the pose the turn ends with.
+    turn_ends: Option<Instant>,
     /// When each item was last asked again (LLAttachmentsMgr::mAttachmentRequests).
     refreshed: HashMap<Uuid, Instant>,
 }
@@ -76,10 +82,15 @@ impl App {
         let turned = editing && self.customize_turns();
         if turned != self.avatar_health.turned {
             self.avatar_health.turned = turned;
+            self.avatar_health.turn_ends = turned.then(|| Instant::now() + TURN_TIME);
             if self.shape_ui.open {
                 // frame our avatar again from the side it now faces
                 self.shape_ui.camera_pending = true;
             }
+        }
+        if self.avatar_health.turn_ends.is_some_and(|at| Instant::now() >= at) {
+            self.avatar_health.turn_ends = None;
+            self.shape_ui.camera_pending |= self.shape_ui.open;
         }
         if self.demo && self.frame_count == 600 {
             match std::env::var("AURORA_DEMO_AVATAR_HEALTH").as_deref() {

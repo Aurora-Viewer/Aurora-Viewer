@@ -5,11 +5,27 @@ use crate::{scene::Scene, world::World};
 use glam::{Quat, Vec3};
 use std::time::Instant;
 
+/// Where the camera looks from, in the frame of the avatar's face (+X the
+/// way it faces, +Y its left): the subparts' camera offset minus their
+/// target offset, the face being on the negative side of their root frame
+/// (the customise animation turns the avatar around). The whole body is
+/// seen from above and a little from its right, the head nearly level.
+fn direction(group: usize) -> Vec3 {
+    match group {
+        1..=6 => Vec3::new(0.5, -0.05, 0.02),
+        7 => Vec3::new(1.0, -0.15, 0.0),
+        8 => Vec3::new(1.6, -0.15, 0.0),
+        _ => Vec3::new(2.5, -0.5, 0.7),
+    }
+    .normalize()
+}
+
 /// `turned`: the customise animation plays, which turns our avatar half a
 /// turn around its pelvis (ANIM_AGENT_CUSTOMIZE ends at 180°): its face is
 /// then behind the root, where the Legacy Viewer puts the camera
-/// (LLAgentCamera::changeCameraToCustomizeAvatar, the subparts' negative
-/// camera offsets).
+/// (LLAgentCamera::changeCameraToCustomizeAvatar, LLMorphView::updateCamera
+/// with the root joint's rotation). The root is the one drawn, not the
+/// agent's heading: the body of our avatar follows that heading late.
 pub fn view(world: &World, scene: &Scene, group: usize, fov: f32, turned: bool) -> Option<(Vec3, Vec3)> {
     let now = Instant::now();
     let id = world.agent_id;
@@ -19,17 +35,24 @@ pub fn view(world: &World, scene: &Scene, group: usize, fov: f32, turned: bool) 
     let (target, distance) = match group {
         1..=6 => (head + Vec3::Z * 0.05, 0.75),
         7 => (scene.joint_world(world, &id, "mTorso", now)? + Vec3::Z * 0.25, 1.3),
-        8 => ((pelvis + foot) * 0.5, 1.55),
+        8 => (pelvis.with_z((pelvis.z + foot.z) * 0.5), 1.55),
         _ => {
             let height = (head.z - foot.z + 0.35).max(1.0);
             (
-                (head + foot) * 0.5 + Vec3::Z * 0.07,
+                pelvis.with_z((head.z + foot.z) * 0.5 + 0.07),
                 (height * 0.65 / (fov * 0.5).tan().max(0.1)).max(2.4),
             )
         }
     };
-    let facing = Quat::from_rotation_z(world.agent.yaw + if turned { std::f32::consts::PI } else { 0.0 });
-    Some((target + facing * Vec3::new(distance, 0.08 * distance, 0.04 * distance), target))
+    let root = world
+        .objects
+        .index_of_uuid(&id)
+        .and_then(|index| Scene::object_transform(world, index, now, 0))
+        .map(|(_, rotation, _)| rotation * Vec3::X)
+        .filter(|at| at.truncate().length_squared() > 1e-6)
+        .map_or(world.agent.yaw, |at| at.y.atan2(at.x));
+    let face = Quat::from_rotation_z(root + if turned { std::f32::consts::PI } else { 0.0 });
+    Some((target + face * direction(group) * distance, target))
 }
 
 /// Keep the edited part in the larger free area beside the editor, including
@@ -85,16 +108,23 @@ mod tests {
         for event in crate::demo::events() {
             world.apply(event);
         }
-        world.agent.yaw = 0.7;
+        // the heading the body has not caught up with yet does not count
+        world.agent.yaw += 2.0;
         let scene = Scene::new(std::env::temp_dir().join("aurora-shape-camera-turn"), world.avatar_lib.clone());
-        let at = Quat::from_rotation_z(world.agent.yaw) * Vec3::X;
+        let index = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
+        let (_, rotation, _) = Scene::object_transform(&world, index, Instant::now(), 0).expect("drawn");
+        let (at, left) = (rotation * Vec3::X, rotation * Vec3::Y);
         for group in [0, 1, 7, 8] {
             let (eye, target) = view(&world, &scene, group, 1.05, false).expect("front");
-            assert!((eye - target).dot(at) > 0.0, "in front of the root");
+            assert!((eye - target).normalize().dot(at) > 0.9, "in front of the root");
+            assert!((eye - target).dot(left) < 0.0, "a little on the avatar's right");
             let (eye, turned) = view(&world, &scene, group, 1.05, true).expect("turned");
             assert_eq!(turned, target);
-            assert!((eye - target).dot(at) < 0.0, "behind the root, before the turned face");
+            assert!((eye - target).normalize().dot(at) < -0.9, "behind the root, before the turned face");
+            assert!((eye - target).dot(left) > 0.0, "on the turned avatar's right");
         }
+        let (eye, target) = view(&world, &scene, 0, 1.05, true).expect("body");
+        assert!(eye.z - target.z > 0.2 * eye.distance(target), "the whole body seen from above");
     }
     #[test]
     fn edited_head_stays_visible_beside_a_narrow_or_right_hand_editor() {

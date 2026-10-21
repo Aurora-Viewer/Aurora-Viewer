@@ -104,6 +104,9 @@ pub struct State {
     snapshot_parts: Option<[u64; 3]>,
     rebuilds: [u32; 3],
     rebuilds_since: Instant,
+    /// The left-out parts of the last capture, and how often they moved.
+    ignored_parts: Option<[u64; 2]>,
+    ignored: [u32; 2],
     generation: u64,
     model_pending: Option<(u64, u64)>,
     model_tx: mpsc::Sender<(u64, u64, Vec<Hint>)>,
@@ -146,6 +149,8 @@ impl Default for State {
             snapshot_parts: None,
             rebuilds: [0; 3],
             rebuilds_since: Instant::now(),
+            ignored_parts: None,
+            ignored: [0; 2],
             generation: 1,
             model_pending: None,
             model_tx,
@@ -386,6 +391,12 @@ impl State {
             self.checked = Instant::now();
             let input = preview::Input::capture(world, scene);
             self.snapshot_key = input.key;
+            if let Some(parts) = self.ignored_parts {
+                for (count, (a, b)) in self.ignored.iter_mut().zip(parts.iter().zip(&input.ignored)) {
+                    *count += (a != b) as u32;
+                }
+            }
+            self.ignored_parts = Some(input.ignored);
             if self.snapshot_ready_key != Some(input.key) && self.snapshot_pending.is_none() {
                 if let Some(parts) = self.snapshot_parts {
                     for (count, changed) in self.rebuilds.iter_mut().zip(parts.iter().zip(&input.parts).map(|(a, b)| a != b)) {
@@ -406,8 +417,11 @@ impl State {
         }
         if self.rebuilds_since.elapsed() >= Duration::from_secs(10) {
             let [bakes, meshes, textures] = std::mem::take(&mut self.rebuilds);
-            if bakes + meshes + textures > 0 {
-                log::info!("shape hints: built again for bakes {bakes}, worn meshes {meshes}, textures {textures} times in 10 s");
+            let [moves, looks] = std::mem::take(&mut self.ignored);
+            if bakes + meshes + textures + moves + looks > 0 {
+                log::info!(
+                    "shape hints: built again for bakes {bakes}, worn meshes {meshes}, textures {textures} times in 10 s; left alone: rigid meshes moved {moves}, face tints changed {looks} times"
+                );
             }
             self.rebuilds_since = Instant::now();
         }
