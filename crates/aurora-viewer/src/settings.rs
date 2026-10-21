@@ -733,6 +733,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// Pictures and videos under the links of the Conversations window
+    /// (Preferences › Chat; `link_preview.rs`).
+    pub link_previews: crate::link_preview::Settings,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
     /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
@@ -1439,6 +1442,7 @@ impl Default for Settings {
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
+            link_previews: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,

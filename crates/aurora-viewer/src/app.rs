@@ -10888,6 +10888,14 @@ impl App {
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
+                // the cards under links, their videos played by the media
+                // plugins' browser
+                self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
+                self.chat_ui.previews.demo = self.demo && crate::demo::previews_offline();
+                self.chat_ui.previews.web = Some(ui::chat::previews::WebEnv {
+                    paths: self.media.plugins(&self.settings.media).cloned(),
+                    browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language()),
+                });
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, `World::is_typing_nearby`)
                 self.chat_ui.nearby_count = 0;
@@ -11055,6 +11063,16 @@ impl App {
                     }
                 }
                 self.panels.chat = open;
+                // a link's menu hid the previews of its site
+                if let Some(site) = self.chat_ui.previews.hide_site.take()
+                    && !self.settings.link_previews.hidden_sites.contains(&site)
+                {
+                    self.settings.link_previews.hidden_sites.push(site);
+                    self.settings.save();
+                }
+                // a YouTube video playing in its window, or a card's that
+                // stopped being drawn
+                self.chat_ui.previews.player_window(&ctx, &p);
                 if self.settings.friends_list != friends_before {
                     self.settings.save();
                 }
@@ -12922,6 +12940,12 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.selected = crate::demo::bubbles_conversation(view);
+                // AURORA_DEMO_PREVIEW_PLAY=card|window: the first video plays
+                self.chat_ui.previews.demo_play = match std::env::var("AURORA_DEMO_PREVIEW_PLAY").as_deref() {
+                    Ok("card") => Some(crate::link_preview::Player::InCard),
+                    Ok("window") => Some(crate::link_preview::Player::Window),
+                    _ => None,
+                };
                 self.chat_ui.demo_style = Some(if view == crate::demo::Bubbles::Legacy {
                     crate::settings::ChatStyle::Legacy
                 } else {
