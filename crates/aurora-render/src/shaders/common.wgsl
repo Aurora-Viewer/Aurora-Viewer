@@ -40,7 +40,7 @@ struct Frame {
     params: vec4<f32>,          // x exposure, y water height, z shadows enabled, w light count
     cascade_splits: vec4<f32>,  // view-space distances
     screen: vec4<f32>,          // width, height, 1/w, 1/h
-    misc: vec4<f32>,            // x ssao, y ssr, z water reflection texture, w reflection pass
+    misc: vec4<f32>,            // x ssao, y ssr, z water reflection texture, w reflection pass (2: mirrored)
     clip_plane: vec4<f32>,      // reflection passes: keep dot(n, p) + w >= 0
     cam_right: vec4<f32>,       // camera right axis, w = particle soft fade distance
     cam_up: vec4<f32>,          // camera up axis, camera-local macro waterline
@@ -53,6 +53,7 @@ struct Frame {
     water_air: vec4<f32>,       // x: exterior capture available
     mirror_plane: vec4<f32>,    // n.xyz, d (0 normal = no mirror)
     mirror_box: mat4x4<f32>,    // world -> mirror probe box ([-0.5, 0.5]^3)
+    mirror_view_proj: mat4x4<f32>, // the mirror pass's camera (mirror_tex)
     // EEP sky (legacy haze model)
     sky_light: vec4<f32>,       // light norm xyz (z >= -0.1), sun/moon glow factor
     sky_sunlight: vec4<f32>,    // sunlight rgb, cloud shadow
@@ -344,6 +345,11 @@ fn sample_tex_level(idx: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
 
 fn in_reflection_pass() -> bool {
     return frame.misc.w > 0.5;
+}
+
+/// Planar reflection passes (water, mirror): a view mirrored by a plane.
+fn mirrored_pass() -> bool {
+    return frame.misc.w > 1.5;
 }
 
 // Probes are sampled in the main view only (captures see the sky instead,
@@ -1464,16 +1470,34 @@ fn specular_occlusion(frag: vec2<f32>, r: vec3<f32>, roughness: f32, otherwise: 
     return cone_specular_occlusion(bent, s.g, r, roughness);
 }
 
-/// How much a surface takes the planar mirror image (SL hero probe).
-fn mirror_weight(world_pos: vec3<f32>, n: vec3<f32>) -> f32 {
+/// The planar mirror (SL hero probe) seen along the reflected ray `r` from
+/// `world_pos`: .rgb its image, .a how much the surface takes it. Weight as
+/// tapHeroProbe (reflectionProbeF.glsl): any surface inside the probe's box,
+/// fading over the outer tenth, in front of the mirror plane (from 5 cm
+/// behind it) and glossy enough (`gloss` 0.75 to 1), whatever its normal.
+/// LL reads a cube map taken from the camera mirrored by the plane along
+/// `r`; the planar image is that same view, so `r` is projected through
+/// the mirror pass's camera: exact on the plane, and a tilted or normal
+/// mapped face looks up the same direction the cube map would.
+fn mirror_tap(world_pos: vec3<f32>, r: vec3<f32>, gloss: f32) -> vec4<f32> {
     if (dot(frame.mirror_plane.xyz, frame.mirror_plane.xyz) < 0.5 || in_reflection_pass()) {
-        return 0.0;
+        return vec4<f32>(0.0);
     }
     let lp = (frame.mirror_box * vec4<f32>(world_pos, 1.0)).xyz;
-    if (any(abs(lp) > vec3<f32>(0.52))) {
-        return 0.0;
+    let inside = max(1.0 - 2.0 * max(max(abs(lp.x), abs(lp.y)), abs(lp.z)), 0.0);
+    let clip = clamp((dot(frame.mirror_plane.xyz, world_pos) + frame.mirror_plane.w) * 9.5 + 0.5, 0.0, 1.0);
+    var w = clamp(inside * 10.0 * clip, 0.0, 1.0) * clamp((gloss - 0.75) * 4.0, 0.0, 1.0);
+    let c = frame.mirror_view_proj * vec4<f32>(r, 0.0);
+    if (w <= 0.0 || c.w <= 1e-5) {
+        return vec4<f32>(0.0);
     }
-    return smoothstep(0.8, 0.95, dot(n, frame.mirror_plane.xyz));
+    let ndc = c.xy / c.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    // the image covers the screen's frustum only, where the cube map is
+    // whole: rays leaving it fade back to the probes
+    let out = max(max(-uv.x, uv.x - 1.0), max(-uv.y, uv.y - 1.0));
+    w *= clamp(1.0 - out * 20.0, 0.0, 1.0);
+    return vec4<f32>(textureSampleLevel(mirror_tex, lin_clamp, uv, 0.0).rgb, w);
 }
 
 // `mat_ao`: the material's own occlusion (ORM red), which pbrIbl applies to
@@ -1561,11 +1585,10 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     if (legacy) {
         return col;
     }
-    let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
-    if (mw > 0.0) {
-        let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
-        env = mix(env, m, mw);
-        occl = mix(occl, 1.0, mw);
+    let m = mirror_tap(world_pos, r, 1.0 - clamp(roughness_in, 0.0, 1.0));
+    if (m.a > 0.0) {
+        env = mix(env, m.rgb, m.a);
+        occl = mix(occl, 1.0, m.a);
     }
     col += env * env_brdf(f0, roughness, nv) * occl * mat_ao;
     return col;
@@ -2165,11 +2188,8 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
     let r = reflect(-v, n);
     var env = probe_radiance(world_pos, frag, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
-    let mw = mirror_weight(world_pos, n) * clamp(1.0 - roughness * 1.5, 0.0, 1.0);
-    if (mw > 0.0) {
-        let m = textureSampleLevel(mirror_tex, lin_clamp, screen_uv(frag), 0.0).rgb;
-        env = mix(env, m, mw);
-    }
+    let m = mirror_tap(world_pos, r, 1.0 - clamp(roughness_in, 0.0, 1.0));
+    env = mix(env, m.rgb, m.a);
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
     // SSAO darkens the irradiance alone (adjustIrradiance). The classic
     // ambient (finalAmbient) does not take that occlusion. GTAO adds its

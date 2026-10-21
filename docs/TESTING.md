@@ -2272,8 +2272,8 @@ tests do not establish that this report uses an invalid joint or index.
   camera of `AURORA_DEMO_POS="135,134"` stands in, and a sphere of 12 m east
   of it. The automatic probes are kept out of the box, and mixed with the
   sphere's by its weight. Used to check `AURORA_PROBE_WALK` on the probes
-  the plaza does not have otherwise (its only box probe is the mirror's,
-  8 cm thick).
+  the plaza does not have otherwise (its only probe is the mirror's, which
+  is a hero probe and no cube map).
 - **`AURORA_DEMO_OVERDRAW=<n>`**: n rows of opaque walls (12 if the
   value is not a number, 40 at most) east of the plaza, one
   behind the other and each taller than the one in front, sent from the

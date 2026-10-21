@@ -688,6 +688,13 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
             }
         }
     }
+    // and both take the mirror, the environment as fully glossy
+    let gm = mirror_tap(world_pos, r, spec.a);
+    gloss_sky = mix(gloss_sky, gm.rgb, gm.a);
+    if (env > 0.0) {
+        let em = mirror_tap(world_pos, r, 1.0);
+        env_sky = mix(env_sky, em.rgb, em.a);
+    }
     // sampleReflectionProbesLegacy clamps both: a very bright sky does not
     // wash a shiny face out
     gloss_sky = clamp(gloss_sky, vec3<f32>(0.0), vec3<f32>(10.0));
@@ -1185,7 +1192,16 @@ fn fs_mask_g(in: VsOut, @builtin(front_facing) front: bool) -> GOut {
 @fragment
 fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
-    let s = shade(in, front);
+    // A mirrored view (water, mirror) flips the winding: the side facing
+    // its camera is the one rasterized as a back face. Single-sided faces
+    // show that side only, as in the Legacy Viewer's culled reflection and
+    // hero probe passes: a mirror's own surface, a few centimetres in front
+    // of its plane, would otherwise hide the whole image behind its back.
+    let facing = front != mirrored_pass();
+    if (!facing && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
+        discard;
+    }
+    let s = shade(in, facing);
     let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u && s.color.a < max(rec.params.w, 0.01);
     if (reflection_clip(in.world_pos) || masked) {
         discard;
