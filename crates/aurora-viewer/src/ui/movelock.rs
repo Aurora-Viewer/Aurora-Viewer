@@ -65,7 +65,7 @@ impl MoveLockUi {
             let _ = response;
             ui.add_space(8.0);
             ui.label(aurora_i18n::tr!("movelock-shortcut", shortcut = shortcut.to_owned()));
-            if prefs.mode == LockMode::Bridge {
+            if prefs.mode == LockMode::Bridge || error.is_some() {
                 let response = widgets::action_button(
                     ui,
                     p,

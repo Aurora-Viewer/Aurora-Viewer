@@ -15,7 +15,7 @@ impl App {
         }
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
         prefs.enabled = !prefs.enabled;
-        if prefs.enabled && prefs.mode == crate::world::bridge::LockMode::Bridge && self.bridge_runtime.error.is_some() {
+        if prefs.enabled && self.bridge_runtime.error.is_some() {
             self.bridge_runtime.retry(Instant::now());
         }
         if !self.demo {
@@ -80,7 +80,8 @@ impl App {
             return;
         }
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
-        self.bridge_runtime.update(&mut self.world, prefs, online, Instant::now());
+        let effective = self.native_anchor.bridge_preferences(*prefs);
+        self.bridge_runtime.update(&mut self.world, &effective, online, Instant::now());
         self.egui_ctx
             .data_mut(|d| d.insert_temp(egui::Id::new("movelock_requested"), prefs.enabled));
         if self.demo {
@@ -220,8 +221,13 @@ impl App {
             self.movelock_ui.open = true;
         }
         let prefs = self.settings.bridge.entry(self.world.agent_id).or_default();
+        let fallback = prefs.enabled && prefs.mode == crate::world::bridge::LockMode::NativeSit && self.native_anchor.bridge_fallback();
         let status = if prefs.enabled && prefs.mode == crate::world::bridge::LockMode::NativeSit {
-            self.native_anchor.status.label()
+            if fallback {
+                aurora_i18n::tr!("movelock-sit-needs-stand")
+            } else {
+                self.native_anchor.status.label()
+            }
         } else {
             prefs.state()
         };
@@ -238,23 +244,20 @@ impl App {
         self.toolbar_ui.movelock_active = prefs.enabled;
         self.toolbar_ui.movelock_status = format!("{} ({shortcut})\n{status}", aurora_i18n::tr!("movelock-title"));
         if prefs.enabled && prefs.indicator {
-            let label = if prefs.mode == crate::world::bridge::LockMode::NativeSit {
+            let label = if fallback {
+                aurora_i18n::tr!("movelock-short-ao")
+            } else if prefs.mode == crate::world::bridge::LockMode::NativeSit {
                 self.native_anchor.status.short_label()
             } else {
                 aurora_i18n::tr!("movelock-short-on")
             };
             self.movelock_ui.indicator(ctx, p, label, status);
         }
-        let diagnostic = (prefs.mode == crate::world::bridge::LockMode::Bridge)
+        let diagnostic = (prefs.mode == crate::world::bridge::LockMode::Bridge || fallback)
             .then(|| self.bridge_runtime.error.as_deref().or(self.bridge_runtime.progress()))
             .flatten();
         let (changed, repair) = self.movelock_ui.show(ctx, p, prefs, status, diagnostic, &shortcut);
-        if repair
-            || (prefs.mode == crate::world::bridge::LockMode::Bridge
-                && prefs.enabled
-                && !was_enabled
-                && self.bridge_runtime.error.is_some())
-        {
+        if repair || (prefs.enabled && !was_enabled && self.bridge_runtime.error.is_some()) {
             // Repair preserves the requested mode.
             self.bridge_runtime.retry(Instant::now());
         }

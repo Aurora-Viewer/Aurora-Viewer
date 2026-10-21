@@ -192,4 +192,25 @@ mod tests {
             "an independently cycling track must always cover its channels"
         );
     }
+    #[test]
+    fn native_anchor_requires_at_least_one_compatible_standing_idle() {
+        let (_, mut set) = super::super::tests::fixture();
+        let rig = crate::scene::avatar::AvatarLibrary::load().rig;
+        let mut idle = reference();
+        idle.base_priority = 4;
+        let config = set.states.get_mut(&State::Standing).expect("standing");
+        config.steps.truncate(1);
+        config.tracks.clear();
+        let asset = config.steps[0].members[0].asset;
+        let clips = HashMap::from([
+            (State::GroundSit.motion(), Arc::new(BoundAnim::bind(reference(), &rig))),
+            (asset, Arc::new(BoundAnim::bind(idle, &rig))),
+        ]);
+        assert!(StandCheck::default().ready(Some(&set), |id| clips.get(id).cloned()));
+        set.states.get_mut(&State::Standing).expect("standing").steps.clear();
+        assert!(!StandCheck::default().ready(Some(&set), |id| clips.get(id).cloned()));
+        set.states.remove(&State::Standing);
+        assert!(!StandCheck::default().ready(Some(&set), |id| clips.get(id).cloned()));
+        assert!(!StandCheck::default().ready(None, |id| clips.get(id).cloned()));
+    }
 }

@@ -1520,6 +1520,51 @@ fn native_movelock_disables_the_bridge_anchor_without_disabling_movement_service
 }
 
 #[test]
+fn native_movelock_ao_fallback_routes_real_bridge_commands_and_recovers() {
+    use crate::movement::movelock::{Controller, Frame, Travel};
+    let mut sim = Simulator::new();
+    sim.ready();
+    let selected = Preferences {
+        mode: LockMode::NativeSit,
+        ..sim.prefs
+    };
+    let mut native = Controller::default();
+    let mut frame = Frame {
+        requested: true,
+        region: sim.world.main_region,
+        available: true,
+        voluntary: false,
+        moving: false,
+        travel: Travel::Ready,
+        pose_ready: false,
+        pose_warm: false,
+        ground_sit: false,
+        on_object: false,
+    };
+    sim.bridge.motion = Motion::motor(2, 1.0, 1.7);
+    for ready in [false, true, false, true] {
+        frame.pose_ready = ready;
+        assert!(native.update(frame, sim.now).is_none());
+        sim.prefs = native.bridge_preferences(selected);
+        sim.step();
+        assert_eq!(sim.bridge.ack.enabled, !ready);
+        assert_eq!(sim.bridge.locked(), !ready);
+        assert!(sim.bridge.available(), "the bridge is reused without reinstallation");
+        assert_eq!(sim.bridge.sent.expect("sent mode").2.mode, 2, "retain other movement services");
+        assert_eq!(selected.mode, LockMode::NativeSit);
+    }
+    frame.requested = false;
+    frame.pose_ready = false;
+    native.update(frame, sim.now);
+    sim.prefs = native.bridge_preferences(Preferences {
+        enabled: false,
+        ..selected
+    });
+    sim.step();
+    assert!(!sim.bridge.ack.enabled && !sim.bridge.locked());
+}
+
+#[test]
 fn release_supersedes_in_flight_lock_commands_and_does_not_change_saved_preferences() {
     let mut sim = Simulator::new();
     sim.ready();
