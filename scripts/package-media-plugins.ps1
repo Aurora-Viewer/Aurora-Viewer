@@ -97,10 +97,10 @@ if ($Platform -eq 'windows') {
     Copy-Required $bin @('chrome-sandbox', 'dullahan_host') $plugin
     Copy-Required $resources @('chrome_100_percent.pak', 'chrome_200_percent.pak', 'resources.pak', 'icudtl.dat', 'locales') $plugin
 
-    # the shared libraries of the packages these binaries link (APR for
-    # SLPlugin…): SLPlugin has no rpath, the viewer starts it with
-    # LD_LIBRARY_PATH on this folder (the Legacy Viewer's wrapper.sh does the
-    # same with its lib folder)
+    # the shared libraries of the packages these binaries link, if any (the
+    # pinned commit links them statically): the viewer starts SLPlugin with
+    # LD_LIBRARY_PATH on this folder, as the Legacy Viewer's wrapper.sh does
+    # with its lib folder, which dullahan_host needs for libcef.so
     $libFull = (Resolve-Path -LiteralPath $lib).Path
     $saved = $env:LD_LIBRARY_PATH
     $env:LD_LIBRARY_PATH = "$((Resolve-Path -LiteralPath $plugin).Path):$libFull"

@@ -570,6 +570,7 @@ dependencies = [
  "aurora-llsd",
  "env_logger",
  "image",
+ "libc",
  "log",
  "windows-sys 0.61.2",
 ]

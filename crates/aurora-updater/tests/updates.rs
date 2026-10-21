@@ -290,7 +290,27 @@ fn success_removes_backup_only_after_launch_and_refuses_foreign_files_or_concurr
     assert!(!work.root.join("backup").exists());
 }
 
-const PACK_ROUTE: &str = "/download/media-plugins-2/Aurora-Media-Plugins-2-windows-x64.zip";
+/// A media pack path written with the names of the Windows pack, in the
+/// names of this system's pack.
+fn os(path: &str) -> String {
+    if cfg!(target_os = "linux") {
+        path.replace("windows-x64", "linux-x64")
+            .replace("SLPlugin.exe", "SLPlugin")
+            .replace("media_plugin_libvlc.dll", "libmedia_plugin_gstreamer.so")
+            .replace("media_plugin_cef.dll", "libmedia_plugin_cef.so")
+    } else {
+        path.to_string()
+    }
+}
+
+fn pack_route() -> String {
+    os("/download/media-plugins-2/Aurora-Media-Plugins-2-windows-x64.zip")
+}
+
+fn pack_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let named: Vec<(String, &[u8])> = entries.iter().map(|(name, value)| (os(name), *value)).collect();
+    zip(&named.iter().map(|(name, value)| (name.as_str(), *value)).collect::<Vec<_>>())
+}
 
 fn pack_zip(with_cef: bool) -> Vec<u8> {
     let mut entries: Vec<(&str, &[u8])> = vec![
@@ -305,7 +325,7 @@ fn pack_zip(with_cef: bool) -> Vec<u8> {
     if with_cef {
         entries.push(("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_cef.dll", b"cef"));
     }
-    zip(&entries)
+    pack_archive(&entries)
 }
 
 fn pack(bytes: &[u8], sha256: String) -> media_pack::Pack {
@@ -331,18 +351,18 @@ fn hidden(root: &Path) -> usize {
 fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
     let bytes = pack_zip(true);
     let pack = pack(&bytes, digest(&bytes));
-    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), bytes)]));
+    let server = Server::new(HashMap::from([(pack_route(), bytes)]));
     let temp = Temp::new();
     let root = temp.0.join("media-plugins");
     fs::create_dir_all(root.join("1/llplugin")).expect("older pack");
-    fs::write(root.join("1/llplugin/SLPlugin.exe"), b"old").expect("older pack");
+    fs::write(root.join(os("1/llplugin/SLPlugin.exe")), b"old").expect("older pack");
     fs::create_dir_all(root.join(".staging-interrupted")).expect("leftover");
     fs::write(root.join(".staging-interrupted/download.zip"), b"partial").expect("leftover");
     assert!(media_pack::installed(&root, &pack).is_none());
     let dir = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {})).expect("installed pack");
     assert_eq!(dir, root.join("2"));
     assert_eq!(media_pack::installed(&root, &pack), Some(root.join("2")));
-    assert_eq!(fs::read(dir.join("llplugin/SLPlugin.exe")).expect("launcher"), b"launcher");
+    assert_eq!(fs::read(dir.join(os("llplugin/SLPlugin.exe"))).expect("launcher"), b"launcher");
     assert_eq!(fs::read(dir.join("llplugin/locales/fr.pak")).expect("resource"), b"fr");
     assert!(!root.join("1").exists(), "the pack of an older viewer is removed");
     // the staging folder is deleted on its own thread
@@ -361,7 +381,7 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
         root.join("2")
     );
     // the same version built again is another archive: it replaces the folder
-    let rebuilt = zip(&[
+    let rebuilt = pack_archive(&[
         (
             "Aurora-Media-Plugins-2-windows-x64/aurora-media-plugins.json",
             br#"{"schema":1,"version":"2"}"#,
@@ -372,7 +392,7 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
     ]);
     let rebuilt_pack = self::pack(&rebuilt, digest(&rebuilt));
     assert!(media_pack::installed(&root, &rebuilt_pack).is_none());
-    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), rebuilt)]));
+    let server = Server::new(HashMap::from([(pack_route(), rebuilt)]));
     run(media_pack::install(
         &server.source(),
         &rebuilt_pack,
@@ -384,10 +404,54 @@ fn media_pack_installs_once_and_replaces_what_older_viewers_left() {
     assert_eq!(media_pack::installed(&root, &rebuilt_pack), Some(root.join("2")));
     assert!(media_pack::installed(&root, &pack).is_none());
     assert_eq!(
-        fs::read(root.join("2/llplugin/SLPlugin.exe")).expect("launcher"),
+        fs::read(root.join(os("2/llplugin/SLPlugin.exe"))).expect("launcher"),
         b"launcher built again"
     );
     assert!(!root.join("2/llplugin/locales").exists(), "nothing of the replaced folder is left");
+}
+
+#[cfg(unix)]
+#[test]
+fn media_pack_programs_stay_executable_without_setuid() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let plain = zip::write::SimpleFileOptions::default();
+    for (name, value, options) in [
+        (
+            "Aurora-Media-Plugins-2-windows-x64/aurora-media-plugins.json",
+            &br#"{"schema":1,"version":"2"}"#[..],
+            plain,
+        ),
+        (
+            "Aurora-Media-Plugins-2-windows-x64/llplugin/SLPlugin.exe",
+            b"launcher",
+            plain.unix_permissions(0o755),
+        ),
+        (
+            "Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_libvlc.dll",
+            b"video",
+            plain,
+        ),
+        ("Aurora-Media-Plugins-2-windows-x64/llplugin/media_plugin_cef.dll", b"cef", plain),
+        (
+            "Aurora-Media-Plugins-2-windows-x64/llplugin/chrome-sandbox",
+            b"sandbox",
+            plain.unix_permissions(0o4755),
+        ),
+    ] {
+        writer.start_file(os(name), options).expect("ZIP member");
+        writer.write_all(value).expect("ZIP data");
+    }
+    let bytes = writer.finish().expect("ZIP").into_inner();
+    let pack = pack(&bytes, digest(&bytes));
+    let server = Server::new(HashMap::from([(pack_route(), bytes)]));
+    let temp = Temp::new();
+    let root = temp.0.join("media-plugins");
+    let dir = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {})).expect("installed pack");
+    let mode = |name: &str| fs::metadata(dir.join(os(name))).expect("installed file").permissions().mode() & 0o7777;
+    assert_eq!(mode("llplugin/SLPlugin.exe"), 0o755);
+    assert_eq!(mode("llplugin/chrome-sandbox"), 0o755, "never setuid from an archive");
+    assert_eq!(mode("llplugin/media_plugin_cef.dll") & 0o111, 0);
 }
 
 #[test]
@@ -406,7 +470,7 @@ fn media_pack_is_refused_when_altered_incomplete_or_being_installed() {
         ),
         (incomplete.clone(), pack(&incomplete, digest(&incomplete)), Failure::Package),
     ] {
-        let server = Server::new(HashMap::from([(PACK_ROUTE.into(), served)]));
+        let server = Server::new(HashMap::from([(pack_route(), served)]));
         let temp = Temp::new();
         let root = temp.0.join("media-plugins");
         let outcome = run(media_pack::install(&server.source(), &pack, &root, &Cancel::default(), |_| {}));
@@ -422,7 +486,7 @@ fn media_pack_is_refused_when_altered_incomplete_or_being_installed() {
     }
     // a second viewer does not download while the first one installs
     let pack = pack(&bytes, digest(&bytes));
-    let server = Server::new(HashMap::from([(PACK_ROUTE.into(), bytes)]));
+    let server = Server::new(HashMap::from([(pack_route(), bytes)]));
     let temp = Temp::new();
     let root = temp.0.join("media-plugins");
     fs::create_dir_all(&root).expect("root");

@@ -226,6 +226,13 @@ pub(crate) fn unpack(path: &Path, root: &Path, prefix: &str, cancel: &Cancel) ->
             out.write_all(&buffer[..n])?;
         }
         ensure!(size == entry.size(), "truncated ZIP member");
+        // Unix: the media plugins' launcher and CEF's host must stay
+        // executable; only the permission bits are kept, never setuid
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            out.set_permissions(fs::Permissions::from_mode(mode & 0o755))?;
+        }
         out.sync_all()?;
     }
     Ok(())

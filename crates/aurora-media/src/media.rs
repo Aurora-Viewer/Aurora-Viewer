@@ -626,6 +626,19 @@ impl MediaPlugin {
         m
     }
 
+    /// Linux native key data, as LLWindowSDL::getNativeKeyData of the SDL2
+    /// build (indra/llwindow/llwindowsdl2.cpp): the SDL keycode (or the typed
+    /// UTF-16 unit), its Windows virtual key, the GDK-like modifier mask
+    /// (shift 1, control 4, alt 8) and the kind of input.
+    pub fn native_key_data_sdl(virtual_key: u32, virtual_key_win: u32, modifiers: u32, input_type: &str) -> Llsd {
+        let mut m = Llsd::new_map();
+        m.insert("virtual_key", Llsd::Integer(virtual_key as i32));
+        m.insert("virtual_key_win", Llsd::Integer(virtual_key_win as i32));
+        m.insert("modifiers", Llsd::Integer(modifiers as i32));
+        m.insert("input_type", Llsd::String(input_type.into()));
+        m
+    }
+
     pub fn key_event(&mut self, ev: KeyEvent, key: i32, mods: Modifiers, native: Llsd) {
         let name = match ev {
             KeyEvent::Down => "down",
@@ -899,17 +912,37 @@ impl Drop for MediaPlugin {
     }
 }
 
-/// Plugin for a MIME type (LLMIMETypes::implType over mime_types.xml,
-/// Windows variant): unknown types go to the browser.
+/// The plugin of time-based media (video and audio streams): LibVLC, except
+/// on Linux where the Legacy Viewer builds no LibVLC plugin and plays them
+/// through the system's GStreamer (mime_types_linux.xml).
+pub const TIME_MEDIA_PLUGIN: &str = if cfg!(target_os = "linux") {
+    "media_plugin_gstreamer"
+} else {
+    "media_plugin_libvlc"
+};
+
+/// Plugin for a MIME type (LLMIMETypes::implType over mime_types.xml, or
+/// mime_types_linux.xml on Linux): unknown types go to the browser.
 pub fn plugin_for_mime(mime: &str) -> &'static str {
+    plugin_for_mime_on(mime, cfg!(target_os = "linux"))
+}
+
+fn plugin_for_mime_on(mime: &str, linux: bool) -> &'static str {
     let mime = mime.trim().to_ascii_lowercase();
-    const CEF_EXCEPTIONS: [&str; 4] = ["application/ogg", "audio/mid", "video/x-ms-wmv", "application/smil"];
-    if CEF_EXCEPTIONS.contains(&mime.as_str()) {
+    let video = if linux { "media_plugin_gstreamer" } else { "media_plugin_libvlc" };
+    // the Windows table sends these to the browser, the Linux one to GStreamer
+    const CEF_ON_WINDOWS: [&str; 3] = ["application/ogg", "audio/mid", "video/x-ms-wmv"];
+    if mime == "application/smil" || (!linux && CEF_ON_WINDOWS.contains(&mime.as_str())) {
         return "media_plugin_cef";
     }
-    if mime.starts_with("video/") || mime.starts_with("audio/") || mime == "application/octet-stream" || mime == "rtsp" || mime == "libvlc"
+    if mime.starts_with("video/")
+        || mime.starts_with("audio/")
+        || mime == "application/octet-stream"
+        || mime == "rtsp"
+        || (linux && mime == "application/ogg")
+        || (!linux && mime == "libvlc")
     {
-        return "media_plugin_libvlc";
+        return video;
     }
     "media_plugin_cef"
 }
@@ -936,14 +969,29 @@ mod tests {
 
     #[test]
     fn mime_routing() {
-        assert_eq!(plugin_for_mime("text/html"), "media_plugin_cef");
-        assert_eq!(plugin_for_mime("video/mp4"), "media_plugin_libvlc");
-        assert_eq!(plugin_for_mime("audio/mpeg"), "media_plugin_libvlc");
-        assert_eq!(plugin_for_mime("video/x-ms-wmv"), "media_plugin_cef");
-        assert_eq!(plugin_for_mime("rtsp"), "media_plugin_libvlc");
+        assert_eq!(plugin_for_mime_on("text/html", false), "media_plugin_cef");
+        assert_eq!(plugin_for_mime_on("video/mp4", false), "media_plugin_libvlc");
+        assert_eq!(plugin_for_mime_on("audio/mpeg", false), "media_plugin_libvlc");
+        assert_eq!(plugin_for_mime_on("video/x-ms-wmv", false), "media_plugin_cef");
+        assert_eq!(plugin_for_mime_on("rtsp", false), "media_plugin_libvlc");
         assert_eq!(mime_from_scheme("rtsp://x/y").as_deref(), Some("rtsp"));
         assert_eq!(mime_from_scheme("https://x/y"), None);
         assert_eq!(mime_from_scheme("www.example.com"), None);
         assert_eq!(mime_from_scheme("data:text/html,hi").as_deref(), Some("text/html"));
+        assert_eq!(plugin_for_mime("video/mp4"), TIME_MEDIA_PLUGIN);
+    }
+
+    #[test]
+    fn mime_routing_on_linux_follows_mime_types_linux_xml() {
+        let linux = |m| plugin_for_mime_on(m, true);
+        assert_eq!(linux("text/html"), "media_plugin_cef");
+        assert_eq!(linux("video/mp4"), "media_plugin_gstreamer");
+        assert_eq!(linux("audio/mpeg"), "media_plugin_gstreamer");
+        assert_eq!(linux("video/x-ms-wmv"), "media_plugin_gstreamer");
+        assert_eq!(linux("application/ogg"), "media_plugin_gstreamer");
+        assert_eq!(linux("audio/mid"), "media_plugin_gstreamer");
+        assert_eq!(linux("application/smil"), "media_plugin_cef");
+        assert_eq!(linux("rtsp"), "media_plugin_gstreamer");
+        assert_eq!(linux("libvlc"), "media_plugin_cef");
     }
 }

@@ -56,11 +56,12 @@ Web pages and video on media faces go through a separate pack, built by the
 as the GitHub releases `media-plugins-<n>`. The viewer downloads it when media
 need it and installs it in the user's data folder. Each release attaches the
 license texts (`LICENSES\` in the archive) and the corresponding source of the
-Linden Lab code.
+Linden Lab code. On Linux, video plays through the system's GStreamer, which
+the pack does not include.
 
 | Component | License |
 |---|---|
-| `SLPlugin.exe`, `media_plugin_cef.dll`, `media_plugin_libvlc.dll`, built unmodified from a pinned commit of the Firestorm sources | LGPL 2.1 (the commit is named in the pack's `aurora-media-plugins.json` and in the release notes) |
+| `SLPlugin.exe`, `media_plugin_cef.dll`, `media_plugin_libvlc.dll` (Windows), `SLPlugin`, `libmedia_plugin_cef.so`, `libmedia_plugin_gstreamer.so` (Linux), built unmodified from a pinned commit of the Firestorm sources | LGPL 2.1 (the commit is named in the pack's `aurora-media-plugins.json` and in the release notes) |
 | Chromium Embedded Framework, Dullahan (Linden Lab's prebuilt package) | BSD-3-Clause and the licenses of Chromium's third-party code |
 | LibVLC and its modules (Linden Lab's prebuilt package of VLC 3.0) | LGPL 2.1 or later; some modules GPL 2 or later |
 | Microsoft Visual C++ runtime (`msvcp140.dll`, `vcruntime140*.dll`) | Redistributable under the Visual Studio license terms |

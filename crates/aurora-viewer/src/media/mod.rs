@@ -235,7 +235,8 @@ impl MediaImpl {
         self.plugin.is_some()
     }
 
-    /// Time-based media (video / audio through LibVLC): pause / play.
+    /// Time-based media (video / audio through LibVLC, GStreamer on Linux):
+    /// pause / play.
     /// The system id of the plugin process playing this media, while one
     /// runs (the resource monitor reads its load).
     pub fn process_id(&self) -> Option<u32> {
@@ -243,7 +244,9 @@ impl MediaImpl {
     }
 
     pub fn is_time_media(&self) -> bool {
-        self.plugin.as_ref().is_some_and(|p| p.plugin_name == "media_plugin_libvlc")
+        self.plugin
+            .as_ref()
+            .is_some_and(|p| p.plugin_name == aurora_media::TIME_MEDIA_PLUGIN)
     }
 
     /// navigateTo: a new URL; the plugin is kept when its type still fits.

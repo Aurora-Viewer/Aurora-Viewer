@@ -362,7 +362,13 @@ fn lines(m: &Monitor, s: &Snapshot) -> Vec<Entry> {
                     fold: None,
                     row: None,
                     select: Selected::Media(proc_.pid),
-                    badge: Some(if proc_.video { "libvlc".into() } else { "CEF".into() }),
+                    badge: Some(if !proc_.video {
+                        "CEF".into()
+                    } else if cfg!(target_os = "linux") {
+                        "GStreamer".into()
+                    } else {
+                        "libvlc".into()
+                    }),
                 })
                 .collect();
         }
