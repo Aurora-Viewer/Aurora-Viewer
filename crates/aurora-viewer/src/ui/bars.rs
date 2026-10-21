@@ -761,15 +761,36 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // Tooltips, Show Tips On All Objects
         menu::submenu(ui, p, "pointer-filled", aurora_i18n::tr!("ui-options-hover-tips"), true, |ui| {
             let mut tips = st.hover_tips;
-            let mut changed = menu::check(ui, p, "pointer-filled", aurora_i18n::tr!("ui-bars-hover-tips-show"), tips.enabled, true);
+            let mut changed = menu::check(
+                ui,
+                p,
+                "pointer-filled",
+                aurora_i18n::tr!("ui-bars-hover-tips-show"),
+                tips.enabled,
+                true,
+            );
             if changed {
                 tips.enabled = !tips.enabled;
             }
-            if menu::check(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-options-hover-tips-land"), tips.land, tips.enabled) {
+            if menu::check(
+                ui,
+                p,
+                "map-pin-filled",
+                aurora_i18n::tr!("ui-options-hover-tips-land"),
+                tips.land,
+                tips.enabled,
+            ) {
                 tips.land = !tips.land;
                 changed = true;
             }
-            if menu::check(ui, p, "cube", aurora_i18n::tr!("ui-bars-hover-tips-all-objects"), tips.all_objects, tips.enabled) {
+            if menu::check(
+                ui,
+                p,
+                "cube",
+                aurora_i18n::tr!("ui-bars-hover-tips-all-objects"),
+                tips.all_objects,
+                tips.enabled,
+            ) {
                 tips.all_objects = !tips.all_objects;
                 changed = true;
             }

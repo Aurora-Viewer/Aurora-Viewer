@@ -28,7 +28,15 @@ impl Run {
     }
 
     /// One frame `ms` after the start, the pointer at `at`.
-    fn frame(&mut self, ms: u64, at: (f32, f32), subject: Option<(Subject, Key)>, interrupted: bool, tip: Option<Rect>, follows: bool) -> Option<Shown> {
+    fn frame(
+        &mut self,
+        ms: u64,
+        at: (f32, f32),
+        subject: Option<(Subject, Key)>,
+        interrupted: bool,
+        tip: Option<Rect>,
+        follows: bool,
+    ) -> Option<Shown> {
         self.timing.update(Frame {
             subject,
             pointer: Some(Pos2::new(at.0, at.1)),
@@ -227,5 +235,8 @@ fn the_hovered_parcel_is_asked_once_and_kept() {
     );
     assert_eq!(parcels.at(handle, at, origin).map(|p| p.local_id), Some(3));
     assert!(parcels.request(handle, Vec3::new(60.0, 40.0, 0.0), origin, now).is_none());
-    assert!(parcels.request(handle, Vec3::new(70.0, 40.0, 0.0), origin, now).is_some(), "another parcel");
+    assert!(
+        parcels.request(handle, Vec3::new(70.0, 40.0, 0.0), origin, now).is_some(),
+        "another parcel"
+    );
 }

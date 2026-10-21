@@ -76,11 +76,11 @@ pub mod group;
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]
 pub mod home;
-#[path = "demo_hud.rs"]
-pub mod hud;
 /// The world's hover tips in one of their forms (AURORA_DEMO_HOVER_TIPS).
 #[path = "demo_hover_tips.rs"]
 pub mod hover_tips;
+#[path = "demo_hud.rs"]
+pub mod hud;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;

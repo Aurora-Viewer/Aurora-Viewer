@@ -39,7 +39,11 @@ pub enum Subject {
     /// An avatar, or something it wears (LLToolPie shows the wearer).
     Avatar { idx: usize, id: Uuid },
     /// The ground at `local` (region coordinates) of region `handle`.
-    Land { handle: RegionHandle, local: Vec3, origin: (u32, u32) },
+    Land {
+        handle: RegionHandle,
+        local: Vec3,
+        origin: (u32, u32),
+    },
 }
 
 /// What makes two subjects the same tip: the linkset, the avatar, the parcel
@@ -487,9 +491,7 @@ fn lindens(n: i32) -> String {
 /// for_sale_selection (llviewermenu.cpp): for sale, transferable, and
 /// copyable when a copy is sold.
 pub fn for_sale(p: &ObjectProps) -> bool {
-    (1..=3).contains(&p.sale_type)
-        && p.owner_mask & perm::TRANSFER != 0
-        && (p.owner_mask & perm::COPY != 0 || p.sale_type != 2)
+    (1..=3).contains(&p.sale_type) && p.owner_mask & perm::TRANSFER != 0 && (p.owner_mask & perm::COPY != 0 || p.sale_type != 2)
 }
 
 /// needs_tooltip (lltoolpie.cpp): without "on all objects", only what can
@@ -497,11 +499,7 @@ pub fn for_sale(p: &ObjectProps) -> bool {
 /// or has media.
 fn interactive(world: &World, idx: usize, props: Option<&ObjectProps>) -> bool {
     let flags = |i: usize| world.objects.get(i).map_or(0, |o| o.update_flags);
-    let parent = world
-        .objects
-        .get(idx)
-        .and_then(|o| world.objects.parent_of(o))
-        .map_or(0, flags);
+    let parent = world.objects.get(idx).and_then(|o| world.objects.parent_of(o)).map_or(0, flags);
     let own = flags(idx);
     if (own | parent) & (flag::HANDLE_TOUCH | flag::TAKES_MONEY) != 0 || own & flag::ALLOW_INVENTORY_DROP != 0 {
         return true;
@@ -622,10 +620,7 @@ fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sou
     }
     let prims = crate::build::family(world, root).len();
     let position = crate::scene::Scene::object_transform(world, root, Instant::now(), 0).map(|xf| xf.0);
-    let region_pos = world
-        .region_offset(region)
-        .zip(position)
-        .map(|(offset, p)| p - offset);
+    let region_pos = world.region_offset(region).zip(position).map(|(offset, p)| p - offset);
     let distance = position.map(|p| p.distance(s.agent));
     let impact = s.land_impact;
     let mut rows = Vec::new();
@@ -645,7 +640,17 @@ fn object_tip(world: &mut World, idx: usize, root: usize, root_id: Uuid, s: &Sou
     if let Some(d) = distance {
         rows.push((aurora_i18n::tr!("common-distance"), meters(d)));
     }
-    let legacy = legacy_object(&title, desc.as_deref(), owner.as_ref(), props.filter(|p| for_sale(p)), &flags, prims, impact, region_pos, distance);
+    let legacy = legacy_object(
+        &title,
+        desc.as_deref(),
+        owner.as_ref(),
+        props.filter(|p| for_sale(p)),
+        &flags,
+        prims,
+        impact,
+        region_pos,
+        distance,
+    );
     Some(Tip {
         kind: TipKind::Object,
         kicker: None,
@@ -842,7 +847,10 @@ fn land_tip(world: &mut World, p: &ParcelInfo, point: Vec3) -> Tip {
     } else {
         p.name.trim().to_owned()
     };
-    let mut rows = vec![(aurora_i18n::tr!("common-owner"), owner.0.clone()), (aurora_i18n::tr!("hover-tips-area"), area)];
+    let mut rows = vec![
+        (aurora_i18n::tr!("common-owner"), owner.0.clone()),
+        (aurora_i18n::tr!("hover-tips-area"), area),
+    ];
     if for_sale {
         let per_m2 = if p.area > 0 {
             format!(

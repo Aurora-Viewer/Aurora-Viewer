@@ -71,18 +71,16 @@ impl App {
         }
         let interrupted = ctx.input(|i| {
             i.pointer.any_pressed()
-                || i
-                    .events
+                || i.events
                     .iter()
                     .any(|e| matches!(e, egui::Event::Key { pressed: true, .. } | egui::Event::MouseWheel { .. }))
         });
         // the demo's resting cursor (AURORA_DEMO_HOVER) moves only the
         // world's, egui has no pointer then
         let ppp = ctx.pixels_per_point();
-        let pointer = ctx.input(|i| i.pointer.latest_pos()).or_else(|| {
-            self.demo
-                .then(|| egui::pos2(self.cursor_pos.0 as f32 / ppp, self.cursor_pos.1 as f32 / ppp))
-        });
+        let pointer = ctx
+            .input(|i| i.pointer.latest_pos())
+            .or_else(|| self.demo.then(|| egui::pos2(self.cursor_pos.0 / ppp, self.cursor_pos.1 / ppp)));
         let frame = tips::Frame {
             subject,
             pointer,
@@ -139,15 +137,7 @@ impl App {
         } else {
             None
         };
-        let drawn = crate::ui::hover_tips::show(
-            ctx,
-            p,
-            tip.as_ref(),
-            land.as_ref(),
-            settings.form,
-            legacy,
-            shown.anchor,
-        );
+        let drawn = crate::ui::hover_tips::show(ctx, p, tip.as_ref(), land.as_ref(), settings.form, legacy, shown.anchor);
         if self.demo
             && tip.is_some()
             && tip.as_ref().map(|t| &t.title) != self.hover_tips.last.as_ref().map(|t| &t.title)

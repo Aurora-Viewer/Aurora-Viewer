@@ -522,11 +522,17 @@ impl DemoSim {
             }
             // the hover tips' parcel under the pointer
             BuildCmd::ParcelRequest {
-                handle, sequence, west, south, ..
-            } if *sequence == aurora_net::land::HOVERED_PARCEL_SEQ_ID => crate::demo::hover_tips::parcel_at(*west, *south, world.parcel.clone())
-                .map(|parcel| NetEvent::HoverParcel { handle: *handle, parcel })
-                .into_iter()
-                .collect(),
+                handle,
+                sequence,
+                west,
+                south,
+                ..
+            } if *sequence == aurora_net::land::HOVERED_PARCEL_SEQ_ID => {
+                crate::demo::hover_tips::parcel_at(*west, *south, world.parcel.clone())
+                    .map(|parcel| NetEvent::HoverParcel { handle: *handle, parcel })
+                    .into_iter()
+                    .collect()
+            }
             BuildCmd::ParcelRequest { handle, sequence, .. } => match world.parcel.clone() {
                 Some(p) => vec![NetEvent::SelectedParcel {
                     handle: *handle,

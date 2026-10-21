@@ -2291,12 +2291,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         toggle(ui, p, &mut s.hover_tips.group_titles)
                     });
                     c |= row(ui, p, aurora_i18n::tr!("ui-options-hover-tips-delay"), "", |ui| {
-                        slider(
-                            ui,
-                            &mut s.hover_tips.delay,
-                            0.0..=crate::settings::MAX_HOVER_TIP_DELAY,
-                            " s",
-                        )
+                        slider(ui, &mut s.hover_tips.delay, 0.0..=crate::settings::MAX_HOVER_TIP_DELAY, " s")
                     });
                 });
             });

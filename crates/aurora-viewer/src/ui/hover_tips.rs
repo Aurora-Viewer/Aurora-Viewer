@@ -48,7 +48,15 @@ pub fn place(anchor: Pos2, size: Vec2, screen: Rect) -> Pos2 {
 
 /// One tip near the pointer (bubble, card or Legacy text), or the readout.
 /// `land` is the parcel under the subject, for the readout's second line.
-pub fn show(ctx: &egui::Context, p: &Palette, tip: Option<&Tip>, land: Option<&Tip>, form: HoverTipForm, legacy: bool, anchor: Pos2) -> Option<Drawn> {
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    tip: Option<&Tip>,
+    land: Option<&Tip>,
+    form: HoverTipForm,
+    legacy: bool,
+    anchor: Pos2,
+) -> Option<Drawn> {
     if !legacy && form == HoverTipForm::Readout {
         return readout(ctx, p, tip, land);
     }
