@@ -319,7 +319,8 @@ fn roomy_row(
                 });
             }
             let (text, color, italics) = body(env, line, name);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, TEXT, color, italics, mark);
+            let size = env.emoji.message_size(&text, TEXT);
+            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
         });
     });
     row.response.rect
@@ -366,7 +367,8 @@ fn compact_row(
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, TEXT, color, italics, mark);
+            let size = env.emoji.message_size(&text, TEXT);
+            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
         });
     });
     row.response.rect
