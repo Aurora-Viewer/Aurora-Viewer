@@ -652,7 +652,9 @@ impl BuyLandUi {
         )
         .help(aurora_i18n::tr!("buy-land-help"));
         floater.min_size = Vec2::new(740.0, 560.0);
-        floater.show(ctx, p, &mut open, |ui| {
+        // held at its size: with a larger text its body measured a little
+        // more than the window, which grew at every frame
+        floater.steady_size().show(ctx, p, &mut open, |ui| {
             // the buttons first, along the bottom; the body takes the rest
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 ui.allocate_ui_with_layout(
@@ -1284,6 +1286,20 @@ mod tests {
             amount,
             ..Default::default()
         }
+    }
+
+    /// The window keeps its size, the covenant's box over its checkbox.
+    #[test]
+    fn the_window_keeps_its_size() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "buy_land",
+            &[SIZE, Vec2::new(740.0, 560.0)],
+            aurora_i18n::tr!("common-cancel"),
+            || (ready(4500, 300), test_world()),
+            |(ui, world), ctx, p| {
+                ui.show(ctx, p, world, &HashMap::new(), Selection::Pending);
+            },
+        );
     }
 
     #[test]
