@@ -2330,15 +2330,20 @@ impl World {
                 None
             }
             NetEvent::LoadUrl {
-                object_name, message, url, ..
+                object_name,
+                object_id,
+                message,
+                url,
             } => {
                 let body = format!("{message}\n{url}");
-                self.notifications.push(
+                let id = self.notifications.push(
                     notifications::Kind::Url,
                     aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
                     body,
                     notifications::Data::Url(url),
                 );
+                self.notifications
+                    .link_name(id, object_name, notifications::NameTarget::Object(object_id));
                 None
             }
             NetEvent::ScriptTeleportRequest {
