@@ -20,6 +20,7 @@ mod latest;
 mod line_menu;
 mod members;
 mod offer_card;
+pub mod previews;
 mod reorder;
 pub(crate) mod select;
 mod sidebar;
@@ -185,6 +186,9 @@ pub struct ChatUi {
     /// The resident picker of the column's "+", and what it starts.
     picker: super::avatar_picker::AvatarPicker,
     start: Start,
+    /// The pictures and videos under links (`previews.rs`), their settings
+    /// given every frame by the app.
+    pub previews: previews::Previews,
 }
 
 /// What the column's resident picker starts.
@@ -1668,6 +1672,14 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         },
     };
     let menu = ui.layer_id().id.with(("chat_line_menu", st.selected));
+    st.previews.place = match st.selected {
+        None => crate::link_preview::Place::Nearby,
+        Some(id) if w.is_group_session(&id) => crate::link_preview::Place::Group,
+        Some(_) => crate::link_preview::Place::Im,
+    };
+    st.previews.update(ui.ctx());
+    // the Legacy lines keep links as text
+    let legacy = matches!(rows, Rows::Classic(None));
     let mut env = LineEnv {
         p,
         icons,
@@ -1683,6 +1695,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             Rows::Classic(style) => style,
             Rows::Thread(_) => None,
         },
+        previews: (!legacy).then_some(&mut st.previews),
     };
     let wash = find::wash(p);
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
@@ -1815,6 +1828,9 @@ pub(crate) struct LineEnv<'a> {
     /// each group when `Some(true)` (several people write); `None`: the
     /// classic lines with their header strips.
     pub bubbles: Option<bool>,
+    /// The cards under links (the Aurora, Compact and Bubbles styles of the
+    /// Conversations window; None elsewhere).
+    pub previews: Option<&'a mut previews::Previews>,
 }
 
 /// One line of a conversation: the day when it changes, the sender's header

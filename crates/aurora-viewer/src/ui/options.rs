@@ -304,6 +304,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("ui-options-smoothness") => "dashboard-filled",
         value if value == aurora_i18n::text("ui-options-layout") => "layout-filled",
         value if value == aurora_i18n::text("ui-options-slurl-links") => "link-filled",
+        value if value == aurora_i18n::text("ui-options-link-previews") => "photo-filled",
         value if value == aurora_i18n::text("preferences-group-skin") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-size",
         value if value == aurora_i18n::text("ui-options-bundled-fonts") => "typography",
@@ -1111,6 +1112,127 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
     c
 }
 
+/// The pictures and videos under the links of the Conversations window
+/// (`link_preview.rs`): what loads by itself, where, how videos play.
+fn link_previews_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    use crate::link_preview::{Load, Player, Size};
+    let mut c = false;
+    let choice = |ui: &mut egui::Ui, selected: &mut usize, labels: &[&str]| {
+        let options: Vec<(&str, bool)> = labels.iter().map(|l| (*l, true)).collect();
+        super::widgets::segmented(ui, p, selected, &options)
+    };
+    group(ui, p, aurora_i18n::tr!("ui-options-link-previews"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-load"),
+            aurora_i18n::tr!("ui-options-link-previews-load-hint"),
+            |ui| {
+                const LOADS: [Load; 3] = [Load::Never, Load::Trusted, Load::All];
+                let mut i = LOADS.iter().position(|l| *l == s.link_previews.load).unwrap_or(1);
+                let changed = choice(
+                    ui,
+                    &mut i,
+                    &[
+                        aurora_i18n::tr!("ui-options-link-previews-never"),
+                        aurora_i18n::tr!("ui-options-link-previews-trusted"),
+                        aurora_i18n::tr!("ui-options-link-previews-all"),
+                    ],
+                );
+                s.link_previews.load = LOADS[i];
+                changed
+            },
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-ims"),
+            aurora_i18n::tr!("ui-options-link-previews-ims-hint"),
+            |ui| toggle(ui, p, &mut s.link_previews.ims),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-link-previews-groups"), "", |ui| {
+            toggle(ui, p, &mut s.link_previews.groups)
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-blur"),
+            aurora_i18n::tr!("ui-options-link-previews-blur-hint"),
+            |ui| {
+                ui.add_enabled_ui(s.link_previews.groups, |ui| toggle(ui, p, &mut s.link_previews.blur_groups))
+                    .inner
+            },
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-nearby"),
+            aurora_i18n::tr!("ui-options-link-previews-nearby-hint"),
+            |ui| toggle(ui, p, &mut s.link_previews.nearby),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-player"),
+            aurora_i18n::tr!("ui-options-link-previews-player-hint"),
+            |ui| {
+                const PLAYERS: [Player; 2] = [Player::InCard, Player::Window];
+                let mut i = PLAYERS.iter().position(|v| *v == s.link_previews.player).unwrap_or(0);
+                let changed = choice(
+                    ui,
+                    &mut i,
+                    &[
+                        aurora_i18n::tr!("ui-options-link-previews-in-card"),
+                        aurora_i18n::tr!("ui-options-link-previews-in-window"),
+                    ],
+                );
+                s.link_previews.player = PLAYERS[i];
+                changed
+            },
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-link-previews-size"), "", |ui| {
+            const SIZES: [Size; 3] = [Size::Small, Size::Medium, Size::Large];
+            let mut i = SIZES.iter().position(|v| *v == s.link_previews.size).unwrap_or(1);
+            let changed = choice(
+                ui,
+                &mut i,
+                &[
+                    aurora_i18n::tr!("ui-options-link-previews-small"),
+                    aurora_i18n::tr!("ui-options-link-previews-medium"),
+                    aurora_i18n::tr!("ui-options-link-previews-large"),
+                ],
+            );
+            s.link_previews.size = SIZES[i];
+            changed
+        });
+        if !s.link_previews.hidden_sites.is_empty() {
+            c |= row(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-options-link-previews-hidden-sites"),
+                aurora_i18n::tr!("ui-options-link-previews-hidden-sites-hint"),
+                |ui| {
+                    let mut removed = None;
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, site) in s.link_previews.hidden_sites.iter().enumerate() {
+                            ui.label(RichText::new(site).size(12.0).color(p.ink));
+                            let tip = aurora_i18n::tr!("ui-options-link-previews-unhide", site = site.as_str());
+                            if super::widgets::icon_button(ui, p, "x", &tip, true) {
+                                removed = Some(i);
+                            }
+                        }
+                    });
+                    if let Some(i) = removed {
+                        s.link_previews.hidden_sites.remove(i);
+                    }
+                    removed.is_some()
+                },
+            );
+        }
+    });
+    c
+}
+
 /// First group of the Chat page; `center`: Aurora's notification center
 /// is chosen (Preferences › Aurora), where the friends' toasts have a place.
 fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool, scroll_to_attention: bool) -> bool {
@@ -1461,6 +1583,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
         // drawn after the first group of the page, below
         let center = s.notifications_style == crate::settings::NotificationsStyle::Aurora;
         c |= chat_page_head(ui, p, s, center, std::mem::take(&mut st.scroll_to_attention));
+        c |= link_previews_group(ui, p, s);
         c |= keyword_alerts_group(ui, p, s, st);
         c |= chat_logs_group(ui, p, s, st, r);
     }

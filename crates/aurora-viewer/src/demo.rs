@@ -729,6 +729,13 @@ pub fn flash_message(agent: Uuid, secs: f64) -> Option<NetEvent> {
     }))
 }
 
+/// AURORA_DEMO_CONV_PREVIEWS=net: the previews of the demo's links come from
+/// the real sites; otherwise the demo makes them (`link_preview::demo`).
+pub fn previews_offline() -> bool {
+    static NET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net"))
+}
+
 /// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
 /// Conversations window as a messenger (ui/chat/bubbles.rs). Without a
 /// suffix the conversation with an online friend, over two days; `busy` the
@@ -921,6 +928,74 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             ];
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
+            }
+            // AURORA_DEMO_CONV_PREVIEWS=1|states: links with their cards
+            // (#538, #739), made here without network (`link_preview::demo`)
+            let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
+                let with = |key: &str, url: &str| format!("{key} {url}");
+                if mode == "net" {
+                    // real sites: a site to click on, a YouTube video
+                    vec![
+                        line(
+                            ago(9),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            "https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif",
+                        ),
+                        line(
+                            ago(8),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
+                        ),
+                        line(
+                            ago(7),
+                            &me,
+                            Uuid::nil(),
+                            ChatKind::Own,
+                            "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
+                        ),
+                    ]
+                } else if mode == "states" {
+                    vec![
+                        line(ago(9), name, friend, ChatKind::Im, "https://i.imgur.com/loading-poster.png"),
+                        line(ago(8), name, friend, ChatKind::Im, "https://i.imgur.com/missing-poster.png"),
+                        line(ago(7), name, friend, ChatKind::Im, "https://i.imgur.com/large-poster.png"),
+                    ]
+                } else {
+                    // the picture and the video last: in sight when the
+                    // conversation opens at its end
+                    vec![
+                        line(
+                            ago(9),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            &with(aurora_i18n::tr!("demo-previews-stage"), "http://pics.example.net/scene.png"),
+                        ),
+                        line(ago(8), name, friend, ChatKind::Im, "https://i.gyazo.com/demo-dance.gif"),
+                        line(
+                            ago(7),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            &with(aurora_i18n::tr!("demo-previews-outfit"), "https://i.imgur.com/demo-outfit.jpg"),
+                        ),
+                        line(
+                            ago(6),
+                            &me,
+                            Uuid::nil(),
+                            ChatKind::Own,
+                            &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
+                        ),
+                    ]
+                }
+            });
+            if let Some(extra) = preview_lines {
+                let at = lines.len() - 2;
+                lines.splice(at..at, extra);
             }
             for l in lines {
                 world.conversation_line(friend, l);
@@ -1149,7 +1224,15 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         (27, Uuid::nil(), aurora_i18n::tr!("demo-aurora-group-5").to_owned()),
         (3, DEMO_NOVA, aurora_i18n::tr!("demo-aurora-mention", name = me.as_str())),
     ];
-    for (minutes, from, text) in group {
+    // AURORA_DEMO_CONV_PREVIEWS: a picture in the group, blurred until clicked
+    let previews = std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok().then(|| {
+        (
+            2,
+            DEMO_LOUP,
+            format!("{} https://i.imgur.com/demo-build.jpg", aurora_i18n::tr!("demo-previews-build")),
+        )
+    });
+    for (minutes, from, text) in group.into_iter().chain(previews) {
         let l = if from.is_nil() {
             line(ago(minutes), &me, Uuid::nil(), ChatKind::Own, &text)
         } else {

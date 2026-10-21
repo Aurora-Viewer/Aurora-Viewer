@@ -243,7 +243,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         ui.add_space(lead);
         let behind = ui.painter().add(egui::Shape::Noop);
         let size = env.emoji.message_size(&text, TEXT_SIZE);
-        let width = text_width(ui, &text, size, max_bubble);
+        // as wide as its widest card, within the bubble's share of the row
+        let cards = env.previews.as_ref().map_or(0.0, |pv| pv.width(line, &text));
+        let width = text_width(ui, &text, size, max_bubble).max(cards.min(max_bubble - 20.0));
         let bubble = egui::Frame::new().inner_margin(PAD).show(ui, |ui| {
             // the width of the text, on the bubble's side of the row
             ui.set_max_width(width);
@@ -253,6 +255,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                 chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, size, text_color, italics, mark);
+                super::previews::cards(ui, env, line, &text);
             });
         });
         let rect = bubble.response.rect;
@@ -448,6 +451,7 @@ mod tests {
                     plain_history: false,
                     menu: None,
                     bubbles: Some(true),
+                    previews: None,
                 };
                 draw(ui, &mut env, &line, look, None, true);
             },

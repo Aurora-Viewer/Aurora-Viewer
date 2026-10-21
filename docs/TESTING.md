@@ -2636,6 +2636,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `net` from the real sites |
+| `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
@@ -3399,6 +3401,28 @@ failure. Grid validation and any paid upload are performed by the human.
   tall (2.4 times the text, sharp: the font's own bitmap), the messages
   that mix text and emoji at the text's size; in the Legacy lines every
   message at the text's size. Capture at frame 900.
+- **`AURORA_DEMO_CONV_PREVIEWS=1|states|net`**: with `AURORA_DEMO_CONV`,
+  links with their cards (`link_preview.rs`, `ui/chat/previews.rs`). `1`,
+  in the friend's conversation: a picture of an unknown site (its card asks
+  "Show": nothing loaded before), an animated GIF (its "GIF" mark, the frames
+  turning), a picture of a trusted site (hovered: open, copy, hide; right
+  click: also hide the site's previews) and our YouTube link (picture, play
+  button, title and channel); with `aurora:group`, Loup's picture in the
+  group, blurred until clicked. The demo makes these pictures, no network.
+  `states`: a picture loading forever (its empty card), an unavailable one
+  (the link alone) and a 24 MB one (its size and the limit, open button).
+  `net`: the real sites, network needed: two Wikimedia files (an unknown
+  site: "Show" loads them, the GIF animated) and a YouTube video, whose
+  title and picture come from YouTube. In the Legacy lines
+  (`bubbles:legacy`) no card at all. Capture at frame 900 (1500 with
+  `net`).
+- **`AURORA_DEMO_PREVIEW_PLAY=card|window`**: with
+  `AURORA_DEMO_CONV_PREVIEWS`, the first video card drawn plays by itself,
+  in its card (wider, stop and window buttons under it) or in the player
+  window ("Me at the zoo" in its title, open in the browser in its bar).
+  With `net` the video really plays (network needed; capture at frame
+  1500): YouTube's player inside a page served on 127.0.0.1, with
+  YouTube's controls; without that page it shows its error 153.
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
