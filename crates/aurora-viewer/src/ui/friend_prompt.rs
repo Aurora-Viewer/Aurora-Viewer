@@ -1,5 +1,5 @@
 //! A friendship offer in the middle of the screen (#465): an Aurora
-//! addition, off by default (Preferences › Chat › Toasts), where the Legacy
+//! addition, on by default (Preferences › Chat › Toasts), where the Legacy
 //! Viewer only has the toast of OfferFriendship (notifications.xml). The
 //! offer stays the notification center's: answering here answers it there,
 //! "Later" leaves it under the bell, and an offer answered from the bell
@@ -242,14 +242,17 @@ fn picture(ui: &mut egui::Ui, p: &Palette, icons: &Icons, env: &PromptEnv<'_>, f
     } else {
         painter.circle_stroke(center, radius + 4.0, egui::Stroke::new(2.0, p.violet_light.gamma_multiply(0.55)));
     }
-    widgets::avatar_disc(
-        ui,
-        p,
-        egui::Rect::from_center_size(center, Vec2::splat(radius * 2.0)),
-        env.pics.get(&from),
-        name,
-        false,
-    );
+    // not before it has a size: its initials' font cannot be 0 px
+    if radius >= 1.0 {
+        widgets::avatar_disc(
+            ui,
+            p,
+            egui::Rect::from_center_size(center, Vec2::splat(radius * 2.0)),
+            env.pics.get(&from),
+            name,
+            false,
+        );
+    }
     // the friendship kind's icon (`notifications::kind_style`), as a badge
     let badge = center + Vec2::splat(radius * 0.72);
     let badge_radius = 13.0 * pop.clamp(0.0, 1.0);
