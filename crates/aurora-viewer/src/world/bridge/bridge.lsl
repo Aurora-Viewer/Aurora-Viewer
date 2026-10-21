@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.28. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.29. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.28";
+string VERSION = "1.29";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -58,6 +58,7 @@ integer gReportedLock;
 integer gInitialized;
 integer gPermissionsReady;
 integer gConnected;
+integer gPaired;
 vector gRunForce;
 vector gRunDirection;
 float gRunIntegral;
@@ -102,6 +103,7 @@ discover(integer channel, key sender, string message) {
         || message != "auroraHello|" + (string)llGetKey() || llGetTime() < gNextHello) return;
     gNextHello = llGetTime() + 5.0;
     gHelloPending = TRUE;
+    gPaired = TRUE;
     takeControls();
     announce();
     if (gHelloPending) bootStatus();
@@ -600,8 +602,10 @@ syncMotionLock() {
 }
 requestURL() {
     // Notify an already paired viewer once when the simulator replaces its
-    // endpoint. Otherwise wait for discovery, even on an unsupported viewer.
-    if (gConnected) gHelloPending = TRUE;
+    // endpoint, even before its first command: a region change right after
+    // the handshake must not leave it on the old region's URL. Otherwise
+    // wait for discovery, even on an unsupported viewer.
+    if (gConnected || gPaired) gHelloPending = TRUE;
     llReleaseURL(gURL);
     gURL = "";
     gToken = llGenerateKey();
@@ -618,8 +622,9 @@ initialize() {
     gInitialized = TRUE;
     gPermissionsReady = FALSE;
     gHelloPending = FALSE;
+    gPaired = FALSE;
     gNextHello = 0.0;
-    CONTROLS = CONTROL_FWD | CONTROL_BACK | CONTROL_LEFT | CONTROL_RIGHT | CONTROL_UP | CONTROL_DOWN;
+    CONTROLS =CONTROL_FWD | CONTROL_BACK | CONTROL_LEFT | CONTROL_RIGHT | CONTROL_UP | CONTROL_DOWN;
     gOwner = llGetOwner();
     llListenRemove(gDiscoveryListener);
     gDiscoveryListener = llListen(DISCOVERY_CHANNEL, "", gOwner, "auroraHello|" + (string)llGetKey());
@@ -714,6 +719,9 @@ default {
             releaseMotion();
             syncControls();
             llSetTimerEvent(0);
+            // The viewer probes as soon as it sees the worn root in the new
+            // region; a probe answered just before the move must not delay it.
+            gNextHello = 0.0;
             requestURL();
             syncMotionLock();
         }

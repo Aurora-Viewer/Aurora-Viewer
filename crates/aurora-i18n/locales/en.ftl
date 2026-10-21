@@ -9334,6 +9334,7 @@ bridge-request-failed = The bridge did not confirm the command. Retrying.
 bridge-request-timeout = The bridge did not respond in time. Retrying.
 bridge-request-connection = The network connection to the bridge failed. Retrying.
 bridge-request-http = The simulator rejected the bridge request (HTTP { $status }). Retrying.
+bridge-request-gone = The bridge's address changed with the region. Reconnecting.
 bridge-request-response = The bridge returned an unreadable or incomplete state. Retrying.
 bridge-request-sequence = The bridge response does not match the command sent. Retrying.
 

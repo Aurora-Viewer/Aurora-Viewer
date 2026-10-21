@@ -9330,6 +9330,7 @@ bridge-request-failed = Le bridge n’a pas confirmé la commande. Nouvelle tent
 bridge-request-timeout = Le bridge n’a pas répondu à temps. Nouvelle tentative en cours.
 bridge-request-connection = La connexion réseau au bridge a échoué. Nouvelle tentative en cours.
 bridge-request-http = Le simulateur a refusé la requête du bridge (HTTP { $status }). Nouvelle tentative en cours.
+bridge-request-gone = L’adresse du bridge a changé avec la région. Reconnexion en cours.
 bridge-request-response = Le bridge a renvoyé un état illisible ou incomplet. Nouvelle tentative en cours.
 bridge-request-sequence = La réponse du bridge ne correspond pas à la commande envoyée. Nouvelle tentative en cours.
 
