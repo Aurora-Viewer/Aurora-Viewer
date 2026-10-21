@@ -12408,6 +12408,9 @@ impl ApplicationHandler for App {
                 self.settings.anti_spam = crate::world::anti_spam::Settings {
                     enabled: mode != "off",
                     global: mode == "global",
+                    own_objects: mode == "text",
+                    amount: if mode == "text" { 2 } else { 10 },
+                    newlines: if mode == "text" { 5 } else { 70 },
                     ..Default::default()
                 };
                 self.world.anti_spam.configure(self.settings.anti_spam);

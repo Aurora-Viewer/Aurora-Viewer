@@ -48,6 +48,13 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, blocks: &[(Queue, 
             changed |= row(
                 ui,
                 p,
+                aurora_i18n::tr!("anti-spam-newlines"),
+                aurora_i18n::tr!("anti-spam-newlines-hint"),
+                |ui| ui.add(egui::Slider::new(&mut s.newlines, 5..=1000)).changed(),
+            );
+            changed |= row(
+                ui,
+                p,
                 aurora_i18n::tr!("anti-spam-sound-multiplier"),
                 aurora_i18n::tr!("anti-spam-multiplier-hint"),
                 |ui| ui.add(egui::Slider::new(&mut s.sound_multiplier, 1..=100)).changed(),

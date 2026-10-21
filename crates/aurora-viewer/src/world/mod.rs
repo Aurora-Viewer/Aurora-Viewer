@@ -2960,7 +2960,7 @@ impl World {
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
         }
-        if self.script_debug.route(&c, self.agent_id) {
+        if self.script_debug.route(&c, self.agent_id) || self.anti_spam_chat(&c) {
             return;
         }
         let kind = match c.source_type {

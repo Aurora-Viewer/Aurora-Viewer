@@ -1,6 +1,6 @@
 //! Synthetic floods through the same World/App paths as incoming traffic.
 
-use aurora_net::{InstantMessage, NetEvent, SoundPreload};
+use aurora_net::{ChatMessage, ChatSourceType, ChatType, InstantMessage, NetEvent, SoundPreload};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -58,6 +58,24 @@ pub fn preload(object: Uuid, owner: Uuid) -> SoundPreload {
 }
 
 pub fn events(agent: Uuid) -> Vec<NetEvent> {
+    if std::env::var("AURORA_DEMO_ANTI_SPAM").as_deref() == Ok("text") {
+        let mut out: Vec<_> = (0..4).map(|n| offer(agent, agent, 9, n)).collect();
+        let text = format!("{}\n", aurora_i18n::tr!("anti-spam-demo-offer")).repeat(6);
+        out.push(NetEvent::Chat(ChatMessage {
+            from_name: aurora_i18n::tr!("anti-spam-demo-object").into(),
+            source_id: DIALOG_SOURCE,
+            owner_id: agent,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::Normal,
+            position: Vec3::ZERO,
+            message: text.clone(),
+        }));
+        if let NetEvent::InstantMessage(mut im) = offer(agent, INVENTORY_SOURCE, 0, 100) {
+            im.message = text;
+            out.push(NetEvent::InstantMessage(im));
+        }
+        return out;
+    }
     let mut out = Vec::new();
     for n in 0..65 {
         if n < 15 {
