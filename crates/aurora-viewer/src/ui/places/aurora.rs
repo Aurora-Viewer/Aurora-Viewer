@@ -766,7 +766,7 @@ impl PlacesUi {
                 }
             }
             if out.resp.double_clicked() {
-                self.teleport(place, &world.inventory, history);
+                self.teleport(key, place, &world.inventory, history);
             }
             if out.star
                 && let Some(change) = toggle_favorite(&world.inventory, place)
@@ -831,17 +831,23 @@ impl PlacesUi {
     }
 
     /// TeleportFromLandmark for a landmark, TeleportToHistoryEntry for a
-    /// place of the history.
-    fn teleport(&mut self, place: &Place, inv: &Inventory, history: &[HistoryItem]) {
-        if let Some(item) = place.item.and_then(|i| inv.items.get(&i)) {
-            self.confirm = Some(Confirm::Landmark {
-                asset: item.asset_id,
-                name: item.name.clone(),
-            });
-        } else if let Some(entry) = place.history.and_then(|i| history.get(i)) {
+    /// place of the history. A line of the history goes back to where that
+    /// visit arrived, even when it shows the landmark it was a visit of
+    /// (LLTeleportHistoryStorage::goToItem, #759).
+    fn teleport(&mut self, key: Key, place: &Place, inv: &Inventory, history: &[HistoryItem]) {
+        let visit = match key {
+            Key::Visit(i) => history.get(i),
+            Key::Landmark(_) => None,
+        };
+        if let Some(entry) = visit {
             self.confirm = Some(Confirm::History {
                 global: entry.global,
                 title: entry.title.clone(),
+            });
+        } else if let Some(item) = place.item.and_then(|i| inv.items.get(&i)) {
+            self.confirm = Some(Confirm::Landmark {
+                asset: item.asset_id,
+                name: item.name.clone(),
             });
         }
     }
@@ -851,7 +857,7 @@ impl PlacesUi {
         let inv = &world.inventory;
         let history = &world.tp_storage.items;
         if menu::item(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-3")) {
-            self.teleport(place, inv, history);
+            self.teleport(key, place, inv, history);
         }
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.global.is_some())
             && let Some(g) = place.global
@@ -1060,7 +1066,7 @@ impl PlacesUi {
                         actions.push(PlacesAction::Teleport(g));
                     }
                 } else {
-                    self.teleport(&place, &world.inventory, history);
+                    self.teleport(key, &place, &world.inventory, history);
                 }
             }
             if ui
@@ -1483,7 +1489,7 @@ impl PlacesUi {
             let tp = aurora_i18n::tr!("common-teleport-3");
             let tw = widgets::action_button_fit(ui, "location-filled", tp);
             if widgets::action_button(ui, p, "location-filled", tp, widgets::ActionKind::Primary, Vec2::new(tw, 26.0)).clicked() {
-                self.teleport(place, &world.inventory, history);
+                self.teleport(key, place, &world.inventory, history);
             }
             let mw = widgets::action_button_fit(ui, "map", aurora_i18n::tr!("common-map"));
             if ui
