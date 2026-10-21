@@ -404,3 +404,31 @@ fn material_window_keeps_its_geometry_with_wrapped_settings_messages_and_late_ma
         assert!(viewport.1.y > viewport.0.height(), "settings stay scrollable");
     }
 }
+
+/// A texture preview keeps its size with every line under its picture: an
+/// export under way and a long message.
+#[test]
+fn a_texture_preview_keeps_its_size_with_its_messages() {
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let item = Uuid::from_u128(110);
+    let images = {
+        let f = Fixture::new(avatars.clone(), Preferences::default());
+        f.images
+    };
+    widgets::steady_tests::assert_window_steady(
+        &preview_window_id(item),
+        &[Vec2::new(460.0, 520.0), Vec2::new(260.0, 300.0)],
+        aurora_i18n::tr!("texture-library-no-copy"),
+        || {
+            let mut f = Fixture::new(avatars.clone(), Preferences::default());
+            f.resources.open_preview(&f.ctx, &f.world, item);
+            let window = f.resources.windows.iter_mut().find(|w| w.id == item).expect("preview");
+            window.texture.export = Some(false);
+            window.texture.message = "The picture could not be saved: the folder chosen cannot be written.".into();
+            (f.resources, f.world, f.scene, f.prefs)
+        },
+        |(resources, world, scene, prefs), ctx, p| {
+            resources.show(ctx, p, world, scene, &images, prefs, &mut false);
+        },
+    );
+}

@@ -633,7 +633,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
         let content = ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::new((key, item))))
             .expect("visible preview content");
-        assert!(window.contains_rect(content));
+        assert!(window.contains_rect(content), "{window:?} {content:?}");
     }
     let button = |pos, pressed| {
         vec![

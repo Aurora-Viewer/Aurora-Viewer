@@ -1024,12 +1024,15 @@ pub fn footer_first(ui: &mut egui::Ui, footer: impl FnOnce(&mut egui::Ui)) -> eg
     let rest = ui.available_rect_before_wrap();
     let id = ui.id().with("footer_first");
     let height = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
-    let top = (rest.bottom() - height).max(rest.top());
+    // a footer taller than the whole rest keeps its bottom (its buttons) in
+    // view, cut at the top
+    let top = rest.bottom() - height;
     let mut foot = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(egui::Rect::from_min_max(egui::pos2(rest.left(), top), rest.max))
             .layout(*ui.layout()),
     );
+    foot.set_clip_rect(rest.intersect(ui.clip_rect()));
     footer(&mut foot);
     let measured = foot.min_rect().height();
     if (measured - height).abs() > 0.5 {

@@ -226,15 +226,15 @@ pub(super) fn image_size(display: Display, source: Vec2, available: Vec2, pixels
     Vec2::new(width, width / ratio)
 }
 
-pub(super) fn show(
+/// The display choices over the picture: fit or actual size, refresh, copy
+/// the UUID, save as, the ratio and the dimensions.
+pub(super) fn toolbar(
     ui: &mut egui::Ui,
     p: &Palette,
     item: &aurora_net::inventory::InvItem,
-    image: Option<&egui::TextureHandle>,
     dimensions: Option<(u32, u32)>,
     display: &mut Display,
     actions: &mut Vec<Action>,
-    footer_height: f32,
 ) {
     ui.horizontal_wrapped(|ui| {
         let mut mode = usize::from(display.actual_size);
@@ -310,7 +310,18 @@ pub(super) fn show(
             .color(p.muted),
         );
     });
-    let available = Vec2::new(ui.available_width(), (ui.available_height() - footer_height).max(24.0));
+}
+
+/// The picture, in all the room `ui` has.
+pub(super) fn picture(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    item: &aurora_net::inventory::InvItem,
+    image: Option<&egui::TextureHandle>,
+    dimensions: Option<(u32, u32)>,
+    display: &Display,
+) {
+    let available = Vec2::new(ui.available_width(), ui.available_height().max(24.0));
     ui.allocate_ui_with_layout(available, egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.set_min_size(available);
         if let Some(image) = image {
