@@ -57,6 +57,12 @@ pub struct OptionsUi {
     /// (cleared by the app).
     pub media_pack: crate::media::pack::PackState,
     pub media_pack_retry: bool,
+    /// The account's media filter list while logged in (set by the app when
+    /// it changes); the changes made here, applied by the app; the site
+    /// being typed.
+    pub media_filter: Option<Vec<crate::media::filter::Rule>>,
+    pub media_filter_edits: Vec<crate::media::filter::Edit>,
+    media_filter_typed: String,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,

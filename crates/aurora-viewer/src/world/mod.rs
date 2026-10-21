@@ -371,6 +371,8 @@ pub struct World {
     pub estate: estate::Estate,
     /// Media texture overrides and parcel media messages (media module).
     pub media: crate::media::WorldMedia,
+    /// The account's media filter list and its questions (media and music).
+    pub media_filter: crate::media::filter::MediaFilter,
     /// Avatar profiles and the ids still to request.
     pub profiles: profiles::Profiles,
     /// Notification center (bell).
@@ -593,6 +595,7 @@ impl World {
             land: land::Land::default(),
             estate: estate::Estate::default(),
             media: Default::default(),
+            media_filter: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
@@ -1658,6 +1661,7 @@ impl World {
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));
+                self.media_filter = crate::media::filter::MediaFilter::load(account.join(crate::media::filter::FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);

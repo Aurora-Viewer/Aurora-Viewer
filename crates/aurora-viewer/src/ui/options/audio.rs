@@ -400,6 +400,36 @@ pub(super) fn page(
             aurora_i18n::tr!("ui-options-allow-scripts-to-start-parcel-media-permallowscriptedmedia-disabled-by"),
             |ui| toggle(ui, p, &mut m.allow_scripted),
         );
+        // Legacy Viewer › Sound & Media: MediaEnableFilter, and the lists
+        // of FloaterMediaLists
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-media-filter"),
+            aurora_i18n::tr!("ui-options-media-filter-help"),
+            |ui| toggle(ui, p, &mut m.filter),
+        );
+        if m.filter {
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-options-media-filter-list"),
+                aurora_i18n::tr!("ui-options-media-filter-list-help"),
+                |ui| {
+                    // the rest of the row: the sites are wider than a slider
+                    let width = ui.available_width().max(SLIDER_W);
+                    crate::ui::media_filter::list(
+                        ui,
+                        p,
+                        st.media_filter.as_deref(),
+                        &mut st.media_filter_typed,
+                        &mut st.media_filter_edits,
+                        width,
+                    );
+                    false
+                },
+            );
+        }
         c |= row(
             ui,
             p,

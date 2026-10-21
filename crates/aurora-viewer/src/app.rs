@@ -398,6 +398,8 @@ pub struct App {
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
+    /// The media filter's question on screen.
+    media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -982,6 +984,7 @@ impl App {
             object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
+            media_filter_prompt: Default::default(),
             script_dialogs_were: 0,
             beacon_sound_at: None,
             wind_sound: Default::default(),
@@ -3953,6 +3956,87 @@ impl App {
         self.wind_sound.update(self.audio_engine.as_ref(), &input, dt);
     }
 
+    /// The media filter's question while one waits (the alerts of
+    /// filterMediaUrl / filterAudioUrl), its answer kept as asked. The first
+    /// one explains the filter and offers to turn it off (EnableMediaFilter).
+    fn media_filter_question(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        use crate::media::filter::Remember;
+        use ui::media_filter::Answer;
+        if !self.settings.media.filter {
+            return;
+        }
+        let first_use = !self.settings.media.filter_explained;
+        let Some(q) = self.world.media_filter.question() else {
+            return;
+        };
+        let Some(answer) = ui::media_filter::prompt(ctx, p, q, first_use, &mut self.media_filter_prompt) else {
+            return;
+        };
+        let url = q.url.clone();
+        let filter = &mut self.world.media_filter;
+        match answer {
+            Answer::Allow(remember) => filter.answer(&url, true, remember),
+            Answer::Deny(remember) => filter.answer(&url, false, remember),
+            Answer::TurnOff => {
+                log::info!("media filter: turned off from its first question");
+                self.settings.media.filter = false;
+                filter.answer(&url, true, Remember::Once);
+            }
+        }
+        if first_use || !self.settings.media.filter {
+            self.settings.media.filter_explained = true;
+            // the demo leaves the shared demo profile alone
+            if !self.demo {
+                self.settings.save();
+            }
+        }
+    }
+
+    /// The demo's media filter stays in memory: the demo account's file
+    /// would carry one run's answers into the next.
+    /// AURORA_DEMO_MEDIA_FILTER: `ask` (or `1`) starts a parcel media on a
+    /// site the list does not know, `first` the same with the first use's
+    /// explanation, `music` the parcel music on such a site, `list` puts a
+    /// few sites in the list (Preferences › Sound and voice › Media).
+    fn demo_media_filter(&mut self) {
+        use crate::media::filter::{Action, Edit, MediaFilter};
+        self.world.media_filter = MediaFilter::default();
+        let Ok(mode) = std::env::var("AURORA_DEMO_MEDIA_FILTER") else {
+            return;
+        };
+        // the scenario shows the filter whatever the demo profile says
+        self.settings.media.filter = true;
+        self.settings.media.filter_explained = mode != "first";
+        match mode.as_str() {
+            "ask" | "1" | "first" => {
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    let pc = Arc::make_mut(parcel);
+                    pc.media_url = "https://media.example.com/welcome/index.html".into();
+                    pc.media.mime = "text/html".into();
+                    pc.media.media_id = crate::demo::parcel_media_texture();
+                    pc.media.auto_scale = true;
+                }
+                self.media.play_parcel(&self.world, &self.settings.media);
+            }
+            "music" => {
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    Arc::make_mut(parcel).music_url = "http://radio.example.org:8000/live".into();
+                }
+                self.music_playing = true;
+            }
+            "list" => {
+                for (site, action) in [
+                    ("video.example.com", Action::Allow),
+                    ("tracker.example.net", Action::Deny),
+                    ("https://radio.example.org/live.mp3", Action::Allow),
+                ] {
+                    self.world.media_filter.apply(Edit::Set(site.into(), action));
+                }
+            }
+            _ => log::warn!("AURORA_DEMO_MEDIA_FILTER: unknown mode {mode}"),
+        }
+    }
+
     fn update_audio(&mut self) {
         let in_world = self.in_world();
         let url = if in_world {
@@ -3984,7 +4068,21 @@ impl App {
             Some(u) if u.starts_with("http://") || u.starts_with("https://") => u.clone(),
             _ => url,
         };
-        let want = if self.music_playing { url } else { String::new() };
+        let mut want = if self.music_playing { url } else { String::new() };
+        // the media filter (filterAudioUrl): nothing reaches the station
+        // before the resident answered; a refusal turns the radio off
+        if !want.is_empty() && self.settings.media.filter {
+            use crate::media::filter::{Source, Verdict};
+            match self.world.media_filter.check(&want, Source::Music) {
+                Verdict::Allow => {}
+                Verdict::Ask => want.clear(),
+                Verdict::Deny => {
+                    self.music_playing = false;
+                    self.music_override = None;
+                    want.clear();
+                }
+            }
+        }
         if want != self.stream_url {
             if want.is_empty() {
                 engine.stop_stream();
@@ -5807,6 +5905,15 @@ impl App {
         }
         self.options_ui.media_pack = self.plugin_pack.state();
         ui::web_view::set_plugins_status(&self.egui_ctx, self.plugin_pack.state());
+        // the media filter's list in the preferences: the account's while
+        // logged in, and the changes made there
+        for edit in std::mem::take(&mut self.options_ui.media_filter_edits) {
+            self.world.media_filter.apply(edit);
+        }
+        let rules = self.in_world().then(|| self.world.media_filter.rules());
+        if self.options_ui.media_filter.as_deref() != rules {
+            self.options_ui.media_filter = rules.map(<[_]>::to_vec);
+        }
         self.poll_inventory_images();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
@@ -6496,6 +6603,9 @@ impl App {
                     .unwrap_or_default();
                 self.options_ui.media_running = self.media.loaded_count();
                 for msg in self.media.messages.drain(..) {
+                    self.world.system_message(msg);
+                }
+                for msg in std::mem::take(&mut self.world.media_filter.messages) {
                     self.world.system_message(msg);
                 }
                 // mouse moves over the focused media
@@ -11189,6 +11299,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }
+                self.media_filter_question(&ctx, &p);
                 ui::media::show(
                     &ctx,
                     &p,
@@ -13885,6 +13996,7 @@ impl ApplicationHandler for App {
                 }
                 self.media.play_parcel(&self.world, &self.settings.media);
             }
+            self.demo_media_filter();
         }
     }
 
