@@ -997,12 +997,21 @@ mod tests {
             (egui::pos2(100.0, 70.0), Vec2::new(660.0, 520.0)),
             (egui::pos2(430.0, 190.0), Vec2::new(660.0, 520.0)),
             (egui::pos2(260.0, 120.0), Vec2::new(900.0, 650.0)),
+            (egui::pos2(850.0, 120.0), Vec2::new(660.0, 520.0)),
         ] {
             super::super::widgets::place_floater(&ctx, &window(target), pos, size);
             settle(&ctx, &mut editors);
             let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
             let search = ctx.memory(|m| m.area_rect(egui::Id::new(dialogs::Search::WINDOW))).unwrap();
-            let expected = egui::pos2(parent.right().min(1600.0 - search.width()), parent.top());
+            let overlap = parent.right() + search.width() > 1600.0;
+            let expected = egui::pos2(
+                parent.right().min(1600.0 - search.width()),
+                if overlap {
+                    editors.documents[0].tools.body_top
+                } else {
+                    parent.top()
+                },
+            );
             assert!((search.left_top() - expected).length() < 1.5, "{parent:?} / {search:?}");
         }
         ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(target), "minimized")), true));

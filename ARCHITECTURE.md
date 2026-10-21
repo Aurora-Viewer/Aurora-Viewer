@@ -598,6 +598,8 @@ preferences and the keyword help.
 the query, replacement and options. It is drawn once after all editors have
 handled commands, anchored beside the owner's upper-right corner and kept
 inside the available work area; minimizing or closing its owner hides it.
+When space constraints make search overlap its owner, its top follows the
+measured body start so the script's title buttons remain accessible.
 Opening an editor focuses character zero once its source is ready; only the
 latest explicit opening may take focus after an asynchronous load.
 `settings.rs` keeps the editor's colours and options in the common settings.

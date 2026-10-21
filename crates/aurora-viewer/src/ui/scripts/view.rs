@@ -19,6 +19,7 @@ use egui::{Id, RichText, Vec2};
 #[derive(Default)]
 pub(super) struct Tools {
     pub focus_start: bool,
+    pub body_top: f32,
     pub help: Help,
     pub insert_filter: String,
     pub insert_button: Option<egui::Rect>,
@@ -235,6 +236,7 @@ pub(super) fn body(
     actions: &mut Vec<Action>,
 ) {
     let ctx = ui.ctx().clone();
+    e.tools.body_top = ui.cursor().top();
     let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button(aurora_i18n::tr!("script-menu-file"), |ui| {
@@ -830,10 +832,15 @@ pub(super) fn dialogs(
     }
 }
 
-pub(super) fn search(ctx: &egui::Context, p: &Palette, e: &mut Editor, id: Id, search: &mut Search, parent: egui::Rect) {
+pub(super) fn search(ctx: &egui::Context, p: &Palette, e: &mut Editor, id: Id, search: &mut Search, mut parent: egui::Rect) {
     let id = visible_id(id, e.tools.processed);
     let cursor = editing::cursor(ctx, id);
     let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed && !e.colors.active();
+    // If screen constraints make search overlap its owner, leave the title
+    // and its close/minimize buttons accessible, at any font scale.
+    if parent.right() + Search::width(ctx) > crate::ui::layout::work_area(ctx).right() {
+        parent.min.y = e.tools.body_top;
+    }
     search.show(
         ctx,
         p,

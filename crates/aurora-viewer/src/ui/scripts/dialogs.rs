@@ -41,6 +41,10 @@ impl Search {
         ctx.memory(|m| m.has_focus(window.with("query")) || m.has_focus(window.with("replacement")))
     }
 
+    pub fn width(ctx: &egui::Context) -> f32 {
+        ctx.memory(|m| m.area_rect(Id::new(Self::WINDOW))).map_or(420.0, |r| r.width())
+    }
+
     // LLFloaterSearchReplace::show rebinds one shared search to its editor.
     pub fn begin(&mut self, ctx: &egui::Context, owner: Id, id: Id, source: &str) {
         if self.owner.is_none() {
@@ -65,11 +69,10 @@ impl Search {
             self.focus = true;
         }
         let window = Id::new(Self::WINDOW);
-        let size = ctx.memory(|m| m.area_rect(window)).map_or(Vec2::new(420.0, 185.0), |r| r.size());
         // Requested improvement: attach to the script's upper-right corner.
         // Keep the search reachable when there is less room beside the script.
         let room = crate::ui::layout::work_area(ctx);
-        let pos = egui::pos2(parent.right().min(room.right() - size.x).max(room.left()), parent.top());
+        let pos = egui::pos2(parent.right().min(room.right() - Self::width(ctx)).max(room.left()), parent.top());
         crate::ui::widgets::move_floater(ctx, Self::WINDOW, pos);
         if self.focus {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window));
