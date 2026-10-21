@@ -2717,7 +2717,7 @@ impl App {
                 flags,
             } => {
                 self.flush_object_sounds();
-                if self.world.sound_blocked(&object, &owner) {
+                if !sound.is_nil() && self.world.sound_blocked(&object, &owner) {
                     return;
                 }
                 self.scene
@@ -2728,9 +2728,9 @@ impl App {
                 self.flush_object_sounds();
                 self.scene.sounds.set_gain(object, gain);
             }
-            NetEvent::PreloadSounds(ids) => {
-                for id in ids {
-                    self.scene.sounds.want(id);
+            NetEvent::PreloadSounds(sounds) => {
+                for sound in sounds {
+                    self.scene.sounds.want(sound.sound);
                 }
             }
             NetEvent::LoggedOut => {
@@ -3709,22 +3709,36 @@ impl App {
     fn flush_object_sounds(&mut self) {
         let engine = self.audio_engine.as_ref();
         // the block list changed: silence / restore the sounds it covers
-        let version = self.world.mutes.version;
+        let version = self.world.mutes.version.wrapping_add(self.world.anti_spam.version);
         let recheck = self.sound_blocks.0 != version;
         self.sound_blocks.0 = version;
         let mutes = &self.world.mutes;
-        let blocked =
-            |o: &crate::world::objects::Object| mutes.is_muted_id(&o.full_id) || (!o.owner_id.is_nil() && mutes.sounds_muted(&o.owner_id));
+        let anti_spam = &self.world.anti_spam;
+        let blocked = |o: &crate::world::objects::Object| {
+            mutes.is_muted_id(&o.full_id)
+                || (!o.owner_id.is_nil() && mutes.sounds_muted(&o.owner_id))
+                || anti_spam.is_blocked(crate::world::anti_spam::Queue::Sound, o.full_id)
+                || anti_spam.is_blocked(crate::world::anti_spam::Queue::Sound, o.owner_id)
+        };
         if recheck {
             // rare: every object with a sound, but for those whose update is
             // applied below
             for o in self.world.objects.slots.iter().flatten() {
-                if o.sound_update || o.sound.id.is_nil() {
+                // AttachedSound packets can have started a loop after a
+                // nil object snapshot. A new block must stop that loop too.
+                if o.sound_update {
                     continue;
                 }
                 if blocked(o) {
                     if self.sound_blocks.1.insert(o.full_id) {
-                        self.scene.sounds.apply_object_sound(engine, o.full_id, Default::default());
+                        self.scene.sounds.apply_object_sound(
+                            engine,
+                            o.full_id,
+                            aurora_net::objects::AttachedSound {
+                                flags: 1 << 5,
+                                ..Default::default()
+                            },
+                        );
                     }
                 } else if self.sound_blocks.1.remove(&o.full_id) {
                     self.scene.sounds.apply_object_sound(engine, o.full_id, o.sound);
@@ -3746,7 +3760,16 @@ impl App {
             }
             if blocked(o) {
                 self.sound_blocks.1.insert(o.full_id);
+                self.scene.sounds.apply_object_sound(
+                    engine,
+                    o.full_id,
+                    aurora_net::objects::AttachedSound {
+                        flags: 1 << 5,
+                        ..Default::default()
+                    },
+                );
             } else {
+                self.sound_blocks.1.remove(&o.full_id);
                 self.scene.sounds.apply_object_sound(engine, o.full_id, o.sound);
             }
         }
@@ -5880,6 +5903,18 @@ impl App {
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
         aurora_render::frame_priority::apply();
+        self.world.anti_spam.configure(self.settings.anti_spam);
+        if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_ANTI_SPAM").is_some() {
+            for event in crate::demo::anti_spam::events(self.world.agent_id) {
+                if let Some(event) = self.world.apply(event) {
+                    self.on_app_event(event);
+                }
+            }
+            log::info!(
+                "anti-spam demo: {} blocked source/category pairs",
+                self.world.anti_spam.blocks().len()
+            );
+        }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
@@ -10064,6 +10099,28 @@ impl App {
             second_life,
         });
         let time_of_day = self.settings.time_of_day;
+        if self.options_ui.anti_spam_version != self.world.anti_spam.version {
+            self.options_ui.anti_spam_version = self.world.anti_spam.version;
+            self.options_ui.anti_spam_blocks = self
+                .world
+                .anti_spam
+                .blocks()
+                .into_iter()
+                .map(|(queue, source)| {
+                    let name = self
+                        .build
+                        .props
+                        .get(&source)
+                        .or_else(|| self.interactions.props.get(&source))
+                        .map(|properties| properties.name.clone())
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| self.world.social.avatar_names.complete(&source))
+                        .or_else(|| self.world.social.names.get(&source).cloned())
+                        .unwrap_or_else(|| source.to_string());
+                    (queue, source, name)
+                })
+                .collect();
+        }
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)
@@ -10092,6 +10149,13 @@ impl App {
                 log::info!("demo text size: frame={} scale={scale:.1}", self.frame_count);
             }
         }
+        if res.reset_anti_spam {
+            self.world.anti_spam.reset();
+        }
+        if let Some((queue, source)) = res.unblock_anti_spam {
+            self.world.anti_spam.unblock(queue, source);
+        }
+        self.world.anti_spam.configure(self.settings.anti_spam);
         if let Some(change) = res.account
             && let Some(cmd) = self.world.change_user_info(change)
         {
@@ -12338,6 +12402,21 @@ impl ApplicationHandler for App {
             }
             // before the login scenarios: with AURORA_DEMO_LOGIN the
             // preferences open over the login screen (its cogwheel)
+            if let Ok(mode) = std::env::var("AURORA_DEMO_ANTI_SPAM") {
+                let (id, clip) = crate::demo::chime();
+                self.scene.sounds.insert(id, clip);
+                self.settings.anti_spam = crate::world::anti_spam::Settings {
+                    enabled: mode != "off",
+                    global: mode == "global",
+                    own_objects: mode == "text",
+                    amount: if mode == "text" { 2 } else { 10 },
+                    newlines: if mode == "text" { 5 } else { 70 },
+                    ..Default::default()
+                };
+                self.world.anti_spam.configure(self.settings.anti_spam);
+                self.panels.settings = true;
+                self.options_ui.open(ui::options::Page::Protections, 0);
+            }
             if std::env::var_os("AURORA_DEMO_OPTIONS").is_some() {
                 self.panels.settings = true;
                 self.panels.perf = false;

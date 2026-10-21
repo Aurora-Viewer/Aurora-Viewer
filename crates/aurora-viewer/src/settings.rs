@@ -614,6 +614,7 @@ pub struct Settings {
     pub sim_version_alert: bool,
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
+    pub anti_spam: crate::world::anti_spam::Settings,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1397,6 +1398,7 @@ impl Default for Settings {
             script_count_threshold: 100,
             sim_version_alert: true,
             object_im_filter: Default::default(),
+            anti_spam: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),

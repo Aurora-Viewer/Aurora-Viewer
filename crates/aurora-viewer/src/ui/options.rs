@@ -49,6 +49,7 @@ pub enum Page {
     Sound,
     Media,
     Privacy,
+    Protections,
     Layout,
     Appearance,
     Accessibility,
@@ -62,7 +63,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 18] = [
+    pub const ALL: [Page; 19] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -71,6 +72,7 @@ impl Page {
         Page::Sound,
         Page::Media,
         Page::Privacy,
+        Page::Protections,
         Page::Layout,
         Page::Appearance,
         Page::Accessibility,
@@ -94,6 +96,7 @@ impl Page {
             Page::Sound => "sound",
             Page::Media => "media",
             Page::Privacy => "privacy",
+            Page::Protections => "protections",
             Page::Layout => "layout",
             Page::Appearance => "appearance",
             Page::Accessibility => "accessibility",
@@ -117,6 +120,7 @@ impl Page {
             Page::Sound => aurora_i18n::tr!("ui-options-sound-and-voice"),
             Page::Media => aurora_i18n::tr!("ui-options-page-media"),
             Page::Privacy => aurora_i18n::tr!("ui-options-privacy"),
+            Page::Protections => aurora_i18n::tr!("ui-options-protections"),
             Page::Layout => aurora_i18n::tr!("ui-options-layout"),
             Page::Appearance => aurora_i18n::tr!("ui-options-page-appearance"),
             Page::Accessibility => aurora_i18n::tr!("ui-options-accessibility"),
@@ -141,6 +145,7 @@ impl Page {
             Page::Sound => aurora_i18n::tr!("ui-options-about-sound"),
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
             Page::Privacy => aurora_i18n::tr!("ui-options-about-privacy"),
+            Page::Protections => aurora_i18n::tr!("anti-spam-enable-hint"),
             Page::Layout => aurora_i18n::tr!("ui-options-about-layout"),
             Page::Appearance => aurora_i18n::tr!("ui-options-about-appearance"),
             Page::Accessibility => aurora_i18n::tr!("ui-options-about-accessibility"),
@@ -164,6 +169,7 @@ impl Page {
             Page::Sound => "headset-filled",
             Page::Media => "player-play-filled",
             Page::Privacy => "lock-filled",
+            Page::Protections => "shield-filled",
             Page::Layout => "layout-filled",
             Page::Appearance => "palette-filled",
             Page::Accessibility => "accessible-filled",
@@ -216,6 +222,7 @@ impl Page {
             12 => (Page::Privacy, 0),
             13 => (Page::Aurora, 0),
             14 => (Page::Accessibility, 0),
+            15 => (Page::Protections, 0),
             _ => return None,
         })
     }
@@ -291,6 +298,8 @@ const UNDO_SECONDS: f64 = 8.0;
 
 #[derive(Default)]
 pub struct OptionsUi {
+    pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
+    pub anti_spam_version: u64,
     /// The page shown and its tab.
     pub page: Page,
     pub tab: usize,
@@ -463,6 +472,8 @@ impl OptionsUi {
 
 #[derive(Default)]
 pub struct OptionsResult {
+    pub reset_anti_spam: bool,
+    pub unblock_anti_spam: Option<(crate::world::anti_spam::Queue, uuid::Uuid)>,
     /// Settings that need the general application path (rendering, network,
     /// crash recovery, theme). UI zoom has its own per-frame path below.
     pub changed: bool,

@@ -1,5 +1,6 @@
 //! Viewer-side world model fed by network events.
 
+pub mod anti_spam;
 pub mod appearance;
 pub mod attention;
 pub mod blocking;
@@ -260,6 +261,7 @@ pub struct World {
     pub look_at: lookat::LookAts,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
+    pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
@@ -539,6 +541,7 @@ impl World {
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
             object_im_filter: object_im_filter::Settings::default(),
+            anti_spam: Default::default(),
             appearance_counter: 1,
             bake_refreshes: HashMap::new(),
             shape_preview: None,
@@ -1638,10 +1641,14 @@ impl World {
 
     fn apply_event(&mut self, ev: NetEvent) -> Option<NetEvent> {
         self.events_this_frame += 1;
-        let ev = self.hold_for_parked(ev)?;
+        let mut ev = self.hold_for_parked(ev)?;
+        if self.anti_spam_event(&mut ev) {
+            return None;
+        }
         match ev {
             NetEvent::LoggedIn(l) => {
                 self.agent_id = l.agent_id;
+                self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
@@ -2953,7 +2960,7 @@ impl World {
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
         }
-        if self.script_debug.route(&c, self.agent_id) {
+        if self.script_debug.route(&c, self.agent_id) || self.anti_spam_chat(&c) {
             return;
         }
         let kind = match c.source_type {
@@ -3017,6 +3024,9 @@ impl World {
 
     fn on_im(&mut self, im: InstantMessage) {
         if self.im_blocked(&im) {
+            return;
+        }
+        if self.anti_spam_im(&im) {
             return;
         }
         // IM_TYPING_START / STOP (llimprocessing.cpp: processIMTypingStart /

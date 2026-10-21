@@ -303,6 +303,8 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     };
     s.lookat.style = crate::world::lookat::Style::Legacy;
     s.lookat.private = true;
+    s.anti_spam.enabled = true;
+    s.anti_spam.newlines = 5;
     s.lookat.head_yaw = 10.0;
     s.username = "kept".into();
     s.inventory.sort.by_date = false;
@@ -317,6 +319,11 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert_eq!(s.lookat.private, d.lookat.private);
     assert_eq!(s.lookat.style, crate::world::lookat::Style::Legacy);
     assert_eq!(s.lookat.head_yaw, 10.0);
+    assert!(s.anti_spam.enabled, "Privacy reset preserves Protections");
+    s.lookat.private = true;
+    reset_page_settings(Page::Protections, &mut s);
+    assert_eq!(s.anti_spam, d.anti_spam);
+    assert!(s.lookat.private, "Protections reset preserves Privacy");
     reset_page_settings(Page::Aurora, &mut s);
     assert_eq!(s.lookat.style, d.lookat.style);
     assert_eq!(s.lookat.head_yaw, 10.0);
@@ -403,6 +410,7 @@ fn the_search_finds_settings_on_their_pages() {
     // a command by its name, a shortcut by its key
     assert!(counts(&mut s, "gtp").hits(Page::Commands) >= 1);
     assert!(counts(&mut s, "Ctrl+I").hits(Page::Shortcuts) >= 1);
+    assert!(counts(&mut s, "anti-spam").hits(Page::Protections) >= 8);
     assert!(counts(&mut s, "").hits.is_empty());
     assert!(counts(&mut s, "zzzzzz").hits.is_empty());
 }
@@ -414,10 +422,12 @@ fn the_modified_settings_are_counted_on_their_pages() {
     s.draw_distance = 300.0;
     s.chat_timestamps = !s.chat_timestamps;
     s.water_effects.caustics = false;
+    s.anti_spam.enabled = true;
     let c = counts(&mut s, "");
     assert_eq!(c.modified(Page::Graphics), 2, "a row behind a cog counts too");
     assert_eq!(c.modified(Page::Chat), 1);
-    assert_eq!(c.total_modified(), 3);
+    assert_eq!(c.modified(Page::Protections), 1);
+    assert_eq!(c.total_modified(), 4);
 }
 
 #[test]

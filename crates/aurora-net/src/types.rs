@@ -18,6 +18,14 @@ pub mod beacon {
 /// Region identifier: global origin in meters packed as `(x << 32) | y`.
 pub type RegionHandle = u64;
 
+/// Keep the source of each PreloadSound block through the viewer's filters.
+#[derive(Debug, Clone, Copy)]
+pub struct SoundPreload {
+    pub sound: Uuid,
+    pub object: Uuid,
+    pub owner: Uuid,
+}
+
 pub fn handle_to_origin(h: RegionHandle) -> (u32, u32) {
     ((h >> 32) as u32, (h & 0xFFFF_FFFF) as u32)
 }
@@ -482,7 +490,7 @@ pub enum NetEvent {
         gain: f32,
     },
     /// PreloadSound: sounds an object is about to play.
-    PreloadSounds(Vec<Uuid>),
+    PreloadSounds(Vec<SoundPreload>),
     /// An avatar's look-at target (ViewerEffect, LLHUDEffectLookAt): the
     /// target object and the offset from it, or a global position when the
     /// object is nil.

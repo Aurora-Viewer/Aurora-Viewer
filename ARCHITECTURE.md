@@ -19,6 +19,19 @@ before remapping, following `LLSkinningUtil::getPerVertexSkinMatrix`.
 
 ## Scope
 
+`world/anti_spam.rs` owns session-local counters and source/category blocks,
+following NACLAntiSpamQueue::checkEntry and the incoming message handlers in
+`indra/newview/NACLantispam.cpp`, `llimprocessing.cpp` and `llviewermessage.cpp`.
+It filters chat text, prompts and offers before notification/attention work and sounds
+before asset requests or playback. PreloadSound events retain object and owner
+UUIDs (`aurora-net::SoundPreload`). Newline floods follow the Legacy Viewer's
+LF threshold and shared IM block, including owner aggregation for nearby chat.
+Scripted inventory offers identify their owner; the own-object option includes
+those sent by our avatar's objects. Settings persist; blocks do not. Preferences
+› Protections (`ui/options/pages/protections.rs`) resets counters or unblocks one source.
+Its Cx rows participate in preference search, modified settings and page reset.
+`demo_anti_spam.rs` supplies synthetic floods through the production event path.
+
 Aurora Viewer is a complete Second Life viewer written in Rust: login,
 UDP and HTTP networking, world (objects, terrain, avatars, environment),
 modern rendering (wgpu on Vulkan), sound, voice, media and interface (egui).
