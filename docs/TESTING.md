@@ -1750,9 +1750,7 @@ tests do not establish that this report uses an invalid joint or index.
   3 s after its arrival, without a head and without the mesh, and the log
   must contain "avatar … (own) shown after 3.0 s". Screenshots with
   `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=240,1200`: cloud, then
-  avatar. With `AURORA_DEMO_DESCRIBE=900` the log's `bake head` line reads
-  "built-in transparent, never downloaded": the invisible bake is never
-  asked of the bake service.
+  avatar.
 - **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
   avatars, the system body with a skin bake whose alpha is soft in a band
   at the waist and cut by a row of holes (an alpha layer), and a hair bake
