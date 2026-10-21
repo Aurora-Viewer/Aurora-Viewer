@@ -857,6 +857,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("report-abuse-title")) {
             *action = BarAction::ReportAbuse;
         }
+        // menu_viewer.xml: Help › Bumps, Pushes & Hits, after the reports
+        let bumps = aurora_i18n::tr!("bumps-title");
+        flip_window(ui, p, "bounce-right-filled", bumps, super::bumps::WINDOW, &mut panels.bumps);
         menu::separator(ui, p);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
         menu::info(ui, p, "info-circle-filled", &version);
@@ -1696,6 +1699,7 @@ fn tool_button(
     active: bool,
     look: ButtonLook,
     unread: usize,
+    flash: f32,
 ) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(look.size, egui::Sense::hover());
     let resp = ui.interact(rect, tool_button_id(command), egui::Sense::click_and_drag());
@@ -1708,6 +1712,10 @@ fn tool_button(
     let hovered = ready && resp.hovered();
     if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
         painter.rect_filled(rect, radius, fill);
+    }
+    // the Conversations button's flash (`ButtonFlash`)
+    if flash > 0.0 {
+        painter.rect_filled(rect, radius, p.violet.gamma_multiply(flash));
     }
     let tint = if !ready {
         p.muted_dim.gamma_multiply(0.55)
@@ -2196,6 +2204,9 @@ pub(crate) struct Row<'a> {
     /// The conversation the chat island's button opens while there are
     /// unread lines (`Social::latest_unread`).
     pub latest_unread: Option<uuid::Uuid>,
+    /// The violet of the Conversations button's flash (0: none), from
+    /// `ButtonFlash::button`.
+    pub flash: f32,
     pub flying: bool,
     pub seated: bool,
     pub mouselook: bool,
@@ -2286,6 +2297,7 @@ pub(crate) fn toolbar_row(
             active,
             look(b),
             count,
+            if b.command == "conversations" { row.flash } else { 0.0 },
         );
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
@@ -2353,10 +2365,15 @@ pub fn bottom_bar(
     let bar = super::toolbar::Bar::Bottom;
     let style = toolbar_settings.style(bar).resolve(bar, islands);
     let editing = toolbar.open && !toolbar_settings.locked;
+    let (flash, flashing) = chat.button_flash.button(ui.input(|i| i.time));
+    if flashing {
+        ui.ctx().request_repaint();
+    }
     if islands {
         let row = Row {
             unread,
             latest_unread,
+            flash,
             flying,
             seated,
             mouselook,
@@ -2473,6 +2490,7 @@ pub fn bottom_bar(
                             let row = Row {
                                 unread,
                                 latest_unread: None,
+                                flash,
                                 flying,
                                 seated,
                                 mouselook,

@@ -253,6 +253,9 @@ pub struct Floater<'a> {
     /// Something new waits inside (unread messages): the minimized bar shows
     /// it, as Firestorm flashes the conversations button.
     pub attention: bool,
+    /// The violet laid over the minimized bar while `attention` (its
+    /// strength, and whether it moves: a flash under way).
+    pub attention_flash: Option<(f32, bool)>,
     /// Minimized, the window keeps a compact body under its title bar
     /// instead of the bar alone, at this width: the body is still drawn and
     /// asks `floater_minimized` what to show.
@@ -286,6 +289,7 @@ impl<'a> Floater<'a> {
             auto_height: false,
             compact_header: false,
             attention: false,
+            attention_flash: None,
             compact_minimized: None,
             flush_body: false,
             steady_size: false,
@@ -378,6 +382,13 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// Tint the minimized bar's mark with `flash` (the violet's strength,
+    /// and whether it moves), as `ButtonFlash::bar` gives it.
+    pub fn attention_flash(mut self, flash: (f32, bool)) -> Self {
+        self.attention_flash = Some(flash);
+        self
+    }
+
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         if window_hidden(ctx, egui::Id::new(self.id), *open) {
@@ -431,7 +442,9 @@ impl<'a> Floater<'a> {
                     bottom: if minimized && !compact { 4 } else { 10 },
                 }
             });
-        let mut close = false;
+        // Ctrl+W closes it as its cross does, when it is the frontmost
+        let mut close = super::close_key::take(ctx, egui::Id::new(self.id));
+        super::close_key::shown(ctx, egui::Id::new(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
@@ -760,11 +773,22 @@ impl<'a> Floater<'a> {
             if !minimized {
                 ctx.data_mut(|d| d.insert_persisted(expanded_id, response.response.rect.size()));
             } else if self.attention {
-                // the bar lights up in the accent while something waits inside
-                ctx.layer_painter(response.response.layer_id).rect_stroke(
+                // the bar lights up in the accent while something waits
+                // inside, tinted and flashing like the Conversations button
+                // when asked for, its outline widening with the violet
+                let painter = ctx.layer_painter(response.response.layer_id);
+                let radius = ctx.global_style().visuals.window_corner_radius;
+                let (wash, moving) = self.attention_flash.unwrap_or((0.0, false));
+                if wash > 0.0 {
+                    painter.rect_filled(response.response.rect, radius, p.violet.gamma_multiply(wash));
+                }
+                if moving {
+                    ctx.request_repaint();
+                }
+                painter.rect_stroke(
                     response.response.rect,
-                    ctx.global_style().visuals.window_corner_radius,
-                    Stroke::new(1.5, p.violet_light),
+                    radius,
+                    Stroke::new(1.5 + 4.0 * wash, p.violet_light),
                     egui::StrokeKind::Inside,
                 );
             }
