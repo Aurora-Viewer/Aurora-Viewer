@@ -783,6 +783,58 @@ impl PerfData {
 mod tests {
     use super::*;
 
+    /// The resource monitor keeps its size in each of its sections.
+    #[test]
+    fn the_monitor_keeps_its_size_in_every_section() {
+        use super::super::monitor::snapshot::*;
+        let gpu = GpuInfo {
+            name: "Test GPU".into(),
+            backend: "Vulkan".into(),
+            driver: String::new(),
+            bindless: true,
+            timestamps: true,
+            max_textures: 4096,
+            vram_mb: Some(8192),
+            integrated: false,
+        };
+        let data = PerfData::default();
+        for tab in super::super::monitor::Tab::ALL {
+            crate::ui::widgets::steady_tests::assert_window_steady(
+                "perf",
+                &[super::super::monitor::DEFAULT_SIZE, super::super::monitor::MIN_SIZE],
+                aurora_i18n::tr!("monitor-status-live"),
+                || {
+                    let mut m = super::super::monitor::Monitor::default();
+                    m.tab = tab;
+                    for fps in [58.0, 60.0, 61.0] {
+                        m.history.push(Snapshot {
+                            attribution: Default::default(),
+                            cpu: None,
+                            probes: None,
+                            fps,
+                            frame_ms: 1000.0 / fps,
+                            parts: FrameParts::default(),
+                            memory: None,
+                            page_faults_per_s: None,
+                            vram: Default::default(),
+                            texture: TextureInfo::default(),
+                            geometry: GeometryInfo::default(),
+                            net: NetInfo::default(),
+                            regions: Vec::new(),
+                            disk: DiskInfo::default(),
+                            scene: SceneInfo::default(),
+                            region: None,
+                        });
+                    }
+                    m
+                },
+                |m, ctx, p| {
+                    show(ctx, p, &PerfView { data: &data, gpu: &gpu }, m, &mut true);
+                },
+            );
+        }
+    }
+
     #[test]
     fn frame_stats_over_history() {
         let frames: VecDeque<f32> = [10.0, 20.0, 30.0].into_iter().collect();

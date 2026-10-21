@@ -222,7 +222,11 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, ou
     ui.scope_builder(egui::UiBuilder::new().max_rect(rail.shrink2(vec2(6.0, 8.0))), |ui| {
         rail_ui(ui, p, m, out);
     });
-    ui.scope_builder(egui::UiBuilder::new().max_rect(content.shrink2(vec2(16.0, 12.0))), |ui| {
+    // a child, not a scope: a section taller than its room (a larger text)
+    // is cut at the status bar instead of making the window taller at
+    // every frame
+    {
+        let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(content.shrink2(vec2(16.0, 12.0))));
         ui.set_clip_rect(content.intersect(ui.clip_rect()));
         ui.spacing_mut().item_spacing.y = 10.0;
         match m.history.last.clone() {
@@ -243,7 +247,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, ou
                 Tab::Region => region::show(ui, p, m, &s, out),
             },
         }
-    });
+    }
     ui.scope_builder(egui::UiBuilder::new().max_rect(status.shrink2(vec2(12.0, 0.0))), |ui| {
         status_ui(ui, p, m, device);
     });
