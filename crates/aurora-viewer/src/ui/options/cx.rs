@@ -235,6 +235,8 @@ struct Next {
     experimental: bool,
     wide: bool,
     below: bool,
+    /// Its `subs` always show under it, without a cog.
+    unfolded: bool,
     keywords: String,
 }
 
@@ -276,8 +278,9 @@ pub(super) struct Cx<'a> {
     group: String,
     /// The search or modified view still has to title the current group.
     group_untitled: bool,
-    /// The last row declared: the parent of the `subs` that follow.
-    last: Option<(egui::Id, String)>,
+    /// The last row declared: the parent of the `subs` that follow, and
+    /// whether they show without a cog (`unfolded`).
+    last: Option<(egui::Id, String, bool)>,
     /// Inside a parent's `subs`: its label (shown before the row in the
     /// search) and whether it is off (its rows greyed).
     parent: Option<Parent>,
@@ -358,6 +361,14 @@ impl<'a> Cx<'a> {
     pub fn below(&mut self) -> &mut Self {
         self.next.wide = true;
         self.next.below = true;
+        self
+    }
+
+    /// The `subs` of the next row always show under it, as behind an open
+    /// cog, and it has no cog: for the one value its switch is turned on
+    /// to set (a frame rate limit).
+    pub fn unfolded(&mut self) -> &mut Self {
+        self.next.unfolded = true;
         self
     }
 
@@ -445,7 +456,7 @@ impl<'a> Cx<'a> {
         let next = std::mem::take(&mut self.next);
         self.rows_seen += 1;
         let id = self.row_id(label);
-        self.last = Some((id, label.to_owned()));
+        self.last = Some((id, label.to_owned(), next.unfolded));
         let modified = t.modified(self.s, self.d);
         match self.mode {
             Mode::Reset => {
@@ -504,14 +515,15 @@ impl<'a> Cx<'a> {
     /// The rows behind the cog of the row just declared. `off`: that row
     /// is off, they are greyed and its cog dimmed. On the page they show
     /// while its cog is open; the search, the modified view and the resets
-    /// always go through them.
+    /// always go through them. Under an `unfolded` row they always show.
     pub fn subs(&mut self, off: bool, body: impl FnOnce(&mut Self)) {
-        let Some((id, label)) = self.last.take() else {
+        let Some((id, label, unfolded)) = self.last.take() else {
             body(self);
             return;
         };
         let before = self.parent.replace(Parent { label, off, id });
         match self.mode {
+            Mode::Count if unfolded => body(self),
             Mode::Count => {
                 // the number shown on the cog, and whether to dim it (the
                 // hidden rows still count for their page)
@@ -523,7 +535,7 @@ impl<'a> Cx<'a> {
                 }
             }
             Mode::Show => {
-                if self.st.open_subs.contains(&id) {
+                if unfolded || self.st.open_subs.contains(&id) {
                     // greyed one by one while the parent is off (`draw_row`)
                     let indent = self.grid.indent;
                     self.grid.indent += SUB_INDENT;
@@ -531,6 +543,10 @@ impl<'a> Cx<'a> {
                     self.end_line();
                     self.end_block();
                     self.grid.indent = indent;
+                    if unfolded {
+                        // two in a row read as two blocks, not one
+                        self.ui.add_space(6.0);
+                    }
                 }
             }
             _ => body(self),
@@ -787,7 +803,7 @@ impl<'a> Cx<'a> {
         let p = self.p;
         let search = matches!(self.mode, Mode::Search | Mode::Modified);
         let cog = if search { None } else { self.st.subs.get(&id).copied() };
-        let open = cog.is_some() && self.st.open_subs.contains(&id);
+        let open = !search && (next.unfolded || (cog.is_some() && self.st.open_subs.contains(&id)));
         let wide = next.wide || open;
         if open {
             self.end_line();
