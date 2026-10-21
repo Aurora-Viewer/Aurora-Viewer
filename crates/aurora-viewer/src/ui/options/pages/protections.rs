@@ -83,32 +83,34 @@ fn slider(cx: &mut Cx, label: &str, hint: &str, field: &F<u32>, range: std::ops:
 }
 
 fn session(ui: &mut egui::Ui, p: &Palette, global: bool, blocks: &[(Queue, Uuid, String)], result: &mut OptionsResult) {
-    if widgets::flat_button(ui, p, aurora_i18n::tr!("anti-spam-reset")).clicked() {
-        result.reset_anti_spam = true;
-    }
-    if !blocks.is_empty() {
-        egui::ScrollArea::vertical()
-            .id_salt("anti-spam-blocks")
-            .max_height(160.0)
-            .show_rows(ui, ui.spacing().interact_size.y, blocks.len(), |ui, rows| {
-                for &(queue, source, ref name) in &blocks[rows] {
-                    ui.push_id((queue, source), |ui| {
-                        ui.horizontal(|ui| {
-                            let kind = if global { aurora_i18n::tr!("anti-spam-all") } else { queue.label() };
-                            ui.add(widgets::elided_label(
-                                ui,
-                                egui::RichText::new(format!("{kind} · {name}")).color(p.ink),
-                                (ui.available_width() - 95.0).max(40.0),
-                            ))
-                            .on_hover_text(format!("{name}\n{source}"));
-                            if widgets::flat_button(ui, p, aurora_i18n::tr!("anti-spam-unblock")).clicked() {
-                                result.unblock_anti_spam = Some((queue, source));
-                            }
+    ui.vertical(|ui| {
+        if widgets::flat_button(ui, p, aurora_i18n::tr!("anti-spam-reset")).clicked() {
+            result.reset_anti_spam = true;
+        }
+        if !blocks.is_empty() {
+            egui::ScrollArea::vertical()
+                .id_salt("anti-spam-blocks")
+                .max_height(160.0)
+                .show_rows(ui, ui.spacing().interact_size.y, blocks.len(), |ui, rows| {
+                    for &(queue, source, ref name) in &blocks[rows] {
+                        ui.push_id((queue, source), |ui| {
+                            ui.horizontal(|ui| {
+                                let kind = if global { aurora_i18n::tr!("anti-spam-all") } else { queue.label() };
+                                ui.add(widgets::elided_label(
+                                    ui,
+                                    egui::RichText::new(format!("{kind} · {name}")).color(p.ink),
+                                    (ui.available_width() - 95.0).max(40.0),
+                                ))
+                                .on_hover_text(format!("{name}\n{source}"));
+                                if widgets::flat_button(ui, p, aurora_i18n::tr!("anti-spam-unblock")).clicked() {
+                                    result.unblock_anti_spam = Some((queue, source));
+                                }
+                            });
                         });
-                    });
-                }
-            });
-    }
+                    }
+                });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -149,8 +151,22 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        session(ui, &p, settings.global, &blocks, &mut result);
+                        ui.horizontal(|ui| session(ui, &p, settings.global, &blocks, &mut result));
                     },
+                );
+                let reset_rect = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("anti-spam-reset")))
+                    .expect("reset");
+                let unblock_rect = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("anti-spam-unblock")))
+                    .expect("unblock");
+                assert!(
+                    unblock_rect.top() > reset_rect.bottom(),
+                    "session rows must stack vertically inside a horizontal preference control"
                 );
                 let rect = output
                     .shapes
