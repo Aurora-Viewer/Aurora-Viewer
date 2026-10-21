@@ -631,7 +631,7 @@ fn photo_window(
                 .then(|| pics.get(&window.id))
                 .flatten()
         });
-        if let Some(rect) = texture_view::show_image(ui, p, image, photo.view.dimensions, &mut photo.view.display, None, 0.0) {
+        if let Some(rect) = texture_view::show_image(ui, p, image, photo.view.dimensions, &mut photo.view.display, None) {
             ctx.data_mut(|data| data.insert_temp(egui::Id::new(("profile_photo_preview", window.id)), rect));
         }
     });

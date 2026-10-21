@@ -31,6 +31,19 @@ impl Fixture {
     fn new() -> Self {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
+        let (inv, manager) = Self::library();
+        let mut fixture = Self {
+            ctx,
+            inv,
+            manager,
+            state: GesturesUi::default(),
+            prefs: Preferences::default(),
+        };
+        fixture.settle();
+        fixture
+    }
+    /// The demo inventory, with a chat gesture 8106.
+    fn library() -> (Inventory, Manager) {
         let mut inv = Inventory::default();
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         let id = Uuid::from_u128(8106);
@@ -51,15 +64,7 @@ impl Fixture {
                 definition,
             },
         );
-        let mut fixture = Self {
-            ctx,
-            inv,
-            manager,
-            state: GesturesUi::default(),
-            prefs: Preferences::default(),
-        };
-        fixture.settle();
-        fixture
+        (inv, manager)
     }
     fn draw(&mut self, events: Vec<egui::Event>) -> (Vec<Action>, Vec<egui::epaint::ClippedShape>) {
         let mut out = Vec::new();
@@ -230,4 +235,57 @@ fn closing_editor_stops_only_its_preview_and_keeps_active_playback() {
     f.state.editors.get_mut(&item).expect("editor").open = false;
     assert!(matches!(&f.draw(Vec::new()).0[..], [Action::Stop(id)] if *id == preview));
     assert!(f.manager.is_playing(item));
+}
+
+/// The manager keeps its size with every line under its list (an empty
+/// filter result, a message).
+#[test]
+fn the_manager_keeps_its_size() {
+    let (inv, manager) = Fixture::library();
+    let message = "The gesture could not be saved: the inventory did not answer in time.";
+    crate::ui::widgets::steady_tests::assert_window_steady(
+        "gestures",
+        &[Vec2::new(460.0, 510.0), Vec2::new(300.0, 360.0)],
+        message,
+        || {
+            let state = GesturesUi {
+                message: message.into(),
+                ..Default::default()
+            };
+            (state, Preferences::default())
+        },
+        |(state, prefs), ctx, p| {
+            show(ctx, p, &inv, &manager, state, prefs, &mut true);
+        },
+    );
+}
+
+/// An editor keeps its size with a wait step chosen, a save under way and
+/// a message, its tallest footer.
+#[test]
+fn the_editor_keeps_its_size() {
+    let (inv, manager) = Fixture::library();
+    let id = Uuid::from_u128(8106);
+    let message = "The gesture could not be saved: the inventory did not answer in time.";
+    crate::ui::widgets::steady_tests::assert_window_steady(
+        &format!("gesture_{id}"),
+        &[Vec2::new(400.0, 590.0), Vec2::new(320.0, 420.0)],
+        message,
+        || {
+            let mut state = GesturesUi::default();
+            state.open(&inv, id);
+            let editor = state.editors.get_mut(&id).expect("editor");
+            editor.loaded(Gesture {
+                steps: vec![Step::Wait { seconds: 1.0, flags: 0 }],
+                ..Default::default()
+            });
+            editor.step = Some(0);
+            editor.saving = Some(Uuid::from_u128(1));
+            editor.message = message.into();
+            (state, Preferences::default())
+        },
+        |(state, prefs), ctx, p| {
+            show(ctx, p, &inv, &manager, state, prefs, &mut true);
+        },
+    );
 }

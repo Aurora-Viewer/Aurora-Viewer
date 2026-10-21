@@ -226,15 +226,15 @@ pub(super) fn image_size(display: Display, source: Vec2, available: Vec2, pixels
     Vec2::new(width, width / ratio)
 }
 
-pub(super) fn show(
+/// The display choices over the picture: fit or actual size, refresh, copy
+/// the UUID, save as, the ratio and the dimensions.
+pub(super) fn toolbar(
     ui: &mut egui::Ui,
     p: &Palette,
     item: &aurora_net::inventory::InvItem,
-    image: Option<&egui::TextureHandle>,
     dimensions: Option<(u32, u32)>,
     display: &mut Display,
     actions: &mut Vec<Action>,
-    footer_height: f32,
 ) {
     ui.horizontal_wrapped(|ui| {
         display_mode(ui, p, display);
@@ -258,7 +258,7 @@ pub(super) fn show(
                 });
         });
     });
-    show_image(ui, p, image, dimensions, display, Some(item.id), footer_height);
+    ratio_row(ui, p, dimensions, display);
 }
 
 /// Shared by inventory textures and profile photos; one image pixel per
@@ -277,15 +277,8 @@ pub(crate) fn display_mode(ui: &mut egui::Ui, p: &Palette, display: &mut Display
     display.actual_size = mode == 1;
 }
 
-pub(crate) fn show_image(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    image: Option<&egui::TextureHandle>,
-    dimensions: Option<(u32, u32)>,
-    display: &mut Display,
-    drag_item: Option<Uuid>,
-    footer_height: f32,
-) -> Option<egui::Rect> {
+/// The ratio choices and the picture's dimensions.
+fn ratio_row(ui: &mut egui::Ui, p: &Palette, dimensions: Option<(u32, u32)>, display: &mut Display) {
     ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(!display.actual_size, |ui| {
             widgets::switch_labeled(ui, p, &mut display.keep_ratio, aurora_i18n::tr!("resource-preview-keep-ratio"));
@@ -331,7 +324,33 @@ pub(crate) fn show_image(
             .wrap_mode(egui::TextWrapMode::Extend),
         );
     });
-    let available = Vec2::new(ui.available_width(), (ui.available_height() - footer_height).max(24.0));
+}
+
+/// The ratio choices and the picture in all the room left in `ui`; the
+/// picture's rect once drawn.
+pub(crate) fn show_image(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    image: Option<&egui::TextureHandle>,
+    dimensions: Option<(u32, u32)>,
+    display: &mut Display,
+    drag_item: Option<Uuid>,
+) -> Option<egui::Rect> {
+    ratio_row(ui, p, dimensions, display);
+    picture(ui, p, image, dimensions, display, drag_item)
+}
+
+/// The picture, in all the room `ui` has; its rect once drawn. `drag_item`
+/// is the inventory item its drag carries.
+pub(super) fn picture(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    image: Option<&egui::TextureHandle>,
+    dimensions: Option<(u32, u32)>,
+    display: &Display,
+    drag_item: Option<Uuid>,
+) -> Option<egui::Rect> {
+    let available = Vec2::new(ui.available_width(), ui.available_height().max(24.0));
     let mut image_rect = None;
     ui.allocate_ui_with_layout(available, egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.set_min_size(available);

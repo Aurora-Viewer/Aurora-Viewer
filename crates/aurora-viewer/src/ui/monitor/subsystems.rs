@@ -284,19 +284,20 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         })
         .collect();
 
-    let detail_h = 156.0;
-    let table_h = (ui.available_height() - detail_h - 10.0).max(120.0);
     let titles: Vec<&str> = Column::ALL.iter().map(|c| column_title(*c, m.per_core)).collect();
     let mut cols = vec![Col::new(tr!("monitor-col-subsystem"), 0.0, false).total("Aurora".into())];
     for (c, title) in Column::ALL.iter().zip(&titles) {
         let total = s.attribution.total(*c).map_or("–".into(), |v| format(*c, scale(*c, v)));
         cols.push(Col::new(title, 96.0, true).sort(m.sort == *c).total(total));
     }
+    // the table in exactly the room the detail leaves
+    let (mut table, foot) = widgets::above_footer(ui);
     let frame = egui::Frame::new()
         .fill(p.bar)
         .stroke(egui::Stroke::new(1.0, p.raised))
-        .corner_radius(ui.visuals().window_corner_radius);
-    frame.show(ui, |ui| {
+        .corner_radius(table.visuals().window_corner_radius);
+    let table_h = (table.available_height() - 2.0 * frame.stroke.width).max(0.0);
+    frame.show(&mut table, |ui| {
         ui.set_width(ui.available_width());
         ui.set_height(table_h);
         ui.spacing_mut().item_spacing.y = 0.0;
@@ -322,7 +323,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                 }
             });
     });
-    detail(ui, p, m, s, cores, out);
+    foot.show(ui, |ui| detail(ui, p, m, s, cores, out));
 }
 
 /// The table's lines: the parts sorted by the column, each followed by its

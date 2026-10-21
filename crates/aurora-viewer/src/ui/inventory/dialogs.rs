@@ -1163,6 +1163,40 @@ mod tests {
         (inv, st)
     }
 
+    /// A notecard keeps its size with a message under its Save button.
+    #[test]
+    fn a_notecard_keeps_its_size_with_a_message() {
+        let item = Uuid::from_u128(8103);
+        let ui_id = Uuid::from_u128(77);
+        let message = "The notecard could not be saved: the inventory did not answer in time, try again later.";
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            &super::super::document::preview_window_id(ui_id, item, 7),
+            &[egui::vec2(560.0, 520.0), egui::vec2(320.0, 300.0)],
+            message,
+            || {
+                let (inv, mut st) = note_fixture();
+                st.ui_id = ui_id;
+                st.preview_message = message.into();
+                (inv, st)
+            },
+            |(inv, st), ctx, p| {
+                let mut actions = Vec::new();
+                preview(
+                    ctx,
+                    p,
+                    &Icons::default(),
+                    inv,
+                    inv,
+                    st,
+                    &Default::default(),
+                    &mut InventoryPreferences::default(),
+                    &Default::default(),
+                    &mut actions,
+                );
+            },
+        );
+    }
+
     #[test]
     fn notecard_description_commits_metadata_in_every_view_without_saving_the_body() {
         use aurora_net::inventory::operations::Operation;

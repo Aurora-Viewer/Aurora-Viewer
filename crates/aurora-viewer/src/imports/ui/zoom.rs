@@ -35,7 +35,8 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
     );
     window.min_size = Vec2::new(420.0, 360.0);
     window.show(ctx, p, &mut open, |ui| {
-        let size = Vec2::new(ui.available_width(), (ui.available_height() - 65.0).max(220.0));
+        // the preview in exactly the room the line or the controls under it
+        // leave
         if let Some(slot) = slot.filter(|slot| *slot < 4) {
             let key = match &entry.source {
                 Some(Source::Material { images, .. }) => images[slot].as_ref().map(|image| image.key),
@@ -44,8 +45,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             let preview = entry.material_large_previews[slot]
                 .as_ref()
                 .filter(|(stored, generation, _)| Some(*stored) == key && *generation == entry.preview_generation);
-            let square = size.min_elem();
-            ui.vertical_centered(|ui| {
+            let pending = entry.material_large_pending[slot];
+            let (mut area, foot) = widgets::above_footer(ui);
+            let square = area.available_size().min_elem();
+            area.vertical_centered(|ui| {
                 widgets::picture(
                     ui,
                     p,
@@ -54,30 +57,38 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
                     "photo-filled",
                     "",
                 );
-                ui.horizontal(|ui| {
-                    if entry.material_large_pending[slot] {
-                        ui.spinner();
-                    }
-                    ui.label(map_label(slot));
-                });
             });
             if preview.is_none() && key.is_some() && !entry.material_large_pending[slot] {
                 actions.push(Action::LargeMap(id, slot));
             }
+            foot.show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.horizontal(|ui| {
+                        if pending {
+                            ui.spinner();
+                        }
+                        ui.label(map_label(slot));
+                    });
+                });
+            });
         } else {
+            let (mut area, foot) = widgets::above_footer(ui);
+            let size = area.available_size();
             if let Some(model) = &entry.model {
                 aurora_render::preview::paint(
-                    ui,
+                    &mut area,
                     egui::Id::new(("large_import_preview", id)),
                     model.clone(),
                     &mut entry.view,
                     size,
                 );
             } else {
-                widgets::picture(ui, p, None, size, "cube-3d-sphere", "");
+                widgets::picture(&mut area, p, None, size, "cube-3d-sphere", "");
             }
-            camera_hint(ui, p);
-            preview_camera_controls(ui, p, &mut entry.view);
+            foot.show(ui, |ui| {
+                camera_hint(ui, p);
+                preview_camera_controls(ui, p, &mut entry.view);
+            });
         }
     });
     if !open || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {

@@ -386,6 +386,23 @@ mod tests {
     }
 
     #[test]
+    fn the_window_keeps_its_size() {
+        let mut list = Derender::default();
+        for i in 0..40 {
+            list.add(Uuid::from_u128(i), entry(&format!("Object {i}"), i as i64, false));
+        }
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(750.0, 320.0), Vec2::new(520.0, 240.0)],
+            aurora_i18n::tr!("blacklist-clear-temporary"),
+            BlacklistUi::default,
+            |ui, ctx, p| {
+                ui.show(ctx, p, &list, &mut true);
+            },
+        );
+    }
+
+    #[test]
     fn ctrl_and_shift_choose_several_rows() {
         let order: Vec<Uuid> = (1..=4).map(Uuid::from_u128).collect();
         let mut ui = BlacklistUi::default();

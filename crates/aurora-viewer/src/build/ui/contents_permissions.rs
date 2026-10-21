@@ -198,14 +198,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         if !state.status.is_empty() {
             small(ui, p, &state.status);
         }
-        ui.add_space((ui.available_height() - 28.0).max(0.0));
-        ui.horizontal(|ui| {
-            let enabled = !running && b.types.iter().any(|on| *on);
-            accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
-            apply = ui
-                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
-                .clicked();
-            cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+        // the buttons at the bottom, from the height they measure (a
+        // guessed 28 points grew the window at every frame with a larger
+        // text)
+        widgets::above_footer(ui).1.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let enabled = !running && b.types.iter().any(|on| *on);
+                accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
+                apply = ui
+                    .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
+                    .clicked();
+                cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+            });
         });
     });
     if apply || accept {

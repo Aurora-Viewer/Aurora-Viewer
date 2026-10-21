@@ -137,7 +137,8 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                 });
                 return;
             };
-            ui.add_enabled_ui(editor.saving.is_none(), |ui| {
+            let (mut body, foot) = widgets::above_footer(ui);
+            body.add_enabled_ui(editor.saving.is_none(), |ui| {
                 egui::Grid::new("gesture_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                     ui.label(aurora_i18n::tr!("common-description"));
                     ui.add_enabled(
@@ -226,95 +227,100 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                     })
                 });
                 widgets::section_header(ui, p, "list", aurora_i18n::tr!("gesture-steps"));
+                let (mut list, foot) = widgets::above_footer(ui);
                 egui::ScrollArea::vertical()
-                    .max_height((ui.available_height() - 200.0).max(110.0))
+                    .max_height(list.available_height())
                     .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                    .show(&mut list, |ui| {
                         for (index, step) in g.steps.iter().enumerate() {
                             if ui.selectable_label(editor.step == Some(index), step_label(step)).clicked() {
                                 editor.step = Some(index);
                             }
                         }
                     });
-                ui.add_enabled_ui(modifiable, |ui| {
-                    ui.horizontal(|ui| {
-                        let index = editor.step;
-                        if ui
-                            .add_enabled(index.is_some_and(|i| i > 0), egui::Button::new(aurora_i18n::tr!("gesture-up")))
-                            .clicked()
-                            && let Some(i) = index
-                        {
-                            g.steps.swap(i, i - 1);
-                            editor.step = Some(i - 1);
+                foot.show(ui, |ui| {
+                    ui.add_enabled_ui(modifiable, |ui| {
+                        ui.horizontal(|ui| {
+                            let index = editor.step;
+                            if ui
+                                .add_enabled(index.is_some_and(|i| i > 0), egui::Button::new(aurora_i18n::tr!("gesture-up")))
+                                .clicked()
+                                && let Some(i) = index
+                            {
+                                g.steps.swap(i, i - 1);
+                                editor.step = Some(i - 1);
+                            }
+                            if ui
+                                .add_enabled(
+                                    index.is_some_and(|i| i + 1 < g.steps.len()),
+                                    egui::Button::new(aurora_i18n::tr!("gesture-down")),
+                                )
+                                .clicked()
+                                && let Some(i) = index
+                            {
+                                g.steps.swap(i, i + 1);
+                                editor.step = Some(i + 1);
+                            }
+                            if ui
+                                .add_enabled(index.is_some(), egui::Button::new(aurora_i18n::tr!("common-delete")))
+                                .clicked()
+                                && let Some(i) = index
+                            {
+                                g.steps.remove(i);
+                                editor.step = (!g.steps.is_empty()).then_some(i.saturating_sub(1));
+                            }
+                        });
+                        if let Some(step) = editor.step.and_then(|i| g.steps.get_mut(i)) {
+                            parameters(ui, p, inv, assets, step);
                         }
+                    });
+                    ui.label(RichText::new(aurora_i18n::tr!("gesture-simultaneous")).small().color(p.muted));
+                    ui.horizontal(|ui| {
+                        let mut active = manager.active.contains(id);
+                        ui.add_enabled_ui(editable, |ui| {
+                            if widgets::checkbox(ui, p, &mut active, aurora_i18n::tr!("gesture-active")).changed() {
+                                out.push(Action::Active(vec![*id], active));
+                            }
+                        });
                         if ui
                             .add_enabled(
-                                index.is_some_and(|i| i + 1 < g.steps.len()),
-                                egui::Button::new(aurora_i18n::tr!("gesture-down")),
+                                manager.enabled,
+                                egui::Button::new(if manager.is_playing(editor.preview) {
+                                    aurora_i18n::tr!("gesture-stop")
+                                } else {
+                                    aurora_i18n::tr!("gesture-preview")
+                                }),
                             )
                             .clicked()
-                            && let Some(i) = index
                         {
-                            g.steps.swap(i, i + 1);
-                            editor.step = Some(i + 1);
+                            out.push(if manager.is_playing(editor.preview) {
+                                Action::Stop(editor.preview)
+                            } else {
+                                Action::Preview(editor.preview, g.clone())
+                            });
                         }
                         if ui
-                            .add_enabled(index.is_some(), egui::Button::new(aurora_i18n::tr!("common-delete")))
+                            .add_enabled(editable && dirty, egui::Button::new(aurora_i18n::tr!("gesture-save")))
                             .clicked()
-                            && let Some(i) = index
                         {
-                            g.steps.remove(i);
-                            editor.step = (!g.steps.is_empty()).then_some(i.saturating_sub(1));
+                            out.push(Action::Save {
+                                item: *id,
+                                definition: g.clone(),
+                                description: editor.description.clone(),
+                                close: false,
+                            });
                         }
                     });
-                    if let Some(step) = editor.step.and_then(|i| g.steps.get_mut(i)) {
-                        parameters(ui, p, inv, assets, step);
-                    }
-                });
-                ui.label(RichText::new(aurora_i18n::tr!("gesture-simultaneous")).small().color(p.muted));
-                ui.horizontal(|ui| {
-                    let mut active = manager.active.contains(id);
-                    ui.add_enabled_ui(editable, |ui| {
-                        if widgets::checkbox(ui, p, &mut active, aurora_i18n::tr!("gesture-active")).changed() {
-                            out.push(Action::Active(vec![*id], active));
-                        }
-                    });
-                    if ui
-                        .add_enabled(
-                            manager.enabled,
-                            egui::Button::new(if manager.is_playing(editor.preview) {
-                                aurora_i18n::tr!("gesture-stop")
-                            } else {
-                                aurora_i18n::tr!("gesture-preview")
-                            }),
-                        )
-                        .clicked()
-                    {
-                        out.push(if manager.is_playing(editor.preview) {
-                            Action::Stop(editor.preview)
-                        } else {
-                            Action::Preview(editor.preview, g.clone())
-                        });
-                    }
-                    if ui
-                        .add_enabled(editable && dirty, egui::Button::new(aurora_i18n::tr!("gesture-save")))
-                        .clicked()
-                    {
-                        out.push(Action::Save {
-                            item: *id,
-                            definition: g.clone(),
-                            description: editor.description.clone(),
-                            close: false,
-                        });
-                    }
                 });
             });
-            if editor.saving.is_some() {
-                ui.label(aurora_i18n::tr!("gesture-saving"));
-            }
-            if !editor.message.is_empty() {
-                ui.label(RichText::new(&editor.message).color(p.warn));
-            }
+            foot.show(ui, |ui| {
+                if editor.saving.is_some() {
+                    ui.label(aurora_i18n::tr!("gesture-saving"));
+                }
+                if !editor.message.is_empty() {
+                    ui.label(RichText::new(&editor.message).color(p.warn));
+                }
+            });
         });
         if !open && editor.dirty() {
             state.discard = Some(*id);

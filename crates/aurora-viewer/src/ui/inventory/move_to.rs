@@ -4,7 +4,7 @@
 //! picker is an Aurora addition; submission uses the existing move mutation.
 
 use super::*;
-use crate::ui::widgets::{Floater, flat_button, search_field};
+use crate::ui::widgets::{Floater, above_footer, flat_button, search_field};
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
 
@@ -181,8 +181,11 @@ pub(super) fn show(
         #[cfg(test)]
         ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_filter", st.ui_id)), filter.rect));
 
-        let list_height = (ui.available_height() - 90.0).max(80.0);
-        egui::Frame::new().fill(p.field).show(ui, |ui| {
+        // the destinations in exactly the room the count, the buttons and the
+        // message leave
+        let (mut list, foot) = above_footer(ui);
+        let list_height = list.available_height();
+        egui::Frame::new().fill(p.field).show(&mut list, |ui| {
             ui.set_min_height(list_height);
             if picker.visible.is_empty() {
                 ui.label(RichText::new(aurora_i18n::tr!("inventory-move-no-folders")).color(p.muted));
@@ -190,7 +193,7 @@ pub(super) fn show(
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical()
                 .id_salt(("inventory_move_destinations", st.ui_id))
-                .max_height(list_height)
+                .max_height(ui.available_height())
                 .auto_shrink([false, false])
                 .show_rows(ui, 40.0, picker.visible.len(), |ui, range| {
                     for i in range {
@@ -232,47 +235,49 @@ pub(super) fn show(
                     }
                 });
         });
-        ui.label(
-            RichText::new(if picker.failed {
-                aurora_i18n::tr!("inventory-move-loading-failed").into()
-            } else if picker.loaded {
-                aurora_i18n::tr!("inventory-move-folder-count", count = picker.visible.len())
-            } else {
-                aurora_i18n::tr!("inventory-move-loading").into()
-            })
-            .size(11.0)
-            .color(p.muted),
-        );
-        ui.horizontal(|ui| {
-            let enabled = st.pending.is_none() && picker.selected.is_some();
-            ui.add_enabled_ui(enabled, |ui| {
-                let button = flat_button(ui, p, aurora_i18n::tr!("inventory-move-confirm"));
-                #[cfg(test)]
-                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_confirm", st.ui_id)), button.rect));
-                if (button.clicked() || enter)
-                    && enabled
-                    && let Some(to) = picker.selected
-                {
-                    // Revalidate against the current model and permissions;
-                    // the selection is the snapshot taken when the menu opened.
-                    match rules::move_selection(inv, &picker.ids, to, &prefs.protected, &facts.worn) {
-                        Ok(change) if !change.operations.is_empty() => {
-                            actions.push(InvAction::Edit(change));
-                            done = true;
+        foot.show(ui, |ui| {
+            ui.label(
+                RichText::new(if picker.failed {
+                    aurora_i18n::tr!("inventory-move-loading-failed").into()
+                } else if picker.loaded {
+                    aurora_i18n::tr!("inventory-move-folder-count", count = picker.visible.len())
+                } else {
+                    aurora_i18n::tr!("inventory-move-loading").into()
+                })
+                .size(11.0)
+                .color(p.muted),
+            );
+            ui.horizontal(|ui| {
+                let enabled = st.pending.is_none() && picker.selected.is_some();
+                ui.add_enabled_ui(enabled, |ui| {
+                    let button = flat_button(ui, p, aurora_i18n::tr!("inventory-move-confirm"));
+                    #[cfg(test)]
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_confirm", st.ui_id)), button.rect));
+                    if (button.clicked() || enter)
+                        && enabled
+                        && let Some(to) = picker.selected
+                    {
+                        // Revalidate against the current model and permissions;
+                        // the selection is the snapshot taken when the menu opened.
+                        match rules::move_selection(inv, &picker.ids, to, &prefs.protected, &facts.worn) {
+                            Ok(change) if !change.operations.is_empty() => {
+                                actions.push(InvAction::Edit(change));
+                                done = true;
+                            }
+                            Ok(_) => picker.selected = None,
+                            Err(reason) => picker.message = reason,
                         }
-                        Ok(_) => picker.selected = None,
-                        Err(reason) => picker.message = reason,
                     }
-                }
+                });
+                let cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel"));
+                #[cfg(test)]
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_cancel", st.ui_id)), cancel.rect));
+                done |= cancel.clicked();
             });
-            let cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel"));
-            #[cfg(test)]
-            ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_cancel", st.ui_id)), cancel.rect));
-            done |= cancel.clicked();
+            if !picker.message.is_empty() {
+                ui.label(RichText::new(&picker.message).color(p.warn));
+            }
         });
-        if !picker.message.is_empty() {
-            ui.label(RichText::new(&picker.message).color(p.warn));
-        }
     });
     if open && !done {
         st.move_to = Some(picker);
@@ -413,6 +418,32 @@ mod tests {
         rules::demo_mutate(&mut inv, id(2), change).expect("demo move");
         picker.update(&inv, &HashSet::new());
         assert!(picker.selected.is_none(), "the new parent is no longer a useful destination");
+    }
+
+    /// The window keeps its size with its tallest footer: no folder found
+    /// and a message under the buttons.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let prefs = InventoryPreferences::default();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "inventory_move_to_00000000-0000-0000-0000-00000000004d",
+            &[Vec2::new(520.0, 440.0), Vec2::new(320.0, 300.0)],
+            "The folder cannot hold these items: one of them is worn.",
+            || {
+                let mut st = InventoryUi {
+                    ui_id: id(77),
+                    ..Default::default()
+                };
+                st.begin_move_to(id(8000));
+                let picker = st.move_to.as_mut().expect("picker");
+                picker.filter = "no such folder".into();
+                picker.message = "The folder cannot hold these items: one of them is worn.".into();
+                (fixture(), st)
+            },
+            |(inv, st), ctx, p| {
+                show(ctx, p, &Icons::default(), inv, st, &prefs, &facts(), &mut Vec::new());
+            },
+        );
     }
 
     fn frame(

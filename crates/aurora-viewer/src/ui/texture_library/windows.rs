@@ -233,15 +233,11 @@ impl LibraryUi {
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
-                let footer = 112.0
-                    + if window.texture.metadata.uploader.is_some() { 24.0 } else { 0.0 }
-                    + if window.texture.metadata.date.is_some() { 20.0 } else { 0.0 }
-                    + if !window.texture.message.is_empty() || window.texture.export.is_some() {
-                        24.0
-                    } else {
-                        0.0
-                    };
-                texture_view::show(ui, p, &item, image, dimensions, &mut window.texture.display, actions, footer);
+                texture_view::toolbar(ui, p, &item, dimensions, &mut window.texture.display, actions);
+                // the picture in exactly the room the description, the
+                // buttons and the notes leave
+                let (mut view, foot) = widgets::above_footer(ui);
+                texture_view::picture(&mut view, p, image, dimensions, &window.texture.display, Some(item.id));
                 if window.texture.display != before {
                     prefs.texture_display = window.texture.display;
                 }
@@ -253,9 +249,78 @@ impl LibraryUi {
                     if window.texture.display.actual_size || window.texture.export.is_some() {
                         16384.0
                     } else {
-                        ui.available_width().max(ui.available_height()) * ctx.pixels_per_point()
+                        view.available_width().max(view.available_height()) * ctx.pixels_per_point()
                     },
                 );
+                foot.show(ui, |ui| {
+                    let description = window.description.get_or_insert_with(|| item.desc.clone());
+                    let response = ui.add_enabled(
+                        material_editor::can_edit(world, &item),
+                        egui::TextEdit::singleline(description)
+                            .hint_text(aurora_i18n::tr!("common-description"))
+                            .char_limit(127)
+                            .desired_width(ui.available_width()),
+                    );
+                    if response.lost_focus() && *description != item.desc && material_editor::can_edit(world, &item) {
+                        actions.push(Action::Change(Mutation {
+                            operations: vec![Operation::Patch {
+                                id: item.id,
+                                folder: false,
+                                body: aurora_llsd::llsd_map! { "desc" => description.clone() },
+                            }],
+                            refresh: vec![item.parent],
+                            ..Default::default()
+                        }));
+                    }
+                    if let Some(uploader) = window.texture.metadata.uploader {
+                        world.social.want_name(uploader);
+                        let name = world.person_name(&uploader).unwrap_or_else(|| uploader.to_string());
+                        if ui
+                            .small_button(aurora_i18n::tr!("resource-preview-uploader", name = name))
+                            .clicked()
+                        {
+                            actions.push(Action::Profile(uploader));
+                        }
+                    }
+                    if let Some(date) = &window.texture.metadata.date {
+                        ui.label(
+                            RichText::new(aurora_i18n::tr!("resource-preview-upload-date", date = date.clone()))
+                                .small()
+                                .color(p.muted),
+                        );
+                    }
+                    if window.texture.export.is_some() {
+                        ui.label(aurora_i18n::tr!("resource-preview-export-loading"));
+                    }
+                    if !window.texture.message.is_empty() {
+                        ui.label(&window.texture.message);
+                    }
+                    ui.add(egui::Label::new(RichText::new(&path).size(11.0).color(p.muted)).truncate())
+                        .on_hover_text(&path);
+                    ui.horizontal(|ui| {
+                        if ui.button(aurora_i18n::tr!("common-ok")).clicked() {
+                            close_clicked = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                !rules::library(&world.inventory, item.id) && !rules::in_type(&world.inventory, item.id, 14),
+                                egui::Button::new(aurora_i18n::tr!("resource-preview-discard")),
+                            )
+                            .clicked()
+                        {
+                            actions.push(Action::Discard(item.id));
+                        }
+                    });
+                    ui.label(
+                        RichText::new(if item.owner_mask & rules::COPY != 0 {
+                            aurora_i18n::tr!("texture-library-copy")
+                        } else {
+                            aurora_i18n::tr!("texture-library-no-copy")
+                        })
+                        .size(11.0)
+                        .color(p.muted),
+                    );
+                });
             }
             if material {
                 if let Some(editor) = &mut window.editor {
@@ -267,76 +332,6 @@ impl LibraryUi {
                 } else {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
                 }
-            } else {
-                let description = window.description.get_or_insert_with(|| item.desc.clone());
-                let response = ui.add_enabled(
-                    material_editor::can_edit(world, &item),
-                    egui::TextEdit::singleline(description)
-                        .hint_text(aurora_i18n::tr!("common-description"))
-                        .char_limit(127)
-                        .desired_width(ui.available_width()),
-                );
-                if response.lost_focus() && *description != item.desc && material_editor::can_edit(world, &item) {
-                    actions.push(Action::Change(Mutation {
-                        operations: vec![Operation::Patch {
-                            id: item.id,
-                            folder: false,
-                            body: aurora_llsd::llsd_map! { "desc" => description.clone() },
-                        }],
-                        refresh: vec![item.parent],
-                        ..Default::default()
-                    }));
-                }
-                if let Some(uploader) = window.texture.metadata.uploader {
-                    world.social.want_name(uploader);
-                    let name = world.person_name(&uploader).unwrap_or_else(|| uploader.to_string());
-                    if ui
-                        .small_button(aurora_i18n::tr!("resource-preview-uploader", name = name))
-                        .clicked()
-                    {
-                        actions.push(Action::Profile(uploader));
-                    }
-                }
-                if let Some(date) = &window.texture.metadata.date {
-                    ui.label(
-                        RichText::new(aurora_i18n::tr!("resource-preview-upload-date", date = date.clone()))
-                            .small()
-                            .color(p.muted),
-                    );
-                }
-                if window.texture.export.is_some() {
-                    ui.label(aurora_i18n::tr!("resource-preview-export-loading"));
-                }
-                if !window.texture.message.is_empty() {
-                    ui.label(&window.texture.message);
-                }
-                ui.add(egui::Label::new(RichText::new(&path).size(11.0).color(p.muted)).truncate())
-                    .on_hover_text(&path);
-                ui.horizontal(|ui| {
-                    if ui.button(aurora_i18n::tr!("common-ok")).clicked() {
-                        close_clicked = true;
-                    }
-                    if ui
-                        .add_enabled(
-                            !rules::library(&world.inventory, item.id) && !rules::in_type(&world.inventory, item.id, 14),
-                            egui::Button::new(aurora_i18n::tr!("resource-preview-discard")),
-                        )
-                        .clicked()
-                    {
-                        actions.push(Action::Discard(item.id));
-                    }
-                });
-            }
-            if !material {
-                ui.label(
-                    RichText::new(if item.owner_mask & rules::COPY != 0 {
-                        aurora_i18n::tr!("texture-library-copy")
-                    } else {
-                        aurora_i18n::tr!("texture-library-no-copy")
-                    })
-                    .size(11.0)
-                    .color(p.muted),
-                );
             }
         });
         open &= !close_clicked;

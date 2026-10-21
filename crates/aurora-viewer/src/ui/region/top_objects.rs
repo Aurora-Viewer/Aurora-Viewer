@@ -222,131 +222,135 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
             if widgets::segmented(ui, p, &mut by, &options) {
                 s.top.by = [Filter::Object, Filter::Owner, Filter::Parcel][by];
             }
-            let w = (ui.available_width() - 110.0).max(140.0);
-            let r = widgets::search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
-            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let filter_label = aurora_i18n::tr!("region-top-filter");
-            if widgets::action_button_if(
-                ui,
-                p,
-                "filter-filled",
-                filter_label,
-                ActionKind::Flat,
-                Vec2::new(0.0, 26.0),
-                !waiting,
-            )
-            .clicked()
-                || enter && !waiting
-            {
-                refresh(&mut s.top, v, world, true);
-            }
+            // the button first, from the right: the box takes what it leaves
+            // (a guessed button width widened the window at every frame)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let filter_label = aurora_i18n::tr!("region-top-filter");
+                let filter = widgets::action_button_if(
+                    ui,
+                    p,
+                    "filter-filled",
+                    filter_label,
+                    ActionKind::Flat,
+                    Vec2::new(0.0, 26.0),
+                    !waiting,
+                );
+                let w = ui.available_width().max(140.0);
+                let r = widgets::search_box(ui, p, &mut s.top.text, aurora_i18n::tr!("region-top-filter-hint"), w);
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if filter.clicked() || enter && !waiting {
+                    refresh(&mut s.top, v, world, true);
+                }
+            });
         });
         ui.add_space(8.0);
         let rows = report.as_ref().map(|r| sorted(&r.objects, s.top.sort)).unwrap_or_default();
-        let list_h = (ui.available_height() - 44.0).max(120.0);
-        table(ui, p, &mut s.top, &rows, scripts, list_h, waiting);
-        ui.add_space(8.0);
-        // the actions
-        let one = (s.top.selected.len() == 1)
-            .then(|| rows.iter().find(|o| s.top.selected.contains(&o.task_id)).copied())
-            .flatten();
-        // a resident among the colliders: on the region's map
-        let here = |id: &Uuid| world.coarse.get(&v.handle).is_some_and(|l| l.iter().any(|(a, _)| a == id));
-        let avatar = one.filter(|o| here(&o.task_id)).map(|o| o.task_id);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            let size = Vec2::new(0.0, 28.0);
-            if widgets::action_button_if(
-                ui,
-                p,
-                "current-location-filled",
-                aurora_i18n::tr!("region-top-beacon"),
-                ActionKind::Flat,
-                size,
-                one.is_some(),
-            )
-            .clicked()
-                && let Some(o) = one
-            {
-                beacon(world, v, o, false);
-            }
-            if widgets::action_button_if(
-                ui,
-                p,
-                "send-filled",
-                aurora_i18n::tr!("common-teleport"),
-                ActionKind::Flat,
-                size,
-                one.is_some(),
-            )
-            .clicked()
-                && let Some(o) = one
-            {
-                beacon(world, v, o, true);
-            }
-            if widgets::action_button_if(
-                ui,
-                p,
-                "user-filled",
-                aurora_i18n::tr!("common-profile"),
-                ActionKind::Flat,
-                size,
-                avatar.is_some(),
-            )
-            .clicked()
-                && let Some(id) = avatar
-            {
-                crate::ui::profile::request_open(ui.ctx(), id);
-            }
-            let kick_label = aurora_i18n::tr!("region-int-kick");
-            if widgets::action_button_if(
-                ui,
-                p,
-                "door-exit",
-                kick_label,
-                ActionKind::Flat,
-                size,
-                avatar.is_some() && v.manages(),
-            )
-            .clicked()
-            {
-                kick = avatar;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let can = v.manages() && !rows.is_empty();
+        let (mut list, foot) = widgets::above_footer(ui);
+        table(&mut list, p, &mut s.top, &rows, scripts, waiting);
+        foot.show(ui, |ui| {
+            ui.add_space(8.0);
+            // the actions
+            let one = (s.top.selected.len() == 1)
+                .then(|| rows.iter().find(|o| s.top.selected.contains(&o.task_id)).copied())
+                .flatten();
+            // a resident among the colliders: on the region's map
+            let here = |id: &Uuid| world.coarse.get(&v.handle).is_some_and(|l| l.iter().any(|(a, _)| a == id));
+            let avatar = one.filter(|o| here(&o.task_id)).map(|o| o.task_id);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let size = Vec2::new(0.0, 28.0);
                 if widgets::action_button_if(
                     ui,
                     p,
-                    "",
-                    aurora_i18n::tr!("region-top-return-all"),
-                    ActionKind::SoftDanger,
-                    size,
-                    can,
-                )
-                .clicked()
-                {
-                    s.top.ask_return_all = true;
-                }
-                let some = can && !s.top.selected.is_empty();
-                if widgets::action_button_if(
-                    ui,
-                    p,
-                    "arrow-back-up",
-                    aurora_i18n::tr!("region-top-return-selected"),
+                    "current-location-filled",
+                    aurora_i18n::tr!("region-top-beacon"),
                     ActionKind::Flat,
                     size,
-                    some,
+                    one.is_some(),
+                )
+                .clicked()
+                    && let Some(o) = one
+                {
+                    beacon(world, v, o, false);
+                }
+                if widgets::action_button_if(
+                    ui,
+                    p,
+                    "send-filled",
+                    aurora_i18n::tr!("common-teleport"),
+                    ActionKind::Flat,
+                    size,
+                    one.is_some(),
+                )
+                .clicked()
+                    && let Some(o) = one
+                {
+                    beacon(world, v, o, true);
+                }
+                if widgets::action_button_if(
+                    ui,
+                    p,
+                    "user-filled",
+                    aurora_i18n::tr!("common-profile"),
+                    ActionKind::Flat,
+                    size,
+                    avatar.is_some(),
+                )
+                .clicked()
+                    && let Some(id) = avatar
+                {
+                    crate::ui::profile::request_open(ui.ctx(), id);
+                }
+                let kick_label = aurora_i18n::tr!("region-int-kick");
+                if widgets::action_button_if(
+                    ui,
+                    p,
+                    "door-exit",
+                    kick_label,
+                    ActionKind::Flat,
+                    size,
+                    avatar.is_some() && v.manages(),
                 )
                 .clicked()
                 {
-                    let tasks: Vec<Uuid> = rows
-                        .iter()
-                        .filter(|o| s.top.selected.contains(&o.task_id))
-                        .map(|o| o.task_id)
-                        .collect();
-                    world.estate.intervene(EstateCommand::ReturnTopObjects { handle: v.handle, tasks });
-                    s.top.selected.clear();
+                    kick = avatar;
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let can = v.manages() && !rows.is_empty();
+                    if widgets::action_button_if(
+                        ui,
+                        p,
+                        "",
+                        aurora_i18n::tr!("region-top-return-all"),
+                        ActionKind::SoftDanger,
+                        size,
+                        can,
+                    )
+                    .clicked()
+                    {
+                        s.top.ask_return_all = true;
+                    }
+                    let some = can && !s.top.selected.is_empty();
+                    if widgets::action_button_if(
+                        ui,
+                        p,
+                        "arrow-back-up",
+                        aurora_i18n::tr!("region-top-return-selected"),
+                        ActionKind::Flat,
+                        size,
+                        some,
+                    )
+                    .clicked()
+                    {
+                        let tasks: Vec<Uuid> = rows
+                            .iter()
+                            .filter(|o| s.top.selected.contains(&o.task_id))
+                            .map(|o| o.task_id)
+                            .collect();
+                        world.estate.intervene(EstateCommand::ReturnTopObjects { handle: v.handle, tasks });
+                        s.top.selected.clear();
+                    }
+                });
             });
         });
     });
@@ -379,7 +383,7 @@ fn beacon(world: &mut World, v: &View, o: &TopObject, teleport: bool) {
 }
 
 /// The list: a head that sorts, a row per object with a box to select it.
-fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], scripts: bool, height: f32, waiting: bool) {
+fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], scripts: bool, waiting: bool) {
     let mut columns: Vec<(Column, &str, f32)> = vec![
         (
             Column::Score,
@@ -433,6 +437,7 @@ fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], 
         }
         x += w;
     }
+    let height = ui.available_height();
     egui::ScrollArea::vertical()
         .id_salt("region_top_objects_list")
         .max_height(height)
@@ -449,7 +454,7 @@ fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], 
                 return;
             }
             for o in &rows[range] {
-                let (rect, r) = ui.allocate_exact_size(Vec2::new(full, 26.0), Sense::click());
+                let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 26.0), Sense::click());
                 let selected = s.selected.contains(&o.task_id);
                 let radius = ui.visuals().widgets.inactive.corner_radius;
                 if selected {
@@ -586,6 +591,41 @@ mod tests {
         assert_eq!(ids(sorted(&list, None)), [1, 2, 3]);
         assert_eq!(ids(sorted(&list, Some((Column::Score, true)))), [2, 3, 1]);
         assert_eq!(ids(sorted(&list, Some((Column::Name, false)))), [2, 1, 3], "names ignore the case");
+    }
+
+    #[test]
+    fn the_window_keeps_its_size() {
+        use crate::world::estate::Role;
+        let v = View {
+            handle: aurora_net::origin_to_handle(1012 * 256, 998 * 256),
+            role: Role::Owner,
+            shown: Role::Owner,
+            name: "Aurora".into(),
+            sim_access: 13,
+            flags: 0,
+            owner: Uuid::from_u128(1),
+            product: String::new(),
+            same_region: true,
+        };
+        let report = std::sync::Arc::new(aurora_net::estate::TopObjects {
+            report: land_stat::TOP_SCRIPTS,
+            flags: 0,
+            total: 40,
+            objects: (0..40).map(|i| obj(i, i as f32, &format!("Object {i}"))).collect(),
+        });
+        widgets::steady_tests::assert_window_steady(
+            WINDOW,
+            &[Vec2::new(900.0, 540.0), Vec2::new(620.0, 360.0)],
+            aurora_i18n::tr!("region-top-return-all"),
+            || {
+                let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                world.estate.top = Some((v.handle, report.clone()));
+                let mut s = RegionUi::default();
+                s.top.open = true;
+                (s, world)
+            },
+            |(s, world), ctx, p| show(ctx, p, s, &v, world),
+        );
     }
 
     #[test]

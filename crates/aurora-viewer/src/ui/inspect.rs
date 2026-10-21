@@ -369,11 +369,12 @@ impl InspectUi {
         floater.min_size = Vec2::new(560.0, 300.0);
         floater.show(ctx, p, &mut open, |ui| {
             // the buttons keep the bottom of the window; the totals and the
-            // table share what is above them, whatever its height
+            // table share what is above them, whatever its height (a guessed
+            // button row grew the window at every frame with a larger text)
             const BUTTONS: f32 = 26.0;
-            let footer = BUTTONS + 6.0 + ui.spacing().item_spacing.y;
-            let height = (ui.available_height() - footer).max(0.0);
-            ui.horizontal_top(|ui| {
+            let (mut list, foot) = widgets::above_footer(ui);
+            let height = list.available_height();
+            list.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(Vec2::new(STATS_WIDTH, height), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(STATS_WIDTH);
                     ui.set_height(height);
@@ -389,36 +390,38 @@ impl InspectUi {
                     },
                 );
             });
-            ui.add_space(6.0);
             let current = rows.iter().find(|r| Some(r.id) == self.selected);
-            ui.horizontal(|ui| {
-                ui.set_height(BUTTONS);
-                let size = Vec2::new(0.0, 26.0);
-                for (label, tip, who) in [
-                    (
-                        aurora_i18n::tr!("inspect-owner-profile"),
-                        aurora_i18n::tr!("inspect-owner-profile-tip"),
-                        current.and_then(|r| r.owner),
-                    ),
-                    (
-                        aurora_i18n::tr!("inspect-creator-profile"),
-                        aurora_i18n::tr!("inspect-creator-profile-tip"),
-                        current.and_then(|r| r.creator),
-                    ),
-                ] {
-                    let button = widgets::action_button_if(ui, p, "user-filled", label, ActionKind::Flat, size, who.is_some());
-                    if button.on_hover_text(tip).clicked() {
-                        profile = who;
-                    }
-                }
-                // menu_fs_inspect_options.xml: the name stays
-                widgets::icon_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("inspect-options"), |ui| {
-                    for column in Column::ALL.into_iter().skip(1) {
-                        let mut on = shown(*columns, column);
-                        if super::menu::toggle(ui, p, "", column.title(), &mut on) {
-                            *columns ^= column.bit();
+            foot.show(ui, |ui| {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.set_height(BUTTONS);
+                    let size = Vec2::new(0.0, 26.0);
+                    for (label, tip, who) in [
+                        (
+                            aurora_i18n::tr!("inspect-owner-profile"),
+                            aurora_i18n::tr!("inspect-owner-profile-tip"),
+                            current.and_then(|r| r.owner),
+                        ),
+                        (
+                            aurora_i18n::tr!("inspect-creator-profile"),
+                            aurora_i18n::tr!("inspect-creator-profile-tip"),
+                            current.and_then(|r| r.creator),
+                        ),
+                    ] {
+                        let button = widgets::action_button_if(ui, p, "user-filled", label, ActionKind::Flat, size, who.is_some());
+                        if button.on_hover_text(tip).clicked() {
+                            profile = who;
                         }
                     }
+                    // menu_fs_inspect_options.xml: the name stays
+                    widgets::icon_menu(ui, p, "adjustments-filled", aurora_i18n::tr!("inspect-options"), |ui| {
+                        for column in Column::ALL.into_iter().skip(1) {
+                            let mut on = shown(*columns, column);
+                            if super::menu::toggle(ui, p, "", column.title(), &mut on) {
+                                *columns ^= column.bit();
+                            }
+                        }
+                    });
                 });
             });
         });
@@ -461,6 +464,30 @@ fn stats(ui: &mut egui::Ui, p: &Palette, t: &Totals) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window keeps its size, its buttons inside it.
+    #[test]
+    fn the_window_keeps_its_size() {
+        let rows: Vec<Row> = (0..40)
+            .map(|i| Row {
+                id: Uuid::from_u128(i),
+                root: i % 4 == 0,
+                ..Default::default()
+            })
+            .collect();
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "inspect",
+            &[Vec2::new(1040.0, 360.0), Vec2::new(560.0, 300.0)],
+            aurora_i18n::tr!("inspect-owner-profile"),
+            || InspectUi {
+                open: true,
+                ..Default::default()
+            },
+            |ui, ctx, p| {
+                ui.show(ctx, p, &rows, &Totals::default(), &mut u32::MAX.clone());
+            },
+        );
+    }
 
     fn row(n: u128, name: &str, triangles: u32) -> Row {
         Row {
