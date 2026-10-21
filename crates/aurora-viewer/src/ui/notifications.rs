@@ -13,6 +13,8 @@ use egui::{Color32, RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+pub(crate) mod text;
+
 /// Seconds a toast stays: information / waiting for an answer.
 const TOAST_INFO: f64 = 7.0;
 const TOAST_OFFER: f64 = 25.0;
@@ -168,6 +170,7 @@ pub(super) fn person_card(
         _ => return None,
     };
     let mut close = egui::Rect::NOTHING;
+    let mut name_hover = None;
     let surface = if toast { p.panel } else { p.raised.gamma_multiply(0.55) };
     // a toast floats at its own width, a card fills its list
     let width = if toast { WIDTH - 18.0 } else { ui.available_width() - 16.0 };
@@ -190,7 +193,7 @@ pub(super) fn person_card(
                         n.title.clone()
                     };
                     ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                        ui.add(egui::Label::new(RichText::new(&title).size(12.5).strong().color(p.ink)).truncate());
+                        name_hover = text::show(ui, p, &title, &n.name_links, 12.5, p.ink, true, false);
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
@@ -214,7 +217,7 @@ pub(super) fn person_card(
                     if n.body.chars().count() > MESSAGE_CHARS {
                         text.push('…');
                     }
-                    env.emoji.rich_text(ui, &text, 12.0, p.muted, false);
+                    name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links));
                 }
             });
         });
@@ -251,6 +254,10 @@ pub(super) fn person_card(
     };
     let cover = if tip.is_empty() { cover } else { cover.on_hover_text(tip) };
     if cover.clicked() {
+        if !on_close && let Some(target) = name_hover {
+            text::open(ui.ctx(), target);
+            return None;
+        }
         return Some(if on_close || !n.opens() {
             Response::Dismiss
         } else {
@@ -315,8 +322,7 @@ pub(super) fn card(
                 // keep room for the time and the close button
                 let w = (ui.available_width() - 62.0).max(40.0);
                 ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                    ui.add(egui::Label::new(RichText::new(&n.title).size(12.5).strong().color(p.ink)).truncate())
-                        .on_hover_text(&n.title);
+                    text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true);
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::click());
@@ -352,12 +358,12 @@ pub(super) fn card(
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_places(ui, p, ratings, &n.body, 12.0, p.ink);
+                        super::chat::text_with_places(ui, p, ratings, &n.body, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_places(ui, p, ratings, &n.body, 12.0, p.muted);
+                        super::chat::text_with_places(ui, p, ratings, &n.body, &n.name_links, 12.0, p.muted);
                     });
                 }
             }
@@ -396,6 +402,18 @@ pub(super) fn card(
                 Data::Friend { .. } | Data::Group { .. } | Data::CallingCard { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                }
+                Data::Inventory {
+                    from,
+                    task: true,
+                    task_offer,
+                    ..
+                } => {
+                    buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-discard").into(), Response::Decline, false));
+                    if !from.is_nil() && task_offer.as_ref().is_some_and(|offer| !offer.own_object) {
+                        buttons.push((aurora_i18n::tr!("ui-notifications-mute-owner").into(), Response::Block, false));
+                    }
                 }
                 Data::Inventory { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-keep").into(), Response::Accept, true));
@@ -816,6 +834,105 @@ mod tests {
     }
 
     const JANE: Uuid = Uuid::from_u128(2);
+
+    #[test]
+    fn object_offer_buttons_are_visible_and_clickable_in_both_styles() {
+        for aurora in [false, true] {
+            for own_object in [false, true] {
+                let ctx = egui::Context::default();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&ctx, 1.0);
+                let p = theme.palette();
+                let icons = Icons::default();
+                let ratings = RegionRatings::default();
+                let mut list = Notifications::default();
+                let body = "An object named Gift dispenser owned by Jane Doe has given you this object:\nWelcome note";
+                list.push(
+                    Kind::Inventory,
+                    "Gift dispenser",
+                    body,
+                    Data::Inventory {
+                        from: JANE,
+                        tx: Uuid::from_u128(3),
+                        asset_type: 7,
+                        object: Uuid::nil(),
+                        task: true,
+                        task_offer: Some(crate::world::inventory_offers::TaskOffer {
+                            object_name: "Gift dispenser".into(),
+                            item_name: "Welcome note".into(),
+                            from_group: false,
+                            own_object,
+                        }),
+                    },
+                );
+                let notification = list.last_id();
+                list.link_name(notification, "Jane Doe", crate::world::notifications::NameTarget::Avatar(JANE));
+                let mut time = 0.0;
+                let mut frame = |events| {
+                    time += 0.1;
+                    let mut answer = None;
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                            time: Some(time),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            ui.set_width(320.0);
+                            answer = card(ui, &p, &icons, &ratings, &mut list.list[0], true, aurora);
+                        },
+                    );
+                    output.textures_delta.clear();
+                    (output, answer)
+                };
+                for _ in 0..3 {
+                    frame(vec![]);
+                }
+                let labels = [
+                    (aurora_i18n::tr!("ui-notifications-accept"), Response::Accept),
+                    (aurora_i18n::tr!("ui-notifications-discard"), Response::Decline),
+                    (aurora_i18n::tr!("ui-notifications-mute-owner"), Response::Block),
+                ];
+                for (index, (label, expected)) in labels.iter().enumerate() {
+                    let (output, _) = frame(vec![]);
+                    assert!(
+                        output
+                            .shapes
+                            .iter()
+                            .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.text() == body)),
+                        "complete body visible"
+                    );
+                    let pos = output.shapes.iter().find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if t.galley.text() == *label => Some(t.pos + t.galley.size() * 0.5),
+                        _ => None,
+                    });
+                    if own_object && index == 2 {
+                        assert!(pos.is_none(), "our own owner cannot be muted");
+                        continue;
+                    }
+                    let pos = pos.expect("button visible");
+                    frame(vec![egui::Event::PointerMoved(pos)]);
+                    for pressed in [true, false] {
+                        let (_, answer) = frame(vec![egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        }]);
+                        if !pressed {
+                            assert!(matches!(
+                                (answer, expected),
+                                (Some(Response::Accept), Response::Accept)
+                                    | (Some(Response::Decline), Response::Decline)
+                                    | (Some(Response::Block), Response::Block)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// A friend's notice lives as long as its toast; a message's entry
     /// stays under the bell once its toast is gone when asked for, else it

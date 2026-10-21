@@ -32,8 +32,10 @@ impl World {
                     dest,
                     transaction: Uuid::new_v4(),
                 });
-                let text = aurora_i18n::tr!("world-calling-card-offered", name = name);
-                self.notifications.push(Kind::Info, title, text, Data::None);
+                let text = aurora_i18n::tr!("world-calling-card-offered", name = name.clone());
+                let id = self.notifications.push(Kind::Info, title, text, Data::None);
+                self.notifications
+                    .link_name(id, name, super::notifications::NameTarget::Avatar(dest));
             }
             None => {
                 let text = aurora_i18n::tr!("world-calling-card-cannot-offer");
@@ -65,12 +67,14 @@ impl World {
             self.calling_card_declined(from);
             return;
         }
-        self.notifications.push(
+        let id = self.notifications.push(
             Kind::Friendship,
-            aurora_i18n::tr!("world-calling-card-offer", name = name),
+            aurora_i18n::tr!("world-calling-card-offer", name = name.clone()),
             aurora_i18n::tr!("world-calling-card-offer-body"),
             Data::CallingCard { from, tx, region },
         );
+        self.notifications
+            .link_name(id, name, super::notifications::NameTarget::Avatar(from));
     }
 
     /// send_do_not_disturb_message after a declined offer: our do not

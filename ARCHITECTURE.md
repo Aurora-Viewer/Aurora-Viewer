@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Notification identity names carry typed avatar/group/experience/object targets in
+`world/notifications.rs`, retained by `world/notification_history.rs` across sessions.
+`ui/notifications/text.rs` styles and hit-tests their exact text spans with the
+chat's glyph-range geometry, dispatching the existing native profile/SLapp actions.
+Cards, presence toasts, friendship prompts and history share those links; clicking
+a name leaves the notification's answer pending. Place links retain their existing
+chat renderer and region badges.
+
 Attachment frames follow `LLViewerJointAttachment` and `LLXformMatrix`: a bone scales its attachment joint's local offset, while rigid object sizes and linked child offsets retain their own scales. `scene/avatar.rs::AttachPoint::frame` shares that rule between CPU/GPU anchors and automatic hover; appearance hints use the same absolute bone frame. `scene/joint_overrides.rs` selects joint positions and nonzero pelvis fixups by greatest mesh asset UUID, independently of object arrival/traversal order. Scale locks from every qualifying mesh remain independent of the winning position. The pelvis is converted from root-relative Legacy coordinates to Aurora's feet-origin skeleton, without canceling its local translation in the root height correction. Animation position tracks still set absolute local positions, including the pelvis. Ground control avatars receive their own pelvis fixup; worn control avatars cannot deform the wearer.
 
 Rigged mesh compatibility uses `scene/anim.rs::Rig::skin_joint` to resolve

@@ -500,6 +500,7 @@ pub(crate) fn text_with_places(
     p: &Palette,
     ratings: &crate::world::worldmap::RegionRatings,
     text: &str,
+    names: &[crate::world::notifications::NameLink],
     size: f32,
     color: Color32,
 ) {
@@ -512,7 +513,7 @@ pub(crate) fn text_with_places(
         .collect();
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
-            ui.add(egui::Label::new(RichText::new(t).size(size).color(color)).wrap().selectable(true));
+            super::notifications::text::show(ui, p, t, names, size, color, false, true);
         }
     };
     if places.is_empty() {
@@ -2960,7 +2961,7 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
 }
 
 /// Screen rects of a char range of a laid-out text, one per row.
-fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range<usize>) -> Vec<egui::Rect> {
+pub(crate) fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range<usize>) -> Vec<egui::Rect> {
     use egui::text::CCursor;
     let mut out: Vec<egui::Rect> = Vec::new();
     for i in range {
@@ -3162,7 +3163,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_places(ui, &p, &ratings, text, 12.0, p.ink),
+            |ui| text_with_places(ui, &p, &ratings, text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);

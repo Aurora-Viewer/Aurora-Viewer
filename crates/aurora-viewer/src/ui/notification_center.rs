@@ -782,6 +782,7 @@ fn presence_toasts(
                     continue;
                 };
                 let fade = ((now - since - PRESENCE) / PRESENCE_FADE).clamp(0.0, 1.0) as f32;
+                let mut name_hover = None;
                 let frame = ui
                     .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                         // laid out with a guess on its first frame: unseen, measured
@@ -806,7 +807,7 @@ fn presence_toasts(
                                     super::presence::Status::Offline
                                 };
                                 super::presence::paint_dot(ui.painter(), p, pic, status, p.panel);
-                                ui.add(egui::Label::new(RichText::new(&n.title).size(12.5).color(p.ink)).truncate());
+                                name_hover = cards::text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, false);
                             });
                         })
                         .response
@@ -818,6 +819,17 @@ fn presence_toasts(
                     continue;
                 }
                 let click = ui.interact(frame, egui::Id::new(("notification_presence", id)), egui::Sense::click());
+                if name_hover.is_some() {
+                    let click = click
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(aurora_i18n::tr!("common-view-profile"));
+                    if click.clicked()
+                        && let Some(target) = name_hover
+                    {
+                        cards::text::open(ctx, target);
+                    }
+                    continue;
+                }
                 if n.opens() {
                     let click = click
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -906,13 +918,12 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, e: &Entry) -> Opt
                         // keep room for the time
                         let w = (ui.available_width() - 40.0).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                            ui.add(egui::Label::new(RichText::new(&e.title).size(12.5).strong().color(p.ink)).truncate())
-                                .on_hover_text(&e.title);
+                            cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true);
                         });
                         ui.label(RichText::new(hhmm(e.time)).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
-                        ui.add(egui::Label::new(RichText::new(&e.body).size(12.0).color(p.muted)).wrap());
+                        cards::text::show(ui, p, &e.body, &e.name_links, 12.0, p.muted, false, true);
                     }
                     ui.horizontal(|ui| {
                         egui::Frame::new()

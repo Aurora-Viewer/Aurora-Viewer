@@ -959,6 +959,10 @@ ui-options-sit-when-away-help = The avatar sits on the ground when you become aw
 ui-options-quit-after-away = Quit after being away for
 ui-options-quit-after-away-help = Quit the viewer after this long away (0 = never)
 ui-notifications-accept = Accept
+ui-notifications-discard = Discard
+ui-notifications-mute-owner = Mute Owner
+world-inventory-offers-object = An object named "{ $object }" owned by { $owner } has given you this object:
+world-inventory-offers-own-object = Your object named "{ $object }" has given you this object:
 world-appearance-spare-attachment = Spare attachment
 world-inventory-demo-attachments = Attachments
 ui-land-options-newcomer-friendly = Newcomer-friendly

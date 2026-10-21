@@ -962,6 +962,10 @@ ui-options-sit-when-away-help = L'avatar s'assoit par terre quand vous passez en
 ui-options-quit-after-away = Quitter après une absence de
 ui-options-quit-after-away-help = Quitter le viewer après cette durée en absent (0 = jamais)
 ui-notifications-accept = Accepter
+ui-notifications-discard = Refuser
+ui-notifications-mute-owner = Ignorer le propriétaire
+world-inventory-offers-object = Un objet nommé « { $object } » appartenant à { $owner } vous a donné cet objet :
+world-inventory-offers-own-object = Votre objet nommé « { $object } » vous a donné cet objet :
 world-appearance-spare-attachment = Accessoire de rechange
 world-inventory-demo-attachments = Accessoires
 ui-land-options-newcomer-friendly = Accueil pour les nouveaux
