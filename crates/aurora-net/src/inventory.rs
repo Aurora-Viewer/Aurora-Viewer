@@ -1,8 +1,9 @@
-//! Inventory data model and `FetchInventoryDescendents2` client
+//! Inventory data model and AIS / legacy inventory clients
 //! (see `newview/llinventorymodelbackgroundfetch.cpp`).
 
 use aurora_llsd::{Llsd, llsd_map};
 use uuid::Uuid;
+pub mod ais;
 #[cfg(test)]
 mod gesture_tests;
 pub mod mesh_upload;
@@ -26,6 +27,8 @@ pub struct InvFolder {
     pub type_default: i32,
     pub version: i32,
     pub favorite: bool,
+    /// A complete AIS record, or explicit metadata, can replace this flag.
+    pub favorite_known: bool,
     pub thumbnail: Uuid,
 }
 
@@ -40,6 +43,8 @@ pub struct InvItem {
     pub asset_id: Uuid,
     pub flags: u32,
     pub favorite: bool,
+    /// UDP and older fetch responses may omit this metadata entirely.
+    pub favorite_known: bool,
     pub thumbnail: Uuid,
     pub base_mask: u32,
     pub owner_mask: u32,
@@ -149,6 +154,7 @@ pub fn folder_from_llsd(v: &Llsd) -> Option<InvFolder> {
         type_default,
         version: v["version"].as_i32(),
         favorite: v["favorite"]["toggled"].as_bool(),
+        favorite_known: v.has("favorite"),
         thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
     })
 }
@@ -158,7 +164,9 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
     if id.is_nil() {
         return None;
     }
-    let asset_id = if v.has("asset_id") {
+    let asset_id = if v.has("linked_id") {
+        v["linked_id"].as_uuid()
+    } else if v.has("asset_id") {
         v["asset_id"].as_uuid()
     } else {
         // LLInventoryItem::fromLLSD (llinventory.cpp): fixed XOR key, not a secret.
@@ -179,6 +187,7 @@ pub fn item_from_llsd(v: &Llsd) -> Option<InvItem> {
         asset_id,
         flags: v["flags"].as_u32(),
         favorite: v["favorite"]["toggled"].as_bool(),
+        favorite_known: v.has("favorite"),
         thumbnail: v["thumbnail"]["asset_id"].as_uuid(),
         base_mask: v["permissions"]["base_mask"].as_u32(),
         owner_mask: v["permissions"]["owner_mask"].as_u32(),
@@ -229,7 +238,19 @@ pub fn fetch_items_body(items: &[Uuid], owner: Uuid) -> Llsd {
 }
 
 pub fn parse_items_response(v: &Llsd) -> Vec<InvItem> {
-    v["items"].as_array().iter().filter_map(item_from_llsd).collect()
+    v["items"].as_array().iter().filter_map(legacy_item).collect()
+}
+
+fn legacy_item(v: &Llsd) -> Option<InvItem> {
+    let mut item = item_from_llsd(v)?;
+    item.favorite_known = item.favorite;
+    Some(item)
+}
+
+fn legacy_folder(v: &Llsd) -> Option<InvFolder> {
+    let mut folder = folder_from_llsd(v)?;
+    folder.favorite_known = folder.favorite;
+    Some(folder)
 }
 
 pub fn parse_fetch_response(v: &Llsd) -> Vec<FolderContents> {
@@ -240,8 +261,8 @@ pub fn parse_fetch_response(v: &Llsd) -> Vec<FolderContents> {
             folder_id: f["folder_id"].as_uuid(),
             owner_id: f["owner_id"].as_uuid(),
             version: f["version"].as_i32(),
-            folders: f["categories"].as_array().iter().filter_map(folder_from_llsd).collect(),
-            items: f["items"].as_array().iter().filter_map(item_from_llsd).collect(),
+            folders: f["categories"].as_array().iter().filter_map(legacy_folder).collect(),
+            items: f["items"].as_array().iter().filter_map(legacy_item).collect(),
         })
         .collect()
 }

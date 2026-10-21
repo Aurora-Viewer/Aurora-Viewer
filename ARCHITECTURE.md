@@ -679,7 +679,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `updater.rs`, `ui/update.rs` | Asynchronous controller and update window: notes, progress, restart and errors; manual check in Help / login, ignored tag and Ask / Automatic / Required only choice. Isolated synthetic demo through `AURORA_DEMO_UPDATE`. |
 | `ui/news.rs`, `ui/news/markdown.rs`, `links.rs` | News of the login screen: Markdown files `news/<language>.md` of the repository, one per interface language (fallback to the base language, then English). At startup, the last download kept in the cache (`news-<language>.json`) or, failing that, the files compiled into the viewer; then the file from `main`, downloaded in the background (bounded size, 20 news items, texts cut, `https://` links only), replaces them. Reloaded when the interface language changes; a failure leaves the panel as it is. No download in demo nor in the test installation of updates; `AURORA_NEWS_URL` reads a local server or another branch, without cache. `markdown.rs`: tolerant reading of the format (`## date — title`, text, link), HTML comments ignored |
 | `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/clipboard.rs`, `ui/inventory/delete.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventory: pure sorting / filters and per-generation view cache in `view.rs` (index, sorting and filtering in parallel with rayon), persistent commands and preferences in `controls.rs`, filtered tree including the parent folders, expansion states per tab, results drawn according to the visible area without a limit of 500 and status area of fixed height; scrolling on both axes, width of the names measured in the visible area then kept for the virtual results, commands adapted to small widths; menus per type, multiple selection with grouped add / detach, renaming in the row after creation or on request, folder windows limited to their descendants with a filter of their own, clipboard shared between windows and native Ctrl+C / Ctrl+X / Ctrl+V shortcuts according to the focus of the list in `clipboard.rs`, Delete and bottom-of-window trash through the shared deletion in `delete.rs`, properties and confirmations, previews / editing of notecards and scripts, reading of the animation statistics; image editor with six actions, tree picker and screenshot of the scene without the interface; decoding / resizing / encoding off the render thread and execution of the actions after the interface is drawn |
-| `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs` | Permission rules, moves / copies / links and offers, preparation of the Marketplace listings, default clothing assets and synthetic scenario; v2 inventory cache with full permissions |
+| `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs` | Permission rules, moves / copies / links and offers, preparation of the Marketplace listings, default clothing assets and synthetic scenario; v3 inventory cache with full permissions and AIS favorite metadata |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | AIS mutations with read-back, remapping of the UUIDs assigned by the server, UDP creations / copies and acknowledgements with expiry, saving of the documents through capabilities; AssetUpload / Xfer upload of clothing before the item is created; free thumbnails through InventoryThumbnailUpload, JPEG2000 POST then AIS and read-back |
 | `aurora-assets/src/j2k/encode.rs` | Memory-bounded OpenJPEG encoder, square RGB / RGBA thumbnails of 64 to 256 pixels and alpha preserved |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs (the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache, remembered password (OS vault) |
@@ -973,13 +973,22 @@ before continuing their work.
 The folders published directly in the inventory use the normalised name
 sent to the server, with the same rules of characters and length.
 
-Favorite mutations retain explicit metadata on the matching item/category
-returned by AIS, including records in `_embedded`, before reconciling the
-legacy parent listing (`AISUpdate::parseContent`). HTTP success alone is
-insufficient. Readback retries never repeat a write, and diagnostics log
-only field states. Inventory links read and toggle their original's favorite
-through `world/inventory/actions.rs`; the menu, filter, count and star share
-that rule (`get_is_favorite` / `toggle_favorite`).
+`inventory/ais.rs` reads agent folders and items through InventoryAPIv3,
+following `AISAPI::FetchCategoryChildren` / `FetchItem`. Complete folder
+snapshots include every child's favorite metadata, links and embedded
+originals, with bounded parallel HTTP reads. Favorite mutations verify the
+whole parent through AIS; overlaying only the last changed flag onto a
+legacy listing would erase earlier favorites in the same folder. Library
+and servers without AIS retain their legacy fetch paths. The model tracks
+whether favorite metadata is authoritative: partial/UDP/legacy records
+preserve known flags, while complete AIS records can explicitly clear them.
+Cache version 3 invalidates older snapshots once, reloading favorites that
+earlier builds may have lost from their local listing.
+Readback retries never repeat a write, and diagnostics log only field states.
+Inventory links read and modify their original's favorite through
+`world/inventory/actions.rs`; the menu, filter, count and star share that
+rule. Multi-selection sets a common state and deduplicates aliases,
+following `set_favorite` / `doToSelected` (llinventoryfunctions.cpp).
 
 `session/inventory_updates.rs` receives `UpdateCreateInventoryItem` and
 `BulkUpdateInventory` directly over HTTP, like Firestorm's `LLEventPollImpl`,

@@ -13482,6 +13482,10 @@ impl ApplicationHandler for App {
                         | "aurora-medium"
                         | "aurora-wide"
                         | "aurora-rights"
+                        | "favorites"
+                        | "favorites-multi"
+                        | "aurora-favorites"
+                        | "aurora-favorites-multi"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
                         | "show-original"
@@ -13521,6 +13525,23 @@ impl ApplicationHandler for App {
                             if let Some(window) = self.inventory_ui.windows.last_mut() {
                                 window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
                             }
+                        }
+                    }
+                    if view.contains("favorites") {
+                        let ids: Vec<_> = [8100, 8109, 8110].into_iter().map(uuid::Uuid::from_u128).collect();
+                        if view.ends_with("multi") {
+                            self.inventory_ui.show_original(&self.world.inventory, ids[0]);
+                            self.inventory_ui.selection.extend(ids.iter().copied());
+                            self.inventory_ui.demo_menu = Some(ids[0]);
+                        } else {
+                            // Run the same batch planner used by the menu.
+                            if let Ok(change) = crate::world::inventory::actions::set_favorites(&self.world.inventory, &ids, true) {
+                                let _ =
+                                    crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change);
+                            }
+                            self.inventory_ui.tab = 4;
+                            self.settings.inventory.show_favorites = true;
+                            self.inventory_ui.expand_all = Some(true);
                         }
                     }
                     if view == "recent" {

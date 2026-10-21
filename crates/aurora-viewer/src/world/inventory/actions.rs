@@ -100,12 +100,35 @@ pub fn is_favorite(inv: &Inventory, id: Uuid) -> bool {
 }
 
 pub fn toggle_favorite(inv: &Inventory, id: Uuid) -> Result<Mutation, String> {
-    let target = original(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
-    patch(
-        inv,
-        target,
-        aurora_net::inventory::operations::metadata_favorite(!is_favorite(inv, target)),
-    )
+    set_favorites(inv, &[id], !is_favorite(inv, id))
+}
+
+/// set_favorite / doToSelected (llinventoryfunctions.cpp): set every selected
+/// original to the requested state; aliases must not toggle it twice.
+pub fn set_favorites(inv: &Inventory, ids: &[Uuid], favorite: bool) -> Result<Mutation, String> {
+    let mut change = Mutation::default();
+    let mut seen = HashSet::new();
+    for id in ids {
+        let target = original(inv, *id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
+        if target == inv.root || library(inv, target) {
+            return Err(aurora_i18n::tr!("common-item-not-found").into());
+        }
+        // Legacy set_favorite also clears a stale flag attached to the link
+        // itself when removing its original from favorites.
+        if !favorite && *id != target && inv.items.get(id).is_some_and(|item| item.favorite) && seen.insert(*id) {
+            let update = patch(inv, *id, aurora_net::inventory::operations::metadata_favorite(false))?;
+            change.operations.extend(update.operations);
+            change.refresh.extend(update.refresh);
+        }
+        if seen.insert(target) && is_favorite(inv, target) != favorite {
+            let update = patch(inv, target, aurora_net::inventory::operations::metadata_favorite(favorite))?;
+            change.operations.extend(update.operations);
+            change.refresh.extend(update.refresh);
+        }
+    }
+    change.refresh.sort();
+    change.refresh.dedup();
+    Ok(change)
 }
 
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
@@ -367,6 +390,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("favorite") {
                         f.info.favorite = body["favorite"]["toggled"].as_bool();
+                        f.info.favorite_known = true;
                     }
                     if body.has("thumbnail") {
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
@@ -381,6 +405,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("favorite") {
                         it.favorite = body["favorite"]["toggled"].as_bool();
+                        it.favorite_known = true;
                     }
                     if body.has("thumbnail") {
                         it.thumbnail = body["thumbnail"]["asset_id"].as_uuid();

@@ -357,6 +357,7 @@ mod tests {
             type_default: t,
             version: 1,
             favorite: false,
+            favorite_known: false,
             thumbnail: Uuid::nil(),
         };
         let landmark = |id: u128, parent: u128| InvItem {

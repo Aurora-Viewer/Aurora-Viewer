@@ -220,6 +220,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
                 SettingsKind::Day => 2,
             },
             favorite: false,
+            favorite_known: false,
             creator: Uuid::nil(),
             created_at: 0,
             owner,

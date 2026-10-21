@@ -2719,6 +2719,24 @@ impl Session<'_> {
     }
 
     fn fetch_inventory(&mut self, folders: Vec<uuid::Uuid>, owner: uuid::Uuid, library: bool) {
+        if !library && let Some(cap) = self.main_cap("InventoryAPIv3") {
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            tokio::spawn(async move {
+                for chunk in folders.chunks(16) {
+                    match crate::inventory::ais::fetch_folders(&http, &cap, owner, chunk).await {
+                        Ok(contents) => {
+                            let _ = events.send(NetEvent::InventoryContents(contents));
+                        }
+                        Err(error) => {
+                            log::warn!("inventory fetch failed: {error}");
+                            let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                        }
+                    }
+                }
+            });
+            return;
+        }
         let cap_name = if library {
             "FetchLibDescendents2"
         } else {
@@ -2889,6 +2907,26 @@ impl Session<'_> {
     }
 
     fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid) {
+        if owner == self.agent_id()
+            && let Some(cap) = self.main_cap("InventoryAPIv3")
+        {
+            let http = self.sh.caps_http.clone();
+            let events = self.sh.events.clone();
+            tokio::spawn(async move {
+                for chunk in items.chunks(16) {
+                    match crate::inventory::ais::fetch_items(&http, &cap, owner, chunk).await {
+                        Ok(items) => {
+                            let _ = events.send(NetEvent::InventoryItems(items));
+                        }
+                        Err(error) => {
+                            log::warn!("item fetch failed: {error}");
+                            let _ = events.send(NetEvent::InventoryItemsFailed { items: chunk.to_vec() });
+                        }
+                    }
+                }
+            });
+            return;
+        }
         let Some(url) = self.main_cap("FetchInventory2") else {
             emit(self.sh, NetEvent::InventoryItemsFailed { items });
             return;

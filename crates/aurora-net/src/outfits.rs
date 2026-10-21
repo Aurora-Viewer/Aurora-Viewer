@@ -104,7 +104,7 @@ async fn request(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> R
 pub async fn set_favorite(
     http: &reqwest::Client,
     cap: &str,
-    fetch_cap: &str,
+    _fetch_cap: &str,
     owner: Uuid,
     item: Uuid,
     favorite: bool,
@@ -117,10 +117,9 @@ pub async fn set_favorite(
     let body = llsd_map! { "favorite" => value };
     let url = format!("{}/item/{item}", cap.trim_end_matches('/'));
     send(http.patch(url), &body).await?;
-    let response = crate::caps::post_llsd(http, fetch_cap, &crate::inventory::fetch_items_body(&[item], owner))
+    crate::inventory::ais::fetch_items(http, cap, owner, &[item])
         .await
-        .map_err(|_| aurora_i18n::tr!("outfits-could-not-read-the-pick-back-refresh-before-trying").to_owned())?;
-    crate::inventory::parse_items_response(&response)
+        .map_err(|_| aurora_i18n::tr!("outfits-could-not-read-the-pick-back-refresh-before-trying").to_owned())?
         .into_iter()
         .find(|it| it.id == item && it.favorite == favorite)
         .ok_or_else(|| aurora_i18n::tr!("outfits-the-server-did-not-confirm-the-pick-change").into())
@@ -175,7 +174,7 @@ pub(crate) mod tests {
                                     .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
                                     .and_then(|(_, v)| v.trim().parse::<usize>().ok())
                             })
-                            .expect("content length");
+                            .unwrap_or(0);
                         if bytes.len() >= pos + 4 + len {
                             break (pos + 4, len);
                         }
@@ -186,7 +185,14 @@ pub(crate) mod tests {
                     .next()
                     .expect("request line")
                     .to_owned();
-                requests.push((first, aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD request")));
+                requests.push((
+                    first,
+                    if len == 0 {
+                        Llsd::Undef
+                    } else {
+                        aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD request")
+                    },
+                ));
                 let body = aurora_llsd::to_xml(&reply);
                 let header = format!(
                     "HTTP/1.1 {status} Test\r\nContent-Type: application/llsd+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -317,9 +323,7 @@ pub(crate) mod tests {
                 (200, Llsd::new_map()),
                 (
                     200,
-                    llsd_map! { "items" => Llsd::Array(vec![
-                        llsd_map! { "item_id" => id, "type" => 6, "inv_type" => 6, "favorite" => value.clone() }
-                    ]) },
+                    llsd_map! { "item_id" => id, "parent_id" => Uuid::from_u128(1), "name" => "Object", "type" => 6, "inv_type" => 6, "favorite" => value.clone() },
                 ),
             ])
             .await;
@@ -330,7 +334,7 @@ pub(crate) mod tests {
             let requests = task.await.expect("server");
             assert!(requests[0].0.starts_with(&format!("PATCH /item/{id} ")));
             assert_eq!(requests[0].1["favorite"], value);
-            assert_eq!(requests[1].1["items"].at(0)["item_id"].as_uuid(), id);
+            assert!(requests[1].0.starts_with(&format!("GET /item/{id} ")));
         }
     }
 }

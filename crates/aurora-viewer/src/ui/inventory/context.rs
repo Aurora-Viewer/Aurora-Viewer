@@ -630,19 +630,31 @@ pub(super) fn show(
             {
                 st.dialog = Some(EditDialog::Ungroup(id));
             }
-            let favorite = rules::is_favorite(inv, id);
-            if menu::item_if(
-                ui,
-                p,
-                "star-filled",
-                if favorite {
-                    aurora_i18n::tr!("common-remove-from-favorites")
-                } else {
-                    aurora_i18n::tr!("common-add-to-favorites")
-                },
-                ready && single && target.is_some_and(|target| !rules::library(inv, target) && target != inv.root),
-            ) {
-                submit(st, actions, rules::toggle_favorite(inv, id));
+            let favorites_ready = ready
+                && ids
+                    .iter()
+                    .all(|id| rules::original(inv, *id).is_some_and(|target| !rules::library(inv, target) && target != inv.root));
+            for favorite in [true, false] {
+                if ids.iter().any(|id| rules::is_favorite(inv, *id) != favorite)
+                    && menu::item_if(
+                        ui,
+                        p,
+                        "star-filled",
+                        if favorite {
+                            aurora_i18n::tr!("common-add-to-favorites")
+                        } else {
+                            aurora_i18n::tr!("common-remove-from-favorites")
+                        },
+                        favorites_ready,
+                    )
+                {
+                    let change = if single {
+                        rules::toggle_favorite(inv, id)
+                    } else {
+                        rules::set_favorites(inv, &ids, favorite)
+                    };
+                    submit(st, actions, change);
+                }
             }
             if folder.is_none() {
                 menu::separator(ui, p);
@@ -1259,6 +1271,104 @@ mod tests {
                 assert!(
                     matches!(&actions[..], [InvAction::Appearance(Wear::WearItems { items, replace: false, point: 0 })] if *items == ids)
                 );
+            }
+        }
+    }
+    #[test]
+    fn favorites_menu_actions_include_every_selected_object() {
+        for remove in [false, true] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let p = crate::theme::Theme::default().palette();
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let ids: Vec<_> = [8100, 8109, 8110].into_iter().map(Uuid::from_u128).collect();
+            for (index, id) in ids.iter().enumerate() {
+                inv.items.get_mut(id).expect("object").favorite = remove || index == 0;
+            }
+            let mut state = InventoryUi {
+                selection: ids.iter().copied().collect(),
+                ..Default::default()
+            };
+            let facts = Facts {
+                agent: Uuid::nil(),
+                worn: HashSet::new(),
+                worn_labels: Default::default(),
+                worn_at: Default::default(),
+                points: Vec::new(),
+                appearance_busy: false,
+                active_gestures: Default::default(),
+                touchable: Default::default(),
+                names: Default::default(),
+            };
+            let mut actions = Vec::new();
+            let mut open = true;
+            let mut frame = |events| {
+                headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        menu::popup_at(
+                            ui.ctx(),
+                            egui::Id::new("favorite_batch_menu"),
+                            egui::pos2(500.0, 80.0),
+                            &mut open,
+                            &p,
+                            |ui| {
+                                show(
+                                    ui,
+                                    &p,
+                                    &inv,
+                                    ids[0],
+                                    &mut state,
+                                    &mut InventoryPreferences::default(),
+                                    &facts,
+                                    &mut actions,
+                                );
+                            },
+                        );
+                    },
+                ))
+            };
+            for _ in 0..4 {
+                let _ = frame(Vec::new());
+            }
+            let output = frame(Vec::new());
+            let label = if remove {
+                aurora_i18n::tr!("common-remove-from-favorites")
+            } else {
+                aurora_i18n::tr!("common-add-to-favorites")
+            };
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, label))
+                .expect("batch action")
+                + egui::vec2(4.0, 4.0);
+            for pressed in [true, false] {
+                let _ = frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("favorite action");
+            };
+            assert_eq!(change.operations.len(), if remove { 3 } else { 2 });
+            for operation in &change.operations {
+                let aurora_net::inventory::operations::Operation::Patch { id, folder: false, body } = operation else {
+                    panic!("favorite item patch");
+                };
+                assert!(ids.contains(id));
+                assert_eq!(body["favorite"]["toggled"].as_bool(), !remove);
             }
         }
     }

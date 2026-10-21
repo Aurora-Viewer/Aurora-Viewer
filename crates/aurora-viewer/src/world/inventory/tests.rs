@@ -27,6 +27,102 @@ fn id(n: u128) -> Uuid {
 }
 
 #[test]
+fn multiple_inventory_favorites_keep_independent_flags_and_batch_originals() {
+    let mut inv = fixture();
+    let mut selected = vec![id(8000), id(8001)];
+    for (offset, kind) in [1, 3, 5, 6, 10].into_iter().enumerate() {
+        for n in 0..2 {
+            let target = id(9000 + offset as u128 * 2 + n);
+            inv.add_items(vec![InvItem {
+                id: target,
+                parent: id(8000),
+                asset_type: kind,
+                ..Default::default()
+            }]);
+            selected.push(target);
+        }
+    }
+    inv.add_items(vec![InvItem {
+        id: id(9999),
+        parent: id(8001),
+        asset_type: 24,
+        asset_id: selected[2],
+        ..Default::default()
+    }]);
+    selected.push(id(9999));
+    // Duplicate aliases produce one PATCH of the original.
+    let change = set_favorites(&inv, &selected, true).expect("batch favorites");
+    assert_eq!(change.operations.len(), 12);
+    demo_mutate(&mut inv, id(2), change).expect("add all");
+    assert!(selected.iter().all(|id| is_favorite(&inv, *id)));
+    let remove = toggle_favorite(&inv, selected[2]).expect("remove just one");
+    demo_mutate(&mut inv, id(2), remove).expect("remove");
+    assert!(!is_favorite(&inv, selected[2]));
+    assert!(is_favorite(&inv, selected[3]), "same asset type remains a favorite");
+    // A mixed selection sets a common state, rather than toggling each row.
+    let change = set_favorites(&inv, &selected, true).expect("mixed add");
+    assert_eq!(change.operations.len(), 1);
+    demo_mutate(&mut inv, id(2), change).expect("restore");
+    inv.items.get_mut(&id(9999)).expect("link").favorite = true;
+    let change = set_favorites(&inv, &selected, false).expect("batch remove");
+    assert_eq!(change.operations.len(), 13, "also clean the stale link flag");
+    demo_mutate(&mut inv, id(2), change).expect("remove all");
+    assert!(selected.iter().all(|id| !is_favorite(&inv, *id)));
+    assert!(!inv.items[&id(9999)].favorite);
+}
+
+#[test]
+fn partial_inventory_updates_preserve_favorites_until_an_authoritative_removal() {
+    let mut inv = fixture();
+    inv.items.insert(
+        id(9000),
+        InvItem {
+            id: id(9000),
+            parent: id(8000),
+            favorite: true,
+            favorite_known: true,
+            ..Default::default()
+        },
+    );
+    inv.folders.get_mut(&id(8001)).expect("folder").info.favorite = true;
+    // Older inventory services and UDP notifications carry ordinary item
+    // fields without AIS metadata; a rename/move must not clear a favorite.
+    let legacy = aurora_net::inventory::parse_fetch_response(&aurora_llsd::llsd_map! {
+        "folders" => Llsd::Array(vec![aurora_llsd::llsd_map! {
+            "folder_id" => id(8000), "version" => 20,
+            "items" => Llsd::Array(vec![aurora_llsd::llsd_map! { "item_id" => id(9000), "parent_id" => id(8000), "name" => "Renamed", "favorite" => Llsd::Undef }]),
+            "categories" => Llsd::Array(vec![aurora_llsd::llsd_map! { "category_id" => id(8001), "parent_id" => id(8000), "name" => "Folder" }])
+        }])
+    });
+    inv.apply(legacy);
+    assert!(is_favorite(&inv, id(9000)));
+    assert!(is_favorite(&inv, id(8001)));
+    inv.server_updated(
+        Vec::new(),
+        vec![InvItem {
+            id: id(9000),
+            parent: id(8001),
+            name: "Moved".into(),
+            ..Default::default()
+        }],
+    );
+    assert!(is_favorite(&inv, id(9000)));
+    // A complete AIS record with no favorite is an explicit removal.
+    inv.add_items(vec![InvItem {
+        id: id(9000),
+        parent: id(8001),
+        favorite_known: true,
+        ..Default::default()
+    }]);
+    assert!(!is_favorite(&inv, id(9000)));
+    let mut folder = inv.folders[&id(8001)].info.clone();
+    folder.favorite = false;
+    folder.favorite_known = true;
+    inv.server_updated(vec![folder], Vec::new());
+    assert!(!is_favorite(&inv, id(8001)));
+}
+
+#[test]
 fn inventory_favorites_toggle_originals_through_item_and_folder_links() {
     for kind in [1, 3, 5, 6, 10] {
         let mut inv = fixture();
