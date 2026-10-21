@@ -65,6 +65,9 @@ pub mod env;
 pub mod experience;
 /// Meshes filling the geometry arena until it outgrows its buffers
 /// (AURORA_DEMO_GEOMETRY).
+/// Friendship offers in the middle of the screen (AURORA_DEMO_FRIEND_PROMPT).
+#[path = "demo_friend_prompt.rs"]
+pub mod friend_prompt;
 #[path = "demo_geometry.rs"]
 pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).

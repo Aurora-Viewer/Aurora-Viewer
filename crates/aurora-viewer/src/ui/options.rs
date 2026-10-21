@@ -1223,6 +1223,14 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
                 changed
             },
         );
+        // #465: an offer of friendship in the middle of the screen
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-friend-request-prompt"),
+            aurora_i18n::tr!("ui-options-friend-request-prompt-hint"),
+            |ui| toggle(ui, p, &mut s.friend_request_prompt),
+        );
         c |= row(
             ui,
             p,

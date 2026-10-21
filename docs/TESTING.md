@@ -2612,6 +2612,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
+| `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -3081,6 +3082,16 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_WINDOW_SIZE`; capture with `AURORA_FPS_LIMIT=60` at
   `790,1100,1390,1560,1610,2000`. A very low window (`1280,360`) shows only
   the newest toasts that fit.
+- **`AURORA_DEMO_FRIEND_PROMPT=1|later`**: the friendship offer in the
+  middle of the screen (#465), turned on for this run only (Preferences ›
+  Chat › Toasts is not changed). Nova offers friendship with a message at
+  frame 700, Tess without one at 760: Nova's card arrives (it rises, the
+  picture pops in, rings pulse, hearts rise for four seconds) and says one
+  more offer is waiting; neither offer gets a toast, both wait under the
+  bell. With `later`, Nova's offer is put off at 900 and Tess's card
+  arrives. Capture with `AURORA_FPS_LIMIT=60` at 800 (and 960 with
+  `later`), in `--language en` and `fr`; Preferences › Interface › "Reduce
+  animations" leaves the card still.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at

@@ -565,6 +565,11 @@ pub struct Settings {
     pub friends_online_in_chat: bool,
     /// Where those toasts stand with Aurora's notification center.
     pub presence_position: PresencePosition,
+    /// A friendship offer shows as a card in the middle of the screen
+    /// instead of a toast (`ui::friend_prompt`, #465; on, an Aurora
+    /// addition the Legacy Viewer does not have: its toast stays one switch
+    /// away).
+    pub friend_request_prompt: bool,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -1367,6 +1372,7 @@ impl Default for Settings {
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
+            friend_request_prompt: true,
             toast_im: true,
             toast_group_im: false,
             ims_in_notification_center: false,
