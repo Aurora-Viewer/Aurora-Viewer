@@ -184,6 +184,7 @@ impl App {
                 agent_id: self.world.agent_id,
                 group: self.world.groups.group(&parcel.group_id),
                 health: self.world.health,
+                frozen: self.world.frozen,
             }),
             // nothing known yet: the simulator decides
             _ => true,

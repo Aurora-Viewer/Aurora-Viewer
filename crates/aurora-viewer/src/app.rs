@@ -408,6 +408,8 @@ pub struct App {
     /// The Dev Toolbox: the window's state, and the app's (app/dev_toolbox.rs).
     dev_toolbox: ui::dev_toolbox::DevToolboxUi,
     toolbox: dev_toolbox::Toolbox,
+    /// The region console's command line (Advanced › Region console).
+    sim_console_input: ui::sim_console::ConsoleInput,
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
@@ -975,6 +977,7 @@ impl App {
             describe: None,
             dev_toolbox: Default::default(),
             toolbox: Default::default(),
+            sim_console_input: Default::default(),
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
@@ -2044,6 +2047,21 @@ impl App {
         }
         if let NetEvent::GroupCreated { group, success, message } = &ev {
             self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
+            return;
+        }
+        if let NetEvent::ServerReleaseNotes(page) = ev {
+            // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
+            match page {
+                Ok(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Err(_) => {
+                    self.world.notifications.push(
+                        crate::world::notifications::Kind::Alert,
+                        aurora_i18n::tr!("help-server-release-notes"),
+                        aurora_i18n::tr!("help-server-release-notes-failed").to_owned(),
+                        crate::world::notifications::Data::None,
+                    );
+                }
+            }
             return;
         }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
@@ -4268,6 +4286,11 @@ impl App {
         // the call's channel: its state and participants (the demo has no
         // voice server and simulates them)
         let server_type = main.map(|r| r.voice_server.clone()).unwrap_or_default();
+        // nearby voice moderation: who a moderator muted, and us
+        self.world.calls.nearby_moderated = self.voice.nearby_moderation();
+        if let Some(muted) = self.voice.take_moderation_notice() {
+            self.world.on_nearby_voice_moderated(muted);
+        }
         self.world.calls.voice_enabled = self.settings.audio.voice_enabled;
         self.world.calls.server_type = server_type;
         self.world.calls.reject_group = self.settings.audio.reject_group_calls;
@@ -5581,6 +5604,10 @@ impl App {
         }
         // Preferences › Privacy's account settings
         for c in self.world.user_info.take_commands() {
+            self.send(c);
+        }
+        // the region console's command lines
+        for c in self.world.sim_console.take_commands() {
             self.send(c);
         }
         // experiences' details and permissions (questions, profile)
@@ -8753,6 +8780,7 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
+            BarAction::ServerReleaseNotes => self.send(NetCommand::ServerReleaseNotes),
             BarAction::Import => {
                 self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
@@ -10060,6 +10088,8 @@ impl App {
                     double_click: self.double_click_action(),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
+                    release_notes: self.world.main_has_cap("ServerReleaseNotes"),
+                    region_console: self.world.main_has_cap("SimConsoleAsync"),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
@@ -10069,6 +10099,7 @@ impl App {
                             agent_id: self.world.agent_id,
                             group: self.world.groups.group(&parcel.group_id),
                             health: self.world.health,
+                            frozen: self.world.frozen,
                         }),
                         _ => Vec::new(),
                     },
@@ -11493,6 +11524,17 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                let region = self.world.region_name();
+                let available = self.world.main_has_cap("SimConsoleAsync");
+                ui::sim_console::show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.sim_console,
+                    &region,
+                    available,
+                    &mut self.world.sim_console,
+                    &mut self.sim_console_input,
+                );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
                 if self.panels.environment {

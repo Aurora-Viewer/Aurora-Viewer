@@ -278,6 +278,9 @@ pub enum CtxAction {
     /// Block / unblock only a resident's voice (LLAvatarActions::
     /// toggleMuteVoice: LLMute::flagVoiceChat).
     ToggleVoiceMute(Uuid),
+    /// Mute or unmute a resident (or everyone, None) in nearby voice for
+    /// everyone, as its moderator (LLFloaterIMContainer::moderateVoice).
+    ModerateVoice(Option<Uuid>, bool),
     /// Block / unblock only a resident's particles (LLMute::flagParticles,
     /// as the block list's "Block particles").
     ToggleParticleMute(Uuid),
@@ -559,6 +562,7 @@ pub fn voice_volume_of(world: &World, id: Uuid) -> Option<menu::VoiceVolume> {
         volume: world.calls.volume(&id),
         muted: world.voice_blocked(&id),
         can_mute: !crate::world::mutes::is_linden(&name),
+        moderated: world.nearby_voice_moderated(&id),
     })
 }
 
@@ -577,6 +581,24 @@ fn voice_edit(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume
         Some(menu::VoiceEdit::Volume(v)) => request(ui.ctx(), CtxAction::SetVoiceVolume(id, v)),
         Some(menu::VoiceEdit::ToggleMute) => request(ui.ctx(), CtxAction::ToggleVoiceMute(id)),
         None => {}
+    }
+    // menu_conversation.xml's moderator entries (ModerateVoiceMuteSelected /
+    // UnMuteSelected, ModerateVoiceMute / Unmute)
+    if let Some(moderated) = voice.moderated {
+        let (icon, label) = if moderated {
+            ("microphone-filled", aurora_i18n::tr!("ui-context-voice-unmute-for-everyone"))
+        } else {
+            ("microphone-off", aurora_i18n::tr!("ui-context-voice-mute-for-everyone"))
+        };
+        if menu::item(ui, p, icon, label) {
+            request(ui.ctx(), CtxAction::ModerateVoice(Some(id), !moderated));
+        }
+        if menu::item(ui, p, "microphone-off", aurora_i18n::tr!("ui-context-voice-mute-everyone")) {
+            request(ui.ctx(), CtxAction::ModerateVoice(None, true));
+        }
+        if menu::item(ui, p, "microphone-filled", aurora_i18n::tr!("ui-context-voice-unmute-everyone")) {
+            request(ui.ctx(), CtxAction::ModerateVoice(None, false));
+        }
     }
 }
 
@@ -1185,6 +1207,7 @@ mod tests {
                 volume: 0.5,
                 muted: false,
                 can_mute: true,
+                moderated: None,
             })
         );
         world.calls.set_volume(tess, 0.8);

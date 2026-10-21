@@ -77,8 +77,9 @@ pub fn from_text(message: &str) -> Option<Restart> {
 }
 
 /// ExtraParams in any LLSD serialization (LLSDSerialize::deserialize detects
-/// it); undefined when it cannot be read.
-fn parse_extra(extra: &[u8]) -> Llsd {
+/// it); undefined when it cannot be read. Also read for the freeze notices
+/// (freeze.rs).
+pub(crate) fn parse_extra(extra: &[u8]) -> Llsd {
     const BINARY: &[u8] = b"<? LLSD/Binary ?>";
     let end = extra.iter().rposition(|b| *b != 0).map_or(0, |i| i + 1);
     let start = extra[..end].iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(end);
@@ -94,7 +95,7 @@ fn parse_extra(extra: &[u8]) -> Llsd {
     match parsed {
         Ok(v) => v,
         Err(e) => {
-            log::warn!("region restart: its parameters could not be read ({e})");
+            log::warn!("alert: its parameters could not be read ({e})");
             Llsd::Undef
         }
     }

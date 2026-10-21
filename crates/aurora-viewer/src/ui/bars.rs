@@ -25,6 +25,8 @@ pub enum BarAction {
     ReportBug,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
     ReportAbuse,
+    /// Help › Server release notes (LLFloaterAbout's release notes link).
+    ServerReleaseNotes,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
     ShowHuds(bool),
@@ -169,6 +171,11 @@ pub struct StatusInfo<'a> {
     /// The agent's region allows setting home there
     /// (World.EnableSetHomeLocation).
     pub can_set_home: bool,
+    /// The agent's region has a ServerReleaseNotes page (Help › Server
+    /// release notes) and a SimConsoleAsync console (Advanced › Region
+    /// console, estate managers).
+    pub release_notes: bool,
+    pub region_console: bool,
     /// Firestorm's full-width bars (Preferences › Aurora) instead of the
     /// islands.
     pub classic_bars: bool,
@@ -845,6 +852,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 crate::ui::dev_toolbox::WINDOW,
                 &mut panels.dev_toolbox,
             );
+            // Develop › Consoles › Region Debug Console, for those the
+            // region gives the console to
+            if st.region_console {
+                let console = aurora_i18n::tr!("sim-console-menu");
+                flip_window(
+                    ui,
+                    p,
+                    "terminal-2",
+                    console,
+                    crate::ui::sim_console::WINDOW,
+                    &mut panels.sim_console,
+                );
+            }
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
@@ -856,6 +876,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("report-abuse-title")) {
             *action = BarAction::ReportAbuse;
+        }
+        if st.release_notes && menu::item(ui, p, "file-text-filled", aurora_i18n::tr!("help-server-release-notes")) {
+            *action = BarAction::ServerReleaseNotes;
         }
         menu::separator(ui, p);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());

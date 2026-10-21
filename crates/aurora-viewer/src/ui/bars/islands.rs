@@ -994,6 +994,8 @@ mod tests {
             marketplace: false,
             parcel_landmark: None,
             can_set_home: false,
+            release_notes: false,
+            region_console: false,
             classic_bars: false,
             islands: IslandsLook {
                 stretch,

@@ -56,6 +56,7 @@ pub mod region_alerts;
 pub mod region_restart;
 pub mod script_debug;
 pub mod search;
+pub mod sim_console;
 pub mod social;
 pub mod status;
 pub mod teleport_invites;
@@ -63,6 +64,7 @@ pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
 pub mod user_info;
+pub mod voice_moderation;
 pub mod windlight_presets;
 pub mod worldmap;
 
@@ -280,6 +282,9 @@ pub struct World {
     pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
+    /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
+    /// shown on the navigation bar while it lasts.
+    pub frozen: bool,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -377,6 +382,8 @@ pub struct World {
     pub set_home: home::SetHome,
     /// Preferences › Privacy's account settings kept by the grid.
     pub user_info: user_info::UserInfoState,
+    /// The region console of estate managers (SimConsoleAsync).
+    pub sim_console: sim_console::SimConsole,
     /// Experiences: details, questions waiting for them, permissions.
     pub experiences: experiences::Experiences,
     /// Teleport history (navigation bar back / forward).
@@ -543,6 +550,7 @@ impl World {
             local_assets: HashMap::new(),
             environment_answers: Vec::new(),
             health: 100.0,
+            frozen: false,
             social: social::Social::default(),
             contact_sets: Default::default(),
             recent: Default::default(),
@@ -598,6 +606,7 @@ impl World {
             maturity: maturity::MaturityPreference::default(),
             set_home: home::SetHome::default(),
             user_info: user_info::UserInfoState::default(),
+            sim_console: sim_console::SimConsole::default(),
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -1716,6 +1725,26 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
+            NetEvent::SimConsoleReply(reply) => {
+                self.sim_console.reply(reply);
+                None
+            }
+            NetEvent::VoiceModerationFailed { everyone } => {
+                // messageHttpPost's failure_msg is only logged; a notice
+                // says the click did nothing
+                let text = if everyone {
+                    aurora_i18n::tr!("world-mod-voice-moderation-all-failed")
+                } else {
+                    aurora_i18n::tr!("world-mod-voice-moderation-failed")
+                };
+                self.notifications.push(
+                    notifications::Kind::Alert,
+                    aurora_i18n::tr!("world-mod-voice-moderation"),
+                    text.to_owned(),
+                    notifications::Data::None,
+                );
+                None
+            }
             NetEvent::AgentMovementComplete { handle, position, look_at } => {
                 let region_changed = Some(handle) != self.main_region;
                 log::info!(
@@ -2507,6 +2536,37 @@ impl World {
             }
             NetEvent::Health(health) => {
                 self.health = health;
+                None
+            }
+            NetEvent::Frozen(frozen) => {
+                if frozen != self.frozen {
+                    log::info!("frozen: {frozen}");
+                }
+                self.frozen = frozen;
+                None
+            }
+            NetEvent::FreezeAlert(alert) => {
+                // the AvatarFrozen… notifications, worded in the viewer's language
+                let message = match &alert {
+                    aurora_net::freeze::Alert::Frozen { by, seconds: Some(s) } => {
+                        aurora_i18n::tr!("world-mod-frozen-for", name = by.as_str(), seconds = *s)
+                    }
+                    aurora_net::freeze::Alert::Frozen { by, seconds: None } => {
+                        aurora_i18n::tr!("world-mod-frozen", name = by.as_str())
+                    }
+                    aurora_net::freeze::Alert::Unfrozen { by } => aurora_i18n::tr!("world-mod-unfrozen", name = by.as_str()),
+                };
+                self.ui_sounds.push(UiSound::Alert);
+                self.system_message(message.clone());
+                let id = self.notifications.push(
+                    notifications::Kind::Alert,
+                    aurora_i18n::tr!("world-mod-simulator-alert"),
+                    message.clone(),
+                    notifications::Data::None,
+                );
+                let notice = self.notice_of(id, attention::Open::Notifications);
+                self.ask_attention(attention::Cause::Notice, notice);
+                self.alerts.push_back(message);
                 None
             }
             NetEvent::AgentParcel(info) => {
@@ -3551,6 +3611,12 @@ impl World {
 
     pub fn region_name(&self) -> String {
         self.main().map(|r| r.name.clone()).unwrap_or_default()
+    }
+
+    /// The agent's region granted the capability `name`
+    /// (LLViewerRegion::isCapabilityAvailable).
+    pub fn main_has_cap(&self, name: &str) -> bool {
+        self.main().is_some_and(|r| r.caps.contains_key(name))
     }
 
     /// `id` talked with us now (LLRecentPeople::add), here.

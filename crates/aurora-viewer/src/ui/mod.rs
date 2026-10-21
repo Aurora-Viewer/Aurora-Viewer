@@ -79,6 +79,7 @@ pub mod script_queue;
 pub mod scripts;
 pub mod search;
 pub mod shape;
+pub mod sim_console;
 pub mod sheet;
 pub mod skin;
 pub mod sky_beacons;
@@ -105,6 +106,8 @@ pub struct Panels {
     pub perf: bool,
     /// The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D).
     pub dev_toolbox: bool,
+    /// Advanced › Region console (SimConsoleAsync, estate managers).
+    pub sim_console: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -157,6 +160,7 @@ impl Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
             dev_toolbox: false,
+            sim_console: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,

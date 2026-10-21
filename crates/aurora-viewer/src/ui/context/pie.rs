@@ -549,6 +549,7 @@ mod tests {
                 volume: 0.5,
                 muted: false,
                 can_mute: true,
+                moderated: None,
             }),
             ..Facts::default()
         };
