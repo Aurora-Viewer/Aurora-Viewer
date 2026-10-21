@@ -4807,7 +4807,9 @@ What the inventory must show with these scenarios:
     demo preferences are affected.
   - `AURORA_DEMO_PLATE_HOVER=x,y` holds the pointer at x, y (points) for
     the plates only: the plate there shows full ("Expand a plate on hover",
-    on by default), a pill or a far name included; with `,click` the plate
+    on by default), a pill or a far name included, and its surface and
+    border are lighter (#473; the bounce on arrival is over before the
+    capture, try it with the mouse); with `,click` the plate
     is clicked at frame 700. `AURORA_DEMO_PLATE_CLICK=profile|im|tp|menu`
     sets "Click on a plate" for the run (not saved): the pointer turns into
     the hand of a clickable object over another avatar's plate, and the click

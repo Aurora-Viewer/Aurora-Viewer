@@ -118,6 +118,7 @@ impl App {
         self.plate_hover = self.plate_pointer(ctx).and_then(|pointer| plate_at(&self.name_tags, pointer));
         self.plates.hovered = self.plate_hover;
         self.plates.expand_on_hover = self.settings.plates_hover_expand;
+        self.plates.still = self.settings.reduce_motion;
         if self.demo
             && self.frame_count == DEMO_CLICK_FRAME
             && demo_pointer().is_some_and(|(_, click)| click)

@@ -640,7 +640,8 @@ pub struct Settings {
     /// (Preferences › Interface › Bumps, pushes & hits).
     pub collisions: crate::world::collisions::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
-    /// stand still (the region restart alert, for now).
+    /// stand still (the region restart alert, the rez effect, the bounce of
+    /// a hovered name plate).
     pub reduce_motion: bool,
     /// Preferences › Accessibility › Colour blindness: the interface's
     /// colours adapted to a colour vision deficiency (`crate::colorblind`),
