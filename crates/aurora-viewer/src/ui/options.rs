@@ -303,6 +303,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-image") => "photo-filled",
         value if value == aurora_i18n::text("ui-options-smoothness") => "dashboard-filled",
         value if value == aurora_i18n::text("ui-options-layout") => "layout-filled",
+        value if value == aurora_i18n::text("ui-options-slurl-links") => "link-filled",
         value if value == aurora_i18n::text("preferences-group-skin") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-size",
         value if value == aurora_i18n::text("ui-options-bundled-fonts") => "typography",
@@ -703,6 +704,41 @@ fn response_text(ui: &mut egui::Ui, p: &Palette, label: &str, text: &mut String)
 
 fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
     super::widgets::switch(ui, p, v).changed()
+}
+
+/// Whether the `secondlife:` links of web pages open in this viewer
+/// (`url_scheme.rs`): the system's state, not a saved setting, so outside
+/// the page's reset. The Legacy Viewer's installer asks it once.
+fn slurl_links(ui: &mut egui::Ui, p: &Palette) {
+    use crate::url_scheme::Handler;
+    group(ui, p, aurora_i18n::tr!("ui-options-slurl-links"), |ui| {
+        let handler = crate::url_scheme::handler();
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-slurl-links-open"),
+            aurora_i18n::tr!("ui-options-slurl-links-open-help"),
+            |ui| {
+                let mut on = handler == Handler::This;
+                if toggle(ui, p, &mut on) {
+                    let done = if on {
+                        crate::url_scheme::register()
+                    } else {
+                        crate::url_scheme::unregister()
+                    };
+                    if let Err(e) = done {
+                        log::warn!("secondlife links: {e}");
+                    }
+                    crate::url_scheme::refresh();
+                }
+                false
+            },
+        );
+        if let Handler::Other(program) = handler {
+            let note = aurora_i18n::tr!("ui-options-slurl-links-other", program = program);
+            ui.label(RichText::new(note).size(11.5).color(p.muted));
+        }
+    });
 }
 
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
@@ -2202,6 +2238,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     },
                 );
             });
+            if crate::url_scheme::supported() {
+                slurl_links(ui, p);
+            }
             group(ui, p, aurora_i18n::tr!("ui-options-layout"), |ui| {
                 c |= row(ui, p, aurora_i18n::tr!("bug-toolbar"), aurora_i18n::tr!("bug-toolbar-help"), |ui| {
                     toggle(ui, p, &mut s.show_bug_report)

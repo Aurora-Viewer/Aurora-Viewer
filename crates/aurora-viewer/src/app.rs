@@ -50,6 +50,7 @@ mod double_click;
 mod env_apply;
 mod env_day_editor;
 mod env_editor;
+mod external_links;
 mod gestures;
 mod hover_height;
 mod hover_tips;
@@ -507,6 +508,8 @@ pub struct App {
     /// After the link with the region was lost: the grid, the user and the
     /// place "Reconnect" goes back to (ui/link_health.rs).
     reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
+    /// SLURLs from outside and the command line's login (app/external_links.rs).
+    external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
     demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
@@ -785,6 +788,7 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
             && std::env::var_os("AURORA_DEMO_AO").is_none()
@@ -1050,6 +1054,7 @@ impl App {
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
+            external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
             remote_object: None,
@@ -1911,6 +1916,9 @@ impl App {
             if let Some((_, _, place)) = self.reconnect_place.take() {
                 log::info!("demo login: reconnect to {}", place.to_login_string());
             }
+            if let Some(l) = &self.login_form.start_slurl {
+                log::info!("demo login: start at {}", crate::external_url::place_label(l));
+            }
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
@@ -1930,7 +1938,14 @@ impl App {
             .take()
             .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
             .map(|(_, _, place)| place);
-        let start = reconnect.unwrap_or_else(|| match self.settings.start_location.as_str() {
+        // then a SLURL given from outside (LLStartUp::getStartSLURL)
+        let slurl = self.login_form.start_slurl.as_ref().map(|l| StartLocation::Region {
+            name: l.region.clone(),
+            x: l.pos.x.round() as u32,
+            y: l.pos.y.round() as u32,
+            z: l.pos.z.round() as u32,
+        });
+        let start = reconnect.or(slurl).unwrap_or_else(|| match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
                 name: self.settings.start_region.trim().to_owned(),
@@ -2551,6 +2566,8 @@ impl App {
                 self.login_form.adding = false;
                 self.login_form.add_return = None;
                 self.login_form.editing = false;
+                // a start SLURL serves one login
+                self.login_form.start_slurl = None;
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
@@ -10165,12 +10182,13 @@ impl App {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 }
                 self.sync_remembered_password();
-                let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
                 self.login_form.block_reason = self
                     .updater
                     .login_block_reason()
                     .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
+                self.command_line_login();
+                let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 a.login = ui::login::show(
                     ui,
                     &p,
@@ -14382,6 +14400,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.record_window_geometry();
         self.attention_window();
+        self.external_links();
         if self.gfx.as_ref().is_some_and(|g| !g.shown) {
             // Hidden windows may receive no RedrawRequested event. Keep
             // producing frames until a real presentation makes it visible,
