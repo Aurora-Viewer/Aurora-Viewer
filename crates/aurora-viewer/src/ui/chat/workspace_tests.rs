@@ -45,6 +45,8 @@ struct Harness {
     friends_pane: bool,
     people: crate::ui::people::PeopleUi,
     friends: crate::ui::people::FriendsSettings,
+    /// The window is open (its cross or Ctrl+W closes it).
+    open: bool,
 }
 
 impl Harness {
@@ -71,6 +73,7 @@ impl Harness {
             friends_pane: false,
             people: Default::default(),
             friends: Default::default(),
+            open: true,
         }
     }
 
@@ -91,6 +94,7 @@ impl Harness {
             friends_pane,
             people,
             friends,
+            open,
         } = self;
         let radar = crate::world::radar::Radar::default();
         let mut radar_settings = crate::ui::people::RadarSettings::default();
@@ -103,8 +107,9 @@ impl Harness {
             now: 0.0,
             pics: &pics,
         };
-        let mut open = true;
         frames.run(events, |ui| {
+            // as the app does before any window
+            crate::ui::close_key::begin(ui.ctx());
             actions.extend(show(
                 ui.ctx(),
                 &p,
@@ -124,7 +129,7 @@ impl Harness {
                     settings: friends,
                     images: &pics,
                 }),
-                &mut open,
+                open,
             ));
         })
     }
@@ -261,6 +266,71 @@ fn a_narrow_window_has_a_rail() {
     let entry = h.rect(entry_id(Pinned::Conversation(BOB)));
     assert!(entry.width() <= super::super::sidebar::RAIL, "{entry:?}");
     assert!(texts.iter().all(|t| t.source != "hello from Bob"), "no sub-line in the rail");
+}
+
+/// A key pressed and released (a key egui still holds down comes back as
+/// a repeat).
+fn key(key: egui::Key, modifiers: egui::Modifiers) -> Vec<egui::Event> {
+    [true, false]
+        .map(|pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        })
+        .to_vec()
+}
+
+/// Alt + the arrows go round the conversations with the keyboard in the
+/// window, the field of the one shown taking it; Ctrl+W closes the one
+/// shown and shows the next, then on the nearby chat closes the window
+/// (#651), in both styles of the list.
+#[test]
+fn the_keyboard_goes_round_the_conversations_and_closes_them() {
+    for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
+        let mut h = Harness::new(style);
+        h.st.conv_focus_request = true;
+        h.settle();
+        let order = if style.workspace() {
+            super::super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::super::keys::legacy_order(&h.world, &h.st)
+        };
+        assert_eq!(order.len(), 3, "{style:?}: the nearby chat, Jane and Bob");
+        let (first, last) = (order[1], order[2]);
+        let field = |tab| egui::Id::new(("conv_input", tab));
+        h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+        h.settle();
+        assert_eq!(h.st.selected, first, "{style:?}");
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(first))), "{style:?}: its field has the keyboard");
+        h.frame(key(egui::Key::ArrowUp, egui::Modifiers::ALT));
+        h.settle();
+        assert_eq!(h.st.selected, None, "{style:?}");
+        // round the list
+        h.frame(key(egui::Key::ArrowLeft, egui::Modifiers::ALT));
+        h.settle();
+        assert_eq!(h.st.selected, last, "{style:?}");
+        // the keyboard elsewhere: the camera's keys
+        h.frames.ctx.memory_mut(|m| m.surrender_focus(field(last)));
+        h.frame(key(egui::Key::ArrowRight, egui::Modifiers::ALT));
+        h.settle();
+        assert_eq!(h.st.selected, last, "{style:?}");
+        // Ctrl+W: the conversation shown, the one above it shown next (it was the last)
+        h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
+        h.settle();
+        let closed = last.expect("a conversation");
+        assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == closed)), "{style:?}");
+        assert_eq!(h.st.selected, first, "{style:?}");
+        assert!(h.open, "{style:?}");
+        // on the nearby chat, the window
+        h.st.selected = None;
+        h.settle();
+        h.actions.clear();
+        h.frame(key(egui::Key::W, egui::Modifiers::COMMAND));
+        assert!(!h.open, "{style:?}");
+        assert!(!h.actions.iter().any(|a| matches!(a, ConvAction::Close(_))), "{style:?}");
+    }
 }
 
 /// The kinds of the column's sections.

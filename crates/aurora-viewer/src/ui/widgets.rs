@@ -431,7 +431,9 @@ impl<'a> Floater<'a> {
                     bottom: if minimized && !compact { 4 } else { 10 },
                 }
             });
-        let mut close = false;
+        // Ctrl+W closes it as its cross does, when it is the frontmost
+        let mut close = super::close_key::take(ctx, egui::Id::new(self.id));
+        super::close_key::shown(ctx, egui::Id::new(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
