@@ -4215,7 +4215,7 @@ impl App {
                     crate::world::notifications::Data::None,
                 );
             } else {
-                // the name is a link to the resident, as in Firestorm's chat;
+                // the name is a link to the resident, as in the Legacy Viewer's chat;
                 // checked for keywords as nearby chat (FSRadar::radarAlertMsg)
                 let name = ui::people::radar_name(&self.world, &id, s.name_format);
                 self.world
