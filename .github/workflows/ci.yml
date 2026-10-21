@@ -102,9 +102,11 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # dead code is the Windows job's: Windows-only helpers (system probes,
+      # toasts…) build here without their callers
       - name: Clippy (warnings are errors)
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || steps.cache.outputs.cache-hit != 'true')
-        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --profile ci --workspace --all-targets --locked -- -D warnings -A dead-code
       - name: Tests of the media host and the updater
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
         run: cargo test --profile ci --locked -p aurora-media -p aurora-updater
