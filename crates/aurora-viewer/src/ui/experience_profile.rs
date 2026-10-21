@@ -13,6 +13,9 @@ use egui::{RichText, Vec2};
 /// Shows the profile of `world.experiences.profile`; returns the change asked for.
 pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World) -> Option<(uuid::Uuid, ExperiencePermissionChange)> {
     let id = world.experiences.profile?;
+    if std::mem::take(&mut world.experiences.profile_raise) {
+        super::widgets::expand_floater(ctx, "experience_profile");
+    }
     let screen = ctx.content_rect();
     let mut open = true;
     let mut change = None;

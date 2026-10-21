@@ -433,7 +433,7 @@ impl ProfileUi {
                 }
                 if std::mem::take(&mut w.raise) {
                     let win_id = aurora::window_id(w.id);
-                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&win_id)));
+                    widgets::expand_floater(ctx, &win_id);
                 }
                 world.social.avatar_names.want(&w.id);
                 let mut env = aurora::Env {
@@ -468,7 +468,7 @@ impl ProfileUi {
             }
             let win_id = format!("profile-{}", w.id);
             if std::mem::take(&mut w.raise) {
-                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&win_id)));
+                widgets::expand_floater(ctx, &win_id);
             }
             let name = world.social.name_of(&w.id);
             world.social.avatar_names.want(&w.id);

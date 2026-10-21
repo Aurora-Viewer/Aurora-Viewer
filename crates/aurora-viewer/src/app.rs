@@ -5915,6 +5915,9 @@ impl App {
                 self.world.anti_spam.blocks().len()
             );
         }
+        if self.demo {
+            self.demo_uri_restore();
+        }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
         }
@@ -13219,8 +13222,9 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.open(crate::demo::DEMO_NOVA);
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 380.0), egui::vec2(640.0, 380.0));
-                if let Some(link) = crate::demo::applinks_click(&text) {
-                    self.run_app_link(link);
+                if let Some(action) = crate::demo::applinks_action(&text) {
+                    self.prepare_uri_restore_demo(&action);
+                    self.on_ctx_action(action);
                 }
             }
             // AURORA_DEMO_SLURLS: place links of every rating, and one unknown

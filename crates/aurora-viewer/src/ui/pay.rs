@@ -82,6 +82,7 @@ pub enum PayAction {
 #[derive(Default)]
 pub struct PayUi {
     pub payee: Option<Payee>,
+    raise: bool,
     /// sLastAmount: the last amount paid, shared by every Pay window.
     last_amount: i32,
     /// A payment to an object waiting for its confirmation in Firestorm's
@@ -103,6 +104,7 @@ pub fn needs_confirmation(confirm: bool, threshold: i32, amount: i32, balance: O
 impl PayUi {
     /// LLFloaterPayUtil::payDirectly: a resident, or a group with `group`.
     pub fn open(&mut self, id: Uuid, group: bool) {
+        self.raise = true;
         self.payee = Some(Payee {
             id,
             group,
@@ -202,6 +204,9 @@ impl PayUi {
     ) -> Vec<PayAction> {
         let mut actions = Vec::new();
         if self.payee.is_some() {
+            if std::mem::take(&mut self.raise) {
+                widgets::expand_floater(ctx, if classic { "pay_classic" } else { "pay" });
+            }
             if classic {
                 self.show_classic(ctx, p, world, confirm, threshold, &mut actions);
             } else {

@@ -54,6 +54,7 @@ pub struct MarketWeb<'a> {
 #[derive(Default)]
 pub struct MarketplaceUi {
     pub open: bool,
+    raise: bool,
     /// The browser keeps the shared profile, like Firestorm's: a sign-in on
     /// the site lasts from one opening to the next.
     web: WebView,
@@ -75,6 +76,7 @@ impl MarketplaceUi {
     pub fn open(&mut self, url: Option<String>) {
         log::info!("marketplace window opened ({})", if url.is_some() { "link" } else { "home" });
         self.open = true;
+        self.raise = true;
         self.wanted = url;
         if self.wanted.is_none() {
             // openMarketplace: back home only when elsewhere
@@ -92,6 +94,9 @@ impl MarketplaceUi {
             return;
         }
         let work = super::layout::work_area(ctx);
+        if std::mem::take(&mut self.raise) {
+            widgets::expand_floater(ctx, WINDOW);
+        }
         let size = DEFAULT_SIZE.min(work.size() - Vec2::splat(2.0 * super::layout::GAP)).max(MIN_SIZE);
         let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("marketplace-title"), default.min, default.size());

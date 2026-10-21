@@ -335,7 +335,7 @@ impl GroupProfileUi {
     /// The profile window on group `id`.
     fn profile_window(&mut self, ctx: &egui::Context, c: &mut Ctx, env: &Env, id: Uuid, actions: &mut Vec<GroupAction>) {
         if std::mem::take(&mut self.raise) {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)));
+            widgets::expand_floater(ctx, WINDOW);
         }
         let member = c.world.groups.is_member(&id);
         let forgotten = c.world.group_data.get(&id).is_none();

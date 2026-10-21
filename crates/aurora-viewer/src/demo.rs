@@ -1586,10 +1586,31 @@ pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
 /// clicked once the scene is set.
 pub fn applinks_click(text: &str) -> Option<crate::slapp::AppLink> {
     let kind = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
+    let kind = kind.split(':').next()?;
     let needle = format!("secondlife:///app/{}/", kind.trim());
     let at = text.find(&needle)?;
     let url = text[at..].split([' ', ']']).next()?;
     crate::slapp::parse(url)
+}
+
+/// Additional URI destinations for the minimize/reopen scenario.
+pub fn applinks_action(text: &str) -> Option<crate::ui::context::CtxAction> {
+    use crate::slapp::{AgentVerb, AppLink};
+    use crate::ui::context::CtxAction;
+    let mode = std::env::var("AURORA_DEMO_APPLINKS").ok()?;
+    Some(match mode.split(':').next()? {
+        "profile" => CtxAction::Profile(DEMO_LOUP),
+        "pay" => CtxAction::AppLink(AppLink::Agent {
+            id: DEMO_LOUP,
+            verb: AgentVerb::Pay,
+        }),
+        "report" => CtxAction::AppLink(AppLink::Agent {
+            id: DEMO_LOUP,
+            verb: AgentVerb::ReportAbuse,
+        }),
+        "inventory-show" => CtxAction::AppLink(AppLink::InventoryShow),
+        _ => CtxAction::AppLink(applinks_click(text)?),
+    })
 }
 
 /// What the map would have taught before `slurls_scene`: the lagoon and

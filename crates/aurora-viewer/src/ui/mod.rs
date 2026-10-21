@@ -103,6 +103,9 @@ pub mod viewfinder;
 pub mod voice_tag;
 pub mod web_view;
 pub mod widgets;
+
+#[cfg(test)]
+mod uri_restore_tests;
 pub mod worldmap;
 
 /// Which floating panels are open.
