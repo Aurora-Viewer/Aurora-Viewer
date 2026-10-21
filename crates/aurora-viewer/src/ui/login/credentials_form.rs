@@ -46,7 +46,7 @@ pub fn content(
             ui.add_space(10.0);
             let user = if new_account {
                 let mut options = Account::from_settings(settings, form.remember_mfa, None);
-                if super::carousel::controls(ui, &mut options) {
+                if super::carousel::controls(ui, &mut options, &mut form.start_slurl) {
                     let changed_grid = options.uri != settings.login_uri();
                     options.apply(settings);
                     if changed_grid {

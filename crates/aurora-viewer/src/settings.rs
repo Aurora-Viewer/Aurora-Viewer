@@ -189,6 +189,60 @@ impl PlateClick {
     ];
 }
 
+/// The look of the world's hover tips (Preferences › Interface): a bubble
+/// next to the pointer, a card with the details and the actions (the
+/// default), or a fixed readout in a corner.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HoverTipForm {
+    Bubble,
+    #[default]
+    Card,
+    Readout,
+}
+
+impl HoverTipForm {
+    pub const ALL: [HoverTipForm; 3] = [HoverTipForm::Bubble, HoverTipForm::Card, HoverTipForm::Readout];
+}
+
+/// The world's hover tips: what is under the pointer, object, avatar or
+/// land (the Legacy Viewer's "Hover Tips" of panel_preferences_UI.xml).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct HoverTips {
+    /// ShowHoverTips (View › Show Tips, Ctrl+Shift+T). Off by default, the
+    /// human's choice (2026-10-21); the Legacy Viewer's is on.
+    pub enabled: bool,
+    pub form: HoverTipForm,
+    /// ShowAllObjectHoverTip: every object, not only those that can be
+    /// touched, paid, bought or have media (off, as in the Legacy Viewer).
+    pub all_objects: bool,
+    /// ShowLandHoverTip: the parcel under the pointer (off, as in the
+    /// Legacy Viewer).
+    pub land: bool,
+    /// FSShowGroupTitleInTooltip: the avatars' group title above their name.
+    pub group_titles: bool,
+    /// Seconds the pointer rests before a tip shows (ObjectInspectorTooltipDelay
+    /// and AvatarInspectorTooltipDelay, one setting here).
+    pub delay: f32,
+}
+
+/// The longest hover tip delay of the preferences' slider (the Legacy
+/// Viewer's delay sliders go to 6 s).
+pub const MAX_HOVER_TIP_DELAY: f32 = 6.0;
+
+impl Default for HoverTips {
+    fn default() -> Self {
+        HoverTips {
+            enabled: false,
+            form: HoverTipForm::Card,
+            all_objects: false,
+            land: false,
+            group_titles: true,
+            delay: 0.35,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GridChoice {
     SecondLife,
@@ -420,6 +474,9 @@ pub struct Settings {
     pub confirm_payments: bool,
     /// FSPaymentConfirmationThreshold: 200 L$ by default.
     pub payment_confirm_threshold: i32,
+    /// The money tracker records the payments even while it is closed
+    /// (FSAlwaysTrackPayments, off by default).
+    pub always_track_payments: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -508,6 +565,11 @@ pub struct Settings {
     pub friends_online_in_chat: bool,
     /// Where those toasts stand with Aurora's notification center.
     pub presence_position: PresencePosition,
+    /// A friendship offer shows as a card in the middle of the screen
+    /// instead of a toast (`ui::friend_prompt`, #465; on, an Aurora
+    /// addition the Legacy Viewer does not have: its toast stays one switch
+    /// away).
+    pub friend_request_prompt: bool,
     /// Toast of an IM or conference message out of sight (EnableIMChatPopups, on).
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
@@ -557,6 +619,8 @@ pub struct Settings {
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
     /// Commands).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
+    /// Keyword alerts in chat and IMs (FSKeyword*, Preferences › Chat).
+    pub keywords: crate::keywords::KeywordSettings,
     pub name_tag_distance: f32,
     pub show_own_name_tag: bool,
     pub show_friend_name_tags: bool,
@@ -580,6 +644,9 @@ pub struct Settings {
     pub classic_profiles: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
+    /// The Legacy Viewer's money tracker (floater_fs_money_tracker.xml)
+    /// instead of the Aurora look of `ui/money_tracker/aurora.rs`.
+    pub legacy_money_tracker: bool,
     /// The full-width top and bottom bars of Firestorm instead of the glass
     /// islands of `ui/bars/islands.rs`.
     pub classic_bars: bool,
@@ -618,6 +685,11 @@ pub struct Settings {
     /// The effect by default since it covers every loading path (no face
     /// stays grey: `rez_still_grey` in object.wgsl).
     pub classic_rez_effect: bool,
+    /// The world's hover tips (Preferences › Interface).
+    pub hover_tips: HoverTips,
+    /// The Legacy Viewer's plain text hover tips with their "i" button
+    /// instead of Aurora's bubble, card or readout (`ui/hover_tips.rs`).
+    pub classic_hover_tips: bool,
     /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
     /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
     /// fade slowly. Off, the default until it has been tried on the grid:
@@ -627,6 +699,9 @@ pub struct Settings {
     /// elapsed time, including late loading and edit release. Off by default:
     /// the Legacy Viewer starts at asset activation and suspends during edits.
     pub synchronize_animations: bool,
+    /// Experimental filing of new deliveries by the sender's legacy name.
+    pub sort_received_items: bool,
+    pub received_items_since: i64,
     /// Project standing feet onto support and adapt landing recovery to its
     /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
     pub ground_avatar_feet: bool,
@@ -658,6 +733,9 @@ pub struct Settings {
     /// The lines of the Conversations window (`ui/chat/bubbles.rs` or the
     /// legacy lines).
     pub chat_style: ChatStyle,
+    /// Pictures and videos under the links of the Conversations window
+    /// (Preferences › Chat; `link_preview.rs`).
+    pub link_previews: crate::link_preview::Settings,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
     /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
@@ -1256,6 +1334,7 @@ impl Default for Settings {
             region_check_texture_heights: true,
             confirm_payments: true,
             payment_confirm_threshold: 200,
+            always_track_payments: false,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,
@@ -1299,6 +1378,7 @@ impl Default for Settings {
             toast_friends_online: true,
             friends_online_in_chat: false,
             presence_position: PresencePosition::TopRight,
+            friend_request_prompt: true,
             toast_im: true,
             toast_group_im: false,
             ims_in_notification_center: false,
@@ -1319,6 +1399,7 @@ impl Default for Settings {
             object_im_filter: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
+            keywords: Default::default(),
             name_tag_distance: 64.0,
             show_own_name_tag: true,
             show_friend_name_tags: true,
@@ -1328,6 +1409,7 @@ impl Default for Settings {
             classic_name_tags: false,
             classic_profiles: false,
             classic_pay_window: false,
+            legacy_money_tracker: false,
             classic_bars: false,
             place_bar_stretch: true,
             place_bar_rights_text: false,
@@ -1340,8 +1422,12 @@ impl Default for Settings {
             classic_restart_alert: false,
             classic_chat_lines: false,
             classic_rez_effect: false,
+            hover_tips: HoverTips::default(),
+            classic_hover_tips: false,
             predict_own_motion: false,
             synchronize_animations: false,
+            sort_received_items: false,
+            received_items_since: 0,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
@@ -1356,6 +1442,7 @@ impl Default for Settings {
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
+            link_previews: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,
@@ -1918,6 +2005,11 @@ impl Settings {
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
         self.font_scale = self.font_scale.clamp(0.8, 1.4);
+        self.hover_tips.delay = if self.hover_tips.delay.is_finite() {
+            self.hover_tips.delay.clamp(0.0, MAX_HOVER_TIP_DELAY)
+        } else {
+            HoverTips::default().delay
+        };
         self.shadow_quality = self.shadow_quality.min(4);
         self.antialiasing = self.antialiasing.min(6);
         self.reflection_probes = self.reflection_probes.min(3);

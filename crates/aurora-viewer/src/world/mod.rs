@@ -35,6 +35,7 @@ pub mod land;
 pub mod land_buy;
 pub mod landmarks;
 pub mod lookat;
+pub mod lsl_syntax;
 pub mod lslbridge;
 pub mod marketplace;
 pub mod maturity;
@@ -52,11 +53,13 @@ pub mod place_details;
 pub mod place_snapshots;
 pub mod profiles;
 pub mod radar;
+pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
 pub mod region_restart;
 pub mod script_debug;
 pub mod search;
+pub mod sim_console;
 pub mod social;
 pub mod status;
 pub mod teleport_invites;
@@ -64,6 +67,7 @@ pub mod terrain;
 pub mod tphistory;
 pub mod transcripts;
 pub mod user_info;
+pub mod voice_moderation;
 pub mod windlight_presets;
 pub mod worldmap;
 
@@ -99,6 +103,8 @@ pub struct Region {
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
     pub avatar_hover_height: bool,
+    /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
+    pub lsl_syntax_id: Option<Uuid>,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -281,6 +287,9 @@ pub struct World {
     pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
+    /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
+    /// shown on the navigation bar while it lasts.
+    pub frozen: bool,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -322,6 +331,7 @@ pub struct World {
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
+    pub received_items: received_items::ReceivedItems,
     /// Playing animations per avatar / animesh.
     pub animations: HashMap<Uuid, Vec<PlayingAnimation>>,
     /// AO remapping applies only to our rendered pose, never movement signals.
@@ -363,6 +373,8 @@ pub struct World {
     pub estate: estate::Estate,
     /// Media texture overrides and parcel media messages (media module).
     pub media: crate::media::WorldMedia,
+    /// The account's media filter list and its questions (media and music).
+    pub media_filter: crate::media::filter::MediaFilter,
     /// Avatar profiles and the ids still to request.
     pub profiles: profiles::Profiles,
     /// Notification center (bell).
@@ -378,6 +390,10 @@ pub struct World {
     pub set_home: home::SetHome,
     /// Preferences › Privacy's account settings kept by the grid.
     pub user_info: user_info::UserInfoState,
+    /// The region console of estate managers (SimConsoleAsync).
+    pub sim_console: sim_console::SimConsole,
+    /// The LSL syntax ids already asked for this session (lsl_syntax.rs).
+    lsl_syntax_asked: HashSet<Uuid>,
     /// Experiences: details, questions waiting for them, permissions.
     pub experiences: experiences::Experiences,
     /// Teleport history (navigation bar back / forward).
@@ -546,6 +562,7 @@ impl World {
             local_assets: HashMap::new(),
             environment_answers: Vec::new(),
             health: 100.0,
+            frozen: false,
             social: social::Social::default(),
             contact_sets: Default::default(),
             recent: Default::default(),
@@ -560,6 +577,7 @@ impl World {
             active_gestures: Default::default(),
             inventory_cache: None,
             inventory_edits: Vec::new(),
+            received_items: Default::default(),
             animations: HashMap::new(),
             ao_pose: None,
             own_locomotion: Default::default(),
@@ -580,6 +598,7 @@ impl World {
             land: land::Land::default(),
             estate: estate::Estate::default(),
             media: Default::default(),
+            media_filter: Default::default(),
             tp_history: tphistory::TeleportHistory::default(),
             tp_storage: Default::default(),
             tp_record: None,
@@ -601,6 +620,8 @@ impl World {
             maturity: maturity::MaturityPreference::default(),
             set_home: home::SetHome::default(),
             user_info: user_info::UserInfoState::default(),
+            sim_console: sim_console::SimConsole::default(),
+            lsl_syntax_asked: HashSet::new(),
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -1375,6 +1396,7 @@ impl World {
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
             avatar_hover_height: false,
+            lsl_syntax_id: None,
             materials_limits: Default::default(),
             max_tasks: 0,
         })
@@ -1642,6 +1664,7 @@ impl World {
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));
+                self.media_filter = crate::media::filter::MediaFilter::load(account.join(crate::media::filter::FILE));
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
@@ -1689,8 +1712,10 @@ impl World {
                 avatar_hover_height,
                 materials_rate,
                 materials_max,
+                lsl_syntax_id,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
+                r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -1718,6 +1743,30 @@ impl World {
             }
             NetEvent::UserInfoUpdateFailed(error) => {
                 self.on_user_info_update_failed(error);
+                None
+            }
+            NetEvent::LslSyntax { id, keywords } => {
+                self.on_lsl_syntax(id, keywords);
+                None
+            }
+            NetEvent::SimConsoleReply(reply) => {
+                self.sim_console.reply(reply);
+                None
+            }
+            NetEvent::VoiceModerationFailed { everyone } => {
+                // messageHttpPost's failure_msg is only logged; a notice
+                // says the click did nothing
+                let text = if everyone {
+                    aurora_i18n::tr!("world-mod-voice-moderation-all-failed")
+                } else {
+                    aurora_i18n::tr!("world-mod-voice-moderation-failed")
+                };
+                self.notifications.push(
+                    notifications::Kind::Alert,
+                    aurora_i18n::tr!("world-mod-voice-moderation"),
+                    text.to_owned(),
+                    notifications::Data::None,
+                );
                 None
             }
             NetEvent::AgentMovementComplete { handle, position, look_at } => {
@@ -2207,6 +2256,7 @@ impl World {
                 };
                 let title = format!("{object_name} ({owner_name})");
                 let id = self.notifications.push(notifications::Kind::Script, title, message, data);
+                self.link_object_notification(id, object_id, &object_name, &owner_name);
                 // LLScriptFloater ("script_floater") opening
                 self.ui_sounds.push(UiSound::ScriptFloaterOpen);
                 // FSFlashOnScriptDialog and the ScriptDialog notification
@@ -2249,7 +2299,7 @@ impl World {
                         owner_name = owner_name.to_string(),
                         value0 = lines.join("\n• ").to_string()
                     );
-                    self.notifications.push(
+                    let id = self.notifications.push(
                         notifications::Kind::Permissions,
                         aurora_i18n::tr!("world-mod-requested-permissions"),
                         body,
@@ -2261,6 +2311,7 @@ impl World {
                             experience: None,
                         },
                     );
+                    self.link_object_notification(id, task_id, &object_name, &owner_name);
                 }
                 None
             }
@@ -2279,15 +2330,20 @@ impl World {
                 None
             }
             NetEvent::LoadUrl {
-                object_name, message, url, ..
+                object_name,
+                object_id,
+                message,
+                url,
             } => {
                 let body = format!("{message}\n{url}");
-                self.notifications.push(
+                let id = self.notifications.push(
                     notifications::Kind::Url,
                     aurora_i18n::tr!("extra-offers-a-link", object_name = object_name.to_string()),
                     body,
                     notifications::Data::Url(url),
                 );
+                self.notifications
+                    .link_name(id, object_name, notifications::NameTarget::Object(object_id));
                 None
             }
             NetEvent::ScriptTeleportRequest {
@@ -2316,10 +2372,12 @@ impl World {
                     self.social.avatar_names.on_legacy(id, &first, &last);
                     self.social.names.insert(id, social::format_name(&first, &last));
                 }
+                self.refresh_task_inventory_offers();
                 None
             }
             NetEvent::DisplayNames { names, bad_ids, max_age } => {
                 self.social.avatar_names.on_display_names(&names, &bad_ids, max_age);
+                self.refresh_task_inventory_offers();
                 None
             }
             NetEvent::DisplayNamesFailed(ids) => {
@@ -2328,6 +2386,7 @@ impl World {
             }
             NetEvent::DisplayNameUpdate { name, old_display_name } => {
                 let notice = self.social.avatar_names.on_update(&name, &old_display_name);
+                self.refresh_task_inventory_offers();
                 log::info!("display name update: {notice}");
                 if self.social.avatar_names.notify_changes {
                     self.system_message(notice);
@@ -2517,6 +2576,37 @@ impl World {
                 self.health = health;
                 None
             }
+            NetEvent::Frozen(frozen) => {
+                if frozen != self.frozen {
+                    log::info!("frozen: {frozen}");
+                }
+                self.frozen = frozen;
+                None
+            }
+            NetEvent::FreezeAlert(alert) => {
+                // the AvatarFrozen… notifications, worded in the viewer's language
+                let message = match &alert {
+                    aurora_net::freeze::Alert::Frozen { by, seconds: Some(s) } => {
+                        aurora_i18n::tr!("world-mod-frozen-for", name = by.as_str(), seconds = *s)
+                    }
+                    aurora_net::freeze::Alert::Frozen { by, seconds: None } => {
+                        aurora_i18n::tr!("world-mod-frozen", name = by.as_str())
+                    }
+                    aurora_net::freeze::Alert::Unfrozen { by } => aurora_i18n::tr!("world-mod-unfrozen", name = by.as_str()),
+                };
+                self.ui_sounds.push(UiSound::Alert);
+                self.system_message(message.clone());
+                let id = self.notifications.push(
+                    notifications::Kind::Alert,
+                    aurora_i18n::tr!("world-mod-simulator-alert"),
+                    message.clone(),
+                    notifications::Data::None,
+                );
+                let notice = self.notice_of(id, attention::Open::Notifications);
+                self.ask_attention(attention::Cause::Notice, notice);
+                self.alerts.push_back(message);
+                None
+            }
             NetEvent::AgentParcel(info) => {
                 self.parcel_name = info.name.clone();
                 if !info.is_group_owned {
@@ -2646,6 +2736,7 @@ impl World {
             }
             NetEvent::GroupProfile(g) => {
                 self.search.groups.insert(g.id, *g);
+                self.refresh_task_inventory_offers();
                 None
             }
             NetEvent::ProductInfo(types) => {
@@ -2877,6 +2968,11 @@ impl World {
             };
             self.ask_attention(attention::Cause::Mention, Some(notice));
         }
+        // process_chat_from_simulator: every line but ours and the debug
+        // channel's (FSKeywords::chatContainsKeyword)
+        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) {
+            self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -2936,6 +3032,8 @@ impl World {
                 .complete(&im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
+            let open = attention::Open::Conversation(im.from_agent_id);
+            self.keyword_alert(im.from_agent_id, &from, &im.message, false, open);
             // a message kept while we were offline says when it was sent
             // ("(Saved <date>)" before the text, llimprocessing.cpp)
             let text = if im.offline {
@@ -2985,6 +3083,11 @@ impl World {
             open: attention::Open::NearbyChat,
         };
         self.ask_attention(cause, Some(notice));
+        // an object's IM is checked as nearby chat (processNewMessage,
+        // IM_FROM_TASK)
+        if im.dialog == 19 {
+            self.keyword_alert(im.from_agent_id, &from, &text, true, attention::Open::NearbyChat);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -3026,18 +3129,15 @@ impl World {
                     },
                 );
             }
-            d::INVENTORY_OFFERED | d::TASK_INVENTORY_OFFERED => {
+            d::TASK_INVENTORY_OFFERED => self.on_task_inventory_offer(im, &from),
+            d::INVENTORY_OFFERED => {
                 self.ui_sounds.push(UiSound::InventoryOffer);
-                let task = im.dialog == d::TASK_INVENTORY_OFFERED;
                 let asset_type = im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1);
                 // A resident's offer is in our inventory before we answer:
                 // prefetch it (inventory_offer_handler, llimprocessing.cpp),
                 // or it stays unseen until the next login. A folder cannot be
                 // fetched by id; it lands in the root, reloaded instead.
-                let object = (!task)
-                    .then(|| notifications::offered_object(&im.binary_bucket))
-                    .flatten()
-                    .map_or(Uuid::nil(), |(_, id)| id);
+                let object = notifications::offered_object(&im.binary_bucket).map_or(Uuid::nil(), |(_, id)| id);
                 if !object.is_nil() {
                     self.groups.out.push(if asset_type == notifications::AT_CATEGORY {
                         aurora_net::NetCommand::FetchInventory {
@@ -3062,13 +3162,12 @@ impl World {
                         tx: im.session_id,
                         asset_type,
                         object,
-                        task,
+                        task: false,
+                        task_offer: None,
                     },
                 );
-                // UserGiveItem logs to IM, an object's offer does not
-                if !task {
-                    self.on_inventory_offer_card(im, &from, asset_type, entry);
-                }
+                self.on_inventory_offer_card(im, &from, asset_type, entry);
+                self.received_items.offer(im, entry);
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for
@@ -3152,6 +3251,19 @@ impl World {
                 | d::MESSAGEBOX
         );
         let last = self.notifications.last_id();
+        if last != before
+            && !matches!(
+                im.dialog,
+                d::TASK_INVENTORY_OFFERED | d::GROUP_NOTICE | d::FROM_TASK_AS_ALERT | d::GOTO_URL | d::MESSAGEBOX
+            )
+        {
+            let target = if im.from_group || im.dialog == d::GROUP_INVITATION {
+                notifications::NameTarget::Group(im.from_agent_id)
+            } else {
+                notifications::NameTarget::Avatar(im.from_agent_id)
+            };
+            self.notifications.link_name(last, im.from_name.clone(), target);
+        }
         let notice = if told && last != before {
             self.notice_of(last, attention::Open::Notifications)
         } else {
@@ -3180,6 +3292,30 @@ impl World {
             .find(|f| !f.library && f.info.type_default == i32::from(asset_type))
             .map_or(inv.root, |f| f.info.id);
         self.group_data.save_attachment(group, folder);
+    }
+
+    fn link_object_notification(&mut self, id: u64, object: Uuid, name: &str, owner_name: &str) {
+        use notifications::NameTarget;
+        self.notifications.link_name(id, name, NameTarget::Object(object));
+        if let Some(owner) = self
+            .objects
+            .index_of_uuid(&object)
+            .and_then(|i| self.objects.get(i))
+            .map(|o| o.owner_id)
+        {
+            let group = self.groups.groups.iter().any(|g| g.id == owner)
+                || self.land.group_names.contains_key(&owner)
+                || self.search.groups.contains_key(&owner);
+            self.notifications.link_name(
+                id,
+                owner_name,
+                if group {
+                    NameTarget::Group(owner)
+                } else {
+                    NameTarget::Avatar(owner)
+                },
+            );
+        }
     }
 
     /// The Calling Cards folder, sent with a friendship offer
@@ -3217,7 +3353,7 @@ impl World {
             experience = name.clone(),
             questions = lines.join("\n• ")
         );
-        self.notifications.push(
+        let id = self.notifications.push(
             notifications::Kind::Permissions,
             aurora_i18n::tr!("world-experiences-question-title", name = name.clone()),
             body,
@@ -3228,11 +3364,14 @@ impl World {
                 region: q.region,
                 experience: Some(notifications::ExperiencePrompt {
                     id: q.experience,
-                    name,
-                    object_name: q.object_name,
+                    name: name.clone(),
+                    object_name: q.object_name.clone(),
                 }),
             },
         );
+        self.notifications
+            .link_name(id, name, notifications::NameTarget::Experience(q.experience));
+        self.link_object_notification(id, q.task, &q.object_name, owner);
         // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
         self.ui_sounds.push(UiSound::ScriptFloaterOpen);
     }
@@ -3286,6 +3425,15 @@ impl World {
                 .insert(prompt.id, aurora_net::experience::ExperiencePermission::Allowed);
         }
         if matches!(r, notifications::Response::Block) {
+            if let Some(notifications::Data::Inventory {
+                from,
+                task: true,
+                task_offer: Some(offer),
+                ..
+            }) = &data
+            {
+                return (self.mute_task_inventory_owner(id, *from, offer), None);
+            }
             if let Some(notifications::Data::Dialog {
                 object,
                 object_name,
@@ -3367,12 +3515,13 @@ impl World {
             .iter()
             .find(|n| n.id == id && matches!(n.data, notifications::Data::Inventory { task: false, .. }))
             .map(|n| notifications::outcome_of(n, &r));
-        let out = self.notifications.respond(
+        let mut out = self.notifications.respond(
             id,
             r,
             |t| folders.iter().find(|(ft, _)| *ft == t).map(|(_, f)| *f).unwrap_or(root),
             calling,
         );
+        self.received_items.answer(id, &mut out.0);
         if let Some((asset_type, object)) = discard {
             self.discard_offer(asset_type, object);
         }
@@ -3456,7 +3605,9 @@ impl World {
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
             if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
-                self.notifications.push_presence(id, n.clone(), online);
+                let notification = self.notifications.push_presence(id, n.clone(), online);
+                self.notifications
+                    .link_name(notification, self.social.name_of(&id), notifications::NameTarget::Avatar(id));
             }
             // FriendOnlineOffline for the system (never during login)
             if self.notifications.started && !self.mutes.is_muted_id(&id) {
@@ -3470,6 +3621,9 @@ impl World {
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
             if self.notifications.toasts.presence_in_chat {
+                // checked as nearby chat (LLAvatarTracker::processNotify)
+                let from = self.social.name_of(&id);
+                self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 self.system_message(n);
             }
         }
@@ -3518,7 +3672,16 @@ impl World {
         } else {
             (line.from.clone(), text)
         };
-        self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
+        let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
+        self.notifications
+            .link_name(notification, self.social.name_of(&from), notifications::NameTarget::Avatar(from));
+        if m.kind == ImKind::Group {
+            self.notifications.link_name(
+                notification,
+                self.session_title(&m.session),
+                notifications::NameTarget::Group(m.session),
+            );
+        }
     }
 
     /// A friend's or a message's card clicked: it is acknowledged (gone from
@@ -3573,6 +3736,12 @@ impl World {
 
     pub fn region_name(&self) -> String {
         self.main().map(|r| r.name.clone()).unwrap_or_default()
+    }
+
+    /// The agent's region granted the capability `name`
+    /// (LLViewerRegion::isCapabilityAvailable).
+    pub fn main_has_cap(&self, name: &str) -> bool {
+        self.main().is_some_and(|r| r.caps.contains_key(name))
     }
 
     /// `id` talked with us now (LLRecentPeople::add), here.
@@ -5803,6 +5972,7 @@ mod motion_tests {
                 avatar_hover_height: enabled,
                 materials_rate: None,
                 materials_max: None,
+                lsl_syntax_id: Uuid::nil(),
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

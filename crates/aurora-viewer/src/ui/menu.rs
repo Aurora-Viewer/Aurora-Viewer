@@ -589,6 +589,10 @@ pub struct VoiceVolume {
     pub muted: bool,
     /// The mute button works: not a Linden (the inspector greys it).
     pub can_mute: bool,
+    /// Whether a moderator muted them in nearby voice, when we moderate it
+    /// (LLNearbyVoiceModeration::isNearbyChatModerator): the "for
+    /// everyone" entries under the row.
+    pub moderated: Option<bool>,
 }
 
 /// A change made on a [`voice_volume`] row.

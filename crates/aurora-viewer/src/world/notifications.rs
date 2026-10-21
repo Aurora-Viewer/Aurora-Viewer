@@ -4,6 +4,7 @@
 //! (LLOfferInfo, LLScriptFloater, LLPanelNotification in Firestorm).
 
 use super::notification_history::{self as history, Entry, Follow, Look, Outcome};
+pub use super::notification_history::{NameLink, NameTarget};
 use aurora_net::NetCommand;
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -125,6 +126,8 @@ pub enum Data {
         /// (nil for objects' offers, delivered once accepted).
         object: Uuid,
         task: bool,
+        /// Object/owner details for ObjectGiveItem (the sender id is the owner).
+        task_offer: Option<super::inventory_offers::TaskOffer>,
     },
     Group {
         group: Uuid,
@@ -198,6 +201,7 @@ pub struct Notification {
     pub kind: Kind,
     pub title: String,
     pub body: String,
+    pub name_links: Vec<NameLink>,
     pub read: bool,
     pub data: Data,
     /// llTextBox reply being typed.
@@ -274,6 +278,7 @@ impl Notification {
             look: self.kind.look(),
             title: self.title.clone(),
             body: self.body.clone(),
+            name_links: self.name_links.clone(),
             outcome,
             follow,
         }
@@ -398,6 +403,7 @@ impl Notifications {
             kind,
             title: title.into(),
             body: body.into(),
+            name_links: Vec::new(),
             read: false,
             data,
             text: String::new(),
@@ -414,6 +420,22 @@ impl Notifications {
             }
         }
         self.next
+    }
+
+    /// Names are paired with protocol ids at their source, never guessed
+    /// from arbitrary message text or sent to an external browser.
+    pub fn link_name(&mut self, id: u64, name: impl Into<String>, target: NameTarget) {
+        let name = name.into();
+        let (NameTarget::Avatar(key) | NameTarget::Group(key) | NameTarget::Experience(key) | NameTarget::Object(key)) = target;
+        if name.is_empty() || key.is_nil() {
+            return;
+        }
+        if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            let link = NameLink { name, target };
+            if !n.name_links.contains(&link) {
+                n.name_links.push(link);
+            }
+        }
     }
 
     /// A friend's online / offline toast: never kept in the list, so that a
@@ -493,6 +515,7 @@ impl Notifications {
         let id = self.push(Kind::of_look(e.look), e.title.clone(), e.body.clone(), Data::None);
         if let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
             n.time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(e.time);
+            n.name_links = e.name_links.clone();
         }
         id
     }
@@ -573,6 +596,7 @@ impl Notifications {
                         asset_type,
                         object,
                         task,
+                        ..
                     } => {
                         let keep = !object.is_nil();
                         let folder = if keep { folder_for(*asset_type) } else { Uuid::nil() };
@@ -754,6 +778,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn identity_links_survive_history_storage_and_restore() {
+        let mut list = Notifications::default();
+        let id = list.push(Kind::Info, "Demo group", "Jane Doe", Data::None);
+        list.link_name(id, "Demo group", NameTarget::Group(Uuid::from_u128(1)));
+        list.link_name(id, "Jane Doe", NameTarget::Avatar(Uuid::from_u128(2)));
+        let entry = list.list[0].history_entry(Outcome::Read);
+        let saved = serde_json::to_string(&entry).expect("history serialized");
+        let loaded: Entry = serde_json::from_str(&saved).expect("history parsed");
+        let restored = list.restore(&loaded);
+        assert_eq!(
+            list.list.iter().find(|n| n.id == restored).expect("restored").name_links,
+            entry.name_links
+        );
+        let old: Entry = serde_json::from_str(r#"{"time":1,"title":"Old notification"}"#).expect("old history");
+        assert!(old.name_links.is_empty());
+    }
+
+    #[test]
     fn dialog_button_reply_and_removal() {
         let mut n = Notifications::default();
         let obj = Uuid::new_v4();
@@ -792,6 +834,7 @@ mod tests {
                 asset_type: 6,
                 object: Uuid::nil(),
                 task: false,
+                task_offer: None,
             },
         );
         let (cmds, _) = n.respond(id, Response::Accept, |t| if t == 6 { folder } else { Uuid::nil() }, Uuid::nil());
@@ -861,6 +904,7 @@ mod tests {
                 asset_type: 6,
                 object,
                 task: false,
+                task_offer: None,
             },
         );
         n.push_presence(from, "Orion is online.", true);

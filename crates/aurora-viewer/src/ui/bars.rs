@@ -25,6 +25,8 @@ pub enum BarAction {
     ReportBug,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
     ReportAbuse,
+    /// Help › Server release notes (LLFloaterAbout's release notes link).
+    ServerReleaseNotes,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
     ShowHuds(bool),
@@ -110,6 +112,8 @@ pub enum BarAction {
     /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
     ToggleInterface,
     HideInterface,
+    /// World › World tooltips: the three checks, as they are now.
+    HoverTips(HoverTipsMenu),
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -169,6 +173,11 @@ pub struct StatusInfo<'a> {
     /// The agent's region allows setting home there
     /// (World.EnableSetHomeLocation).
     pub can_set_home: bool,
+    /// The agent's region has a ServerReleaseNotes page (Help › Server
+    /// release notes) and a SimConsoleAsync console (Advanced › Region
+    /// console, estate managers).
+    pub release_notes: bool,
+    pub region_console: bool,
     /// Firestorm's full-width bars (Preferences › Aurora) instead of the
     /// islands.
     pub classic_bars: bool,
@@ -195,6 +204,16 @@ pub struct StatusInfo<'a> {
     pub interface_hidden: bool,
     pub interface_keys: String,
     pub health: HealthMenu,
+    pub hover_tips: HoverTipsMenu,
+}
+
+/// World › World tooltips: the Legacy Viewer's Show Tips, Show Land
+/// Tooltips and Show Tips On All Objects.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct HoverTipsMenu {
+    pub enabled: bool,
+    pub land: bool,
+    pub all_objects: bool,
 }
 
 /// What Me › Avatar health needs: our avatar (its skeleton resets) and the
@@ -556,6 +575,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("currency-menu")) {
             *action = BarAction::BuyCurrency;
         }
+        // menu_viewer.xml: Avatar › Money Tracker
+        let tracker = aurora_i18n::tr!("money-tracker-title");
+        if menu::check(ui, p, "receipt-filled", tracker, panels.money_tracker, true) {
+            super::money_tracker::toggle(ui.ctx(), &mut panels.money_tracker);
+        }
         menu::separator(ui, p);
         if menu::item(ui, p, "home-filled", aurora_i18n::tr!("common-go-home")) {
             *action = BarAction::TeleportHome;
@@ -745,6 +769,47 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 }
             }
         });
+        // menu_viewer.xml: Show Info › Show Tips (Ctrl+Shift+T), Show Land
+        // Tooltips, Show Tips On All Objects
+        menu::submenu(ui, p, "pointer-filled", aurora_i18n::tr!("ui-options-hover-tips"), true, |ui| {
+            let mut tips = st.hover_tips;
+            let mut changed = menu::check(
+                ui,
+                p,
+                "pointer-filled",
+                aurora_i18n::tr!("ui-bars-hover-tips-show"),
+                tips.enabled,
+                true,
+            );
+            if changed {
+                tips.enabled = !tips.enabled;
+            }
+            if menu::check(
+                ui,
+                p,
+                "map-pin-filled",
+                aurora_i18n::tr!("ui-options-hover-tips-land"),
+                tips.land,
+                tips.enabled,
+            ) {
+                tips.land = !tips.land;
+                changed = true;
+            }
+            if menu::check(
+                ui,
+                p,
+                "cube",
+                aurora_i18n::tr!("ui-bars-hover-tips-all-objects"),
+                tips.all_objects,
+                tips.enabled,
+            ) {
+                tips.all_objects = !tips.all_objects;
+                changed = true;
+            }
+            if changed {
+                *action = BarAction::HoverTips(tips);
+            }
+        });
         menu::submenu(ui, p, "sunset-2-filled", aurora_i18n::tr!("common-environment"), true, |ui| {
             // back to the region / parcel EEP cycle, in real time
             let shared = !st.local_env;
@@ -845,6 +910,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 crate::ui::dev_toolbox::WINDOW,
                 &mut panels.dev_toolbox,
             );
+            // Develop › Consoles › Region Debug Console, for those the
+            // region gives the console to
+            if st.region_console {
+                let console = aurora_i18n::tr!("sim-console-menu");
+                flip_window(
+                    ui,
+                    p,
+                    "terminal-2",
+                    console,
+                    crate::ui::sim_console::WINDOW,
+                    &mut panels.sim_console,
+                );
+            }
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
@@ -860,6 +938,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // menu_viewer.xml: Help › Bumps, Pushes & Hits, after the reports
         let bumps = aurora_i18n::tr!("bumps-title");
         flip_window(ui, p, "bounce-right-filled", bumps, super::bumps::WINDOW, &mut panels.bumps);
+        if st.release_notes && menu::item(ui, p, "file-text-filled", aurora_i18n::tr!("help-server-release-notes")) {
+            *action = BarAction::ServerReleaseNotes;
+        }
         menu::separator(ui, p);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
         menu::info(ui, p, "info-circle-filled", &version);

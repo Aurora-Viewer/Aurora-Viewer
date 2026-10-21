@@ -83,12 +83,12 @@ fn metadata(bytes: &[u8]) -> Metadata {
 }
 
 #[derive(Default)]
-pub(super) struct ImageView {
+pub(crate) struct ImageView {
     pub display: Display,
     pub image: Option<egui::TextureHandle>,
     pub dimensions: Option<(u32, u32)>,
     pub export: Option<bool>,
-    pub metadata: Metadata,
+    pub(super) metadata: Metadata,
     pub message: String,
     pixels: Option<Arc<aurora_render::preview::Image>>,
     revision: Option<crate::scene::textures::PreviewRevision>,
@@ -237,17 +237,7 @@ pub(super) fn toolbar(
     actions: &mut Vec<Action>,
 ) {
     ui.horizontal_wrapped(|ui| {
-        let mut mode = usize::from(display.actual_size);
-        widgets::segmented(
-            ui,
-            p,
-            &mut mode,
-            &[
-                (aurora_i18n::tr!("resource-preview-fit"), true),
-                (aurora_i18n::tr!("resource-preview-actual"), true),
-            ],
-        );
-        display.actual_size = mode == 1;
+        display_mode(ui, p, display);
         if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("resource-preview-refresh"), true) {
             actions.push(Action::RefreshTexture(item.asset_id));
         }
@@ -268,6 +258,27 @@ pub(super) fn toolbar(
                 });
         });
     });
+    ratio_row(ui, p, dimensions, display);
+}
+
+/// Shared by inventory textures and profile photos; one image pixel per
+/// physical screen pixel in native mode, including on scaled displays.
+pub(crate) fn display_mode(ui: &mut egui::Ui, p: &Palette, display: &mut Display) {
+    let mut mode = usize::from(display.actual_size);
+    widgets::segmented(
+        ui,
+        p,
+        &mut mode,
+        &[
+            (aurora_i18n::tr!("resource-preview-fit"), true),
+            (aurora_i18n::tr!("resource-preview-actual"), true),
+        ],
+    );
+    display.actual_size = mode == 1;
+}
+
+/// The ratio choices and the picture's dimensions.
+fn ratio_row(ui: &mut egui::Ui, p: &Palette, dimensions: Option<(u32, u32)>, display: &mut Display) {
     ui.horizontal_wrapped(|ui| {
         ui.add_enabled_ui(!display.actual_size, |ui| {
             widgets::switch_labeled(ui, p, &mut display.keep_ratio, aurora_i18n::tr!("resource-preview-keep-ratio"));
@@ -295,39 +306,58 @@ pub(super) fn toolbar(
                 }
             });
         });
-        ui.label(
-            RichText::new(dimensions.map_or_else(
-                || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
-                |(width, height)| {
-                    aurora_i18n::tr!(
-                        "resource-preview-dimensions",
-                        width = width.to_string(),
-                        height = height.to_string()
-                    )
-                },
-            ))
-            .small()
-            .color(p.muted),
+        ui.add(
+            egui::Label::new(
+                RichText::new(dimensions.map_or_else(
+                    || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
+                    |(width, height)| {
+                        aurora_i18n::tr!(
+                            "resource-preview-dimensions",
+                            width = width.to_string(),
+                            height = height.to_string()
+                        )
+                    },
+                ))
+                .small()
+                .color(p.muted),
+            )
+            .wrap_mode(egui::TextWrapMode::Extend),
         );
     });
 }
 
-/// The picture, in all the room `ui` has.
+/// The ratio choices and the picture in all the room left in `ui`; the
+/// picture's rect once drawn.
+pub(crate) fn show_image(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    image: Option<&egui::TextureHandle>,
+    dimensions: Option<(u32, u32)>,
+    display: &mut Display,
+    drag_item: Option<Uuid>,
+) -> Option<egui::Rect> {
+    ratio_row(ui, p, dimensions, display);
+    picture(ui, p, image, dimensions, display, drag_item)
+}
+
+/// The picture, in all the room `ui` has; its rect once drawn. `drag_item`
+/// is the inventory item its drag carries.
 pub(super) fn picture(
     ui: &mut egui::Ui,
     p: &Palette,
-    item: &aurora_net::inventory::InvItem,
     image: Option<&egui::TextureHandle>,
     dimensions: Option<(u32, u32)>,
     display: &Display,
-) {
+    drag_item: Option<Uuid>,
+) -> Option<egui::Rect> {
     let available = Vec2::new(ui.available_width(), ui.available_height().max(24.0));
+    let mut image_rect = None;
     ui.allocate_ui_with_layout(available, egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.set_min_size(available);
         if let Some(image) = image {
             let source = dimensions.map_or(image.size_vec2(), |(w, h)| Vec2::new(w as f32, h as f32));
             let size = image_size(*display, source, available, ui.ctx().pixels_per_point());
-            let draw = |ui: &mut egui::Ui| {
+            let mut draw = |ui: &mut egui::Ui| {
                 let (canvas, _) = ui.allocate_exact_size(if display.actual_size { size } else { available }, egui::Sense::hover());
                 let rect = egui::Rect::from_center_size(canvas.center(), size);
                 checkerboard(ui, p, rect);
@@ -335,11 +365,14 @@ pub(super) fn picture(
                     .fit_to_exact_size(size)
                     .maintain_aspect_ratio(false)
                     .paint_at(ui, rect);
-                let response = ui.interact(rect, ui.id().with("image_drag"), egui::Sense::click_and_drag());
-                response.dnd_set_drag_payload(InvDrag(item.id));
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(egui::Id::new(("resource_texture_preview", item.id)), response.rect));
-                response.on_hover_text(aurora_i18n::tr!("texture-library-drag-hint"));
+                image_rect = Some(rect);
+                if let Some(item) = drag_item {
+                    let response = ui.interact(rect, ui.id().with("image_drag"), egui::Sense::click_and_drag());
+                    response.dnd_set_drag_payload(InvDrag(item));
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(egui::Id::new(("resource_texture_preview", item)), response.rect));
+                    response.on_hover_text(aurora_i18n::tr!("texture-library-drag-hint"));
+                }
             };
             if display.actual_size {
                 egui::ScrollArea::both()
@@ -355,6 +388,7 @@ pub(super) fn picture(
             ui.centered_and_justified(|ui| ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image")));
         }
     });
+    image_rect
 }
 
 fn checkerboard(ui: &egui::Ui, p: &Palette, image: egui::Rect) {

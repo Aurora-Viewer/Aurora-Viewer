@@ -25,6 +25,9 @@ pub enum Cause {
     /// The Legacy Viewer flashes for it only when it is an IM; Aurora
     /// flashes for a mention in nearby chat too, with the message setting.
     Mention,
+    /// A line that holds one of the keywords (FSKeywords::notify): its
+    /// sound, told to the system, no flash of its own.
+    Keyword,
     /// A notice that never flashes (a friend online, a simulator alert, the
     /// region restart, whose alert flashes on its own…).
     Notice,
@@ -100,6 +103,30 @@ impl World {
             _ => (Cause::Message, None),
         };
         self.ask_attention(cause, notice);
+    }
+
+    /// A line that arrived, if it holds a keyword (FSKeywords::
+    /// chatContainsKeyword then notify): the keyword sound and "Keyword
+    /// alert" told to the system with the sender and the text. `local`: a
+    /// nearby chat line (objects' IMs and the notices shown there
+    /// included). Never for a blocked `sender` (FSKeywords::notify); the
+    /// callers leave out our own lines and the debug channel.
+    pub(crate) fn keyword_alert(&mut self, sender: Uuid, from: &str, text: &str, local: bool, open: Open) {
+        if !crate::keywords::matches(from, text, local) || self.mutes.is_muted_id(&sender) {
+            return;
+        }
+        let body = if strip_me(text).len() == text.len() {
+            format!("{from}: {text}")
+        } else {
+            // an emote reads as "Name waves" (FSCommon::is_irc_me_prefix)
+            format!("{from}{}", &text[3..])
+        };
+        let notice = Notice {
+            title: aurora_i18n::tr!("world-keyword-alert").to_owned(),
+            body,
+            open,
+        };
+        self.ask_attention(Cause::Keyword, Some(notice));
     }
 
     /// A system notification of the notification just pushed: its title

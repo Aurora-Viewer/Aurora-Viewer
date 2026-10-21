@@ -32,9 +32,11 @@ pub mod exit;
 pub mod experience_profile;
 pub mod find_shortcut;
 pub mod fonts;
+pub mod friend_prompt;
 pub mod gestures;
 pub mod group_profile;
 pub mod hover_height;
+pub mod hover_tips;
 pub mod hud;
 pub mod icons;
 pub mod inspect;
@@ -51,8 +53,10 @@ pub mod map_tiles;
 pub mod marketplace;
 pub mod marketplace_listings;
 pub mod media;
+pub mod media_filter;
 pub mod menu;
 pub mod minimap;
+pub mod money_tracker;
 pub mod monitor;
 pub mod movelock;
 pub mod movement;
@@ -82,6 +86,7 @@ pub mod scripts;
 pub mod search;
 pub mod shape;
 pub mod sheet;
+pub mod sim_console;
 pub mod skin;
 pub mod sky_beacons;
 pub mod snap;
@@ -107,6 +112,8 @@ pub struct Panels {
     pub perf: bool,
     /// The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D).
     pub dev_toolbox: bool,
+    /// Advanced › Region console (SimConsoleAsync, estate managers).
+    pub sim_console: bool,
     /// The photo window (Firestorm's snapshot floater).
     pub snapshot: bool,
     pub people: bool,
@@ -139,6 +146,8 @@ pub struct Panels {
     pub search: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
+    /// "Money tracker" (Me menu): the L$ received and paid.
+    pub money_tracker: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
@@ -161,6 +170,7 @@ impl Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
             dev_toolbox: false,
+            sim_console: false,
             snapshot: false,
             people: settings.show_people,
             minimap: settings.show_minimap,
@@ -182,6 +192,7 @@ impl Panels {
             places: false,
             search: false,
             asset_blacklist: false,
+            money_tracker: false,
             bumps: false,
             camera_controls: false,
             movement_controls: false,

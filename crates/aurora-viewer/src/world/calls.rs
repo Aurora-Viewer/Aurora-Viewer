@@ -216,6 +216,12 @@ pub struct Calls {
     /// call's), set by the app from the voice session: who gets the volume
     /// row at the top of their menus.
     pub voice_peers: std::collections::HashSet<Uuid>,
+    /// The moderator mute of each participant of the nearby channel, set
+    /// by the app from the voice session; None off that channel.
+    pub nearby_moderated: Option<std::collections::HashMap<Uuid, bool>>,
+    /// Ours, as last seen on the nearby channel
+    /// (LLNearbyVoiceModeration::mChannelMuteMap).
+    pub own_moderated: Option<bool>,
 }
 
 /// The file of the voice volumes, in the account's folder
@@ -898,12 +904,21 @@ impl World {
         );
         let notification = self.notifications.push(
             notifications::Kind::Call,
-            title,
+            title.clone(),
             text,
             notifications::Data::Call {
                 invite: Box::new(inv.clone()),
             },
         );
+        self.notifications
+            .link_name(notification, title, notifications::NameTarget::Avatar(inv.from));
+        if group {
+            self.notifications.link_name(
+                notification,
+                inv.session_name.clone(),
+                notifications::NameTarget::Group(inv.session),
+            );
+        }
         if !inv.p2p {
             self.calls.launched.insert(inv.session, (inv.from, Instant::now()));
         }

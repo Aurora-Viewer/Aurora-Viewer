@@ -186,7 +186,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
@@ -255,6 +255,11 @@ answers like my.secondlife.com and its storage (session cookie, upload
 configuration, form, 303): the log gives `demo profile: photo posted (<KB>
 PNG, caption "…", location true)` and the window "Posted to your profile".
 `profile-fail` has the configuration refused: the window shows the failure.
+`postcard` opens the window on the E-mail destination, a recipient and a
+message filled in, and sends the photo at `AURORA_DEMO_SNAPSHOT_FRAME`: the
+JPEG is encoded (log `photo: postcard of <n> bytes`), nothing leaves the PC
+and the window says "E-mail sent!"; `postcard-fail` answers as a server
+refusing a photo too big.
 `dof` opens the window with its depth of field on (f/1.4, focused by hand
 at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
 in its strip: the view, the preview and the photos are blurred, while
@@ -648,6 +653,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
+| `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland]` | World tooltips over objects, avatars and land |
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
@@ -967,6 +973,19 @@ New `llOwnerSay` messages open Script debug if their routing is enabled; the
 errors of owned objects also appear there, after filtering of the bridge and
 of blocked objects. The window allows seeing all the objects or a single one
 and clearing the displayed messages.
+
+**`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland]`** — the
+world tooltips on for the session in that form (the Legacy Viewer's text
+with `legacy`), the saved settings untouched; on land unless `noland`, on
+every object with `all`. The simulator answers the parcel under the pointer
+(the plaza, the 128 m square in the middle, or the garden for sale around
+it) and the objects' properties. Rest the cursor with `AURORA_DEMO_HOVER="x,y"`
+and add `AURORA_DEMO_ACTIONS=1` for cubes that can be bought, paid and
+touched; capture with `AURORA_FPS_LIMIT=60` near frame 780. Each new tip is
+logged (`demo hover tip:` with its title, owner, sale, lines, flags and
+buttons). In the default demo view, `550,500` is the Pay cube, `752,420`
+Orion, and with `AURORA_DEMO_POS=40,126` the ground at `800,600` is the
+garden.
 
 **`AURORA_DEMO_ACTIONS`** — cursors and object clicks like Firestorm
 (same rules; cursors drawn from the Tabler icons).
@@ -2570,6 +2589,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
+| `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
@@ -2589,8 +2609,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
-| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
+| `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
+| `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
+| `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
@@ -2613,11 +2635,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
+| `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `net` from the real sites |
+| `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
+| `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -2647,6 +2674,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
+| `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
+| `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 
 ### Details
 
@@ -2677,6 +2706,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Payments). `sent`: the end of a payment, with its message. `group`: the
   demo group as the payee, without a message field. An object's payment
   is `AURORA_DEMO_ACTIONS=pay`.
+- **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
+  made-up transactions of the last 75 minutes (tips through an object,
+  gifts, a sale and a purchase, an upload fee, a group's joining fee).
+  `aurora`: the Aurora look (totals, filter, newest first). `legacy`: the
+  Legacy Viewer's Time / Name / Amount list. `select`: two rows selected,
+  "Copy 2 (CSV)". `undo`: two rows removed and the bar that puts them back.
+  `empty`: nothing recorded yet. A resident paid with the Pay window during
+  the demo is added as a paid gift while the tracker records.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top
@@ -2995,6 +3032,7 @@ failure. Grid validation and any paid upload are performed by the human.
   `offer-card-legacy-reject` rejects it from its notification at frame 700:
   the line ends with "· Rejected". Capture at frame 900, with
   `--language fr` and `--language en`.
+- **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
@@ -3050,6 +3088,16 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_WINDOW_SIZE`; capture with `AURORA_FPS_LIMIT=60` at
   `790,1100,1390,1560,1610,2000`. A very low window (`1280,360`) shows only
   the newest toasts that fit.
+- **`AURORA_DEMO_FRIEND_PROMPT=1|later`**: the friendship offer in the
+  middle of the screen (#465), turned on for this run only (Preferences ›
+  Chat › Toasts is not changed). Nova offers friendship with a message at
+  frame 700, Tess without one at 760: Nova's card arrives (it rises, the
+  picture pops in, rings pulse, hearts rise for four seconds) and says one
+  more offer is waiting; neither offer gets a toast, both wait under the
+  bell. With `later`, Nova's offer is put off at 900 and Tess's card
+  arrives. Capture with `AURORA_FPS_LIMIT=60` at 800 (and 960 with
+  `later`), in `--language en` and `fr`; Preferences › Interface › "Reduce
+  animations" leaves the card still.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at
@@ -3118,6 +3166,20 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds.
+- **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
+  (the two keywords of `demo-keywords-words`, "party, builders" in English,
+  "fête, constructeurs" in French; colour change and sound on), with the
+  Conversations window open on the nearby chat. A resident says a line
+  holding a keyword at frame 700, another sends one in an IM (760), a third
+  writes one in the Aurora Builders group chat (820), an object sends one in
+  an IM (880), and a line without one is said (940); capture with
+  `AURORA_FPS_LIMIT=60` at frame 1010. The four keyword lines are drawn in
+  orange in every chat style and play the keyword sound (silent in captures unless
+  `AURORA_DEMO_SOUND=1`); with the system notifications on, each is told as
+  a "Keyword alert". `AURORA_DEMO_OPTIONS=3:keywords` opens Preferences ›
+  Chat on the group (it shows the saved settings, not the run's). `prefs`
+  keeps the settings of Preferences › Chat › Keyword alerts, to try them by
+  hand, and sends the same five lines again every 1200 frames.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
@@ -3168,7 +3230,8 @@ failure. Grid validation and any paid upload are performed by the human.
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
   version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
   group titles, `3:new` the reopened
-  conversations, `3:new2` the invitations to joined groups, `7:new` the music
+  conversations, `3:new2` the ignored conferences, `3:new3` the invitations
+  to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
@@ -3296,6 +3359,28 @@ failure. Grid validation and any paid upload are performed by the human.
   unread count only. Combine with `AURORA_DEMO_CONV=aurora:group` (or
   `bubbles:group`) so that her conversation is not the one shown.
 
+- **`AURORA_DEMO_CONFERENCE=1|<seconds>`**: every 20 seconds (or every
+  `<seconds>`) a conference invitation arrives, from Tess Touch (not a
+  friend) then from Orion (a friend) in turn, each in a new conference.
+  Settings off: each opens in Conversations › Conferences. With Preferences
+  › Chat › Groups and blocking › Ignore conferences (or Online status › Ad
+  hoc conferences › Ignore all and exit automatically) on, none opens;
+  "Report ignored conferences" adds a nearby chat line naming the inviter,
+  "Except from my friends" lets Orion's through and still ignores Tess's.
+  The log says `ignoring conference (ad-hoc) chat from <name>` for each.
+
+- **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
+  `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's
+  conversation), forty earlier messages come before the scenario's lines and
+  the conversation opens on its top. A button fades in over the bottom of
+  the lines, above the field: "Jump to the latest messages" with `up`;
+  with `new` the friend writes three messages once the top is shown and it
+  reads "3 new messages". A click brings the last message back against the
+  field and the button fades out; a message written then shows at once,
+  the lines following the end again. Scrolling back down by hand also hides
+  it once the end is less than half the height in sight away (with nothing
+  new).
+
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
   at frame 701 on the first conversation of that kind in the list (the
@@ -3308,6 +3393,36 @@ failure. Grid validation and any paid upload are performed by the human.
   (`aurora:conference`): Close, Hang up during its call, the transcript;
   `local`: the transcript only. The transcript rows are greyed in the demo
   (no transcript folder).
+- **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
+  `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
+  conversation holds two more messages of emoji alone: Nova's three
+  (🎉🎶🐺) after her "join me", our 👍 before "On my way!". What to see: in
+  the Aurora, Compact and Bubbles styles their pictures about 40 points
+  tall (2.4 times the text, sharp: the font's own bitmap), the messages
+  that mix text and emoji at the text's size; in the Legacy lines every
+  message at the text's size. Capture at frame 900.
+- **`AURORA_DEMO_CONV_PREVIEWS=1|states|net`**: with `AURORA_DEMO_CONV`,
+  links with their cards (`link_preview.rs`, `ui/chat/previews.rs`). `1`,
+  in the friend's conversation: a picture of an unknown site (its card asks
+  "Show": nothing loaded before), an animated GIF (its "GIF" mark, the frames
+  turning), a picture of a trusted site (hovered: open, copy, hide; right
+  click: also hide the site's previews) and our YouTube link (picture, play
+  button, title and channel); with `aurora:group`, Loup's picture in the
+  group, blurred until clicked. The demo makes these pictures, no network.
+  `states`: a picture loading forever (its empty card), an unavailable one
+  (the link alone) and a 24 MB one (its size and the limit, open button).
+  `net`: the real sites, network needed: two Wikimedia files (an unknown
+  site: "Show" loads them, the GIF animated) and a YouTube video, whose
+  title and picture come from YouTube. In the Legacy lines
+  (`bubbles:legacy`) no card at all. Capture at frame 900 (1500 with
+  `net`).
+- **`AURORA_DEMO_PREVIEW_PLAY=card|window`**: with
+  `AURORA_DEMO_CONV_PREVIEWS`, the first video card drawn plays by itself,
+  in its card (wider, stop and window buttons under it) or in the player
+  window ("Me at the zoo" in its title, open in the browser in its bar).
+  With `net` the video really plays (network needed; capture at frame
+  1500): YouTube's player inside a page served on 127.0.0.1, with
+  YouTube's controls; without that page it shows its error 153.
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
@@ -3923,6 +4038,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
 
+  `friend:photo` opens the main photo preview; `friend:first-photo` opens the
+  First life photo preview. Append `:actual` to either to display native pixels
+  with scrolling. Both previews offer the inventory texture preview's dimensions
+  and original, preset or custom aspect ratios.
+
   Options add up, separated by `:` (`self:edit:2`). The other tabs:
   `friend:2` (Nova's favorite places, featured place over thumbnails),
   `friend:3` (two classifieds, the first one unfolded), `friend:4` (first
@@ -4262,6 +4382,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   settings of the demo, separate from those of the connected viewer.
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
+- **`AURORA_DEMO_FREEZE`**: at frame 660 Nova Demo freezes the avatar for
+  30 s (`1`) or the given seconds: the alert in the chat and the
+  notifications, a red snowflake in front of the parcel icons of the
+  navigation bar; at 60 fps the release comes after that many seconds
+  (frame 660 + 60 × seconds), with its own alert, and the snowflake goes.
+- **`AURORA_DEMO_SIM_CONSOLE=1`**: the demo region gives its console
+  (SimConsoleAsync): Advanced › Region console opens it (the Advanced menu
+  shown, Preferences › Aurora); `help`, `stats` and `time` answer, any other
+  command gets "Unknown command"; the arrow keys walk the typed commands.
+  `open` opens it at frame 600 with `help` and `stats` typed (capture at
+  frame 640).
 
 **`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
 the balls and the hops): `1` wears a physics layer with the lively values of
@@ -4410,6 +4541,11 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
+- `show-original`, `aurora-show-original`: minimize the inventory at frame
+  650, then run an attachment's "Show in inventory" action at frame 750.
+  Capture frames `700,850`: first the title bar alone, then the restored
+  window with the demo object selected and revealed. Covers both layouts
+  without grid access; also test manually with a worn attachment on Agni.
 - `aurora`, `aurora-medium`, `aurora-wide`, `aurora-rights`: Aurora's
   window, placed at frame 2 at its narrow (440 px), medium (800 px) and wide
   (1180 px) width, on the demo object of the right-click tests, the demo
@@ -4694,6 +4830,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
@@ -4701,6 +4838,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
+| `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
@@ -4842,6 +4980,14 @@ What the inventory must show with these scenarios:
   (`…;764,616,r` as the seventh point, capture at frame 720). Positions are
   window pixels at the default capture size; the residents out of voice
   never get the row.
+- **`AURORA_DEMO_VOICE_MODERATION`**: `1` makes the avatar an estate
+  manager on a parcel that uses the estate's voice channel: the voice row
+  of a resident's menu (`AURORA_DEMO_VOICE_MENU=1`, with
+  `AURORA_DEMO_TAGS=voice` for residents in voice) gets "Mute in nearby
+  voice for everyone" (or "Unmute…" once muted) and "Mute / Unmute everyone
+  in nearby voice"; the demo applies them at once, as the simulator would.
+  `self`: a moderator mutes us at frame 700 and lets us speak again at
+  frame 1300, each with its notification.
 - **`AURORA_VOICE_LEVEL_LOG`**: once a second, a `voice level (own plate,
   loudest over 1 s)` line with the loudest raw level of our own plate (and
   its dBFS, the microphone meter's value), whether we spoke, the smoothed
@@ -4879,6 +5025,18 @@ What the inventory must show with these scenarios:
   replaced when these two values change.
 - **`AURORA_DEMO_MUSIC`**: `1` designates an unreachable dummy address; the
   music waits for the radio button.
+- **`AURORA_DEMO_MEDIA_FILTER`**: turns the media filter on for the run.
+  `ask` (or `1`) starts a parcel media on `media.example.com`, which the
+  filter asks about (the question is up from the first frames; nothing
+  loads until it is answered), `first` the same with the first use's
+  explanation and its "Do not filter media" button, `music` starts the
+  parcel music on `radio.example.org` (the log has no `parcel music:` line
+  before the answer), `list` puts three sites in the list of Preferences ›
+  Sound and voice › Media (`AURORA_DEMO_OPTIONS=7:end`). In the demo the
+  list and the answers stay in memory: no run changes the demo account's
+  `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
+  `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
+  profile's filter is on.
 - **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
@@ -6732,3 +6890,11 @@ screen-only/half/quarter exterior are Water 0.151/0.155/0.128 ms and total GPU
 1.16/1.08/1.17 ms, all at the 60 FPS cap. CPU parameter work is
 0.10/0.09/0.10 ms. Shared desktop load varies; these local simple-scene
 observations do not establish a general speedup or a busy-grid cost.
+
+### Received inventory filing
+
+`AURORA_DEMO_INVENTORY=received-filing` exercises new direct deliveries, an offline delivery, an intact folder and an accepted scripted gift below their sender/owner legacy names. `aurora-received-filing` shows the same fixture in Aurora's wide inventory. Both use the real filing state machine and synthetic inventory acknowledgements; at frame 700 the Received tree expands for capture. `aurora-received-unread` and `aurora-received-unread-compact` leave the Received tab unopened to show the combined red badge in the sidebar and compact tabs. Use `AURORA_CAPTURE_FRAMES=900`. Preferences > Aurora (`AURORA_DEMO_OPTIONS=13`) shows the OFF-by-default switch with the shared experimental icon; there is no warning paragraph below it. No grid access or old-inventory classification. On the grid, the human checks enabled/disabled direct and object-owner deliveries, offline retrieval, rejection, folder contents, and Marketplace purchases above the sender folders. Check another gift from the same sender raises the red badge after opening Received, that type destinations never override sender filing, and that empty sender folders move to Trash (MarketPlace and nonempty/unloaded folders stay).
+
+The Aurora page starts with Appearance. Received items and Water are its final two sections, in that order; use `AURORA_DEMO_OPTIONS=13:end` to capture the end of the page.
+
+Unread state is account-specific and survives reconnecting, restarting and clearing the inventory cache. On first use, existing history establishes a baseline without a red total. Check that reading Received and reconnecting shows no red badge, a new offline gift counts once, and an unread gift stays unread after restart. Automated regressions use real isolated state files and fresh inventory models, including old creation dates, late folder metadata, arrivals during initialization and a read before disk loading completes.

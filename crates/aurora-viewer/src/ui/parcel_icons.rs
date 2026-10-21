@@ -1,6 +1,7 @@
 //! Parcel abilities of the navigation bar: voice, fly, push, build, scripts,
 //! damage and avatar visibility, one icon each at the right end of the
-//! location field.
+//! location field; a frozen avatar (ViewerFrozenMessage) gets one more in
+//! front of them while it lasts.
 //!
 //! Rules ported from LLViewerParcelMgr::allowAgentVoice / allowAgentFly /
 //! allowAgentPush / allowAgentBuild / allowAgentScripts / allowAgentDamage and
@@ -53,6 +54,8 @@ pub struct ParcelState<'a> {
     pub group: Option<&'a GroupMembership>,
     /// Health in percent (HealthMessage).
     pub health: f32,
+    /// Frozen by a parcel owner or an estate manager (ViewerFrozenMessage).
+    pub frozen: bool,
 }
 
 /// allowAgentBuild / LLParcel::allowModifyBy, with "rez under land group":
@@ -67,12 +70,25 @@ pub fn agent_can_build(s: &ParcelState) -> bool {
 }
 
 /// The icons, in Firestorm's order (voice, fly, push, build, scripts,
-/// damage, see avatars).
+/// damage, see avatars), after the frozen state when there is one.
 pub fn parcel_icons(s: &ParcelState) -> Vec<ParcelIcon> {
     let flags = s.parcel.flags;
     let region = |f: u32| s.region_flags & f != 0;
     let parcel = |f: u32| flags & f != 0;
-    let mut out = Vec::with_capacity(7);
+    let mut out = Vec::with_capacity(8);
+
+    // process_frozen_message shows nothing; Aurora keeps the state in sight
+    // until the simulator releases us. Red without a strike: it is active.
+    if s.frozen {
+        let mut f = icon(
+            "snowflake",
+            false,
+            aurora_i18n::tr!("ui-parcel-icons-name-frozen"),
+            aurora_i18n::tr!("ui-parcel-icons-frozen-you-cannot-move-or-interact"),
+        );
+        f.strike = false;
+        out.push(f);
+    }
 
     // allowAgentVoice: region voice and parcel voice
     let voice = region(rf::ALLOW_VOICE) && parcel(pf::ALLOW_VOICE_CHAT);
@@ -321,6 +337,7 @@ mod tests {
             agent_id: Uuid::from_u128(1),
             group: None,
             health: 100.0,
+            frozen: false,
         }
     }
 
@@ -439,6 +456,19 @@ mod tests {
         for it in parcel_icons(&state(0, &parcel)) {
             assert!(!it.name.is_empty() && it.name.len() < it.tip.len(), "{}", it.icon);
         }
+    }
+
+    #[test]
+    fn a_frozen_avatar_sees_it_first() {
+        let parcel = ParcelInfo::default();
+        assert!(parcel_icons(&state(0, &parcel)).iter().all(|i| i.icon != "snowflake"));
+        let s = ParcelState {
+            frozen: true,
+            ..state(0, &parcel)
+        };
+        let icons = parcel_icons(&s);
+        assert_eq!(icons.len(), 8);
+        assert_eq!((icons[0].icon, icons[0].ok, icons[0].strike), ("snowflake", false, false));
     }
 
     #[test]

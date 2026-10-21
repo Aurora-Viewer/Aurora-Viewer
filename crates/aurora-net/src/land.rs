@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 /// ParcelPropertiesRequest sequence id of the selection (SELECTED_PARCEL_SEQ_ID).
 pub const SELECTED_PARCEL_SEQ_ID: i32 = -10000;
+/// ParcelPropertiesRequest sequence id of the parcel under the pointer
+/// (HOVERED_PARCEL_SEQ_ID, LLViewerParcelMgr::setHoverParcel).
+pub const HOVERED_PARCEL_SEQ_ID: i32 = -4;
 /// Parcel request results (llparcelflags.h PARCEL_RESULT_*).
 pub const PARCEL_RESULT_NO_DATA: i32 = -1;
 pub const PARCEL_RESULT_SUCCESS: i32 = 0;

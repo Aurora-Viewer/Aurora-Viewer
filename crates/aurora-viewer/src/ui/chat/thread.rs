@@ -195,7 +195,7 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
     }
     let whisper = matches!(line.kind, ChatKind::Local(ChatType::Whisper));
     let shout = matches!(line.kind, ChatKind::Local(ChatType::Shout));
-    let color = tone.unwrap_or_else(|| {
+    let color = tone.or_else(|| crate::ui::colors::keyword_color(line)).unwrap_or_else(|| {
         if whisper {
             p.muted
         } else if shout {
@@ -319,7 +319,9 @@ fn roomy_row(
                 });
             }
             let (text, color, italics) = body(env, line, name);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, TEXT, color, italics, mark);
+            let size = env.emoji.message_size(&text, TEXT);
+            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
+            super::previews::cards(ui, env, line, &text);
         });
     });
     row.response.rect
@@ -366,7 +368,9 @@ fn compact_row(
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, TEXT, color, italics, mark);
+            let size = env.emoji.message_size(&text, TEXT);
+            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
+            super::previews::cards(ui, env, line, &text);
         });
     });
     row.response.rect

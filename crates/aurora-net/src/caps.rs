@@ -66,6 +66,9 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "InventoryThumbnailUpload",
     // the scripts of a parcel (LLFloaterScriptLimits)
     "LandResources",
+    // the server's LSL keywords, fetched when SimulatorFeatures' LSLSyntaxId
+    // changes (LLSyntaxIdLSL)
+    "LSLSyntax",
     "NewFileAgentInventory",
     "MeshUploadFlag",
     "DirectDelivery",
@@ -91,11 +94,20 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // the clicks of a classified (LLPanelProfileClassified)
     "SearchStatRequest",
     "SearchStatTracking",
+    // a photo sent by e-mail (LLPanelSnapshotPostcard::sendPostcard)
+    "SendPostcard",
     // abuse reports, with or without their screenshot (sendReportViaCaps)
     "SendUserReport",
     "SendUserReportWithScreenshot",
+    // Help › Server release notes (LLFloaterAbout::startFetchServerReleaseNotes)
+    "ServerReleaseNotes",
     "SetDisplayName",
+    // the region console of estate managers (LLFloaterRegionDebugConsole)
+    "SimConsoleAsync",
     "SimulatorFeatures",
+    // nearby voice moderation by estate managers and parcel owners
+    // (LLNearbyVoiceModeration)
+    "SpatialVoiceModerationRequest",
     "UpdateAvatarAppearance",
     // the maturity preference (LLAgent::sendMaturityPreferenceToServer)
     "UpdateAgentInformation",
@@ -187,6 +199,22 @@ mod language_tests {
     #[test]
     fn the_home_and_user_info_capabilities_are_requested() {
         for cap in ["HomeLocation", "UserInfo"] {
+            assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
+        }
+    }
+
+    /// The minor capabilities of llviewerregion.cpp buildCapabilityNames
+    /// (#660): without them the console, the postcard, the voice moderation,
+    /// the server keywords and the release notes have no URL.
+    #[test]
+    fn the_minor_simulator_capabilities_are_requested() {
+        for cap in [
+            "LSLSyntax",
+            "SendPostcard",
+            "ServerReleaseNotes",
+            "SimConsoleAsync",
+            "SpatialVoiceModerationRequest",
+        ] {
             assert!(REQUESTED_CAPS.contains(&cap), "{cap}");
         }
     }

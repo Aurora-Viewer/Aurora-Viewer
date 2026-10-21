@@ -409,6 +409,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
         "object_payment" | "buy_currency" | "pay" | "pay_classic" => "coin-filled",
+        "money_tracker" | "money_tracker_legacy" => "receipt-filled",
         "object_contents" => "package",
         "object_weights" => "box",
         "build_options" => "adjustments-filled",

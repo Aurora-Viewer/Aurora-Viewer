@@ -129,6 +129,12 @@ pub struct View {
     /// window got shorter (its bottom then short of the end) and nobody
     /// scrolled.
     anchored_top: Option<f32>,
+    /// How far the viewport's bottom stood above the end at the last `show`
+    /// (0 against the end).
+    below: f32,
+    /// The number after the last line when the reader left the end: the
+    /// lines from it on came in since (`latest.rs` counts them).
+    left_end: Option<u64>,
     unmeasured: usize,
     /// Rows matching the find text, as indices of `rows`.
     hits: Vec<usize>,
@@ -272,6 +278,22 @@ impl View {
     /// Bring a row in sight at the next `show`.
     pub fn scroll_to(&mut self, row: usize) {
         self.scroll_to = Some(row);
+    }
+
+    /// How far the end of the conversation was under the viewport at the
+    /// last `show`.
+    pub fn below(&self) -> f32 {
+        self.below
+    }
+
+    /// The rows that came in since the reader left the end, among those
+    /// `keep` takes (by line index).
+    pub fn arrived(&self, first: u64, keep: impl Fn(usize) -> bool) -> usize {
+        let Some(from) = self.left_end else {
+            return 0;
+        };
+        let start = self.rows.partition_point(|r| first + (r.line as u64) < from);
+        self.rows[start..].iter().filter(|r| keep(r.line)).count()
     }
 
     /// Bring the rows up to date with the conversation. True when the set
@@ -532,6 +554,16 @@ impl View {
             0.0
         };
         self.shown_height = height;
+        // (not a window's sizing pass: it scrolls an area of its own, at its
+        // top)
+        if !ui.is_sizing_pass() {
+            if anchored {
+                (self.below, self.left_end) = (0.0, None);
+            } else {
+                self.below = (height - viewport.bottom()).max(0.0);
+                self.left_end.get_or_insert(first + self.len as u64);
+            }
+        }
         let (base, view_top) = if anchored {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
@@ -834,5 +866,82 @@ mod tests {
         }
         let first = bottoms[1];
         assert!(bottoms[1..].iter().all(|b| (b - first).abs() < 0.5), "{bottoms:?}");
+    }
+
+    /// Away from the end, the view says how far it is and counts the lines
+    /// that came in since; the offset `latest.rs` sets past the end brings
+    /// it back, where it follows new lines again (#558).
+    #[test]
+    fn leaving_the_end_counts_the_new_lines_until_the_jump_back() {
+        let mut lines: VecDeque<ChatLine> = (0..40).map(|i| line("Jane", &format!("line {i}"), i * 600)).collect();
+        let mut clock = LineClock::default();
+        let mut view = View::default();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let mut frame = |view: &mut View, lines: &VecDeque<ChatLine>, clock: LineClock, jump: bool| {
+            frames.run(Vec::new(), |ui| {
+                ui.set_max_width(400.0);
+                let out = egui::ScrollArea::vertical()
+                    .id_salt("latest")
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .max_height(300.0)
+                    .min_scrolled_height(300.0)
+                    .show_viewport(ui, |ui, viewport| {
+                        let source = Source {
+                            lines,
+                            clock,
+                            filter: "",
+                            find: "",
+                            layout: Layout::Aurora,
+                            first_unread: None,
+                        };
+                        view.sync(&source, 400.0);
+                        view.show(ui, viewport, clock.first, &mut |ui, _, _| {
+                            ui.allocate_exact_size(egui::vec2(ui.max_rect().width(), 20.0), egui::Sense::hover());
+                        })
+                        .0
+                    });
+                let mut state = out.state;
+                state.offset.y += out.inner;
+                if jump {
+                    state.offset.y = out.content_size.y;
+                }
+                state.store(ui.ctx(), out.id);
+            });
+        };
+        for _ in 0..3 {
+            frame(&mut view, &lines, clock, false);
+        }
+        assert_eq!(view.below(), 0.0);
+        // to the top: the end far below, nothing new yet
+        view.scroll_to(0);
+        for _ in 0..3 {
+            frame(&mut view, &lines, clock, false);
+        }
+        assert!(view.below() > 300.0, "{}", view.below());
+        assert_eq!(view.arrived(clock.first, |_| true), 0);
+        // two lines come in, one of them kept
+        for i in 0..2 {
+            lines.push_back(line("Bob", &format!("new {i}"), 40 * 600 + i));
+            clock.pushed_back();
+        }
+        frame(&mut view, &lines, clock, false);
+        assert!(view.below() > 300.0);
+        assert_eq!(view.arrived(clock.first, |_| true), 2);
+        assert_eq!(view.arrived(clock.first, |i| i == 41), 1);
+        // the jump: at the end, and following the next line there
+        frame(&mut view, &lines, clock, true);
+        for _ in 0..2 {
+            frame(&mut view, &lines, clock, false);
+        }
+        assert_eq!(view.below(), 0.0);
+        assert_eq!(view.arrived(clock.first, |_| true), 0);
+        lines.push_back(line("Bob", "after", 50 * 600));
+        clock.pushed_back();
+        for _ in 0..3 {
+            frame(&mut view, &lines, clock, false);
+        }
+        assert_eq!(view.below(), 0.0);
+        assert_eq!(view.arrived(clock.first, |_| true), 0);
     }
 }

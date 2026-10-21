@@ -45,7 +45,9 @@ fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::S
     derez::Snapshot { rect, action, shapes }
 }
 
-pub(super) fn controls(ui: &mut egui::Ui, account: &mut Account) -> bool {
+/// The card's grid and start menus; `slurl` is the login screen's start
+/// SLURL, shown by every card's start menu.
+pub(super) fn controls(ui: &mut egui::Ui, account: &mut Account, slurl: &mut Option<crate::slurl::Location>) -> bool {
     let previous = (account.uri.clone(), account.start_location.clone(), account.start_region.clone());
     let mut grid = crate::login_accounts::grid(&account.uri);
     let label_size = Vec2::new(
@@ -84,25 +86,12 @@ pub(super) fn controls(ui: &mut egui::Ui, account: &mut Account) -> bool {
     }
     ui.horizontal(|ui| {
         ui.add_sized(label_size, egui::Label::new(aurora_i18n::tr!("ui-login-start")));
-        egui::ComboBox::from_id_salt("accounts_start")
+        let combo = egui::ComboBox::from_id_salt("accounts_start")
             .width(ui.available_width())
-            .truncate()
-            .selected_text(match account.start_location.as_str() {
-                "home" => aurora_i18n::tr!("common-home"),
-                "region" => aurora_i18n::tr!("ui-login-region"),
-                _ => aurora_i18n::tr!("ui-login-last-location"),
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut account.start_location,
-                    "last".into(),
-                    aurora_i18n::tr!("ui-login-last-location"),
-                );
-                ui.selectable_value(&mut account.start_location, "home".into(), aurora_i18n::tr!("common-home"));
-                ui.selectable_value(&mut account.start_location, "region".into(), aurora_i18n::tr!("ui-login-region"));
-            });
+            .truncate();
+        super::start_menu(ui, combo, &mut account.start_location, slurl);
     });
-    if account.start_location == "region" {
+    if account.start_location == "region" && slurl.is_none() {
         ui.add(
             egui::TextEdit::singleline(&mut account.start_region)
                 .interactive(ui.is_enabled())
@@ -469,7 +458,7 @@ pub fn show(
                                                         inner_width,
                                                     ));
                                                     ui.add_space(6.0);
-                                                    if controls(ui, &mut account) {
+                                                    if controls(ui, &mut account, &mut form.start_slurl) {
                                                         edited = Some((index, previous, account.clone()));
                                                     }
                                                     ui.add_space(8.0);
@@ -950,7 +939,7 @@ mod tests {
                         // Larger text exercises the same overflow as a longer
                         // translation, without changing the process-wide locale.
                         ui.style_mut().text_styles.get_mut(&egui::TextStyle::Button).unwrap().size = 24.0;
-                        controls(ui, &mut account);
+                        controls(ui, &mut account, &mut None);
                         width = ui.min_rect().width();
                     });
                 },

@@ -57,6 +57,12 @@ pub struct OptionsUi {
     /// (cleared by the app).
     pub media_pack: crate::media::pack::PackState,
     pub media_pack_retry: bool,
+    /// The account's media filter list while logged in (set by the app when
+    /// it changes); the changes made here, applied by the app; the site
+    /// being typed.
+    pub media_filter: Option<Vec<crate::media::filter::Rule>>,
+    pub media_filter_edits: Vec<crate::media::filter::Edit>,
+    media_filter_typed: String,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
@@ -67,6 +73,9 @@ pub struct OptionsUi {
     confirm_reset_section: Option<usize>,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
+    /// The keyword alerts' sound asset being typed, and the asset it was
+    /// started from.
+    keyword_sound_text: Option<(uuid::Uuid, String)>,
     /// Folder of the conversation transcripts of the account logged in
     /// (set by the app; none on the login screen).
     pub chat_log_dir: Option<std::path::PathBuf>,
@@ -91,6 +100,8 @@ pub struct OptionsUi {
     pub scroll_to_new: u8,
     /// Chat opens on the taskbar and system notifications (`3:attention`).
     pub scroll_to_attention: bool,
+    /// Chat opens on the keyword alerts (`3:keywords`).
+    pub scroll_to_keywords: bool,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -292,6 +303,8 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-image") => "photo-filled",
         value if value == aurora_i18n::text("ui-options-smoothness") => "dashboard-filled",
         value if value == aurora_i18n::text("ui-options-layout") => "layout-filled",
+        value if value == aurora_i18n::text("ui-options-slurl-links") => "link-filled",
+        value if value == aurora_i18n::text("ui-options-link-previews") => "photo-filled",
         value if value == aurora_i18n::text("preferences-group-skin") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-size-and-preview") => "text-size",
         value if value == aurora_i18n::text("ui-options-bundled-fonts") => "typography",
@@ -334,6 +347,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("bumps-title") => "bounce-right-filled",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
+        value if value == aurora_i18n::text("ui-options-hover-tips") => "pointer-filled",
         value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-aurora-gaze") => "eye-filled",
         value if value == aurora_i18n::text("ui-options-aurora-movement") => "walk",
@@ -691,6 +705,41 @@ fn response_text(ui: &mut egui::Ui, p: &Palette, label: &str, text: &mut String)
 
 fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
     super::widgets::switch(ui, p, v).changed()
+}
+
+/// Whether the `secondlife:` links of web pages open in this viewer
+/// (`url_scheme.rs`): the system's state, not a saved setting, so outside
+/// the page's reset. The Legacy Viewer's installer asks it once.
+fn slurl_links(ui: &mut egui::Ui, p: &Palette) {
+    use crate::url_scheme::Handler;
+    group(ui, p, aurora_i18n::tr!("ui-options-slurl-links"), |ui| {
+        let handler = crate::url_scheme::handler();
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-slurl-links-open"),
+            aurora_i18n::tr!("ui-options-slurl-links-open-help"),
+            |ui| {
+                let mut on = handler == Handler::This;
+                if toggle(ui, p, &mut on) {
+                    let done = if on {
+                        crate::url_scheme::register()
+                    } else {
+                        crate::url_scheme::unregister()
+                    };
+                    if let Err(e) = done {
+                        log::warn!("secondlife links: {e}");
+                    }
+                    crate::url_scheme::refresh();
+                }
+                false
+            },
+        );
+        if let Handler::Other(program) = handler {
+            let note = aurora_i18n::tr!("ui-options-slurl-links-other", program = program);
+            ui.label(RichText::new(note).size(11.5).color(p.muted));
+        }
+    });
 }
 
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
@@ -1063,6 +1112,127 @@ fn chat_logs_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut Op
     c
 }
 
+/// The pictures and videos under the links of the Conversations window
+/// (`link_preview.rs`): what loads by itself, where, how videos play.
+fn link_previews_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
+    use crate::link_preview::{Load, Player, Size};
+    let mut c = false;
+    let choice = |ui: &mut egui::Ui, selected: &mut usize, labels: &[&str]| {
+        let options: Vec<(&str, bool)> = labels.iter().map(|l| (*l, true)).collect();
+        super::widgets::segmented(ui, p, selected, &options)
+    };
+    group(ui, p, aurora_i18n::tr!("ui-options-link-previews"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-load"),
+            aurora_i18n::tr!("ui-options-link-previews-load-hint"),
+            |ui| {
+                const LOADS: [Load; 3] = [Load::Never, Load::Trusted, Load::All];
+                let mut i = LOADS.iter().position(|l| *l == s.link_previews.load).unwrap_or(1);
+                let changed = choice(
+                    ui,
+                    &mut i,
+                    &[
+                        aurora_i18n::tr!("ui-options-link-previews-never"),
+                        aurora_i18n::tr!("ui-options-link-previews-trusted"),
+                        aurora_i18n::tr!("ui-options-link-previews-all"),
+                    ],
+                );
+                s.link_previews.load = LOADS[i];
+                changed
+            },
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-ims"),
+            aurora_i18n::tr!("ui-options-link-previews-ims-hint"),
+            |ui| toggle(ui, p, &mut s.link_previews.ims),
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-link-previews-groups"), "", |ui| {
+            toggle(ui, p, &mut s.link_previews.groups)
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-blur"),
+            aurora_i18n::tr!("ui-options-link-previews-blur-hint"),
+            |ui| {
+                ui.add_enabled_ui(s.link_previews.groups, |ui| toggle(ui, p, &mut s.link_previews.blur_groups))
+                    .inner
+            },
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-nearby"),
+            aurora_i18n::tr!("ui-options-link-previews-nearby-hint"),
+            |ui| toggle(ui, p, &mut s.link_previews.nearby),
+        );
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-link-previews-player"),
+            aurora_i18n::tr!("ui-options-link-previews-player-hint"),
+            |ui| {
+                const PLAYERS: [Player; 2] = [Player::InCard, Player::Window];
+                let mut i = PLAYERS.iter().position(|v| *v == s.link_previews.player).unwrap_or(0);
+                let changed = choice(
+                    ui,
+                    &mut i,
+                    &[
+                        aurora_i18n::tr!("ui-options-link-previews-in-card"),
+                        aurora_i18n::tr!("ui-options-link-previews-in-window"),
+                    ],
+                );
+                s.link_previews.player = PLAYERS[i];
+                changed
+            },
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-link-previews-size"), "", |ui| {
+            const SIZES: [Size; 3] = [Size::Small, Size::Medium, Size::Large];
+            let mut i = SIZES.iter().position(|v| *v == s.link_previews.size).unwrap_or(1);
+            let changed = choice(
+                ui,
+                &mut i,
+                &[
+                    aurora_i18n::tr!("ui-options-link-previews-small"),
+                    aurora_i18n::tr!("ui-options-link-previews-medium"),
+                    aurora_i18n::tr!("ui-options-link-previews-large"),
+                ],
+            );
+            s.link_previews.size = SIZES[i];
+            changed
+        });
+        if !s.link_previews.hidden_sites.is_empty() {
+            c |= row(
+                ui,
+                p,
+                aurora_i18n::tr!("ui-options-link-previews-hidden-sites"),
+                aurora_i18n::tr!("ui-options-link-previews-hidden-sites-hint"),
+                |ui| {
+                    let mut removed = None;
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, site) in s.link_previews.hidden_sites.iter().enumerate() {
+                            ui.label(RichText::new(site).size(12.0).color(p.ink));
+                            let tip = aurora_i18n::tr!("ui-options-link-previews-unhide", site = site.as_str());
+                            if super::widgets::icon_button(ui, p, "x", &tip, true) {
+                                removed = Some(i);
+                            }
+                        }
+                    });
+                    if let Some(i) = removed {
+                        s.link_previews.hidden_sites.remove(i);
+                    }
+                    removed.is_some()
+                },
+            );
+        }
+    });
+    c
+}
+
 /// First group of the Chat page; `center`: Aurora's notification center
 /// is chosen (Preferences › Aurora), where the friends' toasts have a place.
 fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool, scroll_to_attention: bool) -> bool {
@@ -1217,6 +1387,14 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
                 changed
             },
         );
+        // #465: an offer of friendship in the middle of the screen
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-friend-request-prompt"),
+            aurora_i18n::tr!("ui-options-friend-request-prompt-hint"),
+            |ui| toggle(ui, p, &mut s.friend_request_prompt),
+        );
         c |= row(
             ui,
             p,
@@ -1284,6 +1462,119 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
     c
 }
 
+/// Chat › Keyword alerts (panel_preferences_chat.xml, "ChatKeywordAlerts"):
+/// the rows greyed while the alerts are off, the sound's asset while its
+/// switch is off, as the Legacy panel's enabled_control.
+fn keyword_alerts_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
+    let mut c = false;
+    if st.scroll_to_keywords {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+        st.scroll_to_keywords = false;
+    }
+    group(ui, p, aurora_i18n::tr!("ui-options-keywords"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-keywords-on"),
+            aurora_i18n::tr!("ui-options-keywords-on-hint"),
+            |ui| toggle(ui, p, &mut s.keywords.on),
+        );
+        let on = s.keywords.on;
+        let switches = [
+            (aurora_i18n::tr!("ui-options-keywords-in-chat"), "", &mut s.keywords.in_chat),
+            (aurora_i18n::tr!("ui-options-keywords-in-im"), "", &mut s.keywords.in_im),
+            (
+                aurora_i18n::tr!("ui-options-keywords-speakers-name"),
+                aurora_i18n::tr!("ui-options-keywords-speakers-name-hint"),
+                &mut s.keywords.speakers_name,
+            ),
+            (
+                aurora_i18n::tr!("ui-options-keywords-case-sensitive"),
+                "",
+                &mut s.keywords.case_sensitive,
+            ),
+            (
+                aurora_i18n::tr!("ui-options-keywords-whole-words"),
+                aurora_i18n::tr!("ui-options-keywords-whole-words-hint"),
+                &mut s.keywords.whole_words,
+            ),
+        ];
+        for (label, hint, value) in switches {
+            c |= row(ui, p, label, hint, |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, value)).inner);
+        }
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-keywords-words"),
+            aurora_i18n::tr!("ui-options-keywords-words-hint"),
+            |ui| {
+                ui.add_enabled(
+                    on,
+                    egui::TextEdit::singleline(&mut s.keywords.words)
+                        .desired_width(290.0)
+                        .hint_text(aurora_i18n::tr!("ui-options-keywords-words-example")),
+                )
+                .changed()
+            },
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-keywords-color"), "", |ui| {
+            ui.add_enabled_ui(on, |ui| {
+                let mut ch = toggle(ui, p, &mut s.keywords.change_color);
+                ui.add_enabled_ui(s.keywords.change_color, |ui| {
+                    ch |= swatch(ui, p, "keyword-color", &mut s.keywords.color);
+                });
+                ch
+            })
+            .inner
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-keywords-sound"),
+            aurora_i18n::tr!("ui-options-keywords-sound-hint"),
+            |ui| {
+                ui.add_enabled_ui(on, |ui| {
+                    let k = &mut s.keywords;
+                    let mut ch = toggle(ui, p, &mut k.play_sound);
+                    ui.add_enabled_ui(k.play_sound, |ui| {
+                        // typed for this asset; a reset of the page starts it again
+                        let (typed_for, text) = st.keyword_sound_text.get_or_insert_with(|| (k.sound, uuid_text(k.sound)));
+                        if *typed_for != k.sound {
+                            (*typed_for, *text) = (k.sound, uuid_text(k.sound));
+                        }
+                        let valid = parse_uuid_text(text).is_some();
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(text)
+                                .desired_width(290.0)
+                                .font(egui::TextStyle::Monospace)
+                                .text_color(if valid { p.ink } else { p.danger })
+                                .hint_text(aurora_i18n::tr!("ui-options-no-sound")),
+                        );
+                        if edit.changed()
+                            && let Some(id) = parse_uuid_text(text)
+                        {
+                            (k.sound, *typed_for) = (id, id);
+                            ch = true;
+                        }
+                        // force_sound: heard even with the interface sounds off
+                        if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-listen")).clicked() && !k.sound.is_nil() {
+                            super::sound_cues::preview(ui.ctx(), k.sound);
+                        }
+                        let default = crate::keywords::DEFAULT_SOUND;
+                        if k.sound != default && super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-default")).clicked() {
+                            (k.sound, *typed_for, *text) = (default, default, uuid_text(default));
+                            ch = true;
+                        }
+                    });
+                    ch
+                })
+                .inner
+            },
+        );
+    });
+    c
+}
+
 fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
     let mut c = false;
     let (mut font, mut cache) = (false, false);
@@ -1292,6 +1583,8 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
         // drawn after the first group of the page, below
         let center = s.notifications_style == crate::settings::NotificationsStyle::Aurora;
         c |= chat_page_head(ui, p, s, center, std::mem::take(&mut st.scroll_to_attention));
+        c |= link_previews_group(ui, p, s);
+        c |= keyword_alerts_group(ui, p, s, st);
         c |= chat_logs_group(ui, p, s, st, r);
     }
     match st.tab {
@@ -2068,6 +2361,9 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     },
                 );
             });
+            if crate::url_scheme::supported() {
+                slurl_links(ui, p);
+            }
             group(ui, p, aurora_i18n::tr!("ui-options-layout"), |ui| {
                 c |= row(ui, p, aurora_i18n::tr!("bug-toolbar"), aurora_i18n::tr!("bug-toolbar-help"), |ui| {
                     toggle(ui, p, &mut s.show_bug_report)
@@ -2255,6 +2551,67 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         |ui| toggle(ui, p, &mut s.tag_complexity_own),
                     );
                 }
+            });
+            // panel_preferences_UI.xml "Hover Tips": ShowHoverTips and what
+            // it enables; Aurora's form of the tips (Preferences › Aurora
+            // has their Legacy text)
+            group(ui, p, aurora_i18n::tr!("ui-options-hover-tips"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-hover-tips-show"),
+                    aurora_i18n::tr!("ui-options-hover-tips-show-help"),
+                    |ui| toggle(ui, p, &mut s.hover_tips.enabled),
+                );
+                ui.add_enabled_ui(s.hover_tips.enabled, |ui| {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-hover-tips-form"),
+                        aurora_i18n::tr!("ui-options-hover-tips-form-help"),
+                        |ui| {
+                            use crate::settings::HoverTipForm;
+                            let options = [
+                                (aurora_i18n::tr!("hover-tips-bubble"), true),
+                                (aurora_i18n::tr!("hover-tips-card"), true),
+                                (aurora_i18n::tr!("hover-tips-readout"), true),
+                            ];
+                            let mut selected = HoverTipForm::ALL.iter().position(|f| *f == s.hover_tips.form).unwrap_or(1);
+                            let changed = super::widgets::segmented(ui, p, &mut selected, &options);
+                            s.hover_tips.form = HoverTipForm::ALL[selected];
+                            changed
+                        },
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-hover-tips-objects"),
+                        aurora_i18n::tr!("ui-options-hover-tips-objects-help"),
+                        |ui| {
+                            let options = [
+                                (aurora_i18n::tr!("ui-options-hover-tips-interactive"), true),
+                                (aurora_i18n::tr!("ui-options-hover-tips-all"), true),
+                            ];
+                            let mut selected = usize::from(s.hover_tips.all_objects);
+                            let changed = super::widgets::segmented(ui, p, &mut selected, &options);
+                            s.hover_tips.all_objects = selected == 1;
+                            changed
+                        },
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-hover-tips-land"),
+                        aurora_i18n::tr!("ui-options-hover-tips-land-help"),
+                        |ui| toggle(ui, p, &mut s.hover_tips.land),
+                    );
+                    c |= row(ui, p, aurora_i18n::tr!("ui-options-hover-tips-group-titles"), "", |ui| {
+                        toggle(ui, p, &mut s.hover_tips.group_titles)
+                    });
+                    c |= row(ui, p, aurora_i18n::tr!("ui-options-hover-tips-delay"), "", |ui| {
+                        slider(ui, &mut s.hover_tips.delay, 0.0..=crate::settings::MAX_HOVER_TIP_DELAY, " s")
+                    });
+                });
             });
             // panel_preferences_UI.xml "Use stand-alone windows for:"
             group(ui, p, aurora_i18n::tr!("common-windows"), |ui| {
@@ -2631,6 +2988,33 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     aurora_i18n::tr!("ui-options-groups-without-notices"),
                     aurora_i18n::tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                     |ui| toggle(ui, p, &mut s.mute_groups_without_notices),
+                );
+                // Legacy Viewer › Chat (FSIgnoreAdHocSessions, FSReportIgnoredAdHocSession,
+                // FSDontIgnoreAdHocFromFriends): the same switches as Online status ›
+                // Ad hoc conferences
+                scroll_mark(ui, st);
+                let a = &mut s.autoresponse;
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-hint"),
+                    |ui| toggle(ui, p, &mut a.ignore_adhoc),
+                );
+                let on = a.ignore_adhoc;
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences-report"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-report-hint"),
+                    |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, &mut a.report_ignored_adhoc)).inner,
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-ignore-conferences-friends"),
+                    aurora_i18n::tr!("ui-options-ignore-conferences-friends-hint"),
+                    |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, &mut a.adhoc_from_friends)).inner,
                 );
                 c |= row(
                     ui,

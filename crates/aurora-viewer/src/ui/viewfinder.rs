@@ -129,6 +129,8 @@ pub enum Review {
     Inventory,
     /// On the profile feed.
     Profile,
+    /// Sent by e-mail.
+    Email,
 }
 
 /// What the viewfinder asks of the app.
@@ -330,7 +332,8 @@ fn next_destination(d: Destination) -> Destination {
     match d {
         Destination::Disk => Destination::Inventory,
         Destination::Inventory => Destination::Profile,
-        Destination::Profile => Destination::Disk,
+        // a postcard needs its e-mail, written in the panel
+        Destination::Profile | Destination::Email => Destination::Disk,
     }
 }
 
@@ -361,6 +364,11 @@ fn next_size(s: &mut Settings, destination: Destination) {
             let i = all.iter().position(|r| *r == s.profile_size).unwrap_or(0);
             s.profile_size = all[(i + 1) % all.len()];
         }
+        Destination::Email => {
+            let all = crate::snapshot::profile::ProfileSize::ALL;
+            let i = all.iter().position(|r| *r == s.postcard_size).unwrap_or(0);
+            s.postcard_size = all[(i + 1) % all.len()];
+        }
     }
 }
 
@@ -383,6 +391,7 @@ fn destination_label(d: Destination) -> &'static str {
         Destination::Disk => aurora_i18n::tr!("photo-destination-disk"),
         Destination::Inventory => aurora_i18n::tr!("photo-destination-inventory"),
         Destination::Profile => aurora_i18n::tr!("photo-destination-profile"),
+        Destination::Email => aurora_i18n::tr!("photo-destination-email"),
     }
 }
 
@@ -652,6 +661,10 @@ impl Viewfinder {
                         }
                         Destination::Profile => {
                             text_button(ui, p, FileFormat::Png.label(), font.clone(), p.ink, "");
+                            dot(ui, p);
+                        }
+                        Destination::Email => {
+                            text_button(ui, p, FileFormat::Jpeg.label(), font.clone(), p.ink, "");
                             dot(ui, p);
                         }
                         Destination::Inventory => {}
@@ -1759,6 +1772,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
                             Review::Disk(_) => aurora_i18n::tr!("photo-vf-saved"),
                             Review::Inventory => aurora_i18n::tr!("photo-uploaded"),
                             Review::Profile => aurora_i18n::tr!("photo-profile-posted"),
+                            Review::Email => aurora_i18n::tr!("photo-email-sent"),
                         };
                         ui.label(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink));
                         ui.label(egui::RichText::new(label).size(12.0).color(p.muted));
@@ -1781,6 +1795,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
                                     out.push(Out::Panel(Action::ShowProfile));
                                 }
                             }
+                            Review::Email => {}
                         });
                     });
                 });
@@ -1879,7 +1894,7 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
             .inventory_size
             .side()
             .map_or_else(|| aurora_i18n::tr!("photo-resolution-window").to_owned(), |v| v.to_string()),
-        Destination::Profile => {
+        Destination::Profile | Destination::Email => {
             let (w, h) = f.photo;
             format!("{w} × {h}")
         }

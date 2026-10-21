@@ -170,6 +170,7 @@ mod tests {
                     plain_history: false,
                     menu: None,
                     bubbles: Some(false),
+                    previews: None,
                 };
                 if bubbles {
                     draw_card(ui, &mut env, line, offer, 0.0);

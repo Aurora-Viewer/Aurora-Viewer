@@ -165,6 +165,18 @@ pub fn encode(
     }
 }
 
+/// A JPEG in memory: a postcard (LLPanelSnapshotPostcard's
+/// SNAPSHOT_FORMAT_JPEG).
+pub fn encode_jpeg(width: u32, height: u32, rgba: &[u8], quality: u8) -> Result<Vec<u8>, String> {
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err(format!("photo: {} bytes for {width} x {height}", rgba.len()));
+    }
+    let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let mut out = Vec::new();
+    encode(&mut out, width, height, &rgb, FileFormat::Jpeg, quality, &AtomicU32::new(0))?;
+    Ok(out)
+}
+
 /// A small copy for the gallery, its long side THUMB_SIDE.
 pub fn thumbnail(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
     downscale(width, height, rgba, THUMB_SIDE)

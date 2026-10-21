@@ -64,7 +64,8 @@ enum Glyph {
 
 pub struct Emoji {
     face: Option<ttf_parser::Face<'static>>,
-    glyphs: HashMap<char, Glyph>,
+    /// By code point and full size (the font's bitmap) or not.
+    glyphs: HashMap<(char, bool), Glyph>,
     /// Per-category list of code points that exist in the font.
     lists: Vec<Vec<char>>,
     pub tab: usize,
@@ -132,6 +133,16 @@ pub fn emoji_side(size: f32) -> f32 {
     size * 1.25
 }
 
+/// Most emoji a message may hold alone and still be drawn large.
+const JUMBO_MAX: usize = 27;
+/// Text size of a message of emoji alone, against the other messages':
+/// 13.5 gives pictures of 40 points.
+const JUMBO_SCALE: f32 = 2.4;
+/// Side the pictures are decoded at for the text; larger ones (a message of
+/// emoji alone, a large text size, a dense screen) take the font's own
+/// bitmap (136 × 128) instead of an enlarged blur.
+const DECODED: u32 = 64;
+
 impl Emoji {
     pub fn load() -> Emoji {
         // The font asked for (to compare another one), else the built-in one.
@@ -185,7 +196,12 @@ impl Emoji {
 
     /// Texture of an emoji (decoded on first use).
     pub fn texture(&mut self, ctx: &egui::Context, c: char) -> Option<egui::TextureHandle> {
-        if let Some(g) = self.glyphs.get(&c) {
+        self.texture_sized(ctx, c, false)
+    }
+
+    /// Texture of an emoji, the font's own bitmap when `full`.
+    fn texture_sized(&mut self, ctx: &egui::Context, c: char, full: bool) -> Option<egui::TextureHandle> {
+        if let Some(g) = self.glyphs.get(&(c, full)) {
             return match g {
                 Glyph::Ready(t) => Some(t.clone()),
                 Glyph::Missing => None,
@@ -198,20 +214,50 @@ impl Emoji {
             .filter(|img| img.format == ttf_parser::RasterImageFormat::PNG)
             .and_then(|img| image::load_from_memory(img.data).ok())
             .map(|img| {
-                let img = img.resize(64, 64, image::imageops::FilterType::Triangle).to_rgba8();
+                let img = if full {
+                    img.to_rgba8()
+                } else {
+                    img.resize(DECODED, DECODED, image::imageops::FilterType::Triangle).to_rgba8()
+                };
                 let (w, h) = img.dimensions();
                 egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], img.as_raw())
             });
+        let name = format!("emoji-{:x}{}", c as u32, if full { "-full" } else { "" });
         let g = match decoded {
-            Some(ci) => Glyph::Ready(ctx.load_texture(format!("emoji-{:x}", c as u32), ci, egui::TextureOptions::LINEAR)),
+            Some(ci) => Glyph::Ready(ctx.load_texture(name, ci, egui::TextureOptions::LINEAR)),
             None => Glyph::Missing,
         };
         let out = match &g {
             Glyph::Ready(t) => Some(t.clone()),
             Glyph::Missing => None,
         };
-        self.glyphs.insert(c, g);
+        self.glyphs.insert((c, full), g);
         out
+    }
+
+    /// A message of color emoji alone (spaces aside), at most `JUMBO_MAX`
+    /// pictures: its emoji are drawn large. Counted as drawn: a sequence
+    /// (joiner, skin tone) is still drawn as its pictures.
+    pub fn only_emoji(&self, text: &str) -> bool {
+        let mut pictures = 0;
+        for c in text.chars() {
+            if c.is_whitespace() || c == '\u{FE0F}' || c == '\u{200D}' {
+                continue;
+            }
+            if !self.has(c) {
+                return false;
+            }
+            pictures += 1;
+        }
+        (1..=JUMBO_MAX).contains(&pictures)
+    }
+
+    /// The text size of a message of the conversation (issue #483): larger
+    /// for emoji alone. The Aurora, Compact and Bubbles styles only: the
+    /// Legacy lines, the History window and the chat lines at the bottom of
+    /// the screen keep one size, as in the Legacy Viewer.
+    pub fn message_size(&self, text: &str, size: f32) -> f32 {
+        if self.only_emoji(text) { size * JUMBO_SCALE } else { size }
     }
 
     /// Text with color emoji inline (wraps like a label). The text stays
@@ -262,14 +308,15 @@ impl Emoji {
             if c == '\u{FE0F}' || c == '\u{200D}' {
                 continue;
             }
+            // a little larger than the letters, the picture keeps the height
+            // of a row of text: centered on it, it overflows the row instead
+            // of making a line with an emoji taller
+            let s = emoji_side(size) * super::fonts::scale(ui.ctx());
+            let full = s * ui.ctx().pixels_per_point() > DECODED as f32;
             if self.has(c)
-                && let Some(t) = self.texture(ui.ctx(), c)
+                && let Some(t) = self.texture_sized(ui.ctx(), c, full)
             {
                 flush(ui, &mut run);
-                // a little larger than the letters, the picture keeps the
-                // height of a row of text: centered on it, it overflows the
-                // row instead of making a line with an emoji taller
-                let s = emoji_side(size) * super::fonts::scale(ui.ctx());
                 let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
                 let behind = super::chat::select::atom_begin(ui);
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(s, row), egui::Sense::hover());
@@ -495,6 +542,21 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// Emoji alone, spaces and variation selectors aside, up to the limit:
+    /// large; any letter, digit or punctuation, or too many: the text's size.
+    #[test]
+    fn only_emoji_messages_are_large() {
+        let emoji = Emoji::load();
+        for text in ["😀", " 😀 ", "😀😂👍", "❤️", "❤\u{FE0F} 🔥", "👍🏽", &"🎉".repeat(JUMBO_MAX)] {
+            assert!(emoji.only_emoji(text), "{text:?} is emoji alone");
+            assert_eq!(emoji.message_size(text, 13.5), 13.5 * JUMBO_SCALE);
+        }
+        for text in ["", "   ", "hi 😀", "😀!", "1", ":)", "😀 a", &"🎉".repeat(JUMBO_MAX + 1)] {
+            assert!(!emoji.only_emoji(text), "{text:?} is not emoji alone");
+            assert_eq!(emoji.message_size(text, 13.5), 13.5);
         }
     }
 

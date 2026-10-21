@@ -50,8 +50,10 @@ mod double_click;
 mod env_apply;
 mod env_day_editor;
 mod env_editor;
+mod external_links;
 mod gestures;
 mod hover_height;
+mod hover_tips;
 mod hud_drag;
 mod imports;
 mod inspect;
@@ -60,6 +62,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod link_health;
 mod marketplace_listings;
+mod money_tracker;
 mod monitor;
 mod movement;
 mod object_actions;
@@ -351,6 +354,8 @@ pub struct App {
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
+    /// The world's hover tips (`app/hover_tips.rs`).
+    hover_tips: hover_tips::HoverTipsState,
     /// Fade-in of the look-at targets (`ui::lookat_targets`).
     look_at_fades: ui::lookat_targets::Fades,
     /// Offline demo: eye tracking on without touching the saved settings.
@@ -394,6 +399,8 @@ pub struct App {
     /// External web link waiting for the warning's answer, with the state of
     /// its "Do not warn me again" box and, for a dangerous link, the reason.
     url_confirm: Option<(String, bool, Option<&'static str>)>,
+    /// The media filter's question on screen.
+    media_filter_prompt: ui::media_filter::PromptUi,
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
@@ -409,6 +416,8 @@ pub struct App {
     /// The Dev Toolbox: the window's state, and the app's (app/dev_toolbox.rs).
     dev_toolbox: ui::dev_toolbox::DevToolboxUi,
     toolbox: dev_toolbox::Toolbox,
+    /// The region console's command line (Advanced › Region console).
+    sim_console_input: ui::sim_console::ConsoleInput,
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
@@ -473,6 +482,8 @@ pub struct App {
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
+    /// "Money tracker" (Me menu): the L$ received and paid.
+    money_tracker_ui: ui::money_tracker::MoneyTrackerUi,
     /// Buy Land (LLFloaterBuyLand), and the selection it follows.
     buy_land_ui: ui::buy_land::BuyLandUi,
     buy_land_source: buy_land::BuyLandSource,
@@ -488,6 +499,8 @@ pub struct App {
     options_ui: ui::options::OptionsUi,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
+    /// A friendship offer in the middle of the screen (#465).
+    friend_prompt: ui::friend_prompt::FriendPromptUi,
     /// The region restart alert (app/region_restart.rs).
     region_restart: region_restart::State,
     /// Taskbar flashes and system notifications (app/attention.rs).
@@ -495,6 +508,8 @@ pub struct App {
     /// After the link with the region was lost: the grid, the user and the
     /// place "Reconnect" goes back to (ui/link_health.rs).
     reconnect_place: Option<(String, String, aurora_net::login::StartLocation)>,
+    /// SLURLs from outside and the command line's login (app/external_links.rs).
+    external: external_links::ExternalLinks,
     /// AURORA_DEMO_LINK: a silence of the region to show, or a lost link.
     demo_link_health: Option<link_health::LinkHealthDemo>,
     /// AURORA_DEMO_SLURLS: region lookups the demo server answers late.
@@ -773,6 +788,7 @@ impl App {
             settings.keybinds = Default::default();
         }
         apply_test_overrides(&mut settings);
+        external_links::apply_grid(&mut settings);
         if std::env::var("AURORA_DEMO").as_deref() == Ok("1")
             && std::env::var_os("AURORA_DEMO_TEXTURE_LIBRARY").is_some()
             && std::env::var_os("AURORA_DEMO_AO").is_none()
@@ -802,6 +818,7 @@ impl App {
             ui::layout::load(&egui_ctx);
         }
         ui::colors::set(&settings.colors);
+        crate::keywords::set(&settings.keywords);
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
@@ -945,6 +962,7 @@ impl App {
             look_at_privacy: None,
             static_eyes_sent: None,
             look_hover: None,
+            hover_tips: Default::default(),
             look_at_fades: Default::default(),
             demo_look_at: false,
             demo_look_at_targets: false,
@@ -970,6 +988,7 @@ impl App {
             object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
+            media_filter_prompt: Default::default(),
             script_dialogs_were: 0,
             beacon_sound_at: None,
             wind_sound: Default::default(),
@@ -979,6 +998,7 @@ impl App {
             describe: None,
             dev_toolbox: Default::default(),
             toolbox: Default::default(),
+            sim_console_input: Default::default(),
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
@@ -1018,6 +1038,7 @@ impl App {
             bumps_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
+            money_tracker_ui: Default::default(),
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
@@ -1029,9 +1050,11 @@ impl App {
             options_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
+            friend_prompt: Default::default(),
             region_restart: Default::default(),
             attention: Default::default(),
             reconnect_place: None,
+            external: external_links::ExternalLinks::start(),
             demo_link_health: link_health::LinkHealthDemo::from_env(),
             demo_lookups: Vec::new(),
             remote_object: None,
@@ -1230,6 +1253,21 @@ impl App {
             }
             return;
         }
+        // AURORA_DEMO_SIM_CONSOLE / AURORA_DEMO_VOICE_MODERATION: the
+        // region's answers
+        if self.demo
+            && let NetCommand::SimConsole(command) = &cmd
+        {
+            self.world.apply(crate::demo::sim_extras::console_reply(command));
+            return;
+        }
+        if self.demo
+            && let NetCommand::ModerateVoice { target, mute } = cmd
+        {
+            let peers: Vec<uuid::Uuid> = self.world.calls.voice_peers.iter().copied().collect();
+            crate::demo::sim_extras::moderate(target, mute, &peers);
+            return;
+        }
         // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
         if self.demo
             && let NetCommand::SetMaturityPreference(maturity) = cmd
@@ -1353,6 +1391,28 @@ impl App {
                     amount = format!("{}", amount)
                 ));
             }
+            // the simulator's MoneyBalanceReply names a gift (the money tracker)
+            if let NetCommand::PayResident {
+                to,
+                group,
+                amount,
+                message,
+            } = &cmd
+            {
+                let item = if message.is_empty() { "Payment" } else { message.as_str() };
+                self.record_money(&NetEvent::MoneyTransaction {
+                    id: uuid::Uuid::new_v4(),
+                    success: true,
+                    kind: 5001,
+                    source: self.world.agent_id,
+                    source_group: false,
+                    dest: *to,
+                    dest_group: *group,
+                    amount: *amount,
+                    item: item.to_owned(),
+                    description: String::new(),
+                });
+            }
             // a sit on any prim, and the stand up from it (app/own_motion.rs);
             // the stand up's animations still come from demo::respond
             let seated_on_demo_prim = self.demo_seat.is_some();
@@ -1407,6 +1467,9 @@ impl App {
             if let NetCommand::EditInventory { request, change } = &cmd {
                 let result = crate::world::inventory::actions::demo_mutate(&mut self.world.inventory, self.world.agent_id, change.clone());
                 self.on_app_event(NetEvent::InventoryEdited { request: *request, result });
+                return;
+            }
+            if crate::world::received_items::demo_accept(&mut self.world, &cmd) {
                 return;
             }
             if let NetCommand::UploadInventoryThumbnail {
@@ -1853,6 +1916,9 @@ impl App {
             if let Some((_, _, place)) = self.reconnect_place.take() {
                 log::info!("demo login: reconnect to {}", place.to_login_string());
             }
+            if let Some(l) = &self.login_form.start_slurl {
+                log::info!("demo login: start at {}", crate::external_url::place_label(l));
+            }
             if matches!(mode.as_str(), "derez" | "derez1" | "connecting") {
                 self.login_form.busy = true;
                 self.login_progress = Some((aurora_i18n::tr!("session-connecting-to-login-server").into(), 0.35));
@@ -1872,7 +1938,14 @@ impl App {
             .take()
             .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
             .map(|(_, _, place)| place);
-        let start = reconnect.unwrap_or_else(|| match self.settings.start_location.as_str() {
+        // then a SLURL given from outside (LLStartUp::getStartSLURL)
+        let slurl = self.login_form.start_slurl.as_ref().map(|l| StartLocation::Region {
+            name: l.region.clone(),
+            x: l.pos.x.round() as u32,
+            y: l.pos.y.round() as u32,
+            z: l.pos.z.round() as u32,
+        });
+        let start = reconnect.or(slurl).unwrap_or_else(|| match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
                 name: self.settings.start_region.trim().to_owned(),
@@ -1950,6 +2023,7 @@ impl App {
         self.library_demo_seeded = false;
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
+        self.money_tracker_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
         // the listings belong to the account (LLMarketplaceData)
@@ -2019,6 +2093,9 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if self.world.received_items_event(&ev) {
+            return;
+        }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
             let _ = self.sync_bridge_queries();
             if self.bridge_services.owns(request) {
@@ -2041,6 +2118,7 @@ impl App {
             ..
         } = ev
         {
+            self.record_money(&ev);
             self.pay_ui.on_transaction(success, kind, dest, description);
             return;
         }
@@ -2049,6 +2127,21 @@ impl App {
         }
         if let NetEvent::GroupCreated { group, success, message } = &ev {
             self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
+            return;
+        }
+        if let NetEvent::ServerReleaseNotes(page) = ev {
+            // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
+            match page {
+                Ok(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Err(_) => {
+                    self.world.notifications.push(
+                        crate::world::notifications::Kind::Alert,
+                        aurora_i18n::tr!("help-server-release-notes"),
+                        aurora_i18n::tr!("help-server-release-notes-failed").to_owned(),
+                        crate::world::notifications::Data::None,
+                    );
+                }
+            }
             return;
         }
         if let NetEvent::ScriptTeleportRequest { .. } = ev {
@@ -2380,6 +2473,7 @@ impl App {
                 }
             }
             NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),
+            NetEvent::HoverParcel { handle, parcel } => self.on_hover_parcel(handle, parcel),
             NetEvent::LoginProgress { message, fraction } => {
                 self.loading_stage = message.clone();
                 self.login_progress = Some((message, fraction));
@@ -2420,6 +2514,11 @@ impl App {
             }
             NetEvent::LoggedIn(l) => {
                 if !self.demo {
+                    let root = self.world.inventory.root;
+                    self.inventory_ui.load_received(
+                        crate::settings::account_dir(&l.agent_id).join(format!("received-{root}.json")),
+                        root,
+                    );
                     self.settings.select_hover_account(l.agent_id);
                     self.settings.save();
                 }
@@ -2467,6 +2566,8 @@ impl App {
                 self.login_form.adding = false;
                 self.login_form.add_return = None;
                 self.login_form.editing = false;
+                // a start SLURL serves one login
+                self.login_form.start_slurl = None;
                 // the demo's teleport history: several days, never saved
                 if self.demo {
                     self.world.tp_storage = crate::world::tphistory::HistoryStorage::in_memory(crate::demo::place::history());
@@ -2483,6 +2584,9 @@ impl App {
                 }
                 // interface sounds ready when needed (init_audio preloads)
                 for id in self.settings.audio.ui.preload() {
+                    self.scene.sounds.want(id);
+                }
+                if let Some(id) = attention::keyword_sound(&self.settings, &self.settings.keywords) {
                     self.scene.sounds.want(id);
                 }
                 // remembered password: the hash of the one typed (kept when
@@ -3003,6 +3107,7 @@ impl App {
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
+            Action::HoverTips => self.toggle_hover_tips(),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
@@ -3879,6 +3984,87 @@ impl App {
         self.wind_sound.update(self.audio_engine.as_ref(), &input, dt);
     }
 
+    /// The media filter's question while one waits (the alerts of
+    /// filterMediaUrl / filterAudioUrl), its answer kept as asked. The first
+    /// one explains the filter and offers to turn it off (EnableMediaFilter).
+    fn media_filter_question(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        use crate::media::filter::Remember;
+        use ui::media_filter::Answer;
+        if !self.settings.media.filter {
+            return;
+        }
+        let first_use = !self.settings.media.filter_explained;
+        let Some(q) = self.world.media_filter.question() else {
+            return;
+        };
+        let Some(answer) = ui::media_filter::prompt(ctx, p, q, first_use, &mut self.media_filter_prompt) else {
+            return;
+        };
+        let url = q.url.clone();
+        let filter = &mut self.world.media_filter;
+        match answer {
+            Answer::Allow(remember) => filter.answer(&url, true, remember),
+            Answer::Deny(remember) => filter.answer(&url, false, remember),
+            Answer::TurnOff => {
+                log::info!("media filter: turned off from its first question");
+                self.settings.media.filter = false;
+                filter.answer(&url, true, Remember::Once);
+            }
+        }
+        if first_use || !self.settings.media.filter {
+            self.settings.media.filter_explained = true;
+            // the demo leaves the shared demo profile alone
+            if !self.demo {
+                self.settings.save();
+            }
+        }
+    }
+
+    /// The demo's media filter stays in memory: the demo account's file
+    /// would carry one run's answers into the next.
+    /// AURORA_DEMO_MEDIA_FILTER: `ask` (or `1`) starts a parcel media on a
+    /// site the list does not know, `first` the same with the first use's
+    /// explanation, `music` the parcel music on such a site, `list` puts a
+    /// few sites in the list (Preferences › Sound and voice › Media).
+    fn demo_media_filter(&mut self) {
+        use crate::media::filter::{Action, Edit, MediaFilter};
+        self.world.media_filter = MediaFilter::default();
+        let Ok(mode) = std::env::var("AURORA_DEMO_MEDIA_FILTER") else {
+            return;
+        };
+        // the scenario shows the filter whatever the demo profile says
+        self.settings.media.filter = true;
+        self.settings.media.filter_explained = mode != "first";
+        match mode.as_str() {
+            "ask" | "1" | "first" => {
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    let pc = Arc::make_mut(parcel);
+                    pc.media_url = "https://media.example.com/welcome/index.html".into();
+                    pc.media.mime = "text/html".into();
+                    pc.media.media_id = crate::demo::parcel_media_texture();
+                    pc.media.auto_scale = true;
+                }
+                self.media.play_parcel(&self.world, &self.settings.media);
+            }
+            "music" => {
+                if let Some(parcel) = self.world.parcel.as_mut() {
+                    Arc::make_mut(parcel).music_url = "http://radio.example.org:8000/live".into();
+                }
+                self.music_playing = true;
+            }
+            "list" => {
+                for (site, action) in [
+                    ("video.example.com", Action::Allow),
+                    ("tracker.example.net", Action::Deny),
+                    ("https://radio.example.org/live.mp3", Action::Allow),
+                ] {
+                    self.world.media_filter.apply(Edit::Set(site.into(), action));
+                }
+            }
+            _ => log::warn!("AURORA_DEMO_MEDIA_FILTER: unknown mode {mode}"),
+        }
+    }
+
     fn update_audio(&mut self) {
         let in_world = self.in_world();
         let url = if in_world {
@@ -3910,7 +4096,21 @@ impl App {
             Some(u) if u.starts_with("http://") || u.starts_with("https://") => u.clone(),
             _ => url,
         };
-        let want = if self.music_playing { url } else { String::new() };
+        let mut want = if self.music_playing { url } else { String::new() };
+        // the media filter (filterAudioUrl): nothing reaches the station
+        // before the resident answered; a refusal turns the radio off
+        if !want.is_empty() && self.settings.media.filter {
+            use crate::media::filter::{Source, Verdict};
+            match self.world.media_filter.check(&want, Source::Music) {
+                Verdict::Allow => {}
+                Verdict::Ask => want.clear(),
+                Verdict::Deny => {
+                    self.music_playing = false;
+                    self.music_override = None;
+                    want.clear();
+                }
+            }
+        }
         if want != self.stream_url {
             if want.is_empty() {
                 engine.stop_stream();
@@ -4256,7 +4456,11 @@ impl App {
                     crate::world::notifications::Data::None,
                 );
             } else {
-                // the name is a link to the resident, as in Firestorm's chat
+                // the name is a link to the resident, as in the Legacy Viewer's chat;
+                // checked for keywords as nearby chat (FSRadar::radarAlertMsg)
+                let name = ui::people::radar_name(&self.world, &id, s.name_format);
+                self.world
+                    .keyword_alert(id, &name, &text, true, crate::world::attention::Open::NearbyChat);
                 self.world.system_message(format!("secondlife:///app/agent/{id}/about {text}"));
             }
         }
@@ -4313,6 +4517,15 @@ impl App {
         // the call's channel: its state and participants (the demo has no
         // voice server and simulates them)
         let server_type = main.map(|r| r.voice_server.clone()).unwrap_or_default();
+        // nearby voice moderation: who a moderator muted, and us (the demo
+        // simulates it, AURORA_DEMO_VOICE_MODERATION)
+        let moderated = if self.demo {
+            let peers = self.world.calls.voice_peers.iter().copied();
+            crate::demo::sim_extras::nearby_moderated(self.frame_count, self.world.agent_id, peers)
+        } else {
+            self.voice.nearby_moderation()
+        };
+        self.world.set_nearby_moderated(moderated);
         self.world.calls.voice_enabled = self.settings.audio.voice_enabled;
         self.world.calls.server_type = server_type;
         self.world.calls.reject_group = self.settings.audio.reject_group_calls;
@@ -5351,6 +5564,7 @@ impl App {
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
         wanted.extend(self.region_ui.wanted_pics.drain());
+        wanted.extend(self.money_tracker_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -5628,6 +5842,14 @@ impl App {
         for c in self.world.user_info.take_commands() {
             self.send(c);
         }
+        // the region console's command lines
+        for c in self.world.sim_console.take_commands() {
+            self.send(c);
+        }
+        // the script editor's keywords follow the region's LSL syntax
+        if let Some(c) = self.world.follow_lsl_syntax() {
+            self.send(c);
+        }
         // experiences' details and permissions (questions, profile)
         for c in self.world.experiences.take_commands() {
             self.send(c);
@@ -5666,6 +5888,20 @@ impl App {
         {
             self.send(cmd);
         }
+        // AURORA_DEMO_SIM_CONSOLE=open: the console and two commands
+        if self.demo && self.frame_count == 600 && crate::demo::sim_extras::console_open() {
+            self.panels.sim_console = true;
+            self.world.sim_console.send("help");
+            self.world.sim_console.send("stats");
+        }
+        // AURORA_DEMO_FREEZE: frozen by Nova, released later
+        if self.demo {
+            for ev in crate::demo::sim_extras::freeze_events(self.frame_count) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
+        }
         // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
         // the demo's start has settled (it takes it back at the start)
         if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
@@ -5697,6 +5933,15 @@ impl App {
         }
         self.options_ui.media_pack = self.plugin_pack.state();
         ui::web_view::set_plugins_status(&self.egui_ctx, self.plugin_pack.state());
+        // the media filter's list in the preferences: the account's while
+        // logged in, and the changes made there
+        for edit in std::mem::take(&mut self.options_ui.media_filter_edits) {
+            self.world.media_filter.apply(edit);
+        }
+        let rules = self.in_world().then(|| self.world.media_filter.rules());
+        if self.options_ui.media_filter.as_deref() != rules {
+            self.options_ui.media_filter = rules.map(<[_]>::to_vec);
+        }
         self.poll_inventory_images();
         // a click whose depth is back already (the render thread finished
         // the last frame while this thread waited for its next one)
@@ -5749,6 +5994,14 @@ impl App {
         let t_ev = Instant::now();
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
+        self.world.received_items.enabled = self.settings.sort_received_items;
+        self.world.received_items.enabled_since = self.settings.received_items_since;
+        if self.demo
+            && self.frame_count == 700
+            && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode.ends_with("received-filing"))
+        {
+            self.inventory_ui.expand_all = Some(true);
+        }
         self.sync_chat_log();
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
@@ -5776,12 +6029,17 @@ impl App {
             self.camera.shift(shift);
         }
         self.world.poll_inventory_cache();
+        let receipts = std::mem::take(&mut self.world.received_items.receipts);
+        self.inventory_ui.update_received(&mut self.world.inventory, receipts);
         self.world.poll_transcripts();
         self.update_hover_height();
         self.update_avatar_health();
         if self.demo {
             crate::demo::tangents::tick(&mut self.world, &mut self.scene, self.frame_count);
             crate::demo::rigged_prop::tick(&mut self.world, &mut self.scene, self.frame_count);
+            if let Some(e) = crate::demo::conference::tick().and_then(|ev| self.world.apply(ev)) {
+                self.on_app_event(e);
+            }
         }
         self.perf.events_ms = t_ev.elapsed().as_secs_f32() * 1000.0;
         for anim in std::mem::take(&mut self.world.animation_stops) {
@@ -5869,6 +6127,9 @@ impl App {
             }
             // Background inventory changes, whatever the inventory window does.
             self.update_marketplace_listings();
+            for command in self.world.file_received_items(Instant::now()) {
+                self.send(command);
+            }
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -6383,6 +6644,9 @@ impl App {
                     .unwrap_or_default();
                 self.options_ui.media_running = self.media.loaded_count();
                 for msg in self.media.messages.drain(..) {
+                    self.world.system_message(msg);
+                }
+                for msg in std::mem::take(&mut self.world.media_filter.messages) {
                     self.world.system_message(msg);
                 }
                 // mouse moves over the focused media
@@ -6990,6 +7254,13 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
+                match self.frame_count {
+                    650 => ui::widgets::minimize_floater(&ctx, "inventory"),
+                    750 => self.on_ctx_action(ui::context::CtxAction::AttachmentInventory(uuid::Uuid::from_u128(8100))),
+                    _ => {}
+                }
+            }
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -7142,6 +7413,8 @@ impl App {
             }
         }
         self.look_hover = None;
+        self.hover_tips.avatar = None;
+        let tips_on = self.hover_tips_on();
         if matches!(self.screen, Screen::World)
             && !self.build.open
             && !self.alt
@@ -7155,14 +7428,21 @@ impl App {
         {
             let hovered = self.scene.hover_hud(&self.world, self.cursor_pos).or_else(|| {
                 // Preserve the world hover cache (scene/hover.rs).
+                let ray = gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1);
                 let (point, idx) = self.scene.hover_pick(
                     &self.world,
-                    gfx.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1),
+                    ray,
                     gfx.renderer.hover_pick(self.cursor_pos.0, self.cursor_pos.1),
                     self.settings.draw_distance,
                 );
                 // the same pick gives the look-at its point
                 self.look_hover = point.map(|p| (idx, p));
+                // the hover tips name the avatars the search leaves out,
+                // in front of what it found
+                if tips_on && let Some(ray) = ray {
+                    let far = point.map_or(self.settings.draw_distance, |p| (p - ray.0).length() + 0.05);
+                    self.hover_tips.avatar = self.scene.avatar_on_ray(&self.world, ray, far);
+                }
                 idx
             });
             if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
@@ -7299,6 +7579,7 @@ impl App {
             }
             self.skin.theme.apply(&self.egui_ctx, self.settings.font_scale);
             ui::colors::set(&self.settings.colors);
+            crate::keywords::set(&self.keyword_settings());
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
@@ -7558,6 +7839,16 @@ impl App {
                     self.on_app_event(e);
                 }
             }
+            if self.frame_count == 850 && mode == "object-history" {
+                if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Decline);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.notif_ui.open = true;
+                self.notif_ui.center.tab = ui::notification_center::Tab::History;
+            }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
                 let ids: Vec<(u64, bool)> = self.world.notifications.listed().map(|n| (n.id, n.interactive())).collect();
@@ -7587,6 +7878,19 @@ impl App {
                 if mode.ends_with("history") {
                     self.notif_ui.center.tab = ui::notification_center::Tab::History;
                 }
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::friend_prompt::mode()
+        {
+            let agent = self.world.agent_id;
+            for event in crate::demo::friend_prompt::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+            if mode == "later" && self.frame_count == crate::demo::friend_prompt::LATER_AT {
+                self.friend_prompt.put_off();
             }
         }
         if self.demo && crate::demo::object_im::settings().is_some() {
@@ -7647,6 +7951,14 @@ impl App {
                     self.frame_count,
                     self.window_behind()
                 );
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::keywords::active() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::keywords::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -8104,6 +8416,7 @@ impl App {
             self.demo_buy_currency();
             self.demo_buy_land();
             self.demo_pay();
+            self.demo_money_tracker();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
@@ -8815,6 +9128,7 @@ impl App {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
+            BarAction::ServerReleaseNotes => self.send(NetCommand::ServerReleaseNotes),
             BarAction::Import => {
                 self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
@@ -8931,6 +9245,13 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
+            BarAction::HoverTips(menu) => {
+                let tips = &mut self.settings.hover_tips;
+                tips.enabled = menu.enabled;
+                tips.land = menu.land;
+                tips.all_objects = menu.all_objects;
+                self.settings.save();
+            }
             BarAction::SystemIsland(shown) => {
                 self.settings.system_island = shown;
                 self.settings.save();
@@ -9878,12 +10199,13 @@ impl App {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
                 }
                 self.sync_remembered_password();
-                let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 self.login_info.poll();
                 self.login_form.block_reason = self
                     .updater
                     .login_block_reason()
                     .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
+                self.command_line_login();
+                let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 a.login = ui::login::show(
                     ui,
                     &p,
@@ -10054,6 +10376,11 @@ impl App {
                 if !self.camera.mouselook() && !held {
                     self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
                 }
+                // the hover tips of what the pointer rested on (none in
+                // mouselook nor over a held photo)
+                if let Some(action) = self.draw_hover_tips(&ctx, &p, !self.camera.mouselook() && !held) {
+                    a.ctx_action = Some(action);
+                }
                 ui::sky_beacons::draw(
                     &ctx,
                     &p,
@@ -10122,6 +10449,8 @@ impl App {
                     double_click: self.double_click_action(),
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
+                    release_notes: self.world.main_has_cap("ServerReleaseNotes"),
+                    region_console: self.world.main_has_cap("SimConsoleAsync"),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
@@ -10131,6 +10460,7 @@ impl App {
                             agent_id: self.world.agent_id,
                             group: self.world.groups.group(&parcel.group_id),
                             health: self.world.health,
+                            frozen: self.world.frozen,
                         }),
                         _ => Vec::new(),
                     },
@@ -10153,6 +10483,11 @@ impl App {
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),
                     health: self.health_menu(),
+                    hover_tips: ui::bars::HoverTipsMenu {
+                        enabled: self.settings.hover_tips.enabled,
+                        land: self.settings.hover_tips.land,
+                        all_objects: self.settings.hover_tips.all_objects,
+                    },
                 };
                 let media = ui::audio::MediaState {
                     music_available: self.world.parcel.as_ref().is_some_and(|pc| !pc.music_url.is_empty()),
@@ -10570,6 +10905,14 @@ impl App {
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
+                // the cards under links, their videos played by the media
+                // plugins' browser
+                self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
+                self.chat_ui.previews.demo = self.demo && crate::demo::previews_offline();
+                self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
+                    paths: self.media.plugins(&self.settings.media).cloned(),
+                    browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language()),
+                });
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, `World::is_typing_nearby`)
                 self.chat_ui.nearby_count = 0;
@@ -10600,6 +10943,11 @@ impl App {
                     && let Some(ev) = crate::demo::flash_message(self.world.agent_id, self.radar_clock.elapsed().as_secs_f64())
                 {
                     self.world.apply(ev);
+                }
+                // AURORA_DEMO_CONV_SCROLL=new: the friend writes while we read
+                // higher up
+                if self.demo {
+                    crate::demo::conv_scroll_new(&mut self.world, self.chat_ui.demo_scrolled);
                 }
                 // AURORA_DEMO_CONV=aurora: the group's call rings without us
                 if let Some(scene) = crate::demo::aurora_scenario() {
@@ -10737,6 +11085,16 @@ impl App {
                     }
                 }
                 self.panels.chat = open;
+                // a link's menu hid the previews of its site
+                if let Some(site) = self.chat_ui.previews.hide_site.take()
+                    && !self.settings.link_previews.hidden_sites.contains(&site)
+                {
+                    self.settings.link_previews.hidden_sites.push(site);
+                    self.settings.save();
+                }
+                // a YouTube video playing in its window, or a card's that
+                // stopped being drawn
+                self.chat_ui.previews.player_window(&ctx, &p);
                 if self.settings.friends_list != friends_before {
                     self.settings.save();
                 }
@@ -11023,6 +11381,7 @@ impl App {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }
+                self.media_filter_question(&ctx, &p);
                 ui::media::show(
                     &ctx,
                     &p,
@@ -11036,6 +11395,7 @@ impl App {
                     ctx.set_cursor_icon(c);
                 }
                 self.show_pay(&ctx, &p, &mut a);
+                self.show_money_tracker(&ctx, &p, &mut a);
                 for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
                     match document {
                         ui::object_actions::ContentsOpen::Script(object, item) => {
@@ -11073,6 +11433,28 @@ impl App {
                 let dnd = self.world.status.dnd;
                 let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
                 self.world.notifications.aurora = aurora;
+                // #465: a friendship offer in the middle of the screen, before
+                // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)
+                let prompt_on = self.settings.friend_request_prompt || (self.demo && crate::demo::friend_prompt::mode().is_some());
+                let prompt_allowed = !toasts_hidden && !dnd && self.world.notifications.started;
+                let mut prompt_action = None;
+                if let Some((id, from)) = self.friend_prompt.next(&mut self.world.notifications, prompt_on, prompt_allowed) {
+                    self.notif_ui.wanted_pics.insert(from);
+                    let name = Some(self.world.social.display_name_of(&from))
+                        .filter(|n| n != "…")
+                        .or_else(|| self.world.avatar_name(&from));
+                    if name.is_none() {
+                        self.world.social.want_name(from);
+                    }
+                    let env = ui::friend_prompt::PromptEnv {
+                        pics: &self.avatar_pics,
+                        name,
+                        motion: !self.settings.reduce_motion,
+                    };
+                    prompt_action = self
+                        .friend_prompt
+                        .show(&ctx, &p, &self.skin.icons, &self.world.notifications, id, &env);
+                }
                 let restart = self.restart_bell_info(&p);
                 // AURORA_DEMO_PRESENCE: a place for this run only
                 let presence_at = crate::demo::presence::position()
@@ -11088,7 +11470,7 @@ impl App {
                     presence_at,
                     classic_bars,
                 };
-                let (answers, asks) = if aurora {
+                let (mut answers, asks) = if aurora {
                     ui::notification_center::show(
                         &ctx,
                         &p,
@@ -11118,6 +11500,11 @@ impl App {
                 self.order_region_restart(&ctx, aurora);
                 for ask in asks {
                     self.on_notification_ask(&ctx, ask);
+                }
+                match prompt_action {
+                    Some(ui::friend_prompt::PromptAction::Answer(id, r)) => answers.push((id, r)),
+                    Some(ui::friend_prompt::PromptAction::Profile(id)) => self.profile_ui.open(&mut self.world, id),
+                    None => {}
                 }
                 for (id, r) in answers {
                     if self.region_restart_bell_answer(id, &r) {
@@ -11311,6 +11698,7 @@ impl App {
                     cookie: cookie.as_ref(),
                     profile_base: profile_base.as_deref(),
                 };
+                self.profile_ui.prepare_photos(&ctx, &mut self.scene, &self.world);
                 let acts = self.profile_ui.show(
                     &ctx,
                     &p,
@@ -11557,6 +11945,17 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                let region = self.world.region_name();
+                let available = self.world.main_has_cap("SimConsoleAsync");
+                ui::sim_console::show(
+                    &ctx,
+                    &p,
+                    &mut self.panels.sim_console,
+                    &region,
+                    available,
+                    &mut self.world.sim_console,
+                    &mut self.sim_console_input,
+                );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
                 if self.panels.environment {
@@ -11966,6 +12365,7 @@ impl ApplicationHandler for App {
                         _ => 0,
                     };
                     self.options_ui.scroll_to_attention = filter == "attention";
+                    self.options_ui.scroll_to_keywords = filter == "keywords";
                     self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
                         match filter {
                             "voice" => Some(ui::options::AudioSection::Voice),
@@ -12563,6 +12963,12 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.panels.perf = false;
                 self.chat_ui.selected = crate::demo::bubbles_conversation(view);
+                // AURORA_DEMO_PREVIEW_PLAY=card|window: the first video plays
+                self.chat_ui.previews.demo_play = match std::env::var("AURORA_DEMO_PREVIEW_PLAY").as_deref() {
+                    Ok("card") => Some(crate::link_preview::Player::InCard),
+                    Ok("window") => Some(crate::link_preview::Player::Window),
+                    _ => None,
+                };
                 self.chat_ui.demo_style = Some(if view == crate::demo::Bubbles::Legacy {
                     crate::settings::ChatStyle::Legacy
                 } else {
@@ -12840,6 +13246,11 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
             }
+            // AURORA_DEMO_CONV_SCROLL: the friend's earlier talk first
+            if crate::demo::conv_scroll_scenario().is_some() {
+                crate::demo::conv_scroll_lines(&mut self.world);
+                self.chat_ui.demo_scroll = Some(crate::demo::DEMO_FRIEND);
+            }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
             }
@@ -13089,12 +13500,18 @@ impl ApplicationHandler for App {
                         | "received-sort-name"
                         | "aurora-received-sort"
                         | "aurora-received-sort-name"
+                        | "received-filing"
+                        | "aurora-received-filing"
+                        | "aurora-received-unread"
+                        | "aurora-received-unread-compact"
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
                         | "aurora-rights"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "show-original"
+                        | "aurora-show-original"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -13142,6 +13559,12 @@ impl ApplicationHandler for App {
                         self.inventory_ui.selected = None;
                         self.inventory_ui.selection.clear();
                         self.settings.inventory.received_sort.folders_by_name = view.ends_with("-name");
+                    }
+                    if view.ends_with("received-filing") || view.starts_with("aurora-received-unread") {
+                        self.settings.sort_received_items = true;
+                        self.settings.received_items_since = 0;
+                        crate::world::received_items::demo(&mut self.world);
+                        self.inventory_ui.tab = usize::from(view.ends_with("received-filing"));
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;
@@ -13501,6 +13924,12 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.demo_reorder = true;
             }
+            // AURORA_DEMO_KEYWORDS: the alerts on for the run, with the
+            // Conversations window open on the nearby chat
+            if crate::demo::keywords::active() {
+                crate::keywords::set(&self.keyword_settings());
+                self.panels.chat = true;
+            }
             // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
             // interface sounds (audible: off by default for the captures)
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {
@@ -13673,6 +14102,7 @@ impl ApplicationHandler for App {
                 }
                 self.media.play_parcel(&self.world, &self.settings.media);
             }
+            self.demo_media_filter();
         }
     }
 
@@ -14024,6 +14454,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.record_window_geometry();
         self.attention_window();
+        self.external_links();
         if self.gfx.as_ref().is_some_and(|g| !g.shown) {
             // Hidden windows may receive no RedrawRequested event. Keep
             // producing frames until a real presentation makes it visible,

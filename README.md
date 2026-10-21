@@ -654,6 +654,9 @@ exe before publishing; the local build also writes it to `version.txt`.
 | `--title <text>` | Names the window "Aurora Viewer <version> - <text> (Dev)" and its log file |
 | `--fps-limit <fps>` | Caps this instance at 1–500 fps without changing saved preferences |
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, or another language added to the catalogues), without changing the saved choice |
+| `--grid <name>` | Selects the grid of the login screen: `agni`, `aditi` or a login URI (`--loginuri <uri>` too) |
+| `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
+| `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Prints the built version then exits, with no window, log or network |
 
@@ -663,6 +666,18 @@ exe before publishing; the local build also writes it to `version.txt`.
   and online sessions; a lower user preference remains effective.
 - `--language`: also accepts `--language=fr`. An unavailable language falls
   back to English; the argument is meant for demos and screenshots.
+- `<slurl>`: `secondlife://Region/x/y/z`, a `maps.secondlife.com` link or a
+  `secondlife:///app/…` command (`-url` as the system's link handler passes
+  it). Nothing after it is read, so a link from a web page cannot add other
+  options. Before login the place is the start location of the next login
+  (the saved choice stays); in the world it opens the place's details; a
+  command runs once in the world. When a viewer already runs (same demo
+  mode and `--title`), the link goes to it and the new process stops.
+  Preferences › Interface › "Open secondlife:// links in Aurora" registers
+  the viewer as the link handler of the current Windows user.
+- `--login`: the account follows the usual "remember" choices; a single
+  user name is written `<name> Resident`. `--grid` alone selects the grid of
+  a new account's form.
 
 ### Demo mode and test switches
 

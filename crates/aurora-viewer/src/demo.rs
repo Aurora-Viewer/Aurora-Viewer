@@ -48,6 +48,10 @@ pub mod classifieds;
 /// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
 #[path = "demo_collisions.rs"]
 pub mod collisions;
+/// Conference invitations from a stranger and a friend in turn
+/// (AURORA_DEMO_CONFERENCE).
+#[path = "demo_conference.rs"]
+pub mod conference;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -65,6 +69,9 @@ pub mod env;
 pub mod experience;
 /// Meshes filling the geometry arena until it outgrows its buffers
 /// (AURORA_DEMO_GEOMETRY).
+/// Friendship offers in the middle of the screen (AURORA_DEMO_FRIEND_PROMPT).
+#[path = "demo_friend_prompt.rs"]
+pub mod friend_prompt;
 #[path = "demo_geometry.rs"]
 pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
@@ -79,8 +86,14 @@ pub mod group;
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]
 pub mod home;
+/// The world's hover tips in one of their forms (AURORA_DEMO_HOVER_TIPS).
+#[path = "demo_hover_tips.rs"]
+pub mod hover_tips;
 #[path = "demo_hud.rs"]
 pub mod hud;
+/// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
+#[path = "demo_keywords.rs"]
+pub mod keywords;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
@@ -129,6 +142,10 @@ pub mod search;
 /// A seat deleted under the resident sitting on it (AURORA_DEMO_SEAT_KILL).
 #[path = "demo_seat_kill.rs"]
 pub mod seat_kill;
+/// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
+/// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
+#[path = "demo_sim_extras.rs"]
+pub mod sim_extras;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
@@ -712,6 +729,13 @@ pub fn flash_message(agent: Uuid, secs: f64) -> Option<NetEvent> {
     }))
 }
 
+/// AURORA_DEMO_CONV_PREVIEWS=net: the previews of the demo's links come from
+/// the real sites; otherwise the demo makes them (`link_preview::demo`).
+pub fn previews_offline() -> bool {
+    static NET: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net"))
+}
+
 /// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
 /// Conversations window as a messenger (ui/chat/bubbles.rs). Without a
 /// suffix the conversation with an online friend, over two days; `busy` the
@@ -880,7 +904,15 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
         Bubbles::Friend | Bubbles::Legacy => {
             let friend = DEMO_FRIEND;
             let name = "Nova Example";
-            for l in [
+            // AURORA_DEMO_CONV_EMOJI=1: messages of emoji alone, drawn large
+            // (#483), among the others
+            let emoji_lines = std::env::var("AURORA_DEMO_CONV_EMOJI").is_ok().then(|| {
+                [
+                    line(ago(10), name, friend, ChatKind::Im, "🎉🎶🐺"),
+                    line(ago(3), &me, Uuid::nil(), ChatKind::Own, "👍"),
+                ]
+            });
+            let mut lines = vec![
                 line(
                     ago(26 * 60),
                     &me,
@@ -893,7 +925,79 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                 line(ago(11), name, friend, ChatKind::Im, aurora_i18n::tr!("demo-bubbles-join")),
                 line(ago(2), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-coming")),
                 line(ago(1), &me, Uuid::nil(), ChatKind::Own, aurora_i18n::tr!("demo-bubbles-send-tp")),
-            ] {
+            ];
+            if let Some(extra) = emoji_lines {
+                lines.splice(4..4, extra);
+            }
+            // AURORA_DEMO_CONV_PREVIEWS=1|states: links with their cards
+            // (#538, #739), made here without network (`link_preview::demo`)
+            let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
+                let with = |key: &str, url: &str| format!("{key} {url}");
+                if mode == "net" {
+                    // real sites: a site to click on, a YouTube video
+                    vec![
+                        line(
+                            ago(9),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            "https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif",
+                        ),
+                        line(
+                            ago(8),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png",
+                        ),
+                        line(
+                            ago(7),
+                            &me,
+                            Uuid::nil(),
+                            ChatKind::Own,
+                            "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
+                        ),
+                    ]
+                } else if mode == "states" {
+                    vec![
+                        line(ago(9), name, friend, ChatKind::Im, "https://i.imgur.com/loading-poster.png"),
+                        line(ago(8), name, friend, ChatKind::Im, "https://i.imgur.com/missing-poster.png"),
+                        line(ago(7), name, friend, ChatKind::Im, "https://i.imgur.com/large-poster.png"),
+                    ]
+                } else {
+                    // the picture and the video last: in sight when the
+                    // conversation opens at its end
+                    vec![
+                        line(
+                            ago(9),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            &with(aurora_i18n::tr!("demo-previews-stage"), "http://pics.example.net/scene.png"),
+                        ),
+                        line(ago(8), name, friend, ChatKind::Im, "https://i.gyazo.com/demo-dance.gif"),
+                        line(
+                            ago(7),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            &with(aurora_i18n::tr!("demo-previews-outfit"), "https://i.imgur.com/demo-outfit.jpg"),
+                        ),
+                        line(
+                            ago(6),
+                            &me,
+                            Uuid::nil(),
+                            ChatKind::Own,
+                            &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
+                        ),
+                    ]
+                }
+            });
+            if let Some(extra) = preview_lines {
+                let at = lines.len() - 2;
+                lines.splice(at..at, extra);
+            }
+            for l in lines {
                 world.conversation_line(friend, l);
             }
         }
@@ -911,6 +1015,62 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             world.conversation_line(DEMO_NOVA, line(now, "Tess Touch", DEMO_NOVA, ChatKind::Im, &reply));
         }
         Bubbles::Group | Bubbles::Local => {}
+    }
+}
+
+/// AURORA_DEMO_CONV_SCROLL=up|new: the friend's conversation (the one
+/// `AURORA_DEMO_CONV=aurora`, `bubbles` or `bubbles:legacy` shows) a few
+/// screens long, shown from its top (`ui/chat/latest.rs`); with `new`, the
+/// friend writes three messages once it is there. True for `new`.
+pub fn conv_scroll_scenario() -> Option<bool> {
+    match std::env::var("AURORA_DEMO_CONV_SCROLL").ok()?.trim() {
+        "new" => Some(true),
+        _ => Some(false),
+    }
+}
+
+/// The scroll scenario's earlier talk, a day before the bubbles' lines
+/// (which come after it).
+pub fn conv_scroll_lines(world: &mut crate::world::World) {
+    use crate::world::{ChatKind, ChatLine, Origin};
+    let start = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
+    let me = world.own_name();
+    for n in 1..=40u64 {
+        let (from, source, kind) = if n % 3 == 0 {
+            (me.clone(), Uuid::nil(), ChatKind::Own)
+        } else {
+            ("Nova Example".to_owned(), DEMO_FRIEND, ChatKind::Im)
+        };
+        let line = ChatLine {
+            time: start + std::time::Duration::from_secs(n * 90),
+            from,
+            text: aurora_i18n::tr!("demo-scroll-earlier", n = n as i64),
+            kind,
+            source,
+            origin: Origin::Live,
+        };
+        world.conversation_line(DEMO_FRIEND, line);
+    }
+}
+
+/// The `new` scroll scenario: the friend's three messages, once the
+/// conversation was scrolled to its top.
+pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SENT: AtomicBool = AtomicBool::new(false);
+    if !scrolled || conv_scroll_scenario() != Some(true) || SENT.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    for n in 1..=3i64 {
+        let line = crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: "Nova Example".into(),
+            text: aurora_i18n::tr!("demo-flash-message", n = n),
+            kind: crate::world::ChatKind::Im,
+            source: DEMO_FRIEND,
+            origin: crate::world::Origin::Live,
+        };
+        world.conversation_line(DEMO_FRIEND, line);
     }
 }
 
@@ -1064,7 +1224,15 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
         (27, Uuid::nil(), aurora_i18n::tr!("demo-aurora-group-5").to_owned()),
         (3, DEMO_NOVA, aurora_i18n::tr!("demo-aurora-mention", name = me.as_str())),
     ];
-    for (minutes, from, text) in group {
+    // AURORA_DEMO_CONV_PREVIEWS: a picture in the group, blurred until clicked
+    let previews = std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok().then(|| {
+        (
+            2,
+            DEMO_LOUP,
+            format!("{} https://i.imgur.com/demo-build.jpg", aurora_i18n::tr!("demo-previews-build")),
+        )
+    });
+    for (minutes, from, text) in group.into_iter().chain(previews) {
         let l = if from.is_nil() {
             line(ago(minutes), &me, Uuid::nil(), ChatKind::Own, &text)
         } else {
@@ -2450,6 +2618,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     0
                 },
                 next_owner_mask: aurora_net::build::perm::TRANSFER,
+                // Nova may sell copies (for_sale_selection, the hover tips)
+                owner_mask: aurora_net::build::perm::TRANSFER | aurora_net::build::perm::COPY | aurora_net::build::perm::MODIFY,
                 sale_price: 10,
                 name: if *object == action_id(971) {
                     aurora_i18n::tr!("demo-cube-for-sale")
@@ -2460,6 +2630,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 description: aurora_i18n::tr!("demo-offline-demo-no-real-l-is-spent").into(),
                 ..Default::default()
             }])]
+        }
+        // the other objects' names for the hover tips (AURORA_DEMO_HOVER_TIPS)
+        aurora_net::NetCommand::RequestObjectProperties { object, .. } if hover_tips::scenario().is_some() => {
+            vec![NetEvent::ObjectProperties(vec![hover_tips::object_props(*object)])]
         }
         // Report Abuse: the region's categories, the reported object (owned
         // by Nova) and a report the demo keeps to itself
@@ -3081,10 +3255,16 @@ pub fn events() -> Vec<NetEvent> {
     let mut ev = vec![
         NetEvent::LoggedIn(Arc::new(login)),
         NetEvent::MainRegionChanged { handle: HANDLE },
-        // only the People API (names) is simulated
+        // only the People API (names) is simulated, and what the
+        // scenarios of sim_extras add
         NetEvent::Capabilities {
             handle: HANDLE,
-            caps: Arc::new([("GetDisplayNames".to_owned(), "demo://names".to_owned())].into_iter().collect()),
+            caps: Arc::new(
+                [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
+                    .into_iter()
+                    .chain(sim_extras::caps())
+                    .collect(),
+            ),
         },
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
@@ -3103,7 +3283,7 @@ pub fn events() -> Vec<NetEvent> {
             // AURORA_DEMO_REGION: the avatar may own the estate or manage it;
             // AURORA_DEMO_ENV_EDITOR=region: the avatar manages the estate
             owner: region::estate_owner(),
-            is_estate_manager: region::is_manager() || env::estate_manager(),
+            is_estate_manager: region::is_manager() || env::estate_manager() || sim_extras::estate_manager(),
             product_name: "Estate / Full Region".into(),
             billable_factor: 1.0,
         })),
@@ -4310,6 +4490,12 @@ pub fn events() -> Vec<NetEvent> {
             pf::ALLOW_DAMAGE | pf::RESTRICT_PUSHOBJECT
         } else {
             pf::ALLOW_FLY | pf::CREATE_OBJECTS | pf::ALLOW_OTHER_SCRIPTS | pf::ALLOW_VOICE_CHAT | pf::RESTRICT_PUSHOBJECT
+        };
+        // AURORA_DEMO_VOICE_MODERATION: the estate's voice channel
+        let flags = if sim_extras::estate_voice() {
+            flags | pf::USE_ESTATE_VOICE_CHAN
+        } else {
+            flags
         };
         if restricted {
             ev.push(NetEvent::Health(72.0));

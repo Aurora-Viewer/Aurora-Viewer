@@ -4,7 +4,7 @@
 pub(crate) mod catalogue;
 mod material_editor;
 pub(crate) mod previews;
-mod texture_view;
+pub(crate) mod texture_view;
 mod windows;
 pub(crate) use windows::window_id as preview_window_id;
 #[cfg(test)]

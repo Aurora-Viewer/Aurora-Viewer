@@ -237,7 +237,7 @@ impl LibraryUi {
                 // the picture in exactly the room the description, the
                 // buttons and the notes leave
                 let (mut view, foot) = widgets::above_footer(ui);
-                texture_view::picture(&mut view, p, &item, image, dimensions, &window.texture.display);
+                texture_view::picture(&mut view, p, image, dimensions, &window.texture.display, Some(item.id));
                 if window.texture.display != before {
                     prefs.texture_display = window.texture.display;
                 }
