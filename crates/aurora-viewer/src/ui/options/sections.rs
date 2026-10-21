@@ -60,7 +60,7 @@ sections! {
         windows_stop_right, windows_stop_bottom, show_perf,
         show_minimap, show_bug_report, place_bar_stretch, place_bar_rights_text, favorites_access, show_net_stats, standalone_place_details, loading_backdrop, reduce_motion, confirm_teleports,
         confirm_no_transfer_settings, confirm_object_bonus, confirm_return_to_owner, confirm_attachment_drop,
-        confirm_script_modify, region_check_texture_heights, sim_version_alert, script_count_alert, script_count_threshold, region_restart,
+        confirm_script_modify, region_check_texture_heights, sim_version_alert, script_count_alert, script_count_threshold, region_restart, collisions,
         confirm_payments, payment_confirm_threshold,
         name_tag_distance, show_own_name_tag, show_friend_name_tags, show_other_name_tags,
         temporary_name_tags, name_tag_show_seconds, use_display_names, show_usernames, legacy_username_format, trim_resident,

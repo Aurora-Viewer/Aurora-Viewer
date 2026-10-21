@@ -45,6 +45,9 @@ pub mod chatlog;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
+/// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
+#[path = "demo_collisions.rs"]
+pub mod collisions;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;

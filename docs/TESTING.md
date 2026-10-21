@@ -2592,6 +2592,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
+| `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
@@ -3047,6 +3048,17 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_WINDOW_SIZE`; capture with `AURORA_FPS_LIMIT=60` at
   `790,1100,1390,1560,1610,2000`. A very low window (`1280,360`) shows only
   the newest toasts that fit.
+- **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
+  sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
+  pushes & hits" window opens at frame 600, a resident bumps the agent at
+  640, a second one pushes it with a script at 760, a third one hits it
+  with a scripted then a physical object at 880, and at 1000 the first one
+  bumps it again (that row comes back to the top with the new time) while
+  the second one hits it with an object and sends a type the viewer does
+  not know (left out, logged as `collision of unknown type`). `chat` also turns on "Collisions in nearby
+  chat" for this run (Preferences › Interface is not changed): one line
+  per collision, the name a link to the profile. Capture after frame 1000
+  with `AURORA_FPS_LIMIT=60`.
 - **`AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>`**: the link
   with the agent's region as the user feels it (`ui/link_health.rs`).
   `stall` makes the demo region silent from that frame for that many
@@ -3142,9 +3154,11 @@ failure. Grid validation and any paid upload are performed by the human.
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
-  `<n>:new` and `<n>:new2` open a page on its first or second marked row
+  `<n>:new`, `<n>:new2` and `<n>:new3` open a page on its first, second or
+  third marked row
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
-  version alerts, `1:new2` the group titles, `3:new` the reopened
+  version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
+  group titles, `3:new` the reopened
   conversations, `3:new2` the invitations to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
