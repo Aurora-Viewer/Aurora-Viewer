@@ -100,12 +100,22 @@ impl Face {
         }
         out
     }
+    /// What builds the hints again: the maps, how the face blends and
+    /// whether it shows at all (a body HUD hides parts with alpha 0).
     pub fn hash(&self, hasher: &mut impl std::hash::Hasher) {
         use std::hash::Hash;
         self.textures.hash(hasher);
         self.alpha_explicit.hash(hasher);
         self.material.alpha_mode.hash(hasher);
         self.material.double_sided.hash(hasher);
+        (self.material.color[3] < 0.004).hash(hasher);
+    }
+
+    /// Its tint, glow and texture placement, which scripts often change
+    /// all the time (pulsing tattoos, scrolling textures): the hints take
+    /// them up whenever they are built, never just for them.
+    pub fn hash_look(&self, hasher: &mut impl std::hash::Hasher) {
+        use std::hash::Hash;
         for value in self
             .material
             .color

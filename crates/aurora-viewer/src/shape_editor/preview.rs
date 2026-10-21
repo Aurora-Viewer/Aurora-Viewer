@@ -67,6 +67,12 @@ pub struct Input {
     meshes: Vec<RawMesh>,
     pose: (Vec<Quat>, Vec<Vec3>),
     pub key: u64,
+    /// What the key covers, apart: the bakes, the worn meshes and the
+    /// textures (which of them made the hints be built again).
+    pub parts: [u64; 3],
+    /// What it leaves out on purpose: where the worn rigid meshes sit and
+    /// the tint, glow and placement of the faces (counted in the log).
+    pub ignored: [u64; 2],
 }
 pub struct Snapshot {
     textures: HashMap<Uuid, Arc<Image>>,
@@ -77,6 +83,24 @@ pub struct Snapshot {
     pose: (Vec<Quat>, Vec<Vec3>),
 }
 
+/// The hints look at the avatar from the front of its root, while the
+/// frozen pose may have turned the pelvis: the customise animation turns it
+/// half a turn, an AO stand a little. Only its turn about the vertical is
+/// dropped; its tilt stays.
+fn facing_front(mut pose: (Vec<Quat>, Vec<Vec3>), pelvis: Option<usize>) -> (Vec<Quat>, Vec<Vec3>) {
+    if let Some(rotation) = pelvis.and_then(|pelvis| pose.0.get_mut(pelvis)) {
+        let twist = Quat::from_xyzw(0.0, 0.0, rotation.z, rotation.w).normalize();
+        if twist.is_finite() {
+            *rotation = (*rotation * twist.inverse()).normalize();
+        }
+    }
+    pose
+}
+
+/// LLModel's MAX_MODEL_FACES (indra/llprimitive/llmodel.h): a mesh has no
+/// more faces, where a texture entry holds MAX_TES.
+const MAX_MESH_FACES: usize = 8;
+
 impl Input {
     pub fn capture(world: &World, scene: &Scene) -> Self {
         let mut out = Self {
@@ -84,14 +108,20 @@ impl Input {
             body: HashMap::new(),
             hidden_bakes: 0,
             meshes: Vec::new(),
-            pose: scene.preview_pose(&world.agent_id),
+            pose: facing_front(
+                scene.preview_pose(&world.agent_id),
+                world.avatar_lib.rig.names.get("mPelvis").copied(),
+            ),
             key: 0,
+            parts: [0; 3],
+            ignored: [0; 2],
         };
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        world.agent_id.hash(&mut hasher);
         // Hints freeze a pose. AO cycles and blink signals are not appearance
         // changes and must never invalidate the resident's comparison images.
         let Some(index) = world.objects.index_of_uuid(&world.agent_id) else {
+            world.agent_id.hash(&mut hasher);
+            out.key = hasher.finish();
             return out;
         };
         out.hidden_bakes = Scene::bom_mask(world, index);
@@ -103,10 +133,13 @@ impl Input {
                 out.body.insert(slot, id);
             }
         }
+        out.parts[0] = std::mem::take(&mut hasher).finish();
         let root = index;
         let mut stack = vec![(index, 0)];
         let mut visited = HashSet::new();
         let mut signatures = Vec::new();
+        let mut moves = Vec::new();
+        let mut looks = Vec::new();
         while let Some((index, depth)) = stack.pop() {
             if visited.len() >= 20_000 || depth >= 16 || !visited.insert(index) {
                 continue;
@@ -151,10 +184,14 @@ impl Input {
                     .and_then(|m| m.skin.clone())
                     .filter(|skin| !skin.joint_names.is_empty());
                 let rigid = skin.is_none().then(|| Rigid::capture(world, index)).flatten();
+                // The geometry once held (a later level is never decoded
+                // again: `prepare` keeps the first), the skin's presence,
+                // the joint of a rigid mesh: not where scripts move it.
                 let mut mesh_hash = std::collections::hash_map::DefaultHasher::new();
                 id.hash(&mut mesh_hash);
-                data.as_ref().map(|m| m.bytes.held()).hash(&mut mesh_hash);
-                skin.as_ref().map(|skin| Arc::as_ptr(skin) as usize).hash(&mut mesh_hash);
+                data.as_ref().is_some_and(|m| m.lod_section(3).is_some()).hash(&mut mesh_hash);
+                skin.as_ref().map(|skin| skin.joint_names.len()).hash(&mut mesh_hash);
+                let mut move_hash = std::collections::hash_map::DefaultHasher::new();
                 if let Some(rigid) = &rigid {
                     rigid.joint.hash(&mut mesh_hash);
                     for value in rigid
@@ -164,15 +201,19 @@ impl Input {
                         .chain(rigid.point.to_array())
                         .chain(rigid.rotation.to_array())
                     {
-                        value.to_bits().hash(&mut mesh_hash);
+                        value.to_bits().hash(&mut move_hash);
                     }
                 }
-                let appearance: Vec<_> = (0..aurora_prim::te::MAX_TES)
+                let appearance: Vec<_> = (0..MAX_MESH_FACES)
                     .map(|face| Face::capture(world, scene, object, face, root))
                     .collect();
+                let mut look_hash = std::collections::hash_map::DefaultHasher::new();
                 for face in &appearance {
                     face.hash(&mut mesh_hash);
+                    face.hash_look(&mut look_hash);
                 }
+                moves.push((object.full_id, move_hash.finish()));
+                looks.push((object.full_id, look_hash.finish()));
                 out.meshes.push(RawMesh {
                     asset: id,
                     data,
@@ -185,6 +226,12 @@ impl Input {
         }
         signatures.sort_unstable();
         signatures.hash(&mut hasher);
+        out.parts[1] = std::mem::take(&mut hasher).finish();
+        for (index, mut list) in [moves, looks].into_iter().enumerate() {
+            list.sort_unstable();
+            list.hash(&mut hasher);
+            out.ignored[index] = std::mem::take(&mut hasher).finish();
+        }
         let ids: HashSet<_> = out
             .body
             .values()
@@ -203,22 +250,25 @@ impl Input {
             }
             let source = scene.textures.preview_source(&id);
             id.hash(&mut hasher);
-            source.revision().hash(&mut hasher);
+            source.image_revision().hash(&mut hasher);
             out.textures.insert(id, source);
         }
-        out.key = hasher.finish();
+        out.parts[2] = hasher.finish();
+        let mut key = std::collections::hash_map::DefaultHasher::new();
+        (world.agent_id, out.parts).hash(&mut key);
+        out.key = key.finish();
         out
     }
 
     pub fn prepare(self, previous: Option<Arc<Snapshot>>) -> Snapshot {
-        let revisions = self.textures.iter().map(|(id, source)| (*id, source.revision())).collect();
+        let revisions = self.textures.iter().map(|(id, source)| (*id, source.image_revision())).collect();
         let textures = self
             .textures
             .into_par_iter()
             .filter_map(|(id, source)| {
                 let image = previous
                     .as_ref()
-                    .filter(|old| old.revisions.get(&id) == Some(&source.revision()))
+                    .filter(|old| old.revisions.get(&id) == Some(&source.image_revision()))
                     .and_then(|old| old.textures.get(&id).cloned())
                     .or_else(|| source.image(id))
                     .or_else(|| previous.as_ref().and_then(|snapshot| snapshot.textures.get(&id).cloned()));
@@ -776,6 +826,39 @@ mod tests {
     }
 
     #[test]
+    fn scripted_tints_and_moves_leave_the_hints_alone_but_a_hidden_face_does_not() {
+        let library = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let mut object = super::super::demo::object(&world).expect("mesh head");
+        let region = world.main_region.expect("region");
+        world.objects.upsert(region, object.clone());
+        let mut scene = scene(library.clone());
+        let asset = super::super::demo::asset(&library, false).expect("head asset");
+        scene
+            .meshes
+            .insert_local(super::super::demo::ASSET, asset.data, asset.header, asset.skin);
+        let first = Input::capture(&world, &scene);
+        assert!(first.meshes[0].rigid.is_some());
+        assert_eq!(first.meshes[0].appearance.len(), MAX_MESH_FACES);
+        let mut texture = (**object.texture_entry.as_ref().expect("faces")).clone();
+        texture.faces[0].color[0] *= 0.5;
+        texture.faces[0].glow = 0.4;
+        object.texture_entry = Some(Arc::new(texture.clone()));
+        object.position += Vec3::splat(0.01);
+        world.objects.upsert(region, object.clone());
+        let pulsed = Input::capture(&world, &scene);
+        assert_eq!(pulsed.key, first.key, "a pulsing tint or a scripted move rebuilds nothing");
+        assert_ne!(pulsed.ignored, first.ignored, "but the log counts them");
+        texture.faces[0].color[3] = 0.0;
+        object.texture_entry = Some(Arc::new(texture));
+        world.objects.upsert(region, object);
+        assert_ne!(Input::capture(&world, &scene).key, first.key, "a face hidden by a body HUD shows");
+    }
+
+    #[test]
     fn worn_mesh_heads_replace_the_system_head_and_animation_cycles_keep_the_content_key() {
         let library = Arc::new(AvatarLibrary::load());
         for rigged in [false, true] {
@@ -843,6 +926,21 @@ mod tests {
     }
 
     #[test]
+    fn hints_drop_the_pelvis_turn_of_the_customise_animation_but_keep_its_tilt() {
+        let tilt = Quat::from_rotation_x(0.2);
+        let pose = (
+            vec![Quat::IDENTITY, tilt * Quat::from_rotation_z(std::f32::consts::PI)],
+            vec![Vec3::ZERO; 2],
+        );
+        let front = facing_front(pose, Some(1));
+        assert_eq!(front.0[0], Quat::IDENTITY);
+        assert!(front.0[1].abs_diff_eq(tilt, 1e-5), "{:?}", front.0[1]);
+        let forward = front.0[1] * Vec3::X;
+        assert!(forward.x > 0.9, "the pelvis faces the hints' camera again: {forward:?}");
+        assert_eq!(facing_front((Vec::new(), Vec::new()), Some(1)).0, Vec::<Quat>::new());
+    }
+
+    #[test]
     fn transient_sources_keep_ready_geometry_textures_and_the_frozen_pose() {
         let id = Uuid::from_u128(1);
         let image = Arc::new(Image {
@@ -901,6 +999,8 @@ mod tests {
             }],
             pose: (vec![Quat::from_rotation_z(1.0)], vec![Vec3::ONE]),
             key: 2,
+            parts: [0; 3],
+            ignored: [0; 2],
         };
         let next = input.prepare(Some(Arc::new(previous)));
         assert!(Arc::ptr_eq(&next.textures[&id], &image));
