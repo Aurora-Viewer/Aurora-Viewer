@@ -915,7 +915,35 @@ fn next_link(text: &str) -> Option<(usize, usize, Seg<'_>)> {
         end -= 1;
     }
     let link = &tail[..end.max(1)];
+    let link = &link[..verb_end(link)];
     Some((i, link.len(), link_seg(link)))
+}
+
+/// Where an agent, group, parcel or experience link ends: after the word of
+/// its verb, as in LLUrlEntryAgent, LLUrlEntryGroup, LLUrlEntryParcel and
+/// LLUrlEntryExperienceProfile (`/agent/[\da-f-]+/\w+`), which come before
+/// the generic LLUrlEntrySL in LLUrlRegistry. So in "…/about's hat" the
+/// link is "…/about" and "'s hat" stays text. Unlike the Legacy Viewer, a
+/// verb followed by `/` or `?` keeps its arguments (`…/block/Old%20Sign`).
+fn verb_end(link: &str) -> usize {
+    fn strip<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+        s.get(..prefix.len())
+            .filter(|p| p.eq_ignore_ascii_case(prefix))
+            .map(|_| &s[prefix.len()..])
+    }
+    const KINDS: [&str; 5] = ["agent/", "agentself/", "group/", "parcel/", "experience/"];
+    let Some(id) = strip(link, "secondlife:///app/").and_then(|rest| KINDS.iter().find_map(|k| strip(rest, k))) else {
+        return link.len();
+    };
+    let id_len = id.find(|c: char| !(c.is_ascii_hexdigit() || c == '-')).unwrap_or(id.len());
+    let Some(verb) = id[id_len..].strip_prefix('/').filter(|_| id_len > 0) else {
+        return link.len();
+    };
+    let word = verb.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(verb.len());
+    if word == 0 || verb[word..].starts_with(['/', '?']) {
+        return link.len();
+    }
+    link.len() - (verb.len() - word)
 }
 
 /// Where an address without its scheme starts, "www.example.org"
@@ -3111,6 +3139,22 @@ mod tests {
         // another verb acts (LLAgentHandler) and shows the name
         let im = format!("secondlife:///app/agent/{id}/im");
         assert!(matches!(segments(&im)[0], Seg::App(_, crate::slapp::AppLink::Agent { .. })));
+    }
+
+    #[test]
+    fn a_link_verb_ends_at_its_word() {
+        // an object's "secondlife:///app/agent/<id>/about's follower" (LLUrlEntryAgent)
+        let id = uuid::Uuid::from_u128(5);
+        let t = format!("secondlife:///app/agent/{id}/about's follower");
+        assert_eq!(segments(&t), vec![Seg::Agent(id), Seg::Text("'s follower")]);
+        let t = format!("secondlife:///app/group/{id}/about’s notice");
+        assert!(matches!(&segments(&t)[..], [Seg::App(_, crate::slapp::AppLink::Group(g)), Seg::Text("’s notice")] if *g == id));
+        // arguments and queries stay in the link
+        let t = format!("secondlife:///app/agent/{id}/block/Old%20Sign!");
+        assert!(matches!(&segments(&t)[..], [Seg::App(l, _), Seg::Text("!")] if l.ends_with("Sign")));
+        // other commands keep the whole address (LLUrlEntryChat: `\d+/\S+`)
+        let t = "secondlife:///app/chat/42/it's";
+        assert!(matches!(&segments(t)[..], [Seg::App(l, _)] if *l == t));
     }
 
     #[test]

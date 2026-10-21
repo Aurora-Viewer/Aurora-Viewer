@@ -1357,6 +1357,8 @@ pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
         format!("{app}/chat/42/Hello%20from%20a%20link"),
         format!("{app}/search/places/beach"),
         format!("{app}/agent/{DEMO_LOUP}/im"),
+        // a verb glued to the sentence, as objects write it (LLUrlEntryAgent)
+        format!("{app}/agent/{DEMO_LOUP}/about's hat"),
         format!("{app}/wear_folder/?folder_id={}", Uuid::from_u128(0xF01D)),
         format!("{app}/frobnicate/1"),
     ];
