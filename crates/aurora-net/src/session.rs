@@ -92,6 +92,8 @@ struct Sim {
     eq_task: Option<JoinHandle<()>>,
     /// The request of the seed capability, while it is asked for.
     caps_task: Option<JoinHandle<()>>,
+    /// The same seed asked again (the region sent it twice), while asked.
+    caps_again_task: Option<JoinHandle<()>>,
     /// Region features belong to this circuit, never to the next account.
     features_task: Option<JoinHandle<()>>,
     last_ping: Instant,
@@ -129,6 +131,7 @@ impl Sim {
             caps: Arc::new(HashMap::new()),
             eq_task: None,
             caps_task: None,
+            caps_again_task: None,
             features_task: None,
             last_ping: Instant::now(),
             time_dilation: 1.0,
@@ -153,6 +156,9 @@ impl Drop for Sim {
             t.abort();
         }
         if let Some(t) = self.caps_task.take() {
+            t.abort();
+        }
+        if let Some(t) = self.caps_again_task.take() {
             t.abort();
         }
         if let Some(t) = self.features_task.take() {
@@ -181,8 +187,7 @@ struct Session<'a> {
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
     eq_tx: mpsc::UnboundedSender<EqMessage>,
-    /// (simulator, seed asked, its capabilities or why they did not come)
-    caps_tx: mpsc::UnboundedSender<(SocketAddr, String, Result<HashMap<String, String>, String>)>,
+    caps_tx: CapsSender,
     notecard_copy_tx: mpsc::UnboundedSender<(u32, Result<(), String>)>,
     inventory_move_tx: mpsc::UnboundedSender<inventory_moves::Request>,
     notecard_copies: HashMap<u32, (Uuid, Uuid, bool)>,
@@ -244,6 +249,18 @@ fn packets_counted(stats: &NetStats) -> throttle::Counted {
 
 fn emit(sh: &Shared, ev: NetEvent) {
     let _ = sh.events.send(ev);
+}
+
+/// (simulator, seed asked, its capabilities or why they did not come)
+type CapsSender = mpsc::UnboundedSender<(SocketAddr, String, Result<HashMap<String, String>, String>)>;
+
+/// One request of a seed capability, answered on the session loop (on_caps).
+async fn resolve_seed_task(http: reqwest::Client, tx: CapsSender, addr: SocketAddr, seed: String) {
+    let alive = tx.clone();
+    let r = caps::resolve_seed(&http, &seed, caps::SeedRetry::FIRESTORM, move || !alive.is_closed())
+        .await
+        .map_err(|e| e.to_string());
+    let _ = tx.send((addr, seed, r));
 }
 
 fn ip_from_llsd(v: &Llsd) -> Option<Ipv4Addr> {
@@ -367,7 +384,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
     );
     let addr = SocketAddr::V4(SocketAddrV4::new(login.sim_ip, login.sim_port));
     s.add_sim(addr, login.region_handle(), (login.region_size_x, login.region_size_y), true);
-    s.set_main(addr, Some(login.seed_capability.clone()));
+    s.set_main(addr, login.seed_capability.clone());
     s.complete_agent_movement(addr);
 
     let mut buf = vec![0u8; 16384];
@@ -523,9 +540,10 @@ impl Session<'_> {
         self.sh.stats.sim_count.store(self.sims.len() as u32, Ordering::Relaxed);
     }
 
-    fn set_main(&mut self, addr: SocketAddr, seed: Option<String>) {
+    fn set_main(&mut self, addr: SocketAddr, seed: String) {
         let changed = self.main != Some(addr);
         self.main = Some(addr);
+        self.set_seed(addr, seed);
         if changed {
             self.agent_parcel = None;
             // capabilities of a neighbour we already know: no new caps event
@@ -534,16 +552,38 @@ impl Session<'_> {
                 self.request_environment(None);
             }
         }
-        let mut handle = 0;
-        if let Some(sim) = self.sims.get_mut(&addr) {
-            if seed.is_some() {
-                sim.seed = seed;
-            }
-            handle = sim.handle;
-        }
+        let handle = self.sims.get(&addr).map_or(0, |sim| sim.handle);
         self.publish_motion();
-        self.request_caps(addr);
         emit(self.sh, NetEvent::MainRegionChanged { handle });
+    }
+
+    /// LLViewerRegion::setSeedCapability. A new seed drops the capabilities
+    /// until its own arrive: a request sent meanwhile on the old ones could
+    /// fail, inventory and outfit changes first. The same seed again is
+    /// asked a second time (requestBaseCapabilitiesCompleteCoro): the first
+    /// answer of a neighbour lacks the inventory capabilities, and the
+    /// crossing or EstablishAgentCommunication that makes it the agent's
+    /// region repeats its seed (#750).
+    fn set_seed(&mut self, addr: SocketAddr, seed: String) {
+        let Some(sim) = self.sims.get_mut(&addr) else {
+            return;
+        };
+        if sim.seed.as_deref() == Some(seed.as_str()) {
+            if sim.caps_requested {
+                self.request_caps_again(addr);
+            } else {
+                // given up before: asked again from the start
+                self.request_caps(addr);
+            }
+            return;
+        }
+        sim.seed = Some(seed);
+        sim.caps_requested = false;
+        sim.caps = Arc::default();
+        if let Some(old) = sim.caps_again_task.take() {
+            old.abort();
+        }
+        self.request_caps(addr);
     }
 
     /// Queue CompleteAgentMovement until UseCircuitCode is acknowledged
@@ -638,13 +678,25 @@ impl Session<'_> {
         if let Some(old) = sim.features_task.take() {
             old.abort();
         }
-        sim.caps_task = Some(tokio::spawn(async move {
-            let alive = tx.clone();
-            let r = caps::resolve_seed(&http, &seed, caps::SeedRetry::FIRESTORM, move || !alive.is_closed())
-                .await
-                .map_err(|e| e.to_string());
-            let _ = tx.send((addr, seed, r));
-        }));
+        sim.caps_task = Some(tokio::spawn(resolve_seed_task(http, tx, addr, seed)));
+    }
+
+    /// The seed the region already had, asked again beside the first
+    /// request (which keeps going): on_caps keeps the larger answer.
+    fn request_caps_again(&mut self, addr: SocketAddr) {
+        let Some(sim) = self.sims.get_mut(&addr) else {
+            return;
+        };
+        let Some(seed) = sim.seed.clone().filter(|s| !s.is_empty()) else {
+            return;
+        };
+        transition::step(|| format!("seed capability asked again of region {} (same seed)", transition::grid(sim.handle)));
+        let http = self.sh.caps_http.clone();
+        let tx = self.caps_tx.clone();
+        if let Some(old) = sim.caps_again_task.take() {
+            old.abort();
+        }
+        sim.caps_again_task = Some(tokio::spawn(resolve_seed_task(http, tx, addr, seed)));
     }
 
     fn on_caps(&mut self, addr: SocketAddr, seed: &str, r: Result<HashMap<String, String>, String>) {
@@ -652,6 +704,38 @@ impl Session<'_> {
         // (mHttpResponderID in LLViewerRegionImpl::requestBaseCapabilitiesCoro)
         if self.sims.get(&addr).is_some_and(|sim| sim.seed.as_deref() != Some(seed)) {
             log::info!("capabilities for {addr}: answer to a previous seed ignored");
+            return;
+        }
+        // a second answer to the seed: it replaces the capabilities only
+        // when it grants more (requestBaseCapabilitiesCompleteCoro); the
+        // event queue and the region features keep going
+        if let Some(sim) = self.sims.get_mut(&addr)
+            && !sim.caps.is_empty()
+        {
+            match r {
+                Ok(caps) if caps.len() > sim.caps.len() => {
+                    log::info!(
+                        "{} capabilities for {} ({}) asked again, {} before",
+                        caps.len(),
+                        addr,
+                        sim.name,
+                        sim.caps.len()
+                    );
+                    transition::step(|| {
+                        format!(
+                            "seed capability of region {} asked again: {} capabilities, {} before",
+                            transition::grid(sim.handle),
+                            caps.len(),
+                            sim.caps.len()
+                        )
+                    });
+                    let caps = Arc::new(caps);
+                    sim.caps = caps.clone();
+                    emit(self.sh, NetEvent::Capabilities { handle: sim.handle, caps });
+                }
+                Ok(caps) => log::info!("{} capabilities for {addr} asked again, {} kept", caps.len(), sim.caps.len()),
+                Err(e) => log::warn!("capabilities for {addr} asked again failed, {} kept: {e}", sim.caps.len()),
+            }
             return;
         }
         let caps = match r {
@@ -3024,10 +3108,7 @@ impl Session<'_> {
                 transition::link(|| format!("EstablishAgentCommunication for {ipport}"));
                 let seed = b["seed-capability"].as_str().to_owned();
                 if let Ok(addr) = ipport.parse::<SocketAddr>() {
-                    if let Some(sim) = self.sims.get_mut(&addr) {
-                        sim.seed = Some(seed);
-                    }
-                    self.request_caps(addr);
+                    self.set_seed(addr, seed);
                 }
             }
             "TeleportFinish" => {
@@ -3152,18 +3233,9 @@ impl Session<'_> {
         self.add_sim(addr, handle, size, false);
         if let Some(sim) = self.sims.get_mut(&addr) {
             sim.handle = handle;
-            // A new seed means new capabilities, and the old ones are
-            // dropped until they arrive (LLViewerRegion::setSeedCapability
-            // clears mCapabilities): a request sent on the child agent's
-            // capabilities meanwhile could fail, inventory and outfit
-            // changes first.
-            if sim.seed.as_deref() != Some(seed.as_str()) {
-                sim.caps_requested = false;
-                sim.caps = Arc::default();
-            }
         }
         self.agent_moved = false;
-        self.set_main(addr, Some(seed));
+        self.set_main(addr, seed);
         if let Some(previous) = previous.filter(|p| self.sims.contains_key(p)) {
             transition::step(|| format!("previous region {} kept as a neighbour", transition::grid(self.handle_of(previous))));
         }
@@ -4805,22 +4877,21 @@ mod event_queue_tests {
         task
     }
 
-    #[tokio::test]
-    async fn a_lost_event_queue_ends_the_session_only_for_the_agents_region() {
-        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
-        let main_addr: SocketAddr = "127.0.0.1:13001".parse().expect("address");
-        let neighbour_addr: SocketAddr = "127.0.0.1:13002".parse().expect("address");
-        let (events, received) = crossbeam_channel::unbounded();
-        let sh = Shared {
+    fn shared(events: crate::EventSender) -> Shared {
+        Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
-            events: crate::EventSender(events),
+            events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
-        };
+        }
+    }
+
+    /// The agent in `main_addr` (handle 10), `neighbour_addr` (20) beside.
+    fn two_regions(sh: &Shared, sock: Arc<UdpSocket>, main_addr: SocketAddr, neighbour_addr: SocketAddr) -> Session<'_> {
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
@@ -4846,8 +4917,8 @@ mod event_queue_tests {
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
-        let mut session = Session {
-            sh: &sh,
+        Session {
+            sh,
             sock,
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
@@ -4886,7 +4957,17 @@ mod event_queue_tests {
             inventory_copies: inventory_copies::Pending::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn a_lost_event_queue_ends_the_session_only_for_the_agents_region() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13001".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13002".parse().expect("address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
         let set_queue = |session: &mut Session, addr: SocketAddr, task: JoinHandle<()>| {
             let sim = session.sims.get_mut(&addr).expect("simulator");
             if let Some(old) = sim.eq_task.replace(task) {
@@ -4934,6 +5015,70 @@ mod event_queue_tests {
         let (_, event) = received.try_recv().expect("disconnection");
         // a lost link, not a kick: the viewer offers to reconnect
         assert!(matches!(event, NetEvent::Disconnected { lost: true, .. }), "{event:?}");
+    }
+
+    /// #750: the first answer to a neighbour's seed lacks the inventory
+    /// capabilities; the crossing repeats that seed, which is asked again,
+    /// and the larger answer is kept.
+    #[tokio::test]
+    async fn a_repeated_seed_is_asked_again_and_the_larger_answer_kept() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main_addr: SocketAddr = "127.0.0.1:13001".parse().expect("address");
+        let neighbour_addr: SocketAddr = "127.0.0.1:13002".parse().expect("address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main_addr, neighbour_addr);
+        // (nothing answers there: the requests only have to start)
+        let seed = "http://127.0.0.1:9/neighbour-seed".to_owned();
+        let caps = |names: &[&str]| -> HashMap<String, String> {
+            names.iter().map(|n| (n.to_string(), format!("http://127.0.0.1:9/{n}"))).collect()
+        };
+        let child = caps(&["GetTexture", "ViewerAsset"]);
+        let agent = caps(&["GetTexture", "ViewerAsset", "InventoryAPIv3", "FetchInventoryDescendents2"]); // gitleaks:allow -- public capability names
+        let caps_events = |received: &crossbeam_channel::Receiver<_>| {
+            received
+                .try_iter()
+                .filter_map(|(_, event)| match event {
+                    NetEvent::Capabilities { handle, caps } => Some((handle, caps.len())),
+                    NetEvent::Alert { message } => panic!("alert: {message}"),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // EstablishAgentCommunication: the neighbour's seed, its first answer
+        session.set_seed(neighbour_addr, seed.clone());
+        assert!(session.sims[&neighbour_addr].caps_requested);
+        session.on_caps(neighbour_addr, &seed, Ok(child.clone()));
+        assert_eq!(caps_events(&received), [(20, 2)]);
+
+        // the crossing gives the same seed: its capabilities stay meanwhile
+        session.switch_region(20, Some(Ipv4Addr::LOCALHOST), neighbour_addr.port(), seed.clone(), (256, 256));
+        assert_eq!(session.main, Some(neighbour_addr));
+        assert!(session.sims[&neighbour_addr].caps_again_task.is_some());
+        assert_eq!(session.main_cap("ViewerAsset").as_deref(), Some("http://127.0.0.1:9/ViewerAsset"));
+        assert_eq!(session.main_cap("InventoryAPIv3"), None);
+
+        // the second answer grants more: it takes the place of the first;
+        // a smaller or failed one afterwards changes nothing
+        session.on_caps(neighbour_addr, &seed, Ok(agent.clone()));
+        assert!(session.main_cap("InventoryAPIv3").is_some());
+        session.on_caps(neighbour_addr, &seed, Ok(child));
+        session.on_caps(neighbour_addr, &seed, Err("status 503".into()));
+        assert_eq!(session.sims[&neighbour_addr].caps.len(), 4);
+        assert_eq!(caps_events(&received), [(20, 4)]);
+
+        // a new seed drops them until its own answer comes; the answer to
+        // the old seed still on its way is ignored
+        let new_seed = "http://127.0.0.1:9/new-seed".to_owned();
+        session.set_seed(neighbour_addr, new_seed.clone());
+        assert!(session.sims[&neighbour_addr].caps.is_empty());
+        assert!(session.sims[&neighbour_addr].caps_again_task.is_none());
+        session.on_caps(neighbour_addr, &seed, Ok(agent.clone()));
+        assert!(session.sims[&neighbour_addr].caps.is_empty());
+        session.on_caps(neighbour_addr, &new_seed, Ok(agent));
+        assert!(session.main_cap("InventoryAPIv3").is_some());
+        assert_eq!(caps_events(&received), [(20, 4)]);
     }
 }
 
