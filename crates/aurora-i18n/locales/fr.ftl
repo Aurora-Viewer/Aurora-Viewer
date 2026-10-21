@@ -934,6 +934,8 @@ keybinds-numpad-2 = + (pavé)
 keybinds-numpad-3 = - (pavé)
 ui-land-dialogs-select = - Sélectionnez -
 cli-fps-limit-requires-a-value-between-1-and-500 = --fps-limit requires a value between 1 and 500
+cli-login-requires-three-values = --login demande un prénom, un nom et un mot de passe
+cli-unknown-grid = Grille inconnue pour --grid : { $grid } (agni, aditi ou une adresse de connexion)
 keybinds-numpad-4 = . (pavé)
 keybinds-numpad-5 = / (pavé)
 ui-options-0-hide-avatar-names = 0 = masquer les noms des avatars
@@ -1714,6 +1716,8 @@ ui-chat-applink-copy-name = Copier le nom
 ui-chat-applink-run = Exécuter cette commande
 ui-chat-applink-blocked = Cette SLurl vient d'un texte écrit par quelqu'un d'autre et a été bloquée pour votre sécurité.
 ui-chat-applink-unsupported = La SLurl sur laquelle vous avez cliqué n'est pas prise en charge.
+external-link-blocked = Une SLurl a été reçue d'un navigateur non sécurisé et a été bloquée pour votre sécurité.
+external-link-throttled = Plusieurs SLurl ont été reçues d'un navigateur non sécurisé pendant un court laps de temps. Elles vont être bloquées pendant quelques secondes pour votre sécurité.
 ui-remote-object-owner = Propriétaire
 ui-remote-object-location = Emplacement
 ui-worldmap-click-on-the-map-to-choose-a-location = Cliquez sur la carte pour choisir un lieu.
@@ -1965,6 +1969,10 @@ build-ui-texture-diffuse = Diffuse
 ui-options-direct = Direct
 ui-bars-available = Disponible
 ui-options-layout = Disposition
+ui-options-slurl-links = Liens Second Life
+ui-options-slurl-links-open = Ouvrir les liens secondlife:// dans Aurora
+ui-options-slurl-links-open-help = Un lien de lieu ou de profil d'une page web s'ouvre dans ce viewer : le lieu devient le point de départ avant la connexion, sa fiche une fois dans le monde.
+ui-options-slurl-links-other = Ces liens s'ouvrent actuellement dans { $program }.
 common-distance = Distance
 common-draw-distance = Distance d'affichage
 app-chat-commands-draw-distance-set-to-m = { "Distance d'affichage réglée à " }{ $value0 }{ " m." }
@@ -5918,7 +5926,7 @@ hud-local-scale = Taille locale : { $percent } %
 hud-local-scale-reset = Revenir à 100 %
 hud-local-scale-forget = Oublier le réglage mémorisé
 hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.
-cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--language <code>] [--version]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
+cli-help = { "Aurora Viewer\u000A\u000AUsage : aurora-viewer [--title <texte>] [--fps-limit <fps>] [--language <code>] [--grid <nom>]\u000A                      [--login <prénom> <nom> <mot de passe>] [--version] [<slurl>]\u000A\u000A  --title <texte>  Nomme cette fenêtre et son journal (aurora-<texte>.log,\u000A                  aurora-demo-<texte>.log en démo)\u000A  --fps-limit <fps>  Limite cette instance à 1..500 FPS sans enregistrer le réglage\u000A  --language <code>  Force la langue de cette instance (" }{ $languages }{ ")\u000A  --grid <nom>    Démarre sur agni, aditi ou une adresse de connexion (aussi --loginuri <uri>)\u000A  --login <prénom> <nom> <mot de passe>  Se connecte tout de suite avec ce compte\u000A  <slurl>, --url <slurl>  Démarre à ce lieu ; rien n'est lu après. Un viewer déjà\u000A                  ouvert le reçoit à la place\u000A  -V, --version   Affiche la version compilée puis quitte\u000A  -h, --help      Affiche cette aide\u000A\u000ALes scénarios de test utilisent des variables (AURORA_DEMO=1, AURORA_CAPTURE=...) :\u000Avoir README.md." }
 demo-media-page = { "data:text/html;charset=utf-8,<html><body style='margin:0;height:100vh;background:linear-gradient(135deg,%232a1f4a,%230f6d6d);color:white;font:56px sans-serif;text-align:center'><h1 style='margin:40px 0 10px'>Aurora media</h1><p id='t' style='font-size:90px;margin:10px'>--</p><button onclick=\"document.body.style.background='%237a3b9c';this.textContent='Cliqu%C3%A9 !'\" style='font-size:48px;padding:10px 40px'>Cliquer</button><br><input placeholder='Taper ici' style='font-size:44px;margin-top:30px;width:70%'><script>setInterval(function(){document.getElementById('t').textContent=new Date().toLocaleTimeString()},250)</script></body></html>" }
 
 # Secondary labels and status messages

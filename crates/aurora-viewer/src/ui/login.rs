@@ -69,6 +69,10 @@ pub struct LoginForm {
     pub stored: Option<String>,
     /// Grid and user name `stored` was read for.
     pub stored_for: Option<(String, String)>,
+    /// A place given from outside (command line, a link of a web page):
+    /// where the next login starts, whatever the account's choice, shown in
+    /// the start menus (FSPanelLogin::onUpdateStartSLURL). Not saved.
+    pub start_slurl: Option<crate::slurl::Location>,
 }
 
 #[derive(Default)]
@@ -180,6 +184,39 @@ fn field(
 fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).size(11.5).color(p.muted));
     ui.add_space(-2.0);
+}
+
+/// The start location menu: last location, home or a region; a place given
+/// from outside (`slurl`) comes first and stays chosen until another entry
+/// is, as the Legacy Viewer's location combo shows the start SLURL
+/// (FSPanelLogin::onUpdateStartSLURL).
+pub(super) fn start_menu(ui: &mut egui::Ui, combo: egui::ComboBox, start: &mut String, slurl: &mut Option<crate::slurl::Location>) {
+    let place = slurl.as_ref().map(crate::external_url::place_label);
+    let selected = match (&place, start.as_str()) {
+        (Some(place), _) => place.clone(),
+        (None, "home") => aurora_i18n::tr!("common-home").to_owned(),
+        (None, "region") => aurora_i18n::tr!("ui-login-region").to_owned(),
+        _ => aurora_i18n::tr!("ui-login-last-location").to_owned(),
+    };
+    let shown = combo.selected_text(selected).show_ui(ui, |ui| {
+        if let Some(place) = &place {
+            let _ = ui.selectable_label(true, place);
+        }
+        for (value, text) in [
+            ("last", aurora_i18n::tr!("ui-login-last-location")),
+            ("home", aurora_i18n::tr!("common-home")),
+            ("region", aurora_i18n::tr!("ui-login-region")),
+        ] {
+            if ui.selectable_label(place.is_none() && start == value, text).clicked() {
+                *start = value.into();
+                *slurl = None;
+            }
+        }
+    });
+    // a card's narrow menu cuts the place short
+    if let Some(place) = place {
+        shown.response.on_hover_text(place);
+    }
 }
 
 /// Height of the buttons along the bottom of the screen.
@@ -559,22 +596,13 @@ pub fn show(
                                 ui.selectable_value(&mut settings.grid, GridChoice::Custom, aurora_i18n::tr!("ui-login-other-grid"));
                             });
                         caption(&mut cols[1], p, aurora_i18n::tr!("ui-login-start"));
-                        egui::ComboBox::from_id_salt("start")
-                            .width(cols[1].available_width())
-                            .selected_text(match settings.start_location.as_str() {
-                                "home" => aurora_i18n::tr!("common-home"),
-                                "region" => aurora_i18n::tr!("ui-login-region"),
-                                _ => aurora_i18n::tr!("ui-login-last-location"),
-                            })
-                            .show_ui(&mut cols[1], |ui| {
-                                ui.selectable_value(
-                                    &mut settings.start_location,
-                                    "last".into(),
-                                    aurora_i18n::tr!("ui-login-last-location"),
-                                );
-                                ui.selectable_value(&mut settings.start_location, "home".into(), aurora_i18n::tr!("common-home"));
-                                ui.selectable_value(&mut settings.start_location, "region".into(), aurora_i18n::tr!("ui-login-region"));
-                            });
+                        let width = cols[1].available_width();
+                        start_menu(
+                            &mut cols[1],
+                            egui::ComboBox::from_id_salt("start").width(width),
+                            &mut settings.start_location,
+                            &mut form.start_slurl,
+                        );
                     });
                     if settings.grid == GridChoice::Custom {
                         field(
@@ -588,7 +616,7 @@ pub fn show(
                             None,
                         );
                     }
-                    if settings.start_location == "region" {
+                    if settings.start_location == "region" && form.start_slurl.is_none() {
                         field(
                             ui,
                             p,
