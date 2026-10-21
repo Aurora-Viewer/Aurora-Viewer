@@ -144,7 +144,7 @@ mod tests {
             };
             let draw = |events| {
                 let mut result = OptionsResult::default();
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(850.0, 1400.0))),
                         events,
@@ -154,6 +154,8 @@ mod tests {
                         ui.horizontal(|ui| session(ui, &p, settings.global, &blocks, &mut result));
                     },
                 );
+                // Headless input tests inspect shapes without uploading font textures.
+                output.textures_delta.clear();
                 let reset_rect = output
                     .shapes
                     .iter()
