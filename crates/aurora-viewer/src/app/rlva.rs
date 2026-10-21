@@ -6,10 +6,34 @@ impl App {
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         self.world.rlva.configure(self.settings.rlva_enabled);
+        if !self.settings.rlva_enabled && !self.appearance_ui.pending_actor.is_nil() {
+            if let Some((_, sync)) = self.appearance_ui.pending.as_mut() {
+                *sync = false;
+            }
+            self.appearance_ui.attachments.clear();
+            self.appearance_ui.pending_actor = Uuid::nil();
+        }
+        self.world.eep.rlva_locked = self.world.rlva.has("setenv");
+        self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
+        self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
         self.world
             .rlva
             .collect(Instant::now(), |id| self.world.objects.index_of_uuid(&id).is_some());
+        self.world.rlva.appearance_busy = self.appearance_ui.pending.is_some();
+        if !self.world.rlva.appearance_busy && self.world.rlva.appearance.is_empty() {
+            self.world.rlva.self_detach = None;
+        }
+        self.world.rlva_update_stand();
+        if let Some((handle, position)) = self.world.rlva.stand_return {
+            self.send(NetCommand::TeleportTo {
+                handle,
+                position,
+                look_at: self.world.agent.forward(),
+            });
+            self.world.rlva.stand_return = None;
+        }
         let commands = self.world.rlva_pending();
+        self.rlva_environment_asset();
         self.rlva_camera_commands();
         if self.appearance_ui.pending.is_none() && !self.world.rlva.appearance.is_empty() {
             let (actor, action) = self.world.rlva.appearance.remove(0);
@@ -41,6 +65,22 @@ impl App {
         }
         if self.world.rlva.has("temprun") {
             self.temp_run = None;
+        }
+        let invalid: Vec<_> = self
+            .build
+            .selection
+            .iter()
+            .filter(|key| self.world.objects.index_of(key).is_none_or(|i| !self.world.rlva_can_edit(i)))
+            .copied()
+            .collect();
+        if !invalid.is_empty() {
+            self.build.deselect(&self.world, &invalid);
+        }
+        if self.world.rlva.has("viewwireframe") {
+            self.settings.debug.wireframe = false;
+        }
+        if self.world.rlva.has("viewtransparent") {
+            self.settings.debug.show_alpha = false;
         }
     }
 
@@ -93,11 +133,160 @@ impl App {
         self.send_from(command, actor);
     }
 
+    fn rlva_environment_asset(&mut self) {
+        use crate::scene::settings::SettingsState;
+        use crate::world::{eep::Settings as Environment, env_select::SettingsKind, inventory::FetchState};
+        let Some((actor, command)) = self.world.rlva.environment_request.take() else {
+            return;
+        };
+        if !self.world.rlva.enabled() || self.world.rlva.has_except("setenv", actor) {
+            return;
+        }
+        let asset = if let Ok(id) = Uuid::parse_str(&command.option) {
+            Some(id)
+        } else {
+            let root = self.world.inventory.lib_root;
+            let environments = self
+                .world
+                .inventory
+                .folders
+                .values()
+                .find(|f| f.library && f.info.parent == root && f.info.name.eq_ignore_ascii_case("Environments"))
+                .map(|f| f.info.id);
+            let mut stack = environments.map_or_else(|| vec![root], |id| vec![id]);
+            let mut seen = std::collections::HashSet::new();
+            let mut loading = Vec::new();
+            let mut asset = None;
+            while let Some(id) = stack.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(folder) = self.world.inventory.folders.get(&id) else {
+                    continue;
+                };
+                if folder.state != FetchState::Fetched {
+                    loading.push(id);
+                }
+                if environments.is_some() {
+                    stack.extend(folder.children.iter().copied());
+                }
+                let kind = if command.behaviour == "setenv_daycycle" {
+                    SettingsKind::Day
+                } else {
+                    SettingsKind::Sky
+                };
+                asset = asset.or_else(|| {
+                    folder
+                        .items
+                        .iter()
+                        .filter_map(|id| self.world.inventory.items.get(id))
+                        .find(|it| {
+                            it.asset_type == 56
+                                && SettingsKind::from_flags(it.flags) == Some(kind)
+                                && it.name.eq_ignore_ascii_case(&command.option)
+                        })
+                        .map(|it| it.asset_id)
+                });
+            }
+            if asset.is_none() && !loading.is_empty() {
+                for id in loading.into_iter().take(16) {
+                    self.world.inventory.request(id);
+                }
+                self.world.rlva.environment_request = Some((actor, command));
+                return;
+            }
+            asset
+        };
+        let Some(asset) = asset.filter(|id| !id.is_nil()) else {
+            return;
+        };
+        match self.scene.settings.get(asset) {
+            SettingsState::Pending => self.world.rlva.environment_request = Some((actor, command)),
+            SettingsState::Failed => {}
+            SettingsState::Ready(settings) => {
+                let (sky, water) = self.world.rlva_environment_frames(self.world.eep.current());
+                self.world.rlva.environment = Some((actor, sky));
+                match settings.as_ref() {
+                    Environment::Sky(sky) => {
+                        self.world.rlva.environment = Some((actor, *sky));
+                        self.world.rlva.environment_day = None;
+                        self.world.rlva.environment_water = Some(water);
+                    }
+                    Environment::Water(water) => self.world.rlva.environment_water = Some(*water),
+                    Environment::Day(day) => {
+                        self.world.rlva.environment_day = Some(std::sync::Arc::new(day.clone()));
+                        self.world.rlva.environment_water = None;
+                    }
+                }
+            }
+        }
+    }
+
     fn rlva_camera_commands(&mut self) {
         use crate::world::rlva::{Param, camera::vector};
         for (actor, c) in std::mem::take(&mut self.world.rlva.viewer) {
+            if c.behaviour.starts_with("getdebug_") {
+                if let Param::Reply(channel) = c.param {
+                    let text = match c.behaviour.as_str() {
+                        "getdebug_avatarsex" => self.world.rlva.pseudo_sex.map_or_else(
+                            || {
+                                self.world
+                                    .visual_params(&self.world.agent_id)
+                                    .map(|values| {
+                                        u8::from(self.world.avatar_lib.shape_params.weights(values).get(&80).copied().unwrap_or(0.0) > 0.5)
+                                            .to_string()
+                                    })
+                                    .unwrap_or_default()
+                            },
+                            |value| u8::from(value).to_string(),
+                        ),
+                        "getdebug_aspectratio" => {
+                            let rect = self.egui_ctx.content_rect();
+                            format!("{:.3}", rect.width() / rect.height().max(1.0))
+                        }
+                        "getdebug_renderresolutiondivisor"
+                        | "getdebug_windlightuseatmosshaders"
+                        | "getdebug_restrainedloveforbidgivetorlv" => "1".to_owned(),
+                        "getdebug_restrainedlovenosetenv" => "0".to_owned(),
+                        _ => String::new(),
+                    };
+                    self.world.rlva.reply(channel, text);
+                }
+                continue;
+            }
+            if c.behaviour == "setdebug_avatarsex" {
+                if !self.world.rlva.has_except("setdebug", actor) {
+                    self.world.rlva.pseudo_sex = match c.option.as_str() {
+                        "true" | "1" => Some(true),
+                        "false" | "0" => Some(false),
+                        _ => self.world.rlva.pseudo_sex,
+                    };
+                }
+                continue;
+            }
+            if c.behaviour == "getheightoffset" {
+                if c.option.is_empty()
+                    && let Param::Reply(channel) = c.param
+                {
+                    self.world
+                        .rlva
+                        .reply(channel, format!("{:.2}", self.world.hover_height.value() * 100.0));
+                }
+                continue;
+            }
+            if c.behaviour == "adjustheight" {
+                if self.world.hover_height_available()
+                    && let Some(height) = crate::world::rlva::camera::height_offset(&c.option, self.pelvis_to_foot())
+                {
+                    self.settings.auto_hover_height = false;
+                    self.world.hover_height.preview(height);
+                    self.world.hover_height.commit();
+                }
+                continue;
+            }
             if let Param::Reply(channel) = c.param {
                 let value = match c.behaviour.as_str() {
+                    "getcam_avdist" => self.camera.position.distance(self.world.agent.position),
                     "getcam_fov" => self.camera.fov_y,
                     "getcam_fovmin" => self.world.rlva.camera_limit("setcam_fovmin", 0.1, true),
                     "getcam_fovmax" => self.world.rlva.camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false),

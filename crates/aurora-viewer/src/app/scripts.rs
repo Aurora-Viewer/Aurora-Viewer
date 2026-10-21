@@ -453,6 +453,9 @@ impl App {
     }
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
+        if self.world.rlva.has("viewscript") {
+            return;
+        }
         let Some(info) = self.script_info(target) else { return };
         if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
             self.send(NetCommand::LoadScript {

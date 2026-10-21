@@ -316,6 +316,15 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id) => {
+                if self
+                    .world
+                    .inventory
+                    .items
+                    .get(&id)
+                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
+                {
+                    return;
+                }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
                     self.texture_library.open_preview(&self.egui_ctx, &self.world, id);
                     return;
@@ -701,6 +710,7 @@ impl App {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
                 self.appearance_ui.pending = Some((request, sync));
+                self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
                 self.appearance_ui.message.clear();
                 let command = NetCommand::UpdateOutfit { request, change };

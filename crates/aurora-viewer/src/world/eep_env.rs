@@ -270,6 +270,7 @@ struct Fade {
 /// The environment slots and the transition state.
 #[derive(Debug, Default)]
 pub struct EnvSelector {
+    pub rlva_locked: bool,
     local: Option<LocalEnv>,
     /// Time of day preset shown by the local sky (0: none).
     local_preset: u8,
@@ -306,6 +307,18 @@ pub struct EnvSelector {
 }
 
 impl EnvSelector {
+    pub fn has_fixed_sky(&self) -> bool {
+        self.edit.is_some() || self.local.as_ref().is_some_and(|l| l.sky.is_some())
+    }
+
+    pub fn day_sky_at(&self, pos: f32, altitude: f32) -> Option<SkyFrame> {
+        self.local
+            .as_ref()
+            .and_then(|l| l.day.as_ref().map(|(_, d)| d))
+            .or_else(|| self.parcel.as_ref().map(|s| &s.day))
+            .or_else(|| self.region.as_ref().map(|s| &s.day))
+            .map(|day| day.sky_at(pos, day.track_for_altitude(&self.altitudes, altitude)))
+    }
     /// An editor shows its sky or water (LLFloaterFixedEnvironment::
     /// updateEditEnvironment, TRANSITION_INSTANT); the other half stays what
     /// was shown when the editing began.
@@ -322,6 +335,9 @@ impl EnvSelector {
     /// "Apply only to myself" of the day cycle editor (setEnvironment(
     /// ENV_LOCAL, day)): a local day without an asset.
     pub fn apply_local_day(&mut self, day: DayCycle) {
+        if self.rlva_locked {
+            return;
+        }
         self.apply_settings(Uuid::nil(), &Settings::Day(day), None, None);
     }
 
@@ -351,11 +367,17 @@ impl EnvSelector {
     /// "Apply only to myself" of an editor (setEnvironment(ENV_LOCAL, sky or
     /// water)): a fixed half of the local environment, without an asset.
     pub fn apply_local_sky(&mut self, sky: SkyFrame) {
+        if self.rlva_locked {
+            return;
+        }
         // an edited sky without an asset: "Personal lighting" edits it next
         self.apply_sky(LocalOrigin::Personal, sky);
     }
 
     pub fn apply_local_water(&mut self, water: WaterFrame) {
+        if self.rlva_locked {
+            return;
+        }
         self.apply_water(LocalOrigin::Inherited, water);
     }
     fn slot(&mut self, handle: RegionHandle, day: Arc<DayCycle>, settings: Option<Arc<Llsd>>, length: f64, offset: f64) -> Slot {
@@ -529,6 +551,9 @@ impl EnvSelector {
     /// Aurora shows its built-in sky with the preset's sun instead, so the
     /// preset still does what its name says.
     pub fn set_time_of_day(&mut self, preset: u8) {
+        if self.rlva_locked {
+            return;
+        }
         if preset == self.local_preset {
             return;
         }
@@ -569,6 +594,9 @@ impl EnvSelector {
     /// asset is fetched, then applied by its own type. A newer pick from the
     /// same list replaces one still loading.
     pub fn request_local(&mut self, asset: Uuid, kind: SettingsKind) {
+        if self.rlva_locked {
+            return;
+        }
         let mut preset_replaced = false;
         self.pending.retain(|p| {
             let replaced = p.kind == kind && matches!(p.state, PendingState::Waiting) && !p.asset.is_nil();
@@ -590,6 +618,9 @@ impl EnvSelector {
 
     /// "Shared environment" (setSharedEnvironment: clearEnvironment(ENV_LOCAL)).
     pub fn clear_local(&mut self) {
+        if self.rlva_locked {
+            return;
+        }
         self.pending.clear();
         if self.local.take().is_some() {
             self.local_dirty = true;
@@ -715,6 +746,9 @@ impl EnvSelector {
     /// local environment at once (a local day is frozen; a fixed local sky
     /// is edited as it is).
     pub fn capture_personal(&mut self) {
+        if self.rlva_locked {
+            return;
+        }
         if self.local.as_ref().is_some_and(|l| l.day.is_none()) {
             return;
         }
@@ -736,6 +770,9 @@ impl EnvSelector {
     /// fixed sky). `edit` returns true when it changed something: the sky
     /// becomes the personal one, shown at once.
     pub fn edit_personal(&mut self, edit: impl FnOnce(&mut SkyFrame) -> bool) -> bool {
+        if self.rlva_locked {
+            return false;
+        }
         let Some((origin, sky)) = self.local.as_mut().and_then(|l| l.sky.as_mut()) else {
             return false;
         };
@@ -970,7 +1007,8 @@ impl super::World {
             *time_of_day = p;
         }
         self.eep.set_time_of_day(*time_of_day);
-        self.eep.frame(&input)
+        let (sky, water) = self.eep.frame(&input);
+        self.rlva_environment_frames((sky, water))
     }
 }
 

@@ -2426,6 +2426,7 @@ impl App {
         if let NetEvent::OutfitUpdated { request, result } = ev {
             if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
                 let sync = self.appearance_ui.pending.take().is_some_and(|(_, sync)| sync);
+                let actor = std::mem::take(&mut self.appearance_ui.pending_actor);
                 match result {
                     Ok(contents) => {
                         self.world.inventory.apply(contents);
@@ -2445,7 +2446,7 @@ impl App {
                                 crate::world::appearance::apply_attachment_override(&mut commands, attachment);
                             }
                             for cmd in commands {
-                                self.send(cmd);
+                                self.send_from(cmd, actor);
                             }
                         }
                     }
@@ -5178,7 +5179,7 @@ impl App {
     /// LLFloater::setFocus → focusFirstItem). Openings that come from calls
     /// set `focus_im` alone and leave the keyboard where it is.
     pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
-        if !self.world.rlva.allows_im("startim", id) && !self.world.social.ims.iter().any(|im| im.other == id) {
+        if !self.world.rlva_allows_im("startim", id) && !self.world.social.ims.iter().any(|im| im.other == id) {
             self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
             return;
         }
@@ -6207,7 +6208,11 @@ impl App {
                 self.world.status.cfg = self.settings.autoresponse.clone();
             }
             // AFKTimeout: away after some idle time, back on the next input
-            let idle_limit = self.settings.autoresponse.away_after_minutes as u64 * 60;
+            let idle_limit = if self.world.rlva.has("allowidle") {
+                30 * 60
+            } else {
+                self.settings.autoresponse.away_after_minutes as u64 * 60
+            };
             if idle_limit > 0 && !self.world.status.away && self.last_input.elapsed().as_secs() >= idle_limit {
                 self.world.set_away(true);
                 self.auto_away = true;
@@ -6439,6 +6444,15 @@ impl App {
                 );
                 self.last_vertical_flags = vertical;
             }
+            if self.world.rlva.has("unsit") {
+                c.control_flags &= !control::STAND_UP;
+            }
+            if self.world.rlva.has("sitground") {
+                c.control_flags &= !control::SIT_ON_GROUND;
+            }
+            if !self.world.agent.flying && self.world.rlva.has("jump") {
+                c.control_flags &= !control::UP_POS;
+            }
             self.net.set_controls(c);
         }
         self.update_voice();
@@ -6512,7 +6526,7 @@ impl App {
                 self.settings.debug.show_alpha_rigged = alpha.unwrap_or(false);
             }
             let debug_alpha = match self.settings.debug {
-                d if d.show_alpha => Some(d.show_alpha_rigged),
+                d if d.show_alpha && !self.world.rlva.has("viewtransparent") => Some(d.show_alpha_rigged),
                 _ => None,
             };
             self.scene.set_debug_alpha(&mut self.world, debug_alpha);
@@ -7197,7 +7211,7 @@ impl App {
             water: env.water,
             mirror,
             probes,
-            wireframe: self.settings.debug.wireframe,
+            wireframe: self.settings.debug.wireframe && !self.world.rlva.has("viewwireframe"),
             debug_glow: self.settings.debug.glow_view,
             blend_late_discard: self.frame_profile.blend_late_discard(),
             all_lights: self.frame_profile.all_lights(),

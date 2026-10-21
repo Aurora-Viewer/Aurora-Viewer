@@ -380,9 +380,6 @@ pub fn draw(
             continue;
         }
         if o.is_avatar() {
-            if world.rlva.enabled() && !world.rlva.allows("shownametags", &o.full_id.to_string()) {
-                continue;
-            }
             let own = o.full_id == world.agent_id;
             if (own && !show_own) || !name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) {
                 continue;
@@ -391,6 +388,12 @@ pub fn draw(
                 continue;
             };
             let d = pos.distance(eye);
+            if !world
+                .rlva
+                .nametag_visible(o.full_id, world.agent_id, pos.distance(world.agent.position))
+            {
+                continue;
+            }
             if d > settings.name_tag_distance {
                 continue;
             }

@@ -23,11 +23,19 @@ restrictions. `world/rlva.rs` owns parsing, object-scoped rules, strict
 exceptions, protocol replies and garbage collection. Its `policy.rs` checks
 the common action boundary; `inventory.rs` resolves #RLV paths and validates
 COF deltas, attachment/layer locks and scripted nostrip. `camera.rs` supplies
-temporary camera settings and exclusive ownership. `app/rlva.rs` dispatches
+temporary camera settings and exclusive ownership. `events.rs` handles
+permission/teleport consent, command notifications and stand returns;
+`editing.rs` checks linksets and material/media writes. `environment.rs`
+keeps scripted sky, water and day cycles separate from saved local choices.
+`app/rlva.rs` dispatches
 forced actions through the native application handlers. Camera constraints
 also cover the free camera; HUD text and avatar tags are filtered at drawing.
 Disabling clears rules, queued commands and temporary camera values. No
 restriction is saved to settings or restored for a later account.
+Forced outfit transactions retain their issuer through the asynchronous COF
+reply and attachment sync. A later query waits until the preceding outfit
+transaction finishes. Inventory moves/copies compare lock sources, and
+renaming or removing a parent cannot invalidate explicit folder locks.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately

@@ -6,13 +6,24 @@ use glam::Vec3;
 use uuid::Uuid;
 
 impl World {
+    pub fn rlva_allows_im(&self, behaviour: &str, target: Uuid) -> bool {
+        if !self.rlva.enabled() {
+            return true;
+        }
+        let distance = self
+            .objects
+            .index_of_uuid(&target)
+            .and_then(|i| crate::scene::Scene::object_transform_unshifted(self, i, std::time::Instant::now()))
+            .map(|(p, _, _)| p.distance(self.agent.position));
+        distance.map_or_else(
+            || self.rlva.allows_im(behaviour, target),
+            |d| self.rlva.allows_im_at(behaviour, target, Some(d)),
+        )
+    }
     pub fn rlva_can_touch(&self, handle: aurora_net::RegionHandle, local_id: u32) -> bool {
         let r = &self.rlva;
         if !r.enabled() {
             return true;
-        }
-        if r.has("interact") {
-            return false;
         }
         let Some(index) = self.objects.index_of(&super::super::objects::ObjKey { region: handle, local_id }) else {
             return false;
@@ -37,6 +48,26 @@ impl World {
         };
         let id = object.full_id.to_string();
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
+        if r.rules_for("touchme", Uuid::nil()).any(|(source, _)| {
+            let Some(mut i) = self.objects.index_of_uuid(&source) else {
+                return false;
+            };
+            for _ in 0..64 {
+                if i == root {
+                    return true;
+                }
+                let Some(parent) = self.objects.get(i).and_then(|o| self.objects.parent_of(o)) else {
+                    break;
+                };
+                i = parent;
+            }
+            false
+        }) {
+            return true;
+        }
+        if !hud && r.has("interact") {
+            return false;
+        }
         if r.targets("touchthis", &id) || (!hud && r.has("touchall")) {
             return false;
         }
@@ -78,18 +109,33 @@ impl World {
         }
         let blocked = |name| r.has_except(name, actor);
         match command {
-            NetCommand::SendIm { to, .. } => r.allows_im("sendim", *to),
+            NetCommand::EditInventory { change, .. } => self.rlva_inventory_mutation_allowed(change, actor),
+            NetCommand::CopyInventoryItems(copies) => copies
+                .iter()
+                .all(|copy| self.rlva_inventory_move_allowed(copy.item, copy.parent, actor)),
+            NetCommand::PreviewInventoryItem(item) => match item.asset_type {
+                0 => !r.has("viewtexture"),
+                7 => !r.has("viewnote"),
+                10 => !r.has("viewscript"),
+                _ => true,
+            },
+            NetCommand::PreviewTaskNotecard { .. } => !r.has("viewnote"),
+            NetCommand::LoadScript { .. } => !r.has("viewscript"),
+            NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog {
                 to,
                 dialog: 0 | 17 | 41 | 42,
                 ..
-            } => r.allows_im("sendim", *to),
+            } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
             NetCommand::ActivateGroup(_) => !blocked("setgroup"),
             NetCommand::TeleportHome | NetCommand::TeleportLandmark(_) => {
                 !blocked("tplm") && !(self.agent.is_sitting() && blocked("unsit"))
             }
             NetCommand::TeleportTo { handle, position, .. } => {
+                if r.stand_return == Some((*handle, *position)) {
+                    return true;
+                }
                 let local = self.main_region == Some(*handle) && position.distance(self.agent.position) <= 256.0;
                 !blocked(if local { "tplocal" } else { "tploc" }) && !(self.agent.is_sitting() && blocked("unsit"))
             }
@@ -101,6 +147,7 @@ impl World {
             NetCommand::RequestSit { target, .. } => {
                 let limit = r.distance_limit("sittp", 1.5, actor);
                 !blocked("sit")
+                    && !(self.agent.is_sitting() && r.has("standtp"))
                     && !(self.agent.is_sitting() && blocked("unsit"))
                     && (!limit.is_finite()
                         || self
@@ -120,6 +167,15 @@ impl World {
                 | aurora_net::build::BuildCmd::RezInventory(_)
                 | aurora_net::build::BuildCmd::Duplicate { .. },
             ) => !blocked("rez"),
+            NetCommand::Build(command) => self.rlva_allows_build(command),
+            NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
+            NetCommand::AcceptLure { lure_id, godlike } => {
+                *godlike
+                    || self.teleport_invites.list.iter().any(|v| {
+                        matches!(v.kind, super::super::teleport_invites::InviteKind::Offer { lure, .. } if lure == *lure_id)
+                            && self.rlva_can_accept_teleport(v.from, false)
+                    })
+            }
             NetCommand::DetachAttachments(items) => items.iter().all(|item| self.rlva_can_remove(*item, actor)),
             NetCommand::RezAttachments(items) => items.iter().all(|item| {
                 let at = if item.point == 0 {
@@ -151,6 +207,11 @@ impl World {
             }
             NetCommand::Touch { local_id } => self.main_region.is_some_and(|h| self.rlva_can_touch(h, *local_id)),
             NetCommand::ObjectGrab { handle, local_id, .. } => self.rlva_can_touch(*handle, *local_id),
+            NetCommand::ObjectGrabUpdate { object, .. } => self
+                .objects
+                .index_of_uuid(object)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| self.rlva_can_touch(o.key.region, o.key.local_id)),
             _ => true,
         }
     }
@@ -159,11 +220,23 @@ impl World {
     /// original order. The issuing object may bypass only its own locks.
     pub fn rlva_pending(&mut self) -> Vec<(Uuid, NetCommand)> {
         let mut commands = Vec::new();
-        for (source, c) in std::mem::take(&mut self.rlva.pending) {
+        if self.rlva.appearance_busy || !self.rlva.appearance.is_empty() {
+            return commands;
+        }
+        let mut pending = std::mem::take(&mut self.rlva.pending).into_iter();
+        while let Some((source, c)) = pending.next() {
             if !self.rlva.enabled() {
                 break;
             }
-            if c.behaviour.starts_with("getcam_") || c.behaviour.starts_with("setcam_") {
+            if self.rlva_environment_command(source, &c) {
+                continue;
+            }
+            if c.behaviour.starts_with("getcam_")
+                || c.behaviour.starts_with("setcam_")
+                || c.behaviour.starts_with("getdebug_")
+                || c.behaviour.starts_with("setdebug_")
+                || matches!(c.behaviour.as_str(), "adjustheight" | "getheightoffset")
+            {
                 if self.rlva.viewer.len() < 256 {
                     self.rlva.viewer.push((source, c));
                 }
@@ -188,22 +261,25 @@ impl World {
                             .map_or(Uuid::nil(), |o| o.full_id)
                             .to_string(),
                     ),
-                    name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c),
+                    name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
                     _ => Some(String::new()),
                 };
                 if let Some(text) = text {
                     self.rlva.reply(channel, text);
                 } else {
                     self.rlva.pending.push((source, c));
+                    self.rlva.pending.extend(pending);
+                    break;
                 }
                 continue;
             }
-            if matches!(
-                c.behaviour.as_str(),
-                "attach" | "attachover" | "attachall" | "attachallover" | "detach" | "detachall" | "detachme" | "remattach" | "remoutfit"
-            ) {
+            if super::inventory::force_kind(&c.behaviour).is_some() {
                 if !self.rlva_inventory_force(source, &c) {
                     self.rlva.pending.push((source, c));
+                }
+                if !self.rlva.pending.is_empty() || !self.rlva.appearance.is_empty() {
+                    self.rlva.pending.extend(pending);
+                    break;
                 }
                 continue;
             }
@@ -247,6 +323,9 @@ impl World {
             if let Some(command) = command
                 && self.rlva_allows_command(&command, source)
             {
+                if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") {
+                    self.rlva.stand_origin = self.main_region.map(|h| (h, self.agent.position));
+                }
                 commands.push((source, command));
             }
         }

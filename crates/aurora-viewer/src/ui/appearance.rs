@@ -29,6 +29,7 @@ pub struct AppearanceUi {
     add_search: String,
     reverse_sort: bool,
     pub pending: Option<(Uuid, bool)>,
+    pub pending_actor: Uuid,
     pub saved_new: bool,
     pub attachments: Vec<aurora_net::AttachRequest>,
     pub favorite_pending: HashSet<Uuid>,

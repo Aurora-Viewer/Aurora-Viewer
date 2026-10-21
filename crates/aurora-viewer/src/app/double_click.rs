@@ -19,7 +19,7 @@ impl App {
     /// Half the height of our avatar: how high above the ground its centre
     /// stands (LLVOAvatar::getPelvisToFoot, read from the size the
     /// simulator gives the avatar object).
-    fn pelvis_to_foot(&self) -> f32 {
+    pub(super) fn pelvis_to_foot(&self) -> f32 {
         self.world
             .objects
             .index_of_uuid(&self.world.agent_id)

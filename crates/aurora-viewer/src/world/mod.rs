@@ -2316,6 +2316,16 @@ impl World {
                 experience,
                 region,
             } => {
+                let (questions, auto_accept) = self.rlva_script_permissions(task_id, questions);
+                if auto_accept && experience.is_nil() {
+                    self.rlva.out.push(aurora_net::NetCommand::ScriptAnswer {
+                        task_id,
+                        item_id,
+                        questions,
+                        region,
+                    });
+                    return None;
+                }
                 // process_script_question: an experience's question waits
                 // for the experience's details (LLExperienceCache::get), a
                 // caution permission keeps the ordinary dialog
@@ -2961,6 +2971,15 @@ impl World {
 
     fn on_chat(&mut self, c: ChatMessage) {
         if self.rlva.receive(&c) {
+            self.eep.rlva_locked = self.rlva.has("setenv");
+            let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
+            if self.eep.rlva_locked
+                && self.rlva.environment.is_none()
+                && let Some(actor) = environment_owner
+            {
+                self.rlva.environment = Some((actor, self.eep.current().0));
+            }
+            self.inventory.rlva_preview_mask = self.rlva.preview_mask();
             return;
         }
         let mut c = c;
@@ -3032,9 +3051,7 @@ impl World {
 
     fn on_im(&mut self, im: InstantMessage) {
         if matches!(im.dialog, 0 | 17 | 41 | 42)
-            && !self
-                .rlva
-                .allows_im("recvim", if im.dialog == 17 { im.session_id } else { im.from_agent_id })
+            && !self.rlva_allows_im("recvim", if im.dialog == 17 { im.session_id } else { im.from_agent_id })
         {
             return;
         }

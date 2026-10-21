@@ -626,6 +626,9 @@ pub(super) fn preview(
         animation(ctx, p, inv, st, it, prefs, actions);
         return;
     }
+    if !inv.can_preview(it.asset_type) {
+        return;
+    }
     let mut view = if it.asset_type == 7 {
         *st.notecard_view.get_or_insert(prefs.notecard_view)
     } else {

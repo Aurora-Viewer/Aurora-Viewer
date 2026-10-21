@@ -10,6 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub mod camera;
+mod editing;
+pub mod environment;
+mod events;
 mod inventory;
 mod policy;
 
@@ -34,9 +37,11 @@ impl Command {
     pub fn parse(text: &str) -> Option<Self> {
         let (left, value) = text.split_once('=').unwrap_or((text, ""));
         let (name, option) = left.split_once(':').unwrap_or((left, ""));
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b == b'_') {
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphabetic() || b == b'_') {
             return None;
         }
+        let name = name.to_ascii_lowercase();
+        let name = name.as_str();
         let param = match (name, value) {
             (_, "n" | "add") => Param::Add,
             (_, "y" | "rem") => Param::Remove,
@@ -80,9 +85,50 @@ impl From<&Command> for Rule {
     }
 }
 
+impl Rule {
+    fn general(&self) -> bool {
+        self.option.is_empty()
+            || (matches!(self.behaviour.as_str(), "sendim" | "recvim" | "startim") && im_range(&self.option).is_some())
+            || (self.behaviour == "shownametags" && self.option.parse::<f32>().is_ok())
+    }
+}
+
+fn im_range(text: &str) -> Option<(f32, f32)> {
+    let (min, max) = text.split_once(';').unwrap_or((text, ""));
+    let min = min.parse::<f32>().ok()?;
+    let max = if max.is_empty() { f32::MAX } else { max.parse::<f32>().ok()? };
+    (min.is_finite() && max.is_finite() && min >= 0.0 && max >= 0.0).then_some((min, max))
+}
+
 /// Commands listed here have a consumer. Do not advertise unfinished handlers
 /// through @getcommand: scripts use it to decide whether a feature is safe.
 pub const RESTRICTIONS: &[&str] = &[
+    "acceptpermission",
+    "accepttp",
+    "accepttprequest",
+    "allowidle",
+    "notify",
+    "tplure",
+    "tprequest",
+    "edit",
+    "editobj",
+    "editattach",
+    "editworld",
+    "viewtransparent",
+    "viewwireframe",
+    "viewnote",
+    "viewscript",
+    "viewtexture",
+    "setenv",
+    "setdebug",
+    "attachthis",
+    "attachallthis",
+    "attachthis_except",
+    "attachallthis_except",
+    "detachthis",
+    "detachallthis",
+    "detachthis_except",
+    "detachallthis_except",
     "shownametags",
     "showhovertext",
     "showhovertextall",
@@ -102,6 +148,12 @@ pub const RESTRICTIONS: &[&str] = &[
     "setcam_fovmax",
     "setcam_mouselook",
     "setcam_unlock",
+    "camdistmin",
+    "camdistmax",
+    "camzoommin",
+    "camzoommax",
+    "camunlock",
+    "touchfar",
     "addattach",
     "remattach",
     "detach",
@@ -118,6 +170,7 @@ pub const RESTRICTIONS: &[&str] = &[
     "touchattachother",
     "touchhud",
     "touchthis",
+    "touchme",
     "interact",
     "fartouch",
     "sittp",
@@ -151,6 +204,7 @@ pub const RESTRICTIONS: &[&str] = &[
     "showworldmap",
     "sit",
     "sitground",
+    "standtp",
     "startim",
     "startimto",
     "temprun",
@@ -160,6 +214,8 @@ pub const RESTRICTIONS: &[&str] = &[
     "unsit",
 ];
 pub const FORCES: &[&str] = &[
+    "setdebug_avatarsex",
+    "adjustheight",
     "setcam_eyeoffset",
     "setcam_eyeoffsetscale",
     "setcam_focusoffset",
@@ -170,6 +226,24 @@ pub const FORCES: &[&str] = &[
     "attachover",
     "attachall",
     "attachallover",
+    "attachoverorreplace",
+    "attachalloverorreplace",
+    "attachthis",
+    "attachallthis",
+    "attachthisover",
+    "attachallthisover",
+    "attachthisoverorreplace",
+    "attachallthisoverorreplace",
+    "addoutfit",
+    "addoutfitover",
+    "addoutfitall",
+    "addoutfitallover",
+    "addoutfitthis",
+    "addoutfitallthis",
+    "addoutfitthisover",
+    "addoutfitallthisover",
+    "detachthis",
+    "detachallthis",
     "detach",
     "detachall",
     "detachme",
@@ -184,6 +258,14 @@ pub const FORCES: &[&str] = &[
     "unsit",
 ];
 pub const QUERIES: &[&str] = &[
+    "getdebug_avatarsex",
+    "getdebug_aspectratio",
+    "getdebug_renderresolutiondivisor",
+    "getdebug_restrainedloveforbidgivetorlv",
+    "getdebug_restrainedlovenosetenv",
+    "getdebug_windlightuseatmosshaders",
+    "getcam_avdist",
+    "getheightoffset",
     "getcam_avdistmin",
     "getcam_avdistmax",
     "getcam_fov",
@@ -228,11 +310,41 @@ fn supports_strict(name: &str) -> bool {
             | "startimto"
             | "sendchannel"
             | "sendchannel_except"
+            | "share"
+            | "accepttp"
+            | "accepttprequest"
+            | "tplure"
+            | "tprequest"
+            | "shownametags"
     )
 }
 
+fn canonical(name: &str) -> &str {
+    match name {
+        "camdistmin" => "setcam_avdistmin",
+        "camdistmax" => "setcam_avdistmax",
+        "camzoommin" => "setcam_fovmin",
+        "camzoommax" => "setcam_fovmax",
+        "camunlock" => "setcam_unlock",
+        "touchfar" => "fartouch",
+        _ => name,
+    }
+}
+
 fn valid_option(c: &Command) -> bool {
-    match c.behaviour.as_str() {
+    if matches!(c.behaviour.as_str(), "camzoommin" | "camzoommax") {
+        return c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v > 0.0);
+    }
+    match canonical(&c.behaviour) {
+        "attachthis"
+        | "attachallthis"
+        | "attachthis_except"
+        | "attachallthis_except"
+        | "detachthis"
+        | "detachallthis"
+        | "detachthis_except"
+        | "detachallthis_except" => !c.option.split('/').any(|v| matches!(v, "." | "..")),
+        "notify" => events::notification_option(&c.option).is_some(),
         "setcam_fovmin" | "setcam_fovmax" => c
             .option
             .parse::<f32>()
@@ -242,13 +354,16 @@ fn valid_option(c: &Command) -> bool {
         }
         "setcam_eyeoffset" | "setcam_focusoffset" => camera::vector(&c.option).is_some(),
         "fartouch" | "sittp" | "tplocal" => c.option.is_empty() || c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0),
-        "touchthis" => Uuid::parse_str(&c.option).is_ok(),
-        "touchworld" | "touchattach" | "touchattachother" | "touchhud" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
-        "addattach" | "remattach" | "detach" => c.option.is_empty() || inventory::point(&c.option).is_some(),
-        "addoutfit" | "remoutfit" => c.option.is_empty() || inventory::layer(&c.option).is_some(),
-        "recvchat" | "recvemote" | "recvim" | "sendim" | "startim" | "share" | "shownametags" => {
+        "touchthis" | "editobj" => Uuid::parse_str(&c.option).is_ok(),
+        "touchworld" | "touchattach" | "touchattachother" | "touchhud" | "edit" => {
             c.option.is_empty() || Uuid::parse_str(&c.option).is_ok()
         }
+        "addattach" | "remattach" | "detach" => c.option.is_empty() || inventory::point(&c.option).is_some(),
+        "addoutfit" | "remoutfit" => c.option.is_empty() || inventory::layer(&c.option).is_some(),
+        "recvim" | "sendim" | "startim" if im_range(&c.option).is_some() => true,
+        "shownametags" if c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0) => true,
+        "recvchat" | "recvemote" | "recvim" | "sendim" | "startim" | "share" | "shownametags" | "accepttp" | "accepttprequest"
+        | "tplure" | "tprequest" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "showhovertext" => Uuid::parse_str(&c.option).is_ok(),
         "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "sendimto" | "startimto" => Uuid::parse_str(&c.option).is_ok(),
         "sendchannel" | "sendchannel_except" => c.option.is_empty() || c.option.parse::<i32>().is_ok_and(|v| v != 0),
@@ -266,6 +381,17 @@ pub struct Rlva {
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
+    pub environment: Option<(Uuid, super::eep::SkyFrame)>,
+    pub environment_water: Option<super::eep::WaterFrame>,
+    pub environment_day: Option<std::sync::Arc<super::eep::DayCycle>>,
+    pub environment_request: Option<(Uuid, Command)>,
+    pub pseudo_sex: Option<bool>,
+    pub appearance_busy: bool,
+    pub self_detach: Option<(Uuid, Uuid)>,
+    pub stand_origin: Option<(aurora_net::RegionHandle, glam::Vec3)>,
+    pub stand_return: Option<(aurora_net::RegionHandle, glam::Vec3)>,
+    stand_seated: bool,
+    inventory_fetches: BTreeMap<Uuid, (std::time::Instant, u8)>,
     pub revision: u64,
     gc: Option<std::time::Instant>,
     lookups: BTreeMap<Uuid, (bool, u8)>,
@@ -274,6 +400,10 @@ pub struct Rlva {
 impl Rlva {
     pub fn enabled(&self) -> bool {
         self.enabled
+    }
+
+    pub fn preview_mask(&self) -> u8 {
+        u8::from(self.has("viewtexture")) | (u8::from(self.has("viewnote")) << 1) | (u8::from(self.has("viewscript")) << 2)
     }
 
     pub fn inventory_locked(&self) -> bool {
@@ -291,6 +421,14 @@ impl Rlva {
                             | "sharedunwear"
                             | "unsharedwear"
                             | "unsharedunwear"
+                            | "attachthis"
+                            | "attachallthis"
+                            | "attachthis_except"
+                            | "attachallthis_except"
+                            | "detachthis"
+                            | "detachallthis"
+                            | "detachthis_except"
+                            | "detachallthis_except"
                     )
                 })
             })
@@ -326,12 +464,29 @@ impl Rlva {
         self.appearance.clear();
         self.viewer.clear();
         self.camera_values.clear();
+        self.clear_environment();
+        self.pseudo_sex = None;
+        self.appearance_busy = false;
+        self.self_detach = None;
+        self.stand_origin = None;
+        self.stand_return = None;
+        self.stand_seated = false;
+        self.inventory_fetches.clear();
         self.lookups.clear();
         self.gc = None;
         self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn forget(&mut self, source: Uuid) {
+        if self.self_detach.is_some_and(|(id, _)| id == source) {
+            self.self_detach = None;
+        }
+        if self.environment.is_some_and(|(id, _)| id == source) {
+            self.clear_environment();
+        }
+        if self.environment_request.as_ref().is_some_and(|(id, _)| *id == source) {
+            self.environment_request = None;
+        }
         self.lookups.remove(&source);
         if self.rules.remove(&source).is_some() {
             self.revision = self.revision.wrapping_add(1);
@@ -371,7 +526,7 @@ impl Rlva {
             .iter()
             .filter(move |(id, _)| self.enabled && **id != actor)
             .flat_map(|(id, rs)| rs.iter().map(move |r| (*id, r)))
-            .filter(move |(_, r)| r.behaviour == name)
+            .filter(move |(_, r)| canonical(&r.behaviour) == canonical(name))
             .map(|(id, r)| (id, r.option.as_str()))
     }
 
@@ -399,16 +554,24 @@ impl Rlva {
         }
         for text in chat.message[1..].split(',').take(256) {
             if let Some(command) = Command::parse(text) {
+                let notify = matches!(command.param, Param::Add | Param::Remove | Param::Clear);
                 self.process(chat.source_id, command);
+                if notify {
+                    self.notify(text);
+                }
             }
         }
         true
     }
 
     fn process(&mut self, source: Uuid, c: Command) {
+        let was_environment_locked = self.has("setenv");
         match c.param {
             Param::Add | Param::Remove => {
-                if c.param == Param::Add && c.behaviour == "setcam" && self.has_except("setcam", source) {
+                if c.param == Param::Add
+                    && matches!(c.behaviour.as_str(), "setcam" | "setenv" | "setdebug")
+                    && self.has_except(&c.behaviour, source)
+                {
                     return;
                 }
                 if !RESTRICTIONS.contains(&c.behaviour.as_str()) || (c.strict && !supports_strict(&c.behaviour)) || !valid_option(&c) {
@@ -443,8 +606,18 @@ impl Rlva {
                     self.rules.remove(&source);
                 }
             }
-            Param::Force if FORCES.contains(&c.behaviour.as_str()) && self.pending.len() < 256 => self.pending.push((source, c)),
-            Param::Reply(channel) if channel > 0 && channel != i32::MAX && QUERIES.contains(&c.behaviour.as_str()) => {
+            Param::Force
+                if (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true)) && self.pending.len() < 256 =>
+            {
+                self.pending.push((source, c))
+            }
+            Param::Reply(channel)
+                if channel > 0
+                    && channel != i32::MAX
+                    && (QUERIES.contains(&c.behaviour.as_str())
+                        || environment::supports(&c.behaviour, false)
+                        || c.behaviour.starts_with("getdebug_")) =>
+            {
                 let reply = match c.behaviour.as_str() {
                     // Do not claim a full specification version before parity.
                     "version" | "versionnew" => Some("RestrainedLove viewer v0.0 (Aurora experimental RLVa)".to_owned()),
@@ -461,6 +634,9 @@ impl Rlva {
                 }
             }
             _ => {}
+        }
+        if was_environment_locked && !self.has("setenv") {
+            self.clear_environment();
         }
     }
 
@@ -496,7 +672,7 @@ impl Rlva {
             && self
                 .rules
                 .values()
-                .any(|rules| rules.iter().any(|r| r.behaviour == behaviour && r.option.is_empty()))
+                .any(|rules| rules.iter().any(|r| canonical(&r.behaviour) == canonical(behaviour) && r.general()))
     }
 
     pub fn has_except(&self, behaviour: &str, actor: Uuid) -> bool {
@@ -504,7 +680,7 @@ impl Rlva {
             && self
                 .rules
                 .iter()
-                .any(|(id, rules)| *id != actor && rules.iter().any(|r| r.behaviour == behaviour && r.option.is_empty()))
+                .any(|(id, rules)| *id != actor && rules.iter().any(|r| canonical(&r.behaviour) == canonical(behaviour) && r.general()))
     }
 
     /// A normal exception is shared. Under _sec (or @permissive=n), every
@@ -517,12 +693,12 @@ impl Rlva {
             || self
                 .rules
                 .values()
-                .any(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.option.is_empty() && r.strict));
+                .any(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.general() && r.strict));
         let exception = |rs: &BTreeSet<Rule>| rs.iter().any(|r| r.behaviour == behaviour && r.option.eq_ignore_ascii_case(target));
         let restricting: Vec<_> = self
             .rules
             .values()
-            .filter(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.option.is_empty()))
+            .filter(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.general()))
             .collect();
         restricting.is_empty()
             || if strict {
@@ -541,6 +717,10 @@ impl Rlva {
     }
 
     pub fn allows_im(&self, name: &str, target: Uuid) -> bool {
+        self.allows_im_at(name, target, None)
+    }
+
+    pub fn allows_im_at(&self, name: &str, target: Uuid, distance: Option<f32>) -> bool {
         if !self.enabled {
             return true;
         }
@@ -550,7 +730,30 @@ impl Rlva {
             "startim" => "startimto",
             _ => "recvimfrom",
         };
-        self.allows(name, &id) && !self.targets(specific, &id)
+        let mut ranges = self.rules_for(name, Uuid::nil()).filter_map(|(_, option)| im_range(option));
+        let range = ranges
+            .next()
+            .map(|first| ranges.fold(first, |(min, max), r| (min.max(r.0), max.min(r.1))));
+        let within = range.is_some_and(|(min, max)| {
+            let d = distance.unwrap_or(f32::MAX);
+            min < max && min <= d && d <= max
+        });
+        (self.allows(name, &id) || within) && !self.targets(specific, &id)
+    }
+
+    pub fn nametag_visible(&self, target: Uuid, own: Uuid, distance: f32) -> bool {
+        if !self.enabled() {
+            return true;
+        }
+        if target == own || self.allows("shownametags", &target.to_string()) {
+            return true;
+        }
+        let radius = self
+            .rules_for("shownametags", Uuid::nil())
+            .filter_map(|(_, v)| v.parse::<f32>().ok())
+            .reduce(f32::min)
+            .unwrap_or(0.0);
+        radius > 0.0 && distance < radius
     }
 
     pub fn allows_channel(&self, channel: i32) -> bool {
@@ -660,7 +863,24 @@ fn command_list(option: &str) -> String {
     let mut names = BTreeSet::new();
     for (name, list) in [("add", RESTRICTIONS), ("force", FORCES), ("reply", QUERIES)] {
         if kind.is_empty() || kind == "any" || kind == name {
-            names.extend(list.iter().copied().filter(|n| n.contains(filter)));
+            names.extend(list.iter().filter(|n| n.contains(filter)).map(|n| (*n).to_owned()));
+        }
+    }
+    for prefix in ["getenv_", "setenv_"] {
+        if !(kind.is_empty() || kind == "any" || kind == if prefix == "getenv_" { "reply" } else { "force" }) {
+            continue;
+        }
+        for field in environment::SCALARS
+            .iter()
+            .chain(environment::COLORS)
+            .chain(environment::TEXTURES)
+            .copied()
+            .chain(std::iter::once("cloudscroll"))
+        {
+            let name = format!("{prefix}{field}");
+            if name.contains(filter) {
+                names.insert(name);
+            }
         }
     }
     names.into_iter().collect::<Vec<_>>().join(separator)
