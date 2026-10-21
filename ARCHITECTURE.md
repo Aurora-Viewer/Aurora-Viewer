@@ -1082,6 +1082,12 @@ footer in Edit and Create. Linked-prim and face navigation have separate arrows.
 The shared Floater supports a compact status row in its title; construction
 uses independent lock, no-mod and ownership states. Material projection/options
 are inline rather than collapsed.
+Construction uses the shared Floater's steady body sizing: content cannot widen
+the chosen inspector, including during or after PBR numeric scrubbing. PBR rows
+reserve the measured number field and its step buttons before truncating labels,
+so enlarged fonts fit without feeding minimum-width growth back into the window.
+The shared footer keeps its own bounded viewport so wider section content cannot
+push its coordinate buttons outside the inspector.
 `build::can_transform` applies effective simulator
 Move / Modify flags to numeric controls and manipulators before any local echo,
 with whole-selection validation and checks during dragging and release.

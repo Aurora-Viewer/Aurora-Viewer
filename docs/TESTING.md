@@ -1135,6 +1135,12 @@ cancels it. The inspector must keep its size, controls and focus while the
 simulator's replacement material loads. The native inspector regressions also
 simulate ObjectUpdate arriving before RenderMaterials.
 
+For PBR scrubbing, apply a material and drag the metallic/roughness number in
+both directions, hold still, release, then wait at least three seconds. The
+inspector must retain its chosen width, including with text enlarged to 140%.
+Its edge/corner handles must still resize it normally; changing sections and
+folding/reopening the panel must retain that manually chosen size.
+
 Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
 section to open a task item in the same properties panel as agent inventory
 (name, picture, owner/creator/date, description, masks and sale). Task items

@@ -650,7 +650,11 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             });
             if shared_options {
                 divider(ui, p);
-                footer(ui, p, tool, world, s, mods);
+                // A section's minimum content width can exceed its viewport.
+                // Keep the footer in the inspector's chosen width independently.
+                ui.allocate_ui_with_layout(Vec2::new(width, footer_height), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    footer(ui, p, tool, world, s, mods);
+                });
             } else if let Some(hint) = hint {
                 band(ui, p.bar.gamma_multiply(0.82), 12, 8, |ui| {
                     ui.add(egui::Label::new(hint));

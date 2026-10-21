@@ -301,6 +301,7 @@ pub fn show(
             aurora_i18n::tr!("build-compact-collapse"),
             &mut toggle_sections,
         )
+        .steady_size()
         .silent();
     floater.header_status = compact::object_status(tool, world, p);
     floater.min_size = Vec2::new(344.0, 420.0);
