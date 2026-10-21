@@ -99,10 +99,8 @@ impl Catalog {
             constants: Vec<String>,
         }
         // Invariant: these JSON files are bundled, tested build-time assets, not input.
-        let catalog: Words =
-            serde_json::from_str(include_str!("../assets/lsl/keywords.json")).expect("valid bundled LSL keyword catalog");
-        let entries: Vec<Entry> =
-            serde_json::from_str(include_str!("../assets/lsl/reference.json")).expect("valid bundled LSL reference");
+        let catalog: Words = serde_json::from_str(include_str!("../assets/lsl/keywords.json")).expect("valid bundled LSL keyword catalog");
+        let entries: Vec<Entry> = serde_json::from_str(include_str!("../assets/lsl/reference.json")).expect("valid bundled LSL reference");
         let mut words = HashMap::new();
         for (names, group) in [
             (catalog.controls, Group::Control),
@@ -226,7 +224,10 @@ mod tests {
         assert!(c.entries().windows(2).all(|w| w[0].name < w[1].name));
         assert_eq!(c.word("rotation"), Some(Group::Type));
         assert_eq!(c.word("default"), Some(Group::Control));
-        assert_eq!(c.entry("llSay").map(|e| e.signature.as_str()), Some("void llSay(integer Channel, string Text)"));
+        assert_eq!(
+            c.entry("llSay").map(|e| e.signature.as_str()),
+            Some("void llSay(integer Channel, string Text)")
+        );
         assert_eq!(c.id, None);
     }
 

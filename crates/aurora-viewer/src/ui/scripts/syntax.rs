@@ -8,12 +8,12 @@ use super::{
     reference,
     settings::{ColorRole, ScriptSettings},
 };
+use crate::lsl_keywords::{self, Group};
 use crate::theme::Palette;
 use egui::{
     Color32, FontId, TextFormat,
     text::{LayoutJob, LayoutSection},
 };
-use crate::lsl_keywords::{self, Group};
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

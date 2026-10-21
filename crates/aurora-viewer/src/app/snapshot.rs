@@ -203,6 +203,9 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=profile | profile-fail: posted to the demo's
     /// web profile (which refuses it with -fail).
     profile: bool,
+    /// AURORA_DEMO_SNAPSHOT=postcard | postcard-fail: sent by e-mail, the
+    /// demo answering itself (too big with -fail).
+    postcard: bool,
     /// AURORA_DEMO_SNAPSHOT=dof | full-dof: the window's depth of field on,
     /// f/1.4, focused by hand on the own avatar (3.3 m).
     dof: bool,
@@ -566,7 +569,10 @@ impl App {
                 text.to_owned()
             }
         };
-        let own = self.world.legacy_name(&self.world.agent_id).unwrap_or_else(|| self.world.own_name());
+        let own = self
+            .world
+            .legacy_name(&self.world.agent_id)
+            .unwrap_or_else(|| self.world.own_name());
         // the sender's address, off Second Life only (OpenSim compatibility)
         let from = (self.settings.grid == crate::settings::GridChoice::Custom)
             .then(|| self.world.user_info.info.as_ref().map(|i| i.email.clone()))
@@ -1864,6 +1870,7 @@ impl App {
                 aspect,
                 inventory,
                 profile: kind.starts_with("profile"),
+                postcard: kind.starts_with("postcard"),
                 dof: kind.ends_with("dof"),
                 quality: kind.ends_with("quality"),
                 light: kind == "light",
@@ -1913,6 +1920,11 @@ impl App {
                 self.snapshots.ui.destination = Destination::Profile;
                 self.snapshots.ui.caption = aurora_i18n::tr!("demo-photo-caption").to_owned();
             }
+            if demo.postcard {
+                self.snapshots.ui.destination = Destination::Email;
+                self.snapshots.ui.postcard.to = "friend@example.com".into();
+                self.snapshots.ui.postcard.message = aurora_i18n::tr!("demo-photo-caption").to_owned();
+            }
             if let Some(v) = &demo.viewfinder {
                 let s = &mut self.settings.snapshot;
                 s.viewfinder.display = v.display;
@@ -1943,6 +1955,13 @@ impl App {
             if self.frame_count == demo.frame {
                 self.snapshots.quiet = false;
                 self.photo_to_profile(renderer);
+            }
+            return;
+        }
+        if demo.postcard {
+            if self.frame_count == demo.frame {
+                self.snapshots.quiet = false;
+                self.photo_to_postcard(renderer);
             }
             return;
         }

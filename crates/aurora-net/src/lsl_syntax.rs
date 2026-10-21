@@ -204,7 +204,10 @@ mod tests {
         );
         assert_eq!(get(&words, "EOF").signature, "string EOF = \\\n\\\n\\\n");
         assert_eq!(get(&words, "if").tooltip, "if block\nif (x) {}");
-        assert_eq!((get(&words, "integer").group, get(&words, "integer").signature.as_str()), (Group::Type, "integer"));
+        assert_eq!(
+            (get(&words, "integer").group, get(&words, "integer").signature.as_str()),
+            (Group::Type, "integer")
+        );
         assert!(words.iter().all(|k| k.name != "bad name"));
     }
 

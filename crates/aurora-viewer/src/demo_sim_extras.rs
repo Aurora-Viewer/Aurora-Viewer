@@ -143,7 +143,11 @@ mod tests {
 
     #[test]
     fn the_console_answers_every_command() {
-        for (command, expected) in [("help", "Commands:"), (" stats ", "Agents: 3"), ("reboot", "Unknown command: reboot")] {
+        for (command, expected) in [
+            ("help", "Commands:"),
+            (" stats ", "Agents: 3"),
+            ("reboot", "Unknown command: reboot"),
+        ] {
             match console_reply(command) {
                 NetEvent::SimConsoleReply(Ok(text)) => assert!(text.starts_with(expected), "{command}: {text}"),
                 other => panic!("{other:?}"),

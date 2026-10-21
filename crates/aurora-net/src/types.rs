@@ -599,7 +599,9 @@ pub enum NetEvent {
     },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
-    VoiceModerationFailed { everyone: bool },
+    VoiceModerationFailed {
+        everyone: bool,
+    },
     TeleportFailed {
         reason: String,
     },
