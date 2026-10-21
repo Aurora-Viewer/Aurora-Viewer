@@ -1163,6 +1163,15 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
             aurora_i18n::tr!("ui-options-flash-unread-hint"),
             |ui| toggle(ui, p, &mut s.flash_unread_conversations),
         );
+        // the Legacy Viewer's "Flash chat toolbar button if a new IM
+        // arrives" (FSNotifyIMFlash)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-flash-conversations-button"),
+            aurora_i18n::tr!("ui-options-flash-conversations-button-hint"),
+            |ui| toggle(ui, p, &mut s.flash_conversations_button),
+        );
     });
     // Firestorm's Chat › Notifications (EnableIMChatPopups,
     // EnableGroupChatPopups) and ChatOnlineNotification
@@ -1218,6 +1227,19 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
         c |= row(ui, p, aurora_i18n::tr!("ui-options-toast-group-im"), "", |ui| {
             toggle(ui, p, &mut s.toast_group_im)
         });
+        // only what toasts can stay under the bell
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-ims-in-notification-center"),
+            aurora_i18n::tr!("ui-options-ims-in-notification-center-hint"),
+            |ui| {
+                ui.add_enabled_ui(s.toast_im || s.toast_group_im, |ui| {
+                    toggle(ui, p, &mut s.ims_in_notification_center)
+                })
+                .inner
+            },
+        );
         c |= row(ui, p, aurora_i18n::tr!("ui-options-toast-duration"), "", |ui| {
             slider(ui, &mut s.im_toast_seconds, 3.0..=60.0, " s")
         });

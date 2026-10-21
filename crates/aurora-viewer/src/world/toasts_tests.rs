@@ -187,6 +187,7 @@ fn friend_toasts_follow_the_preference_dnd_and_blocks() {
 #[test]
 fn messages_of_one_conversation_fill_one_entry_until_read() {
     let mut w = world();
+    w.notifications.toasts.im_in_bell = true;
     receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
     receive(&mut w, JANE, JANE, "are you there?", ImKind::Private, false);
     receive(&mut w, TOM, TOM, "hi", ImKind::Private, false);
@@ -203,6 +204,28 @@ fn messages_of_one_conversation_fill_one_entry_until_read() {
     assert_eq!(messages(&w), vec![(TOM, 1, "hi".into())]);
 }
 
+/// By default a message is a toast only, as the Legacy Viewer's
+/// notification well never lists IMs (#752): one card per conversation
+/// still, neither listed nor counted, never in the history once read.
+#[test]
+fn by_default_a_message_toasts_without_staying_under_the_bell() {
+    let mut w = world();
+    receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
+    receive(&mut w, JANE, JANE, "are you there?", ImKind::Private, false);
+    assert_eq!(messages(&w), vec![(JANE, 2, "are you there?".into())]);
+    assert!(w.notifications.list.iter().all(|n| n.transient));
+    assert_eq!((w.notifications.listed().count(), w.notifications.unread()), (0, 0));
+    // kept under the bell, then read: the history does not keep it either
+    let mut w = world();
+    w.notifications.toasts.im_in_bell = true;
+    receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
+    assert!(w.notifications.take_departures().is_empty());
+    w.social.ims.iter_mut().find(|s| s.other == JANE).unwrap().unread = 0;
+    w.acknowledge_read_messages();
+    assert!(messages(&w).is_empty());
+    assert!(w.notifications.take_departures().is_empty());
+}
+
 #[test]
 fn no_message_entry_in_sight_in_dnd_from_a_blocked_resident_or_when_turned_off() {
     // the conversation shown in the window
@@ -214,11 +237,16 @@ fn no_message_entry_in_sight_in_dnd_from_a_blocked_resident_or_when_turned_off()
     w.status.dnd = true;
     receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
     assert!(messages(&w).is_empty());
-    // Aurora's paused bell keeps it in "To do", silently
+    // Aurora's paused bell keeps it in "To do", silently, when messages
+    // stay under it; a toast alone has nothing to show
     let mut w = world();
     w.notifications.aurora = true;
+    w.notifications.toasts.im_in_bell = true;
     w.status.dnd = true;
     receive(&mut w, JANE, JANE, "hello", ImKind::Private, false);
+    assert_eq!(messages(&w).len(), 1);
+    w.notifications.toasts.im_in_bell = false;
+    receive(&mut w, TOM, TOM, "hi", ImKind::Private, false);
     assert_eq!(messages(&w).len(), 1);
     // a blocked resident in a group chat
     let mut w = world();
