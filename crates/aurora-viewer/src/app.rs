@@ -9674,7 +9674,14 @@ impl App {
             show_in_search: self.world.show_in_search(),
             second_life,
         });
+        let time_of_day = self.settings.time_of_day;
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        // the panels hold the time of day shown and write it back to the
+        // settings later in the frame: a choice made here (or by a reset)
+        // goes to them first, or it is undone at once (#742)
+        if self.settings.time_of_day != time_of_day {
+            self.panels.time_of_day = self.settings.time_of_day;
+        }
         // Repeatable live-scale profiling without taking the native pointer.
         if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale") {
             let phase = (self.frame_count - 600) % 600;
@@ -9740,16 +9747,11 @@ impl App {
             self.reset_camera_all();
         }
         if res.reset {
-            // the panels must not write the old time of day back
-            self.panels.time_of_day = self.settings.time_of_day;
             self.settings.save();
             self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
             ui::layout::forget(ctx);
         }
         if let Some(tab) = res.reset_section {
-            if tab == 0 {
-                self.panels.time_of_day = self.settings.time_of_day;
-            }
             self.settings.save();
             self.world
                 .system_message(aurora_i18n::tr!("app-section-settings-reset", section = ui::options::tab_name(tab)));
