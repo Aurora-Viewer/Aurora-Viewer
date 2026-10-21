@@ -4489,7 +4489,19 @@ impl Session<'_> {
             );
         } else if id == PreloadSound::ID {
             let m: PreloadSound = pkt.decode()?;
-            emit(self.sh, NetEvent::PreloadSounds(m.data_block.iter().map(|b| b.sound_id).collect()));
+            emit(
+                self.sh,
+                NetEvent::PreloadSounds(
+                    m.data_block
+                        .iter()
+                        .map(|b| SoundPreload {
+                            sound: b.sound_id,
+                            object: b.object_id,
+                            owner: b.owner_id,
+                        })
+                        .collect(),
+                ),
+            );
         } else if id == TeleportLocal::ID {
             let m: TeleportLocal = pkt.decode()?;
             transition::step(|| "TeleportLocal (inside the region)".to_string());
