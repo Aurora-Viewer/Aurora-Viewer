@@ -26,6 +26,56 @@ fn id(n: u128) -> Uuid {
     Uuid::from_u128(n)
 }
 
+#[test]
+fn inventory_favorites_toggle_originals_through_item_and_folder_links() {
+    for kind in [1, 3, 5, 6, 10] {
+        let mut inv = fixture();
+        inv.add_items(vec![
+            InvItem {
+                id: id(9000),
+                parent: id(8000),
+                asset_type: kind,
+                ..Default::default()
+            },
+            InvItem {
+                id: id(9001),
+                parent: id(8001),
+                asset_type: 24,
+                asset_id: id(9000),
+                ..Default::default()
+            },
+        ]);
+        for expected in [true, false] {
+            let change = toggle_favorite(&inv, id(9001)).expect("original favorite");
+            assert_eq!(change.refresh, vec![id(8000)], "refresh the original's parent");
+            assert!(
+                matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Patch { id: target, folder: false, .. }] if *target == id(9000))
+            );
+            demo_mutate(&mut inv, id(2), change).expect("confirmed change");
+            assert_eq!(is_favorite(&inv, id(9000)), expected);
+            assert_eq!(is_favorite(&inv, id(9001)), expected);
+            assert!(!inv.items[&id(9001)].favorite, "the link must not get its own favorite");
+        }
+    }
+    let mut inv = fixture();
+    inv.add_items(vec![InvItem {
+        id: id(9002),
+        parent: id(8000),
+        asset_type: 25,
+        asset_id: id(8001),
+        ..Default::default()
+    }]);
+    let change = toggle_favorite(&inv, id(9002)).expect("folder original");
+    assert!(
+        matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Patch { id: target, folder: true, .. }] if *target == id(8001))
+    );
+    demo_mutate(&mut inv, id(2), change).expect("favorite folder");
+    assert!(is_favorite(&inv, id(9002)));
+    inv.items.get_mut(&id(9002)).expect("link").asset_id = id(9999);
+    assert!(!is_favorite(&inv, id(9002)));
+    assert!(toggle_favorite(&inv, id(9002)).is_err());
+}
+
 fn nested_folder_fixture() -> Inventory {
     let mut inv = fixture();
     for (number, parent) in [(8200, id(8001)), (8201, id(8200)), (8300, inv.root)] {

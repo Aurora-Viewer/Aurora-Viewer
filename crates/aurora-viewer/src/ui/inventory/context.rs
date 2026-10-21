@@ -4,7 +4,6 @@
 use super::*;
 use crate::ui::menu;
 use crate::world::appearance::Action as Wear;
-use aurora_net::inventory::operations::metadata_favorite;
 
 fn entry(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool, action: InvAction, actions: &mut Vec<InvAction>) {
     if menu::item_if(ui, p, icon, label, enabled) {
@@ -631,7 +630,7 @@ pub(super) fn show(
             {
                 st.dialog = Some(EditDialog::Ungroup(id));
             }
-            let favorite = folder.map_or_else(|| item.is_some_and(|it| it.favorite), |f| f.info.favorite);
+            let favorite = rules::is_favorite(inv, id);
             if menu::item_if(
                 ui,
                 p,
@@ -641,9 +640,9 @@ pub(super) fn show(
                 } else {
                     aurora_i18n::tr!("common-add-to-favorites")
                 },
-                ready && single && !rules::library(inv, id) && id != inv.root,
+                ready && single && target.is_some_and(|target| !rules::library(inv, target) && target != inv.root),
             ) {
-                submit(st, actions, rules::patch(inv, id, metadata_favorite(!favorite)));
+                submit(st, actions, rules::toggle_favorite(inv, id));
             }
             if folder.is_none() {
                 menu::separator(ui, p);

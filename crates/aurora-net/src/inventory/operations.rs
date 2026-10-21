@@ -164,6 +164,7 @@ where
     let mut created = HashMap::new();
     let mut folders = Vec::new();
     let mut moved = false;
+    let mut favorites = HashMap::new();
     let resolve = |ids: &HashMap<Uuid, Uuid>, id: Uuid| ids.get(&id).copied().unwrap_or(id);
     for (index, op) in change.operations.iter().enumerate() {
         progress(Progress {
@@ -217,7 +218,18 @@ where
                 }
                 if !fields.is_empty() {
                     let kind = if *folder { "category" } else { "item" };
-                    crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields)).await?;
+                    let favorite = fields.contains_key("favorite");
+                    let response = crate::outfits::send(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields)).await?;
+                    if favorite {
+                        favorites.remove(&(id, *folder));
+                        if let Some(value) = favorite_from_ais(&response, id, *folder) {
+                            favorites.insert((id, *folder), value);
+                        } else {
+                            // Never log response bodies: inventory records can
+                            // contain personal data. J3 can copy this diagnostic.
+                            log::warn!("inventory favorite: AIS reply omitted matching favorite metadata (folder={folder})");
+                        }
+                    }
                 }
             }
             Operation::Links { parent, links } => {
@@ -288,10 +300,42 @@ where
             complete &= chunk.iter().all(|id| fetched.iter().any(|c| c.folder_id == *id && c.version >= 0));
             contents.extend(fetched);
         }
+        // AISUpdate::parseContent / parseItem / parseCategory (llaisapi.cpp)
+        // apply the mutation's canonical metadata before notifying observers.
+        // A legacy folder listing can lag behind that very same AIS response.
+        for contents in &mut contents {
+            for item in &mut contents.items {
+                if let Some(favorite) = favorites.get(&(item.id, false)) {
+                    item.favorite = *favorite;
+                }
+            }
+            for folder in &mut contents.folders {
+                if let Some(favorite) = favorites.get(&(folder.id, true)) {
+                    folder.favorite = *favorite;
+                }
+            }
+        }
         if complete && confirmed(&change.operations, &created, &contents) {
             break;
         }
         if attempt == retries {
+            for operation in &change.operations {
+                if let Operation::Patch { id, folder, body } = operation
+                    && body.has("favorite")
+                {
+                    let id = resolve(&created, *id);
+                    let observed = if *folder {
+                        contents.iter().flat_map(|c| &c.folders).find(|f| f.id == id).map(|f| f.favorite)
+                    } else {
+                        contents.iter().flat_map(|c| &c.items).find(|it| it.id == id).map(|it| it.favorite)
+                    };
+                    log::warn!(
+                        "inventory favorite confirmation failed: folder={folder}, expected={}, observed={observed:?}, AIS_metadata={}",
+                        body["favorite"]["toggled"].as_bool(),
+                        favorites.contains_key(&(id, *folder))
+                    );
+                }
+            }
             return Err(if complete {
                 aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into()
             } else {
@@ -313,6 +357,33 @@ where
         removed: change.removed,
         created,
     })
+}
+
+/// Only explicit metadata on the matching record is an acknowledgement;
+/// HTTP success, another object's record or an ID-only error is insufficient.
+fn favorite_from_ais(response: &Llsd, id: Uuid, folder: bool) -> Option<bool> {
+    let (key, collection) = if folder {
+        ("category_id", "categories")
+    } else {
+        ("item_id", "items")
+    };
+    let record = if response[key].as_uuid() == id {
+        response
+    } else {
+        &response["_embedded"][collection][id.to_string().as_str()]
+    };
+    if record[key].as_uuid() != id || record["parent_id"].as_uuid().is_nil() || !record.has("favorite") {
+        return None;
+    }
+    match &record["favorite"] {
+        Llsd::Undef => Some(false),
+        Llsd::Map(map) => match map.get("toggled") {
+            Some(Llsd::Boolean(value)) => Some(*value),
+            Some(Llsd::Integer(value)) => Some(*value != 0),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn sort_contents_parent_first(contents: &mut [FolderContents]) {
@@ -1390,6 +1461,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inventory_favorites_use_ais_metadata_when_legacy_readback_is_stale() {
+        for folder in [false, true] {
+            for favorite in [false, true] {
+                for embedded in [false, true] {
+                    let fresh = favorite_readback(folder, favorite);
+                    let kind = if folder { "categories" } else { "items" };
+                    let record = fresh["folders"].at(0)[kind].at(0).clone();
+                    let response = if embedded {
+                        let mut records = Llsd::new_map();
+                        records.insert(id(3).to_string(), record);
+                        let mut contents = Llsd::new_map();
+                        contents.insert(kind, records);
+                        llsd_map! { "_embedded" => contents }
+                    } else {
+                        record
+                    };
+                    let (url, task) = move_server(vec![response, favorite_readback(folder, !favorite)]).await;
+                    let result = mutate(
+                        &reqwest::Client::new(),
+                        &url,
+                        &format!("{url}/fetch"),
+                        id(2),
+                        favorite_change(folder, favorite),
+                    )
+                    .await
+                    .expect("AIS metadata is canonical despite a stale legacy listing");
+                    let observed = if folder {
+                        result.contents[0].folders[0].favorite
+                    } else {
+                        result.contents[0].items[0].favorite
+                    };
+                    assert_eq!(observed, favorite);
+                    assert_eq!(task.await.expect("requests").len(), 2, "one patch and one parent listing");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn inventory_favorites_do_not_hide_unconfirmed_name_changes() {
+        let current = favorite_readback(false, true);
+        let record = current["folders"].at(0)["items"].at(0).clone();
+        let mut replies = vec![record];
+        replies.extend(vec![favorite_readback(false, false); 6]);
+        let (url, task) = move_server(replies).await;
+        let mut change = favorite_change(false, true);
+        let Operation::Patch { body, .. } = &mut change.operations[0] else {
+            panic!("favorite patch");
+        };
+        body.insert("name", "New sound");
+        assert!(mutate(&reqwest::Client::new(), &url, &url, id(2), change).await.is_err());
+        assert_eq!(task.await.expect("bounded readback").len(), 7);
+    }
+
+    #[tokio::test]
     async fn inventory_favorites_wait_for_readback_without_repeating_the_patch() {
         for folder in [false, true] {
             for favorite in [false, true] {
@@ -1448,11 +1574,34 @@ mod tests {
         let record = if folder {
             llsd_map! { "category_id" => id(3), "parent_id" => id(1), "name" => "Folder", "type_default" => -1, "favorite" => favorite }
         } else {
-            llsd_map! { "item_id" => id(3), "parent_id" => id(1), "name" => "Object", "type" => 6, "inv_type" => 6, "favorite" => favorite }
+            llsd_map! { "item_id" => id(3), "parent_id" => id(1), "name" => "Sound", "type" => 1, "inv_type" => 1, "favorite" => favorite }
         };
         let mut parent = llsd_map! { "folder_id" => id(1), "owner_id" => id(2), "version" => 2 };
         parent.insert(if folder { "categories" } else { "items" }, Llsd::Array(vec![record]));
         llsd_map! { "folders" => Llsd::Array(vec![parent]) }
+    }
+
+    #[test]
+    fn inventory_favorites_ignore_unrelated_incomplete_and_malformed_ais_metadata() {
+        for folder in [false, true] {
+            let key = if folder { "category_id" } else { "item_id" };
+            let mut record = llsd_map! { "parent_id" => id(1), "favorite" => llsd_map! { "toggled" => true } };
+            record.insert(key, id(4));
+            assert_eq!(favorite_from_ais(&record, id(3), folder), None);
+            record.insert(key, id(3));
+            assert_eq!(favorite_from_ais(&record, id(3), folder), Some(true));
+            record.insert("parent_id", Uuid::nil());
+            assert_eq!(favorite_from_ais(&record, id(3), folder), None);
+            record.insert("parent_id", id(1));
+            record.insert("favorite", Llsd::new_map());
+            assert_eq!(favorite_from_ais(&record, id(3), folder), None);
+            record.insert("favorite", "not favorite metadata");
+            assert_eq!(favorite_from_ais(&record, id(3), folder), None);
+            record.insert("favorite", Llsd::Undef);
+            assert_eq!(favorite_from_ais(&record, id(3), folder), Some(false));
+            record.insert("favorite", llsd_map! { "toggled" => 1, "version" => 2 });
+            assert_eq!(favorite_from_ais(&record, id(3), folder), Some(true));
+        }
     }
 
     #[tokio::test]

@@ -89,6 +89,25 @@ pub fn default_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     let kind = original(inv, id).and_then(|id| inv.items.get(&id)).map(|it| it.asset_type);
     kind.and_then(|kind| system(inv, kind)).or(Some(inv.root).filter(|id| !id.is_nil()))
 }
+/// get_is_favorite / toggle_favorite (llinventoryfunctions.cpp): links show
+/// and modify their original's favorite, including links to folders.
+pub fn is_favorite(inv: &Inventory, id: Uuid) -> bool {
+    original(inv, id).is_some_and(|id| {
+        inv.folders
+            .get(&id)
+            .map_or_else(|| inv.items.get(&id).is_some_and(|it| it.favorite), |f| f.info.favorite)
+    })
+}
+
+pub fn toggle_favorite(inv: &Inventory, id: Uuid) -> Result<Mutation, String> {
+    let target = original(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
+    patch(
+        inv,
+        target,
+        aurora_net::inventory::operations::metadata_favorite(!is_favorite(inv, target)),
+    )
+}
+
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
     let old = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     let mut refresh = vec![old];

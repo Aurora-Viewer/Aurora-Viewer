@@ -973,6 +973,14 @@ before continuing their work.
 The folders published directly in the inventory use the normalised name
 sent to the server, with the same rules of characters and length.
 
+Favorite mutations retain explicit metadata on the matching item/category
+returned by AIS, including records in `_embedded`, before reconciling the
+legacy parent listing (`AISUpdate::parseContent`). HTTP success alone is
+insufficient. Readback retries never repeat a write, and diagnostics log
+only field states. Inventory links read and toggle their original's favorite
+through `world/inventory/actions.rs`; the menu, filter, count and star share
+that rule (`get_is_favorite` / `toggle_favorite`).
+
 `session/inventory_updates.rs` receives `UpdateCreateInventoryItem` and
 `BulkUpdateInventory` directly over HTTP, like Firestorm's `LLEventPollImpl`,
 and the LLSD variants of `LargeGenericMessage` / `GenericMessage`, in

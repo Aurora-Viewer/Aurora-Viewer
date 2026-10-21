@@ -201,7 +201,8 @@ impl Counts {
                     && (prefs.search_library || !library.contains(&it.parent))
             })
             .count();
-        self.favorites = inv.items.values().filter(|it| it.favorite).count() + inv.folders.values().filter(|f| f.info.favorite).count();
+        self.favorites =
+            inv.items.keys().filter(|id| rules::is_favorite(inv, **id)).count() + inv.folders.values().filter(|f| f.info.favorite).count();
         let held = |kind: i32| {
             rules::system(inv, kind)
                 .and_then(|id| inv.folders.get(&id))

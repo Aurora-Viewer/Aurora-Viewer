@@ -412,7 +412,8 @@ pub(in super::super) fn item(
     };
     let pills = pills(inv, it, facts, frame.layout);
     let pills_w: f32 = pills.iter().map(|(text, _)| pill_width(ui, text) + 6.0).sum();
-    let star_w = if it.favorite { 20.0 } else { 0.0 };
+    let favorite = rules::is_favorite(inv, id);
+    let star_w = if favorite { 20.0 } else { 0.0 };
     let room = cols.name_end - name_left - quick_w - trailing - pills_w - star_w - if trailing > 0.0 { 8.0 } else { 0.0 };
     let name = if selected {
         sheet::semibold(ui, &it.name, NAME, p.ink)
@@ -433,7 +434,7 @@ pub(in super::super) fn item(
         x += 6.0;
         x += paint_pill(ui, p, text, *tone, x, rect.center().y);
     }
-    if it.favorite {
+    if favorite {
         widgets::paint_glyph(
             ui.painter(),
             "star-filled",
