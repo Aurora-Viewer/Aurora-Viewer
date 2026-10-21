@@ -4511,6 +4511,11 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
+- `show-original`, `aurora-show-original`: minimize the inventory at frame
+  650, then run an attachment's "Show in inventory" action at frame 750.
+  Capture frames `700,850`: first the title bar alone, then the restored
+  window with the demo object selected and revealed. Covers both layouts
+  without grid access; also test manually with a worn attachment on Agni.
 - `aurora`, `aurora-medium`, `aurora-wide`, `aurora-rights`: Aurora's
   window, placed at frame 2 at its narrow (440 px), medium (800 px) and wide
   (1180 px) width, on the demo object of the right-click tests, the demo

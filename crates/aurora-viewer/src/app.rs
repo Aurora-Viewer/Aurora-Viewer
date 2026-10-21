@@ -7254,6 +7254,13 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
+                match self.frame_count {
+                    650 => ui::widgets::minimize_floater(&ctx, "inventory"),
+                    750 => self.on_ctx_action(ui::context::CtxAction::AttachmentInventory(uuid::Uuid::from_u128(8100))),
+                    _ => {}
+                }
+            }
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -13468,6 +13475,8 @@ impl ApplicationHandler for App {
                         | "aurora-rights"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "show-original"
+                        | "aurora-show-original"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
