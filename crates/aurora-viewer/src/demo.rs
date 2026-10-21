@@ -132,6 +132,10 @@ pub mod search;
 /// A seat deleted under the resident sitting on it (AURORA_DEMO_SEAT_KILL).
 #[path = "demo_seat_kill.rs"]
 pub mod seat_kill;
+/// Freeze, region console and voice moderation (AURORA_DEMO_FREEZE,
+/// AURORA_DEMO_SIM_CONSOLE, AURORA_DEMO_VOICE_MODERATION).
+#[path = "demo_sim_extras.rs"]
+pub mod sim_extras;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
@@ -3084,10 +3088,16 @@ pub fn events() -> Vec<NetEvent> {
     let mut ev = vec![
         NetEvent::LoggedIn(Arc::new(login)),
         NetEvent::MainRegionChanged { handle: HANDLE },
-        // only the People API (names) is simulated
+        // only the People API (names) is simulated, and what the
+        // scenarios of sim_extras add
         NetEvent::Capabilities {
             handle: HANDLE,
-            caps: Arc::new([("GetDisplayNames".to_owned(), "demo://names".to_owned())].into_iter().collect()),
+            caps: Arc::new(
+                [("GetDisplayNames".to_owned(), "demo://names".to_owned())]
+                    .into_iter()
+                    .chain(sim_extras::caps())
+                    .collect(),
+            ),
         },
         NetEvent::RegionHandshake(Arc::new(RegionInfo {
             handle: HANDLE,
@@ -3106,7 +3116,7 @@ pub fn events() -> Vec<NetEvent> {
             // AURORA_DEMO_REGION: the avatar may own the estate or manage it;
             // AURORA_DEMO_ENV_EDITOR=region: the avatar manages the estate
             owner: region::estate_owner(),
-            is_estate_manager: region::is_manager() || env::estate_manager(),
+            is_estate_manager: region::is_manager() || env::estate_manager() || sim_extras::estate_manager(),
             product_name: "Estate / Full Region".into(),
             billable_factor: 1.0,
         })),
@@ -4313,6 +4323,12 @@ pub fn events() -> Vec<NetEvent> {
             pf::ALLOW_DAMAGE | pf::RESTRICT_PUSHOBJECT
         } else {
             pf::ALLOW_FLY | pf::CREATE_OBJECTS | pf::ALLOW_OTHER_SCRIPTS | pf::ALLOW_VOICE_CHAT | pf::RESTRICT_PUSHOBJECT
+        };
+        // AURORA_DEMO_VOICE_MODERATION: the estate's voice channel
+        let flags = if sim_extras::estate_voice() {
+            flags | pf::USE_ESTATE_VOICE_CHAN
+        } else {
+            flags
         };
         if restricted {
             ev.push(NetEvent::Health(72.0));

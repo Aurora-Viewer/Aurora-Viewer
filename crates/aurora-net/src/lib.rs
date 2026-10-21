@@ -11,6 +11,7 @@ pub mod currency;
 pub mod estate;
 pub mod experience;
 pub mod fetch;
+pub mod freeze;
 pub mod group_money;
 pub mod groups;
 pub mod home;
@@ -18,17 +19,21 @@ pub mod inventory;
 pub mod land;
 pub mod land_tool;
 pub mod login;
+pub mod lsl_syntax;
 pub mod objcache;
 pub mod objects;
 pub mod offline_im;
 pub mod outfits;
+pub mod postcard;
 pub mod probe;
 pub mod profile;
 pub mod region_restart;
+pub mod release_notes;
 pub mod script_controls;
 pub mod scripts;
 pub mod search;
 mod session;
+pub mod sim_console;
 pub mod slm;
 pub mod social;
 pub mod stats;
@@ -38,6 +43,7 @@ pub mod throttle;
 pub mod transition;
 pub mod types;
 pub mod user_info;
+pub mod voice_moderation;
 pub mod xmlrpc;
 
 pub use fetch::{FetchRequest, FetchResult, Fetcher, Lane};
@@ -95,6 +101,18 @@ pub enum NetError {
     Http(String),
 }
 
+/// The certificates a simulator's capability may be signed by: the public
+/// roots and Linden Lab's own CA (the simulator hostname is not checked, see
+/// NetClient::new).
+pub(crate) fn simulator_roots() -> Vec<reqwest::Certificate> {
+    let mut roots: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
+        .collect();
+    roots.extend(reqwest::Certificate::from_pem_bundle(include_bytes!("../lindenlab.pem")).unwrap_or_default());
+    roots
+}
+
 impl NetClient {
     pub fn new() -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -107,17 +125,13 @@ impl NetClient {
         let http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
             .connect_timeout(std::time::Duration::from_secs(15))
-            .tls_certs_merge(ll_ca.clone())
+            .tls_certs_merge(ll_ca)
             .build()
             .map_err(|e| NetError::Http(e.to_string()))?;
         // Capabilities / assets: like LL's llcorehttp (mVerifyHost = false) the
         // certificate chain is verified (public roots + Linden Lab CA) but the
         // simulator hostname is not.
-        let mut roots: Vec<reqwest::Certificate> = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-            .iter()
-            .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok())
-            .collect();
-        roots.extend(ll_ca);
+        let roots = simulator_roots();
         let caps_http = reqwest::Client::builder()
             .user_agent(aurora_version::user_agent())
             .pool_max_idle_per_host(32)

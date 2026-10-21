@@ -234,6 +234,8 @@ pub struct Settings {
     pub profile_size: profile::ProfileSize,
     /// The place in the profile post (SnapshotToProfileIncludeLocation).
     pub profile_location: bool,
+    /// Size of a postcard (LastSnapshotToEmailResolution: 800 × 600).
+    pub postcard_size: profile::ProfileSize,
     /// The window's depth of field (the Preferences' own is left alone).
     pub dof: crate::dof::PhotoDof,
     /// "Photo quality": the graphics raised while the window is open
@@ -265,6 +267,7 @@ impl Default for Settings {
             inventory_size: inventory::TextureSize::S512,
             profile_size: profile::ProfileSize::S640,
             profile_location: true,
+            postcard_size: profile::ProfileSize::S800,
             dof: Default::default(),
             quality: false,
             viewfinder: Default::default(),

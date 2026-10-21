@@ -186,7 +186,7 @@ the background still applies outside screenshots.
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
 | `AURORA_CAPTURE_LAYOUT=1` | The screenshot reloads the saved layout (`ui_layout.ron`) |
-| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory or posted to the profile |
+| `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
@@ -255,6 +255,11 @@ answers like my.secondlife.com and its storage (session cookie, upload
 configuration, form, 303): the log gives `demo profile: photo posted (<KB>
 PNG, caption "…", location true)` and the window "Posted to your profile".
 `profile-fail` has the configuration refused: the window shows the failure.
+`postcard` opens the window on the E-mail destination, a recipient and a
+message filled in, and sends the photo at `AURORA_DEMO_SNAPSHOT_FRAME`: the
+JPEG is encoded (log `photo: postcard of <n> bytes`), nothing leaves the PC
+and the window says "E-mail sent!"; `postcard-fail` answers as a server
+refusing a photo too big.
 `dof` opens the window with its depth of field on (f/1.4, focused by hand
 at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
 in its strip: the view, the preview and the photos are blurred, while
@@ -2649,6 +2654,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
+| `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
+| `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 
 ### Details
 
@@ -4286,6 +4293,17 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   settings of the demo, separate from those of the connected viewer.
 - **`AURORA_DEMO_RESTRICTED=1`**: red parcel icons, damage
   enabled, health at 72%.
+- **`AURORA_DEMO_FREEZE`**: at frame 660 Nova Demo freezes the avatar for
+  30 s (`1`) or the given seconds: the alert in the chat and the
+  notifications, a red snowflake in front of the parcel icons of the
+  navigation bar; at 60 fps the release comes after that many seconds
+  (frame 660 + 60 × seconds), with its own alert, and the snowflake goes.
+- **`AURORA_DEMO_SIM_CONSOLE=1`**: the demo region gives its console
+  (SimConsoleAsync): Advanced › Region console opens it (the Advanced menu
+  shown, Preferences › Aurora); `help`, `stats` and `time` answer, any other
+  command gets "Unknown command"; the arrow keys walk the typed commands.
+  `open` opens it at frame 600 with `help` and `stats` typed (capture at
+  frame 640).
 
 **`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
 the balls and the hops): `1` wears a physics layer with the lively values of
@@ -4725,6 +4743,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
+| `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
 | `AURORA_DEMO_FRIEND_PLATES=1` | "Full plates for friends only" for this run, without saving it |
 | `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
@@ -4866,6 +4885,14 @@ What the inventory must show with these scenarios:
   (`…;764,616,r` as the seventh point, capture at frame 720). Positions are
   window pixels at the default capture size; the residents out of voice
   never get the row.
+- **`AURORA_DEMO_VOICE_MODERATION`**: `1` makes the avatar an estate
+  manager on a parcel that uses the estate's voice channel: the voice row
+  of a resident's menu (`AURORA_DEMO_VOICE_MENU=1`, with
+  `AURORA_DEMO_TAGS=voice` for residents in voice) gets "Mute in nearby
+  voice for everyone" (or "Unmute…" once muted) and "Mute / Unmute everyone
+  in nearby voice"; the demo applies them at once, as the simulator would.
+  `self`: a moderator mutes us at frame 700 and lets us speak again at
+  frame 1300, each with its notification.
 - **`AURORA_VOICE_LEVEL_LOG`**: once a second, a `voice level (own plate,
   loudest over 1 s)` line with the loudest raw level of our own plate (and
   its dBFS, the microphone meter's value), whether we spoke, the smoothed

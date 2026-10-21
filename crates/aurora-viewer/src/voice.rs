@@ -254,6 +254,17 @@ impl Voice {
         };
     }
 
+    /// The moderator mute of each participant of the nearby channel
+    /// (LLWebRTCVoiceClient::getIsModeratorMuted), us included; None off
+    /// the nearby channel or before it connects.
+    pub fn nearby_moderation(&self) -> Option<HashMap<Uuid, bool>> {
+        let (ChannelKey::Local { .. }, s) = self.session.as_ref()? else {
+            return None;
+        };
+        self.connected
+            .then(|| s.participants().into_iter().map(|p| (p.agent_id, p.moderator_muted)).collect())
+    }
+
     /// Mute the participants we blocked (voice), unmute the others
     /// (LLVoiceClient::muteListChanged); only changes are sent.
     pub fn apply_blocks(&mut self, blocked: impl Fn(&Uuid) -> bool) {
@@ -368,6 +379,11 @@ pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_moderation_off_the_nearby_channel() {
+        assert_eq!(Voice::default().nearby_moderation(), None);
+    }
 
     #[test]
     fn avatar_ears_follow_the_head_and_camera_ears_are_tethered() {

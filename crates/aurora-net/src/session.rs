@@ -18,6 +18,7 @@ mod inventory_upload;
 mod object_actions;
 mod object_cache;
 mod scripts;
+mod sim_requests;
 mod slm_net;
 mod task_notecard;
 mod terrain_raw;
@@ -823,6 +824,7 @@ impl Session<'_> {
                     let max = &v["MaxMaterialsPerTransaction"];
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
+                    let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
@@ -830,6 +832,7 @@ impl Session<'_> {
                         avatar_hover_height,
                         materials_rate,
                         materials_max,
+                        lsl_syntax_id,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1274,6 +1277,10 @@ impl Session<'_> {
                 directory_visibility,
                 im_via_email,
             } => self.update_user_info(directory_visibility, im_via_email),
+            NetCommand::ServerReleaseNotes => self.fetch_server_release_notes(),
+            NetCommand::SimConsole(command) => self.send_sim_console(command),
+            NetCommand::ModerateVoice { target, mute } => self.moderate_voice(target, mute),
+            NetCommand::FetchLslSyntax { id, cache_dir } => self.fetch_lsl_syntax(id, cache_dir),
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
@@ -3182,6 +3189,11 @@ impl Session<'_> {
                     self.remove_sim(e.sim);
                 }
             }
+            // the region console's output (ConsoleResponseNode,
+            // llfloaterregiondebugconsole.cpp)
+            "SimConsoleResponse" => {
+                emit(self.sh, NetEvent::SimConsoleReply(Ok(crate::sim_console::response_text(b))));
+            }
             // LLSetDisplayNameReply (llviewerdisplayname.cpp)
             "SetDisplayNameReply" => {
                 let status = b["status"].as_i32();
@@ -3788,6 +3800,10 @@ impl Session<'_> {
         } else if id == HealthMessage::ID {
             let m: HealthMessage = pkt.decode()?;
             emit(self.sh, NetEvent::Health(m.health_data.health));
+        } else if id == ViewerFrozenMessage::ID {
+            // process_frozen_message (freeze.rs)
+            let m: ViewerFrozenMessage = pkt.decode()?;
+            emit(self.sh, NetEvent::Frozen(m.frozen_data.data));
         } else if id == RegionHandshake::ID {
             let m: RegionHandshake = pkt.decode()?;
             self.on_region_handshake(from, m);
@@ -3958,7 +3974,14 @@ impl Session<'_> {
                 .first()
                 .and_then(|info| crate::home::from_alert_info(&field_str(&info.message)))
                 .or_else(|| crate::home::from_text(&msg));
-            if let Some(alert) = home {
+            // who froze us and for how long (AvatarFrozen…, freeze.rs)
+            let freeze = m
+                .alert_info
+                .first()
+                .and_then(|info| crate::freeze::from_alert_info(&field_str(&info.message), &info.extra_params));
+            if let Some(alert) = freeze {
+                emit(self.sh, NetEvent::FreezeAlert(alert));
+            } else if let Some(alert) = home {
                 emit(self.sh, NetEvent::HomeAlert(alert));
             } else {
                 match named.map(Restart::Notice).or_else(|| region_restart::from_text(&msg)) {

@@ -216,6 +216,12 @@ pub struct Calls {
     /// call's), set by the app from the voice session: who gets the volume
     /// row at the top of their menus.
     pub voice_peers: std::collections::HashSet<Uuid>,
+    /// The moderator mute of each participant of the nearby channel, set
+    /// by the app from the voice session; None off that channel.
+    pub nearby_moderated: Option<std::collections::HashMap<Uuid, bool>>,
+    /// Ours, as last seen on the nearby channel
+    /// (LLNearbyVoiceModeration::mChannelMuteMap).
+    pub own_moderated: Option<bool>,
 }
 
 /// The file of the voice volumes, in the account's folder

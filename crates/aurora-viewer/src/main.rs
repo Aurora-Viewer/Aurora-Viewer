@@ -43,6 +43,7 @@ mod links;
 mod logging;
 mod login_accounts;
 mod login_places;
+mod lsl_keywords;
 mod media;
 mod movement;
 mod net_profile;

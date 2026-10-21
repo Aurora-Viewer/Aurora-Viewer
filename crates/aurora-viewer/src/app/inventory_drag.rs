@@ -611,6 +611,7 @@ mod tests {
                 caps: Arc::new(Default::default()),
                 voice_server: String::new(),
                 avatar_hover_height: false,
+                lsl_syntax_id: None,
                 materials_limits: Default::default(),
                 max_tasks: 0,
             },

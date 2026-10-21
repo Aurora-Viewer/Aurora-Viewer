@@ -360,6 +360,11 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::ModerateVoice(target, mute) => {
+                use aurora_net::voice_moderation::Target;
+                let target = target.map_or(Target::Everyone, Target::Resident);
+                self.send(NetCommand::ModerateVoice { target, mute });
+            }
             CtxAction::ToggleParticleMute(id) => {
                 let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
                 if let Err(e) = self.world.toggle_particle_block(id, &name) {

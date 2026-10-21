@@ -519,6 +519,9 @@ pub enum NetEvent {
         materials_rate: Option<f32>,
         /// "MaxMaterialsPerTransaction": material ids per request.
         materials_max: Option<u32>,
+        /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
+        /// when the region names none.
+        lsl_syntax_id: Uuid,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -595,6 +598,22 @@ pub enum NetEvent {
     UserInfo(Result<crate::user_info::UserInfo, crate::user_info::Error>),
     /// `UpdateUserInfo` did not go through.
     UserInfoUpdateFailed(crate::user_info::Error),
+    /// Help › Server release notes: the page to open, or why there is none
+    /// (`NetCommand::ServerReleaseNotes`, release_notes.rs).
+    ServerReleaseNotes(Result<String, String>),
+    /// The region console's output (`SimConsoleResponse`), or Err when the
+    /// command did not reach the simulator (sim_console.rs).
+    SimConsoleReply(Result<String, String>),
+    /// The LSL keywords of a syntax id (`NetCommand::FetchLslSyntax`).
+    LslSyntax {
+        id: Uuid,
+        keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+    },
+    /// A nearby voice moderation request failed (voice_moderation.rs);
+    /// `everyone` for mute / unmute all.
+    VoiceModerationFailed {
+        everyone: bool,
+    },
     TeleportFailed {
         reason: String,
     },
@@ -888,6 +907,11 @@ pub enum NetEvent {
     },
     /// Agent health in percent (HealthMessage, damage-enabled land).
     Health(f32),
+    /// A parcel owner or an estate manager froze the agent, or released it
+    /// (ViewerFrozenMessage).
+    Frozen(bool),
+    /// Who froze or released the agent (AvatarFrozen… alerts, freeze.rs).
+    FreezeAlert(crate::freeze::Alert),
     /// The parcel the agent stands on (main region).
     AgentParcel(Arc<ParcelInfo>),
     /// About Land: selected parcel, its lists, covenant... (land.rs).
@@ -1358,6 +1382,24 @@ pub enum NetCommand {
     UpdateUserInfo {
         directory_visibility: String,
         im_via_email: Option<bool>,
+    },
+    /// Fetch the page of the region's ServerReleaseNotes capability,
+    /// answered by `NetEvent::ServerReleaseNotes`.
+    ServerReleaseNotes,
+    /// One command line for the region console (SimConsoleAsync); the
+    /// output comes as `NetEvent::SimConsoleReply`.
+    SimConsole(String),
+    /// The LSL keywords of the syntax `id`, from the cache folder or the
+    /// region's LSLSyntax capability; answered by `NetEvent::LslSyntax`.
+    FetchLslSyntax {
+        id: Uuid,
+        cache_dir: std::path::PathBuf,
+    },
+    /// Mute or unmute in the region's spatial voice
+    /// (SpatialVoiceModerationRequest).
+    ModerateVoice {
+        target: crate::voice_moderation::Target,
+        mute: bool,
     },
     TeleportTo {
         handle: RegionHandle,

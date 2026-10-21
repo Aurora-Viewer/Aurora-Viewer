@@ -155,6 +155,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         marketplace: false,
         parcel_landmark: None,
         can_set_home: false,
+        release_notes: false,
+        region_console: false,
         classic_bars: classic,
         islands: IslandsLook {
             stretch: true,
