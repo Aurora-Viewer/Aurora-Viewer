@@ -62,6 +62,7 @@ pub mod textures;
 pub mod water;
 mod water_contacts;
 mod water_effects;
+pub mod wind_sound;
 
 use crate::frame_par::{self, Grain};
 use crate::world::World;

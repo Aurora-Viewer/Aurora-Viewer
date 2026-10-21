@@ -4200,6 +4200,12 @@ pub fn events() -> Vec<NetEvent> {
         objects: objs,
     });
     ev.extend(overrides);
+    if let Some((wind, _)) = crate::scene::wind_sound::demo_spec() {
+        ev.push(NetEvent::Wind {
+            handle: HANDLE,
+            grid: Box::new(aurora_net::terrain::WindGrid { velocities: [wind; 256] }),
+        });
+    }
 
     if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
         ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));

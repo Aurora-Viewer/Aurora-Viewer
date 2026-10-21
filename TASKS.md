@@ -1719,7 +1719,7 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 - ⬜ Vivox voice (OpenSim grids; Second Life uses WebRTC, `aurora-voice` answers Unsupported) and voice morphing (voice fonts)
 - ⬜ Interface sounds later (their function does not exist yet in Aurora): UISndInvalidOp (RLVa cases, attachments, click outside a modal dialog), UISndBadKeystroke on forbidden flying (LLAgent::setFlying), UISndHealthReductionF / M (health), UISndSnapshot (photos), UISndIncomingVoiceCall (private voice calls), UISndObjectRezIn (rezzing an object from the inventory), UISndQuestionExperience, UISndChatMention, UISndRadar* (radar), UISndFSKeywordSound (keywords), UISndRestartOpenSim
 - ⬜ Sounds, later: "local sound" of parcels (canHearSound), avatar footsteps (UISndFootsteps), sync master / slave
-- ⬜ Wind sound (LLWindGen): the ambient wind noise driven by the region's wind and the camera speed
+- 🔧 Wind sound (LLWindGen, #686; task `wind-sound`): the ambient wind noise driven by the region's wind and the camera speed
 
 ## To explore
 

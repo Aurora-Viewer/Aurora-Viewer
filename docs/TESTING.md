@@ -4672,6 +4672,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
+| `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
@@ -4857,6 +4858,15 @@ What the inventory must show with these scenarios:
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
+  The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.
+- **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
+  of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
+  grid), and with `fly` our avatar arrives flying. The wind noise plays on
+  the Ambient channel only while flying above the water: hovering still you
+  hear half the region's wind (AudioLevelWind 0.5), flying forward makes it
+  louder and higher, turning sideways to the wind moves it to one ear, and
+  landing (or going under the water) fades it out over two seconds. The log
+  says `wind sound: fading in` / `fading out` at each change.
 - **`AURORA_DEMO_VOLUME`**: `open` keeps the volume panel of the speaker
   open as if the pointer were on it (the panel normally opens on hover and
   closes 0.35 s after the pointer leaves it); `muted` also draws the speaker

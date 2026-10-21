@@ -397,6 +397,7 @@ pub struct App {
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
+    wind_sound: crate::scene::wind_sound::WindSound,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -969,6 +970,7 @@ impl App {
             url_confirm: None,
             script_dialogs_were: 0,
             beacon_sound_at: None,
+            wind_sound: Default::default(),
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -2452,6 +2454,8 @@ impl App {
                     self.world.agent.flying = crate::world::flying_at_exit::load(
                         &crate::settings::account_dir(&l.agent_id).join(crate::world::flying_at_exit::FILE),
                     );
+                } else if crate::scene::wind_sound::demo_spec().is_some_and(|(_, fly)| fly) {
+                    self.world.agent.flying = true;
                 }
                 self.restore_gestures(&l.raw);
                 self.net_profile.reset();
@@ -3832,6 +3836,31 @@ impl App {
                 chat_type: aurora_net::ChatType::Whisper,
             });
         }
+    }
+
+    /// audio_update_wind: the wind at our avatar, heard while flying above
+    /// the water.
+    fn update_wind_sound(&mut self, dt: f32) {
+        let agent = &self.world.agent;
+        let region_wind = self
+            .world
+            .main()
+            .map_or(Vec3::ZERO, |r| r.wind.velocity(agent.position, r.heightmap.size_x as f32));
+        // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND
+        let demo_silent = self.demo
+            && std::env::var_os("AURORA_DEMO_SOUND").is_none()
+            && crate::scene::wind_sound::demo_spec().is_none();
+        let input = crate::scene::wind_sound::WindInput {
+            region_wind,
+            velocity: agent.velocity,
+            rotation: agent.body_rotation(),
+            audible: matches!(self.screen, Screen::World)
+                && !demo_silent
+                && agent.flying
+                && !agent.seated
+                && agent.position.z >= self.world.main_water_height(),
+        };
+        self.wind_sound.update(self.audio_engine.as_ref(), &input, dt);
     }
 
     fn update_audio(&mut self) {
@@ -5905,6 +5934,7 @@ impl App {
         self.update_native_movelock();
         self.update_movement();
         self.update_audio();
+        self.update_wind_sound(dt);
         let mut edit_camera_frame = None;
         if self.in_world() {
             self.update_sounds();

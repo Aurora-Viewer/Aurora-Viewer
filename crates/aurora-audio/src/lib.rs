@@ -10,6 +10,8 @@
 //! * PCM sinks ([`VoiceSink`]) used by the voice client (and later media)
 //!   to push 48 kHz audio with jitter buffering.
 //! * One-shot sounds ([`SoundClip`]) for UI / sound effects.
+//! * The ambient wind noise ([`AudioEngine::set_wind`]), synthesised on the
+//!   Ambient channel.
 //! * Device selection ([`output_devices`], [`input_devices`],
 //!   [`AudioEngine::set_output_device`]) and microphone capture
 //!   ([`MicCapture`]: 48 kHz mono, input gain, level meter) for voice.
@@ -32,6 +34,7 @@ mod output;
 mod processing;
 mod resample;
 mod stream;
+mod wind;
 
 use std::sync::Arc;
 
@@ -45,6 +48,7 @@ pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
 pub use stream::StreamStatus;
+pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
 use stream::StreamController;
@@ -237,6 +241,12 @@ impl AudioEngine {
     /// Fades a world sound out and removes it.
     pub fn stop_world(&self, id: u64) {
         let _ = self.inner.cmd_tx.try_send(Command::StopWorld(id));
+    }
+
+    /// Where the ambient wind noise (Ambient channel) moves to; the
+    /// generator glides there over a few tens of milliseconds.
+    pub fn set_wind(&self, target: WindTarget) {
+        self.inner.params.wind.set(target);
     }
 
     /// Plays a one-shot sound on `ch` with an extra per-sound `gain` (0..=1).
