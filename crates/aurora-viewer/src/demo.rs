@@ -943,6 +943,62 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
     }
 }
 
+/// AURORA_DEMO_CONV_SCROLL=up|new: the friend's conversation (the one
+/// `AURORA_DEMO_CONV=aurora`, `bubbles` or `bubbles:legacy` shows) a few
+/// screens long, shown from its top (`ui/chat/latest.rs`); with `new`, the
+/// friend writes three messages once it is there. True for `new`.
+pub fn conv_scroll_scenario() -> Option<bool> {
+    match std::env::var("AURORA_DEMO_CONV_SCROLL").ok()?.trim() {
+        "new" => Some(true),
+        _ => Some(false),
+    }
+}
+
+/// The scroll scenario's earlier talk, a day before the bubbles' lines
+/// (which come after it).
+pub fn conv_scroll_lines(world: &mut crate::world::World) {
+    use crate::world::{ChatKind, ChatLine, Origin};
+    let start = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400);
+    let me = world.own_name();
+    for n in 1..=40u64 {
+        let (from, source, kind) = if n % 3 == 0 {
+            (me.clone(), Uuid::nil(), ChatKind::Own)
+        } else {
+            ("Nova Example".to_owned(), DEMO_FRIEND, ChatKind::Im)
+        };
+        let line = ChatLine {
+            time: start + std::time::Duration::from_secs(n * 90),
+            from,
+            text: aurora_i18n::tr!("demo-scroll-earlier", n = n as i64),
+            kind,
+            source,
+            origin: Origin::Live,
+        };
+        world.conversation_line(DEMO_FRIEND, line);
+    }
+}
+
+/// The `new` scroll scenario: the friend's three messages, once the
+/// conversation was scrolled to its top.
+pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SENT: AtomicBool = AtomicBool::new(false);
+    if !scrolled || conv_scroll_scenario() != Some(true) || SENT.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    for n in 1..=3i64 {
+        let line = crate::world::ChatLine {
+            time: std::time::SystemTime::now(),
+            from: "Nova Example".into(),
+            text: aurora_i18n::tr!("demo-flash-message", n = n),
+            kind: crate::world::ChatKind::Im,
+            source: DEMO_FRIEND,
+            origin: crate::world::Origin::Live,
+        };
+        world.conversation_line(DEMO_FRIEND, line);
+    }
+}
+
 /// AURORA_DEMO_CONV=aurora[:flag…]: the Conversations window in Aurora's
 /// workspace (ui/chat/workspace.rs), on the lines of the bubbles scenario
 /// and a few more. Flags, joined by ":": `local`, `im` (the default),

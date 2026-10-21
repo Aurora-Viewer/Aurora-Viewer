@@ -2642,6 +2642,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
+| `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -3364,6 +3365,18 @@ failure. Grid validation and any paid upload are performed by the human.
   "Report ignored conferences" adds a nearby chat line naming the inviter,
   "Except from my friends" lets Orion's through and still ignores Tess's.
   The log says `ignoring conference (ad-hoc) chat from <name>` for each.
+
+- **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
+  `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's
+  conversation), forty earlier messages come before the scenario's lines and
+  the conversation opens on its top. A button fades in over the bottom of
+  the lines, above the field: "Jump to the latest messages" with `up`;
+  with `new` the friend writes three messages once the top is shown and it
+  reads "3 new messages". A click brings the last message back against the
+  field and the button fades out; a message written then shows at once,
+  the lines following the end again. Scrolling back down by hand also hides
+  it once the end is less than half the height in sight away (with nothing
+  new).
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click

@@ -2870,6 +2870,7 @@ ui-contacts-invite = Invite...
 ui-login-i-accept-the-terms-and-want-to-log-in = I accept the terms and want to log in
 demo-arriving-with-textures = Arriving with textures ✨
 demo-flash-message = Are you there? ({ $n })
+demo-scroll-earlier = Earlier message { $n } of our long talk
 world-inventory-demo-jeans-substance-worn-item-with-a-very-long-name = JEANS_SUBSTANCE — Worn item with a very long name in a nested folder
 world-inventory-demo-jeans-substance-cuir-jeans-jeans-substance-cuir-normal-demo = JEANS_SUBSTANCE_CUIR (JEANS): JEANS_SUBSTANCE_CUIR (Normal) — Demo version
 ui-sound-never = Never
@@ -3753,6 +3754,11 @@ ui-chat-today-at = today at { $time }
 ui-chat-yesterday-at = yesterday at { $time }
 ui-chat-date-at = { $date } at { $time }
 ui-chat-new-messages = New
+ui-chat-latest = Jump to the latest messages
+ui-chat-latest-new = { $count ->
+    [one] { $count } new message
+   *[other] { $count } new messages
+    }
 ui-chat-copy-message = Copy the message
 ui-chat-quote-message = Quote
 ui-chat-drop-to-give = Drop here to give to { $name }

@@ -10919,6 +10919,11 @@ impl App {
                 {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_CONV_SCROLL=new: the friend writes while we read
+                // higher up
+                if self.demo {
+                    crate::demo::conv_scroll_new(&mut self.world, self.chat_ui.demo_scrolled);
+                }
                 // AURORA_DEMO_CONV=aurora: the group's call rings without us
                 if let Some(scene) = crate::demo::aurora_scenario() {
                     // call-away: the call opened its conversation; once it
@@ -13198,6 +13203,11 @@ impl ApplicationHandler for App {
                     }
                     _ => {}
                 }
+            }
+            // AURORA_DEMO_CONV_SCROLL: the friend's earlier talk first
+            if crate::demo::conv_scroll_scenario().is_some() {
+                crate::demo::conv_scroll_lines(&mut self.world);
+                self.chat_ui.demo_scroll = Some(crate::demo::DEMO_FRIEND);
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);

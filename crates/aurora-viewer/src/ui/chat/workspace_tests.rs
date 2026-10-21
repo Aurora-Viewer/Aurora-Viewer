@@ -1540,3 +1540,47 @@ fn the_tabs_of_the_other_styles_open_the_menu() {
         );
     }
 }
+
+/// Away from the end of a conversation, the button back to the latest
+/// messages shows and counts what came in; its click brings the end back,
+/// where the next line shows at once (#558), in both windows.
+#[test]
+fn the_latest_button_brings_the_end_back() {
+    let jump = aurora_i18n::tr!("ui-chat-latest");
+    let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
+    let count = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().filter(|t| t.source == s).count();
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| count(texts, s) > 0;
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        for k in 0..60 {
+            h.world
+                .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+        }
+        h.st.selected = Some(JANE);
+        // never, not even for the frame the conversation is first shown
+        for _ in 0..8 {
+            assert!(!has(&h.frame(Vec::new()), jump), "{style:?}: at the end, no button");
+        }
+        // to the top (the demo's way)
+        h.st.demo_scroll = Some(JANE);
+        h.settle();
+        h.settle();
+        assert!(h.st.demo_scrolled, "{style:?}");
+        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+        assert!(has(&texts, jump), "{style:?}: far from the end");
+        // two lines come in, out of sight
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
+        // (the column's entry says the last one too)
+        let texts = h.settle();
+        let away = count(&texts, "new 2");
+        let at = painted(&texts, &two).rect.center();
+        h.click(at);
+        let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+        assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}: the end in sight");
+        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: the button gone");
+        // the lines follow the end again
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
+        assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}");
+    }
+}
