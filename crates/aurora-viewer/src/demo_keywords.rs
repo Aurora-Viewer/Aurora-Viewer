@@ -3,20 +3,29 @@
 //! a private message, a group chat line and an object's message holding a
 //! keyword arrive one second apart, and a line without one. Each keyword
 //! line is coloured, plays the sound and, with the system notifications on,
-//! is told as a "Keyword alert".
+//! is told as a "Keyword alert". `prefs` keeps the settings of the
+//! preferences (to try them by hand) and sends the same lines again every
+//! `PERIOD` frames.
 
 use crate::keywords::KeywordSettings;
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, InstantMessage, NetEvent};
 use uuid::Uuid;
 
-/// The scenario is asked.
-pub fn active() -> bool {
-    std::env::var_os("AURORA_DEMO_KEYWORDS").is_some()
+/// Frames between two rounds of lines in `prefs`.
+const PERIOD: u64 = 1200;
+
+fn mode() -> Option<String> {
+    std::env::var("AURORA_DEMO_KEYWORDS").ok()
 }
 
-/// The settings of the run, if asked.
+/// The scenario is asked.
+pub fn active() -> bool {
+    mode().is_some()
+}
+
+/// The settings of the run, unless `prefs` keeps the preferences'.
 pub fn settings() -> Option<KeywordSettings> {
-    active().then(|| KeywordSettings {
+    mode().filter(|m| m != "prefs").map(|_| KeywordSettings {
         on: true,
         in_chat: true,
         in_im: true,
@@ -59,6 +68,11 @@ fn said(text: &str) -> NetEvent {
 /// The events of `frame` (after the loading fade).
 pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
     use super::{DEMO_GROUP1, DEMO_NOVA, DEMO_TESS};
+    let frame = if frame > 700 && mode().as_deref() == Some("prefs") {
+        700 + (frame - 700) % PERIOD
+    } else {
+        frame
+    };
     let event = match frame {
         700 => said(aurora_i18n::tr!("demo-keywords-nearby")),
         760 => im(
