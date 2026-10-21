@@ -1569,6 +1569,109 @@ fn region_handoff_preserves_an_early_handshake_and_monotonic_command_sequence() 
     assert_eq!((sim.copies, sim.uploads), (1, 1), "crossing must not recreate an existing bridge");
 }
 
+/// The worn bridge arrives in the next region, before any new hello.
+fn move_to_next_region(sim: &mut Simulator) {
+    let new_region = sim.world.main_region.expect("region") + 65536;
+    let attachment = crate::demo::outfit_attachment(&AttachRequest {
+        item_id: sim.bridge.item,
+        owner_id: sim.world.agent_id,
+        point: 31,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: NAME.into(),
+        desc: String::new(),
+    });
+    sim.world.apply(NetEvent::ObjectUpdates {
+        handle: new_region,
+        objects: vec![crate::demo::action_avatar(false), attachment],
+    });
+    sim.world.main_region = Some(new_region);
+}
+
+fn lock_again(sim: &mut Simulator) {
+    for _ in 0..12 {
+        sim.step();
+        if sim.bridge.locked() {
+            return;
+        }
+    }
+    panic!("bridge did not lock again: {:?} {:?}", sim.bridge.phase, sim.bridge.error);
+}
+
+#[test]
+fn a_moved_bridge_seen_before_its_new_hello_is_probed_instead_of_reinstalled() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.now += Duration::from_secs(30);
+    let attaches = sim.attaches;
+    move_to_next_region(&mut sim);
+    sim.now += Duration::from_millis(250);
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(sim.bridge.phase, Phase::Handshake, "wait for the new URL, never recompile");
+    lock_again(&mut sim);
+    assert_eq!(
+        (sim.copies, sim.uploads, sim.attaches),
+        (1, 1, attaches),
+        "a region change keeps the installed scripts and the worn object"
+    );
+}
+
+#[test]
+fn a_region_change_right_after_the_handshake_never_reuses_the_old_region_url() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let (_, at) = sim.bridge.accepted.clone().expect("accepted hello");
+    assert!(
+        sim.now.duration_since(at) < Duration::from_secs(3),
+        "inside the hello replay window"
+    );
+    move_to_next_region(&mut sim);
+    sim.now += Duration::from_millis(250);
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert!(
+        !sim.bridge.ready() && sim.bridge.endpoint.is_none(),
+        "the hello that made the bridge ready came from the old region"
+    );
+    lock_again(&mut sim);
+    assert_eq!((sim.copies, sim.uploads), (1, 1));
+}
+
+#[test]
+fn a_dead_url_waits_for_the_new_hello_without_an_error_or_a_reinstall() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    let request = Uuid::new_v4();
+    sim.bridge.pending = Some((request, sim.bridge.sequence, (true, true, Motion::default())));
+    sim.event(NetEvent::BridgeReply {
+        request,
+        result: Err(aurora_i18n::tr!("bridge-request-gone").into()),
+    });
+    assert_eq!(sim.bridge.phase, Phase::Handshake);
+    assert!(sim.bridge.error.is_none() && sim.bridge.endpoint.is_none() && !sim.bridge.locked());
+    lock_again(&mut sim);
+    assert_eq!((sim.copies, sim.uploads), (1, 1));
+}
+
+#[test]
+fn a_moved_bridge_that_never_says_hello_is_reinstalled_not_failed() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.now += Duration::from_secs(30);
+    sim.demo.startup_stalled = true;
+    move_to_next_region(&mut sim);
+    for _ in 0..32 * 4 {
+        sim.step();
+    }
+    // The Repair path restarts from the inventory; this synthetic region has
+    // no inventory capabilities, so it waits there instead of failing.
+    assert_eq!(sim.bridge.reinstalls.len(), 1);
+    assert_eq!(sim.bridge.phase, Phase::Inventory);
+    assert!(sim.bridge.error.is_none());
+}
+
 #[test]
 fn worn_firestorm_bridge_is_only_detached_once_without_any_inventory_or_script_edit() {
     use aurora_net::inventory::{InvFolder, InvItem};

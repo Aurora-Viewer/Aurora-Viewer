@@ -1,7 +1,7 @@
 //! Read-only counterparts of getZOffsets/getScriptInfo in the Legacy Viewer
 //! (fsradar.cpp and fs_resources/EBEDD1D2-*.lsltxt, originally LGPL 2.1).
 //! They never consume the movement sequence or refresh its watchdog.
-use super::{Endpoint, http, transport_failure, valid_url};
+use super::{Endpoint, gone_failure, http, transport_failure, valid_url};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::Value;
 use std::{collections::HashSet, time::Duration};
@@ -209,11 +209,18 @@ pub async fn send(endpoint: Endpoint, query: Query) -> Result<Reply, String> {
         .await
         .map_err(transport_failure)?;
     if !response.status().is_success() {
-        return Err(if response.status().as_u16() == 404 {
-            aurora_i18n::tr!("bridge-script-info-missing").into()
-        } else {
-            aurora_i18n::tr!("bridge-request-http", status = response.status().as_u16().to_string())
-        });
+        let status = response.status().as_u16();
+        if status == 404 {
+            // query.lsl's own 404 names a missing object; a simulator 404
+            // means its URL died. Only the first short chunk is read.
+            let body = response.chunk().await.ok().flatten();
+            return Err(if body.is_some_and(|body| &body[..] == b"unavailable") {
+                aurora_i18n::tr!("bridge-script-info-missing").into()
+            } else {
+                gone_failure()
+            });
+        }
+        return Err(aurora_i18n::tr!("bridge-request-http", status = status.to_string()));
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(transport_failure)? {

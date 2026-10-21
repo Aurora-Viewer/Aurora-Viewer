@@ -287,6 +287,19 @@ pub fn unreachable(error: &str) -> bool {
     error == aurora_i18n::tr!("bridge-request-timeout") || error == aurora_i18n::tr!("bridge-request-connection")
 }
 
+/// The controller never answers 404, and query.lsl only with the body
+/// "unavailable": any other 404 is the simulator's, for an HTTP-in URL that
+/// no longer exists (the worn bridge left the region, or the region restarted).
+fn gone_failure() -> String {
+    log::info!("Aurora bridge: HTTP-in URL gone (HTTP 404)");
+    aurora_i18n::tr!("bridge-request-gone").into()
+}
+
+/// True for the failure gone_failure reports: wait for the script's new URL.
+pub fn gone(error: &str) -> bool {
+    error == aurora_i18n::tr!("bridge-request-gone")
+}
+
 fn decode_ack(bytes: &[u8], sequence: u32) -> Result<Ack, String> {
     let ack = std::str::from_utf8(bytes)
         .ok()
@@ -358,6 +371,9 @@ pub async fn send(command: Command) -> Result<Ack, String> {
         .map_err(transport_failure)?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        if status == 404 {
+            return Err(gone_failure());
+        }
         log::warn!("Aurora bridge: HTTP status {status}");
         return Err(aurora_i18n::tr!("bridge-request-http", status = status.to_string()));
     }
@@ -423,6 +439,14 @@ mod tests {
         let message = transport_failure(error);
         assert_eq!(message, aurora_i18n::tr!("bridge-request-connection"));
         assert!(!message.contains("private.example") && !message.contains("synthetic-private-path"));
+    }
+
+    #[test]
+    fn a_dead_http_in_url_is_told_apart_from_other_failures() {
+        let message = gone_failure();
+        assert!(gone(&message) && !unreachable(&message));
+        assert!(!gone(&aurora_i18n::tr!("bridge-request-http", status = "500".to_string())));
+        assert!(!gone(aurora_i18n::tr!("bridge-request-timeout")));
     }
 
     #[test]

@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.28";
+const VERSION: &str = "1.29";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -30,6 +30,9 @@ const QUERY_SOURCE: &str = include_str!("bridge/query.lsl");
 
 pub mod services;
 const TIMEOUT: Duration = Duration::from_secs(60);
+// A worn bridge that moved keeps its scripts: it only renews its HTTP-in URLs.
+// Without a hello by then, reinstall it as the old Attach path did at once.
+const RELOCATION_TIMEOUT: Duration = Duration::from_secs(30);
 // FSLSLBridge::processDetach and FSLSLBridgeReAttachTimer wait five seconds
 // after detachment. An inventory asset UUID change is not a save receipt.
 const STORE_DELAY: Duration = Duration::from_secs(5);
@@ -181,6 +184,12 @@ pub struct Bridge {
     rejection: Option<HandshakeError>,
     candidate: Option<ChatMessage>,
     accepted: Option<(ChatMessage, Instant)>,
+    /// The accepted hello replaced a live endpoint: the script had already
+    /// renewed its URL, so it may belong to the region the agent moves into.
+    accepted_renewal: bool,
+    /// A ready bridge changed region or lost its URL: wait for its new hello
+    /// in Handshake instead of reinstalling it.
+    relocated: bool,
     endpoint: Option<Endpoint>,
     sequence: u32,
     pending: Option<(Uuid, u32, (bool, bool, Motion))>,
@@ -354,6 +363,9 @@ impl Bridge {
         // A query hello is valid from compilation until the next save or move.
         if !matches!(phase, Phase::Starting | Phase::Handshake | Phase::Ready) {
             self.query = None;
+        }
+        if !matches!(phase, Phase::Attach | Phase::Handshake) {
+            self.relocated = false;
         }
         if phase == Phase::Upload {
             // A recompiled script starts with all of its memory again.
@@ -609,6 +621,7 @@ impl Bridge {
         }
         self.object = chat.source_id;
         self.accepted = Some((chat.clone(), now));
+        self.accepted_renewal = self.ready();
         self.endpoint = Some(endpoint);
         self.candidate = None;
         self.sent = None;
@@ -641,13 +654,18 @@ impl Bridge {
         }
         let region_changed = self.region.is_some() && self.region != world.main_region;
         if region_changed {
+            // Installed scripts survive the move; only their URLs change.
+            let installed = matches!(self.phase, Phase::Ready | Phase::Handshake);
             self.probe = None;
             self.endpoint = None;
             self.pending = None;
             self.sent = None;
             self.ack = Ack::default();
             self.capture_sent = None;
-            if self.candidate.is_none() {
+            if self.candidate.is_none() && self.accepted_renewal {
+                // Only a hello that renewed a live endpoint can come from the
+                // new region. The one that made the bridge ready in the old
+                // region carries a URL that died with the move (HTTP 404).
                 self.candidate = self
                     .accepted
                     .as_ref()
@@ -672,6 +690,7 @@ impl Bridge {
                 },
                 now,
             );
+            self.relocated = installed && self.phase == Phase::Attach;
         }
         self.region = world.main_region;
         if self.refresh_inventory {
@@ -738,6 +757,11 @@ impl Bridge {
             // timeout or consuming a rename/create attempt. In-flight edits
             // retain their own deadline and never get silently replayed.
             self.since = Some(now);
+            return;
+        }
+        if self.relocated && self.since.is_some_and(|since| now.duration_since(since) > RELOCATION_TIMEOUT) {
+            log::warn!("Aurora bridge: no hello since its URL changed");
+            self.reinstall(world, true, now);
             return;
         }
         if self.since.is_some_and(|since| now.duration_since(since) > TIMEOUT) {
@@ -963,7 +987,9 @@ impl Bridge {
                         return;
                     }
                     self.object = object.full_id;
-                    if self.phase == Phase::Restore {
+                    // A moved bridge is back in our region before its new
+                    // hello, often: probe it rather than recompile and resave.
+                    if self.phase == Phase::Restore || self.relocated {
                         self.enter(Phase::Handshake, now);
                     } else {
                         // Keep the freshly copied library object unobtrusive
@@ -1321,6 +1347,18 @@ impl Bridge {
                             self.capture_sent = self.last_send;
                             self.sent = Some(mode);
                             self.error = None;
+                        }
+                        Err(reason) if aurora_net::bridge::gone(reason) => {
+                            // The simulator dropped this URL (the agent moved
+                            // or the region restarted); the script announces
+                            // its new one. Wait for it as after a region change.
+                            self.endpoint = None;
+                            self.sent = None;
+                            self.ack = Ack::default();
+                            self.capture_sent = None;
+                            self.probe = None;
+                            self.enter(Phase::Handshake, now);
+                            self.relocated = true;
                         }
                         _ => {
                             self.sent = None;

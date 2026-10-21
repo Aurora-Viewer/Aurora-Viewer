@@ -1,10 +1,10 @@
-// Aurora LSL Bridge read-only services v1.28: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge read-only services v1.29: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.28";
+string VERSION = "1.29";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -94,7 +94,11 @@ default {
     }
     changed(integer change) {
         if (change & CHANGED_OWNER) llResetScript();
-        else if (llGetAttached() && (change & (CHANGED_REGION | CHANGED_REGION_START | CHANGED_TELEPORT))) requestURL();
+        else if (llGetAttached() && (change & (CHANGED_REGION | CHANGED_REGION_START | CHANGED_TELEPORT))) {
+            // Answer the viewer's first probe in the new region at once.
+            gNextHello = 0.0;
+            requestURL();
+        }
     }
     listen(integer channel, string name, key sender, string message) {
         if (!llGetAttached() || sender != gOwner || llGetTime() < gNextHello) return;
