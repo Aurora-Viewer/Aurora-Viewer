@@ -19,24 +19,49 @@ pub fn show(ctx: &egui::Context, p: &Palette, queue: &ScriptQueue) -> bool {
         Vec2::new(300.0, 400.0),
     )
     .show(ctx, p, &mut open, |ui| {
-        let footer = 34.0;
+        let mut list = widgets::footer_first(ui, |ui| {
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let size = Vec2::new(0.0, 26.0);
+                let label = aurora_i18n::tr!("common-close");
+                if widgets::action_button_if(ui, p, "x", label, widgets::ActionKind::Flat, size, queue.done).clicked() {
+                    close = true;
+                }
+            });
+        });
         egui::ScrollArea::vertical()
-            .max_height((ui.available_height() - footer).max(60.0))
+            .max_height(list.available_height())
             .auto_shrink([false, false])
             .stick_to_bottom(true)
-            .show(ui, |ui| {
+            .show(&mut list, |ui| {
                 for line in &queue.lines {
                     ui.add(egui::Label::new(RichText::new(line).size(12.5).color(p.ink)).wrap());
                 }
             });
-        ui.add_space(6.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let size = Vec2::new(0.0, 26.0);
-            let label = aurora_i18n::tr!("common-close");
-            if widgets::action_button_if(ui, p, "x", label, widgets::ActionKind::Flat, size, queue.done).clicked() {
-                close = true;
-            }
-        });
     });
     open && !close
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::build::script_queue::QueueKind;
+
+    #[test]
+    fn the_window_keeps_its_size() {
+        crate::ui::widgets::steady_tests::assert_window_steady(
+            "script_queue",
+            &[Vec2::new(300.0, 400.0), Vec2::new(240.0, 220.0)],
+            aurora_i18n::tr!("common-close"),
+            || {
+                let objects = (0..30).map(|i| (uuid::Uuid::from_u128(i), format!("Box {i}"))).collect();
+                let mut queue = ScriptQueue::new(QueueKind::Reset, objects);
+                queue.lines.extend((0..30).map(|i| format!("Loading inventory for: Box {i}")));
+                queue
+            },
+            |queue, ctx, p| {
+                show(ctx, p, queue);
+            },
+        );
+    }
 }
