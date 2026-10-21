@@ -2,6 +2,7 @@
 //! FSSelfForceSit (indra/newview/llviewermenu.cpp); no seat object is created.
 //! Ownership is separate from the actual seated state: never stand up a chair
 //! or a ground sit requested by the user, and never fake a simulator flag.
+use crate::world::bridge::{LockMode, Preferences};
 use aurora_net::{NetCommand, control};
 use std::time::{Duration, Instant};
 
@@ -166,6 +167,59 @@ mod tests {
         }
         assert_eq!(c.standing_since(true), Some(now - SETTLE));
         assert_eq!(c.standing_since(false), None);
+    }
+    #[test]
+    fn movelock_sit_routes_missing_idle_to_bridge_through_motion_and_seat_transitions() {
+        let (mut c, mut f, now) = anchored();
+        let selected = Preferences {
+            enabled: true,
+            indicator: true,
+            mode: LockMode::NativeSit,
+        };
+        assert_eq!(c.bridge_preferences(selected), selected);
+        f.pose_ready = false;
+        assert_eq!(c.update(f, now), Some(control::STAND_UP));
+        assert!(c.owns_sit(), "keep the verified pose through stand-up acknowledgement");
+        assert!(c.bridge_fallback());
+        assert_eq!(c.bridge_preferences(selected).mode, LockMode::Bridge);
+        f.ground_sit = false;
+        c.update(f, now + SETTLE);
+        assert!(!c.owns_sit());
+        for (voluntary, moving, on_object, travel) in [
+            (false, false, false, Travel::Ready),
+            (true, true, false, Travel::Ready),
+            (false, false, true, Travel::Ready),
+            (false, false, false, Travel::Water),
+        ] {
+            f.voluntary = voluntary;
+            f.moving = moving;
+            f.on_object = on_object;
+            f.travel = travel;
+            assert_eq!(c.update(f, now + SETTLE * 2), None);
+            let effective = c.bridge_preferences(selected);
+            assert_eq!(effective.mode, LockMode::Bridge);
+            assert!(effective.enabled && effective.indicator);
+        }
+        f = frame();
+        f.pose_warm = false;
+        c.update(f, now + SETTLE * 3);
+        assert!(!c.bridge_fallback(), "animation warm-up uses native preparation");
+        assert_eq!(c.bridge_preferences(selected), selected);
+        assert_eq!(c.update(f, now + SETTLE * 4), None);
+        f.pose_warm = true;
+        assert_eq!(c.update(f, now + SETTLE * 5), Some(control::SIT_ON_GROUND));
+        f.requested = false;
+        f.pose_ready = false;
+        c.update(f, now + SETTLE * 6);
+        assert!(!c.bridge_fallback(), "turning Movelock off cannot enable its fallback");
+        assert!(
+            !c.bridge_preferences(Preferences {
+                enabled: false,
+                ..selected
+            })
+            .enabled
+        );
+        assert_eq!(selected.mode, LockMode::NativeSit, "never change the saved method");
     }
     #[test]
     fn movelock_sit_prepares_the_same_standing_clock_before_requesting_native_sit() {
@@ -524,6 +578,7 @@ pub struct Controller {
     phase: Phase,
     region: Option<u64>,
     requested: bool,
+    pose_ready: bool,
     manual: bool,
     idle_since: Option<Instant>,
     hold_start: Option<Instant>,
@@ -533,6 +588,16 @@ pub struct Controller {
     pub status: Status,
 }
 impl Controller {
+    pub fn bridge_fallback(&self) -> bool {
+        self.requested && !self.pose_ready
+    }
+    /// Route only the physical lock; the saved choice and bridge services stay intact.
+    pub fn bridge_preferences(&self, mut prefs: Preferences) -> Preferences {
+        if prefs.mode == LockMode::NativeSit && self.bridge_fallback() {
+            prefs.mode = LockMode::Bridge;
+        }
+        prefs
+    }
     pub fn owns_sit(&self) -> bool {
         matches!(
             self.phase,
@@ -624,6 +689,7 @@ impl Controller {
             };
         }
         let late_sit = frame.ground_sit && !self.ground_sit;
+        self.pose_ready = frame.pose_ready;
         self.ground_sit = frame.ground_sit;
         if frame.requested != self.requested {
             self.requested = frame.requested;

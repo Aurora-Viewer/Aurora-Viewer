@@ -1177,8 +1177,15 @@ wrapped status message and a 64-item object inventory at two heights.
 
 **Native Movelock choice (2026-10-18):** `AURORA_DEMO_MOVELOCK=native`
 opens the same options with native sitting selected and an offline full-body
-P4 standing AO above a P3 constrained sit. `native-missing` disables the AO:
-the status must wait for compatible standing animations without sitting.
+P4 standing AO above a P3 constrained sit. `native-missing` disables Aurora's
+integrated AO: the existing bridge lock takes over without native sitting.
+The selected native method stays unchanged. The bridge choice says "classic
+method"; native sitting has no explanatory paragraph. Its fallback status names
+Aurora's integrated AO, requires at least one compatible standing idle animation
+and says the classic system will be used otherwise.
+`native-fallback` starts anchored, disables the integrated AO at frame 700 and
+restores it at frame 1000. Capture at 620/850/1250: native sitting, bridge
+fallback after stand-up, then native sitting again without changing the method.
 `native-moving` simulates continuous voluntary input: the selected option
 stays enabled while its status reports free movement. Capture after frame
 620. The bridge modes below remain available and the bridge stays the default
@@ -1188,7 +1195,9 @@ The optional lock indicator is off by default. Enable it in the options,
 drag its body to another position, hide/show it and restart: the saved UI
 layout must retain its position. A click without dragging still opens the
 options; shrinking the viewer keeps the indicator inside the work area.
-The indicator uses compact state labels; hover it for the full status.
+The indicator says "Position lock active" ("Verrouillage actif" in French)
+for the classic method, native hold and bridge fallback; transient states
+retain their compact labels. Hover it for the full status.
 
 Offline checks exercise control edges, bounded retries/late replies, manual
 seat ownership, region changes, per-channel priorities, complete standing
@@ -1200,9 +1209,14 @@ switch/disable the method, sit on the ground/on a chair, cross a region and
 relog. Confirm with another viewer that standing cycles remain visible and
 that scripts still report sitting. Check physical/scripted pushes while
 anchored, then swim/walk on water and return to land: native sitting must
-pause for these water controllers. It requires an active AO whose looping
-standing selections override every constrained-sit channel at a higher joint
-priority; incomplete, downloading or lower-priority sets leave it waiting.
+pause for these water controllers. It requires Aurora's active integrated AO
+whose looping standing selections override every constrained-sit channel at a higher joint
+priority; missing, empty, disabled, paused, downloading or incompatible standing
+sets use the bridge fallback. Disable the integrated AO while anchored, enable
+it again, then remove/restore its standing idle: each loss releases the native
+sit and enables the bridge, and each recovery resumes native sitting. A worn
+third-party AO alone cannot meet the native method's requirement. Check the
+bridge's ordinary movement/rearming and manual-seat pause during fallback too.
 No animation is imported/uploaded, and no seat object is rezzed.
 
 **Native rearming (#632):** `AURORA_DEMO_MOVELOCK=native-rearm` repeats the

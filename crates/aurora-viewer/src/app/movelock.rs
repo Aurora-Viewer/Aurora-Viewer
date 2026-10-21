@@ -23,6 +23,13 @@ impl App {
         {
             crate::ao::demo::native_anchor_cycle(&mut self.world, &mut self.input, self.frame_count, mode == "native-rearm");
         }
+        if self.demo
+            && self.frame_count > 300
+            && std::env::var("AURORA_DEMO_MOVELOCK").is_ok_and(|mode| mode == "native-fallback")
+            && let Some(account) = self.settings.ao.accounts.get_mut(&self.world.agent_id)
+        {
+            account.enabled = !(700..1000).contains(&self.frame_count);
+        }
         let prefs = self.settings.bridge.get(&self.world.agent_id).copied().unwrap_or_default();
         let requested = prefs.enabled && prefs.mode == LockMode::NativeSit;
         let account = self.settings.ao.accounts.get(&self.world.agent_id).cloned().unwrap_or_default();

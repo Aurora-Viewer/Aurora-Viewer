@@ -845,9 +845,15 @@ ordinary inventory synchronization can subsequently reconcile the entry.
 `movement/movelock.rs` owns the optional native-sit Movelock state machine;
 `app/movelock.rs` samples voluntary input and travel eligibility before the
 movement controllers and dispatches ordinary SIT_ON_GROUND/STAND_UP controls.
-The existing bridge lock remains the per-avatar default. Native mode disables
-only its scripted anchor, retaining other bridge services. Preparation and the
-owned ground sit are mapped to Standing by the AO; manual seats take priority.
+The existing bridge lock remains the per-avatar default. Native mode requires
+Aurora's integrated AO to be active with at least one compatible standing idle.
+Otherwise its effective bridge preferences enable the existing scripted anchor;
+the saved native choice is retained and resumes automatically when the AO is
+ready. Routing follows AO eligibility even while moving or manually seated;
+the bridge retains its normal movement/sitting rules. Only the scripted anchor
+is disabled while native mode is eligible, retaining other bridge services.
+Preparation and the owned ground sit are mapped to Standing by the AO;
+manual seats take priority.
 Preparation starts only after simulator travel and local visual settling fall
 below the ordinary 0.5 m/s walk-stop threshold, including vertical flight.
 The legacy interpolation residual and Aurora's drawn glide both count; key

@@ -43,10 +43,9 @@ impl MoveLockUi {
             remember(ui.ctx(), 4, response.rect);
             #[cfg(not(test))]
             let _ = response;
-            ui.label(match prefs.mode {
-                LockMode::Bridge => aurora_i18n::tr!("movelock-bridge-help"),
-                LockMode::NativeSit => aurora_i18n::tr!("movelock-sit-help"),
-            });
+            if prefs.mode == LockMode::Bridge {
+                ui.label(aurora_i18n::tr!("movelock-bridge-help"));
+            }
             ui.add_space(8.0);
             let response = widgets::switch_labeled(ui, p, &mut prefs.enabled, aurora_i18n::tr!("movelock-enable"));
             #[cfg(test)]
@@ -65,7 +64,7 @@ impl MoveLockUi {
             let _ = response;
             ui.add_space(8.0);
             ui.label(aurora_i18n::tr!("movelock-shortcut", shortcut = shortcut.to_owned()));
-            if prefs.mode == LockMode::Bridge {
+            if prefs.mode == LockMode::Bridge || error.is_some() {
                 let response = widgets::action_button(
                     ui,
                     p,
