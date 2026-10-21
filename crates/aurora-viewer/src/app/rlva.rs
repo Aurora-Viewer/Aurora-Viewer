@@ -123,7 +123,7 @@ impl App {
             let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
             if scenario == "baseline"
                 || scenario.starts_with("sphere-")
-                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head")
+                || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution")
             {
                 // Keep the avatar and the world visible in offline visual
                 // comparisons; a conversation otherwise covers the subject.
@@ -151,6 +151,9 @@ impl App {
                 format!(
                     "@setsphere=n,setsphere_mode:{number}=force,setsphere_origin:1=force,setsphere_distmin:2=force,setsphere_distmax:15=force,setsphere_valuemin:0=force,setsphere_valuemax:{strength}=force,setsphere_param:{params}=force"
                 )
+            } else if scenario == "resolution" {
+                self.panels.settings = false;
+                "@setdebug_renderresolutiondivisor:12=force".to_owned()
             } else if scenario == "overlay" {
                 self.panels.settings = false;
                 format!(
@@ -312,9 +315,8 @@ impl App {
                             let rect = self.egui_ctx.content_rect();
                             format!("{:.3}", rect.width() / rect.height().max(1.0))
                         }
-                        "getdebug_renderresolutiondivisor"
-                        | "getdebug_windlightuseatmosshaders"
-                        | "getdebug_restrainedloveforbidgivetorlv" => "1".to_owned(),
+                        "getdebug_renderresolutiondivisor" => self.world.rlva.resolution_divisor.unwrap_or(1).to_string(),
+                        "getdebug_windlightuseatmosshaders" | "getdebug_restrainedloveforbidgivetorlv" => "1".to_owned(),
                         "getdebug_restrainedlovenosetenv" => "0".to_owned(),
                         _ => String::new(),
                     };
@@ -322,14 +324,7 @@ impl App {
                 }
                 continue;
             }
-            if c.behaviour == "setdebug_avatarsex" {
-                if !self.world.rlva.has_except("setdebug", actor) {
-                    self.world.rlva.pseudo_sex = match c.option.as_str() {
-                        "true" | "1" => Some(true),
-                        "false" | "0" => Some(false),
-                        _ => self.world.rlva.pseudo_sex,
-                    };
-                }
+            if self.world.rlva.debug_force(actor, &c) {
                 continue;
             }
             if c.behaviour == "getheightoffset" {

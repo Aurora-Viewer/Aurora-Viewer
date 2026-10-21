@@ -7199,6 +7199,7 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let fp = FrameParams {
+            rlva_resolution_divisor: self.world.rlva.resolution_divisor.unwrap_or(1),
             rlva_overlays: self
                 .world
                 .rlva_overlay_frames(Instant::now())

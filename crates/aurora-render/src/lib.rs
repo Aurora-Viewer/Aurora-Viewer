@@ -112,6 +112,7 @@ mod shader_tests {
     fn rlva_sphere_shader_is_valid() {
         validate(include_str!("shaders/rlva.wgsl"));
         validate(include_str!("shaders/rlva_overlay.wgsl"));
+        validate(include_str!("shaders/rlva_resolution.wgsl"));
     }
     fn validate(src: &str) {
         let module = match naga::front::wgsl::parse_str(src) {

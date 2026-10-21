@@ -2787,7 +2787,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   around the avatar so its body and attachments remain visible.
   `baseline` shows the unobstructed scene directly. `textures`, `silhouette`,
   `self` and `head` exercise forced world textures, distant avatar silhouettes
-  and own-avatar visibility. Append `-released` to an effect mode to disable
+  and own-avatar visibility. `resolution` sets the real 3D resolution divisor
+  to 12: the scene becomes coarse while text, HUDs and controls stay sharp.
+  Compare it with `baseline` and `resolution-released`; check scene clicks
+  still address their visible surfaces. Append `-released` to an effect mode to disable
   RLVa at frame 760 and verify restoration in the same run.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and

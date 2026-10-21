@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub mod camera;
+mod debug;
 mod editing;
 pub mod effects;
 pub mod environment;
@@ -244,6 +245,7 @@ pub const RESTRICTIONS: &[&str] = &[
     "unsit",
 ];
 pub const FORCES: &[&str] = &[
+    "setdebug_renderresolutiondivisor",
     "setdebug_avatarsex",
     "adjustheight",
     "setcam_eyeoffset",
@@ -426,6 +428,7 @@ pub struct Rlva {
     pub environment_day: Option<std::sync::Arc<super::eep::DayCycle>>,
     pub environment_request: Option<(Uuid, Command)>,
     pub pseudo_sex: Option<bool>,
+    pub resolution_divisor: Option<u32>,
     pub appearance_busy: bool,
     pub self_detach: Option<(Uuid, Uuid)>,
     pub stand_origin: Option<(aurora_net::RegionHandle, glam::Vec3)>,
@@ -509,6 +512,7 @@ impl Rlva {
         self.recovery.clear();
         self.clear_environment();
         self.pseudo_sex = None;
+        self.resolution_divisor = None;
         self.appearance_busy = false;
         self.self_detach = None;
         self.stand_origin = None;

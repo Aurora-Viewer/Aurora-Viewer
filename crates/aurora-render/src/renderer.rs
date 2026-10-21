@@ -1322,6 +1322,7 @@ pub(crate) struct Backend {
     ui_glass: Option<crate::ui_glass::Glass>,
     previews: crate::preview::Cache,
     selection: Option<crate::selection::Overlay>,
+    hud_selection: Option<crate::selection::Overlay>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -1375,6 +1376,8 @@ pub(crate) struct Backend {
     dof: Option<crate::dof::Dof>,
     rlva_spheres: Option<crate::rlva::Spheres>,
     rlva_overlays: Option<crate::rlva::overlay::Overlays>,
+    rlva_resolution_divisor: u32,
+    rlva_scaled: Option<crate::rlva::resolution::Scaled>,
     smaa: Smaa,
     smaa_targets: Option<SmaaTargets>,
     targets: Targets,
@@ -2610,6 +2613,7 @@ impl Backend {
             ui_glass: None,
             previews: Default::default(),
             selection: None,
+            hud_selection: None,
             frame_layout,
             records_layout,
             tex_layout,
@@ -2650,6 +2654,8 @@ impl Backend {
             dof: None,
             rlva_spheres: None,
             rlva_overlays: None,
+            rlva_resolution_divisor: 1,
+            rlva_scaled: None,
             smaa,
             smaa_targets: None,
             targets,
@@ -3856,8 +3862,14 @@ impl Backend {
         }
     }
 
+    fn scene_size(&self) -> (u32, u32) {
+        (self.targets.color_tex.width(), self.targets.color_tex.height())
+    }
+
     fn rebuild_targets(&mut self) {
         self.occlusion.invalidate();
+        self.depth_pick.scene_changed();
+        let size = crate::rlva::resolution::size((self.config.width, self.config.height), self.rlva_resolution_divisor);
         self.targets = Self::make_targets(
             &self.device,
             &self.post_layout,
@@ -3866,8 +3878,8 @@ impl Backend {
             &self.glow.views[1],
             &self.gtao,
             &self.contact,
-            self.config.width,
-            self.config.height,
+            size.0,
+            size.1,
             self.msaa_samples,
             &self.settings,
         );
@@ -3875,14 +3887,8 @@ impl Backend {
             .bind(&self.device, &self.targets.color, &self.targets.depth_ss, &self.glow.views[1]);
         self.histogram.bind(&self.device, &self.targets.color);
         self.smaa_targets = (self.settings.aa == AntiAliasing::Smaa).then(|| {
-            self.smaa.make_targets(
-                &self.device,
-                &self.queue,
-                &self.dummies.white,
-                self.config.width,
-                self.config.height,
-                self.surface_srgb,
-            )
+            self.smaa
+                .make_targets(&self.device, &self.queue, &self.dummies.white, size.0, size.1, self.surface_srgb)
         });
         self.rebuild_bind_groups();
     }
@@ -4049,8 +4055,8 @@ impl Backend {
             make_view(
                 device,
                 "taa history",
-                self.config.width,
-                self.config.height,
+                self.scene_size().0,
+                self.scene_size().1,
                 HDR_FORMAT,
                 1,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -4239,10 +4245,10 @@ impl Backend {
         u.light_sets = LightSets::whole();
         u.cascade_splits = [splits[0], splits[1], splits[2], if pixel_splits { 1.0 } else { 0.0 }];
         u.screen = [
-            self.config.width as f32,
-            self.config.height as f32,
-            1.0 / self.config.width.max(1) as f32,
-            1.0 / self.config.height.max(1) as f32,
+            self.scene_size().0 as f32,
+            self.scene_size().1 as f32,
+            1.0 / self.scene_size().0 as f32,
+            1.0 / self.scene_size().1 as f32,
         ];
         let right = inv_view.transform_vector3(Vec3::X).normalize_or(Vec3::X);
         let up = inv_view.transform_vector3(Vec3::Y).normalize_or(Vec3::Z);
@@ -4428,18 +4434,30 @@ impl Backend {
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
         self.drawn_pick.ask(drawn);
+        let previous_scene = self.scene_size();
+        let picks = picks
+            .into_iter()
+            .map(|(ticket, x, y)| {
+                let (x, y) = crate::rlva::resolution::pixel((x, y), (self.config.width, self.config.height), previous_scene);
+                (ticket, x, y)
+            })
+            .collect();
         // the depth under the clicks made on the last frame drawn, before
         // anything of this frame replaces it (targets, depth, camera)
         self.depth_pick.submit_clicks(
             &self.device,
             &self.queue,
             &self.targets.depth_ss,
-            (self.config.width, self.config.height),
+            previous_scene,
             self.last_inv_vp,
             picks,
         );
         // the window and the settings as the main thread had them for this frame
         self.apply_surface(surface);
+        if self.rlva_resolution_divisor != params.rlva_resolution_divisor {
+            self.rlva_resolution_divisor = params.rlva_resolution_divisor;
+            self.rebuild_targets();
+        }
         stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
             self.apply_settings(settings);
@@ -4452,8 +4470,10 @@ impl Backend {
             self.begin_snapshot(s);
         } else if let Some((x, y)) = hover {
             // (window pixels: a photo frame has none of them)
+            let (x, y) = crate::rlva::resolution::pixel((x, y), (self.config.width, self.config.height), self.scene_size());
             self.depth_pick.hover(x, y);
         }
+        let world_size = self.scene_size();
 
         // egui textures first, so they are never lost on a skipped frame
         if let Some(ui) = &mut egui_frame {
@@ -4564,12 +4584,21 @@ impl Backend {
         // swapchain cannot be sampled or copied, and preserves scene captures.
         let surface_view = self.ui_blur.as_ref().map_or_else(|| present_view.clone(), |blur| blur.view.clone());
 
-        if !lists.select_faces.is_empty() || !lists.hud_select_faces.is_empty() {
-            let size = [self.config.width, self.config.height];
+        if !lists.select_faces.is_empty() {
+            let size = [world_size.0, world_size.1];
             if self.selection.as_ref().is_none_or(|selection| selection.size != size) {
                 self.selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
             }
             if let Some(selection) = &self.selection {
+                selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
+            }
+        }
+        if !lists.hud_select_faces.is_empty() {
+            let size = [self.config.width, self.config.height];
+            if self.hud_selection.as_ref().is_none_or(|selection| selection.size != size) {
+                self.hud_selection = Some(crate::selection::Overlay::new(&self.device, self.config.format, size));
+            }
+            if let Some(selection) = &self.hud_selection {
                 selection.update(&self.queue, f.selection_color, f.selection_pulse, f.selection_scale);
             }
         }
@@ -4591,9 +4620,12 @@ impl Backend {
         let mut depth_jitter = glam::Vec2::ZERO;
         let fu: &FrameParams = if self.taa.is_some() {
             let i = (self.frame_index % 16) + 1;
-            let jx = halton(i, 2) * 2.0 / self.config.width.max(1) as f32;
-            let jy = halton(i, 3) * 2.0 / self.config.height.max(1) as f32;
-            depth_jitter = glam::Vec2::new(halton(i, 2), -halton(i, 3));
+            let jx = halton(i, 2) * 2.0 / world_size.0 as f32;
+            let jy = halton(i, 3) * 2.0 / world_size.1 as f32;
+            depth_jitter = glam::Vec2::new(
+                halton(i, 2) * self.config.width as f32 / world_size.0 as f32,
+                -halton(i, 3) * self.config.height as f32 / world_size.1 as f32,
+            );
             let mut j = f.clone();
             j.proj = Mat4::from_translation(Vec3::new(jx, jy, 0.0)) * f.proj;
             jittered = j;
@@ -4695,7 +4727,7 @@ impl Backend {
             LightCulling::Alternate => !f.all_lights,
         };
         if light_tiles_on {
-            let size = [self.config.width, self.config.height];
+            let size = [world_size.0, world_size.1];
             let lights = &f.lights[..f.lights.len().min(MAX_LIGHTS)];
             // (the eye the shaders measure depths from: the uniform's camera)
             let eye = Vec3::from_slice(&main.camera_pos[..3]);
@@ -4707,7 +4739,7 @@ impl Backend {
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
         let probe_walk = crate::probes::ProbeWalk::from_env();
         let probe_sets = if f.probes.enabled && probe_walk.tiles(f.probe_walk_list) {
-            let size = [self.config.width, self.config.height];
+            let size = [world_size.0, world_size.1];
             let eye = Vec3::from_slice(&main.camera_pos[..3]);
             crate::probes::tiles(fu.view, fu.proj, eye, size, &f.probes.probes)
         } else {
@@ -4815,6 +4847,12 @@ impl Backend {
             // (HUD records are in screen space: nothing to take away)
             hud.eye_view_proj = hud.view_proj;
             hud.eye = [0.0; 4];
+            hud.screen = [
+                self.config.width as f32,
+                self.config.height as f32,
+                1.0 / self.config.width as f32,
+                1.0 / self.config.height as f32,
+            ];
             self.queue.write_buffer(&self.refl_buffers[5], 0, bytemuck::bytes_of(&hud));
             if self
                 .hud_depth
@@ -4954,7 +4992,7 @@ impl Backend {
             let debug_view = f.debug_glow || f.debug.shadows || f.debug.ambient_occlusion;
             let (strength, keep) = crate::bloom::Override::from_env().strength(if debug_view { 0.0 } else { f.bloom }, secs);
             if keep && !debug_view {
-                self.bloom.ensure(&self.device, (self.config.width, self.config.height));
+                self.bloom.ensure(&self.device, world_size);
             } else {
                 self.bloom.release();
             }
@@ -5194,8 +5232,8 @@ impl Backend {
                 &self.device,
                 &self.queue,
                 &self.targets.depth_ss,
-                self.config.width,
-                self.config.height,
+                world_size.0,
+                world_size.1,
                 vp,
                 &cull,
                 records,
@@ -6123,8 +6161,8 @@ impl Backend {
         }
         // ---- scene copy (refraction / SSR source)
         let size = wgpu::Extent3d {
-            width: self.config.width.max(1),
-            height: self.config.height.max(1),
+            width: world_size.0,
+            height: world_size.1,
             depth_or_array_layers: 1,
         };
         encoder.copy_texture_to_texture(
@@ -6339,7 +6377,7 @@ impl Backend {
             &self.queue,
             &mut encoder,
             &self.targets.depth_ss,
-            (self.config.width, self.config.height),
+            world_size,
             unjittered_vp.inverse(),
         );
         let enc_scene = std::mem::replace(
@@ -6359,8 +6397,8 @@ impl Backend {
                 params: [
                     if taa.reset || self.prev_view_proj.is_none() { 1.0 } else { 0.0 },
                     0.1,
-                    self.config.width as f32,
-                    self.config.height as f32,
+                    world_size.0 as f32,
+                    world_size.1 as f32,
                 ],
             };
             self.queue.write_buffer(&taa.buffer, 0, bytemuck::bytes_of(&u));
@@ -6403,7 +6441,7 @@ impl Backend {
                     post_src,
                     &self.targets.depth_ss,
                     f.proj,
-                    (self.config.width, self.config.height),
+                    world_size,
                     params,
                     HDR_FORMAT,
                     &crate::dof::PostInputs {
@@ -6458,13 +6496,21 @@ impl Backend {
         mark(&mut encoder, MARK_BLOOM_END);
 
         let draw_huds = lists.hud_view.is_some() && self.hud_depth.is_some() && snapshot.is_none_or(|s| s.huds);
+        if world_size != (self.config.width, self.config.height) {
+            if self.rlva_scaled.as_ref().is_none_or(|scaled| scaled.size() != world_size) {
+                self.rlva_scaled = Some(crate::rlva::resolution::Scaled::new(&self.device, self.config.format, world_size));
+            }
+        } else {
+            self.rlva_scaled = None;
+        }
+        let composed_view = self.rlva_scaled.as_ref().map_or(&surface_view, |scaled| &scaled.view);
         let scene_target = if !f.rlva_spheres.is_empty() {
             self.rlva_spheres
                 .get_or_insert_with(|| crate::rlva::Spheres::new(&self.device, self.config.format))
-                .prepare(&self.device, (self.config.width, self.config.height), self.config.format)
+                .prepare(&self.device, world_size, self.config.format)
         } else {
             self.rlva_spheres = None;
-            &surface_view
+            composed_view
         };
         // ---- post (tonemap) to the swapchain
         {
@@ -6534,11 +6580,15 @@ impl Backend {
                 &mut encoder,
                 &self.targets.depth_ss,
                 unjittered_vp.inverse(),
-                (self.config.width, self.config.height),
+                world_size,
                 &f.rlva_spheres,
-                &surface_view,
+                composed_view,
             );
             calls.set(calls.get() + passes as u32);
+        }
+        if let Some(scaled) = &self.rlva_scaled {
+            scaled.encode(&mut encoder, &surface_view);
+            calls.set(calls.get() + 1);
         }
 
         let mut capture = None;
@@ -6716,7 +6766,7 @@ impl Backend {
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
         }
         if hud_select_faces_range.1 > 0
-            && let (Some(selection), Some((_, _, depth))) = (&self.selection, &self.hud_depth)
+            && let (Some(selection), Some((_, _, depth))) = (&self.hud_selection, &self.hud_depth)
         {
             let mut pass = selection.begin_mask(&mut encoder, depth);
             bind_mesh(&mut pass, &self.groups.refl[5]);
@@ -6932,10 +6982,10 @@ impl Backend {
             return None;
         }
         let px = crate::pick::PickPixel {
-            x: x as u32,
-            y: y as u32,
-            width: w,
-            height: h,
+            x: crate::rlva::resolution::pixel((x as u32, y as u32), (w, h), self.scene_size()).0,
+            y: crate::rlva::resolution::pixel((x as u32, y as u32), (w, h), self.scene_size()).1,
+            width: self.scene_size().0,
+            height: self.scene_size().1,
             inv_view_proj: self.last_inv_vp,
         };
         self.depth_pick.blocking(&self.device, &self.queue, &self.targets.depth_ss, px)

@@ -946,6 +946,7 @@ pub struct OverlayEffect {
 pub struct FrameParams {
     /// Session-local scripted vision effects; empty keeps the normal render path.
     pub rlva_spheres: Vec<SphereEffect>,
+    pub rlva_resolution_divisor: u32,
     pub rlva_overlays: Vec<OverlayEffect>,
     /// Linear RGBA from the UI palette for selected-face overlays.
     pub selection_color: [f32; 4],

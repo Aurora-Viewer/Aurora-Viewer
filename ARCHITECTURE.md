@@ -47,6 +47,13 @@ locked COF links. Its internal actor authorizes only the exact pending item
 and point or rejected predecessor. `temporary.rs` applies point/source locks
 to attachments with no inventory record; `aurora-net/src/attachment_detach.rs`
 addresses ObjectDetach to their simulator. Disabling clears all recovery work.
+`debug.rs` validates allowlisted writes and other issuers' setdebug locks.
+The render-resolution divisor resizes the actual 3D targets, including
+depth, occlusion, TAA/SMAA, DoF and post processing. `rlva/resolution.rs`
+upscales their composed result before world labels, overlays, HUDs and UI;
+depth picks map physical window pixels to the scene's actual dimensions.
+HUD selection keeps a separate full-resolution mask. The ordinary path
+allocates no reduced-scene target and runs no upscale pass.
 Script replies use `NetCommand::ChatReply` and `aurora-net/src/chat_reply.rs`:
 one reliable shout, including an empty response, UTF-8 truncated to the
 protocol's 1023-byte limit. They bypass user chat splitting and redirection.

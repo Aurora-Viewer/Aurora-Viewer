@@ -305,4 +305,60 @@ fn rlva_gpu_spheres_preserve_uniform_images_and_compose_black_masks_without_glow
             "overlay at x={x}: {pixel:?}"
         );
     }
+    drop(bytes);
+    readback.unmap();
+    let scaled = resolution::Scaled::new(&device, format, (2, 1));
+    queue.write_texture(
+        scaled.texture.as_image_copy(),
+        &[204, 102, 51, 255, 0, 204, 255, 255],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(8),
+            rows_per_image: Some(1),
+        },
+        wgpu::Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let mut encoder = device.create_command_encoder(&Default::default());
+    scaled.encode(&mut encoder, &out);
+    overlays.encode(
+        &queue,
+        &mut encoder,
+        &out,
+        &textures,
+        &[crate::OverlayEffect {
+            color: [1.0, 0.0, 0.0, 0.5],
+            texture: [0; 4],
+        }],
+    );
+    encoder.copy_texture_to_buffer(
+        output.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(256),
+                rows_per_image: Some(64),
+            },
+        },
+        wgpu::Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    readback.map_async(wgpu::MapMode::Read, .., |result| result.expect("resolution readback"));
+    device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
+    let bytes = readback.get_mapped_range(..).expect("mapped pixels");
+    for (x, expected) in [(31, [204, 102, 51, 255]), (32, [128, 102, 128, 255])] {
+        let offset = (32 * 64 + x) * 4;
+        assert!(
+            bytes[offset..offset + 4].iter().zip(expected).all(|(v, e)| v.abs_diff(e) <= 1),
+            "upscale/overlay at x={x}"
+        );
+    }
 }

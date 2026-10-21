@@ -5,6 +5,36 @@ const B: Uuid = Uuid::from_u128(2);
 const TARGET: Uuid = Uuid::from_u128(3);
 
 #[test]
+fn rlva_debug_resolution_writes_are_allowlisted_locked_ordered_and_released() {
+    let mut r = enabled();
+    command(
+        &mut r,
+        A,
+        "@setdebug=n,setdebug_renderresolutiondivisor:12=force,getdebug_renderresolutiondivisor=123",
+    );
+    assert_eq!(r.pending.len(), 2);
+    let writes = std::mem::take(&mut r.pending);
+    assert!(r.debug_force(A, &writes[0].1));
+    assert_eq!(r.resolution_divisor, Some(12));
+    assert_eq!(writes[1].1.behaviour, "getdebug_renderresolutiondivisor");
+    let force = |value| Command::parse(&format!("setdebug_renderresolutiondivisor:{value}=force")).unwrap();
+    for value in ["-1", "NaN", "4294967296", "2.5"] {
+        r.debug_force(A, &force(value));
+    }
+    assert_eq!(r.resolution_divisor, Some(12));
+    r.debug_force(B, &force("4"));
+    assert_eq!(r.resolution_divisor, Some(12), "another issuer cannot bypass the debug lock");
+    r.debug_force(A, &force("default"));
+    assert_eq!(r.resolution_divisor, None);
+    r.debug_force(A, &force("4"));
+    r.configure(false);
+    assert_eq!(r.resolution_divisor, None);
+    r.debug_force(A, &force("4"));
+    assert_eq!(r.resolution_divisor, None);
+    assert!(command_list("renderresolutiondivisor;force").contains("setdebug_renderresolutiondivisor"));
+}
+
+#[test]
 fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_is_denied() {
     use crate::world::inventory::{FetchState, Folder};
     use aurora_net::{

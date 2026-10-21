@@ -94,7 +94,11 @@ script authors; the command lists below describe this branch specifically.
   allowidle uses the reference's thirty-minute automatic-away interval.
 - Debug extensions: session-local AvatarSex pseudo-value, aspect ratio and
   existing renderer/environment capability reads, respecting setdebug
-  ownership. Arbitrary settings are not exposed.
+  ownership. RenderResolutionDivisor reduces real 3D target dimensions,
+  including depth and post effects, then upscales before full-resolution
+  world labels, overlays, HUDs and UI. Window-space picks map to the reduced
+  depth surface. `default` or disabling RLVa releases the override. Arbitrary
+  settings are not exposed.
 
 `getcommand` advertises the handlers actually present. `versionnum` returns
 0 and the version string identifies the experimental implementation rather
@@ -110,8 +114,8 @@ than asserting a complete RLV specification version.
 - Location and identity filtering across every surface (showloc, shownames,
   nearby people, notifications, profiles, maps, hover tips, stored transcripts
   and application links).
-- Complete environment/debug conformance (including resolution-divisor
-  writes), wearable/attachment/sit notifications and permission notifications.
+- Complete environment/debug conformance, wearable/attachment/sit
+  notifications and permission entry-point validation.
 - Complete linked/folded-folder conformance, attachment-point groups for
   every command, shared inventory offers and rename-on-wear, queue timeout
   behavior and live confirmation of attachment recovery across crossings.
@@ -133,9 +137,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PR #805: `scripts/check.ps1` passes with 4,311 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,318 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 36 RLVa logic/integration/shader tests, covering
+are clean. This includes 38 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -143,10 +147,13 @@ compatibility, IM ranges, stand returns, visual-effect lifecycle/tweens,
 alpha masks, shader validation, display-only privacy, surface distances,
 local teleports across region edges, encoded empty/UTF-8 replies, attachment
 recovery timing, saved-asset ordering, locked/nostrip replacement, temporary
-attachments and changing attachment points. The additional Vulkan test
-`cargo test --workspace rlva_gpu --locked -- --ignored` passes: five sphere
-modes, chained masks and overlay alpha holes are checked from real GPU pixels
-without egui. It does not
+attachments, changing attachment points, allowlisted debug writes, real target
+dimensions and pick-coordinate conversion. The additional Vulkan test
+`cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
+modes, chained masks, reduced-scene upscaling and overlay alpha holes from
+real GPU pixels without egui. It passes, including the extended upscale
+and overlay-composition case.
+The automated checks do not
 validate the unfinished command families or live-grid behavior.
 
 Initial native preference validation (`4e22e952`): the dev viewer builds
@@ -155,6 +162,13 @@ successfully. Inspected offline captures
 `rlva-released-en.png` (1440 × 1000, frame 850): the switch is off with no
 locks, on with the synthetic restrictions, then off with an empty list.
 Labels, hints and session controls fit the existing Protections layout.
+
+Native vision validation on 2026-10-22: inspected all five sphere modes,
+the FR overlay with alpha holes, forced textures and release captures.
+With the newer fixed avatar framing, `resolution` (FR) visibly renders
+coarse 12-pixel blocks while the UI remains sharp; `resolution-released`
+(EN) restores full detail. These are offline presentation checks, not live
+script or complete-parity acceptance.
 
 `AURORA_DEMO_RLVA=enabled|disabled|released` opens the native preference page
 and delivers synthetic object commands through `World::apply`. Capture after

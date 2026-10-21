@@ -4,6 +4,7 @@ use crate::SphereEffect;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 pub(crate) mod overlay;
+pub(crate) mod resolution;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
