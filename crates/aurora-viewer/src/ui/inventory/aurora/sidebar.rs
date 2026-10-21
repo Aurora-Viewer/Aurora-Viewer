@@ -265,7 +265,7 @@ pub(super) fn show(
     crate::ui::menu::section(ui, p, aurora_i18n::tr!("inventory-folders"));
     ui.add_space(2.0);
     // The folders.
-    st.view.prepare(inv, prefs.sort);
+    st.view.prepare(inv, prefs.sort_for(st.tab));
     let follow = st.side.follow(inv, st.browse, base);
     st.side.prepare(&st.view, inv, base, prefs.show_library);
     let trash = rules::system(inv, 14).filter(|_| !scoped);

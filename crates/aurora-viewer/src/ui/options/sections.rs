@@ -66,7 +66,7 @@ sections! {
         temporary_name_tags, name_tag_show_seconds, use_display_names, show_usernames, legacy_username_format, trim_resident,
         group_titles, hide_own_group_title,
         display_name_notices, tag_complexity, tag_complexity_too_complex_only, tag_complexity_own,
-        inventory.sort, inventory.show_library, inventory.show_recent, inventory.show_worn,
+        inventory.sort, inventory.received_sort, inventory.show_library, inventory.show_recent, inventory.show_worn,
         inventory.show_favorites, inventory.search_trash, inventory.search_library, inventory.search_outfits,
         inventory.separate_searches, inventory.double_click_add_objects, inventory.double_click_add_clothes,
         inventory.warn_task_move, inventory.warn_scripted_task_move,
@@ -207,7 +207,9 @@ mod tests {
         // the inventory block of the Interface page edits `prefs`
         let inventory = include_str!("../inventory/controls.rs");
         pages[1].1.remove("inventory");
-        pages[1].1.extend(accessed(body(inventory, "preferences"), "prefs", "inventory."));
+        pages[1]
+            .1
+            .extend(accessed(body(inventory, "preferences_for_tab"), "prefs", "inventory."));
         pages[TAB_AUDIO].1.extend(accessed(body(include_str!("audio.rs"), "page"), "s", ""));
         pages[TAB_SHORTCUTS].1.extend(accessed(body(options, "keys_page"), "s", ""));
         pages[TAB_CAMERA].1.extend(accessed(include_str!("camera.rs"), "s", ""));
@@ -280,6 +282,8 @@ mod tests {
         s.lookat.private = true;
         s.lookat.head_yaw = 10.0;
         s.username = "kept".into();
+        s.inventory.sort.by_date = false;
+        s.inventory.received_sort.folders_by_name = true;
         reset(0, &mut s);
         let d = Settings::default();
         assert_eq!(s.draw_distance, d.draw_distance);
@@ -294,6 +298,11 @@ mod tests {
         assert_eq!(s.lookat.style, d.lookat.style);
         assert_eq!(s.lookat.head_yaw, 10.0);
         assert_eq!(s.username, "kept");
+        assert!(!s.inventory.sort.by_date, "other sections preserve both inventory orders");
+        assert!(s.inventory.received_sort.folders_by_name);
+        reset(1, &mut s);
+        assert_eq!(s.inventory.sort, d.inventory.sort);
+        assert_eq!(s.inventory.received_sort, d.inventory.received_sort);
     }
 
     #[test]

@@ -182,6 +182,61 @@ pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
     );
 }
 
+/// Three purchases whose alphabetical and newest-content orders are opposite.
+pub fn seed_received_sort(inv: &mut Inventory, agent: Uuid) {
+    seed_received(inv, agent);
+    let inbox = Uuid::from_u128(8_300_000);
+    let oldest = Uuid::from_u128(8_300_001);
+    let time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs() as i64);
+    if let Some(folder) = inv.folders.get_mut(&oldest) {
+        folder.info.name = aurora_i18n::tr!("inventory-sort-demo-old").into();
+    }
+    for item in inv.items.values_mut().filter(|item| item.parent == oldest) {
+        item.created_at = time - 3 * 3600;
+    }
+    for (number, name, hours) in [
+        (8_300_010, aurora_i18n::tr!("inventory-sort-demo-middle"), 2),
+        (8_300_020, aurora_i18n::tr!("inventory-sort-demo-new"), 1),
+    ] {
+        let id = Uuid::from_u128(number);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: inbox,
+                    name: name.into(),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&inbox) {
+            folder.children.push(id);
+        }
+        inv.add_items(vec![InvItem {
+            id: Uuid::from_u128(number + 1),
+            parent: id,
+            name: aurora_i18n::tr!("common-demo-object").into(),
+            asset_type: 6,
+            inv_type: 6,
+            owner: agent,
+            creator: agent,
+            created_at: time - hours * 3600,
+            base_mask: actions::COPY | actions::MODIFY | actions::TRANSFER,
+            owner_mask: actions::COPY | actions::MODIFY | actions::TRANSFER,
+            ..Default::default()
+        }]);
+    }
+}
+
 /// `AURORA_DEMO_INVENTORY=received-big`: a long-time buyer's Received Items,
 /// `folders` purchases of `items` items each, to measure the tab's cost.
 pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items: u128) {

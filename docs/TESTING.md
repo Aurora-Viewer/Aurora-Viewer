@@ -4453,6 +4453,14 @@ offline; the files and snapshots uploaded in demo stay offline.
   search limited to its Marketplace box and state with no received folder. The
   list and the Collapse / Expand buttons keep the same presentation; no
   personal folder must appear in this tab.
+- `received-sort`, `received-sort-name`, `aurora-received-sort`,
+  `aurora-received-sort-name`: open Received preferences in the classic or wide
+  Aurora layout. Three purchases contain files dated one, two and three hours
+  ago. With newest first and "Folders always by name" off, folders show Z, M, A;
+  checking it shows A, M, Z. The `-name` variants open the checked state for
+  comparison captures. With the general "By name" order, both checkbox states
+  show A, M, Z. Main inventory sorting must stay independent, including after
+  saving/reloading preferences; Interface section reset restores both defaults.
 - `received-big`, `received-big-open`: a long-time buyer's Received
   purchases (150 purchases of 20 items). The purchases arrive closed, open
   and close one by one, and only the rows in sight are drawn; `-open`

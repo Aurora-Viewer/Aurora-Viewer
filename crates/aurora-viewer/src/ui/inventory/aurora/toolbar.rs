@@ -169,39 +169,40 @@ fn new_menu(
 /// search searches, and the inventory's preferences.
 fn sort_menu(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs: &mut InventoryPreferences, layout: Layout) {
     menu::section(ui, p, aurora_i18n::tr!("inventory-sort-menu"));
+    let sort = prefs.sort_for_mut(st.tab);
     if menu::check(
         ui,
         p,
         "clock-filled",
         aurora_i18n::tr!("ui-inventory-controls-newest-first"),
-        prefs.sort.by_date,
+        sort.by_date,
         true,
     ) {
-        prefs.sort.by_date = true;
+        sort.by_date = true;
     }
     if menu::check(
         ui,
         p,
         "sort-ascending-letters",
         aurora_i18n::tr!("common-by-name"),
-        !prefs.sort.by_date,
+        !sort.by_date,
         true,
     ) {
-        prefs.sort.by_date = false;
+        sort.by_date = false;
     }
     menu::toggle(
         ui,
         p,
         "folder-filled",
         aurora_i18n::tr!("ui-inventory-controls-folders-always-by-name"),
-        &mut prefs.sort.folders_by_name,
+        &mut sort.folders_by_name,
     );
     menu::toggle(
         ui,
         p,
         "stack-2-filled",
         aurora_i18n::tr!("ui-inventory-controls-system-folders-first"),
-        &mut prefs.sort.system_first,
+        &mut sort.system_first,
     );
     menu::separator(ui, p);
     if layout == Layout::Compact || st.result_view() {
@@ -630,13 +631,14 @@ fn chip(ui: &mut egui::Ui, p: &Palette, text: &str) -> bool {
 }
 
 /// The text of the sort order, at the right end of the chips.
-fn sort_text(prefs: &InventoryPreferences) -> String {
-    let order = if prefs.sort.by_date {
+fn sort_text(prefs: &InventoryPreferences, tab: usize) -> String {
+    let sort = prefs.sort_for(tab);
+    let order = if sort.by_date {
         aurora_i18n::tr!("inventory-sort-date")
     } else {
         aurora_i18n::tr!("inventory-sort-name")
     };
-    if prefs.sort.system_first {
+    if sort.system_first {
         aurora_i18n::tr!("inventory-sort-folders-first", order = order)
     } else {
         order.to_owned()
@@ -651,7 +653,7 @@ pub(super) fn chips(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, prefs:
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            let sort = sort_text(prefs);
+            let sort = sort_text(prefs, st.tab);
             let sort_w = ui
                 .painter()
                 .layout_no_wrap(sort.clone(), egui::FontId::proportional(12.0), p.muted)
@@ -784,6 +786,92 @@ pub(super) fn status_bar(ui: &mut egui::Ui, p: &Palette, st: &InventoryUi, explo
 mod tests {
     use super::super::super::view::Filters;
     use super::*;
+
+    #[test]
+    fn received_sort_controls_edit_only_the_active_order_in_both_layouts() {
+        fn label_rect(shape: &egui::Shape, label: &str) -> Option<Rect> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == label => Some(Rect::from_min_size(text.pos, text.galley.size())),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| label_rect(shape, label)),
+                _ => None,
+            }
+        }
+        for classic in [false, true] {
+            let ctx = egui::Context::default();
+            let palette = crate::theme::Theme::default().palette();
+            let mut prefs = InventoryPreferences::default();
+            let mut frame_index = 0;
+            let mut frame = |tab, prefs: &mut InventoryPreferences, events| {
+                frame_index += 1;
+                headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 1000.0))),
+                        time: Some(f64::from(frame_index) / 60.0),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if classic {
+                            controls::preferences_for_tab(ui, &palette, prefs, tab);
+                        } else {
+                            let mut st = InventoryUi { tab, ..Default::default() };
+                            sort_menu(ui, &palette, &mut st, prefs, Layout::Wide);
+                        }
+                    },
+                ))
+            };
+            for tab in [RECEIVED_TAB, 0] {
+                let other_tab = if tab == RECEIVED_TAB { 0 } else { RECEIVED_TAB };
+                let other_order = prefs.sort_for(other_tab);
+                for (label, switch) in [
+                    (aurora_i18n::tr!("common-by-name"), false),
+                    (aurora_i18n::tr!("ui-inventory-controls-folders-always-by-name"), true),
+                    (aurora_i18n::tr!("ui-inventory-controls-system-folders-first"), true),
+                ] {
+                    drop(frame(tab, &mut prefs, vec![]));
+                    let output = frame(tab, &mut prefs, vec![]);
+                    let rect = output
+                        .shapes
+                        .iter()
+                        .find_map(|shape| label_rect(&shape.shape, label))
+                        .expect("sort control drawn");
+                    let pos = if classic && switch {
+                        egui::pos2(
+                            rect.left() - egui::Style::default().spacing.item_spacing.x - widgets::SWITCH_SIZE.x / 2.0,
+                            rect.center().y,
+                        )
+                    } else {
+                        rect.center()
+                    };
+                    for pressed in [true, false] {
+                        drop(frame(
+                            tab,
+                            &mut prefs,
+                            vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                        ));
+                    }
+                    assert_eq!(
+                        prefs.sort_for(other_tab),
+                        other_order,
+                        "changing {label} leaves the other tab intact"
+                    );
+                }
+                let order = prefs.sort_for(tab);
+                assert!(!order.by_date);
+                assert_eq!(order.folders_by_name, tab == RECEIVED_TAB);
+                assert!(!order.system_first);
+                assert_eq!(sort_text(&prefs, tab), aurora_i18n::tr!("inventory-sort-name"));
+            }
+        }
+    }
 
     #[test]
     fn each_active_filter_has_a_chip_that_takes_it_off() {
