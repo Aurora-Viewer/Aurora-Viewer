@@ -1,29 +1,15 @@
 //! LLScriptEdCore::processKeywords / setHelpPage (Firestorm, LGPL 2.1).
-//! Bundled signatures and help come from keywords_lsl_default.xml.
+//! Signatures and help come from the LSL keywords in use: the bundled
+//! keywords_lsl_default.xml or the region's (`crate::lsl_keywords`).
 
-use serde::Deserialize;
-use std::sync::OnceLock;
-
-#[derive(Deserialize)]
-pub(super) struct Entry {
-    pub name: String,
-    pub group: String,
-    #[serde(rename = "type")]
-    pub data_type: String,
-    pub signature: String,
-    pub tooltip: String,
-}
+pub(super) use crate::lsl_keywords::Entry;
 
 pub(super) fn all() -> &'static [Entry] {
-    static ENTRIES: OnceLock<Vec<Entry>> = OnceLock::new();
-    ENTRIES.get_or_init(|| serde_json::from_str(include_str!("../../../assets/lsl/reference.json")).expect("valid bundled LSL reference"))
+    crate::lsl_keywords::current().entries()
 }
 
 pub(super) fn get(name: &str) -> Option<&'static Entry> {
-    all()
-        .binary_search_by(|entry| entry.name.as_str().cmp(name))
-        .ok()
-        .map(|i| &all()[i])
+    crate::lsl_keywords::current().entry(name)
 }
 
 pub(super) fn url(name: &str) -> String {

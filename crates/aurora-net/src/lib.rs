@@ -19,6 +19,7 @@ pub mod inventory;
 pub mod land;
 pub mod land_tool;
 pub mod login;
+pub mod lsl_syntax;
 pub mod objcache;
 pub mod objects;
 pub mod offline_im;

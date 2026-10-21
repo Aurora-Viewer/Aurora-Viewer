@@ -34,6 +34,7 @@ pub mod land;
 pub mod land_buy;
 pub mod landmarks;
 pub mod lookat;
+pub mod lsl_syntax;
 pub mod lslbridge;
 pub mod marketplace;
 pub mod maturity;
@@ -100,6 +101,8 @@ pub struct Region {
     /// Voice server of the region (SimulatorFeatures): "webrtc", "vivox" or empty.
     pub voice_server: String,
     pub avatar_hover_height: bool,
+    /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
+    pub lsl_syntax_id: Option<Uuid>,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -384,6 +387,8 @@ pub struct World {
     pub user_info: user_info::UserInfoState,
     /// The region console of estate managers (SimConsoleAsync).
     pub sim_console: sim_console::SimConsole,
+    /// The LSL syntax ids already asked for this session (lsl_syntax.rs).
+    lsl_syntax_asked: HashSet<Uuid>,
     /// Experiences: details, questions waiting for them, permissions.
     pub experiences: experiences::Experiences,
     /// Teleport history (navigation bar back / forward).
@@ -607,6 +612,7 @@ impl World {
             set_home: home::SetHome::default(),
             user_info: user_info::UserInfoState::default(),
             sim_console: sim_console::SimConsole::default(),
+            lsl_syntax_asked: HashSet::new(),
             experiences: experiences::Experiences::default(),
             profiles: profiles::Profiles::default(),
             arrived_once: false,
@@ -1380,6 +1386,7 @@ impl World {
             caps: Arc::new(HashMap::new()),
             voice_server: String::new(),
             avatar_hover_height: false,
+            lsl_syntax_id: None,
             materials_limits: Default::default(),
             max_tasks: 0,
         })
@@ -1694,8 +1701,10 @@ impl World {
                 avatar_hover_height,
                 materials_rate,
                 materials_max,
+                lsl_syntax_id,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
+                r.lsl_syntax_id = Some(lsl_syntax_id);
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -1723,6 +1732,10 @@ impl World {
             }
             NetEvent::UserInfoUpdateFailed(error) => {
                 self.on_user_info_update_failed(error);
+                None
+            }
+            NetEvent::LslSyntax { id, keywords } => {
+                self.on_lsl_syntax(id, keywords);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {
@@ -5847,6 +5860,7 @@ mod motion_tests {
                 avatar_hover_height: enabled,
                 materials_rate: None,
                 materials_max: None,
+                lsl_syntax_id: Uuid::nil(),
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

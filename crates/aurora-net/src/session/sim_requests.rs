@@ -1,6 +1,7 @@
 //! The small capabilities of the agent's region (#660): the server release
-//! notes, the region console and nearby voice moderation
-//! (`crate::release_notes`, `crate::sim_console`, `crate::voice_moderation`).
+//! notes, the region console, nearby voice moderation and the LSL keywords
+//! (`crate::release_notes`, `crate::sim_console`, `crate::voice_moderation`,
+//! `crate::lsl_syntax`).
 
 use super::Session;
 use crate::caps;
@@ -40,6 +41,23 @@ impl Session<'_> {
                 log::warn!("region console: the command was not received ({e})");
                 let _ = events.send(NetEvent::SimConsoleReply(Err(e.to_string())));
             }
+        });
+    }
+
+    /// LLSyntaxIdLSL::initialize: the cached keywords of `id`, else the
+    /// region's; read and turned into keywords off the frame.
+    pub(super) fn fetch_lsl_syntax(&mut self, id: uuid::Uuid, cache_dir: std::path::PathBuf) {
+        let url = self.main_cap("LSLSyntax");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let doc = crate::lsl_syntax::load(&http, url.as_deref(), &cache_dir, id).await;
+            let keywords = doc.and_then(|d| crate::lsl_syntax::keywords(&d).ok_or_else(|| "no keyword".to_owned()));
+            match &keywords {
+                Ok(k) => log::info!("lsl syntax: {id} has {} keywords", k.len()),
+                Err(e) => log::warn!("lsl syntax: {id} unavailable ({e})"),
+            }
+            let _ = events.send(NetEvent::LslSyntax { id, keywords });
         });
     }
 

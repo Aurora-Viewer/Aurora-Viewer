@@ -39,6 +39,7 @@ mod interaction;
 mod keybinds;
 mod link_trust;
 mod links;
+mod lsl_keywords;
 mod logging;
 mod login_accounts;
 mod login_places;

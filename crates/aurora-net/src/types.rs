@@ -507,6 +507,9 @@ pub enum NetEvent {
         materials_rate: Option<f32>,
         /// "MaxMaterialsPerTransaction": material ids per request.
         materials_max: Option<u32>,
+        /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
+        /// when the region names none.
+        lsl_syntax_id: Uuid,
     },
     HoverHeightUpdated {
         region: RegionHandle,
@@ -589,6 +592,11 @@ pub enum NetEvent {
     /// The region console's output (`SimConsoleResponse`), or Err when the
     /// command did not reach the simulator (sim_console.rs).
     SimConsoleReply(Result<String, String>),
+    /// The LSL keywords of a syntax id (`NetCommand::FetchLslSyntax`).
+    LslSyntax {
+        id: Uuid,
+        keywords: Result<Vec<crate::lsl_syntax::Keyword>, String>,
+    },
     /// A nearby voice moderation request failed (voice_moderation.rs);
     /// `everyone` for mute / unmute all.
     VoiceModerationFailed { everyone: bool },
@@ -1356,6 +1364,12 @@ pub enum NetCommand {
     /// One command line for the region console (SimConsoleAsync); the
     /// output comes as `NetEvent::SimConsoleReply`.
     SimConsole(String),
+    /// The LSL keywords of the syntax `id`, from the cache folder or the
+    /// region's LSLSyntax capability; answered by `NetEvent::LslSyntax`.
+    FetchLslSyntax {
+        id: Uuid,
+        cache_dir: std::path::PathBuf,
+    },
     /// Mute or unmute in the region's spatial voice
     /// (SpatialVoiceModerationRequest).
     ModerateVoice {

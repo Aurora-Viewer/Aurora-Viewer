@@ -1,6 +1,7 @@
 //! LSL token colors, following LLKeywords::findSegments / processTokensGroup
 //! (Firestorm indra/llui/llkeywords.cpp, originally LGPL 2.1). Built-in names
-//! come from Firestorm's keywords_lsl_default.xml. Custom functions are also
+//! come from the LSL keywords in use (`crate::lsl_keywords`: Firestorm's
+//! keywords_lsl_default.xml, or the region's). Custom functions are also
 //! recognized at declarations and calls. This lexer never changes the source.
 
 use super::{
@@ -12,8 +13,8 @@ use egui::{
     Color32, FontId, TextFormat,
     text::{LayoutJob, LayoutSection},
 };
-use serde::Deserialize;
-use std::{collections::HashMap, ops::Range, sync::OnceLock};
+use crate::lsl_keywords::{self, Group};
+use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -57,36 +58,14 @@ impl Kind {
     }
 }
 
-#[derive(Deserialize)]
-struct Catalog {
-    controls: Vec<String>,
-    types: Vec<String>,
-    events: Vec<String>,
-    functions: Vec<String>,
-    constants: Vec<String>,
-}
-
-fn keywords() -> &'static HashMap<String, Kind> {
-    static WORDS: OnceLock<HashMap<String, Kind>> = OnceLock::new();
-    WORDS.get_or_init(|| {
-        // Invariant: this JSON is a bundled, tested build-time asset, not input.
-        let catalog: Catalog =
-            serde_json::from_str(include_str!("../../../assets/lsl/keywords.json")).expect("valid bundled LSL keyword catalog");
-        let mut words = HashMap::new();
-        for (names, kind) in [
-            (catalog.controls, Kind::Keyword),
-            (catalog.types, Kind::Type),
-            (catalog.events, Kind::Event),
-            (catalog.functions, Kind::Function),
-            (catalog.constants, Kind::Constant),
-        ] {
-            words.extend(names.into_iter().map(|name| (name, kind)));
-        }
-        words.insert("default".into(), Kind::Keyword);
-        for name in ["switch", "case", "break"] {
-            words.insert(name.into(), Kind::Keyword);
-        }
-        words
+/// A built-in name's kind in the LSL keywords in use.
+fn keyword(name: &str) -> Option<Kind> {
+    lsl_keywords::current().word(name).map(|group| match group {
+        Group::Control => Kind::Keyword,
+        Group::Type => Kind::Type,
+        Group::Event => Kind::Event,
+        Group::Function => Kind::Function,
+        Group::Constant => Kind::Constant,
     })
 }
 
@@ -358,14 +337,10 @@ fn tokens(source: &str) -> Vec<Token> {
     // Skip comments and whitespace when recognizing custom function calls.
     // A reverse pass avoids repeatedly scanning long comment blocks.
     let mut next_code = "";
-    let words = keywords();
     for token in result.iter_mut().rev() {
         let text = &source[token.bytes.clone()];
         if token.kind == Kind::Variable {
-            token.kind = words
-                .get(text)
-                .copied()
-                .unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
+            token.kind = keyword(text).unwrap_or(if next_code == "(" { Kind::Function } else { Kind::Variable });
             if text == "default" {
                 token.kind = Kind::Section;
             }
@@ -446,6 +421,9 @@ impl Style {
 #[derive(Default)]
 pub(super) struct Highlighter {
     style: Option<Style>,
+    /// The keywords' generation the job was colored with
+    /// (`lsl_keywords::generation`): a region's own keywords recolor it.
+    keywords: u64,
     job: LayoutJob,
     pub colors: Vec<ColorLiteral>,
 }
@@ -466,7 +444,9 @@ impl Highlighter {
         insensitive: bool,
     ) -> LayoutJob {
         let style = Style::new(p, font, settings, query, insensitive);
-        if self.style.as_ref() != Some(&style) || self.job.text != source {
+        let keywords = lsl_keywords::generation();
+        if self.style.as_ref() != Some(&style) || self.job.text != source || self.keywords != keywords {
+            self.keywords = keywords;
             let mut job = LayoutJob {
                 text: source.into(),
                 ..Default::default()
@@ -619,10 +599,10 @@ mod tests {
             assert!(parsed.contains(&(text, kind)), "{text}: {parsed:?}");
             assert!(parsed.iter().filter(|(t, _)| *t == text).all(|(_, k)| *k == kind));
         }
-        assert_eq!(keywords().get("llsay"), None);
-        assert_eq!(keywords().get("rotation"), Some(&Kind::Type));
-        assert_eq!(keywords().get("ALL_SIDES"), Some(&Kind::Constant));
-        assert_eq!(keywords().get("timer"), Some(&Kind::Event));
+        assert_eq!(keyword("llsay"), None);
+        assert_eq!(keyword("rotation"), Some(Kind::Type));
+        assert_eq!(keyword("ALL_SIDES"), Some(Kind::Constant));
+        assert_eq!(keyword("timer"), Some(Kind::Event));
     }
 
     #[test]

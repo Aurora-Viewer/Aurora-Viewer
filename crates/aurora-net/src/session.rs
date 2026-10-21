@@ -824,6 +824,7 @@ impl Session<'_> {
                     let max = &v["MaxMaterialsPerTransaction"];
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
+                    let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
@@ -831,6 +832,7 @@ impl Session<'_> {
                         avatar_hover_height,
                         materials_rate,
                         materials_max,
+                        lsl_syntax_id,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1278,6 +1280,7 @@ impl Session<'_> {
             NetCommand::ServerReleaseNotes => self.fetch_server_release_notes(),
             NetCommand::SimConsole(command) => self.send_sim_console(command),
             NetCommand::ModerateVoice { target, mute } => self.moderate_voice(target, mute),
+            NetCommand::FetchLslSyntax { id, cache_dir } => self.fetch_lsl_syntax(id, cache_dir),
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {

@@ -5610,6 +5610,10 @@ impl App {
         for c in self.world.sim_console.take_commands() {
             self.send(c);
         }
+        // the script editor's keywords follow the region's LSL syntax
+        if let Some(c) = self.world.follow_lsl_syntax() {
+            self.send(c);
+        }
         // experiences' details and permissions (questions, profile)
         for c in self.world.experiences.take_commands() {
             self.send(c);
