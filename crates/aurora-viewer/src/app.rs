@@ -7543,6 +7543,11 @@ impl App {
                 }
             }
         }
+        if self.demo && crate::demo::seat_kill::on() {
+            for event in crate::demo::seat_kill::events(self.frame_count) {
+                self.world.apply(event);
+            }
+        }
         if self.demo && crate::demo::presence::position().is_some() {
             let agent = self.world.agent_id;
             for event in crate::demo::presence::events(self.frame_count, agent) {

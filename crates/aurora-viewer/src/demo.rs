@@ -123,6 +123,9 @@ pub mod sculpt;
 /// Directory answers of the search window (AURORA_DEMO_SEARCH).
 #[path = "demo_search.rs"]
 pub mod search;
+/// A seat deleted under the resident sitting on it (AURORA_DEMO_SEAT_KILL).
+#[path = "demo_seat_kill.rs"]
+pub mod seat_kill;
 /// A rainbow or a 22° halo in the region's sky (AURORA_DEMO_SKY_OPTICS).
 #[path = "demo_sky.rs"]
 pub mod sky;
@@ -2031,10 +2034,12 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 value4 = format!("{}", DEMO_GROUP2)
             );
             // The animesh fixture needs its wearer visible in full, and
-            // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click
-            // and derender fixtures need the same visible, unblocked wearer.
+            // AURORA_DEMO_PEOPLE the wolf as a friend. The attachment-click,
+            // derender and seat-kill fixtures need the same visible,
+            // unblocked wearer.
             let text = if std::env::var_os("AURORA_DEMO_ANIMESH").is_some()
                 || std::env::var_os("AURORA_DEMO_DERENDER").is_some()
+                || seat_kill::on()
                 || std::env::var("AURORA_DEMO_WORLD_CLICKS").is_ok_and(|m| m.starts_with("worn-"))
                 || people::mode().is_some()
                 || social_menu::step().is_some()
