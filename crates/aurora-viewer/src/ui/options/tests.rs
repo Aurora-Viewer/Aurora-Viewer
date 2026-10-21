@@ -566,6 +566,38 @@ fn the_cog_shows_the_rows_behind_it() {
 }
 
 #[test]
+fn the_frame_rate_limits_show_under_their_switches() {
+    // no cog to open: the limits are what their switches are turned on for
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Graphics, 5, Vec::new());
+    }
+    for (switch, limit) in [
+        (aurora_i18n::tr!("extra-limit-frame-rate"), aurora_i18n::tr!("ui-options-frame-limit")),
+        (
+            aurora_i18n::tr!("ui-options-limit-when-unfocused"),
+            aurora_i18n::tr!("ui-options-frame-limit-unfocused"),
+        ),
+    ] {
+        let switch = texts.iter().find(|t| t.source == switch).expect("the switch").rect;
+        let limit = texts
+            .iter()
+            .find(|t| t.source == limit)
+            .expect("its limit, shown at once")
+            .rect;
+        assert!(limit.top() > switch.bottom(), "under its switch");
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.source == "1" && (t.rect.center().y - switch.center().y).abs() < 6.0),
+            "no cog on the switch"
+        );
+    }
+}
+
+#[test]
 fn the_name_colors_wait_for_their_switch() {
     // the cog of the colours by relation is dimmed and its rows greyed
     // while the switch is off

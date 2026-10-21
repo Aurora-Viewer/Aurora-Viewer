@@ -62,12 +62,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
         3 => reflections_and_water(cx),
         4 => image(cx),
         _ => cx.group(tr!("ui-options-frames-per-second"), |cx| {
-            cx.toggle(
+            // across, its switch in line with those of the limits below
+            cx.wide().toggle(
                 tr!("ui-options-vertical-synchronization"),
                 tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
                 &field!(vsync),
             );
-            cx.toggle(
+            // the limits show under their switches: the value is what the
+            // switch is turned on for
+            cx.unfolded().toggle(
                 tr!("extra-limit-frame-rate"),
                 tr!("ui-options-caps-frames-per-second-less-heat-and-noise-enabled"),
                 &field!(fps_cap),
@@ -76,7 +79,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             cx.subs(off, |cx| {
                 cx.slider(tr!("ui-options-frame-limit"), "", &field!(fps_limit), 10..=360, tr!("status-fps"));
             });
-            cx.toggle(
+            cx.unfolded().toggle(
                 tr!("ui-options-limit-when-unfocused"),
                 tr!("ui-options-when-the-window-is-not-in-the-foreground-the"),
                 &field!(background_fps_cap),
