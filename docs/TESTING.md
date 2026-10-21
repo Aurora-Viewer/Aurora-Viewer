@@ -1168,8 +1168,10 @@ wrapped status message and a 64-item object inventory at two heights.
 opens the same options with native sitting selected and an offline full-body
 P4 standing AO above a P3 constrained sit. `native-missing` disables Aurora's
 integrated AO: the existing bridge lock takes over without native sitting.
-The selected native method stays unchanged; help and status name Aurora's
-integrated AO and require at least one compatible standing idle animation.
+The selected native method stays unchanged. The bridge choice says "classic
+method"; native sitting has no explanatory paragraph. Its fallback status names
+Aurora's integrated AO, requires at least one compatible standing idle animation
+and says the classic system will be used otherwise.
 `native-fallback` starts anchored, disables the integrated AO at frame 700 and
 restores it at frame 1000. Capture at 620/850/1250: native sitting, bridge
 fallback after stand-up, then native sitting again without changing the method.
@@ -1182,7 +1184,9 @@ The optional lock indicator is off by default. Enable it in the options,
 drag its body to another position, hide/show it and restart: the saved UI
 layout must retain its position. A click without dragging still opens the
 options; shrinking the viewer keeps the indicator inside the work area.
-The indicator uses compact state labels; hover it for the full status.
+The indicator says "Movelock active" for the classic method, native hold
+and bridge fallback; transient states retain their compact labels. Hover it for
+the full status.
 
 Offline checks exercise control edges, bounded retries/late replies, manual
 seat ownership, region changes, per-channel priorities, complete standing
