@@ -39,7 +39,10 @@ impl Update {
     pub fn apply(&self, folder: &mut InvFolder) {
         match self {
             Self::Rename(name) => folder.name.clone_from(name),
-            Self::Favorite(favorite) => folder.favorite = *favorite,
+            Self::Favorite(favorite) => {
+                folder.favorite = *favorite;
+                folder.favorite_known = true;
+            }
             Self::Thumbnail(id) => folder.thumbnail = *id,
             Self::Trash(parent) => folder.parent = *parent,
         }
@@ -70,10 +73,17 @@ pub async fn mutate(
     {
         parents.push(parent);
     }
-    let response = crate::caps::post_llsd(http, fetch_cap, &crate::inventory::fetch_request_body(&parents, owner))
-        .await
-        .map_err(|_| aurora_i18n::tr!("outfits-categories-could-not-read-the-outfit-back-refresh-before-trying").to_owned())?;
-    let mut contents = crate::inventory::parse_fetch_response(&response);
+    let read_error = || aurora_i18n::tr!("outfits-categories-could-not-read-the-outfit-back-refresh-before-trying").to_owned();
+    let mut contents = if matches!(change.update, Update::Favorite(_)) {
+        crate::inventory::ais::fetch_folders(http, cap, owner, &parents)
+            .await
+            .map_err(|_| read_error())?
+    } else {
+        let response = crate::caps::post_llsd(http, fetch_cap, &crate::inventory::fetch_request_body(&parents, owner))
+            .await
+            .map_err(|_| read_error())?;
+        crate::inventory::parse_fetch_response(&response)
+    };
     if parents
         .iter()
         .any(|id| !contents.iter().any(|c| c.folder_id == *id && c.version >= 0))
@@ -97,6 +107,12 @@ mod tests {
         let mut category = llsd_map! { "category_id" => folder, "parent_id" => parent, "type_default" => 47, "name" => "Tenue" };
         for (key, value) in update.body().as_map().into_iter().flatten() {
             category.insert(key.clone(), value.clone());
+        }
+        if matches!(update, Update::Favorite(_)) {
+            let mut categories = Llsd::new_map();
+            categories.insert(folder.to_string(), category);
+            return llsd_map! { "category_id" => parent, "version" => 3,
+            "_embedded" => llsd_map! { "categories" => categories, "items" => Llsd::new_map(), "links" => Llsd::new_map() } };
         }
         let mut folders = vec![llsd_map! { "folder_id" => parent, "version" => 3, "categories" => Llsd::Array(vec![category]) }];
         if old_parent != parent {
@@ -137,8 +153,12 @@ mod tests {
             let requests = task.await.expect("server");
             assert_eq!(requests[0].0, format!("PATCH /category/{folder} HTTP/1.1"));
             assert_eq!(requests[0].1, update.body());
-            assert!(requests[1].0.starts_with("POST /fetch "));
-            assert_eq!(requests[1].1["folders"].as_array().len(), if destination == parent { 1 } else { 2 });
+            if matches!(update, Update::Favorite(_)) {
+                assert!(requests[1].0.starts_with(&format!("GET /category/{parent}/children?depth=0 ")));
+            } else {
+                assert!(requests[1].0.starts_with("POST /fetch "));
+                assert_eq!(requests[1].1["folders"].as_array().len(), if destination == parent { 1 } else { 2 });
+            }
         }
     }
 

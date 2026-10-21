@@ -4577,6 +4577,11 @@ offline; the files and snapshots uploaded in demo stay offline.
   Capture frames `700,850`: first the title bar alone, then the restored
   window with the demo object selected and revealed. Covers both layouts
   without grid access; also test manually with a worn attachment on Agni.
+- `favorites`, `aurora-favorites`: the Favorites tab with three objects of
+  the same type, added through the batch planner. `favorites-multi` and
+  `aurora-favorites-multi` show their selected rows and Add to Favorites
+  menu; click it to check that every object receives its own star. Capture
+  at frame 700; the `aurora` variants exercise the Aurora layout.
 - `aurora`, `aurora-medium`, `aurora-wide`, `aurora-rights`: Aurora's
   window, placed at frame 2 at its narrow (440 px), medium (800 px) and wide
   (1180 px) width, on the demo object of the right-click tests, the demo

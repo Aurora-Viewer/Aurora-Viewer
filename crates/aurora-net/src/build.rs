@@ -512,6 +512,7 @@ impl TaskItem {
             asset_id: self.asset_id,
             flags: self.flags,
             favorite: false,
+            favorite_known: false,
             creator: self.creator_id,
             created_at: self.creation_date as i64,
             owner: self.owner_id,

@@ -626,7 +626,7 @@ impl ViewCache {
                 if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
                     return false;
                 }
-                if tab == 4 && !it.favorite {
+                if tab == 4 && !rules::is_favorite(inv, e.id) {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
@@ -1015,6 +1015,28 @@ mod tests {
         let mut cache = ViewCache::default();
         cache.search(inv, inv.root, "", prefs, filters, tab, None, facts, facts.agent, 1000);
         cache.results
+    }
+
+    #[test]
+    fn inventory_favorites_filter_links_by_the_original_state() {
+        let (mut inv, facts) = fixture();
+        inv.items.get_mut(&id(10)).expect("original").favorite = true;
+        let mut link = item(13, id(2), "Link", 100);
+        link.asset_type = 24;
+        link.asset_id = id(10);
+        inv.add_items(vec![link]);
+        let prefs = InventoryPreferences::default();
+        let filters = Filters::default();
+        let results = search(&inv, &facts, &prefs, &filters, 4);
+        assert!(results.contains(&id(10)));
+        assert!(results.contains(&id(13)));
+        assert!(!results.contains(&id(11)));
+        inv.items.get_mut(&id(10)).expect("original").favorite = false;
+        inv.items.get_mut(&id(13)).expect("link").favorite = true;
+        inv.generation += 1;
+        let results = search(&inv, &facts, &prefs, &filters, 4);
+        assert!(!results.contains(&id(10)));
+        assert!(!results.contains(&id(13)), "ignore a stale favorite on the link itself");
     }
 
     #[test]

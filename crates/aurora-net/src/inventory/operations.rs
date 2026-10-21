@@ -272,15 +272,27 @@ where
         total: refresh.len(),
     });
     let mut contents = Vec::new();
-    let retries = if moved || !created.is_empty() { 5 } else { 0 };
+    let favorite_changed = change
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::Patch { body, .. } if body.has("favorite")));
+    let retries = if moved || !created.is_empty() || favorite_changed { 5 } else { 0 };
     for attempt in 0..=retries {
         contents.clear();
         let mut complete = true;
         for chunk in refresh.chunks(16) {
-            let doc = crate::caps::post_llsd(http, fetch_cap, &super::fetch_request_body(chunk, owner))
-                .await
-                .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?;
-            let fetched = super::parse_fetch_response(&doc);
+            let fetched = if favorite_changed {
+                // Every sibling's metadata must come from AIS. Overlaying only
+                // this mutation onto a legacy listing erases earlier favorites.
+                super::ais::fetch_folders(http, cap, owner, chunk)
+                    .await
+                    .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?
+            } else {
+                let doc = crate::caps::post_llsd(http, fetch_cap, &super::fetch_request_body(chunk, owner))
+                    .await
+                    .map_err(|_| aurora_i18n::tr!("inventory-operations-change-sent-but-could-not-read-it-back-reload").to_owned())?;
+                super::parse_fetch_response(&doc)
+            };
             complete &= chunk.iter().all(|id| fetched.iter().any(|c| c.folder_id == *id && c.version >= 0));
             contents.extend(fetched);
         }
@@ -288,14 +300,30 @@ where
             break;
         }
         if attempt == retries {
+            for operation in &change.operations {
+                if let Operation::Patch { id, folder, body } = operation
+                    && body.has("favorite")
+                {
+                    let id = resolve(&created, *id);
+                    let observed = if *folder {
+                        contents.iter().flat_map(|c| &c.folders).find(|f| f.id == id).map(|f| f.favorite)
+                    } else {
+                        contents.iter().flat_map(|c| &c.items).find(|it| it.id == id).map(|it| it.favorite)
+                    };
+                    log::warn!(
+                        "inventory favorite confirmation failed: folder={folder}, expected={}, observed={observed:?}",
+                        body["favorite"]["toggled"].as_bool()
+                    );
+                }
+            }
             return Err(if complete {
                 aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders").into()
             } else {
                 aurora_i18n::tr!("inventory-operations-read-back-incomplete-reload-inventory-before-trying-again").into()
             });
         }
-        // AIS creation and reliable UDP moves can become visible to the fetch
-        // service after the first HTTP read. Retry reads, never the mutation.
+        // AIS creation/favorites and reliable UDP moves can become visible to
+        // the fetch service after the first HTTP read. Retry reads, never writes.
         tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
     }
     // Parent metadata must precede its descendants (including new folders).
@@ -316,7 +344,7 @@ fn sort_contents_parent_first(contents: &mut [FolderContents]) {
     // before the snapshot that introduces its folder to the inventory model.
     let parents: HashMap<_, _> = contents
         .iter()
-        .flat_map(|c| c.folders.iter().map(move |f| (f.id, c.folder_id)))
+        .flat_map(|c| c.folders.iter().filter(|f| f.id != c.folder_id).map(|f| (f.id, f.parent)))
         .collect();
     contents.sort_by_cached_key(|c| {
         let mut id = c.folder_id;
@@ -716,7 +744,7 @@ mod tests {
                                     .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
                                     .and_then(|(_, value)| value.trim().parse::<usize>().ok())
                             })
-                            .expect("content length");
+                            .unwrap_or(0);
                         if bytes.len() >= end + 4 + size {
                             break (end + 4, size);
                         }
@@ -925,7 +953,7 @@ mod tests {
                                     .filter(|(key, _)| key.eq_ignore_ascii_case("content-length"))
                                     .and_then(|(_, value)| value.trim().parse::<usize>().ok())
                             })
-                            .expect("content length");
+                            .unwrap_or(0);
                         if bytes.len() >= end + 4 + len {
                             break (end + 4, len);
                         }
@@ -936,7 +964,11 @@ mod tests {
                     .next()
                     .expect("request line")
                     .to_owned();
-                let body = aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD");
+                let body = if len == 0 {
+                    Llsd::Undef
+                } else {
+                    aurora_llsd::from_xml(&bytes[start..start + len]).expect("LLSD")
+                };
                 let rejected = header.starts_with("PATCH ") && body.has("parent_id");
                 requests.push((header, body));
                 let body = aurora_llsd::to_xml(&reply);
@@ -1383,6 +1415,133 @@ mod tests {
             contents.iter().map(|c| c.folder_id).collect::<Vec<_>>(),
             vec![id(900), id(300), id(200), id(100)]
         );
+    }
+
+    #[tokio::test]
+    async fn inventory_favorites_do_not_hide_unconfirmed_name_changes() {
+        let current = favorite_readback(false, true);
+        let record = current["_embedded"]["items"][id(3).to_string().as_str()].clone();
+        let mut replies = vec![record];
+        replies.extend(vec![favorite_readback(false, true); 6]);
+        let (url, task) = move_server(replies).await;
+        let mut change = favorite_change(false, true);
+        let Operation::Patch { body, .. } = &mut change.operations[0] else {
+            panic!("favorite patch");
+        };
+        body.insert("name", "New sound");
+        assert!(mutate(&reqwest::Client::new(), &url, &url, id(2), change).await.is_err());
+        assert_eq!(task.await.expect("bounded readback").len(), 7);
+    }
+
+    #[tokio::test]
+    async fn inventory_favorites_wait_for_readback_without_repeating_the_patch() {
+        for folder in [false, true] {
+            for favorite in [false, true] {
+                let (url, task) = move_server(vec![
+                    Llsd::new_map(),
+                    favorite_readback(folder, !favorite),
+                    favorite_readback(folder, favorite),
+                ])
+                .await;
+                let reply = mutate(
+                    &reqwest::Client::new(),
+                    &url,
+                    &format!("{url}/fetch"),
+                    id(2),
+                    favorite_change(folder, favorite),
+                )
+                .await
+                .expect("eventual favorite confirmation");
+                let contents = &reply.contents[0];
+                assert_eq!(
+                    if folder {
+                        contents.folders[0].favorite
+                    } else {
+                        contents.items[0].favorite
+                    },
+                    favorite
+                );
+                let requests = task.await.expect("requests");
+                assert_eq!(requests.len(), 3);
+                let kind = if folder { "category" } else { "item" };
+                assert!(requests[0].0.starts_with(&format!("PATCH /{kind}/{} ", id(3))));
+                assert_eq!(requests[0].1, metadata_favorite(favorite));
+                assert!(requests[1..].iter().all(|r| {
+                    r.0.starts_with("GET /category/00000000-0000-0000-0000-000000000001/children?depth=0 ")
+                }));
+            }
+        }
+    }
+
+    fn favorite_change(folder: bool, favorite: bool) -> Mutation {
+        Mutation {
+            operations: vec![Operation::Patch {
+                id: id(3),
+                folder,
+                body: metadata_favorite(favorite),
+            }],
+            refresh: vec![id(1)],
+            ..Default::default()
+        }
+    }
+
+    fn favorite_readback(folder: bool, favorite: bool) -> Llsd {
+        let favorite = if favorite {
+            llsd_map! { "toggled" => true }
+        } else {
+            Llsd::Undef
+        };
+        let record = if folder {
+            llsd_map! { "category_id" => id(3), "parent_id" => id(1), "name" => "Folder", "type_default" => -1, "favorite" => favorite }
+        } else {
+            llsd_map! { "item_id" => id(3), "parent_id" => id(1), "name" => "Sound", "type" => 1, "inv_type" => 1, "favorite" => favorite }
+        };
+        let mut records = Llsd::new_map();
+        records.insert(id(3).to_string(), record);
+        let mut embedded = llsd_map! { "categories" => Llsd::new_map(), "items" => Llsd::new_map(), "links" => Llsd::new_map() };
+        embedded.insert(if folder { "categories" } else { "items" }, records);
+        llsd_map! { "category_id" => id(1), "agent_id" => id(2), "version" => 2, "_embedded" => embedded }
+    }
+
+    #[tokio::test]
+    async fn inventory_favorites_still_fail_when_readback_never_confirms_them() {
+        let mut responses = vec![Llsd::new_map()];
+        responses.extend(vec![favorite_readback(false, false); 6]);
+        let (url, task) = move_server(responses).await;
+        assert!(
+            mutate(
+                &reqwest::Client::new(),
+                &url,
+                &format!("{url}/fetch"),
+                id(2),
+                favorite_change(false, true)
+            )
+            .await
+            .is_err()
+        );
+        let requests = task.await.expect("bounded requests");
+        assert_eq!(requests.len(), 7);
+        assert!(requests[0].0.starts_with("PATCH /item/"));
+        assert!(requests[1..].iter().all(|r| {
+            r.0.starts_with("GET /category/00000000-0000-0000-0000-000000000001/children?depth=0 ")
+        }));
+    }
+
+    #[tokio::test]
+    async fn inventory_favorites_stop_immediately_after_a_server_refusal() {
+        let (url, task) = server(vec![(403, Llsd::new_map())]).await;
+        assert!(
+            mutate(
+                &reqwest::Client::new(),
+                &url,
+                "invalid fetch capability",
+                id(2),
+                favorite_change(false, true)
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(task.await.expect("requests").len(), 1);
     }
 
     #[tokio::test]

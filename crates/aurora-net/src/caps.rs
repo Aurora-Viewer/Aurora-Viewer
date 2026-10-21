@@ -268,6 +268,10 @@ pub async fn get_llsd(http: &reqwest::Client, url: &str) -> Result<Llsd, CapsErr
     send_llsd(http.get(url), HttpKind::Cap).await
 }
 
+pub async fn get_llsd_as(http: &reqwest::Client, url: &str, kind: HttpKind) -> Result<Llsd, CapsError> {
+    send_llsd(http.get(url), kind).await
+}
+
 /// POST, or PUT (RenderMaterials writes, LLMaterialMgr::processPutQueue), of LLSD XML.
 pub async fn request_llsd(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, CapsError> {
     let req = if put { http.put(url) } else { http.post(url) };

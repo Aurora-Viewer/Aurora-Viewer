@@ -2191,6 +2191,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         asset_id: Uuid::nil(),
                         flags: 0,
                         favorite: false,
+                        favorite_known: false,
                         creator: Uuid::nil(),
                         created_at: 0,
                         owner: *owner,

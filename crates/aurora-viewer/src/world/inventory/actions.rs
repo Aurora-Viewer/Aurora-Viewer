@@ -89,6 +89,48 @@ pub fn default_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     let kind = original(inv, id).and_then(|id| inv.items.get(&id)).map(|it| it.asset_type);
     kind.and_then(|kind| system(inv, kind)).or(Some(inv.root).filter(|id| !id.is_nil()))
 }
+/// get_is_favorite / toggle_favorite (llinventoryfunctions.cpp): links show
+/// and modify their original's favorite, including links to folders.
+pub fn is_favorite(inv: &Inventory, id: Uuid) -> bool {
+    original(inv, id).is_some_and(|id| {
+        inv.folders
+            .get(&id)
+            .map_or_else(|| inv.items.get(&id).is_some_and(|it| it.favorite), |f| f.info.favorite)
+    })
+}
+
+pub fn toggle_favorite(inv: &Inventory, id: Uuid) -> Result<Mutation, String> {
+    set_favorites(inv, &[id], !is_favorite(inv, id))
+}
+
+/// set_favorite / doToSelected (llinventoryfunctions.cpp): set every selected
+/// original to the requested state; aliases must not toggle it twice.
+pub fn set_favorites(inv: &Inventory, ids: &[Uuid], favorite: bool) -> Result<Mutation, String> {
+    let mut change = Mutation::default();
+    let mut seen = HashSet::new();
+    for id in ids {
+        let target = original(inv, *id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
+        if target == inv.root || library(inv, target) {
+            return Err(aurora_i18n::tr!("common-item-not-found").into());
+        }
+        // Legacy set_favorite also clears a stale flag attached to the link
+        // itself when removing its original from favorites.
+        if !favorite && *id != target && inv.items.get(id).is_some_and(|item| item.favorite) && seen.insert(*id) {
+            let update = patch(inv, *id, aurora_net::inventory::operations::metadata_favorite(false))?;
+            change.operations.extend(update.operations);
+            change.refresh.extend(update.refresh);
+        }
+        if seen.insert(target) && is_favorite(inv, target) != favorite {
+            let update = patch(inv, target, aurora_net::inventory::operations::metadata_favorite(favorite))?;
+            change.operations.extend(update.operations);
+            change.refresh.extend(update.refresh);
+        }
+    }
+    change.refresh.sort();
+    change.refresh.dedup();
+    Ok(change)
+}
+
 pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> {
     let old = parent(inv, id).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
     let mut refresh = vec![old];
@@ -348,6 +390,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("favorite") {
                         f.info.favorite = body["favorite"]["toggled"].as_bool();
+                        f.info.favorite_known = true;
                     }
                     if body.has("thumbnail") {
                         f.info.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
@@ -362,6 +405,7 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     }
                     if body.has("favorite") {
                         it.favorite = body["favorite"]["toggled"].as_bool();
+                        it.favorite_known = true;
                     }
                     if body.has("thumbnail") {
                         it.thumbnail = body["thumbnail"]["asset_id"].as_uuid();

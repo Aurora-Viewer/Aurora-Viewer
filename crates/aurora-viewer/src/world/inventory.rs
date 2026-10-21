@@ -105,9 +105,13 @@ impl Inventory {
         self.sort_all();
     }
 
-    fn upsert_folder(&mut self, f: InvFolder, library: bool) {
+    fn upsert_folder(&mut self, mut f: InvFolder, library: bool) {
         match self.folders.get_mut(&f.id) {
             Some(existing) => {
+                if !f.favorite_known && !f.favorite {
+                    f.favorite = existing.info.favorite;
+                    f.favorite_known = existing.info.favorite_known;
+                }
                 // A parent listing can carry older/unknown child versions.
                 // Keep the version of the contents already confirmed locally.
                 let version = existing.info.version;
@@ -213,7 +217,8 @@ impl Inventory {
     pub fn add_items(&mut self, items: Vec<InvItem>) {
         self.generation += 1;
         let mut changed = HashSet::new();
-        for it in items {
+        for mut it in items {
+            self.preserve_favorite(&mut it);
             if let Some(old) = self.items.get(&it.id)
                 && old.parent != it.parent
                 && let Some(folder) = self.folders.get_mut(&old.parent)
@@ -241,6 +246,9 @@ impl Inventory {
     /// version once per update. Repeated records do not advance it again.
     pub fn server_updated(&mut self, folders: Vec<InvFolder>, mut items: Vec<InvItem>) {
         items.retain(|item| !item.id.is_nil());
+        for item in &mut items {
+            self.preserve_favorite(item);
+        }
         let mut changed = HashSet::new();
         for folder in folders {
             let id = folder.id;
@@ -287,6 +295,18 @@ impl Inventory {
             self.sort_children(id);
         }
         self.generation += 1;
+    }
+
+    /// Partial/UDP records lack favorite metadata. Preserve what AIS already
+    /// confirmed, while a complete AIS record can explicitly clear the flag.
+    fn preserve_favorite(&self, item: &mut InvItem) {
+        if !item.favorite_known
+            && !item.favorite
+            && let Some(old) = self.items.get(&item.id)
+        {
+            item.favorite = old.favorite;
+            item.favorite_known = old.favorite_known;
+        }
     }
 
     /// AIS has acknowledged these new, empty categories. Subsequent server
@@ -408,7 +428,7 @@ impl Inventory {
             return;
         }
         let doc = llsd_map! {
-            "version" => 2,
+            "version" => 3,
             "folders" => Llsd::Array(folders),
             "items" => Llsd::Array(items),
         };
@@ -438,6 +458,7 @@ impl Inventory {
                 continue;
             }
             cur.info.favorite = c.favorite;
+            cur.info.favorite_known = true;
             cur.info.thumbnail = c.thumbnail;
             cur.state = FetchState::Fetched;
             let mut listed = Vec::with_capacity(c.items.len());
@@ -494,7 +515,9 @@ pub struct CachedInventory {
 pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
     let bytes = crate::cache::read_touch(path).ok()?;
     let (doc, _) = aurora_llsd::from_binary(&bytes).ok()?;
-    if doc["version"].as_i32() != 2 {
+    // Older files were populated by legacy reads that could discard other
+    // favorites. Reload those folders through AIS once, even at equal versions.
+    if doc["version"].as_i32() != 3 {
         return None;
     }
     let mut by_parent: HashMap<Uuid, Vec<InvItem>> = HashMap::new();
@@ -512,6 +535,7 @@ pub fn read_cache(path: &std::path::Path) -> Option<CachedInventory> {
             asset_id: v["asset_id"].as_uuid(),
             flags: v["flags"].as_i32() as u32,
             favorite: v["favorite"].as_bool(),
+            favorite_known: true,
             creator: v["creator"].as_uuid(),
             created_at: v["created_at"].as_i32() as i64,
             owner: v["owner"].as_uuid(),
@@ -860,6 +884,12 @@ mod tests {
     fn an_unreadable_cache_is_no_cache() {
         let path = std::env::temp_dir().join(format!("aurora-inventory-{}.bin", Uuid::new_v4()));
         assert!(read_cache(&path).is_none());
+        let old = aurora_llsd::llsd_map! { "version" => 2, "folders" => Llsd::Array(Vec::new()), "items" => Llsd::Array(Vec::new()) };
+        std::fs::write(&path, aurora_llsd::to_binary(&old)).expect("old inventory cache");
+        assert!(
+            read_cache(&path).is_none(),
+            "reload legacy favorite metadata instead of restoring it"
+        );
         std::fs::write(&path, b"not a cache").expect("synthetic cache");
         assert!(read_cache(&path).is_none());
         std::fs::remove_file(&path).expect("synthetic cache cleanup");

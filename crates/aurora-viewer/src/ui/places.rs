@@ -1379,6 +1379,7 @@ mod tests {
             type_default: t,
             version: 1,
             favorite: false,
+            favorite_known: false,
             thumbnail: Uuid::nil(),
         }
     }
@@ -1394,6 +1395,7 @@ mod tests {
             asset_id: Uuid::from_u128(id + 1000),
             flags: 0,
             favorite: false,
+            favorite_known: false,
             creator: Uuid::nil(),
             created_at: created,
             owner: Uuid::nil(),
