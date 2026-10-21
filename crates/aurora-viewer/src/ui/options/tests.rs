@@ -251,7 +251,7 @@ fn collected() -> Vec<(Page, String)> {
     let mut st = OptionsUi::default();
     let mut r = OptionsResult::default();
     let mut out = Vec::new();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
         let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Collect, "");
         for page in Page::ALL {
             run_page(&mut cx, page, None);
@@ -390,7 +390,7 @@ fn counts(s: &mut Settings, query: &str) -> Counts {
         ..Default::default()
     };
     let mut r = OptionsResult::default();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| count(ui, &p, s, &d, &mut st, &mut r));
+    run_ui(&ctx, egui::RawInput::default(), |ui| count(ui, &p, s, &d, &mut st, &mut r));
     st.counts
 }
 
@@ -570,10 +570,10 @@ fn the_name_colors_wait_for_their_switch() {
         "",
         aurora_i18n::tr!("ui-options-names-by-relation"),
     ));
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| count(ui, &p, &mut s, &d, &mut st, &mut r));
+    run_ui(&ctx, egui::RawInput::default(), |ui| count(ui, &p, &mut s, &d, &mut st, &mut r));
     assert_eq!(st.subs.get(&id), Some(&(4, true)), "four colours, greyed");
     s.colors.relation_names = true;
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| count(ui, &p, &mut s, &d, &mut st, &mut r));
+    run_ui(&ctx, egui::RawInput::default(), |ui| count(ui, &p, &mut s, &d, &mut st, &mut r));
     assert_eq!(st.subs.get(&id), Some(&(4, false)));
 }
 

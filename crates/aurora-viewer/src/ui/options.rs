@@ -846,6 +846,14 @@ fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mu
     st.counts = counts;
 }
 
+/// One frame of `body` outside the window (tests), its textures dropped as
+/// a renderer would take them.
+#[cfg(test)]
+pub(crate) fn run_ui(ctx: &egui::Context, raw: egui::RawInput, body: impl FnMut(&mut egui::Ui)) {
+    let mut output = ctx.run_ui(raw, body);
+    output.textures_delta.clear();
+}
+
 /// The reset of a page, outside the window (tests of the settings).
 #[cfg(test)]
 pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
@@ -854,7 +862,7 @@ pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
     let d = Settings::default();
     let mut st = OptionsUi::default();
     let mut r = OptionsResult::default();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
         reset_rows(ui, &p, s, &d, &mut st, &mut r, Some(page));
         st.after_reset(page, s, &mut r);
     });
