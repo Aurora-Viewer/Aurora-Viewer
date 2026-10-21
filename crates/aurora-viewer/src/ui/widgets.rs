@@ -1549,6 +1549,63 @@ fn letters_in_middle(painter: &egui::Painter, galley: &egui::Galley, rect: egui:
     baseline_origin(painter, galley, left, baseline)
 }
 
+/// Tabs sharing one track as wide as the space left, each with its count
+/// after its label (Aurora's Places, the money tracker): the chosen one is
+/// lit in `raised`. Returns true when the selection changed.
+pub fn count_tabs(ui: &mut egui::Ui, p: &Palette, id_salt: &str, selected: &mut usize, tabs: &[(&str, usize)]) -> bool {
+    let (bar, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::hover());
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    ui.painter().rect_filled(bar, radius, p.field);
+    let n = tabs.len().max(1) as f32;
+    let tab_w = (bar.width() - 4.0 - 2.0 * (n - 1.0)) / n;
+    let id = egui::Id::new(id_salt);
+    let line = |s: &str, size: f32, strong: bool, width: f32| {
+        let family = if strong {
+            super::fonts::semibold(ui.ctx())
+        } else {
+            egui::FontFamily::Proportional
+        };
+        let mut job = egui::text::LayoutJob::single_section(
+            s.to_owned(),
+            egui::TextFormat::simple(egui::FontId::new(size, family), Color32::PLACEHOLDER),
+        );
+        job.wrap = egui::text::TextWrapping {
+            max_width: width.max(1.0),
+            max_rows: 1,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        ui.painter().layout_job(job)
+    };
+    let mut changed = false;
+    for (i, (label, count)) in tabs.iter().enumerate() {
+        let r = egui::Rect::from_min_size(
+            egui::pos2(bar.left() + 2.0 + i as f32 * (tab_w + 2.0), bar.top() + 2.0),
+            Vec2::new(tab_w, bar.height() - 4.0),
+        );
+        let resp = ui.interact(r, id.with(i), Sense::click());
+        let on = *selected == i;
+        if on {
+            ui.painter().rect_filled(r, radius, p.raised);
+        } else if resp.hovered() {
+            ui.painter().rect_filled(r, radius, p.raised.gamma_multiply(0.5));
+        }
+        let ink = if on { p.ink } else { p.muted };
+        let name = line(label, 12.5, on, tab_w - 30.0);
+        let num = line(&count.to_string(), 11.0, false, 30.0);
+        let (nw, total) = (name.size().x, name.size().x + 6.0 + num.size().x);
+        let x = r.center().x - total * 0.5;
+        paint_row_text(ui.painter(), name, x, r.center().y, ink);
+        paint_row_text(ui.painter(), num, x + nw + 6.0, r.center().y, p.muted);
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, *label));
+        if resp.clicked() && !on {
+            *selected = i;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Column header row for list views.
 pub fn header_row(ui: &mut egui::Ui, p: &Palette, cols: &[(&str, f32)]) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());

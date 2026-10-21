@@ -51,6 +51,7 @@ pub mod marketplace_listings;
 pub mod media;
 pub mod menu;
 pub mod minimap;
+pub mod money_tracker;
 pub mod monitor;
 pub mod movelock;
 pub mod movement;
@@ -137,6 +138,8 @@ pub struct Panels {
     pub search: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
+    /// "Money tracker" (Me menu): the L$ received and paid.
+    pub money_tracker: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
     /// with Preferences › Aurora), and on its Movement tab (the movement
     /// window).
@@ -178,6 +181,7 @@ impl Panels {
             places: false,
             search: false,
             asset_blacklist: false,
+            money_tracker: false,
             camera_controls: false,
             movement_controls: false,
             nav_edit: None,

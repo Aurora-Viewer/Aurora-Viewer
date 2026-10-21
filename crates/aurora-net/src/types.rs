@@ -638,10 +638,18 @@ pub enum NetEvent {
     /// TransactionInfo names one (TransactionType 0 is a plain balance
     /// update). Sent before the new balance.
     MoneyTransaction {
+        /// MoneyData TransactionID: the simulator may send a reply twice.
+        id: Uuid,
         success: bool,
         kind: i32,
+        source: Uuid,
+        source_group: bool,
         dest: Uuid,
+        dest_group: bool,
         amount: i32,
+        /// TransactionInfo ItemDescription: the item sold, or the message
+        /// of a gift ("Payment" when none).
+        item: String,
         description: String,
     },
     /// MoneyBalanceReply's land: m² the account may hold (tier) and m² it

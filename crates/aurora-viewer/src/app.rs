@@ -60,6 +60,7 @@ mod inventory_drag;
 mod inventory_thumbnail;
 mod link_health;
 mod marketplace_listings;
+mod money_tracker;
 mod monitor;
 mod movement;
 mod object_actions;
@@ -470,6 +471,8 @@ pub struct App {
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
+    /// "Money tracker" (Me menu): the L$ received and paid.
+    money_tracker_ui: ui::money_tracker::MoneyTrackerUi,
     /// Buy Land (LLFloaterBuyLand), and the selection it follows.
     buy_land_ui: ui::buy_land::BuyLandUi,
     buy_land_source: buy_land::BuyLandSource,
@@ -1013,6 +1016,7 @@ impl App {
             blacklist_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
+            money_tracker_ui: Default::default(),
             buy_land_ui: Default::default(),
             buy_land_source: Default::default(),
             marketplace_ui: Default::default(),
@@ -1347,6 +1351,28 @@ impl App {
                     kind = kind.to_string(),
                     amount = format!("{}", amount)
                 ));
+            }
+            // the simulator's MoneyBalanceReply names a gift (the money tracker)
+            if let NetCommand::PayResident {
+                to,
+                group,
+                amount,
+                message,
+            } = &cmd
+            {
+                let item = if message.is_empty() { "Payment" } else { message.as_str() };
+                self.record_money(&NetEvent::MoneyTransaction {
+                    id: uuid::Uuid::new_v4(),
+                    success: true,
+                    kind: 5001,
+                    source: self.world.agent_id,
+                    source_group: false,
+                    dest: *to,
+                    dest_group: *group,
+                    amount: *amount,
+                    item: item.to_owned(),
+                    description: String::new(),
+                });
             }
             // a sit on any prim, and the stand up from it (app/own_motion.rs);
             // the stand up's animations still come from demo::respond
@@ -1945,6 +1971,7 @@ impl App {
         self.library_demo_seeded = false;
         self.gesture_state = Default::default();
         self.buy_currency_ui = Default::default();
+        self.money_tracker_ui = Default::default();
         // the next session signs in with its own cookie (the browser stops)
         self.marketplace_ui = Default::default();
         // the listings belong to the account (LLMarketplaceData)
@@ -2036,6 +2063,7 @@ impl App {
             ..
         } = ev
         {
+            self.record_money(&ev);
             self.pay_ui.on_transaction(success, kind, dest, description);
             return;
         }
@@ -5306,6 +5334,7 @@ impl App {
         wanted.extend(self.notif_ui.wanted_pics.drain());
         wanted.extend(self.land_ui.wanted_pics.drain());
         wanted.extend(self.region_ui.wanted_pics.drain());
+        wanted.extend(self.money_tracker_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -8042,6 +8071,7 @@ impl App {
             self.demo_buy_currency();
             self.demo_buy_land();
             self.demo_pay();
+            self.demo_money_tracker();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;
@@ -10973,6 +11003,7 @@ impl App {
                     ctx.set_cursor_icon(c);
                 }
                 self.show_pay(&ctx, &p, &mut a);
+                self.show_money_tracker(&ctx, &p, &mut a);
                 for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
                     match document {
                         ui::object_actions::ContentsOpen::Script(object, item) => {

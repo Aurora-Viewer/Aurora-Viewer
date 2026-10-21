@@ -4290,10 +4290,15 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::MoneyTransaction {
+                        id: m.money_data.transaction_id,
                         success: m.money_data.transaction_success,
                         kind: m.transaction_info.transaction_type,
+                        source: m.transaction_info.source_id,
+                        source_group: m.transaction_info.is_source_group,
                         dest: m.transaction_info.dest_id,
+                        dest_group: m.transaction_info.is_dest_group,
                         amount: m.transaction_info.amount,
+                        item: field_str(&m.transaction_info.item_description),
                         description: field_str(&m.money_data.description),
                     },
                 );
