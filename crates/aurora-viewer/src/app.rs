@@ -3105,7 +3105,7 @@ impl App {
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
             Action::Performance => ui::widgets::toggle_floater(&self.egui_ctx, "perf", &mut self.panels.perf),
             Action::DevToolbox => ui::widgets::toggle_floater(&self.egui_ctx, ui::dev_toolbox::WINDOW, &mut self.panels.dev_toolbox),
-            Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
+            Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
@@ -4468,7 +4468,7 @@ impl App {
 
     /// Voice session for the current region / parcel, microphone, push-to-talk.
     fn update_voice(&mut self) {
-        let tuning = self.panels.settings && self.options_ui.tab == ui::options::TAB_AUDIO;
+        let tuning = self.panels.settings && self.options_ui.page == ui::options::Page::Sound;
         // device lists for the preferences (listed once per opening)
         if tuning && !self.devices_listed {
             self.options_ui.output_devices = aurora_audio::output_devices();
@@ -9043,7 +9043,7 @@ impl App {
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.open_issue_chooser(),
             LoginAction::Quit => self.request_exit(),
-            LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, "options", &mut self.panels.settings),
+            LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             LoginAction::None | LoginAction::Login => {}
         }
         // the line first, then the typing stop it brings (sendChat, then
@@ -9121,7 +9121,7 @@ impl App {
             ui::audio::AudioAction::Changed => {}
             ui::audio::AudioAction::OpenPreferences => {
                 self.panels.settings = true;
-                self.options_ui.tab = ui::options::TAB_AUDIO;
+                self.options_ui.open(ui::options::Page::Sound, 0);
             }
         }
         match a.bar {
@@ -9205,11 +9205,11 @@ impl App {
             BarAction::MarketplaceListings => self.open_marketplace_listings(),
             BarAction::ChatPrefs => {
                 self.panels.settings = true;
-                self.options_ui.tab = ui::options::TAB_CHAT;
+                self.options_ui.open(ui::options::Page::Chat, 0);
             }
             BarAction::VoicePrefs => {
                 self.panels.settings = true;
-                self.options_ui.tab = ui::options::TAB_AUDIO;
+                self.options_ui.open_audio(ui::options::AudioSection::Voice);
             }
             BarAction::ToggleFly => self.toggle_fly(),
             BarAction::SetDoubleClick(choice) => {
@@ -9274,8 +9274,8 @@ impl App {
                 self.settings.save();
             }
             BarAction::GraphicsPreferences => {
-                ui::widgets::open_floater(&self.egui_ctx, "options", &mut self.panels.settings);
-                self.options_ui.tab = ui::options::TAB_GRAPHICS;
+                ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                self.options_ui.open(ui::options::Page::Graphics, 0);
             }
             BarAction::CameraControls => self.panels.camera_controls = true,
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
@@ -10134,10 +10134,13 @@ impl App {
             self.world.system_message(aurora_i18n::tr!("app-all-settings-have-been-reset"));
             ui::layout::forget(ctx);
         }
-        if let Some(tab) = res.reset_section {
+        if let Some(page) = res.reset_section {
             self.settings.save();
             self.world
-                .system_message(aurora_i18n::tr!("app-section-settings-reset", section = ui::options::tab_name(tab)));
+                .system_message(aurora_i18n::tr!("app-section-settings-reset", section = page.name()));
+        }
+        if res.open_dev_toolbox {
+            self.panels.dev_toolbox = true;
         }
         if self.panels.settings && !open {
             self.settings.save();
@@ -10222,7 +10225,7 @@ impl App {
                 // on one would raise it over the window
                 self.draw_options(&ctx, &p, &mut a);
                 if self.panels.settings {
-                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("options")));
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(ui::options::WINDOW)));
                 }
                 // Keep disconnected script drafts accessible for copying.
                 for action in self
@@ -10762,9 +10765,7 @@ impl App {
                 }
                 if open_prefs {
                     self.panels.settings = true;
-                    self.options_ui.tab = ui::options::TAB_AUDIO;
-                    self.options_ui.scroll_to_end = false;
-                    self.options_ui.audio_section = Some(if open_processing {
+                    self.options_ui.open_audio(if open_processing {
                         ui::options::AudioSection::Processing
                     } else {
                         ui::options::AudioSection::Voice
@@ -12335,48 +12336,15 @@ impl ApplicationHandler for App {
                 self.panels.settings = true;
                 self.panels.perf = false;
                 let value = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
-                let (tab, filter) = value.split_once(':').unwrap_or((&value, ""));
-                self.options_ui.tab = tab.parse().unwrap_or(0);
                 // the former Debug page: the Dev Toolbox
-                if self.options_ui.tab == ui::options::TAB_RETIRED_DEBUG {
+                if value.split(':').next() == Some("9") {
                     self.panels.settings = false;
                     self.panels.dev_toolbox = true;
                 }
-                if self.options_ui.tab == 8 {
-                    self.options_ui.shortcut_filter = filter.to_owned();
-                } else if filter == "reset" {
-                    // the "Reset this section" confirmation, for captures
-                    self.options_ui.ask_reset_section();
-                } else {
-                    let animation_options =
-                        self.options_ui.tab == ui::options::TAB_AURORA && matches!(filter, "animations" | "animations-sync");
-                    if animation_options {
-                        self.settings.synchronize_animations = filter == "animations-sync";
-                    }
-                    self.options_ui.scroll_to_end = filter == "end" || animation_options;
-                    self.options_ui.scroll_to_tone_mapping = filter == "tonemap";
-                    self.options_ui.scroll_to_occlusion = filter == "occlusion";
-                    self.options_ui.scroll_to_bloom = filter == "bloom";
-                    self.options_ui.scroll_to_name_tags = filter == "name-tags";
-                    self.options_ui.scroll_to_new = match filter {
-                        "new" => 1,
-                        "new2" => 2,
-                        "new3" => 3,
-                        _ => 0,
-                    };
-                    self.options_ui.scroll_to_attention = filter == "attention";
-                    self.options_ui.scroll_to_keywords = filter == "keywords";
-                    self.options_ui.audio_section = if self.options_ui.tab == ui::options::TAB_AUDIO {
-                        match filter {
-                            "voice" => Some(ui::options::AudioSection::Voice),
-                            "processing" => Some(ui::options::AudioSection::Processing),
-                            "indicators" => Some(ui::options::AudioSection::Indicators),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    };
+                if value.split(':').nth(1) == Some("animations-sync") {
+                    self.settings.synchronize_animations = true;
                 }
+                ui::options::demo(&mut self.options_ui, &value);
             }
             if let Ok(mode) = std::env::var("AURORA_DEMO_LOGIN") {
                 if matches!(
@@ -13071,7 +13039,7 @@ impl ApplicationHandler for App {
             if let Some(mode) = crate::demo::maturity_scene() {
                 self.panels.settings = true;
                 self.panels.perf = false;
-                self.options_ui.tab = 1;
+                self.options_ui.open(ui::options::Page::Privacy, 0);
                 self.notif_ui.open = mode != "agree";
             }
             // AURORA_DEMO_LURE: teleports received, with the notification list
