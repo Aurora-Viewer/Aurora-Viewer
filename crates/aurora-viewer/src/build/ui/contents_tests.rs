@@ -259,3 +259,19 @@ fn bulk_buttons_select_types_cancel_drafts_and_distinguish_apply_from_ok() {
     assert!(!tool.ui.bulk_perms_open);
     assert!(tool.ui.bulk.job.is_some(), "OK closes the panel, not the pending request");
 }
+
+/// The bulk permissions window keeps its size, its buttons inside it.
+#[test]
+fn bulk_permissions_keep_their_size() {
+    crate::ui::widgets::steady_tests::assert_window_steady(
+        "bulk_perms",
+        &[Vec2::new(360.0, 354.0)],
+        aurora_i18n::tr!("common-cancel"),
+        || {
+            let (world, mut tool, _, _) = fixture();
+            tool.ui.bulk_perms_open = true;
+            (world, tool)
+        },
+        |(world, tool), ctx, p| show(ctx, p, tool, world),
+    );
+}
