@@ -16,6 +16,7 @@ mod aurora;
 pub use aurora::banner_image;
 
 use super::menu;
+use super::texture_library::texture_view::{self, ImageView};
 use super::texture_picker::TexturePicker;
 use super::web_view::WebView;
 use super::widgets::{self, Floater, flat_button};
@@ -182,8 +183,8 @@ struct Window {
     bottom_h: f32,
     /// Our own profile edited in place (the Aurora window).
     editing: bool,
-    /// The picture shown large in a window of its own (the Aurora window).
-    big_photo: bool,
+    /// The selected profile picture shown at full resolution.
+    photo: Option<PhotoPreview>,
     /// Our classified being edited and its saved state (the Aurora window).
     classified_edit: Option<(ClassifiedEdit, ClassifiedEdit)>,
     /// The price asked before a new classified is published.
@@ -196,6 +197,8 @@ struct Window {
     /// Demo captures: our first classified in its form (false) or a new
     /// one at its price (true), once the tab shows.
     demo_classified: Option<bool>,
+    /// Open a photo once the demo profile reply arrives.
+    demo_photo: Option<(PictureSlot, bool)>,
 }
 
 impl Window {
@@ -221,12 +224,13 @@ impl Window {
             rights_edit: None,
             bottom_h: 200.0,
             editing: false,
-            big_photo: false,
+            photo: None,
             classified_edit: None,
             publish: None,
             classifieds_opened: HashSet::new(),
             notes_saved: false,
             demo_classified: None,
+            demo_photo: None,
         }
     }
 
@@ -248,6 +252,24 @@ enum PictureSlot {
     Classified(Uuid),
 }
 
+struct PhotoPreview {
+    slot: PictureSlot,
+    asset: Uuid,
+    view: ImageView,
+}
+
+impl Window {
+    fn open_photo(&mut self, slot: PictureSlot, asset: Uuid) {
+        if !asset.is_nil() {
+            self.photo = Some(PhotoPreview {
+                slot,
+                asset,
+                view: ImageView::default(),
+            });
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ProfileUi {
     windows: Vec<Window>,
@@ -263,6 +285,58 @@ pub struct ProfileUi {
 }
 
 impl ProfileUi {
+    /// Decode the selected photo on the scene workers, just like an inventory
+    /// texture preview. UI thumbnails alone cannot supply native pixels.
+    pub(crate) fn prepare_photos(&mut self, ctx: &egui::Context, scene: &mut crate::scene::Scene, world: &World) {
+        for window in &mut self.windows {
+            if let Some((slot, actual)) = window.demo_photo
+                && let Some(profile) = world.profiles.get(&window.id)
+            {
+                let asset = if matches!(slot, PictureSlot::FirstLife) {
+                    profile.fl_image
+                } else {
+                    profile.sl_image
+                };
+                window.open_photo(slot, asset);
+                if let Some(photo) = &mut window.photo {
+                    photo.view.display.actual_size = actual;
+                }
+                window.demo_photo = None;
+            }
+            let Some(photo) = window.photo.as_mut().filter(|_| window.open) else {
+                continue;
+            };
+            let asset = world.profiles.get(&window.id).map_or(Uuid::nil(), |profile| match photo.slot {
+                PictureSlot::FirstLife => profile.fl_image,
+                _ => profile.sl_image,
+            });
+            if asset.is_nil() {
+                window.photo = None;
+                continue;
+            }
+            if asset != photo.asset {
+                photo.asset = asset;
+                let display = photo.view.display;
+                photo.view = ImageView::default();
+                photo.view.display = display;
+            }
+            self.wanted_images.insert(asset);
+            let pixels = if photo.view.display.actual_size {
+                scene.textures.note_usage_fixed(&asset, 16384.0);
+                16384.0
+            } else {
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("profile_photo_preview", window.id))))
+                    .map_or(520.0, |rect| rect.size().max_elem())
+                    * ctx.pixels_per_point()
+            };
+            scene.textures.note_usage(&asset, pixels);
+            photo.view.prepare(ctx, asset, scene);
+            if let Some(size) = scene.textures.full_size(&asset) {
+                photo.view.dimensions = Some(size);
+            }
+        }
+    }
+
     /// The browser processes of the profiles' web pages that run.
     pub fn web_process_ids(&self) -> Vec<u32> {
         self.windows.iter().filter_map(|w| w.web.process_id()).collect()
@@ -300,6 +374,16 @@ impl ProfileUi {
                 "edit" => w.editing = true,
                 "form" => w.demo_classified = Some(false),
                 "publish" => w.demo_classified = Some(true),
+                "photo" => w.demo_photo = Some((PictureSlot::SecondLife, false)),
+                "first-photo" => {
+                    w.tab = TAB_RL;
+                    w.demo_photo = Some((PictureSlot::FirstLife, false));
+                }
+                "actual" => {
+                    if let Some((_, actual)) = &mut w.demo_photo {
+                        *actual = true;
+                    }
+                }
                 "compact" => {
                     let size = Vec2::new(380.0, 640.0);
                     let pos = ctx.content_rect().center() - size * 0.5;
@@ -367,6 +451,7 @@ impl ProfileUi {
                     pick_picture: &mut pick_picture,
                 };
                 let open = aurora::window(ctx, &mut env, w, i);
+                photo_window(ctx, p, world, pics, images, w);
                 close_or_confirm(w, open);
                 continue;
             }
@@ -466,6 +551,7 @@ impl ProfileUi {
             if let Some(rights) = w.rights_edit {
                 rights_dialog(ctx, p, w, &name, rights, &mut actions);
             }
+            photo_window(ctx, p, world, pics, images, w);
             close_or_confirm(w, open);
         }
         self.windows.retain(|w| w.open);
@@ -512,6 +598,45 @@ impl ProfileUi {
         }
         self.wanted_images.extend(self.picker.wanted_images.drain());
         actions
+    }
+}
+
+/// LLFloaterProfileTexture (indra/newview/llfloaterprofiletexture.cpp), with
+/// the inventory preview's dimensions, aspect ratios and native pixel display
+/// added at the human's request for both profile pictures.
+fn photo_window(
+    ctx: &egui::Context,
+    p: &Palette,
+    world: &World,
+    pics: &HashMap<Uuid, egui::TextureHandle>,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    window: &mut Window,
+) {
+    let Some(photo) = &mut window.photo else { return };
+    let name = aurora::display_name(world, &window.id);
+    let caption = match photo.slot {
+        PictureSlot::FirstLife => aurora_i18n::tr!("ui-profile-rl-picture"),
+        _ => aurora_i18n::tr!("ui-profile-profile-picture"),
+    };
+    let id = format!("profile-photo-{}", window.id);
+    let size = Vec2::new(460.0, 520.0);
+    let pos = ctx.content_rect().center() - size * 0.5;
+    let mut open = true;
+    let mut floater = Floater::new(&id, format!("{caption} · {name}"), pos, size);
+    floater.min_size = Vec2::new(300.0, 260.0);
+    floater.show(ctx, p, &mut open, |ui| {
+        ui.horizontal_wrapped(|ui| texture_view::display_mode(ui, p, &mut photo.view.display));
+        let image = photo.view.image.as_ref().or_else(|| images.get(&photo.asset)).or_else(|| {
+            matches!(photo.slot, PictureSlot::SecondLife)
+                .then(|| pics.get(&window.id))
+                .flatten()
+        });
+        if let Some(rect) = texture_view::show_image(ui, p, image, photo.view.dimensions, &mut photo.view.display, None, 0.0) {
+            ctx.data_mut(|data| data.insert_temp(egui::Id::new(("profile_photo_preview", window.id)), rect));
+        }
+    });
+    if !open {
+        window.photo = None;
     }
 }
 
@@ -952,9 +1077,16 @@ fn second_life_tab(
         );
         if own
             && let Some(pr) = profile
-            && r.on_hover_text(aurora_i18n::tr!("ui-profile-click-change-picture")).clicked()
+            && r.clone()
+                .on_hover_text(aurora_i18n::tr!("ui-profile-click-change-picture"))
+                .clicked()
         {
             *pick_picture = Some((PictureSlot::SecondLife, pr.sl_image));
+        } else if !own
+            && let Some(pr) = profile.filter(|pr| !pr.sl_image.is_nil())
+            && r.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked()
+        {
+            w.open_photo(PictureSlot::SecondLife, pr.sl_image);
         }
         ui.add_space(4.0);
         ui.vertical(|ui| {
@@ -1934,8 +2066,12 @@ fn first_life_tab(
             "user-filled",
             aurora_i18n::tr!("ui-profile-rl-picture"),
         );
-        if c.own && r.on_hover_text(aurora_i18n::tr!("ui-profile-click-change-image")).clicked() {
-            *pick_picture = Some((PictureSlot::FirstLife, pr.fl_image));
+        if c.own {
+            if r.on_hover_text(aurora_i18n::tr!("ui-profile-click-change-image")).clicked() {
+                *pick_picture = Some((PictureSlot::FirstLife, pr.fl_image));
+            }
+        } else if !pr.fl_image.is_nil() && r.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
+            w.open_photo(PictureSlot::FirstLife, pr.fl_image);
         }
         if c.own {
             ui.add_space(70.0);

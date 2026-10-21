@@ -272,7 +272,9 @@ including wrapped and empty rows. Inline code retains its glyph highlight.
 shared folder/search/type state and inventory management shortcut.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material
 windows keyed by inventory item. `texture_view.rs` handles fitted, ratio-constrained
-or native-pixel images and worker decoding/export; `material_editor.rs` owns isolated
+or native-pixel images and worker decoding/export. Profile photos share its image
+canvas and controls, with a worker-decoded preview for the selected Second life or
+First life asset, independently of the small UI thumbnail. `material_editor.rs` owns isolated
 PBR drafts, map pickers and save state with the importer's map-row presentation and sphere/cube/Aurora
 geometry. Its bounded scroll viewport and measured footer keep wrapped settings
 from expanding the floater. PBR preview workers also prepare the four map thumbnails

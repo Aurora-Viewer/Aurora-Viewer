@@ -4013,6 +4013,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
 
+  `friend:photo` opens the main photo preview; `friend:first-photo` opens the
+  First life photo preview. Append `:actual` to either to display native pixels
+  with scrolling. Both previews offer the inventory texture preview's dimensions
+  and original, preset or custom aspect ratios.
+
   Options add up, separated by `:` (`self:edit:2`). The other tabs:
   `friend:2` (Nova's favorite places, featured place over thumbnails),
   `friend:3` (two classifieds, the first one unfolded), `friend:4` (first

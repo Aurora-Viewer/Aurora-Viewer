@@ -125,14 +125,11 @@ pub(super) fn window(ctx: &egui::Context, env: &mut Env, w: &mut Window, index: 
     floater.min_size = MIN_SIZE;
     let mut open = true;
     floater.show(ctx, env.p, &mut open, |ui| body(ui, env, w));
-    if w.big_photo {
-        photo_window(ctx, env, w);
-    }
     open
 }
 
 /// The name in large: the display name, else the name the viewer has.
-fn display_name(world: &World, id: &Uuid) -> String {
+pub(super) fn display_name(world: &World, id: &Uuid) -> String {
     world
         .social
         .avatar_names
@@ -519,7 +516,7 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
             ("maximize", aurora_i18n::tr!("ui-profile-aurora-big-photo"))
         };
         if (w.editing || pic.is_some()) && banner_chip(ui, p, banner, icon, text).clicked() && !w.editing {
-            w.big_photo = true;
+            w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
         }
     }
     let name = display_name(world, &id);
@@ -529,7 +526,7 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
     paint_photo(ui, p, photo_rect, ring, pic, &name, status, w.editing);
     let photo_resp = ui.interact(photo_rect, ui.id().with(("profile-photo", id)), Sense::click());
     if pic.is_some() && !w.editing && photo_resp.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
-        w.big_photo = true;
+        w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
     }
     if w.editing {
         camera_button(ui, env, photo_rect, profile);
@@ -2099,22 +2096,6 @@ fn unsaved_bar(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, closing: bool) 
         egui::CornerRadius::ZERO,
         p.amber,
     );
-}
-
-/// The picture in large (Firestorm's floater_profile_texture).
-fn photo_window(ctx: &egui::Context, env: &Env, w: &mut Window) {
-    let p = env.p;
-    let name = display_name(env.world, &w.id);
-    let id = format!("profile-photo-{}", w.id);
-    let size = Vec2::new(420.0, 450.0);
-    let pos = ctx.content_rect().center() - size * 0.5;
-    let mut open = true;
-    let title = format!("{} · {name}", aurora_i18n::tr!("ui-profile-profile-picture"));
-    Floater::new(&id, title, pos, size).show(ctx, p, &mut open, |ui| {
-        let room = ui.available_size();
-        widgets::picture(ui, p, env.pics.get(&w.id), room, "user-filled", "");
-    });
-    w.big_photo = open;
 }
 
 impl Edit {
