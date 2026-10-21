@@ -2652,7 +2652,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BAN=1` | Ban lines |
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 | `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
-| `AURORA_DEMO_SIM_CONSOLE=1` | The region console of estate managers (Advanced › Region console) |
+| `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 
 ### Details
 
@@ -4255,6 +4255,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (SimConsoleAsync): Advanced › Region console opens it (the Advanced menu
   shown, Preferences › Aurora); `help`, `stats` and `time` answer, any other
   command gets "Unknown command"; the arrow keys walk the typed commands.
+  `open` opens it at frame 600 with `help` and `stats` typed (capture at
+  frame 640).
 
 **`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
 the balls and the hops): `1` wears a physics layer with the lively values of

@@ -5671,6 +5671,12 @@ impl App {
         {
             self.send(cmd);
         }
+        // AURORA_DEMO_SIM_CONSOLE=open: the console and two commands
+        if self.demo && self.frame_count == 600 && crate::demo::sim_extras::console_open() {
+            self.panels.sim_console = true;
+            self.world.sim_console.send("help");
+            self.world.sim_console.send("stats");
+        }
         // AURORA_DEMO_FREEZE: frozen by Nova, released later
         if self.demo {
             for ev in crate::demo::sim_extras::freeze_events(self.frame_count) {

@@ -4,7 +4,8 @@
 //!   the avatar (ViewerFrozenMessage and its AvatarFrozenDuration alert),
 //!   and releases it after that many seconds at 60 fps.
 //! - `AURORA_DEMO_SIM_CONSOLE=1`: the region gives the console
-//!   (SimConsoleAsync) and answers `help`, `stats` and the rest.
+//!   (SimConsoleAsync) and answers `help`, `stats` and the rest; `open`
+//!   also opens it at frame 600 with `help` and `stats` typed.
 //! - `AURORA_DEMO_VOICE_MODERATION=1`: the avatar manages the estate, whose
 //!   voice channel the parcel uses, so the voice row of a resident's menu
 //!   offers the moderator's entries; the demo applies them. `self`: a
@@ -52,7 +53,13 @@ pub fn freeze_events(frame: u64) -> Vec<NetEvent> {
 }
 
 fn console() -> bool {
-    std::env::var("AURORA_DEMO_SIM_CONSOLE").is_ok_and(|v| v.trim() == "1")
+    std::env::var("AURORA_DEMO_SIM_CONSOLE").is_ok_and(|v| matches!(v.trim(), "1" | "open"))
+}
+
+/// AURORA_DEMO_SIM_CONSOLE=open: the console opened at frame 600, `help`
+/// and `stats` typed.
+pub fn console_open() -> bool {
+    std::env::var("AURORA_DEMO_SIM_CONSOLE").is_ok_and(|v| v.trim() == "open")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

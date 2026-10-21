@@ -77,6 +77,8 @@ pub struct EmailView {
     /// The region takes postcards (SendPostcard), or the demo.
     pub available: bool,
     pub size: (u32, u32),
+    /// Our name, sent while "From" is empty (shown as its hint).
+    pub sender: String,
 }
 
 /// A photo for the profile feed.
@@ -394,7 +396,12 @@ impl SnapshotUi {
                 aurora_i18n::tr!("photo-email-to-hint"),
                 usize::MAX,
             ),
-            (aurora_i18n::tr!("photo-email-from"), &mut form.name, "", POSTCARD_NAME_MAX),
+            (
+                aurora_i18n::tr!("photo-email-from"),
+                &mut form.name,
+                &mail.sender,
+                POSTCARD_NAME_MAX,
+            ),
             (
                 aurora_i18n::tr!("photo-email-subject"),
                 &mut form.subject,

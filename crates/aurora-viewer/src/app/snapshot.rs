@@ -535,6 +535,7 @@ impl App {
         EmailView {
             available: self.demo || self.world.main_has_cap("SendPostcard"),
             size: self.photo_size(window),
+            sender: self.photo_postcard_sender(),
         }
     }
 
@@ -558,6 +559,14 @@ impl App {
         self.photo_job(Purpose::Postcard, renderer);
     }
 
+    /// Our full name, the sender's while "From" is empty
+    /// (LLAgentUI::buildFullname).
+    fn photo_postcard_sender(&self) -> String {
+        self.world
+            .legacy_name(&self.world.agent_id)
+            .unwrap_or_else(|| self.world.own_name())
+    }
+
     /// The postcard's fields, with the defaults of an empty name, subject
     /// or message (LLPanelSnapshotPostcard::onOpen, missingSubjMsgAlertCallback).
     fn photo_postcard_fields(&self) -> aurora_net::postcard::Postcard {
@@ -569,10 +578,7 @@ impl App {
                 text.to_owned()
             }
         };
-        let own = self
-            .world
-            .legacy_name(&self.world.agent_id)
-            .unwrap_or_else(|| self.world.own_name());
+        let own = self.photo_postcard_sender();
         // the sender's address, off Second Life only (OpenSim compatibility)
         let from = (self.settings.grid == crate::settings::GridChoice::Custom)
             .then(|| self.world.user_info.info.as_ref().map(|i| i.email.clone()))
