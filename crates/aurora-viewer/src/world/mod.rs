@@ -2877,6 +2877,11 @@ impl World {
             };
             self.ask_attention(attention::Cause::Mention, Some(notice));
         }
+        // process_chat_from_simulator: every line but ours and the debug
+        // channel's (FSKeywords::chatContainsKeyword)
+        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) {
+            self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -2936,6 +2941,8 @@ impl World {
                 .complete(&im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
+            let open = attention::Open::Conversation(im.from_agent_id);
+            self.keyword_alert(im.from_agent_id, &from, &im.message, false, open);
             // a message kept while we were offline says when it was sent
             // ("(Saved <date>)" before the text, llimprocessing.cpp)
             let text = if im.offline {
@@ -2985,6 +2992,11 @@ impl World {
             open: attention::Open::NearbyChat,
         };
         self.ask_attention(cause, Some(notice));
+        // an object's IM is checked as nearby chat (processNewMessage,
+        // IM_FROM_TASK)
+        if im.dialog == 19 {
+            self.keyword_alert(im.from_agent_id, &from, &text, true, attention::Open::NearbyChat);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -3470,6 +3482,9 @@ impl World {
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
             if self.notifications.toasts.presence_in_chat {
+                // checked as nearby chat (LLAvatarTracker::processNotify)
+                let from = self.social.name_of(&id);
+                self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 self.system_message(n);
             }
         }

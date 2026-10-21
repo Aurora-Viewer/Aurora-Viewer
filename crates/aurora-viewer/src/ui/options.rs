@@ -67,6 +67,9 @@ pub struct OptionsUi {
     confirm_reset_section: Option<usize>,
     /// Sound assets being typed (Firestorm name -> text).
     ui_sound_text: std::collections::HashMap<&'static str, String>,
+    /// The keyword alerts' sound asset being typed, and the asset it was
+    /// started from.
+    keyword_sound_text: Option<(uuid::Uuid, String)>,
     /// Folder of the conversation transcripts of the account logged in
     /// (set by the app; none on the login screen).
     pub chat_log_dir: Option<std::path::PathBuf>,
@@ -91,6 +94,8 @@ pub struct OptionsUi {
     pub scroll_to_new: u8,
     /// Chat opens on the taskbar and system notifications (`3:attention`).
     pub scroll_to_attention: bool,
+    /// Chat opens on the keyword alerts (`3:keywords`).
+    pub scroll_to_keywords: bool,
     pub audio_section: Option<AudioSection>,
     pub restart_voice: bool,
 }
@@ -1284,6 +1289,119 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
     c
 }
 
+/// Chat › Keyword alerts (panel_preferences_chat.xml, "ChatKeywordAlerts"):
+/// the rows greyed while the alerts are off, the sound's asset while its
+/// switch is off, as the Legacy panel's enabled_control.
+fn keyword_alerts_group(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi) -> bool {
+    let mut c = false;
+    if st.scroll_to_keywords {
+        ui.scroll_to_cursor(Some(egui::Align::TOP));
+        st.scroll_to_keywords = false;
+    }
+    group(ui, p, aurora_i18n::tr!("ui-options-keywords"), |ui| {
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-keywords-on"),
+            aurora_i18n::tr!("ui-options-keywords-on-hint"),
+            |ui| toggle(ui, p, &mut s.keywords.on),
+        );
+        let on = s.keywords.on;
+        let switches = [
+            (aurora_i18n::tr!("ui-options-keywords-in-chat"), "", &mut s.keywords.in_chat),
+            (aurora_i18n::tr!("ui-options-keywords-in-im"), "", &mut s.keywords.in_im),
+            (
+                aurora_i18n::tr!("ui-options-keywords-speakers-name"),
+                aurora_i18n::tr!("ui-options-keywords-speakers-name-hint"),
+                &mut s.keywords.speakers_name,
+            ),
+            (
+                aurora_i18n::tr!("ui-options-keywords-case-sensitive"),
+                "",
+                &mut s.keywords.case_sensitive,
+            ),
+            (
+                aurora_i18n::tr!("ui-options-keywords-whole-words"),
+                aurora_i18n::tr!("ui-options-keywords-whole-words-hint"),
+                &mut s.keywords.whole_words,
+            ),
+        ];
+        for (label, hint, value) in switches {
+            c |= row(ui, p, label, hint, |ui| ui.add_enabled_ui(on, |ui| toggle(ui, p, value)).inner);
+        }
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-keywords-words"),
+            aurora_i18n::tr!("ui-options-keywords-words-hint"),
+            |ui| {
+                ui.add_enabled(
+                    on,
+                    egui::TextEdit::singleline(&mut s.keywords.words)
+                        .desired_width(290.0)
+                        .hint_text(aurora_i18n::tr!("ui-options-keywords-words-example")),
+                )
+                .changed()
+            },
+        );
+        c |= row(ui, p, aurora_i18n::tr!("ui-options-keywords-color"), "", |ui| {
+            ui.add_enabled_ui(on, |ui| {
+                let mut ch = toggle(ui, p, &mut s.keywords.change_color);
+                ui.add_enabled_ui(s.keywords.change_color, |ui| {
+                    ch |= swatch(ui, p, "keyword-color", &mut s.keywords.color);
+                });
+                ch
+            })
+            .inner
+        });
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-keywords-sound"),
+            aurora_i18n::tr!("ui-options-keywords-sound-hint"),
+            |ui| {
+                ui.add_enabled_ui(on, |ui| {
+                    let k = &mut s.keywords;
+                    let mut ch = toggle(ui, p, &mut k.play_sound);
+                    ui.add_enabled_ui(k.play_sound, |ui| {
+                        // typed for this asset; a reset of the page starts it again
+                        let (typed_for, text) = st.keyword_sound_text.get_or_insert_with(|| (k.sound, uuid_text(k.sound)));
+                        if *typed_for != k.sound {
+                            (*typed_for, *text) = (k.sound, uuid_text(k.sound));
+                        }
+                        let valid = parse_uuid_text(text).is_some();
+                        let edit = ui.add(
+                            egui::TextEdit::singleline(text)
+                                .desired_width(290.0)
+                                .font(egui::TextStyle::Monospace)
+                                .text_color(if valid { p.ink } else { p.danger })
+                                .hint_text(aurora_i18n::tr!("ui-options-no-sound")),
+                        );
+                        if edit.changed()
+                            && let Some(id) = parse_uuid_text(text)
+                        {
+                            (k.sound, *typed_for) = (id, id);
+                            ch = true;
+                        }
+                        // force_sound: heard even with the interface sounds off
+                        if super::widgets::flat_button(ui, p, aurora_i18n::tr!("ui-options-listen")).clicked() && !k.sound.is_nil() {
+                            super::sound_cues::preview(ui.ctx(), k.sound);
+                        }
+                        let default = crate::keywords::DEFAULT_SOUND;
+                        if k.sound != default && super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-default")).clicked() {
+                            (k.sound, *typed_for, *text) = (default, default, uuid_text(default));
+                            ch = true;
+                        }
+                    });
+                    ch
+                })
+                .inner
+            },
+        );
+    });
+    c
+}
+
 fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult) -> bool {
     let mut c = false;
     let (mut font, mut cache) = (false, false);
@@ -1292,6 +1410,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
         // drawn after the first group of the page, below
         let center = s.notifications_style == crate::settings::NotificationsStyle::Aurora;
         c |= chat_page_head(ui, p, s, center, std::mem::take(&mut st.scroll_to_attention));
+        c |= keyword_alerts_group(ui, p, s, st);
         c |= chat_logs_group(ui, p, s, st, r);
     }
     match st.tab {

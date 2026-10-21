@@ -195,7 +195,7 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
     }
     let whisper = matches!(line.kind, ChatKind::Local(ChatType::Whisper));
     let shout = matches!(line.kind, ChatKind::Local(ChatType::Shout));
-    let color = tone.unwrap_or_else(|| {
+    let color = tone.or_else(|| crate::ui::colors::keyword_color(line)).unwrap_or_else(|| {
         if whisper {
             p.muted
         } else if shout {

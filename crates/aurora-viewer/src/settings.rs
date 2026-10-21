@@ -557,6 +557,8 @@ pub struct Settings {
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
     /// Commands).
     pub chat_commands: crate::cmdline::ChatCommandSettings,
+    /// Keyword alerts in chat and IMs (FSKeyword*, Preferences › Chat).
+    pub keywords: crate::keywords::KeywordSettings,
     pub name_tag_distance: f32,
     pub show_own_name_tag: bool,
     pub show_friend_name_tags: bool,
@@ -1319,6 +1321,7 @@ impl Default for Settings {
             object_im_filter: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
+            keywords: Default::default(),
             name_tag_distance: 64.0,
             show_own_name_tag: true,
             show_friend_name_tags: true,

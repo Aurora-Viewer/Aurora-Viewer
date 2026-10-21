@@ -51,8 +51,26 @@ fn is_friend(world: &World, id: &Uuid) -> bool {
     world.social.friends.iter().any(|f| f.id == *id)
 }
 
-/// Text color of a chat line (LLViewerChat::getChatColor).
+/// The keyword colour of a line that holds a keyword while "Change the
+/// colour" is on (Preferences › Chat › Keyword alerts). Ours and the debug
+/// channel's never hold one (chatContainsKeyword); a conversation's lines
+/// are IMs, the rest nearby chat.
+pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
+    if matches!(
+        line.kind,
+        ChatKind::Own | ChatKind::Object(ChatType::Debug) | ChatKind::Invite(_) | ChatKind::InventoryOffer(_)
+    ) {
+        return None;
+    }
+    crate::keywords::color(&line.from, &line.text, line.kind != ChatKind::Im).map(c)
+}
+
+/// Text color of a chat line (LLViewerChat::getChatColor): the keyword
+/// colour for a line that holds a keyword, else the sender's.
 pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
+    if let Some(color) = keyword_color(line) {
+        return color;
+    }
     let k = get();
     let v = match line.kind {
         ChatKind::Own => k.chat_mine,

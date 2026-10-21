@@ -657,6 +657,9 @@ impl World {
             SystemTime::now(),
         );
         self.session_sound(session, false);
+        // on receipt, whether or not the chat is in front (FIRE-10178)
+        let open = super::attention::Open::Conversation(session);
+        self.keyword_alert(im.from_agent_id, &im.from_name, &im.message, false, open);
         self.session_push(session, l, true);
         true
     }

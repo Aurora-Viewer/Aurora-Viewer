@@ -273,7 +273,9 @@ fn body(
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(fade);
     painter.galley(rect.min, galley.clone(), p.ink);
-    let col = color_for(line.kind, p).gamma_multiply(fade);
+    let col = crate::ui::colors::keyword_color(line)
+        .unwrap_or_else(|| color_for(line.kind, p))
+        .gamma_multiply(fade);
     line_extras(ui, p, world, &galley, rect.min, TEXT, fade, badges, line_links, col, links);
 }
 

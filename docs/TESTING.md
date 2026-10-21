@@ -2589,6 +2589,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
@@ -3118,6 +3119,20 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds.
+- **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
+  (the two keywords of `demo-keywords-words`, "party, builders" in English,
+  "fête, constructeurs" in French; colour change and sound on), with the
+  Conversations window open on the nearby chat. A resident says a line
+  holding a keyword at frame 700, another sends one in an IM (760), a third
+  writes one in the Aurora Builders group chat (820), an object sends one in
+  an IM (880), and a line without one is said (940); capture with
+  `AURORA_FPS_LIMIT=60` at frame 1010. The four keyword lines are drawn in
+  orange in every chat style and play the keyword sound (silent in captures unless
+  `AURORA_DEMO_SOUND=1`); with the system notifications on, each is told as
+  a "Keyword alert". `AURORA_DEMO_OPTIONS=3:keywords` opens Preferences ›
+  Chat on the group (it shows the saved settings, not the run's). `prefs`
+  keeps the settings of Preferences › Chat › Keyword alerts, to try them by
+  hand, and sends the same five lines again every 1200 frames.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
