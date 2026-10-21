@@ -127,6 +127,7 @@ pub struct InventoryPreferences {
     pub protected: HashSet<Uuid>,
     pub upload_folders: [Uuid; 5],
     pub sort: Sort,
+    pub received_sort: Sort,
     pub search_field: SearchField,
     pub search_trash: bool,
     pub search_library: bool,
@@ -152,6 +153,10 @@ impl Default for InventoryPreferences {
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
+            received_sort: Sort {
+                folders_by_name: false,
+                ..Sort::default()
+            },
             search_field: SearchField::Name,
             search_trash: false,
             search_library: true,
@@ -168,6 +173,27 @@ impl Default for InventoryPreferences {
             warn_task_move: true,
             warn_scripted_task_move: true,
             rights: Default::default(),
+        }
+    }
+}
+
+impl InventoryPreferences {
+    // LLPanelMainInventory::setSortBy saves the active panel's order
+    // (indra/newview/llpanelmaininventory.cpp). Received has its own order;
+    // the other tabs retain Aurora's shared main-inventory preference.
+    pub(super) fn sort_for(&self, tab: usize) -> Sort {
+        if tab == super::RECEIVED_TAB {
+            self.received_sort
+        } else {
+            self.sort
+        }
+    }
+
+    pub(super) fn sort_for_mut(&mut self, tab: usize) -> &mut Sort {
+        if tab == super::RECEIVED_TAB {
+            &mut self.received_sort
+        } else {
+            &mut self.sort
         }
     }
 }
@@ -387,7 +413,7 @@ impl ViewCache {
         agent: Uuid,
         time: i64,
     ) {
-        self.prepare(inv, prefs.sort);
+        self.prepare(inv, prefs.sort_for(tab));
         let age = if tab == 2 && filters.age == Age::Any {
             Age::SinceLogout
         } else {
@@ -1225,11 +1251,19 @@ mod tests {
             serde_json::from_str(r#"{"protected":["00000000-0000-0000-0000-000000000002"]}"#).expect("old preferences");
         assert!(prefs.protected.contains(&id(2)));
         assert_eq!(prefs.sort, Sort::default());
+        assert!(prefs.received_sort.by_date);
+        assert!(!prefs.received_sort.folders_by_name);
+        assert!(prefs.received_sort.system_first);
         let changed = InventoryPreferences {
             sort: Sort {
                 by_date: false,
                 system_first: false,
                 folders_by_name: false,
+            },
+            received_sort: Sort {
+                by_date: true,
+                folders_by_name: true,
+                system_first: false,
             },
             filter_defaults: Filters {
                 links: Links::Exclude,
@@ -1244,5 +1278,95 @@ mod tests {
             serde_json::from_str::<InventoryPreferences>(&json).expect("reload preferences"),
             changed
         );
+    }
+
+    #[test]
+    fn received_sort_migration_preserves_the_saved_main_inventory_order() {
+        let prefs: InventoryPreferences = serde_json::from_str(r#"{"sort":{"by_date":false,"folders_by_name":true,"system_first":false}}"#)
+            .expect("existing preferences");
+        assert_eq!(
+            prefs.sort,
+            Sort {
+                by_date: false,
+                folders_by_name: true,
+                system_first: false
+            }
+        );
+        assert_eq!(
+            prefs.received_sort,
+            Sort {
+                by_date: true,
+                folders_by_name: false,
+                system_first: true
+            }
+        );
+    }
+
+    #[test]
+    fn received_sort_uses_its_own_folder_dates_and_cache_invalidation() {
+        let (mut inv, facts) = fixture();
+        let root = inv.root;
+        folder(&mut inv, 20, root, 50, "Marketplace");
+        folder(&mut inv, 21, id(20), -1, "A older delivery");
+        folder(&mut inv, 22, id(20), -1, "Z newer delivery");
+        inv.add_items(vec![item(23, id(21), "A gift", 100), item(24, id(22), "Z gift", 300)]);
+        let mut prefs = InventoryPreferences::default();
+        let mut cache = ViewCache::default();
+        let run = |cache: &mut ViewCache, prefs: &InventoryPreferences, tab| {
+            cache.search(&inv, root, "", prefs, &Filters::default(), tab, None, &facts, facts.agent, 1000);
+            cache
+                .results
+                .iter()
+                .copied()
+                .filter(|entry| [id(21), id(22)].contains(entry))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(&mut cache, &prefs, 0), [id(21), id(22)]);
+        assert_eq!(run(&mut cache, &prefs, super::super::RECEIVED_TAB), [id(22), id(21)]);
+        let built = cache.built;
+        prefs.sort.by_date = false;
+        prefs.sort.system_first = false;
+        assert_eq!(run(&mut cache, &prefs, super::super::RECEIVED_TAB), [id(22), id(21)]);
+        assert_eq!(cache.built, built, "main-inventory changes do not rebuild Received");
+        prefs.received_sort.folders_by_name = true;
+        assert_eq!(run(&mut cache, &prefs, super::super::RECEIVED_TAB), [id(21), id(22)]);
+        assert_ne!(cache.built, built, "Received changes refresh the cached order");
+        assert_eq!(run(&mut cache, &prefs, 0), [id(21), id(22)]);
+        let built = cache.built;
+        prefs.received_sort.by_date = false;
+        prefs.received_sort.system_first = false;
+        assert_eq!(run(&mut cache, &prefs, 0), [id(21), id(22)]);
+        assert_eq!(cache.built, built, "Received changes do not rebuild the main inventory");
+    }
+
+    #[test]
+    fn received_sort_demo_reverses_real_purchase_folders_when_the_option_changes() {
+        let (mut inv, facts) = fixture();
+        crate::world::inventory::demo::seed_received_sort(&mut inv, facts.agent);
+        let inbox = rules::system(&inv, 50).expect("demo inbox");
+        let mut cache = ViewCache::default();
+        let mut prefs = InventoryPreferences::default();
+        for folders_by_name in [false, true, false] {
+            prefs.received_sort.folders_by_name = folders_by_name;
+            cache.search(
+                &inv,
+                inbox,
+                "",
+                &prefs,
+                &Filters::default(),
+                super::super::RECEIVED_TAB,
+                None,
+                &facts,
+                facts.agent,
+                now(),
+            );
+            let expected = if folders_by_name {
+                [id(8_300_001), id(8_300_010), id(8_300_020)]
+            } else {
+                [id(8_300_020), id(8_300_010), id(8_300_001)]
+            };
+            assert_eq!(cache.result_children[&inbox], expected, "the actual demo must visibly change order");
+            assert!(expected.iter().all(|id| cache.folder_date(*id) > 0));
+        }
     }
 }

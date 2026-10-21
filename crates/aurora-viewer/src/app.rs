@@ -13013,6 +13013,10 @@ impl ApplicationHandler for App {
                         | "received-big-open"
                         | "received-filtered"
                         | "received-missing"
+                        | "received-sort"
+                        | "received-sort-name"
+                        | "aurora-received-sort"
+                        | "aurora-received-sort-name"
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
@@ -13058,6 +13062,14 @@ impl ApplicationHandler for App {
                     }
                     if view == "recent" {
                         self.inventory_ui.tab = 2;
+                    }
+                    if view.ends_with("received-sort") || view.ends_with("received-sort-name") {
+                        crate::world::inventory::demo::seed_received_sort(&mut self.world.inventory, self.world.agent_id);
+                        self.inventory_ui.tab = 1;
+                        self.inventory_ui.preferences_open = true;
+                        self.inventory_ui.selected = None;
+                        self.inventory_ui.selection.clear();
+                        self.settings.inventory.received_sort.folders_by_name = view.ends_with("-name");
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;

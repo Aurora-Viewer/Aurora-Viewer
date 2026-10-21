@@ -14,31 +14,36 @@ fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool 
 }
 
 pub fn preferences(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences) -> bool {
+    preferences_for_tab(ui, p, prefs, 0)
+}
+
+pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, tab: usize) -> bool {
     let mut changed = false;
+    let sort = if tab == super::RECEIVED_TAB {
+        &mut prefs.received_sort
+    } else {
+        &mut prefs.sort
+    };
     ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-display-order")).color(p.muted));
     ui.horizontal(|ui| {
         changed |= ui
-            .selectable_value(
-                &mut prefs.sort.by_date,
-                true,
-                aurora_i18n::tr!("ui-inventory-controls-newest-first"),
-            )
+            .selectable_value(&mut sort.by_date, true, aurora_i18n::tr!("ui-inventory-controls-newest-first"))
             .changed();
         changed |= ui
-            .selectable_value(&mut prefs.sort.by_date, false, aurora_i18n::tr!("common-by-name"))
+            .selectable_value(&mut sort.by_date, false, aurora_i18n::tr!("common-by-name"))
             .changed();
     });
     changed |= check(
         ui,
         p,
         aurora_i18n::tr!("ui-inventory-controls-folders-always-by-name"),
-        &mut prefs.sort.folders_by_name,
+        &mut sort.folders_by_name,
     );
     changed |= check(
         ui,
         p,
         aurora_i18n::tr!("ui-inventory-controls-system-folders-first"),
-        &mut prefs.sort.system_first,
+        &mut sort.system_first,
     );
     ui.add_space(6.0);
     ui.label(RichText::new(aurora_i18n::tr!("common-display")).color(p.muted));
@@ -236,7 +241,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
             .max_height(height)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                preferences(ui, p, prefs);
+                preferences_for_tab(ui, p, prefs, st.tab);
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(aurora_i18n::tr!("ui-inventory-controls-preferences-kept-between-sessions"))

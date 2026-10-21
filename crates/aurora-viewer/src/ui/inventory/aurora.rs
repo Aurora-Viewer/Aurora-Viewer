@@ -105,7 +105,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         let size = match mode {
             "aurora-medium" => egui::vec2(800.0, 640.0),
-            "aurora-wide" | "aurora-rights" => egui::vec2(WIDE_SIZE, 720.0),
+            "aurora-wide" | "aurora-rights" | "aurora-received-sort" | "aurora-received-sort-name" => egui::vec2(WIDE_SIZE, 720.0),
             _ => egui::vec2(DEFAULT_SIZE.x, 640.0),
         };
         if let Some(wide) = mode.strip_prefix("aurora-folder-window") {

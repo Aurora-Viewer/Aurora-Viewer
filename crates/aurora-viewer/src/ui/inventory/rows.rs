@@ -242,7 +242,7 @@ pub(super) fn scroll(
     if st.ui_id.is_nil() && !st.aurora.is_some_and(|frame| frame.explorer) {
         st.plain.persist(ui.ctx(), egui::Id::new("inventory_open_folders"));
     }
-    st.view.prepare(inv, prefs.sort);
+    st.view.prepare(inv, prefs.sort_for(st.tab));
     if let Some(open) = st.expand_all.take() {
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
     }
