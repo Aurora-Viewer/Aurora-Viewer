@@ -600,6 +600,8 @@ pub struct App {
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
+    /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
+    sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
@@ -1113,6 +1115,7 @@ impl App {
             rez_demo: None,
             arrival_demo: None,
             tex_refresh_demo: None,
+            sculpt_missing_demo: None,
             experience_demo: None,
             geometry_demo: None,
             geometry_needs,
@@ -8313,6 +8316,9 @@ impl App {
         {
             self.refresh_object_textures(object);
         }
+        if let Some(demo) = &mut self.sculpt_missing_demo {
+            demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
+        }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
         if let Some(reply) = self
@@ -13761,7 +13767,7 @@ impl ApplicationHandler for App {
             // wearing a mesh that cannot be downloaded (issue #121)
             if std::env::var("AURORA_DEMO_CLOUD").is_ok_and(|v| v == "self") {
                 self.scene.meshes.insert_demo_unavailable(crate::demo::CLOUD_MESH);
-                for ev in crate::demo::cloud_self_events() {
+                for ev in crate::demo::cloud_self_events(&self.world.avatar_lib.shape_params) {
                     self.world.apply(ev);
                 }
             }
@@ -13769,6 +13775,7 @@ impl ApplicationHandler for App {
             self.rez_demo = crate::demo::rez::RezDemo::from_env();
             self.arrival_demo = crate::demo::arrival::ArrivalDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
+            self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();

@@ -323,6 +323,9 @@ pub struct AvatarAppearance {
     pub texture_entry: Option<Arc<TextureEntry>>,
     pub visual_params: Vec<u8>,
     pub cof_version: i32,
+    /// AppearanceData.AppearanceVersion: 1 for server bakes, 0 without
+    /// the block.
+    pub appearance_version: u8,
     pub hover_height: f32,
     /// Worn objects the simulator lists (AttachmentBlock entries with an
     /// id, each once: LLVOAvatar::mSimAttachments).

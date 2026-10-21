@@ -671,6 +671,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_FLEXIBLE=1` | Flexible prims: gravity, tension, wind, force and moving parent |
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
+| `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 ### Details
@@ -683,6 +684,16 @@ the same torus path/profile. The violet object becoming a torus reproduces
 the classification failure; subtype zero must also retain its unstitched
 edges rather than silently using sphere stitching. The map is generated
 offline in the demo cache; no grid asset is used.
+
+`AURORA_DEMO_SCULPT_MISSING=1` places a gold sculpt east of the start
+position (x=134, y=130), north of the `AURORA_DEMO_SCULPT_ZERO` objects, at
+frame 300. Its map is in no cache and the asset server answers 404: the
+sculpt shows the Legacy Viewer's sphere placeholder (radius 0.3 of its size)
+instead of nothing. With `late`, the map turns up at frame 900 (written to
+the disk cache and read again, as a retry finding it on the server): the
+torus it describes replaces the sphere. A map still loading draws nothing,
+as in the Legacy Viewer. Capture with `AURORA_FPS_LIMIT=60` around frames
+700 and 1100.
 
 `AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
 `AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its

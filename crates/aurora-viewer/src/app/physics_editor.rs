@@ -128,6 +128,7 @@ impl App {
             texture_entry: None,
             visual_params: Vec::new(),
             cof_version: 0,
+            appearance_version: 1,
             hover_height: 0.0,
             attachments: 0,
         });
@@ -136,6 +137,8 @@ impl App {
             .avatar_lib
             .shape_params
             .edit_values(self.world.server_visual_params(), params);
+        // a new bake comes with a new COF version (an older one is stale)
+        appearance.cof_version += 1;
         self.world.apply(NetEvent::Appearance(appearance));
     }
 

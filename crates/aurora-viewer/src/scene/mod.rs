@@ -99,6 +99,12 @@ pub enum GeomKey {
         hash: u64,
         lod: u8,
     },
+    /// The sphere a sculpt shows while its map is missing or failed
+    /// (`aurora_prim::sculpt_placeholder`); `hash` is its sculpt's.
+    SculptPlaceholder {
+        hash: u64,
+        lod: u8,
+    },
     Mesh {
         id: Uuid,
         lod: u8,
@@ -400,6 +406,15 @@ pub struct ObjGpu {
 }
 
 impl ObjGpu {
+    /// Its wanted geometry is bound, or the sphere placeholder stands in
+    /// for a sculpt whose map is missing (nothing more is coming).
+    pub fn geometry_built(&self) -> bool {
+        match (self.wanted_geom, self.geom) {
+            (Some(GeomKey::Sculpt { hash, lod }), Some(GeomKey::SculptPlaceholder { hash: h, lod: l })) => hash == h && lod == l,
+            (wanted, geom) => wanted.is_none_or(|k| geom == Some(k)) && self.sculpt_wait.is_none(),
+        }
+    }
+
     /// Culling sphere: the bounds, or for an avatar its posed body (2.5 m
     /// around its position until posed).
     pub fn sphere(&self) -> (Vec3, f32) {
@@ -1504,6 +1519,15 @@ impl Scene {
                 let pool = self.staging.clone();
                 self.jobs.spawn(move || {
                     let mesh = aurora_prim::generate_sculpt(&params, detail, map.width, map.height, map.components, &map.pixels);
+                    JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
+                });
+            }
+            GeomKey::SculptPlaceholder { lod, .. } => {
+                let params = obj.volume;
+                let detail = aurora_prim::volume::DETAIL_SCALES[lod as usize % 4];
+                let pool = self.staging.clone();
+                self.jobs.spawn(move || {
+                    let mesh = aurora_prim::sculpt_placeholder(&params, detail);
                     JobResult::geometry(key, jobs::volume_to_faces(&mesh), mesh.surface_area, pool.as_deref())
                 });
             }
@@ -2943,6 +2967,20 @@ impl Scene {
             }
             // A face can already hold this UUID as an ordinary colour map.
             self.textures.want_sculpt(&st);
+            // a map missing or failed shows the sphere placeholder until it
+            // decodes (LLVOVolume::sculpt passes isMissingAsset as
+            // LLVolume::sculpt's visible_placeholder); one still loading
+            // draws nothing, as there
+            if let Some(GeomKey::Sculpt { hash, lod }) = wanted
+                && bind_new.is_none()
+                && self.gpu[idx].geom != wanted
+                && self.textures.is_unavailable(&st)
+            {
+                let k = GeomKey::SculptPlaceholder { hash, lod };
+                if self.gpu[idx].geom != Some(k) && world.objects.get(idx).is_some_and(|obj| self.request_geom(k, obj, need)) {
+                    bind_new = Some(k);
+                }
+            }
         }
         // waits for its sculpt texture only until this sculpt is bound (a
         // wait left set kept the object synced every frame)
@@ -5252,8 +5290,9 @@ mod tests {
         world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
             avatar_id: owner,
             texture_entry: None,
-            visual_params: Vec::new(),
+            visual_params: world.avatar_lib.shape_params.values_with(&[]),
             cof_version: 1,
+            appearance_version: 1,
             // Our preference must survive a stale simulator appearance.
             hover_height: -0.5,
             attachments: 0,

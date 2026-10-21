@@ -340,6 +340,11 @@ impl OutfitRestore {
         self.request_bake(received);
     }
 
+    /// The COF version the last IncrementCOFVersion answer gave, -1 before.
+    pub fn stepped_cof_version(&self) -> i32 {
+        self.stepped_cof_version
+    }
+
     /// The Current Outfit folder and its version as the inventory has them
     /// now: the outfit may have changed since the login restore.
     fn follow_cof(&mut self, inv: &Inventory) {

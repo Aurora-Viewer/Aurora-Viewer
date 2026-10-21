@@ -65,6 +65,14 @@ const TYPICAL: J2kInfo = J2kInfo {
 /// reply while the rest is asked (`holds_first_pixels`).
 /// Firestorm always starts with `FIRST_PACKET_SIZE` (600 bytes) and asks
 /// for the level in a second request (LLTextureFetchWorker::doWork).
+/// Textures drawn with the built-in transparent slot, never downloaded: the
+/// transparent texture, and the bake of a part an alpha layer hides whole
+/// (IMG_INVISIBLE, never fetched from the bake service:
+/// LLVOAvatar::getBakedTextureImage, indra/newview/llvoavatar.cpp).
+pub fn is_builtin_transparent(id: &Uuid) -> bool {
+    *id == aurora_prim::te::TRANSPARENT_TEXTURE || *id == super::avatar::IMG_INVISIBLE
+}
+
 fn first_bytes(px: f32) -> usize {
     if px <= 0.0 {
         return INITIAL_BYTES;
@@ -981,7 +989,7 @@ impl PreviewSource {
         // Reserved world textures have GPU texels but no fetched asset or
         // cache file. A missing transparent map would expose a white shell
         // over the skin of a layered mesh head.
-        if id == aurora_prim::te::TRANSPARENT_TEXTURE {
+        if is_builtin_transparent(&id) {
             return Some(image(1, 1, vec![0; 4]));
         }
         if id == aurora_prim::te::BLANK_TEXTURE {
@@ -1041,14 +1049,17 @@ impl TextureStreamer {
             staging: None,
             bc7: false,
             bc7_cache: false,
-            pick_masks: HashMap::from([(
-                aurora_prim::te::TRANSPARENT_TEXTURE,
-                PickMask {
-                    width: 1,
-                    height: 1,
-                    bits: vec![0],
-                },
-            )]),
+            pick_masks: [aurora_prim::te::TRANSPARENT_TEXTURE, super::avatar::IMG_INVISIBLE]
+                .into_iter()
+                .map(|id| {
+                    let mask = PickMask {
+                        width: 1,
+                        height: 1,
+                        bits: vec![0],
+                    };
+                    (id, mask)
+                })
+                .collect(),
             // built-in slots: the transparent texture has no visible pixel
             alpha_by_slot: {
                 let mut a = vec![AlphaKind::Opaque; 16];
@@ -1157,6 +1168,7 @@ impl TextureStreamer {
 
     pub fn describe(&self, id: &Uuid) -> String {
         match self.entries.get(id) {
+            None if is_builtin_transparent(id) => "built-in transparent, never downloaded".into(),
             None => "not requested".into(),
             Some(e) => format!(
                 "{} bytes{}, decoded {:?}, want {}, alpha {:?}, failures {}{}{}{}{}{}",
@@ -1197,11 +1209,7 @@ impl TextureStreamer {
     /// Diagnostic: why a face drawn with `slot` for texture `id` would not
     /// show that texture (None when it should).
     pub fn face_problem(&self, id: &Uuid, slot: u32, table: &aurora_render::textures::TextureTable) -> Option<&'static str> {
-        if id.is_nil()
-            || *id == aurora_prim::te::BLANK_TEXTURE
-            || *id == aurora_prim::te::TRANSPARENT_TEXTURE
-            || self.local_slots.contains_key(id)
-        {
+        if id.is_nil() || *id == aurora_prim::te::BLANK_TEXTURE || is_builtin_transparent(id) || self.local_slots.contains_key(id) {
             return None;
         }
         let Some(e) = self.entries.get(id) else {
@@ -1265,7 +1273,7 @@ impl TextureStreamer {
         if id.is_nil() {
             return aurora_render::textures::WHITE;
         }
-        if id == aurora_prim::te::TRANSPARENT_TEXTURE {
+        if is_builtin_transparent(&id) {
             return aurora_render::textures::TRANSPARENT;
         }
         if id == aurora_prim::te::BLANK_TEXTURE {
@@ -1392,11 +1400,7 @@ impl TextureStreamer {
     /// transparent, those of the demo) are left alone, as Firestorm leaves
     /// IMG_DEFAULT and its default textures. Returns whether it was asked.
     pub fn refresh(&mut self, id: &Uuid) -> bool {
-        if id.is_nil()
-            || *id == aurora_prim::te::TRANSPARENT_TEXTURE
-            || *id == aurora_prim::te::BLANK_TEXTURE
-            || self.local_slots.contains_key(id)
-        {
+        if id.is_nil() || is_builtin_transparent(id) || *id == aurora_prim::te::BLANK_TEXTURE || self.local_slots.contains_key(id) {
             return false;
         }
         match self.entries.get_mut(id) {
@@ -2316,6 +2320,50 @@ impl TextureStreamer {
             .is_some_and(|e| e.refs > 0 && e.cache_state == 2 && e.data.is_empty() && !e.decoding)
     }
 
+    /// AURORA_DEMO_SCULPT_MISSING: the asset server has no such texture, as
+    /// a 404 answers. Returns whether it was not known missing already.
+    pub fn demo_missing(&mut self, id: &Uuid) -> bool {
+        let Some(e) = self.entries.get_mut(id).filter(|e| !e.gone) else {
+            return false;
+        };
+        e.gone = true;
+        e.retry_at = Some(Instant::now() + Duration::from_secs(600));
+        Self::settle(&mut self.todo, &mut self.counts, *id, e);
+        true
+    }
+
+    /// For the tests of its users: a texture the asset server does not have.
+    #[cfg(test)]
+    pub(super) fn test_missing(&mut self, id: Uuid) {
+        let mut e = tests::entry(None, 0.0);
+        e.gone = true;
+        self.entries.insert(id, e);
+    }
+
+    /// For the tests of its users: the texture's sculpt map decoded.
+    #[cfg(test)]
+    pub(super) fn test_sculpt_map(&mut self, id: Uuid) {
+        let e = self.entries.entry(id).or_insert_with(|| tests::entry(None, 0.0));
+        e.decoded = Some(0);
+        e.gone = false;
+        e.sculpt = Some(Arc::new(SculptMap {
+            width: 1,
+            height: 1,
+            components: 3,
+            pixels: vec![128; 3],
+        }));
+    }
+
+    /// AURORA_DEMO_SCULPT_MISSING=late: the texture's file is in the disk
+    /// cache now; it is read again, as a retry would find it on the server.
+    pub fn demo_reread(&mut self, id: &Uuid) {
+        if let Some(e) = self.entries.get_mut(id) {
+            drop(e.forget());
+            e.cache_state = 0;
+            Self::settle(&mut self.todo, &mut self.counts, *id, e);
+        }
+    }
+
     /// AURORA_DEMO_STREAM: the downloaded data a texture loaded at full
     /// resolution holds (the demo textures arrive decoded, without any).
     pub fn demo_attach_data(&mut self, id: &Uuid, data: Vec<u8>) {
@@ -2977,6 +3025,7 @@ mod tests {
         assert!(PickMask::from_rgba(4, 4, &rgba[..4]).is_none());
         let textures = TextureStreamer::new(PathBuf::new());
         assert!(!textures.pick_masks[&aurora_prim::te::TRANSPARENT_TEXTURE].hits(glam::Vec2::splat(0.5)));
+        assert!(!textures.pick_masks[&super::super::avatar::IMG_INVISIBLE].hits(glam::Vec2::splat(0.5)));
     }
 
     fn rgba(width: u32, height: u32, levels: u32) -> ChainSize {
@@ -2985,7 +3034,7 @@ mod tests {
 
     /// A 1024 × 1024 texture in use, loaded at `decoded`, covering `need_px`
     /// pixels in view.
-    fn entry(decoded: Option<u8>, need_px: f32) -> Entry {
+    pub(super) fn entry(decoded: Option<u8>, need_px: f32) -> Entry {
         Entry {
             slot: 9,
             refs: 1,
@@ -4051,6 +4100,9 @@ mod tests {
         assert!(!b.s.refresh(&Uuid::nil()));
         assert!(!b.s.refresh(&aurora_prim::te::BLANK_TEXTURE));
         assert!(!b.s.refresh(&aurora_prim::te::TRANSPARENT_TEXTURE));
+        // the invisible bake is never downloaded, so never refreshed either
+        assert!(!b.s.refresh(&super::super::avatar::IMG_INVISIBLE));
+        assert!(b.s.entries.is_empty());
         // a texture not held: only its files go
         let id = Uuid::from_u128(0x7e59);
         for file in b.files(id) {

@@ -3932,6 +3932,7 @@ impl Session<'_> {
                     texture_entry: aurora_prim::parse_texture_entry(&m.object_data.texture_entry).map(Arc::new),
                     visual_params: m.visual_param.iter().map(|p| p.param_value).collect(),
                     cof_version: m.appearance_data.first().map(|a| a.cof_version).unwrap_or(0),
+                    appearance_version: m.appearance_data.first().map(|a| a.appearance_version).unwrap_or(0),
                     hover_height: m.appearance_hover.first().map(|h| h.hover_height.z).unwrap_or(0.0),
                     attachments: m
                         .attachment_block

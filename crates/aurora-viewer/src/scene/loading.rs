@@ -338,7 +338,7 @@ impl Scene {
                     continue;
                 };
                 total += BAR_GEOMETRY;
-                let pending = g.wanted_geom.is_some_and(|k| Some(k) != g.geom) || g.sculpt_wait.is_some();
+                let pending = !g.geometry_built();
                 let given_up = g
                     .wanted_geom
                     .is_some_and(|k| self.geom_failed(&k) || matches!(k, GeomKey::Mesh { id, .. } if self.meshes.failed(&id)));
@@ -656,7 +656,10 @@ mod tests {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         world.agent_id = crate::demo::DEMO_AGENT;
-        for ev in crate::demo::events().into_iter().chain(crate::demo::cloud_self_events()) {
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::cloud_self_events(&lib.shape_params))
+        {
             world.apply(ev);
         }
         let mut scene = Scene::new(std::path::PathBuf::new(), lib);
@@ -695,8 +698,9 @@ mod tests {
         world.apply(aurora_net::NetEvent::Appearance(aurora_net::AvatarAppearance {
             avatar_id: crate::demo::DEMO_LOUP,
             texture_entry: Some(Arc::new(unbaked)),
-            visual_params: Vec::new(),
+            visual_params: world.avatar_lib.shape_params.values_with(&[]),
             cof_version: 1,
+            appearance_version: 1,
             hover_height: 0.0,
             attachments: 0,
         }));
@@ -719,7 +723,10 @@ mod tests {
         assert!(world.objects.index_of_uuid(&own).is_none());
         scene.update_loading(&world, t0 + secs(20.0));
         // the destination sends everyone as new objects
-        for ev in crate::demo::events().into_iter().chain(crate::demo::cloud_self_events()) {
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::cloud_self_events(&world.avatar_lib.shape_params))
+        {
             world.apply(ev);
         }
         scene.gpu.resize_with(world.objects.slots.len(), ObjGpu::default);

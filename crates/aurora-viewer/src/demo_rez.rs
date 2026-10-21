@@ -211,7 +211,7 @@ impl RezDemo {
 
     /// The avatar's bakes (head, upper and lower body) on texture `tex`, as
     /// the appearance service sends them.
-    fn bakes(&self, avatar: uuid::Uuid, tex: u32) -> NetEvent {
+    fn bakes(&self, shapes: &crate::scene::shape::ShapeParams, avatar: uuid::Uuid, tex: u32) -> NetEvent {
         let mut t = (*super::te([1.0; 4], 0, false, 0.0)).clone();
         for (te, _, _) in crate::scene::avatar::BAKES.iter().take(3) {
             t.faces[*te].texture = self.texture(tex);
@@ -219,8 +219,9 @@ impl RezDemo {
         NetEvent::Appearance(aurora_net::AvatarAppearance {
             avatar_id: avatar,
             texture_entry: Some(Arc::new(t)),
-            visual_params: Vec::new(),
+            visual_params: shapes.values_with(&[]),
             cof_version: 1,
+            appearance_version: 1,
             hover_height: 0.0,
             attachments: 0,
         })
@@ -542,7 +543,8 @@ impl RezDemo {
                 o.name_values = "FirstName STRING RW SV Rez\nLastName STRING RW SV Visitor".into();
                 objects.push(o);
                 self.texture_now(&mut scene.textures, renderer, jobs, BAKES_BEFORE, false);
-                world.apply(self.bakes(self.avatar_uuid(), BAKES_BEFORE));
+                let bakes = self.bakes(&world.avatar_lib.shape_params, self.avatar_uuid(), BAKES_BEFORE);
+                world.apply(bakes);
                 log::info!("demo rez: an avatar comes into view");
             }
             STORM => {
@@ -612,7 +614,8 @@ impl RezDemo {
                     objects.push(self.worn(91 + k as u32, point, at, size, volume, 91 + k as u32));
                 }
                 self.texture_now(&mut scene.textures, renderer, jobs, BAKES_AFTER, true);
-                world.apply(self.bakes(self.avatar_uuid(), BAKES_AFTER));
+                let bakes = self.bakes(&world.avatar_lib.shape_params, self.avatar_uuid(), BAKES_AFTER);
+                world.apply(bakes);
                 log::info!("demo rez: the avatar changes outfit (3 items and its bakes), their textures {OUTFIT_TEXTURES} frames later");
             }
             f if f == OUTFIT + OUTFIT_TEXTURES => self.decode(&scene.textures, jobs, vec![91, 92, 93, BAKES_AFTER]),
