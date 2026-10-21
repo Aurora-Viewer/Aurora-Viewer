@@ -479,7 +479,6 @@ pub fn page(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, reset: &mut bool) 
             s.received_items_since = crate::ui::inventory::view::now();
         }
         c |= changed;
-        ui.label(egui::RichText::new(aurora_i18n::tr!("received-filing-warning")).color(p.warn));
     });
     ui.add_space(14.0);
     c |= water_page(ui, p, s);
