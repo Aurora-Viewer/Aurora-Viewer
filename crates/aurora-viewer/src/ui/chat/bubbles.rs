@@ -98,16 +98,16 @@ fn gradient_rect(ctx: &egui::Context, rect: egui::Rect, corners: egui::CornerRad
 /// in the bubble's font, with the room the color emoji and the badges of
 /// web links take more than their characters. A text that comes out wider
 /// than this only wraps sooner.
-fn text_width(ui: &egui::Ui, text: &str, max: f32) -> f32 {
+fn text_width(ui: &egui::Ui, text: &str, size: f32, max: f32) -> f32 {
     let galley = ui
         .painter()
-        .layout(text.to_owned(), egui::FontId::proportional(TEXT_SIZE), Color32::PLACEHOLDER, max);
+        .layout(text.to_owned(), egui::FontId::proportional(size), Color32::PLACEHOLDER, max);
     let emoji = text
         .chars()
         .filter(|c| matches!(*c as u32, 0x2600..=0x27BF | 0x1F000..=0x1FAFF))
         .count() as f32;
     let links = text.matches("://").count() as f32;
-    (galley.size().x + 2.0 + emoji * TEXT_SIZE * 0.4 + links * TEXT_SIZE * 1.6).min(max)
+    (galley.size().x + 2.0 + emoji * size * 0.4 + links * size * 1.6).min(max)
 }
 
 /// A notice of the viewer (offer sent, automatic response…): centered, in
@@ -115,7 +115,7 @@ fn text_width(ui: &egui::Ui, text: &str, max: f32) -> f32 {
 fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, mark: Option<Mark>) {
     let (p, world) = (env.p, env.world);
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let width = text_width(ui, &line.text, ui.available_width() * 0.86);
+    let width = text_width(ui, &line.text, TEXT_SIZE, ui.available_width() * 0.86);
     ui.add_space(3.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
@@ -242,7 +242,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     ui.with_layout(layout, |ui| {
         ui.add_space(lead);
         let behind = ui.painter().add(egui::Shape::Noop);
-        let width = text_width(ui, &text, max_bubble);
+        let size = env.emoji.message_size(&text, TEXT_SIZE);
+        let width = text_width(ui, &text, size, max_bubble);
         let bubble = egui::Frame::new().inner_margin(PAD).show(ui, |ui| {
             // the width of the text, on the bubble's side of the row
             ui.set_max_width(width);
@@ -251,7 +252,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 super::select::colors(p.on_accent, p.violet);
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, TEXT_SIZE, text_color, italics, mark);
+                chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, size, text_color, italics, mark);
             });
         });
         let rect = bubble.response.rect;
