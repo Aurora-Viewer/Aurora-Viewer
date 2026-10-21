@@ -10,7 +10,7 @@
 
 use super::super::context::{CtxAction, request};
 use super::super::menu;
-use crate::slapp::{AppLink, Blocked, unescape};
+use crate::slapp::{AgentVerb, AppLink, Blocked, unescape};
 use crate::theme::Palette;
 use crate::world::World;
 use std::collections::{BTreeSet, HashSet};
@@ -123,15 +123,35 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
     }
 }
 
-/// The tooltip of a command, before its address (mTooltip of its entry).
+/// Describe the actual click action, as LLUrlEntryAgent::getTooltip does
+/// for its verbs. Native links do not need a protocol address in the hint.
 pub(super) fn tooltip(link: &AppLink) -> &'static str {
     match link {
+        AppLink::Agent { verb, .. } => match verb {
+            AgentVerb::Im => aurora_i18n::tr!("ui-chat-applink-im-tip"),
+            AgentVerb::Pay => aurora_i18n::tr!("ui-chat-applink-pay-tip"),
+            AgentVerb::OfferTeleport => aurora_i18n::tr!("ui-chat-applink-offer-teleport-tip"),
+            AgentVerb::RequestFriend => aurora_i18n::tr!("ui-chat-applink-request-friend-tip"),
+            AgentVerb::RemoveFriend => aurora_i18n::tr!("ui-chat-applink-remove-friend-tip"),
+            AgentVerb::Mute => aurora_i18n::tr!("ui-chat-applink-block-resident-tip"),
+            AgentVerb::Unmute => aurora_i18n::tr!("ui-chat-applink-unblock-resident-tip"),
+            AgentVerb::Block(_) => aurora_i18n::tr!("ui-chat-applink-block-object-tip"),
+            AgentVerb::Unblock(_) => aurora_i18n::tr!("ui-chat-applink-unblock-object-tip"),
+            AgentVerb::ReportAbuse => aurora_i18n::tr!("ui-chat-applink-report-tip"),
+        },
         AppLink::Group(_) => aurora_i18n::tr!("ui-chat-applink-group-tip"),
         AppLink::Parcel(_) => aurora_i18n::tr!("ui-chat-applink-parcel-tip"),
         AppLink::ObjectIm(_) => aurora_i18n::tr!("ui-chat-applink-object-tip"),
+        AppLink::Inventory { .. } => aurora_i18n::tr!("ui-chat-applink-inventory-select-tip"),
+        AppLink::InventoryShow => aurora_i18n::tr!("ui-chat-applink-inventory-show-tip"),
+        AppLink::Experience(_) => aurora_i18n::tr!("ui-chat-applink-experience-tip"),
+        AppLink::Classified(_) => aurora_i18n::tr!("ui-chat-applink-classified-tip"),
+        AppLink::Event(_) => aurora_i18n::tr!("ui-chat-applink-event-tip"),
         AppLink::WorldMap { .. } => aurora_i18n::tr!("ui-chat-applink-map-tip"),
-        AppLink::Blocked(Blocked::WearFolder) => aurora_i18n::tr!("ui-chat-applink-wear-tip"),
-        _ => aurora_i18n::tr!("ui-chat-applink-command-tip"),
+        AppLink::Chat { .. } => aurora_i18n::tr!("ui-chat-applink-chat-tip"),
+        AppLink::Search { .. } => aurora_i18n::tr!("ui-chat-applink-search-tip"),
+        AppLink::Blocked(_) => aurora_i18n::tr!("ui-chat-applink-blocked-tip"),
+        AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-tip"),
     }
 }
 
@@ -254,7 +274,7 @@ pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, lin
     ));
     super::select::atom_end(ui, behind, text, r.rect);
     menu(&r, p, world, url, link, text);
-    if r.on_hover_text(format!("{}\n{url}", tooltip(link))).clicked() {
+    if r.on_hover_text(tooltip(link)).clicked() {
         request(ui.ctx(), CtxAction::AppLink(link.clone()));
     }
 }
@@ -262,6 +282,86 @@ pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, lin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hovering_the_same_name_distinguishes_profile_im_and_pay_in_text_and_bubbles() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = crate::demo::DEMO_LOUP;
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        for bubble in [false, true] {
+            for (verb, tip_key) in [
+                ("about", "common-view-profile"),
+                ("im", "ui-chat-applink-im-tip"),
+                ("pay", "ui-chat-applink-pay-tip"),
+            ] {
+                let ctx = egui::Context::default();
+                theme.apply(&ctx, 1.0);
+                ctx.all_styles_mut(|s| s.interaction.tooltip_delay = 0.0);
+                let url = format!("secondlife:///app/agent/{id}/{verb}");
+                let target = if verb == "about" {
+                    super::super::Link::Agent(id)
+                } else {
+                    super::super::Link::App(url.clone(), crate::slapp::parse(&url).expect("agent action"))
+                };
+                let mut pos = egui::pos2(80.0, 50.0);
+                let mut texts = Vec::new();
+                fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+                    match shape {
+                        egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, texts)),
+                        _ => {}
+                    }
+                }
+                for frame in 0..10 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                            time: Some(frame as f64 * 0.2),
+                            events: if frame == 2 {
+                                vec![egui::Event::PointerMoved(pos)]
+                            } else {
+                                Vec::new()
+                            },
+                            ..Default::default()
+                        },
+                        |ui| {
+                            if bubble {
+                                super::super::bubble_link(
+                                    ui.ctx(),
+                                    &p,
+                                    &world,
+                                    0,
+                                    egui::Rect::from_center_size(pos, egui::vec2(100.0, 20.0)),
+                                    &target,
+                                    p.violet,
+                                );
+                            } else {
+                                let shown = ui.scope(|ui| match &target {
+                                    super::super::Link::Agent(id) => super::super::agent_link(ui, &p, &world, *id, "Resident", 14.0),
+                                    super::super::Link::App(url, action) => link(ui, &p, &world, url, action, "Resident", 14.0),
+                                    _ => unreachable!(),
+                                });
+                                pos = shown.response.rect.center();
+                            }
+                        },
+                    );
+                    output.textures_delta.clear();
+                    texts.clear();
+                    output.shapes.iter().for_each(|s| collect(&s.shape, &mut texts));
+                }
+                let expected = aurora_i18n::text(tip_key);
+                assert!(
+                    texts.iter().any(|text| text == expected),
+                    "bubble={bubble}, verb={verb}, texts={texts:?}"
+                );
+                assert!(
+                    !texts.iter().any(|text| text.contains("secondlife:")),
+                    "a native action hint has no protocol/UUID: {texts:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn labels_of_the_legacy_entries() {
