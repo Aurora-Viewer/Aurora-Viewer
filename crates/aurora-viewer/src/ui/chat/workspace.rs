@@ -462,14 +462,14 @@ fn drop_hint(ui: &egui::Ui, p: &Palette, area: egui::Rect, pane: egui::Rect, nam
     }
 }
 
-/// `AURORA_DEMO_CONV_GIVE=away|over|many` (with `AURORA_DEMO_CONV=aurora`).
+/// `AURORA_DEMO_CONV_GIVE=away|over|many|drop|give` (with `AURORA_DEMO_CONV=aurora`).
 fn give_demo() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| {
         (std::env::var("AURORA_DEMO").as_deref() == Ok("1"))
             .then(|| std::env::var("AURORA_DEMO_CONV_GIVE").ok())
             .flatten()
-            .filter(|mode| matches!(mode.as_str(), "away" | "over" | "many" | "drop"))
+            .filter(|mode| matches!(mode.as_str(), "away" | "over" | "many" | "drop" | "give"))
     })
     .as_deref()
 }
@@ -485,15 +485,28 @@ const GIVE_DEMO_ITEMS: [u128; 7] = [8100, 8103, 8109, 8110, 8111, 8104, 8105];
 /// From frame 700, inventory carried: the pointer left outside the window
 /// (`away`), or on the conversation with one entry (`over`) or three
 /// (`many`), never released; `drop` releases seven entries of the demo
-/// inventory on it at frame 720, which opens the give confirmation. No
-/// button is pressed: the payload alone lasts until a release.
+/// inventory on it at frame 720, which opens the give confirmation, and
+/// `give` then answers it with Enter at frame 740. No button is pressed:
+/// the payload alone lasts until a release.
 pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Some(mode) = give_demo().filter(|_| frame >= 700) else {
         return Vec::new();
     };
+    let drop = matches!(mode, "drop" | "give");
+    if mode == "give" && frame == 740 {
+        return [true, false]
+            .map(|pressed| egui::Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            })
+            .to_vec();
+    }
     if frame == 700 {
         let ids = match mode {
-            "drop" => GIVE_DEMO_ITEMS.iter().map(|&n| Uuid::from_u128(n)).collect(),
+            _ if drop => GIVE_DEMO_ITEMS.iter().map(|&n| Uuid::from_u128(n)).collect(),
             "many" => (1..=3)
                 .map(|k| Uuid::from_u128(0xde40_9170_0000_0000_0000_0000_0000_0000 + k))
                 .collect(),
@@ -507,7 +520,7 @@ pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Eve
         (_, Some(pane)) => pane.center(),
     };
     let mut events = vec![egui::Event::PointerMoved(pos)];
-    if mode == "drop" && frame == 720 {
+    if drop && frame == 720 {
         events.push(egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
@@ -515,7 +528,7 @@ pub(super) fn give_demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Eve
             modifiers: Default::default(),
         });
     }
-    if mode == "drop" && frame > 720 {
+    if drop && frame > 720 {
         return Vec::new();
     }
     events
