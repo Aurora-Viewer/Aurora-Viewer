@@ -13222,6 +13222,10 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.open(crate::demo::DEMO_NOVA);
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 380.0), egui::vec2(640.0, 380.0));
+                if crate::demo::applinks_actions_scene() {
+                    self.panels.inventory = false;
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(440.0, 90.0), egui::vec2(800.0, 440.0));
+                }
                 if let Some(action) = crate::demo::applinks_action(&text) {
                     self.prepare_uri_restore_demo(&action);
                     self.on_ctx_action(action);

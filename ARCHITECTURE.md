@@ -1,5 +1,10 @@
 # Aurora Viewer architecture
 
+Native links share `ui/chat/action_marker.rs`: a parsed action chooses its
+Tabler icon and localized short label before the destination. Wrapping text
+and console/bubble LayoutJobs share that prefix; the marker is part of the
+link's hit area while transcript selection keeps the original message text.
+
 Explicit profile openings restore their destination through the shared floater
 expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),
 groups, Places/standalone place details, experiences, payments, abuse reports
