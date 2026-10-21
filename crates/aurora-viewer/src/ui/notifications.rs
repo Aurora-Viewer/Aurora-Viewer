@@ -818,22 +818,29 @@ mod tests {
     const JANE: Uuid = Uuid::from_u128(2);
 
     /// A friend's notice lives as long as its toast; a message's entry
-    /// stays under the bell once its toast is gone.
+    /// stays under the bell once its toast is gone when asked for, else it
+    /// leaves with its toast too (#752).
     #[test]
     fn a_friend_toast_leaves_with_its_toast_and_a_message_stays_listed() {
+        const JOHN: Uuid = Uuid::from_u128(3);
         let mut list = Notifications::default();
         let mut nui = NotifUi::default();
         let friend = list.push_presence(JANE, "Jane Doe is online.", true);
-        let message = list.push_message(JANE, JANE, "Jane Doe", "hello");
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
+        let toast_only = list.push_message(JOHN, JOHN, "John Doe", "hi", false);
         update_toasts(&mut list, &mut nui, 0.0, 30.0, false);
-        assert_eq!(nui.toasts.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![friend, message]);
-        // the friend's toast ends after TOAST_TIP, the message's after 30 s
+        assert_eq!(
+            nui.toasts.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![friend, message, toast_only]
+        );
+        assert_eq!(list.unread(), 1, "the toast alone is not counted");
+        // the friend's toast ends after TOAST_TIP, the messages' after 30 s
         update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false);
         assert!(!list.list.iter().any(|n| n.id == friend));
         assert!(list.list.iter().any(|n| n.id == message));
         update_toasts(&mut list, &mut nui, 31.0, 30.0, false);
         assert!(nui.toasts.is_empty());
-        assert_eq!(list.listed().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
+        assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
         assert_eq!(list.unread(), 1);
     }
 
@@ -844,7 +851,7 @@ mod tests {
         let mut list = Notifications::default();
         let mut nui = NotifUi::default();
         list.push_presence(JANE, "Jane Doe is online.", true);
-        let message = list.push_message(JANE, JANE, "Jane Doe", "hello");
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
         update_toasts(&mut list, &mut nui, 0.0, 30.0, true);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);

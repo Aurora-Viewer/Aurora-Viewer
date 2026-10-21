@@ -337,6 +337,18 @@ pub struct SunInfo {
     pub usec_since_start: u64,
 }
 
+/// One block of MeanCollisionAlert: who bumped, pushed or hit us.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeanCollision {
+    pub perp: Uuid,
+    /// Unix time of the collision, from the simulator.
+    pub time: u32,
+    pub magnitude: f32,
+    /// EMeanCollisionType (mean_collision_data.h): 1 bump, 2 llPushObject,
+    /// 3 selected object, 4 scripted object, 5 physical object.
+    pub kind: u8,
+}
+
 #[derive(Debug, Clone)]
 pub enum NetEvent {
     /// The mute list (LLMuteList): downloaded file, or keep the cached copy.
@@ -763,6 +775,9 @@ pub enum NetEvent {
         /// `beacon::SHOW_MAP` / `beacon::FOCUS_MAP`.
         flags: u32,
     },
+    /// MeanCollisionAlert: residents who bumped us, pushed us or hit us
+    /// with an object (process_mean_collision_alert_message).
+    MeanCollisions(Vec<MeanCollision>),
     /// Avatar profile data (AgentProfile / AvatarPropertiesReply).
     AvatarProfile(Box<crate::profile::AvatarProfile>),
     /// PickInfoReply.

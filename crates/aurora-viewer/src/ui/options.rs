@@ -331,6 +331,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-teleport-commands") => "map-pin-filled",
         value if value == aurora_i18n::text("common-teleport-2") => "location-filled",
         value if value == aurora_i18n::text("ui-options-region-restart") => "refresh",
+        value if value == aurora_i18n::text("bumps-title") => "bounce-right-filled",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
         value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
@@ -1162,6 +1163,15 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
             aurora_i18n::tr!("ui-options-flash-unread-hint"),
             |ui| toggle(ui, p, &mut s.flash_unread_conversations),
         );
+        // the Legacy Viewer's "Flash chat toolbar button if a new IM
+        // arrives" (FSNotifyIMFlash)
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-flash-conversations-button"),
+            aurora_i18n::tr!("ui-options-flash-conversations-button-hint"),
+            |ui| toggle(ui, p, &mut s.flash_conversations_button),
+        );
     });
     // Firestorm's Chat › Notifications (EnableIMChatPopups,
     // EnableGroupChatPopups) and ChatOnlineNotification
@@ -1217,6 +1227,19 @@ fn chat_page_head(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, center: bool
         c |= row(ui, p, aurora_i18n::tr!("ui-options-toast-group-im"), "", |ui| {
             toggle(ui, p, &mut s.toast_group_im)
         });
+        // only what toasts can stay under the bell
+        c |= row(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-options-ims-in-notification-center"),
+            aurora_i18n::tr!("ui-options-ims-in-notification-center-hint"),
+            |ui| {
+                ui.add_enabled_ui(s.toast_im || s.toast_group_im, |ui| {
+                    toggle(ui, p, &mut s.ims_in_notification_center)
+                })
+                .inner
+            },
+        );
         c |= row(ui, p, aurora_i18n::tr!("ui-options-toast-duration"), "", |ui| {
             slider(ui, &mut s.im_toast_seconds, 3.0..=60.0, " s")
         });
@@ -2396,6 +2419,40 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         },
                     );
                 });
+            });
+            // FSCollisionMessagesInChat, FSReportCollisionMessages and
+            // FSReportCollisionMessagesChannel (Legacy Viewer: Preferences ›
+            // Notifications › Alerts)
+            scroll_mark(ui, st);
+            group(ui, p, aurora_i18n::tr!("bumps-title"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-collisions-in-chat"),
+                    aurora_i18n::tr!("ui-options-collisions-in-chat-help"),
+                    |ui| toggle(ui, p, &mut s.collisions.in_chat),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-collisions-report"),
+                    aurora_i18n::tr!("ui-options-collisions-report-help"),
+                    |ui| {
+                        let mut changed = toggle(ui, p, &mut s.collisions.report);
+                        ui.add_enabled_ui(s.collisions.report, |ui| {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut s.collisions.channel)
+                                        .custom_parser(aurora_i18n::parse_number)
+                                        .range(i32::MIN..=i32::MAX)
+                                        .speed(1.0),
+                                )
+                                .on_hover_text(aurora_i18n::tr!("ui-options-collisions-channel"))
+                                .changed();
+                        });
+                        changed
+                    },
+                );
             });
             // FSConfirmPayments / FSPaymentConfirmationThreshold
             // (panel_preferences_firestorm.xml)

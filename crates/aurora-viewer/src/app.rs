@@ -398,6 +398,7 @@ pub struct App {
     script_dialogs_were: usize,
     /// Last tracker beacon sound (FIRE-16969).
     beacon_sound_at: Option<Instant>,
+    wind_sound: crate::scene::wind_sound::WindSound,
     /// Movement keys held since, and the server position then (stuck agent).
     stuck_watch: Option<(Instant, Vec3)>,
     stuck_logged: Option<Instant>,
@@ -468,6 +469,8 @@ pub struct App {
     inspect_ui: ui::inspect::InspectUi,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
+    /// "Bumps, pushes & hits" (Help menu).
+    bumps_ui: ui::bumps::BumpsUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
@@ -972,6 +975,7 @@ impl App {
             url_confirm: None,
             script_dialogs_were: 0,
             beacon_sound_at: None,
+            wind_sound: Default::default(),
             stuck_watch: None,
             stuck_logged: None,
             attachments_logged: 0,
@@ -1014,6 +1018,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             blacklist_ui: Default::default(),
+            bumps_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
@@ -2480,6 +2485,8 @@ impl App {
                     self.world.agent.flying = crate::world::flying_at_exit::load(
                         &crate::settings::account_dir(&l.agent_id).join(crate::world::flying_at_exit::FILE),
                     );
+                } else if crate::scene::wind_sound::demo_spec().is_some_and(|(_, fly)| fly) {
+                    self.world.agent.flying = true;
                 }
                 self.restore_gestures(&l.raw);
                 self.net_profile.reset();
@@ -3739,16 +3746,31 @@ impl App {
             im: self.settings.toast_im,
             // AURORA_DEMO_TOASTS shows a group message too (off by default)
             group_im: self.settings.toast_group_im || (self.demo && crate::demo::toasts::mode().is_some()),
+            // and keeps the messages under the bell for its modes that list
+            // or click them
+            im_in_bell: self.settings.ims_in_notification_center
+                || (self.demo && crate::demo::toasts::mode().is_some_and(|m| matches!(m.as_str(), "bell" | "click" | "minimized"))),
         };
         // a conversation in sight: its tab shown in the Conversations window
         // (FSFloaterIM visible), whether or not the viewer has the focus
-        let shown = (self.panels.chat && !crate::ui::widgets::floater_minimized(&self.egui_ctx, "conversations"))
-            .then_some(self.chat_ui.selected)
-            .flatten();
+        let minimized = crate::ui::widgets::floater_minimized(&self.egui_ctx, "conversations");
+        let shown = (self.panels.chat && !minimized).then_some(self.chat_ui.selected).flatten();
+        // the Conversations button goes out once the window is shown
+        // (FSFloaterIMContainer::setVisible), or with its preference off
+        let flash = &mut self.chat_ui.button_flash;
+        flash.set_on(self.settings.flash_conversations_button);
+        if self.panels.chat {
+            flash.shown();
+        }
+        let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
             let front = self.focused && self.panels.chat && self.chat_ui.selected == Some(m.session);
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
+            }
+            // closed: the button flashes; minimized: the window's bar
+            if self.settings.flash_conversations_button && (!self.panels.chat || minimized) && w.message_flashes_conversations(&m) {
+                self.chat_ui.button_flash.message(now, !self.panels.chat);
             }
             w.notify_message(&m, shown == Some(m.session));
             w.message_attention(&m);
@@ -3860,6 +3882,29 @@ impl App {
                 chat_type: aurora_net::ChatType::Whisper,
             });
         }
+    }
+
+    /// audio_update_wind: the wind at our avatar, heard while flying above
+    /// the water.
+    fn update_wind_sound(&mut self, dt: f32) {
+        let agent = &self.world.agent;
+        let region_wind = self
+            .world
+            .main()
+            .map_or(Vec3::ZERO, |r| r.wind.velocity(agent.position, r.heightmap.size_x as f32));
+        // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND
+        let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() && crate::scene::wind_sound::demo_spec().is_none();
+        let input = crate::scene::wind_sound::WindInput {
+            region_wind,
+            velocity: agent.velocity,
+            rotation: agent.body_rotation(),
+            audible: matches!(self.screen, Screen::World)
+                && !demo_silent
+                && agent.flying
+                && !agent.seated
+                && agent.position.z >= self.world.main_water_height(),
+        };
+        self.wind_sound.update(self.audio_engine.as_ref(), &input, dt);
     }
 
     fn update_audio(&mut self) {
@@ -5800,6 +5845,12 @@ impl App {
                 script_threshold: self.settings.script_count_threshold,
                 version: self.settings.sim_version_alert,
             };
+            // AURORA_DEMO_COLLISIONS=chat: the nearby chat lines for this run only
+            self.world.collisions.cfg = if self.demo {
+                crate::demo::collisions::settings(self.settings.collisions)
+            } else {
+                self.settings.collisions
+            };
             // FSDisableNeighbourRegionConnections, lifted while crossing
             let refuse = self.settings.no_neighbour_regions && self.world.agent_inside_main_region();
             if self.neighbours_refused != refuse {
@@ -5934,6 +5985,7 @@ impl App {
         self.update_native_movelock();
         self.update_movement();
         self.update_audio();
+        self.update_wind_sound(dt);
         let mut edit_camera_frame = None;
         if self.in_world() {
             self.update_sounds();
@@ -7050,6 +7102,8 @@ impl App {
         let mut windows_ms = 0.0;
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
+            // before any field reads its keys: Ctrl+W is the frontmost window's
+            ui::close_key::begin(ui.ctx());
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
@@ -7577,6 +7631,14 @@ impl App {
                 self.world.apply(event);
             }
         }
+        if self.demo && crate::demo::collisions::mode().is_some() {
+            for event in crate::demo::collisions::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            if self.frame_count == crate::demo::collisions::OPEN {
+                ui::widgets::open_floater(&self.egui_ctx, ui::bumps::WINDOW, &mut self.panels.bumps);
+            }
+        }
         if self.demo && crate::demo::presence::position().is_some() {
             let agent = self.world.agent_id;
             for event in crate::demo::presence::events(self.frame_count, agent) {
@@ -7628,7 +7690,7 @@ impl App {
                     self.on_app_event(e);
                 }
             }
-            if self.frame_count == crate::demo::toasts::LIST_AT && mode == "1" {
+            if self.frame_count == crate::demo::toasts::LIST_AT && (mode == "1" || mode == "bell") {
                 self.notif_ui.open = true;
             }
             if self.frame_count == crate::demo::toasts::CLICK_AT && (mode == "click" || mode == "minimized") {
@@ -10315,6 +10377,7 @@ impl App {
                 let side_row = ui::bars::Row {
                     unread: if demo_bars.read { 0 } else { self.world.conversations_badge() },
                     latest_unread: self.world.social.latest_unread(),
+                    flash: self.chat_ui.button_flash.button(ctx.input(|i| i.time)).0,
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
                     mouselook: self.camera.mouselook(),
@@ -11235,6 +11298,7 @@ impl App {
                     }
                 }
                 self.blacklist_window(&ctx, &p);
+                self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
@@ -11929,6 +11993,7 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_new = match filter {
                         "new" => 1,
                         "new2" => 2,
+                        "new3" => 3,
                         _ => 0,
                     };
                     self.options_ui.scroll_to_attention = filter == "attention";

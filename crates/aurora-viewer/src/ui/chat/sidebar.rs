@@ -544,6 +544,28 @@ fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
 
 /// The name of an entry: a resident's display name, else the session's
 /// title (a group, a conference, a name not known yet).
+/// The conversations of the column from top to bottom, as `show` lists
+/// them (None: the nearby chat): those the search leaves, the private
+/// messages, then the groups and the conferences.
+pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
+    let filter = st.side_filter.trim().to_lowercase();
+    let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
+    let sessions = st.reorder.sessions(world);
+    let mut order: Vec<Option<Uuid>> = Vec::new();
+    if matches(aurora_i18n::tr!("common-nearby-chat")) {
+        order.push(None);
+    }
+    for section in [Kind::Private, Kind::Group, Kind::Conference] {
+        order.extend(
+            sessions
+                .iter()
+                .filter(|(id, _)| kind(world, id) == section && matches(&entry_name(world, id, section)))
+                .map(|(id, _)| Some(*id)),
+        );
+    }
+    order
+}
+
 fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
     if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
         return world.social.display_name_of(id);
