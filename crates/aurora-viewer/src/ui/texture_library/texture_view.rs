@@ -313,19 +313,22 @@ pub(crate) fn show_image(
                 }
             });
         });
-        ui.label(
-            RichText::new(dimensions.map_or_else(
-                || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
-                |(width, height)| {
-                    aurora_i18n::tr!(
-                        "resource-preview-dimensions",
-                        width = width.to_string(),
-                        height = height.to_string()
-                    )
-                },
-            ))
-            .small()
-            .color(p.muted),
+        ui.add(
+            egui::Label::new(
+                RichText::new(dimensions.map_or_else(
+                    || aurora_i18n::tr!("resource-preview-dimensions-loading").to_owned(),
+                    |(width, height)| {
+                        aurora_i18n::tr!(
+                            "resource-preview-dimensions",
+                            width = width.to_string(),
+                            height = height.to_string()
+                        )
+                    },
+                ))
+                .small()
+                .color(p.muted),
+            )
+            .wrap_mode(egui::TextWrapMode::Extend),
         );
     });
     let available = Vec2::new(ui.available_width(), (ui.available_height() - footer_height).max(24.0));

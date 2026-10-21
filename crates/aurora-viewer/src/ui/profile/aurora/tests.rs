@@ -551,7 +551,14 @@ fn profile_photo_controls_change_ratio_and_use_full_dimensions_for_native_pixels
     let output = f.settle();
     let text = |output: &egui::FullOutput, label: &str| {
         photo_shape(output, |shape| match shape {
-            egui::Shape::Text(text) if text.galley.text() == label => Some(Rect::from_min_size(text.pos, text.galley.size())),
+            egui::Shape::Text(text) if text.galley.text() == label => {
+                assert_eq!(
+                    text.galley.rows.len(),
+                    1,
+                    "each preview control, including image dimensions, stays in one piece"
+                );
+                Some(Rect::from_min_size(text.pos, text.galley.size()))
+            }
             _ => None,
         })
     };
