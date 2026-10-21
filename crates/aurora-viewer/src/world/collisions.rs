@@ -130,7 +130,11 @@ fn is_prelude(region_flags: u32) -> bool {
 impl World {
     pub(super) fn on_mean_collisions(&mut self, list: Vec<MeanCollision>) {
         // "In prelude, bumping is OK": the newcomers' island says nothing
-        if self.main().and_then(|r| r.info.as_ref()).is_some_and(|i| is_prelude(i.region_flags)) {
+        if self
+            .main()
+            .and_then(|r| r.info.as_ref())
+            .is_some_and(|i| is_prelude(i.region_flags))
+        {
             return;
         }
         let cfg = self.collisions.cfg;
@@ -198,11 +202,7 @@ mod tests {
         w.on_mean_collisions(vec![hit(1, 1, 20), hit(1, 5, 21)]);
         assert_eq!(
             rows(&w),
-            [
-                (id(1), Kind::PhysicalObject, 21),
-                (id(1), Kind::Bump, 20),
-                (id(2), Kind::Push, 11)
-            ]
+            [(id(1), Kind::PhysicalObject, 21), (id(1), Kind::Bump, 20), (id(2), Kind::Push, 11)]
         );
     }
 

@@ -8,8 +8,8 @@ pub mod calling_cards;
 
 pub mod bridge;
 pub mod calls;
-pub mod collisions;
 pub mod chat_log;
+pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
 pub mod eep;

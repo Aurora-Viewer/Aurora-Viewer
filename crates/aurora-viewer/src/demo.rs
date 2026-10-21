@@ -45,6 +45,9 @@ pub mod chatlog;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
+/// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
+#[path = "demo_collisions.rs"]
+pub mod collisions;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -104,9 +107,6 @@ pub mod place;
 /// Linden trees and grass, near, far or as a forest (AURORA_DEMO_PLANTS).
 #[path = "demo_plants.rs"]
 pub mod plants;
-/// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
-#[path = "demo_collisions.rs"]
-pub mod collisions;
 /// The friends' online / offline toasts at one of their places
 /// (AURORA_DEMO_PRESENCE).
 #[path = "demo_presence.rs"]
