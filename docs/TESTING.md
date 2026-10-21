@@ -3604,8 +3604,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   an inventory item, two experiences (the region's treasure hunt by its
   name; the experience of `AURORA_DEMO_EXPERIENCE`, "unknown" without that
   scenario), a classified and an event (their address, as in the Legacy
-  Viewer), the map, a chat on channel 42, a search, a resident's IM, a
-  folder to wear and an unknown command. Each opens what the Legacy Viewer
+  Viewer), the map, a chat on channel 42, a search, a resident's IM, the
+  same resident's profile glued to the sentence ("…/about's hat": the
+  name, then "'s hat" as text), a folder to wear and an unknown command. Each opens what the Legacy Viewer
   opens on a click (group profile, place profile, remote object
   inspector, inventory, experience profile, the classified or the event
   alone in Search, the map); the folder to wear is refused (a notice), as
