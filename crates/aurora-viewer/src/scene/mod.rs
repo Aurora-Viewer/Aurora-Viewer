@@ -215,6 +215,40 @@ fn skeleton_max_age(owner: &Uuid) -> f32 {
     2.0 + ((owner.as_u128() as u32).wrapping_mul(0x9E37_79B9) >> 22) as f32 / 1024.0
 }
 
+/// Where the ray `origin + dir * t` (t ≥ 0) enters the upright cylinder of
+/// `radius` around `center`, from `center.z + low` to `center.z + high`.
+pub(crate) fn ray_capsule(origin: Vec3, dir: Vec3, center: Vec3, radius: f32, low: f32, high: f32) -> Option<f32> {
+    let (o, d) = (origin - center, dir);
+    // the interval of t inside the infinite cylinder
+    let a = d.x * d.x + d.y * d.y;
+    let (mut t0, mut t1) = if a < 1e-9 {
+        if o.x * o.x + o.y * o.y > radius * radius {
+            return None;
+        }
+        (f32::NEG_INFINITY, f32::INFINITY)
+    } else {
+        let b = o.x * d.x + o.y * d.y;
+        let c = o.x * o.x + o.y * o.y - radius * radius;
+        let disc = b * b - a * c;
+        if disc < 0.0 {
+            return None;
+        }
+        let s = disc.sqrt();
+        ((-b - s) / a, (-b + s) / a)
+    };
+    // within its height
+    if d.z.abs() < 1e-9 {
+        if !(low..=high).contains(&o.z) {
+            return None;
+        }
+    } else {
+        let (za, zb) = ((low - o.z) / d.z, (high - o.z) / d.z);
+        t0 = t0.max(za.min(zb));
+        t1 = t1.min(za.max(zb));
+    }
+    (t1 >= t0.max(0.0)).then_some(t0.max(0.0))
+}
+
 /// Pass a face is drawn in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Pass {
@@ -1830,6 +1864,33 @@ impl Scene {
         self.palette_free.clear();
         self.palette_count = self.live_morphs.slots;
         self.live_morphs.uploaded = false;
+    }
+
+    /// The nearest avatar the ray `(origin, dir)` meets before `far`, and
+    /// where: the hover search leaves avatars out (the cursor's actions are
+    /// the objects'), the world's hover tips name them. Each avatar is the
+    /// upright capsule of `pick_at` narrowed to the body: `pick_at` tests a
+    /// point already on the avatar, a ray would meet that one in the air
+    /// around the head and shoulders.
+    pub fn avatar_on_ray(&self, world: &World, (origin, dir): (Vec3, Vec3), far: f32) -> Option<(usize, Vec3)> {
+        const RADIUS: f32 = 0.3;
+        let mut best: Option<(f32, usize)> = None;
+        for (idx, o) in world.objects.avatars() {
+            // not ours: the camera behind it keeps it under the pointer
+            if o.full_id == world.agent_id {
+                continue;
+            }
+            let Some(g) = self.gpu.get(idx).filter(|g| g.is_avatar && !g.faces.is_empty()) else {
+                continue;
+            };
+            let Some(t) = ray_capsule(origin, dir, g.center, RADIUS, -1.1, 0.95) else {
+                continue;
+            };
+            if t <= far && best.is_none_or(|(b, _)| t < b) {
+                best = Some((t, idx));
+            }
+        }
+        best.map(|(t, idx)| (idx, origin + dir * t))
     }
 
     /// What is at a picked world point: an avatar (capsule test) or the most

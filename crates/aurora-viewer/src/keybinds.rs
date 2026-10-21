@@ -330,6 +330,9 @@ pub enum Action {
     /// Hide or show the interface (Firestorm's View › Show User Interface,
     /// Alt+Shift+U, `View.ToggleUI`).
     ToggleInterface,
+    /// The world's hover tips on or off (the Legacy Viewer's Show Tips,
+    /// Ctrl+Shift+T, `View.ShowHoverTips`).
+    HoverTips,
     /// Open Aurora's batch importer and its native file picker.
     Import,
     /// Aurora's held shortcut for dragging a visible HUD with the left button.
@@ -446,6 +449,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
                     (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
+                    (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                 ],
             ),
@@ -649,6 +653,8 @@ impl KeyBindings {
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             // menu_viewer.xml: Show User Interface, shortcut="alt|shift|U"
             (Action::ToggleInterface, [kalt(K::KeyU, false, true), None]),
+            // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
+            (Action::HoverTips, [kmod(K::KeyT, true, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
             (Action::HudDrag, [k(K::ControlLeft), None]),

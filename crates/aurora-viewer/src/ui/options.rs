@@ -339,6 +339,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("bumps-title") => "bounce-right-filled",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
+        value if value == aurora_i18n::text("ui-options-hover-tips") => "pointer-filled",
         value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
         value if value == aurora_i18n::text("ui-options-aurora-gaze") => "eye-filled",
         value if value == aurora_i18n::text("ui-options-aurora-movement") => "walk",
@@ -2374,6 +2375,67 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                         |ui| toggle(ui, p, &mut s.tag_complexity_own),
                     );
                 }
+            });
+            // panel_preferences_UI.xml "Hover Tips": ShowHoverTips and what
+            // it enables; Aurora's form of the tips (Preferences › Aurora
+            // has their Legacy text)
+            group(ui, p, aurora_i18n::tr!("ui-options-hover-tips"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-hover-tips-show"),
+                    aurora_i18n::tr!("ui-options-hover-tips-show-help"),
+                    |ui| toggle(ui, p, &mut s.hover_tips.enabled),
+                );
+                ui.add_enabled_ui(s.hover_tips.enabled, |ui| {
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-hover-tips-form"),
+                        aurora_i18n::tr!("ui-options-hover-tips-form-help"),
+                        |ui| {
+                            use crate::settings::HoverTipForm;
+                            let options = [
+                                (aurora_i18n::tr!("hover-tips-bubble"), true),
+                                (aurora_i18n::tr!("hover-tips-card"), true),
+                                (aurora_i18n::tr!("hover-tips-readout"), true),
+                            ];
+                            let mut selected = HoverTipForm::ALL.iter().position(|f| *f == s.hover_tips.form).unwrap_or(1);
+                            let changed = super::widgets::segmented(ui, p, &mut selected, &options);
+                            s.hover_tips.form = HoverTipForm::ALL[selected];
+                            changed
+                        },
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-hover-tips-objects"),
+                        aurora_i18n::tr!("ui-options-hover-tips-objects-help"),
+                        |ui| {
+                            let options = [
+                                (aurora_i18n::tr!("ui-options-hover-tips-interactive"), true),
+                                (aurora_i18n::tr!("ui-options-hover-tips-all"), true),
+                            ];
+                            let mut selected = usize::from(s.hover_tips.all_objects);
+                            let changed = super::widgets::segmented(ui, p, &mut selected, &options);
+                            s.hover_tips.all_objects = selected == 1;
+                            changed
+                        },
+                    );
+                    c |= row(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("ui-options-hover-tips-land"),
+                        aurora_i18n::tr!("ui-options-hover-tips-land-help"),
+                        |ui| toggle(ui, p, &mut s.hover_tips.land),
+                    );
+                    c |= row(ui, p, aurora_i18n::tr!("ui-options-hover-tips-group-titles"), "", |ui| {
+                        toggle(ui, p, &mut s.hover_tips.group_titles)
+                    });
+                    c |= row(ui, p, aurora_i18n::tr!("ui-options-hover-tips-delay"), "", |ui| {
+                        slider(ui, &mut s.hover_tips.delay, 0.0..=crate::settings::MAX_HOVER_TIP_DELAY, " s")
+                    });
+                });
             });
             // panel_preferences_UI.xml "Use stand-alone windows for:"
             group(ui, p, aurora_i18n::tr!("common-windows"), |ui| {

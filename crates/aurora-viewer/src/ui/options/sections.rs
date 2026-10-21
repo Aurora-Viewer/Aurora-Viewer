@@ -66,6 +66,7 @@ sections! {
         temporary_name_tags, name_tag_show_seconds, use_display_names, show_usernames, legacy_username_format, trim_resident,
         group_titles, hide_own_group_title,
         display_name_notices, tag_complexity, tag_complexity_too_complex_only, tag_complexity_own,
+        hover_tips.enabled, hover_tips.form, hover_tips.all_objects, hover_tips.land, hover_tips.group_titles, hover_tips.delay,
         inventory.sort, inventory.received_sort, inventory.show_library, inventory.show_recent, inventory.show_worn,
         inventory.show_favorites, inventory.search_trash, inventory.search_library, inventory.search_outfits,
         inventory.separate_searches, inventory.double_click_add_objects, inventory.double_click_add_clothes,
@@ -97,7 +98,7 @@ sections! {
     TAB_AURORA => [
         water_effects,
         chat_style, classic_chat_lines, classic_name_tags, lookat.style, notifications_style, classic_bars, world_map_style, classic_people, classic_profiles, photo_window, snapshot.viewfinder.controls,
-        classic_about_land, classic_search, classic_region_estate, classic_places, classic_inventory, classic_pay_window, legacy_money_tracker, classic_controls, classic_restart_alert, classic_rez_effect,
+        classic_about_land, classic_search, classic_region_estate, classic_places, classic_inventory, classic_pay_window, legacy_money_tracker, classic_controls, classic_restart_alert, classic_rez_effect, classic_hover_tips,
         lookat.aim, predict_own_motion, synchronize_animations, ground_avatar_feet, ground_feet_while_moving, ground_feet_max_height, plates_hover_expand, plates_friends_only_full, plate_click,
     ],
     TAB_ACCESSIBILITY => [color_blindness, color_blindness_strength],

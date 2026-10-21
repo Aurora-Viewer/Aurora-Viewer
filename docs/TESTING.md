@@ -653,6 +653,7 @@ when unfocused") is ignored during a screenshot.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
+| `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland]` | World tooltips over objects, avatars and land |
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
@@ -972,6 +973,19 @@ New `llOwnerSay` messages open Script debug if their routing is enabled; the
 errors of owned objects also appear there, after filtering of the bridge and
 of blocked objects. The window allows seeing all the objects or a single one
 and clearing the displayed messages.
+
+**`AURORA_DEMO_HOVER_TIPS=bubble|card|readout|legacy[:all][:noland]`** — the
+world tooltips on for the session in that form (the Legacy Viewer's text
+with `legacy`), the saved settings untouched; on land unless `noland`, on
+every object with `all`. The simulator answers the parcel under the pointer
+(the plaza, the 128 m square in the middle, or the garden for sale around
+it) and the objects' properties. Rest the cursor with `AURORA_DEMO_HOVER="x,y"`
+and add `AURORA_DEMO_ACTIONS=1` for cubes that can be bought, paid and
+touched; capture with `AURORA_FPS_LIMIT=60` near frame 780. Each new tip is
+logged (`demo hover tip:` with its title, owner, sale, lines, flags and
+buttons). In the default demo view, `550,500` is the Pay cube, `752,420`
+Orion, and with `AURORA_DEMO_POS=40,126` the ground at `800,600` is the
+garden.
 
 **`AURORA_DEMO_ACTIONS`** — cursors and object clicks like Firestorm
 (same rules; cursors drawn from the Tabler icons).

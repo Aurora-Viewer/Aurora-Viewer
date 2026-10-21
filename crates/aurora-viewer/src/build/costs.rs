@@ -49,6 +49,8 @@ pub struct Costs {
     asked: Vec<Uuid>,
     asked_at: Option<Instant>,
     parcel_seq: i32,
+    /// Roots the hover tips asked the cost of (once each).
+    hover_asked: std::collections::HashSet<Uuid>,
 }
 
 impl Costs {
@@ -76,6 +78,20 @@ impl BuildTool {
             total += self.costs.objects.get(&o.full_id)?.linked_set;
         }
         Some(total)
+    }
+
+    /// Land impact of a hovered object for the hover tips' card: known, or
+    /// asked once with GetObjectCost (the Legacy Viewer's hover selection
+    /// fetches it the same way, LLSelectMgr::getHoverObjects).
+    pub fn hover_land_impact(&mut self, handle: RegionHandle, root: Uuid) -> Option<f32> {
+        if let Some(c) = self.costs.objects.get(&root) {
+            return Some(c.linked_set);
+        }
+        if self.costs.hover_asked.insert(root) {
+            let body = llsd_map! { "object_ids" => Llsd::Array(vec![Llsd::from(root)]) };
+            self.cap(handle, "GetObjectCost", false, body, CapPurpose::ObjectCost(vec![root]));
+        }
+        None
     }
 
     /// Ask for the costs, weights, physics data and parcel when the

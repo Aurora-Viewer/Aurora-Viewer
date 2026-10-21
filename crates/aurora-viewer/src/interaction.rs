@@ -243,19 +243,20 @@ impl Interactions {
         if !matches!(target.action, Action::Buy | Action::Open) {
             return None;
         }
+        self.tip_request(target.key.region, target.root)
+    }
+
+    /// ObjectPropertiesFamily of a hovered root (LLSelectMgr::setHoverObject
+    /// asks it as the pointer comes on it): at most every 5 s while it has
+    /// not answered, every 30 s once it has.
+    pub fn tip_request(&mut self, handle: aurora_net::RegionHandle, root: Uuid) -> Option<NetCommand> {
         let now = Instant::now();
-        if self
-            .requested
-            .get(&target.root)
-            .is_some_and(|t| now.duration_since(*t) < Duration::from_secs(5))
-        {
+        let wait = Duration::from_secs(if self.props.contains_key(&root) { 30 } else { 5 });
+        if self.requested.get(&root).is_some_and(|t| now.duration_since(*t) < wait) {
             return None;
         }
-        self.requested.insert(target.root, now);
-        Some(NetCommand::RequestObjectProperties {
-            handle: target.key.region,
-            object: target.root,
-        })
+        self.requested.insert(root, now);
+        Some(NetCommand::RequestObjectProperties { handle, object: root })
     }
 
     pub fn open(&mut self, target: Target) -> Vec<NetCommand> {

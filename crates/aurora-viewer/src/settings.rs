@@ -189,6 +189,60 @@ impl PlateClick {
     ];
 }
 
+/// The look of the world's hover tips (Preferences › Interface): a bubble
+/// next to the pointer, a card with the details and the actions (the
+/// default), or a fixed readout in a corner.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HoverTipForm {
+    Bubble,
+    #[default]
+    Card,
+    Readout,
+}
+
+impl HoverTipForm {
+    pub const ALL: [HoverTipForm; 3] = [HoverTipForm::Bubble, HoverTipForm::Card, HoverTipForm::Readout];
+}
+
+/// The world's hover tips: what is under the pointer, object, avatar or
+/// land (the Legacy Viewer's "Hover Tips" of panel_preferences_UI.xml).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct HoverTips {
+    /// ShowHoverTips (View › Show Tips, Ctrl+Shift+T). Off by default, the
+    /// human's choice (2026-10-21); the Legacy Viewer's is on.
+    pub enabled: bool,
+    pub form: HoverTipForm,
+    /// ShowAllObjectHoverTip: every object, not only those that can be
+    /// touched, paid, bought or have media (off, as in the Legacy Viewer).
+    pub all_objects: bool,
+    /// ShowLandHoverTip: the parcel under the pointer (off, as in the
+    /// Legacy Viewer).
+    pub land: bool,
+    /// FSShowGroupTitleInTooltip: the avatars' group title above their name.
+    pub group_titles: bool,
+    /// Seconds the pointer rests before a tip shows (ObjectInspectorTooltipDelay
+    /// and AvatarInspectorTooltipDelay, one setting here).
+    pub delay: f32,
+}
+
+/// The longest hover tip delay of the preferences' slider (the Legacy
+/// Viewer's delay sliders go to 6 s).
+pub const MAX_HOVER_TIP_DELAY: f32 = 6.0;
+
+impl Default for HoverTips {
+    fn default() -> Self {
+        HoverTips {
+            enabled: false,
+            form: HoverTipForm::Card,
+            all_objects: false,
+            land: false,
+            group_titles: true,
+            delay: 0.35,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum GridChoice {
     SecondLife,
@@ -626,6 +680,11 @@ pub struct Settings {
     /// The effect by default since it covers every loading path (no face
     /// stays grey: `rez_still_grey` in object.wgsl).
     pub classic_rez_effect: bool,
+    /// The world's hover tips (Preferences › Interface).
+    pub hover_tips: HoverTips,
+    /// The Legacy Viewer's plain text hover tips with their "i" button
+    /// instead of Aurora's bubble, card or readout (`ui/hover_tips.rs`).
+    pub classic_hover_tips: bool,
     /// Aurora's movement of our avatar (Preferences › Aurora › Movement,
     /// `own_motion.rs`): it moves as soon as a key is pressed and corrections
     /// fade slowly. Off, the default until it has been tried on the grid:
@@ -1351,6 +1410,8 @@ impl Default for Settings {
             classic_restart_alert: false,
             classic_chat_lines: false,
             classic_rez_effect: false,
+            hover_tips: HoverTips::default(),
+            classic_hover_tips: false,
             predict_own_motion: false,
             synchronize_animations: false,
             ground_avatar_feet: false,
@@ -1929,6 +1990,11 @@ impl Settings {
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(0.1, 5.0);
         self.texture_budget_mb = self.texture_budget_mb.clamp(256, 32768);
         self.font_scale = self.font_scale.clamp(0.8, 1.4);
+        self.hover_tips.delay = if self.hover_tips.delay.is_finite() {
+            self.hover_tips.delay.clamp(0.0, MAX_HOVER_TIP_DELAY)
+        } else {
+            HoverTips::default().delay
+        };
         self.shadow_quality = self.shadow_quality.min(4);
         self.antialiasing = self.antialiasing.min(6);
         self.reflection_probes = self.reflection_probes.min(3);

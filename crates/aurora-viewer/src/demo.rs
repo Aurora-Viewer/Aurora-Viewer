@@ -79,6 +79,9 @@ pub mod group;
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]
 pub mod home;
+/// The world's hover tips in one of their forms (AURORA_DEMO_HOVER_TIPS).
+#[path = "demo_hover_tips.rs"]
+pub mod hover_tips;
 #[path = "demo_hud.rs"]
 pub mod hud;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
@@ -2457,6 +2460,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                     0
                 },
                 next_owner_mask: aurora_net::build::perm::TRANSFER,
+                // Nova may sell copies (for_sale_selection, the hover tips)
+                owner_mask: aurora_net::build::perm::TRANSFER | aurora_net::build::perm::COPY | aurora_net::build::perm::MODIFY,
                 sale_price: 10,
                 name: if *object == action_id(971) {
                     aurora_i18n::tr!("demo-cube-for-sale")
@@ -2467,6 +2472,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 description: aurora_i18n::tr!("demo-offline-demo-no-real-l-is-spent").into(),
                 ..Default::default()
             }])]
+        }
+        // the other objects' names for the hover tips (AURORA_DEMO_HOVER_TIPS)
+        aurora_net::NetCommand::RequestObjectProperties { object, .. } if hover_tips::scenario().is_some() => {
+            vec![NetEvent::ObjectProperties(vec![hover_tips::object_props(*object)])]
         }
         // Report Abuse: the region's categories, the reported object (owned
         // by Nova) and a report the demo keeps to itself
