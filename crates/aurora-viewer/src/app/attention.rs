@@ -5,6 +5,7 @@
 //! notification, which brings the window back to what it told.
 
 use super::App;
+use crate::keywords::KeywordSettings;
 use crate::settings::Settings;
 use crate::world::attention::{Cause, Notice, Open};
 use std::collections::{HashMap, VecDeque};
@@ -65,8 +66,15 @@ pub fn flashes(cause: Cause, s: &Settings) -> bool {
         Cause::Message | Cause::Mention => s.flash_on_message,
         Cause::ObjectIm => s.flash_on_message && s.flash_on_object_im,
         Cause::ScriptDialog => s.flash_on_script_dialog,
-        Cause::Notice => false,
+        // FSKeywords::notify plays its sound and tells Growl, no flash
+        Cause::Keyword | Cause::Notice => false,
     }
+}
+
+/// The keyword sound to play (PlayModeUISndFSKeywordSound,
+/// UISndFSKeywordSound), under the "Interface sounds" switch.
+pub fn keyword_sound(s: &Settings, k: &KeywordSettings) -> Option<uuid::Uuid> {
+    (s.audio.ui_sounds && k.play_sound && !k.sound.is_nil()).then_some(k.sound)
 }
 
 /// Whether the system is told now (GrowlManager::shouldNotify): turned on,
@@ -99,13 +107,31 @@ fn body_text(text: &str) -> String {
 impl App {
     /// Each frame in world: what the world asked for since the last frame.
     pub(super) fn update_attention(&mut self) {
+        let mut keyword_sound = None;
         for a in std::mem::take(&mut self.world.attention) {
             if self.attention.behind && flashes(a.cause, &self.settings) {
                 self.flash_taskbar();
             }
+            if a.cause == Cause::Keyword {
+                // once a frame, however many lines arrived together
+                keyword_sound = self::keyword_sound(&self.settings, &self.keyword_settings());
+            }
             if let Some(notice) = a.notice {
                 self.tell_system(notice);
             }
+        }
+        if let Some(id) = keyword_sound {
+            log::debug!(target: "ui_sound", "UISndFSKeywordSound ({id})");
+            self.scene.sounds.play_ui(self.audio_engine.as_ref(), id);
+        }
+    }
+
+    /// The keyword alerts in force: AURORA_DEMO_KEYWORDS's for the run
+    /// (never saved), else the preferences'.
+    pub(super) fn keyword_settings(&self) -> KeywordSettings {
+        match crate::demo::keywords::settings() {
+            Some(k) if self.demo => k,
+            _ => self.settings.keywords.clone(),
         }
     }
 
@@ -276,11 +302,25 @@ mod tests {
     fn the_flash_follows_its_settings() {
         let mut s = Settings::default();
         assert!(flashes(Cause::Message, &s) && flashes(Cause::Mention, &s) && flashes(Cause::ObjectIm, &s));
-        assert!(!flashes(Cause::ScriptDialog, &s) && !flashes(Cause::Notice, &s));
+        assert!(!flashes(Cause::ScriptDialog, &s) && !flashes(Cause::Notice, &s) && !flashes(Cause::Keyword, &s));
         s.flash_on_message = false;
         assert!(!flashes(Cause::ObjectIm, &s) && !flashes(Cause::Mention, &s));
         s.flash_on_script_dialog = true;
         assert!(flashes(Cause::ScriptDialog, &s));
+    }
+
+    #[test]
+    fn the_keyword_sound_needs_its_switch_and_the_interface_sounds() {
+        let mut s = Settings::default();
+        let mut k = KeywordSettings::default();
+        assert_eq!(keyword_sound(&s, &k), None, "off by default, like PlayModeUISndFSKeywordSound");
+        k.play_sound = true;
+        assert_eq!(keyword_sound(&s, &k), Some(crate::keywords::DEFAULT_SOUND));
+        s.audio.ui_sounds = false;
+        assert_eq!(keyword_sound(&s, &k), None);
+        s.audio.ui_sounds = true;
+        k.sound = uuid::Uuid::nil();
+        assert_eq!(keyword_sound(&s, &k), None);
     }
 
     #[test]

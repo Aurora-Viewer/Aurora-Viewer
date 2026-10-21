@@ -384,6 +384,11 @@ fn conversations_button(
         };
     let resp = ui.interact(button, Id::new("chat_island_open"), Sense::click());
     slot_face(ui, p, button, resp.hovered(), shown);
+    // its flash while the window is closed (`ButtonFlash`)
+    if row.flash > 0.0 && !panels.chat {
+        ui.painter()
+            .rect_filled(button, ui.visuals().window_corner_radius, p.violet.gamma_multiply(row.flash));
+    }
     paint_icon(
         ui,
         icons,
@@ -566,6 +571,7 @@ mod tests {
             let row = Row {
                 unread: self.unread,
                 latest_unread: self.latest,
+                flash: 0.0,
                 flying: false,
                 seated: false,
                 mouselook: false,

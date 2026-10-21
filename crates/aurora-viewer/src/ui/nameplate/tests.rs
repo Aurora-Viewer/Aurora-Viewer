@@ -1003,3 +1003,51 @@ fn a_hovered_pill_grows_even_with_full_plates_for_friends_only() {
     frame(&ctx, &mut plates, &tags, 4.0);
     assert_eq!(level(&plates, 1), Some(Level::Compact));
 }
+
+#[test]
+fn a_hovered_plate_bounces_a_few_points_then_stands_still() {
+    assert_eq!(bounce_grow(-0.01), 0.0);
+    assert_eq!(bounce_grow(0.0), 0.0);
+    // out first, a little in, then nothing
+    let samples: Vec<f32> = (0..=100).map(|i| bounce_grow(BOUNCE * i as f64 / 100.0)).collect();
+    let peak = samples.iter().copied().fold(f32::MIN, f32::max);
+    let dip = samples.iter().copied().fold(f32::MAX, f32::min);
+    assert!(peak > 1.5 && peak <= BOUNCE_GROW, "{peak}");
+    assert!(dip < 0.0 && dip > -1.0, "{dip}");
+    assert!(bounce_grow(BOUNCE * 0.1) > 0.0);
+    assert_eq!(bounce_grow(BOUNCE), 0.0);
+    assert_eq!(bounce_grow(BOUNCE + 1.0), 0.0);
+}
+
+#[test]
+fn a_full_plate_lights_up_and_bounces_under_the_pointer() {
+    let ctx = egui::Context::default();
+    let mut plates = Plates::default();
+    // complete already: the level stays, the plate still answers
+    let tags = [tag(1, 4.0, content())];
+    let id = Uuid::from_u128(1);
+    let rect = |out: &(Vec<(Uuid, Rect)>, Vec<egui::Shape>)| out.0[0].1;
+    let still = rect(&frame(&ctx, &mut plates, &tags, 1.0));
+    assert_eq!(plates.entries[&id].hover, 0.0);
+    plates.hovered = Some(id);
+    let reached = rect(&frame(&ctx, &mut plates, &tags, 1.1));
+    assert_eq!(plates.entries[&id].level, Level::Full);
+    assert_eq!(plates.entries[&id].bounced, 1.1);
+    // the pointer's rectangle does not move with the bounce
+    assert_eq!(reached, still);
+    frame(&ctx, &mut plates, &tags, 1.3);
+    assert_eq!(plates.entries[&id].hover, 1.0);
+    // staying on it does not bounce again; leaving fades the light
+    frame(&ctx, &mut plates, &tags, 2.0);
+    assert_eq!(plates.entries[&id].bounced, 1.1);
+    plates.hovered = None;
+    frame(&ctx, &mut plates, &tags, 3.0);
+    assert_eq!(plates.entries[&id].hover, 0.0);
+    // "Reduce animations": the light without the bounce
+    plates.still = true;
+    plates.hovered = Some(id);
+    frame(&ctx, &mut plates, &tags, 4.0);
+    assert_eq!(plates.entries[&id].bounced, 1.1);
+    frame(&ctx, &mut plates, &tags, 4.2);
+    assert_eq!(plates.entries[&id].hover, 1.0);
+}

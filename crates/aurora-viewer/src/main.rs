@@ -38,6 +38,7 @@ mod hover_tips;
 mod imports;
 mod interaction;
 mod keybinds;
+mod keywords;
 mod link_trust;
 mod links;
 mod logging;

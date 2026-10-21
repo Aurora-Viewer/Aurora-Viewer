@@ -9,6 +9,7 @@ pub mod calling_cards;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
+pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
 pub mod eep;
@@ -421,6 +422,8 @@ pub struct World {
     pub group_titles: names::GroupTitles,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
+    /// Bumps, pushes and hits (collisions.rs).
+    pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
     /// The account's list of open private conversations (open_ims.rs).
@@ -604,6 +607,7 @@ impl World {
             offline_im_requested: false,
             group_titles: Default::default(),
             region_alerts: Default::default(),
+            collisions: Default::default(),
             fly_after_teleport: false,
             open_ims_path: None,
             reopen_ims: Vec::new(),
@@ -2303,6 +2307,10 @@ impl World {
                         flags,
                     })
             }
+            NetEvent::MeanCollisions(list) => {
+                self.on_mean_collisions(list);
+                None
+            }
             NetEvent::Names(list) => {
                 for (id, first, last) in list {
                     self.social.avatar_names.on_legacy(id, &first, &last);
@@ -2869,6 +2877,11 @@ impl World {
             };
             self.ask_attention(attention::Cause::Mention, Some(notice));
         }
+        // process_chat_from_simulator: every line but ours and the debug
+        // channel's (FSKeywords::chatContainsKeyword)
+        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) {
+            self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -2928,6 +2941,8 @@ impl World {
                 .complete(&im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
+            let open = attention::Open::Conversation(im.from_agent_id);
+            self.keyword_alert(im.from_agent_id, &from, &im.message, false, open);
             // a message kept while we were offline says when it was sent
             // ("(Saved <date>)" before the text, llimprocessing.cpp)
             let text = if im.offline {
@@ -2977,6 +2992,11 @@ impl World {
             open: attention::Open::NearbyChat,
         };
         self.ask_attention(cause, Some(notice));
+        // an object's IM is checked as nearby chat (processNewMessage,
+        // IM_FROM_TASK)
+        if im.dialog == 19 {
+            self.keyword_alert(im.from_agent_id, &from, &text, true, attention::Open::NearbyChat);
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -3462,33 +3482,50 @@ impl World {
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
             if self.notifications.toasts.presence_in_chat {
+                // checked as nearby chat (LLAvatarTracker::processNotify)
+                let from = self.social.name_of(&id);
+                self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 self.system_message(n);
             }
         }
     }
 
+    /// The line `m` just added to its conversation, when a resident wrote
+    /// it (no system lines, no objects, nothing of ours or of the blocked).
+    fn resident_line(&self, m: &ImMessage) -> Option<&ChatLine> {
+        let line = self.social.ims.iter().find(|s| s.other == m.session).and_then(|s| s.lines.back())?;
+        (!line.source.is_nil() && line.source != self.agent_id && line.kind == ChatKind::Im && !self.mutes.is_muted_id(&line.source))
+            .then_some(line)
+    }
+
+    /// `m` makes the Conversations button flash while the window is closed
+    /// (FSFloaterIMContainer::addFlashingSession, from notify_of_message in
+    /// llimview.cpp): a resident's message, never in do not disturb. Group
+    /// chats too, whatever their toast.
+    pub fn message_flashes_conversations(&self, m: &ImMessage) -> bool {
+        !self.status.dnd && self.resident_line(m).is_some()
+    }
+
     /// A message received in a conversation that is not in sight
-    /// (`in_sight`: its tab shown in the Conversations window): a toast and
-    /// an entry under the bell until the conversation is read, as
-    /// notify_of_message decides (llimview.cpp) — never in do not disturb
-    /// with Firestorm's toasts, group chats by their own preference.
+    /// (`in_sight`: its tab shown in the Conversations window): a toast, and
+    /// when asked for an entry under the bell until the conversation is
+    /// read, as notify_of_message decides (llimview.cpp) — never in do not
+    /// disturb with the Legacy Viewer's toasts, group chats by their own
+    /// preference.
     pub fn notify_message(&mut self, m: &ImMessage, in_sight: bool) {
         let prefs = self.notifications.toasts;
         let wanted = match m.kind {
             ImKind::Group => prefs.group_im,
             ImKind::Private | ImKind::Conference => prefs.im,
         };
-        // Aurora's paused bell still keeps them in "To do", silently
-        if !wanted || in_sight || (self.status.dnd && !self.notifications.aurora) {
+        // Aurora's paused bell still keeps them in "To do", silently; a
+        // toast alone has nothing to show then
+        if !wanted || in_sight || (self.status.dnd && !(self.notifications.aurora && prefs.im_in_bell)) {
             return;
         }
-        let Some(line) = self.social.ims.iter().find(|s| s.other == m.session).and_then(|s| s.lines.back()) else {
+        let Some(line) = self.resident_line(m) else {
             return;
         };
-        // only what a resident wrote (no system lines, no objects)
-        if line.source.is_nil() || line.kind != ChatKind::Im || self.mutes.is_muted_id(&line.source) {
-            return;
-        }
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
         let (title, body) = if group {
@@ -3496,7 +3533,7 @@ impl World {
         } else {
             (line.from.clone(), text)
         };
-        self.notifications.push_message(m.session, from, title, body);
+        self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
     }
 
     /// A friend's or a message's card clicked: it is acknowledged (gone from

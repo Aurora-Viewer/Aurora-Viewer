@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crossbeam_channel::Receiver;
 
+use crate::wind::{SharedWind, WindGen};
+
 /// Internal mixing rate. Every source is converted to this rate (stereo,
 /// interleaved f32) before it reaches the mixer; the output stage resamples
 /// to the device rate when it differs.
@@ -134,15 +136,18 @@ impl ChannelSlot {
     }
 }
 
-/// Channel settings shared between the API thread(s) and the audio callback.
+/// Channel settings and wind targets shared between the API thread(s) and
+/// the audio callback.
 pub(crate) struct SharedParams {
     slots: [ChannelSlot; 7],
+    pub(crate) wind: SharedWind,
 }
 
 impl SharedParams {
     pub(crate) fn new() -> Self {
         Self {
             slots: std::array::from_fn(|_| ChannelSlot::new()),
+            wind: SharedWind::new(),
         }
     }
 
@@ -431,6 +436,9 @@ pub(crate) struct Mixer {
     pcm: Vec<PcmSource>,
     clips: Vec<ClipVoice>,
     world: Vec<WorldVoice>,
+    /// The ambient wind noise, always present, silent unless the viewer
+    /// sets a gain.
+    wind: WindGen,
     buses: [Vec<f32>; NUM_BUSES],
     smoothers: [GainSmoother; NUM_BUSES],
     tmp: Vec<f32>,
@@ -446,6 +454,7 @@ impl Mixer {
             pcm: Vec::with_capacity(16),
             clips: Vec::with_capacity(MAX_CLIPS),
             world: Vec::with_capacity(MAX_WORLD),
+            wind: WindGen::new(ENGINE_SAMPLE_RATE),
             buses: std::array::from_fn(|_| Vec::with_capacity(4096)),
             smoothers,
             tmp: Vec::with_capacity(4096),
@@ -494,6 +503,11 @@ impl Mixer {
         self.pcm.retain_mut(|s| s.mix_into(&mut buses[s.bus], tmp));
         self.clips.retain_mut(|c| c.mix_into(&mut buses[c.bus]));
         self.world.retain_mut(|w| w.mix_into(&mut buses[w.bus]));
+        // The wind sits on the Ambient channel (master * AudioLevelAmbient,
+        // as the Legacy Viewer's mMaxWindGain).
+        if let Some(bus) = Channel::Ambient.bus() {
+            self.wind.mix_into(self.params.wind.get(), &mut buses[bus]);
+        }
 
         let targets: [f32; NUM_BUSES] = std::array::from_fn(|i| self.params.bus_target(BUS_CHANNELS[i]));
 
@@ -644,6 +658,20 @@ mod tests {
         settle(&mut m);
         m.render(&mut out);
         assert!(out.iter().all(|v| v.abs() < 1e-4));
+    }
+
+    #[test]
+    fn wind_plays_on_the_ambient_channel() {
+        let (mut m, params, _tx) = mixer();
+        params.wind.set(crate::WindTarget::from_wind([-20.0, 0.0, 0.0], 1.0));
+        let mut out = vec![0.0; 48_000];
+        m.render(&mut out);
+        assert!(out[24_000..].iter().any(|v| v.abs() > 1e-3), "wind heard");
+        params.set_muted(Channel::Ambient, true);
+        settle(&mut m);
+        m.render(&mut out);
+        assert!(out.iter().all(|v| v.abs() < 1e-4), "muted with Ambient");
+        assert_eq!(m.source_count(), 0, "the wind is not a source");
     }
 
     #[test]

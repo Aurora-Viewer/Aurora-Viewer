@@ -3603,6 +3603,20 @@ impl Session<'_> {
         } else if id == ScriptTeleportRequest::ID {
             let m: ScriptTeleportRequest = pkt.decode()?;
             emit(self.sh, script_teleport_request(&m));
+        } else if id == MeanCollisionAlert::ID {
+            // the Victim of each block is us (the viewer reads gAgentID)
+            let m: MeanCollisionAlert = pkt.decode()?;
+            let list = m
+                .mean_collision
+                .iter()
+                .map(|b| MeanCollision {
+                    perp: b.perp,
+                    time: b.time,
+                    magnitude: b.mag,
+                    kind: b.type_,
+                })
+                .collect();
+            emit(self.sh, NetEvent::MeanCollisions(list));
         } else if id == AvatarSitResponse::ID {
             // the simulator sits us itself unless it asks for the autopilot walk
             // (process_avatar_sit_response); we skip the walk and sit at once

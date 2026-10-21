@@ -5,6 +5,8 @@
 //! is opened). Here a violet wash that rises and falls softly eight times,
 //! then stays faint until the conversation is read; each new message
 //! starts it again. Preferences › Chat › Flash unread conversations.
+//!
+//! The Conversations button flashes the same way (`ButtonFlash`).
 
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -17,6 +19,8 @@ const COUNT: f64 = 8.0;
 /// below the selected entry's 0.22, which it must not be mistaken for.
 const PEAK: f32 = 0.17;
 const REST: f32 = 0.06;
+/// The Conversations button's wash, against an entry's.
+const BUTTON: f32 = 2.0;
 /// Longer than this between two frames that drew the list, the window was
 /// hidden: what is unread then is not news.
 const AWAY: f64 = 1.0;
@@ -63,14 +67,87 @@ impl Flashes {
         if !on {
             return (0.0, false);
         }
-        match start.map(|s| now - s).filter(|t| *t < PERIOD * COUNT) {
-            Some(t) => {
-                // a cosine: no edge, the wash breathes
-                let rise = 0.5 - 0.5 * (std::f64::consts::TAU * t / PERIOD).cos();
-                (REST + (PEAK - REST) * rise as f32, true)
-            }
-            None => (REST, false),
+        breathe(*start, now)
+    }
+}
+
+/// How far into a rise the flash begun at `start` stands, 0 to 1, while
+/// its eight rises last.
+fn rise(start: Option<f64>, now: f64) -> Option<f32> {
+    let t = start.map(|s| now - s).filter(|t| (0.0..PERIOD * COUNT).contains(t))?;
+    // a cosine: no edge, the wash breathes
+    Some((0.5 - 0.5 * (std::f64::consts::TAU * t / PERIOD).cos()) as f32)
+}
+
+/// The wash of a flash begun at `start`, faint once it is over, and
+/// whether it still moves.
+fn breathe(start: Option<f64>, now: f64) -> (f32, bool) {
+    match rise(start, now) {
+        Some(r) => (REST + (PEAK - REST) * r, true),
+        None => (REST, false),
+    }
+}
+
+/// The Conversations button's flash (FSNotifyIMFlash): LLButton::setFlashing
+/// as FSFloaterIMContainer::checkFlashing calls it for the "chat" command
+/// when a message arrives with the window closed, FlashCount rises every
+/// FlashPeriod, then the button keeps the flash colour until the window is
+/// shown (setVisible clears the flashing sessions). There a minimized window
+/// is still visible and nothing flashes; here its bar flashes instead, the
+/// same eight rises, then keeps the button's tint while unread messages
+/// wait inside: a cue that is hard to miss.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ButtonFlash {
+    /// When the latest message that flashes arrived.
+    since: Option<f64>,
+    /// A message came while the window was closed: the button stays tinted.
+    lit: bool,
+    /// Preferences › Chat › "Flash the Conversations button" is on.
+    on: bool,
+}
+
+impl ButtonFlash {
+    /// Follow the preference, given every frame: off, nothing flashes nor
+    /// stays tinted.
+    pub fn set_on(&mut self, on: bool) {
+        if !on {
+            *self = ButtonFlash::default();
         }
+        self.on = on;
+    }
+
+    /// A message that flashes arrived (`World::message_flashes_conversations`),
+    /// the window `closed` or else minimized.
+    pub fn message(&mut self, now: f64, closed: bool) {
+        self.since = Some(now);
+        self.lit |= closed;
+    }
+
+    /// The window is shown, minimized or not: the button goes out.
+    pub fn shown(&mut self) {
+        self.lit = false;
+    }
+
+    /// The violet's strength on the button (0: none), and whether it moves:
+    /// twice an entry's wash on so small a face, still below the 0.40 of
+    /// an open window's button.
+    pub fn button(&self, now: f64) -> (f32, bool) {
+        if !self.lit {
+            return (0.0, false);
+        }
+        let (wash, moving) = breathe(self.since, now);
+        (BUTTON * wash, moving)
+    }
+
+    /// The violet of the minimized bar while unread messages wait inside,
+    /// and whether it moves: the button's flash when one just arrived, its
+    /// tint otherwise.
+    pub fn bar(&self, now: f64) -> (f32, bool) {
+        if !self.on {
+            return (0.0, false);
+        }
+        let (wash, moving) = breathe(self.since, now);
+        (BUTTON * wash, moving)
     }
 }
 
@@ -112,5 +189,29 @@ mod tests {
         f.begin(0.0);
         f.begin(0.1);
         assert_eq!(f.wash(A, 1, 0.1, false), (0.0, false));
+    }
+
+    /// A message with the window closed flashes the button eight times,
+    /// then leaves it tinted until the window is shown; minimized, only the
+    /// bar flashes, then stays tinted like the button.
+    #[test]
+    fn the_button_flashes_while_closed_and_the_minimized_bar_flashes() {
+        let mut b = ButtonFlash::default();
+        assert_eq!(b.bar(0.0), (0.0, false), "the preference off");
+        b.set_on(true);
+        assert_eq!(b.button(0.0), (0.0, false));
+        assert_eq!(b.bar(0.0), (BUTTON * REST, false), "unread before: tinted");
+        b.message(1.0, true);
+        let (top, moving) = b.button(1.25);
+        assert!(moving && (top - BUTTON * PEAK).abs() < 1e-3, "{top}");
+        assert_eq!(b.button(5.1), (BUTTON * REST, false), "over: tinted");
+        b.shown();
+        assert_eq!(b.button(5.2), (0.0, false), "shown: out");
+        // minimized: the bar flashes, the button stays out
+        b.message(10.0, false);
+        assert_eq!(b.button(10.25), (0.0, false));
+        let (top, moving) = b.bar(10.25);
+        assert!(moving && (top - BUTTON * PEAK).abs() < 1e-3, "{top}");
+        assert_eq!(b.bar(14.1), (BUTTON * REST, false), "over: tinted");
     }
 }
