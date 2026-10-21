@@ -38,8 +38,8 @@ pub const PACK: Pack = Pack {
 #[cfg(target_os = "linux")]
 pub const PACK: Pack = Pack {
     version: "2",
-    size: 0,
-    sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+    size: 206_114_621,
+    sha256: "11a41a1e6c6250bbc9875b3fdf2d3609f1dd1740707d9ee805eb245803bea687",
 };
 
 /// The system part of the archive's name.
@@ -58,11 +58,10 @@ const REQUIRED: [&str; 3] = [
 /// Video through the system's GStreamer, as in the Legacy Viewer: no
 /// LibVLC plugin is built for Linux.
 #[cfg(target_os = "linux")]
-const REQUIRED: [&str; 4] = [
+const REQUIRED: [&str; 3] = [
     "llplugin/SLPlugin",
     "llplugin/libmedia_plugin_cef.so",
     "llplugin/libmedia_plugin_gstreamer.so",
-    "llplugin/dullahan_host",
 ];
 
 #[derive(serde::Deserialize)]

@@ -12,7 +12,10 @@ name: Media plugins
 #   Viewer.
 # Run by hand: the packs only change with these pins. With "publish", both
 # packs go to the release media-plugins-<PACK_VERSION>, whose size and SHA-256
-# the viewer then pins per system (aurora-updater media_pack.rs).
+# the viewer then pins per system (aurora-updater media_pack.rs). Publish
+# from main: GitHub refuses this workflow's token a tag on a commit that
+# changes workflow files, as a branch that edits this file does (pack 2 was
+# built on such a branch and its artifacts published by hand).
 on:
   workflow_dispatch:
     inputs:
