@@ -14,8 +14,6 @@ use uuid::Uuid;
 const ROW_H: f32 = 46.0;
 const TIME_W: f32 = 38.0;
 const PICTURE: f32 = 26.0;
-/// Room under the list: the "Track when closed" box and the buttons.
-const FOOTER_H: f32 = 78.0;
 /// How long "Undo" stays after a deletion.
 const UNDO_SECONDS: f64 = 8.0;
 
@@ -67,11 +65,23 @@ impl MoneyTrackerUi {
             Vec2::new(380.0, 600.0),
         );
         floater.min_size = Vec2::new(320.0, 380.0);
-        floater.show(ctx, p, open, |ui| {
+        floater.steady_size().show(ctx, p, open, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             self.head(ui, p);
-            self.list(ui, p, world, pics, now, actions);
-            self.footer(ui, p, world, always, now, actions);
+            // the footer first, from the bottom up, then the list in exactly
+            // what is left: the body never measures more than the window (a
+            // guessed footer height let it grow a little every frame)
+            let rest = ui.available_rect_before_wrap();
+            let mut footer = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rest)
+                    .layout(egui::Layout::bottom_up(egui::Align::Min)),
+            );
+            self.footer(&mut footer, p, world, always, now, actions);
+            let top = footer.min_rect().top() - ui.spacing().item_spacing.y;
+            let list = Rect::from_min_max(rest.min, Pos2::new(rest.right(), top.max(rest.top())));
+            self.list(ui, p, world, pics, list, now, actions);
+            ui.allocate_rect(rest, Sense::hover());
         });
         if self.undo.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
@@ -134,17 +144,19 @@ impl MoneyTrackerUi {
         }
     }
 
-    /// The transactions shown, newest first.
+    /// The transactions shown, newest first, in `area`.
+    #[allow(clippy::too_many_arguments)]
     fn list(
         &mut self,
         ui: &mut egui::Ui,
         p: &Palette,
         world: &World,
         pics: &HashMap<Uuid, egui::TextureHandle>,
+        area: Rect,
         now: f64,
         actions: &mut Vec<TrackerAction>,
     ) {
-        let height = (ui.available_height() - FOOTER_H).max(ROW_H);
+        let height = area.height();
         let shown: Vec<Payment> = self
             .tracker
             .payments()
@@ -154,7 +166,6 @@ impl MoneyTrackerUi {
             .cloned()
             .collect();
         let order: Vec<u64> = shown.iter().map(|x| x.serial).collect();
-        let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
         let mut inner = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(area)
@@ -343,16 +354,9 @@ impl MoneyTrackerUi {
         });
     }
 
-    /// "Track when closed", Copy and Clear.
+    /// "Track when closed", Copy and Clear, laid out from the bottom up in a
+    /// bottom-up `ui`.
     fn footer(&mut self, ui: &mut egui::Ui, p: &Palette, world: &World, always: bool, now: f64, actions: &mut Vec<TrackerAction>) {
-        widgets::divider(ui, p);
-        let mut track = always;
-        if widgets::checkbox(ui, p, &mut track, aurora_i18n::tr!("money-tracker-always"))
-            .on_hover_text(aurora_i18n::tr!("money-tracker-always-help"))
-            .changed()
-        {
-            actions.push(TrackerAction::AlwaysTrack(track));
-        }
         ui.horizontal(|ui| {
             let selection = self.selection();
             let label = if selection.is_empty() {
@@ -393,5 +397,13 @@ impl MoneyTrackerUi {
                 }
             });
         });
+        let mut track = always;
+        if widgets::checkbox(ui, p, &mut track, aurora_i18n::tr!("money-tracker-always"))
+            .on_hover_text(aurora_i18n::tr!("money-tracker-always-help"))
+            .changed()
+        {
+            actions.push(TrackerAction::AlwaysTrack(track));
+        }
+        widgets::divider(ui, p);
     }
 }

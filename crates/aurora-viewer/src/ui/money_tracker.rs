@@ -586,6 +586,59 @@ mod tests {
         assert!(ui.tracker.payments().is_empty());
     }
 
+    /// The window keeps its size frame after frame, in both looks, at the
+    /// interface scales, with its buttons inside it (a footer taller than
+    /// the room kept for it made egui grow the window every frame).
+    #[test]
+    fn the_window_keeps_its_size_and_its_footer() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let p = crate::theme::Theme::default().palette();
+        let pics = HashMap::new();
+        for legacy in [false, true] {
+            for zoom in [1.0f32, 1.25, 1.5] {
+                for size in [egui::vec2(380.0, 600.0), egui::vec2(300.0, 260.0)] {
+                    let mut frames = Frames::new();
+                    crate::theme::Theme::default().apply(&frames.ctx, 1.0);
+                    crate::ui::fonts::apply(&frames.ctx, crate::ui::fonts::DEFAULT);
+                    frames.ctx.set_zoom_factor(zoom);
+                    let id = if legacy { LEGACY_WINDOW } else { WINDOW };
+                    crate::ui::widgets::place_floater(&frames.ctx, id, egui::pos2(40.0, 40.0), size);
+                    let mut ui = MoneyTrackerUi::default();
+                    for i in 0..40 {
+                        ui.tracker.push(at(i), Party::System, i % 2 == 0, 10, trans::GIFT, "");
+                    }
+                    let case = format!("legacy {legacy}, zoom {zoom}, {size:?}");
+                    let mut rects = Vec::new();
+                    let mut texts = Vec::new();
+                    for _ in 0..30 {
+                        texts = frames.run(Vec::new(), |egui_ui| {
+                            let mut open = true;
+                            ui.show(egui_ui.ctx(), &p, &world, &pics, &mut open, false, legacy);
+                        });
+                        rects.push(frames.ctx.memory(|m| m.area_rect(egui::Id::new(id))).expect("window"));
+                    }
+                    let first = rects[2];
+                    assert!(
+                        rects[2..].iter().all(|r| *r == first),
+                        "{case}: the window moved or grew: {:?} … {:?}",
+                        first,
+                        rects.last()
+                    );
+                    let clear = texts
+                        .iter()
+                        .find(|t| t.source == aurora_i18n::tr!("money-tracker-clear"))
+                        .unwrap_or_else(|| panic!("{case}: Clear is drawn"));
+                    assert!(
+                        clear.rect.bottom() <= first.bottom(),
+                        "{case}: Clear at {:?} in {first:?}",
+                        clear.rect
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_copy_is_the_legacy_viewer_csv() {
         let mut t = Tracker::default();

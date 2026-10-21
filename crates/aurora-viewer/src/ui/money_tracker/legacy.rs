@@ -50,7 +50,7 @@ impl MoneyTrackerUi {
             Vec2::new(260.0, 300.0),
         );
         floater.min_size = Vec2::new(220.0, 220.0);
-        floater.show(ctx, p, open, |ui| {
+        floater.steady_size().show(ctx, p, open, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             let mut rows: Vec<Payment> = self.tracker.payments().to_vec();
             let names: Vec<String> = rows.iter().map(|x| party_name(world, x)).collect();
@@ -67,59 +67,73 @@ impl MoneyTrackerUi {
             let names: Vec<String> = order.iter().map(|&i| names[i].clone()).collect();
             rows = order.iter().map(|&i| rows[i].clone()).collect();
             let serials: Vec<u64> = rows.iter().map(|x| x.serial).collect();
-            let footer = 16.0 + 22.0 + 26.0 + ui.spacing().item_spacing.y * 3.0;
-            let height = (ui.available_height() - footer).max(ROW_H * 2.0);
-            ui.allocate_ui_with_layout(
-                Vec2::new(ui.available_width(), height),
-                egui::Layout::top_down(egui::Align::Min),
-                |ui| {
-                    ui.set_height(height);
-                    self.legacy_header(ui, p);
-                    egui::ScrollArea::vertical()
-                        .id_salt("money-tracker-legacy-list")
-                        .auto_shrink([false, false])
-                        .stick_to_bottom(true)
-                        .show(ui, |ui| {
-                            ui.spacing_mut().item_spacing.y = 0.0;
-                            for (n, (x, name)) in rows.iter().zip(&names).enumerate() {
-                                self.legacy_row(ui, p, world, x, name, n, &serials);
-                            }
-                        });
-                },
+            // the footer from the bottom up, then the list in exactly what is
+            // left: the body never measures more than the window
+            let rest = ui.available_rect_before_wrap();
+            let mut footer = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rest)
+                    .layout(egui::Layout::bottom_up(egui::Align::Min)),
             );
-            let (received, paid) = self.tracker.totals();
-            ui.label(
-                egui::RichText::new(aurora_i18n::tr!(
-                    "money-tracker-legacy-summary",
-                    paid = aurora_i18n::integer(paid),
-                    received = aurora_i18n::integer(received)
-                ))
-                .size(12.0)
-                .color(p.ink),
+            self.legacy_footer(&mut footer, p, always, actions);
+            let top = (footer.min_rect().top() - ui.spacing().item_spacing.y).max(rest.top());
+            let area = Rect::from_min_max(rest.min, egui::pos2(rest.right(), top));
+            let mut list = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(area)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
             );
-            let mut track = always;
-            if widgets::checkbox(ui, p, &mut track, aurora_i18n::tr!("money-tracker-legacy-always"))
-                .on_hover_text(aurora_i18n::tr!("money-tracker-always-help"))
-                .changed()
-            {
-                actions.push(TrackerAction::AlwaysTrack(track));
-            }
-            let w = ui.available_width();
-            if widgets::action_button(
-                ui,
-                p,
-                "",
-                aurora_i18n::tr!("money-tracker-clear"),
-                ActionKind::Flat,
-                Vec2::new(w, 24.0),
-            )
-            .clicked()
-            {
-                self.tracker.clear();
-                self.selected.clear();
-                self.anchor = None;
-            }
+            self.legacy_header(&mut list, p);
+            egui::ScrollArea::vertical()
+                .id_salt("money-tracker-legacy-list")
+                .auto_shrink([false, false])
+                .max_height((area.height() - 24.0).max(0.0))
+                .stick_to_bottom(true)
+                .show(&mut list, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for (n, (x, name)) in rows.iter().zip(&names).enumerate() {
+                        self.legacy_row(ui, p, world, x, name, n, &serials);
+                    }
+                });
+            ui.allocate_rect(rest, Sense::hover());
         });
+    }
+
+    /// The summary, "Track when closed" and "Clear", from the bottom up in
+    /// a bottom-up `ui`.
+    fn legacy_footer(&mut self, ui: &mut egui::Ui, p: &Palette, always: bool, actions: &mut Vec<TrackerAction>) {
+        let w = ui.available_width();
+        if widgets::action_button(
+            ui,
+            p,
+            "",
+            aurora_i18n::tr!("money-tracker-clear"),
+            ActionKind::Flat,
+            Vec2::new(w, 24.0),
+        )
+        .clicked()
+        {
+            self.tracker.clear();
+            self.selected.clear();
+            self.anchor = None;
+        }
+        let mut track = always;
+        if widgets::checkbox(ui, p, &mut track, aurora_i18n::tr!("money-tracker-legacy-always"))
+            .on_hover_text(aurora_i18n::tr!("money-tracker-always-help"))
+            .changed()
+        {
+            actions.push(TrackerAction::AlwaysTrack(track));
+        }
+        let (received, paid) = self.tracker.totals();
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!(
+                "money-tracker-legacy-summary",
+                paid = aurora_i18n::integer(paid),
+                received = aurora_i18n::integer(received)
+            ))
+            .size(12.0)
+            .color(p.ink),
+        );
     }
 
     /// The column headings; a click sorts by the column, a second the
