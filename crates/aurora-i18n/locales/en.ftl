@@ -4388,6 +4388,7 @@ ui-chat-trusted-site = Trusted site
 ui-login-website = Website
 ui-profile-show-on-map-2 = Show on map
 demo-seat-seat-camera = Seat (seat camera)
+demo-seat-kill-cushion = Cushion (deleted while sat on)
 ui-emoji-smileys = Smileys
 demo-northern-lights-party = Northern lights party
 ui-land-environment-ground = Ground

@@ -432,38 +432,8 @@ impl super::World {
     /// how they looked to put them back. Avatars sitting on it stay, where
     /// they are drawn (LLViewerObject::markDead: getOffObject).
     fn take_out(&mut self, idx: usize, by: Uuid) -> bool {
-        let now = std::time::Instant::now();
-        let mut tree = Vec::new();
-        let mut seated = Vec::new();
-        let mut stack = vec![idx];
-        while let Some(i) = stack.pop() {
-            let Some(o) = self.objects.get(i) else {
-                continue;
-            };
-            tree.push(i);
-            for &k in self.objects.children_of(&o.key) {
-                if self.objects.get(k).is_some_and(|c| c.is_avatar()) {
-                    seated.push(k);
-                } else {
-                    stack.push(k);
-                }
-            }
-        }
-        let mut unseated = false;
-        for i in seated {
-            let pose = crate::scene::Scene::object_transform_unshifted(self, i, now);
-            let Some(o) = self.objects.get(i) else {
-                continue;
-            };
-            let (agent, region) = (o.full_id == self.agent_id, o.key.region);
-            unseated |= agent;
-            let origin = self.region_offset(region);
-            self.objects.detach(i);
-            if let (Some((pos, rot, _)), Some(origin), Some(o)) = (pose, origin, self.objects.get_mut(i)) {
-                o.position = pos - origin;
-                o.rotation = rot;
-            }
-        }
+        let unseated = self.get_off_linkset(idx);
+        let tree = self.objects.subtree(idx);
         let mut kept = Vec::with_capacity(tree.len());
         for &i in &tree {
             if let Some(o) = self.objects.get(i) {

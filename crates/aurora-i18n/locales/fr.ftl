@@ -4393,6 +4393,7 @@ ui-chat-trusted-site = Site de confiance
 ui-login-website = Site web
 ui-profile-show-on-map-2 = Situer sur la carte
 demo-seat-seat-camera = Siège (caméra de siège)
+demo-seat-kill-cushion = Coussin (supprimé sous son occupant)
 ui-emoji-smileys = Smileys
 demo-northern-lights-party = Soirée aurores boréales
 ui-land-environment-ground = Sol

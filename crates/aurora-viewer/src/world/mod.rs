@@ -1901,6 +1901,9 @@ impl World {
                             .is_some_and(|o| !o.is_avatar());
                     if let Some(i) = self.objects.index_of(&key) {
                         self.unregister_attachment(i);
+                        // (who sits on it stays, with what it wears: the
+                        // simulator does not send them again)
+                        self.get_off_linkset(i);
                         let subtree = self.objects.subtree(i);
                         for &child in &subtree {
                             if let Some(o) = self.objects.get(child) {
@@ -3827,6 +3830,49 @@ impl World {
         }
     }
 
+    /// LLViewerObject::markDead (indra/newview/llviewerobject.cpp, LGPL 2.1):
+    /// the avatars sitting on a linkset that leaves the world (killed,
+    /// derendered) do not go with it. They get off (LLVOAvatar::getOffObject)
+    /// and stay where they are drawn, with what they wear. Returns true when
+    /// one of them is ours.
+    pub(super) fn get_off_linkset(&mut self, root: usize) -> bool {
+        let now = Instant::now();
+        let mut seated = Vec::new();
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            let Some(o) = self.objects.get(i) else {
+                continue;
+            };
+            for &k in self.objects.children_of(&o.key) {
+                if self.objects.get(k).is_some_and(|c| c.is_avatar()) {
+                    seated.push(k);
+                } else {
+                    stack.push(k);
+                }
+            }
+        }
+        let mut ours = false;
+        for i in seated {
+            let pose = crate::scene::Scene::object_transform_unshifted(self, i, now);
+            let Some(o) = self.objects.get(i) else {
+                continue;
+            };
+            let (agent, region) = (o.full_id == self.agent_id, o.key.region);
+            if agent {
+                // (while the seat is still known)
+                self.on_seat_parent_change(region, 0);
+                ours = true;
+            }
+            let origin = self.region_offset(region);
+            self.objects.detach(i);
+            if let (Some((pos, rot, _)), Some(origin), Some(o)) = (pose, origin, self.objects.get_mut(i)) {
+                o.position = pos - origin;
+                o.rotation = rot;
+            }
+        }
+        ours
+    }
+
     /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource
     /// (indra/newview/llvoavatar.cpp, llvoavatarself.cpp, LGPL 2.1). Run before
     /// replacing our object's parent, while the old seat/linkset is known.
@@ -3973,6 +4019,47 @@ mod motion_tests {
             object,
             properties: vec![(12, 1.0), (21, f32::from(u8::from(locked)))],
         });
+    }
+
+    #[test]
+    fn a_killed_seat_leaves_who_sat_on_it_with_what_they_wear() {
+        let (mut world, avatar, handle, root, linked) = seated_fixture();
+        // another resident on the same seat, wearing something
+        let mut other = avatar.clone();
+        other.full_id = Uuid::from_u128(960);
+        other.local_id = 960;
+        let mut worn = other.clone();
+        worn.full_id = Uuid::from_u128(961);
+        worn.local_id = 961;
+        worn.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        worn.parent_id = other.local_id;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![other.clone(), worn.clone()],
+        });
+        world.objects.killed.clear();
+        // the seat dies before the simulator stands them up
+        world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![950],
+        });
+        assert!(world.objects.index_of_uuid(&root).is_none());
+        assert!(world.objects.index_of_uuid(&linked).is_none());
+        for (sitter, attachment) in [(avatar.full_id, Uuid::from_u128(999)), (other.full_id, worn.full_id)] {
+            let idx = world.objects.index_of_uuid(&sitter).expect("the avatar stays");
+            let o = world.objects.get(idx).expect("avatar");
+            assert_eq!(o.parent_id, 0, "it got off");
+            let kids = world.objects.children_of(&o.key).to_vec();
+            assert_eq!(kids, vec![world.objects.index_of_uuid(&attachment).expect("what it wears stays")]);
+        }
+        let gone: Vec<Uuid> = world
+            .objects
+            .killed
+            .iter()
+            .flatten()
+            .filter_map(|&i| world.objects.get(i).map(|o| o.full_id))
+            .collect();
+        assert!(gone.is_empty(), "only the seat's prims leave the scene: {gone:?}");
     }
 
     #[test]
