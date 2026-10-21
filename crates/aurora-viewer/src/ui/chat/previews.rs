@@ -9,9 +9,9 @@
 //! A picture's card: hovered, buttons to open it in the browser, copy it or
 //! hide the preview; a click opens the link (through the trust warning of
 //! links); a right click also hides every preview of its site. A group's
-//! pictures are blurred until clicked (Preferences › Chat). The previews of
-//! a session are kept for the conversations only: hidden or asked-for
-//! previews are forgotten at logout.
+//! pictures are blurred until clicked (Preferences › Chat). A preview hidden,
+//! asked for or unblurred stays so until the viewer closes; a site hidden
+//! from the menu is saved in the settings.
 
 use super::{LineEnv, Seg, segments, web_target};
 use crate::link_preview::{self as lp, Content, Failure, Place, Start, Target};
@@ -333,6 +333,11 @@ impl Previews {
             };
             let _ = tx.send((url, result));
         });
+    }
+
+    /// A video plays: the app gives the player its browser (`web`).
+    pub fn playing(&self) -> bool {
+        self.playing.is_some()
     }
 
     /// The widest card a message gets, for a bubble to make room (0: none).

@@ -376,9 +376,8 @@ pub enum Failure {
 /// on the trusted sites.
 pub fn client(trusted_only: bool) -> Option<reqwest::Client> {
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() >= MAX_REDIRECTS {
-            attempt.stop()
-        } else if trusted_only && crate::link_trust::classify(attempt.url().as_str()) != Trust::Trusted {
+        let off_trusted = trusted_only && crate::link_trust::classify(attempt.url().as_str()) != Trust::Trusted;
+        if attempt.previous().len() >= MAX_REDIRECTS || off_trusted {
             attempt.stop()
         } else {
             attempt.follow()
@@ -517,7 +516,7 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, Failure> {
 /// How long a GIF frame shows: browsers draw a delay under 20 ms as 100.
 fn frame_delay(delay: image::Delay) -> Duration {
     let (n, d) = delay.numer_denom_ms();
-    let ms = if d == 0 { 0 } else { n / d };
+    let ms = n.checked_div(d).unwrap_or(0);
     Duration::from_millis(if ms < 20 { 100 } else { ms as u64 })
 }
 

@@ -10892,7 +10892,7 @@ impl App {
                 // plugins' browser
                 self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
                 self.chat_ui.previews.demo = self.demo && crate::demo::previews_offline();
-                self.chat_ui.previews.web = Some(ui::chat::previews::WebEnv {
+                self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
                     browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language()),
                 });
