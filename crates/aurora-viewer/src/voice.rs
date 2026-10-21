@@ -84,11 +84,6 @@ pub struct Voice {
     muted: HashSet<Uuid>,
     /// Volumes sent to the current session, per resident.
     volumes: HashMap<Uuid, f32>,
-    /// Our moderator mute in the nearby channel, as last seen
-    /// (LLNearbyVoiceModeration::mChannelMuteMap), and its change to
-    /// announce, taken by the app (showMutedNotification).
-    own_moderated: Option<bool>,
-    moderation_notice: Option<bool>,
 }
 
 impl Voice {
@@ -98,7 +93,6 @@ impl Voice {
         self.mic = None;
         self.muted.clear();
         self.volumes.clear();
-        self.own_moderated = None;
         self.connected = false;
         self.own_level = 0.0;
         self.status.clear();
@@ -217,7 +211,6 @@ impl Voice {
                         self.session = Some((key, s));
                         self.muted.clear();
                         self.volumes.clear();
-                        self.own_moderated = None;
                     }
                 }
             }
@@ -259,14 +252,6 @@ impl Voice {
             VoiceStatus::Error(e) => aurora_i18n::tr!("voice-voice-error", e = e.to_string()),
             VoiceStatus::Disconnected => aurora_i18n::tr!("voice-voice-disconnected").into(),
         };
-        // LLNearbyVoiceModeration::setMutedInfo: a new channel that mutes
-        // us, or a change, is announced
-        if let Some(moderated) = self.nearby_moderation().and_then(|m| m.get(&v.agent_id).copied()) {
-            if moderation_changed(self.own_moderated, moderated) {
-                self.moderation_notice = Some(moderated);
-            }
-            self.own_moderated = Some(moderated);
-        }
     }
 
     /// The moderator mute of each participant of the nearby channel
@@ -278,12 +263,6 @@ impl Voice {
         };
         self.connected
             .then(|| s.participants().into_iter().map(|p| (p.agent_id, p.moderator_muted)).collect())
-    }
-
-    /// A moderator muted (true) or unmuted us in nearby voice since the
-    /// last call (NearbyVoiceMutedByModerator / NearbyVoiceUnmutedByModerator).
-    pub fn take_moderation_notice(&mut self) -> Option<bool> {
-        self.moderation_notice.take()
     }
 
     /// Mute the participants we blocked (voice), unmute the others
@@ -384,15 +363,6 @@ fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
 
-/// LLNearbyVoiceModeration::setMutedInfo: a channel first seen muting us,
-/// or a change of the flag, is announced; a channel first seen open is not.
-fn moderation_changed(before: Option<bool>, now: bool) -> bool {
-    match before {
-        None => now,
-        Some(was) => was != now,
-    }
-}
-
 /// Firestorm's LLCoordFrame::getQuaternion (llcoordframe.cpp) uses forward,
 /// left, up axes. The inverse render view contains right, up, backward axes.
 /// Sending that render rotation directly turns the voice listener sideways.
@@ -411,14 +381,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_moderator_mute_is_announced_once_per_change() {
-        assert!(!moderation_changed(None, false));
-        assert!(moderation_changed(None, true));
-        assert!(!moderation_changed(Some(true), true));
-        assert!(moderation_changed(Some(true), false));
-        assert!(moderation_changed(Some(false), true));
-        let mut v = Voice::default();
-        assert_eq!((v.nearby_moderation(), v.take_moderation_notice()), (None, None));
+    fn no_moderation_off_the_nearby_channel() {
+        assert_eq!(Voice::default().nearby_moderation(), None);
     }
 
     #[test]

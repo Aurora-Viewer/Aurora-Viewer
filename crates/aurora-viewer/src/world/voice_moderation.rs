@@ -9,10 +9,20 @@
 
 use super::{World, notifications};
 use aurora_net::{ParcelInfo, parcel_flags};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// GP_SESSION_MODERATOR (roles_constants.h): can mute people's session.
 const GP_SESSION_MODERATOR: u64 = 1 << 37;
+
+/// A channel first seen muting us, or a change of the flag, is announced;
+/// a channel first seen open is not.
+fn moderation_changed(before: Option<bool>, now: bool) -> bool {
+    match before {
+        None => now,
+        Some(was) => was != now,
+    }
+}
 
 /// isNearbyChatModerator once we are on the nearby channel: on a parcel
 /// with its own voice (isVoiceRestricted) its owner, or a member of its
@@ -51,8 +61,24 @@ impl World {
         may_moderate(parcel, self.agent_id, powers, manages_estate).then_some(moderated)
     }
 
+    /// The nearby channel's moderator mutes this frame (None off it).
+    /// LLNearbyVoiceModeration::setMutedInfo: a channel first seen muting
+    /// us, or a change of our flag, is announced.
+    pub fn set_nearby_moderated(&mut self, moderated: Option<HashMap<Uuid, bool>>) {
+        let own = moderated.as_ref().and_then(|m| m.get(&self.agent_id).copied());
+        if let Some(now) = own
+            && moderation_changed(self.calls.own_moderated, now)
+        {
+            self.on_nearby_voice_moderated(now);
+        }
+        if moderated.is_none() || own.is_some() {
+            self.calls.own_moderated = own;
+        }
+        self.calls.nearby_moderated = moderated;
+    }
+
     /// NearbyVoiceMutedByModerator / NearbyVoiceUnmutedByModerator.
-    pub fn on_nearby_voice_moderated(&mut self, muted: bool) {
+    fn on_nearby_voice_moderated(&mut self, muted: bool) {
         log::info!("voice: a moderator {} us in nearby voice", if muted { "muted" } else { "unmuted" });
         let text = if muted {
             aurora_i18n::tr!("world-mod-voice-muted-by-moderator")
@@ -79,6 +105,35 @@ mod tests {
             flags: if estate_voice { parcel_flags::USE_ESTATE_VOICE_CHAN } else { 0 },
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_moderator_mute_is_announced_once_per_change() {
+        assert!(!moderation_changed(None, false));
+        assert!(moderation_changed(None, true));
+        assert!(!moderation_changed(Some(true), true));
+        assert!(moderation_changed(Some(true), false));
+        assert!(moderation_changed(Some(false), true));
+    }
+
+    #[test]
+    fn our_mute_notices_follow_the_channel() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(1);
+        let me = w.agent_id;
+        let notices = |w: &World| w.notifications.list.len();
+        let before = notices(&w);
+        w.set_nearby_moderated(Some(HashMap::from([(me, false)])));
+        assert_eq!(notices(&w), before, "an open channel says nothing");
+        w.set_nearby_moderated(Some(HashMap::from([(me, true)])));
+        w.set_nearby_moderated(Some(HashMap::from([(me, true)])));
+        assert_eq!(notices(&w), before + 1, "muted, once");
+        w.set_nearby_moderated(Some(HashMap::from([(me, false)])));
+        assert_eq!(notices(&w), before + 2, "unmuted");
+        // off the channel and back on an open one: nothing
+        w.set_nearby_moderated(None);
+        w.set_nearby_moderated(Some(HashMap::from([(me, false)])));
+        assert_eq!(notices(&w), before + 2);
     }
 
     #[test]

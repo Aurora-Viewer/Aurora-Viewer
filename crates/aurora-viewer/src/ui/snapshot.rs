@@ -36,6 +36,8 @@ pub struct SnapshotUi {
     pub destination: Destination,
     /// The caption of a profile post (not kept, like Firestorm's editor).
     pub caption: String,
+    /// The e-mail of a postcard (not kept either).
+    pub postcard: PostcardForm,
     /// The quick light, for the photo only (never saved).
     pub light: crate::snapshot::light::PhotoLight,
     /// The free camera's switch and flight (never saved).
@@ -50,6 +52,31 @@ pub enum Destination {
     Disk,
     Inventory,
     Profile,
+    /// A postcard (LLPanelSnapshotPostcard).
+    Email,
+}
+
+/// The e-mail of a postcard (panel_postcard_message.xml).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PostcardForm {
+    /// The recipients, separated by commas.
+    pub to: String,
+    /// The sender's name; the app writes ours while it is empty.
+    pub name: String,
+    pub subject: String,
+    pub message: String,
+}
+
+/// panel_postcard_message.xml's max_length_bytes / max_length.
+const POSTCARD_NAME_MAX: usize = 100;
+const POSTCARD_SUBJECT_MAX: usize = 100;
+const POSTCARD_MESSAGE_MAX: usize = 700;
+
+/// A photo sent by e-mail.
+pub struct EmailView {
+    /// The region takes postcards (SendPostcard), or the demo.
+    pub available: bool,
+    pub size: (u32, u32),
 }
 
 /// A photo for the profile feed.
@@ -92,6 +119,8 @@ pub struct View<'a> {
     pub profile: Option<ProfileView>,
     /// The message tells of a post to the profile feed ("View").
     pub profile_posted: bool,
+    /// The destination is a postcard.
+    pub email: Option<EmailView>,
     /// Preferences' exposure, under the photo's own.
     pub exposure: f32,
     /// The key that brings the free camera back (Escape by default).
@@ -247,8 +276,24 @@ impl SnapshotUi {
     fn actions(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.add_space(4.0);
         let busy = view.busy.is_some();
-        ui.horizontal(|ui| match (&view.inventory, &view.profile) {
-            (_, Some(prof)) => {
+        ui.horizontal(|ui| match (&view.email, &view.inventory, &view.profile) {
+            (Some(mail), _, _) => {
+                let ready = !busy && mail.available;
+                if widgets::action_button_if(
+                    ui,
+                    p,
+                    "mail-filled",
+                    aurora_i18n::tr!("photo-email-send"),
+                    ActionKind::Primary,
+                    Vec2::new(ui.available_width(), 32.0),
+                    ready,
+                )
+                .clicked()
+                {
+                    out.push(Action::Take);
+                }
+            }
+            (None, _, Some(prof)) => {
                 let ready = !busy && prof.connected && prof.ready;
                 if widgets::action_button_if(
                     ui,
@@ -264,7 +309,7 @@ impl SnapshotUi {
                     out.push(Action::Take);
                 }
             }
-            (Some(inv), None) => {
+            (None, Some(inv), None) => {
                 let ready = !busy && inv.connected && inv.cost.is_some();
                 if widgets::action_button_if(
                     ui,
@@ -280,7 +325,7 @@ impl SnapshotUi {
                     out.push(Action::Take);
                 }
             }
-            (None, None) => {
+            (None, None, None) => {
                 let take_w = ui.available_width() - 34.0;
                 ui.add_enabled_ui(!busy, |ui| {
                     if widgets::action_button(
@@ -331,6 +376,53 @@ impl SnapshotUi {
             });
         }
         gallery(ui, p, view, out);
+    }
+
+    /// The postcard's e-mail (panel_postcard_message.xml) and its JPEG
+    /// quality (SnapshotQuality, shared with the disk's JPEG). An empty
+    /// subject or message is sent with the default shown in the field
+    /// (PromptMissingSubjMsg's choice, without the question).
+    fn postcard_form(&mut self, ui: &mut egui::Ui, p: &Palette, s: &mut Settings, mail: &EmailView) {
+        if !mail.available {
+            ui.label(RichText::new(aurora_i18n::tr!("photo-email-unavailable")).color(p.muted));
+        }
+        let form = &mut self.postcard;
+        let fields: [(&str, &mut String, &str, usize); 3] = [
+            (
+                aurora_i18n::tr!("photo-email-to"),
+                &mut form.to,
+                aurora_i18n::tr!("photo-email-to-hint"),
+                usize::MAX,
+            ),
+            (aurora_i18n::tr!("photo-email-from"), &mut form.name, "", POSTCARD_NAME_MAX),
+            (
+                aurora_i18n::tr!("photo-email-subject"),
+                &mut form.subject,
+                aurora_i18n::tr!("photo-email-default-subject"),
+                POSTCARD_SUBJECT_MAX,
+            ),
+        ];
+        for (label, text, hint, max) in fields {
+            ui.label(RichText::new(label).color(p.ink));
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .hint_text(hint)
+                    .char_limit(max)
+                    .desired_width(f32::INFINITY),
+            );
+        }
+        ui.label(RichText::new(aurora_i18n::tr!("photo-email-message")).color(p.ink));
+        ui.add(
+            egui::TextEdit::multiline(&mut form.message)
+                .hint_text(aurora_i18n::tr!("photo-email-default-message"))
+                .char_limit(POSTCARD_MESSAGE_MAX)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY),
+        );
+        row(ui, p, aurora_i18n::tr!("photo-jpeg-quality"), None, |ui| {
+            ui.spacing_mut().slider_width = 130.0;
+            ui.add(egui::Slider::new(&mut s.jpeg_quality, 1..=100));
+        });
     }
 
     /// Firestorm's snapshot floater (floater_snapshot.xml, Preferences ›
@@ -408,10 +500,11 @@ impl SnapshotUi {
         });
 
         section(ui, p, "dimensions", aurora_i18n::tr!("photo-section-resolution"));
-        match (&view.inventory, &view.profile) {
-            (_, Some(prof)) => profile_sizes(ui, p, s, prof),
-            (Some(inv), None) => texture_sizes(ui, p, s, inv),
-            (None, None) => resolutions(ui, p, s, view),
+        match (&view.email, &view.inventory, &view.profile) {
+            (Some(mail), _, _) => long_sides(ui, p, &mut s.postcard_size, mail.size),
+            (None, _, Some(prof)) => long_sides(ui, p, &mut s.profile_size, prof.size),
+            (None, Some(inv), None) => texture_sizes(ui, p, s, inv),
+            (None, None, None) => resolutions(ui, p, s, view),
         }
 
         section(ui, p, "send-filled", aurora_i18n::tr!("photo-section-destination"));
@@ -419,6 +512,7 @@ impl SnapshotUi {
             Destination::Disk => 0,
             Destination::Inventory => 1,
             Destination::Profile => 2,
+            Destination::Email => 3,
         };
         if widgets::segmented(
             ui,
@@ -428,17 +522,20 @@ impl SnapshotUi {
                 (aurora_i18n::tr!("photo-destination-disk"), true),
                 (aurora_i18n::tr!("photo-destination-inventory"), true),
                 (aurora_i18n::tr!("photo-destination-profile"), true),
+                (aurora_i18n::tr!("photo-destination-email"), true),
             ],
         ) {
             self.destination = match dest {
                 1 => Destination::Inventory,
                 2 => Destination::Profile,
+                3 => Destination::Email,
                 _ => Destination::Disk,
             };
             out.push(Action::Changed);
         }
-        match (&view.inventory, &view.profile) {
-            (_, Some(prof)) => {
+        match (&view.email, &view.inventory, &view.profile) {
+            (Some(mail), _, _) => self.postcard_form(ui, p, s, mail),
+            (None, _, Some(prof)) => {
                 if !prof.connected {
                     ui.label(RichText::new(aurora_i18n::tr!("photo-profile-offline")).color(p.muted));
                 } else if !prof.ready {
@@ -456,7 +553,7 @@ impl SnapshotUi {
                     widgets::switch(ui, p, &mut s.profile_location);
                 });
             }
-            (Some(inv), None) => {
+            (None, Some(inv), None) => {
                 let cost = match (inv.connected, inv.cost) {
                     (false, _) => aurora_i18n::tr!("photo-inventory-offline").to_string(),
                     (true, Some(cost)) => aurora_i18n::tr!("photo-upload-cost", cost = cost).to_string(),
@@ -464,7 +561,7 @@ impl SnapshotUi {
                 };
                 ui.label(RichText::new(cost).color(p.ink));
             }
-            (None, None) => {
+            (None, None, None) => {
                 row(ui, p, aurora_i18n::tr!("photo-file-format"), None, |ui| {
                     let mut i = FileFormat::ALL.iter().position(|f| *f == s.format).unwrap_or(0);
                     let options: Vec<(&str, bool)> = FileFormat::ALL.iter().map(|f| (f.label(), true)).collect();
@@ -940,9 +1037,9 @@ fn strip_aperture(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) 
     });
 }
 
-/// The profile feed's sizes (panel_snapshot_profile.xml's combo); the post
-/// is a PNG.
-fn profile_sizes(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, prof: &ProfileView) {
+/// The profile feed's and the postcard's sizes (panel_snapshot_profile.xml's
+/// and panel_snapshot_postcard.xml's combos): long sides, or the window.
+fn long_sides(ui: &mut egui::Ui, p: &Palette, current: &mut ProfileSize, shown: (u32, u32)) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
         for size in ProfileSize::ALL {
@@ -950,12 +1047,12 @@ fn profile_sizes(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, prof: &Profil
                 Some(side) => side.to_string(),
                 None => aurora_i18n::tr!("photo-resolution-window").to_string(),
             };
-            if chip(ui, p, &label, None, s.profile_size == size, true).clicked() {
-                s.profile_size = size;
+            if chip(ui, p, &label, None, *current == size, true).clicked() {
+                *current = size;
             }
         }
     });
-    let (w, h) = prof.size;
+    let (w, h) = shown;
     ui.label(RichText::new(aurora_i18n::tr!("photo-size", width = w, height = h)).color(p.ink));
 }
 
@@ -1097,10 +1194,11 @@ fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
     }
     guide_lines(ui.painter(), rect, s.guide, p.ink.gamma_multiply(0.55));
     // the size badge
-    let badge = match (&view.inventory, &view.profile) {
-        (_, Some(prof)) => format!("{} × {} · PNG", prof.size.0, prof.size.1),
-        (Some(inv), None) => aurora_i18n::tr!("photo-texture-size", width = inv.texture.0, height = inv.texture.1).to_string(),
-        (None, None) => format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label()),
+    let badge = match (&view.email, &view.inventory, &view.profile) {
+        (Some(mail), _, _) => format!("{} × {} · JPEG", mail.size.0, mail.size.1),
+        (None, _, Some(prof)) => format!("{} × {} · PNG", prof.size.0, prof.size.1),
+        (None, Some(inv), None) => aurora_i18n::tr!("photo-texture-size", width = inv.texture.0, height = inv.texture.1).to_string(),
+        (None, None, None) => format!("{} × {} · {}", view.photo.0, view.photo.1, s.format.label()),
     };
     let galley = ui.painter().layout_no_wrap(badge, egui::FontId::proportional(11.0), p.ink);
     let badge_rect = Rect::from_min_size(

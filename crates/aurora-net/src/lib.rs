@@ -22,6 +22,7 @@ pub mod login;
 pub mod lsl_syntax;
 pub mod objcache;
 pub mod objects;
+pub mod postcard;
 pub mod offline_im;
 pub mod outfits;
 pub mod probe;

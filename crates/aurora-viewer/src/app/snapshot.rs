@@ -10,7 +10,7 @@
 
 use super::App;
 use crate::snapshot::{self, TilePass, gallery, inventory, profile, save};
-use crate::ui::snapshot::{Action, Destination, InventoryView, ProfileView};
+use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
 use aurora_net::NetCommand;
 use aurora_net::inventory::upload::{self as upload, Kind, Prices, Receipt};
@@ -45,6 +45,8 @@ enum Purpose {
     Inventory(i32),
     /// To the profile feed.
     Profile,
+    /// By e-mail.
+    Postcard,
 }
 
 /// A photo on its way to the inventory or the profile feed.
@@ -62,6 +64,17 @@ enum Upload {
         /// The PNG's size, once encoded.
         bytes: Option<usize>,
     },
+    /// Encoded, then sent through SendPostcard on the network's runtime.
+    Postcard {
+        rx: crossbeam_channel::Receiver<PostcardStep>,
+        encoded: bool,
+    },
+}
+
+/// How a postcard goes.
+enum PostcardStep {
+    Encoded,
+    Done(Result<(), aurora_net::postcard::Error>),
 }
 
 /// How a profile post goes.
@@ -398,6 +411,7 @@ impl App {
             Purpose::Save(path) => self.photo_save(job.size, job.pixels, path),
             Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost),
             Purpose::Profile => self.photo_post(job.size, job.pixels),
+            Purpose::Postcard => self.photo_postcard(job.size, job.pixels),
         }
     }
 
@@ -409,6 +423,7 @@ impl App {
             Destination::Disk => s.size(window),
             Destination::Inventory => inventory::capture_size(s.aspect, s.inventory_size, window),
             Destination::Profile => profile::capture_size(s.aspect, s.profile_size, window),
+            Destination::Email => profile::capture_size(s.aspect, s.postcard_size, window),
         }
     }
 
@@ -509,6 +524,142 @@ impl App {
         });
         self.snapshots.upload = Some(Upload::Profile { rx, bytes: None });
         self.photo_shutter();
+    }
+
+    /// What the window shows of a postcard: the region takes them
+    /// (SendPostcard), or the demo.
+    fn photo_email_view(&self, window: (u32, u32)) -> EmailView {
+        EmailView {
+            available: self.demo || self.world.main_has_cap("SendPostcard"),
+            size: self.photo_size(window),
+        }
+    }
+
+    /// "Send" (LLPanelSnapshotPostcard::onSend): the recipients checked
+    /// first (PromptRecipientEmail), then the held photo or a new one.
+    fn photo_to_postcard(&mut self, renderer: &Renderer) {
+        if self.photo_busy() {
+            return;
+        }
+        if !aurora_net::postcard::valid_recipients(&self.snapshots.ui.postcard.to) {
+            let text = aurora_i18n::tr!("photo-email-bad-recipient");
+            self.snapshots.message = Some((text.to_owned(), true));
+            self.photo_vf_error(text);
+            return;
+        }
+        if let Some(held) = &self.snapshots.held {
+            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
+            self.photo_postcard(size, rgba);
+            return;
+        }
+        self.photo_job(Purpose::Postcard, renderer);
+    }
+
+    /// The postcard's fields, with the defaults of an empty name, subject
+    /// or message (LLPanelSnapshotPostcard::onOpen, missingSubjMsgAlertCallback).
+    fn photo_postcard_fields(&self) -> aurora_net::postcard::Postcard {
+        let form = &self.snapshots.ui.postcard;
+        let or = |text: &str, default: &str| {
+            if text.trim().is_empty() {
+                default.to_owned()
+            } else {
+                text.to_owned()
+            }
+        };
+        let own = self.world.legacy_name(&self.world.agent_id).unwrap_or_else(|| self.world.own_name());
+        // the sender's address, off Second Life only (OpenSim compatibility)
+        let from = (self.settings.grid == crate::settings::GridChoice::Custom)
+            .then(|| self.world.user_info.info.as_ref().map(|i| i.email.clone()))
+            .flatten()
+            .filter(|e| !e.is_empty());
+        aurora_net::postcard::Postcard {
+            to: form.to.trim().to_owned(),
+            name: or(&form.name, &own),
+            subject: or(&form.subject, aurora_i18n::tr!("photo-email-default-subject")),
+            message: or(&form.message, aurora_i18n::tr!("photo-email-default-message")),
+            pos_global: self.world.agent_global().map_or([0.0; 3], |g| g.to_array()),
+            from,
+        }
+    }
+
+    /// Encode the JPEG and send the postcard, off the main thread; the
+    /// demo has no simulator and answers itself (AURORA_DEMO_SNAPSHOT=
+    /// postcard-fail: refused).
+    fn photo_postcard(&mut self, size: (u32, u32), rgba: Vec<u8>) {
+        let url = self.world.main().and_then(|r| r.caps.get("SendPostcard").cloned());
+        if url.is_none() && !self.demo {
+            self.snapshots.message = Some((aurora_i18n::tr!("photo-email-unavailable").to_owned(), true));
+            return;
+        }
+        self.photo_review_thumb(size, &rgba);
+        let postcard = self.photo_postcard_fields();
+        let quality = self.settings.snapshot.jpeg_quality;
+        let demo_fail = self.demo && std::env::var("AURORA_DEMO_SNAPSHOT").is_ok_and(|m| m == "postcard-fail");
+        let http = self.net.caps_http();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        self.net.runtime().spawn(async move {
+            let encoded = tokio::task::spawn_blocking(move || save::encode_jpeg(size.0, size.1, &rgba, quality)).await;
+            let jpeg = match encoded {
+                Ok(Ok(jpeg)) => jpeg,
+                Ok(Err(e)) => {
+                    log::warn!("photo: JPEG not encoded: {e}");
+                    let _ = tx.send(PostcardStep::Done(Err(aurora_net::postcard::Error::Failed(e))));
+                    return;
+                }
+                Err(_) => return,
+            };
+            let _ = tx.send(PostcardStep::Encoded);
+            log::info!("photo: postcard of {} bytes", jpeg.len());
+            let result = match url {
+                Some(url) => aurora_net::postcard::send(&http, &url, &postcard, jpeg).await,
+                None if demo_fail => Err(aurora_net::postcard::Error::TooBig),
+                None => Ok(()),
+            };
+            let _ = tx.send(PostcardStep::Done(result));
+        });
+        self.snapshots.upload = Some(Upload::Postcard { rx, encoded: false });
+        self.photo_shutter();
+    }
+
+    /// The postcard's progress and outcome (LLPostCard::reportPostResult).
+    fn photo_postcard_poll(&mut self) {
+        let Some(Upload::Postcard { rx, encoded }) = &mut self.snapshots.upload else {
+            return;
+        };
+        let mut done = None;
+        while let Ok(step) = rx.try_recv() {
+            match step {
+                PostcardStep::Encoded => *encoded = true,
+                PostcardStep::Done(result) => done = Some(result),
+            }
+        }
+        let Some(result) = done else {
+            return;
+        };
+        self.snapshots.upload = None;
+        let s = &mut self.snapshots;
+        s.message_item = None;
+        s.message_profile = false;
+        match result {
+            Ok(()) => {
+                log::info!("photo: postcard sent");
+                s.message = Some((aurora_i18n::tr!("photo-email-sent").to_owned(), false));
+                self.photo_review_show(
+                    aurora_i18n::tr!("photo-destination-email").to_owned(),
+                    crate::ui::viewfinder::Review::Email,
+                );
+            }
+            Err(e) => {
+                log::warn!("photo: postcard not sent: {e}");
+                // CannotUploadSnapshotEmailTooBig
+                let text = match e {
+                    aurora_net::postcard::Error::TooBig => aurora_i18n::tr!("photo-email-too-big"),
+                    aurora_net::postcard::Error::Failed(_) => aurora_i18n::tr!("photo-email-failed"),
+                };
+                s.message = Some((text.to_owned(), true));
+                self.photo_vf_error(text);
+            }
+        }
     }
 
     /// Start a photo of the destination's size.
@@ -879,6 +1030,7 @@ impl App {
             }
         }
         self.photo_profile_poll();
+        self.photo_postcard_poll();
         let viewfinder = self.viewfinder_on();
         let s = &mut self.snapshots;
         // the save on its worker
@@ -1055,6 +1207,7 @@ impl App {
                     Destination::Disk => self.photo_take(renderer, None),
                     Destination::Inventory => self.photo_to_inventory(renderer),
                     Destination::Profile => self.photo_to_profile(renderer),
+                    Destination::Email => self.photo_to_postcard(renderer),
                 }
             }
             Action::Confirm(yes) => {
@@ -1151,6 +1304,8 @@ impl App {
                 Upload::Sent(_) => (0.85, aurora_i18n::tr!("photo-uploading").to_owned()),
                 Upload::Profile { bytes: None, .. } => (0.6, aurora_i18n::tr!("photo-profile-encoding").to_owned()),
                 Upload::Profile { bytes: Some(_), .. } => (0.85, aurora_i18n::tr!("photo-profile-posting").to_owned()),
+                Upload::Postcard { encoded: false, .. } => (0.6, aurora_i18n::tr!("photo-profile-encoding").to_owned()),
+                Upload::Postcard { encoded: true, .. } => (0.85, aurora_i18n::tr!("photo-email-sending").to_owned()),
             })
         } else {
             s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
@@ -1251,6 +1406,7 @@ impl App {
             }
             let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
+            let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
             let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
             let busy = self.photo_busy_line();
             if let Some((_, what)) = &busy {
@@ -1274,6 +1430,7 @@ impl App {
                 item_saved: self.snapshots.message_item.is_some(),
                 profile,
                 profile_posted: self.snapshots.message_profile,
+                email,
                 exposure: self.settings.exposure,
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
             };
@@ -1290,6 +1447,7 @@ impl App {
         } else if self.panels.snapshot {
             let inventory = (self.snapshots.ui.destination == Destination::Inventory).then(|| self.photo_inventory_view(window));
             let profile = (self.snapshots.ui.destination == Destination::Profile).then(|| self.photo_profile_view(window));
+            let email = (self.snapshots.ui.destination == Destination::Email).then(|| self.photo_email_view(window));
             let mut state = std::mem::take(&mut self.snapshots.ui);
             let tiles = snapshot::plan(photo, self.photo_max_side(renderer), self.photo_max_pixels(renderer)).len();
             let s = &self.snapshots;
@@ -1307,6 +1465,8 @@ impl App {
                     Upload::Sent(_) => (0.85, aurora_i18n::tr!("photo-uploading").to_owned()),
                     Upload::Profile { bytes: None, .. } => (0.6, aurora_i18n::tr!("photo-profile-encoding").to_owned()),
                     Upload::Profile { bytes: Some(_), .. } => (0.85, aurora_i18n::tr!("photo-profile-posting").to_owned()),
+                    Upload::Postcard { encoded: false, .. } => (0.6, aurora_i18n::tr!("photo-profile-encoding").to_owned()),
+                    Upload::Postcard { encoded: true, .. } => (0.85, aurora_i18n::tr!("photo-email-sending").to_owned()),
                 })
             } else {
                 s.job.as_ref().filter(|j| j.purpose != Purpose::Preview).map(|j| {
@@ -1334,6 +1494,7 @@ impl App {
                 item_saved: s.message_item.is_some(),
                 profile,
                 profile_posted: s.message_profile,
+                email,
                 exposure: self.settings.exposure,
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
             };

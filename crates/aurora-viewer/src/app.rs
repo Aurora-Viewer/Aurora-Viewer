@@ -1228,6 +1228,21 @@ impl App {
             }
             return;
         }
+        // AURORA_DEMO_SIM_CONSOLE / AURORA_DEMO_VOICE_MODERATION: the
+        // region's answers
+        if self.demo
+            && let NetCommand::SimConsole(command) = &cmd
+        {
+            self.world.apply(crate::demo::sim_extras::console_reply(command));
+            return;
+        }
+        if self.demo
+            && let NetCommand::ModerateVoice { target, mute } = cmd
+        {
+            let peers: Vec<uuid::Uuid> = self.world.calls.voice_peers.iter().copied().collect();
+            crate::demo::sim_extras::moderate(target, mute, &peers);
+            return;
+        }
         // AURORA_DEMO_MATURITY: the server agrees, keeps its value or fails
         if self.demo
             && let NetCommand::SetMaturityPreference(maturity) = cmd
@@ -4286,11 +4301,15 @@ impl App {
         // the call's channel: its state and participants (the demo has no
         // voice server and simulates them)
         let server_type = main.map(|r| r.voice_server.clone()).unwrap_or_default();
-        // nearby voice moderation: who a moderator muted, and us
-        self.world.calls.nearby_moderated = self.voice.nearby_moderation();
-        if let Some(muted) = self.voice.take_moderation_notice() {
-            self.world.on_nearby_voice_moderated(muted);
-        }
+        // nearby voice moderation: who a moderator muted, and us (the demo
+        // simulates it, AURORA_DEMO_VOICE_MODERATION)
+        let moderated = if self.demo {
+            let peers = self.world.calls.voice_peers.iter().copied();
+            crate::demo::sim_extras::nearby_moderated(self.frame_count, self.world.agent_id, peers)
+        } else {
+            self.voice.nearby_moderation()
+        };
+        self.world.set_nearby_moderated(moderated);
         self.world.calls.voice_enabled = self.settings.audio.voice_enabled;
         self.world.calls.server_type = server_type;
         self.world.calls.reject_group = self.settings.audio.reject_group_calls;
@@ -5651,6 +5670,14 @@ impl App {
             && let Some(cmd) = self.world.set_home_here()
         {
             self.send(cmd);
+        }
+        // AURORA_DEMO_FREEZE: frozen by Nova, released later
+        if self.demo {
+            for ev in crate::demo::sim_extras::freeze_events(self.frame_count) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+            }
         }
         // AURORA_DEMO_EMOJI_CODES: the keyboard given to the input again once
         // the demo's start has settled (it takes it back at the start)
