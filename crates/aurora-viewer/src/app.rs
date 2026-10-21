@@ -3847,9 +3847,7 @@ impl App {
             .main()
             .map_or(Vec3::ZERO, |r| r.wind.velocity(agent.position, r.heightmap.size_x as f32));
         // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND
-        let demo_silent = self.demo
-            && std::env::var_os("AURORA_DEMO_SOUND").is_none()
-            && crate::scene::wind_sound::demo_spec().is_none();
+        let demo_silent = self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() && crate::scene::wind_sound::demo_spec().is_none();
         let input = crate::scene::wind_sound::WindInput {
             region_wind,
             velocity: agent.velocity,

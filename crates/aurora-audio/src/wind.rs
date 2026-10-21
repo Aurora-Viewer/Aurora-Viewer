@@ -61,7 +61,11 @@ fn map_gain(v: [f32; 3]) -> f64 {
 /// (LLVector3::normVec leaves a null vector null: a right angle).
 fn right_angle(v: [f32; 3]) -> f64 {
     let len = f64::from(v[0]).hypot(f64::from(v[1])).hypot(f64::from(v[2]));
-    let cos = if len > 1e-6 && len.is_finite() { f64::from(v[0]) / len } else { 0.0 };
+    let cos = if len > 1e-6 && len.is_finite() {
+        f64::from(v[0]) / len
+    } else {
+        0.0
+    };
     cos.clamp(-1.0, 1.0).acos() / std::f64::consts::PI
 }
 
@@ -99,7 +103,8 @@ impl SharedWind {
         let s = WindTarget::SILENT;
         self.gain.store(clean(t.gain, 0.0, 1.0, 0.0).to_bits(), Ordering::Relaxed);
         self.freq.store(clean(t.freq, 20.0, 2_000.0, s.freq).to_bits(), Ordering::Relaxed);
-        self.pan_right.store(clean(t.pan_right, 0.0, 1.0, s.pan_right).to_bits(), Ordering::Relaxed);
+        self.pan_right
+            .store(clean(t.pan_right, 0.0, 1.0, s.pan_right).to_bits(), Ordering::Relaxed);
     }
 
     pub(crate) fn get(&self) -> WindTarget {
