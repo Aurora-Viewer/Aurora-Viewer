@@ -114,6 +114,25 @@ pub fn hover_holds(seen: f64, now: f64) -> bool {
     now - seen <= HOVER_LINGER
 }
 
+/// Seconds the light of a hovered plate takes to come and to go.
+pub const HOVER_EASE: f64 = 0.12;
+/// Seconds of the bounce of a plate the pointer reaches (#473), and the
+/// points its surface grows on each side at most: a plate already full
+/// answers the pointer too.
+pub const BOUNCE: f64 = 0.36;
+pub const BOUNCE_GROW: f32 = 3.0;
+
+/// Points the surface of a plate reached `t` seconds ago has grown on each
+/// side: a short damped spring, out about two points, half a point in, then
+/// still. Only the surface moves: the text and the picture stay sharp.
+pub fn bounce_grow(t: f64) -> f32 {
+    if !(0.0..BOUNCE).contains(&t) {
+        return 0.0;
+    }
+    let u = (t / BOUNCE) as f32;
+    BOUNCE_GROW * (1.0 - u).powi(2) * (3.0 * std::f32::consts::PI * u).sin()
+}
+
 /// Level of a plate among the others: `level` is what its distance gives,
 /// `rank` its place among the plates near enough to be complete (0 for the
 /// nearest), `was_full` whether it was complete in the last frame.
@@ -676,6 +695,11 @@ struct Entry {
     voice: VoiceEnvelope,
     /// 1 when the plate blurs the world, 0 when it only tints it.
     glass: f32,
+    /// 1 while the pointer is on it (lighter surface and border), eased.
+    hover: f32,
+    hovered: bool,
+    /// When its last bounce started.
+    bounced: f64,
     picture_asked: bool,
     seen: f64,
     /// Its geometry, kept while its state does not change.
@@ -726,6 +750,9 @@ pub struct Plates {
     pub hovered: Option<Uuid>,
     /// The last plate under the pointer, and when: it lingers a moment.
     hover_seen: Option<(Uuid, f64)>,
+    /// Preferences › "Reduce animations": a hovered plate lights up without
+    /// bouncing.
+    pub still: bool,
     /// The plate whose voice goes to the log (`level_log`): our own.
     pub probe: Option<Uuid>,
     level_probe: LevelProbe,
@@ -781,6 +808,9 @@ impl Plates {
                 changed: f64::NEG_INFINITY,
                 voice: VoiceEnvelope::default(),
                 glass: if glass { 1.0 } else { 0.0 },
+                hover: 0.0,
+                hovered: false,
+                bounced: f64::NEG_INFINITY,
                 picture_asked: false,
                 seen: now,
                 cache: paint::Cache::default(),
@@ -806,6 +836,17 @@ impl Plates {
             } else {
                 (entry.glass - step).max(0.0)
             };
+            let hovered = hover == Some(tag.id);
+            if hovered && !entry.hovered && !self.still {
+                entry.bounced = now;
+            }
+            entry.hovered = hovered;
+            let step = dt / HOVER_EASE as f32;
+            entry.hover = if hovered {
+                (entry.hover + step).min(1.0)
+            } else {
+                (entry.hover - step).max(0.0)
+            };
             let progress = ((now - entry.changed) / LEVEL_EASE).clamp(0.0, 1.0) as f32;
             let state = paint::State {
                 level: entry.level,
@@ -813,6 +854,8 @@ impl Plates {
                 progress: progress * progress * (3.0 - 2.0 * progress),
                 halo: entry.voice.halo(),
                 glass: entry.glass,
+                hover: entry.hover * entry.hover * (3.0 - 2.0 * entry.hover),
+                grow: if self.still { 0.0 } else { bounce_grow(now - entry.bounced) },
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
             placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache), tag.at);

@@ -37,6 +37,7 @@ mod graphics_presets;
 mod imports;
 mod interaction;
 mod keybinds;
+mod keywords;
 mod link_trust;
 mod links;
 mod logging;

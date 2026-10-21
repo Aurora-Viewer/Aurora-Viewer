@@ -60,7 +60,7 @@ sections! {
         windows_stop_right, windows_stop_bottom, show_perf,
         show_minimap, show_bug_report, place_bar_stretch, place_bar_rights_text, favorites_access, show_net_stats, standalone_place_details, loading_backdrop, reduce_motion, confirm_teleports,
         confirm_no_transfer_settings, confirm_object_bonus, confirm_return_to_owner, confirm_attachment_drop,
-        confirm_script_modify, region_check_texture_heights, sim_version_alert, script_count_alert, script_count_threshold, region_restart,
+        confirm_script_modify, region_check_texture_heights, sim_version_alert, script_count_alert, script_count_threshold, region_restart, collisions,
         confirm_payments, payment_confirm_threshold,
         name_tag_distance, show_own_name_tag, show_friend_name_tags, show_other_name_tags,
         temporary_name_tags, name_tag_show_seconds, use_display_names, show_usernames, legacy_username_format, trim_resident,
@@ -73,11 +73,11 @@ sections! {
     ],
     2 => [font, font_scale],
     TAB_CHAT => [
-        chat_timestamps, show_chat_channel, chat_keep_focus, chat_toast_seconds, toast_friends_online, friends_online_in_chat, presence_position, toast_im, toast_group_im, im_toast_seconds,
+        chat_timestamps, show_chat_channel, chat_keep_focus, chat_toast_seconds, toast_friends_online, friends_online_in_chat, presence_position, toast_im, toast_group_im, ims_in_notification_center, im_toast_seconds,
         flash_on_message, flash_on_object_im, flash_on_script_dialog, system_notifications, system_notifications_when_active,
-        warn_external_links, show_chat, show_contacts_tab, send_typing_state, play_typing_anim, type_during_emote, typing_in_name_tags, typing_chevron, flash_unread_conversations, log_im, log_nearby,
+        warn_external_links, show_chat, show_contacts_tab, send_typing_state, play_typing_anim, type_during_emote, typing_in_name_tags, typing_chevron, flash_unread_conversations, flash_conversations_button, log_im, log_nearby,
         log_show_history, reopen_ims, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
-        report_blocks, show_joined_group_invitations,
+        report_blocks, show_joined_group_invitations, keywords,
     ],
     4 => [
         mouse_sensitivity, invert_mouse, arrows_strafe, arrow_keys_always_move, letter_keys_move, walk_backwards_without_turning, double_click, lookat.head_yaw, lookat.head_pitch,
@@ -204,6 +204,7 @@ mod tests {
         }
         pages[TAB_CHAT].1.extend(accessed(body(options, "chat_page_head"), "s", ""));
         pages[TAB_CHAT].1.extend(accessed(body(options, "chat_logs_group"), "s", ""));
+        pages[TAB_CHAT].1.extend(accessed(body(options, "keyword_alerts_group"), "s", ""));
         // the inventory block of the Interface page edits `prefs`
         let inventory = include_str!("../inventory/controls.rs");
         pages[1].1.remove("inventory");

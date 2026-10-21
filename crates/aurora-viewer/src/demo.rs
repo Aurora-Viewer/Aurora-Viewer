@@ -45,6 +45,9 @@ pub mod chatlog;
 /// The classifieds of the profile scenarios, ours kept for the run.
 #[path = "demo_classifieds.rs"]
 pub mod classifieds;
+/// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
+#[path = "demo_collisions.rs"]
+pub mod collisions;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -78,6 +81,9 @@ pub mod group;
 pub mod home;
 #[path = "demo_hud.rs"]
 pub mod hud;
+/// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
+#[path = "demo_keywords.rs"]
+pub mod keywords;
 /// About Land answers (AURORA_DEMO_LAND).
 #[path = "demo_land.rs"]
 pub mod land;
@@ -4225,6 +4231,12 @@ pub fn events() -> Vec<NetEvent> {
         objects: objs,
     });
     ev.extend(overrides);
+    if let Some((wind, _)) = crate::scene::wind_sound::demo_spec() {
+        ev.push(NetEvent::Wind {
+            handle: HANDLE,
+            grid: Box::new(aurora_net::terrain::WindGrid { velocities: [wind; 256] }),
+        });
+    }
 
     if std::env::var_os("AURORA_DEMO_REPLACE_PRIM").is_some() {
         ev.extend(crate::build::replace::demo::events(HANDLE, height(135.0, 125.0)));
