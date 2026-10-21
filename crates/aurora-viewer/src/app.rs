@@ -7254,6 +7254,13 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
+                match self.frame_count {
+                    650 => ui::widgets::minimize_floater(&ctx, "inventory"),
+                    750 => self.on_ctx_action(ui::context::CtxAction::AttachmentInventory(uuid::Uuid::from_u128(8100))),
+                    _ => {}
+                }
+            }
         }
         if self.demo && ui::widgets::demo::rez_mode().is_some() {
             let mode = ui::widgets::demo::rez_mode().unwrap_or("1");
@@ -7831,6 +7838,16 @@ impl App {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+            if self.frame_count == 850 && mode == "object-history" {
+                if let Some(id) = self.world.notifications.list.first().map(|n| n.id) {
+                    let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Decline);
+                    for command in commands {
+                        self.send(command);
+                    }
+                }
+                self.notif_ui.open = true;
+                self.notif_ui.center.tab = ui::notification_center::Tab::History;
             }
             if self.frame_count == crate::demo::notifs::ANSWER_AT && matches!(mode.as_str(), "history" | "legacy-history") {
                 // a few cards answered or closed: they go to the history
@@ -10920,6 +10937,11 @@ impl App {
                 {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_CONV_SCROLL=new: the friend writes while we read
+                // higher up
+                if self.demo {
+                    crate::demo::conv_scroll_new(&mut self.world, self.chat_ui.demo_scrolled);
+                }
                 // AURORA_DEMO_CONV=aurora: the group's call rings without us
                 if let Some(scene) = crate::demo::aurora_scenario() {
                     // call-away: the call opened its conversation; once it
@@ -11659,6 +11681,7 @@ impl App {
                     cookie: cookie.as_ref(),
                     profile_base: profile_base.as_deref(),
                 };
+                self.profile_ui.prepare_photos(&ctx, &mut self.scene, &self.world);
                 let acts = self.profile_ui.show(
                     &ctx,
                     &p,
@@ -13167,6 +13190,11 @@ impl ApplicationHandler for App {
                     _ => {}
                 }
             }
+            // AURORA_DEMO_CONV_SCROLL: the friend's earlier talk first
+            if crate::demo::conv_scroll_scenario().is_some() {
+                crate::demo::conv_scroll_lines(&mut self.world);
+                self.chat_ui.demo_scroll = Some(crate::demo::DEMO_FRIEND);
+            }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
             }
@@ -13426,6 +13454,8 @@ impl ApplicationHandler for App {
                         | "aurora-rights"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "show-original"
+                        | "aurora-show-original"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(

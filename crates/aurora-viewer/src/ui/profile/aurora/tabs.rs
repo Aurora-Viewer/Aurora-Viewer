@@ -1552,9 +1552,9 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
     } else {
         190.0
     };
-    let photo = |ui: &mut egui::Ui, env: &mut Env| {
+    let photo = |ui: &mut egui::Ui, env: &mut Env, w: &mut Window| {
         let size = if compact { Vec2::new(side, 150.0) } else { Vec2::splat(side) };
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let radius = ui.visuals().window_corner_radius;
         match env.images.get(&image).filter(|_| !image.is_nil()) {
             Some(t) => cover(ui, t, rect, radius),
@@ -1572,6 +1572,8 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         }
         if editing {
             photo_menu(ui, env, rect, image);
+        } else if !image.is_nil() && response.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
+            w.open_photo(PictureSlot::FirstLife, image);
         }
     };
     let text = |ui: &mut egui::Ui, env: &mut Env, w: &mut Window| {
@@ -1627,7 +1629,7 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             if editing || !image.is_nil() {
-                photo(ui, env);
+                photo(ui, env, w);
             }
             text(ui, env, w);
         });
@@ -1635,7 +1637,7 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
             if editing || !image.is_nil() {
-                photo(ui, env);
+                photo(ui, env, w);
             }
             ui.vertical(|ui| text(ui, env, w));
         });

@@ -16,6 +16,7 @@ pub mod history;
 mod input_history;
 mod invite_card;
 mod keys;
+mod latest;
 mod line_menu;
 mod members;
 mod offer_card;
@@ -76,6 +77,10 @@ pub struct ChatUi {
     pub demo_menu: Option<String>,
     /// Explicit offline pointer fixture for conversation rearrangement.
     pub demo_reorder: bool,
+    /// `AURORA_DEMO_CONV_SCROLL`: this conversation goes to its top once it
+    /// is shown with its lines laid out; `demo_scrolled` once it is there.
+    pub demo_scroll: Option<uuid::Uuid>,
+    pub demo_scrolled: bool,
     /// Presentation order of currently open conversations, shared by all styles.
     reorder: reorder::State,
     /// Avatars whose profile picture the conversation wants (filled while drawing).
@@ -495,6 +500,7 @@ pub(crate) fn text_with_places(
     p: &Palette,
     ratings: &crate::world::worldmap::RegionRatings,
     text: &str,
+    names: &[crate::world::notifications::NameLink],
     size: f32,
     color: Color32,
 ) {
@@ -507,7 +513,7 @@ pub(crate) fn text_with_places(
         .collect();
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
-            ui.add(egui::Label::new(RichText::new(t).size(size).color(color)).wrap().selectable(true));
+            super::notifications::text::show(ui, p, t, names, size, color, false, true);
         }
     };
     if places.is_empty() {
@@ -1705,6 +1711,14 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             if changed && let Some(f) = search.find.as_mut() {
                 f.hits_changed(view);
             }
+            // (not in the window's sizing pass, whose scroll area is another)
+            if st.demo_scroll.is_some() && st.demo_scroll == st.selected && view.row(0).is_some() && !ui.is_sizing_pass() {
+                if view.below() > 0.0 {
+                    (st.demo_scroll, st.demo_scrolled) = (None, true);
+                } else {
+                    view.scroll_to(0);
+                }
+            }
             let mark = (!needle.is_empty()).then_some(Mark { needle: &needle, wash });
             let selection = &mut st.selection.1;
             let (shift, content) = view.show(ui, viewport, clock.first, &mut |ui, row, painted| {
@@ -1748,10 +1762,26 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             shift
         });
-    if out.inner != 0.0 {
-        // rows above changed height: what is in sight stays
-        let mut state = out.state;
-        state.offset.y += out.inner;
+    let mut state = out.state;
+    // rows above changed height: what is in sight stays
+    state.offset.y += out.inner;
+    let mut store = out.inner != 0.0;
+    // what came in since the reader left the end: others' messages, not
+    // ours nor the notices
+    let arrived = lines.map_or(0, |lines| {
+        view.arrived(clock.first, |i| {
+            lines
+                .get(i)
+                .is_some_and(|l| l.kind != crate::world::ChatKind::Own && !l.kind.is_notice())
+        })
+    });
+    let latest_id = ui.id().with(("latest", st.selected));
+    if !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived) {
+        // past the end: the scroll area stops there and sticks to it again
+        state.offset.y = out.content_size.y;
+        store = true;
+    }
+    if store {
         state.store(ui.ctx(), out.id);
     }
     line_menu::show(ui, menu, p, |ui, target| {
@@ -2931,7 +2961,7 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
 }
 
 /// Screen rects of a char range of a laid-out text, one per row.
-fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range<usize>) -> Vec<egui::Rect> {
+pub(crate) fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std::ops::Range<usize>) -> Vec<egui::Rect> {
     use egui::text::CCursor;
     let mut out: Vec<egui::Rect> = Vec::new();
     for i in range {
@@ -3133,7 +3163,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_places(ui, &p, &ratings, text, 12.0, p.ink),
+            |ui| text_with_places(ui, &p, &ratings, text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);

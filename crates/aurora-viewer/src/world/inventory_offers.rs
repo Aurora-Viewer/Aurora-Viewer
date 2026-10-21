@@ -13,10 +13,51 @@
 //! became of the offer, whichever side answered.
 
 use super::notification_history::Outcome;
-use super::notifications::{AT_CATEGORY, Response};
+use super::notifications::{AT_CATEGORY, Data, Kind, NameLink, NameTarget, Response};
 use super::{ChatKind, World};
 use aurora_net::{InstantMessage, NetCommand};
 use uuid::Uuid;
+
+/// ObjectGiveItem / OwnObjectGiveItem, inventory_offer_handler in
+/// indra/newview/llimprocessing.cpp. The IM sender is the owner, while its
+/// FromAgentName is the object name, never an avatar-name cache entry.
+#[derive(Debug, Clone)]
+pub struct TaskOffer {
+    pub object_name: String,
+    pub item_name: String,
+    pub from_group: bool,
+    pub own_object: bool,
+}
+
+impl TaskOffer {
+    fn body(&self, owner: &str) -> String {
+        let text = if self.own_object {
+            aurora_i18n::tr!("world-inventory-offers-own-object", object = self.object_name.clone())
+        } else {
+            aurora_i18n::tr!(
+                "world-inventory-offers-object",
+                object = self.object_name.clone(),
+                owner = owner.to_owned()
+            )
+        };
+        format!("{text}\n{}", item_label(&self.item_name))
+    }
+
+    fn owner_name(&self, world: &World, owner: Uuid) -> String {
+        if self.from_group {
+            world
+                .search
+                .groups
+                .get(&owner)
+                .map(|g| g.name.clone())
+                .or_else(|| world.groups.groups.iter().find(|g| g.id == owner).map(|g| g.name.clone()))
+                .unwrap_or_else(|| owner.to_string())
+        } else {
+            let name = world.social.name_of(&owner);
+            if name == "…" { owner.to_string() } else { name }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
@@ -117,6 +158,115 @@ pub fn item_label(item: &str) -> String {
 }
 
 impl World {
+    pub(super) fn on_task_inventory_offer(&mut self, im: &InstantMessage, object_name: &str) {
+        // inventory_offer_handler removes the appended location from object offers.
+        let item = [
+            " ( http://slurl.com/secondlife/",
+            " ( https://slurl.com/secondlife/",
+            " ( http://maps.secondlife.com/secondlife/",
+            " ( https://maps.secondlife.com/secondlife/",
+        ]
+        .iter()
+        .filter_map(|prefix| im.message.find(prefix))
+        .min()
+        .map_or(im.message.as_str(), |end| &im.message[..end]);
+        let offer = TaskOffer {
+            object_name: object_name.to_owned(),
+            item_name: item.to_owned(),
+            from_group: im.from_group,
+            own_object: im.from_agent_id == self.agent_id,
+        };
+        if !im.from_agent_id.is_nil() && !offer.own_object {
+            if offer.from_group {
+                if !self.search.groups.contains_key(&im.from_agent_id) {
+                    self.search.request_group(im.from_agent_id);
+                }
+            } else {
+                self.social.want_name(im.from_agent_id);
+            }
+        }
+        self.ui_sounds.push(crate::ui_sound::UiSound::InventoryOffer);
+        let owner = offer.owner_name(self, im.from_agent_id);
+        let target = if offer.from_group {
+            NameTarget::Group(im.from_agent_id)
+        } else {
+            NameTarget::Avatar(im.from_agent_id)
+        };
+        let own_object = offer.own_object;
+        let id = self.notifications.push(
+            Kind::Inventory,
+            object_name,
+            offer.body(&owner),
+            Data::Inventory {
+                from: im.from_agent_id,
+                tx: im.session_id,
+                asset_type: im.binary_bucket.first().map(|b| *b as i8).unwrap_or(-1),
+                object: Uuid::nil(),
+                task: true,
+                task_offer: Some(offer),
+            },
+        );
+        if !own_object {
+            self.notifications.link_name(id, owner, target);
+        }
+        self.received_items.offer(im, id);
+    }
+
+    /// LLPostponedOfferNotification resolves avatar/group names asynchronously.
+    pub(super) fn refresh_task_inventory_offers(&mut self) {
+        let bodies: Vec<_> = self
+            .notifications
+            .list
+            .iter()
+            .enumerate()
+            .filter_map(|(index, n)| {
+                let Data::Inventory {
+                    from,
+                    task_offer: Some(offer),
+                    ..
+                } = &n.data
+                else {
+                    return None;
+                };
+                let owner = offer.owner_name(self, *from);
+                let target = if offer.from_group {
+                    NameTarget::Group(*from)
+                } else {
+                    NameTarget::Avatar(*from)
+                };
+                Some((
+                    index,
+                    offer.body(&owner),
+                    (!offer.own_object).then_some(NameLink { name: owner, target }),
+                ))
+            })
+            .collect();
+        for (index, body, link) in bodies {
+            self.notifications.list[index].body = body;
+            self.notifications.list[index].name_links = link.into_iter().collect();
+        }
+    }
+
+    /// inventory_task_offer_callback / inventory_offer_mute_callback in
+    /// indra/newview/llviewermessage.cpp: mute the owner (avatar or group),
+    /// decline the gift and purge other queued offers from that owner.
+    pub(super) fn mute_task_inventory_owner(&mut self, id: u64, owner: Uuid, offer: &TaskOffer) -> Vec<NetCommand> {
+        if owner.is_nil() || offer.own_object {
+            return Vec::new();
+        }
+        let name = offer.owner_name(self, owner);
+        let kind = if offer.from_group {
+            super::mutes::MuteType::Group
+        } else {
+            super::mutes::MuteType::Agent
+        };
+        let (out, _) = self.notifications.respond(id, Response::Block, |_| Uuid::nil(), Uuid::nil());
+        if let Err(error) = self.block(owner, &name, kind) {
+            self.system_message(error);
+        }
+        out
+    }
+
     /// A resident's offer whose entry `notification` was just listed: its
     /// card in the conversation with the giver, opened if needed and
     /// counted as unread, and its text in the giver's transcript. Blocked
@@ -409,6 +559,122 @@ mod tests {
         assert!(w.inventory_offers.list.is_empty());
         assert!(w.social.ims.is_empty());
         assert!(transcript(&mut w).is_empty());
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn object_offer_resolves_owner_without_caching_the_object_as_a_resident() {
+        let root = temp();
+        let mut w = world(&root);
+        w.social.names.remove(&JANE);
+        let mut gift = offer(
+            im::TASK_INVENTORY_OFFERED,
+            "Free gift ( https://maps.secondlife.com/secondlife/Demo/1/2/3 )",
+        );
+        gift.from_name = "Gift dispenser".into();
+        w.on_im(gift);
+        assert!(!w.social.names.contains_key(&JANE));
+        assert!(w.notifications.list[0].body.contains(&JANE.to_string()));
+        w.apply(aurora_net::NetEvent::Names(vec![(JANE, "Jane".into(), "Doe".into())]));
+        let n = &w.notifications.list[0];
+        assert_eq!(n.title, "Gift dispenser");
+        assert!(n.body.contains("Gift dispenser") && n.body.contains("Jane Doe") && n.body.contains("Free gift"));
+        assert!(!n.body.contains("https://") && !n.body.contains(&JANE.to_string()));
+        assert_eq!(
+            n.name_links,
+            [NameLink {
+                name: "Jane Doe".into(),
+                target: NameTarget::Avatar(JANE)
+            }]
+        );
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn object_offer_accept_discard_and_mute_reply_to_the_owner_with_the_transaction() {
+        for response in [Response::Accept, Response::Decline, Response::Block] {
+            for group in [false, true] {
+                let root = temp();
+                let mut w = world(&root);
+                let mut gift = offer(im::TASK_INVENTORY_OFFERED, "Welcome note");
+                gift.from_name = "Gift dispenser".into();
+                gift.from_group = group;
+                w.on_im(gift.clone());
+                if group {
+                    assert!(
+                        w.search
+                            .take_commands()
+                            .iter()
+                            .any(|c| matches!(c, NetCommand::GroupProfileRequest(JANE)))
+                    );
+                    w.apply(aurora_net::NetEvent::GroupProfile(Box::new(aurora_net::search::GroupProfile {
+                        id: JANE,
+                        name: "Demo group".into(),
+                        ..Default::default()
+                    })));
+                    assert!(w.notifications.list[0].body.contains("Demo group"));
+                    assert_eq!(w.notifications.list[0].name_links[0].target, NameTarget::Group(JANE));
+                }
+                let id = w.notifications.list[0].id;
+                if matches!(response, Response::Block) {
+                    gift.session_id = Uuid::from_u128(0x11);
+                    w.on_im(gift.clone());
+                }
+                let (cmds, _) = w.respond_notification(id, response.clone());
+                let keep = matches!(response, Response::Accept);
+                let expected_dialog = if keep {
+                    im::TASK_INVENTORY_ACCEPTED
+                } else {
+                    im::TASK_INVENTORY_DECLINED
+                };
+                assert!(
+                    matches!(&cmds[..], [NetCommand::SendImDialog { to: JANE, id: TX, dialog, bucket, .. }]
+                    if *dialog == expected_dialog
+                    && (if keep { bucket.len() == 16 } else { bucket.is_empty() }))
+                );
+                assert!(w.notifications.list.is_empty());
+                assert!(w.take_inventory_edits().is_empty());
+                assert!(w.social.ims.is_empty());
+                if matches!(response, Response::Block) {
+                    let mute = w.mutes.get(&JANE).expect("owner blocked");
+                    assert_eq!(
+                        mute.kind,
+                        if group {
+                            super::super::mutes::MuteType::Group
+                        } else {
+                            super::super::mutes::MuteType::Agent
+                        }
+                    );
+                    assert_eq!(mute.name, if group { "Demo group" } else { "Jane Doe" });
+                    assert!(w.take_social_commands().iter().any(|c| matches!(c, NetCommand::UpdateMute { .. })));
+                    w.on_im(gift);
+                    assert!(w.notifications.list.is_empty(), "future gifts from that owner are filtered");
+                }
+                clean(&w, &root);
+            }
+        }
+    }
+
+    #[test]
+    fn our_object_offer_cannot_mute_ourselves() {
+        let root = temp();
+        let mut w = world(&root);
+        let mut gift = offer(im::TASK_INVENTORY_OFFERED, "Welcome note");
+        gift.from_agent_id = ME;
+        gift.from_name = "My dispenser".into();
+        w.on_im(gift);
+        let n = &w.notifications.list[0];
+        assert!(n.body.contains("My dispenser") && n.body.contains("Welcome note"));
+        assert!(matches!(
+            &n.data,
+            Data::Inventory {
+                task_offer: Some(TaskOffer { own_object: true, .. }),
+                ..
+            }
+        ));
+        let (cmds, _) = w.respond_notification(n.id, Response::Block);
+        assert!(cmds.is_empty() && !w.mutes.is_muted_id(&ME));
+        assert_eq!(w.notifications.list.len(), 1);
         clean(&w, &root);
     }
 

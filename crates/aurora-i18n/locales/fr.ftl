@@ -962,6 +962,10 @@ ui-options-sit-when-away-help = L'avatar s'assoit par terre quand vous passez en
 ui-options-quit-after-away = Quitter après une absence de
 ui-options-quit-after-away-help = Quitter le viewer après cette durée en absent (0 = jamais)
 ui-notifications-accept = Accepter
+ui-notifications-discard = Refuser
+ui-notifications-mute-owner = Ignorer le propriétaire
+world-inventory-offers-object = Un objet nommé « { $object } » appartenant à { $owner } vous a donné cet objet :
+world-inventory-offers-own-object = Votre objet nommé « { $object } » vous a donné cet objet :
 world-appearance-spare-attachment = Accessoire de rechange
 world-inventory-demo-attachments = Accessoires
 ui-land-options-newcomer-friendly = Accueil pour les nouveaux
@@ -2873,6 +2877,7 @@ ui-contacts-invite = Inviter...
 ui-login-i-accept-the-terms-and-want-to-log-in = J'accepte les conditions et je me connecte
 demo-arriving-with-textures = J'arrive avec les textures ✨
 demo-flash-message = Tu es là ? ({ $n })
+demo-scroll-earlier = Message { $n } de notre longue discussion
 world-inventory-demo-jeans-substance-worn-item-with-a-very-long-name = JEANS_SUBSTANCE — Élément porté avec un nom très long dans un dossier imbriqué
 world-inventory-demo-jeans-substance-cuir-jeans-jeans-substance-cuir-normal-demo = JEANS_SUBSTANCE_CUIR (JEANS) : JEANS_SUBSTANCE_CUIR (Normal) — Version de démonstration
 ui-sound-never = Jamais
@@ -3756,6 +3761,11 @@ ui-chat-today-at = aujourd'hui à { $time }
 ui-chat-yesterday-at = hier à { $time }
 ui-chat-date-at = { $date } à { $time }
 ui-chat-new-messages = Nouveaux
+ui-chat-latest = Revenir aux derniers messages
+ui-chat-latest-new = { $count ->
+    [one] { $count } nouveau message
+   *[other] { $count } nouveaux messages
+    }
 ui-chat-copy-message = Copier le message
 ui-chat-quote-message = Citer
 ui-chat-drop-to-give = Déposez ici pour donner à { $name }

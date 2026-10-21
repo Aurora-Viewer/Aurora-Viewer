@@ -749,7 +749,8 @@ impl Scene {
 
     /// Diagnostic: the objects (not avatars nor their attachments) within
     /// `radius` m of `center`: lights and every face's texture entry, as
-    /// the build floater would show them.
+    /// the build floater would show them. Distances only, never a position:
+    /// a tester pastes these lines in public (docs/DEV_TOOLBOX.md).
     pub fn log_nearby(&self, world: &World, center: Vec3, radius: f32) {
         let alpha = &self.textures.alpha_by_slot;
         let mut n = 0;
@@ -765,13 +766,13 @@ impl Scene {
             }
             n += 1;
             log::info!(
-                "object {} local {}: {} material {} scale {:.2?} center {:.1?}, {} faces, light {:?}",
+                "object {} local {}: {} material {} scale {:.2?} center {:.1} m away, {} faces, light {:?}",
                 o.full_id,
                 o.key.local_id,
                 if o.visual_volume().is_mesh() { "mesh" } else { "prim" },
                 o.prim_material,
                 o.visual_scale(),
-                g.center,
+                g.center.distance(center),
                 g.faces.len(),
                 o.extra.light
             );
@@ -845,7 +846,7 @@ impl Scene {
                 }
             }
         }
-        log::info!("nearby objects: {n} within {radius} m of {center:.1?}");
+        log::info!("nearby objects: {n} within {radius} m");
         // faces with glow worn by the avatars around (what feeds the glow pass)
         for (idx, o) in world.objects.iter() {
             let Some(g) = self.gpu.get(idx) else {

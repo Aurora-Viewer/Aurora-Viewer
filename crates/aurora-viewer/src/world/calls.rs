@@ -904,12 +904,21 @@ impl World {
         );
         let notification = self.notifications.push(
             notifications::Kind::Call,
-            title,
+            title.clone(),
             text,
             notifications::Data::Call {
                 invite: Box::new(inv.clone()),
             },
         );
+        self.notifications
+            .link_name(notification, title, notifications::NameTarget::Avatar(inv.from));
+        if group {
+            self.notifications.link_name(
+                notification,
+                inv.session_name.clone(),
+                notifications::NameTarget::Group(inv.session),
+            );
+        }
         if !inv.p2p {
             self.calls.launched.insert(inv.session, (inv.from, Instant::now()));
         }

@@ -139,7 +139,10 @@ impl FriendPromptUi {
                         match &env.name {
                             Some(name) => {
                                 let link = ui
-                                    .add(egui::Label::new(RichText::new(name).size(18.0).strong().color(p.ink)).sense(egui::Sense::click()))
+                                    .add(
+                                        egui::Label::new(RichText::new(name).size(18.0).strong().underline().color(p.violet_light))
+                                            .sense(egui::Sense::click()),
+                                    )
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                                     .on_hover_text(aurora_i18n::tr!("common-view-profile"));
                                 if link.clicked() {
@@ -149,7 +152,7 @@ impl FriendPromptUi {
                             }
                             // the name not known yet: the toast's own title
                             None => {
-                                ui.label(RichText::new(&n.title).size(15.0).strong().color(p.ink));
+                                super::notifications::text::show(ui, p, &n.title, &n.name_links, 15.0, p.ink, false, true);
                             }
                         }
                         let message = n.body.trim();
@@ -162,7 +165,7 @@ impl FriendPromptUi {
                                 .show(ui, |ui| {
                                     ui.set_width(ui.available_width());
                                     egui::ScrollArea::vertical().max_height(96.0).show(ui, |ui| {
-                                        ui.label(RichText::new(message).size(12.5).color(p.ink));
+                                        super::notifications::text::show(ui, p, message, &n.name_links, 12.5, p.ink, false, true);
                                     });
                                 });
                         }
