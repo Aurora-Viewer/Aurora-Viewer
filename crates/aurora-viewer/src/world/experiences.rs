@@ -36,6 +36,8 @@ pub struct Experiences {
     pub errors: HashMap<Uuid, String>,
     /// The experience shown in the profile window.
     pub profile: Option<Uuid>,
+    /// An explicit profile opening, including reopening the same experience.
+    pub profile_raise: bool,
     /// The experiences each group owns (LLPanelGroupExperiences), None
     /// while asked.
     pub groups: HashMap<Uuid, Option<Vec<Uuid>>>,
@@ -99,6 +101,7 @@ impl Experiences {
     /// Open the profile: its details and the current permission.
     pub fn open_profile(&mut self, experience: Uuid) {
         self.profile = Some(experience);
+        self.profile_raise = true;
         self.want(experience);
         self.change(experience, ExperiencePermissionChange::Query);
     }

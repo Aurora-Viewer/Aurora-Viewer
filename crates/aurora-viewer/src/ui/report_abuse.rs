@@ -40,6 +40,7 @@ pub enum ReportAction {
 #[derive(Default)]
 pub struct ReportAbuseUi {
     pub open: bool,
+    raise: bool,
     pub form: Form,
     /// The details the window opened with (mDefaultSummary).
     pub default_details: String,
@@ -79,6 +80,7 @@ impl ReportAbuseUi {
         let categories = std::mem::take(&mut self.categories);
         *self = ReportAbuseUi {
             open: true,
+            raise: true,
             region,
             position,
             categories: if categories.is_empty() {
@@ -154,6 +156,9 @@ impl ReportAbuseUi {
         if self.capture_pending {
             ctx.request_repaint();
             return actions;
+        }
+        if std::mem::take(&mut self.raise) {
+            super::widgets::expand_floater(ctx, "report_abuse");
         }
         if let Some(chosen) = self.picker.show(ctx, p, world)
             && let Some(id) = chosen.first().copied()

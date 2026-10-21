@@ -2667,7 +2667,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_HOME=<outcome>[:set]` | World › Set Home to Here and the region's answer |
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
-| `AURORA_DEMO_APPLINKS=1\|<command>` | A `secondlife:///app/...` link of each command; with a command, its first link clicked |
+| `AURORA_DEMO_APPLINKS=1\|<command>[:restore]` | URI examples; optionally open, minimize and reopen a destination |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
@@ -3804,7 +3804,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   is the unknown command. With a command name instead of `1` (`group`,
   `parcel`, `objectim`, `inventory`, `experience`, `classified`, `event`,
   `worldmap`, `chat`, `search`, `agent`, `wear_folder`, `frobnicate`) its
-  first link is clicked once the scene is set, for a capture.
+  first link is clicked once the scene is set, for a capture. Also accepts
+  `profile`, `pay`, `report` and `inventory-show`. Append
+  `:restore` to a window command: minimize its destination at frame 620,
+  repeat its action through the shared UI dispatch at 660, and log its
+  minimized state and height at 760. Capture `640,780` to compare the bar
+  with the restored window. Plain `parcel:restore` uses Places; the unit
+  regression also exercises standalone place details and both profile looks.
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),

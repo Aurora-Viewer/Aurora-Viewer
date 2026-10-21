@@ -3050,7 +3050,7 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                     // the bubble's label is the menu's "copy name"
                     let label = app_links::label(world, &mut HashSet::new(), u, app);
                     app_links::menu(&resp, p, world, u, app, &label);
-                    if resp.on_hover_text(format!("{}\n{u}", app_links::tooltip(app))).clicked() {
+                    if resp.on_hover_text(app_links::tooltip(app)).clicked() {
                         super::context::request(ui.ctx(), CtxAction::AppLink(app.clone()));
                     }
                 }

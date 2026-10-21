@@ -256,7 +256,7 @@ impl PlaceDetailsUi {
         for (i, place) in world.place_details.windows.iter().enumerate() {
             let win_id = format!("place-details-{}", place.serial);
             if self.raise.remove(&place.serial) {
-                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&win_id)));
+                widgets::expand_floater(ctx, &win_id);
             }
             // floater_fs_placedetails.xml: 322 x 590 (250 x 570 at least)
             let size = Vec2::new(322.0, 590.0);

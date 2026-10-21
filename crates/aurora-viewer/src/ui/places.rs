@@ -322,7 +322,7 @@ impl PlacesUi {
             return actions;
         }
         if std::mem::take(&mut self.raise) {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("places")));
+            widgets::expand_floater(ctx, "places");
         }
         let screen = ctx.content_rect();
         // floater_places.xml: 333 x 588 (200 x 200 at least)

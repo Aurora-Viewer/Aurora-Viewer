@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+Explicit profile openings restore their destination through the shared floater
+expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),
+groups, Places/standalone place details, experiences, payments, abuse reports
+and Marketplace. URI commands use the same inventory/search/map openings for
+all text sources. `ui/uri_restore_tests.rs` renders real destination windows
+to check reopening and intentional minimization between requests.
+
 Notification identity names carry typed avatar/group/experience/object targets in
 `world/notifications.rs`, retained by `world/notification_history.rs` across sessions.
 `ui/notifications/text.rs` styles and hit-tests their exact text spans with the

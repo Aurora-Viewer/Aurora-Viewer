@@ -16,19 +16,82 @@ use crate::world::search::{Key, Tab};
 use uuid::Uuid;
 
 impl App {
+    /// Reuse the real command dispatch for offline minimize/reopen captures.
+    pub(super) fn prepare_uri_restore_demo(&mut self, action: &CtxAction) {
+        if !std::env::var("AURORA_DEMO_APPLINKS").is_ok_and(|mode| mode.ends_with(":restore")) {
+            return;
+        }
+        let window = match action {
+            CtxAction::Profile(id) => {
+                let prefix = if self.settings.classic_profiles {
+                    "profile"
+                } else {
+                    "profile-card"
+                };
+                format!("{prefix}-{id}")
+            }
+            CtxAction::AppLink(link) => match link {
+                AppLink::Group(_) => "group_profile".into(),
+                AppLink::Parcel(_) => {
+                    self.settings.standalone_place_details = false;
+                    "places".into()
+                }
+                AppLink::ObjectIm(_) => "remote_object".into(),
+                AppLink::Inventory { .. } | AppLink::InventoryShow => "inventory".into(),
+                AppLink::Experience(_) => "experience_profile".into(),
+                AppLink::Classified(_) | AppLink::Event(_) | AppLink::Search { .. } => ui::search::WINDOW.into(),
+                AppLink::WorldMap { .. } => "worldmap".into(),
+                AppLink::Agent { verb: AgentVerb::Im, .. } => "conversations".into(),
+                AppLink::Agent { verb: AgentVerb::Pay, .. } => if self.settings.classic_pay_window { "pay_classic" } else { "pay" }.into(),
+                AppLink::Agent {
+                    verb: AgentVerb::ReportAbuse,
+                    ..
+                } => "report_abuse".into(),
+                _ => return,
+            },
+            _ => return,
+        };
+        self.egui_ctx
+            .data_mut(|d| d.insert_temp(egui::Id::new("uri_restore_demo"), (window, action.clone())));
+    }
+
+    pub(super) fn demo_uri_restore(&mut self) {
+        if !matches!(self.frame_count, 500 | 620 | 660 | 760) {
+            return;
+        }
+        let Some((window, action)) = self
+            .egui_ctx
+            .data(|d| d.get_temp::<(String, CtxAction)>(egui::Id::new("uri_restore_demo")))
+        else {
+            return;
+        };
+        match self.frame_count {
+            620 => ui::widgets::minimize_floater(&self.egui_ctx, &window),
+            500 | 660 => ui::context::request(&self.egui_ctx, action),
+            _ => {
+                let minimized = ui::widgets::floater_minimized(&self.egui_ctx, &window);
+                let height = self.egui_ctx.memory(|m| m.area_rect(egui::Id::new(&window))).map(|r| r.height());
+                log::info!("URI restore demo: {window}, minimized={minimized}, height={height:?}");
+            }
+        }
+    }
+
     pub(super) fn run_app_link(&mut self, link: AppLink) {
         match link {
             AppLink::Agent { id, verb } => self.run_agent_verb(id, verb),
             AppLink::Group(id) => self.group_profile_ui.open(&mut self.world, id),
             AppLink::Parcel(id) => self.show_place_profile(crate::world::place_details::Source::Parcel(id)),
-            AppLink::ObjectIm(o) => self.remote_object = Some(o),
+            AppLink::ObjectIm(o) => {
+                ui::widgets::expand_floater(&self.egui_ctx, "remote_object");
+                self.remote_object = Some(o);
+            }
             AppLink::Inventory { id, .. } => {
                 // the Legacy Viewer always shows the item
                 // (openInventoryPanelAndSetSelection)
                 self.inventory_ui.show_original(&self.world.inventory, id);
-                self.panels.inventory = true;
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
-            AppLink::InventoryShow => self.panels.inventory = true,
+            AppLink::InventoryShow => ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
             AppLink::Experience(id) => self.world.experiences.open_profile(id),
             AppLink::Classified(id) => self.show_search_one(Tab::Classifieds, Key::Id(id)),
             AppLink::Event(id) => self.show_search_one(Tab::Events, Key::Event(id)),
@@ -76,7 +139,7 @@ impl App {
     /// A classified or an event in Search, alone in its tab.
     fn show_search_one(&mut self, tab: Tab, key: Key) {
         self.search_ui.open_tab(tab);
-        self.panels.search = true;
+        ui::widgets::open_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search);
         self.world.search.show_one(tab, key);
         self.search_ui.aurora_show_one(tab, key, &self.settings.search);
     }
@@ -93,7 +156,7 @@ impl App {
             None if self.settings.classic_search => self.search_ui.open_tab(Tab::People),
             None => self.search_ui.open_all(),
         }
-        self.panels.search = true;
+        ui::widgets::open_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search);
         if query.trim().is_empty() {
             return;
         }

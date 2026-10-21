@@ -535,7 +535,7 @@ impl App {
             CtxAction::ShowPlaceInfo(region, pos) => self.show_place_profile(crate::world::place_details::Source::Link { region, pos }),
             CtxAction::ShowPlace(region, pos) => {
                 self.world.map.track_region(&region, pos);
-                self.panels.world_map = true;
+                ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }
             CtxAction::TeleportToPlace(region, pos) if self.settings.confirm_teleports => self.place_confirm = Some((region, pos, false)),
             CtxAction::TeleportToPlace(region, pos) => self.teleport_to_location(region, pos),
