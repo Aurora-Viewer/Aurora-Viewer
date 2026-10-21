@@ -688,20 +688,6 @@ impl Controller {
         eyes_between(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r), p.head)
     }
 
-    /// Skeleton-space left and right eyes as posed last frame: the Bento
-    /// pair when a mesh head moved it away from the system eyes (as
-    /// `eyes_between` chooses), else the system pair.
-    pub fn eye_pair(&self) -> Option<(Vec3, Vec3)> {
-        let p = &self.posed;
-        let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
-        let mid = |(l, r): (Vec3, Vec3)| (l + r) * 0.5;
-        match (pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r)) {
-            (Some(e), Some(a)) if mid(a).distance(mid(e)) > 0.005 => Some(a),
-            (Some(e), _) => Some(e),
-            (None, a) => a,
-        }
-    }
-
     /// The live morph weights of the last frame: the expressions and hand
     /// poses, as differences from the weights baked into the shape.
     pub fn live_morphs(&self) -> &[(i32, f32)] {

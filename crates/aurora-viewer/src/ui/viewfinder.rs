@@ -16,7 +16,7 @@ use crate::theme::Palette;
 use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 mod controls;
-pub use controls::{CamMode, Pad, ROLL_MAX, roll_text};
+pub use controls::{CamMode, Pad, roll_text};
 
 /// The value the mouse wheel drives (the underlined one of the bottom bar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -97,16 +97,17 @@ pub struct Frame<'a> {
     pub sharp: (f32, f32),
     /// The AF point (points).
     pub point: Pos2,
-    /// The face of the avatar under the AF point, or of the subject (its
-    /// box in points), and whether the focus is on it.
-    /// With the eye the lens takes, on screen.
-    pub face: Option<(Rect, bool, Option<Pos2>)>,
+    /// The head of the avatar under the AF point, or of the subject (its
+    /// box in points), whether the focus is on it, and the avatar's name.
+    pub face: Option<(Rect, bool, String)>,
     /// The camera's pitch (degrees, positive up).
     pub pitch: f32,
     pub histogram: Option<&'a [u32; vf::HISTOGRAM_BINS]>,
     /// The last photo: its thumbnail and what the card says of it.
     pub review: Option<(&'a egui::TextureHandle, String, Review)>,
     pub first_person: bool,
+    /// Preferences allow the first person view (EnableMouselook).
+    pub first_person_allowed: bool,
     pub free_camera: bool,
     /// The keys: menu, AF mode, first person.
     pub keys: Keys<'a>,
@@ -140,10 +141,6 @@ pub enum Out {
     HalfPress,
     Release,
     Cancel,
-    /// AF-S, AF-C, MF in turn.
-    CycleAf,
-    /// Avatar or point.
-    ToggleArea,
     /// The view from the avatar's eyes, or back behind it.
     FirstPerson(bool),
     /// The focus mode and area chosen on screen.
@@ -212,6 +209,15 @@ fn text_button(ui: &mut egui::Ui, p: &Palette, text: &str, font: FontId, color: 
     shadow_text(ui.painter(), p, rect.left_top(), Align2::LEFT_TOP, text, font, color);
     keep_keys(&resp);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip)
+}
+
+/// A value of the bottom bar: a text clicked, or dragged at once to turn it.
+fn value_button(ui: &mut egui::Ui, p: &Palette, text: &str, font: FontId, color: Color32, tip: &str) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), color);
+    let (rect, resp) = ui.allocate_exact_size(galley.size(), Sense::click_and_drag());
+    let color = if resp.hovered() || resp.dragged() { p.ink } else { color };
+    shadow_text(ui.painter(), p, rect.left_top(), Align2::LEFT_TOP, text, font, color);
+    resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal).on_hover_text(tip)
 }
 
 /// An icon alone of the top bar, clickable, centred on the line.
@@ -480,7 +486,7 @@ impl Viewfinder {
             self.scale(ctx, p, &front, screen, s, f);
         }
         if shows {
-            self.bottom_bar(ctx, p, &back, screen, s, f, ctl, &mut out);
+            self.bottom_bar(ctx, p, &back, screen, s, panel, fov, f, ctl, &mut out);
             self.dock(ctx, p, screen, s, f, &mut out);
         } else if ghost_disp(ctx, p, screen) {
             s.viewfinder.display = display.next();
@@ -552,7 +558,7 @@ impl Viewfinder {
             p.navy.gamma_multiply(0.62),
             Color32::TRANSPARENT,
         );
-        let color = af_color(p, self.af.phase, false);
+        // (the AF mode and area are the bottom bar's, once)
         egui::Area::new(Id::new("vf_top_left"))
             .order(Order::Foreground)
             .fade_in(false)
@@ -560,29 +566,6 @@ impl Viewfinder {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 18.0;
-                    // the AF mode, framed
-                    let font = bold(ctx, 14.0);
-                    let label = af_label(s.dof.focus);
-                    let galley = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), color);
-                    let (rect, resp) = ui.allocate_exact_size(galley.size() + Vec2::new(16.0, 4.0), Sense::click());
-                    let c = if resp.hovered() { p.ink } else { color };
-                    ui.painter()
-                        .rect_stroke(rect, widgets::inner_radius(ui.visuals()), Stroke::new(1.5, c), StrokeKind::Inside);
-                    shadow_text(ui.painter(), p, rect.center(), Align2::CENTER_CENTER, label, font, c);
-                    if resp
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(aurora_i18n::tr!("photo-vf-af-mode-tip", key = f.keys.af_mode))
-                        .clicked()
-                    {
-                        out.push(Out::CycleAf);
-                    }
-                    let (name, text) = match s.viewfinder.area {
-                        AfArea::Avatar => ("user-filled", aurora_i18n::tr!("photo-vf-area-avatar")),
-                        AfArea::Point => ("focus-centered", aurora_i18n::tr!("photo-vf-area-point")),
-                    };
-                    if icon_text_button(ui, p, name, text, p.ink, aurora_i18n::tr!("photo-vf-area-tip")).clicked() {
-                        out.push(Out::ToggleArea);
-                    }
                     if icon_text_button(
                         ui,
                         p,
@@ -752,7 +735,7 @@ impl Viewfinder {
                 Dial::Exposure => aurora_i18n::tr!("photo-vf-dial-exposure"),
                 Dial::Distance => aurora_i18n::tr!("photo-vf-dial-distance"),
             };
-            let rows: [(&str, String); 7] = [
+            let rows: [(&str, String); 8] = [
                 (
                     aurora_i18n::tr!("photo-vf-cheat-click-key"),
                     aurora_i18n::tr!("photo-vf-cheat-click").to_owned(),
@@ -773,6 +756,10 @@ impl Viewfinder {
                 (
                     aurora_i18n::tr!("photo-vf-cheat-alt-ctrl-wheel-key"),
                     aurora_i18n::tr!("photo-vf-dial-exposure").to_owned(),
+                ),
+                (
+                    aurora_i18n::tr!("photo-vf-cheat-ctrl-shift-wheel-key"),
+                    aurora_i18n::tr!("photo-vf-cheat-tilt").to_owned(),
                 ),
                 (
                     aurora_i18n::tr!("photo-vf-cheat-camera-key"),
@@ -855,11 +842,12 @@ impl Viewfinder {
             }
         }
 
-        // the level: the camera's tilt, else its pitch (0: verticals stay
-        // straight)
+        // the level: the horizon, so turned against the camera's tilt (a
+        // camera rolled clockwise sees the ground turn the other way), and
+        // the tilt, else the pitch (0: verticals stay straight)
         let c = screen.center();
         let level = controls::level_color(p, f.roll, f.pitch);
-        let along = Vec2::angled(f.roll.to_radians());
+        let along = Vec2::angled(-f.roll.to_radians());
         for side in [-1.0, 1.0] {
             let a = c + along * side * 35.0;
             let b = c + along * side * 105.0;
@@ -917,10 +905,11 @@ impl Viewfinder {
         let shadow = Stroke::new(width + 1.5, p.navy.gamma_multiply(0.45));
         let face = f
             .face
+            .as_ref()
             .filter(|_| s.viewfinder.area == AfArea::Avatar && s.dof.focus != PhotoFocus::Manual);
         let mut under = f.point + Vec2::new(0.0, AF_BOX / 2.0 + 6.0);
         match face {
-            Some((rect, on, eye_pos)) if on || display != Display::Hidden => {
+            Some(&(rect, on, ref name)) if on || display != Display::Hidden => {
                 let rect = Rect::from_center_size(rect.center(), rect.size() * if on { scale } else { 1.0 });
                 let radius = ctx.global_style().visuals.window_corner_radius;
                 let (stroke, c) = if on {
@@ -930,23 +919,13 @@ impl Viewfinder {
                 };
                 painter.rect_stroke(rect, radius, shadow, StrokeKind::Middle);
                 painter.rect_stroke(rect, radius, stroke, StrokeKind::Middle);
-                // the eye the lens holds (the nearest one), where it is;
-                // none when the face is turned away (the head then)
-                let eye = eye_pos.filter(|e| rect.expand(rect.width() * 0.25).contains(*e));
-                if let Some(e) = eye {
-                    painter.circle_stroke(e, 3.5, Stroke::new(1.5, c));
-                }
-                let label = if on && locked && eye.is_some() {
-                    aurora_i18n::tr!("photo-vf-eye")
-                } else {
-                    aurora_i18n::tr!("photo-vf-area-avatar")
-                };
+                // whose head the lens takes
                 shadow_text(
                     painter,
                     p,
                     rect.left_top() - Vec2::new(0.0, 4.0),
                     Align2::LEFT_BOTTOM,
-                    label,
+                    name,
                     bold(ctx, 11.0),
                     c,
                 );
@@ -1056,6 +1035,8 @@ impl Viewfinder {
         back: &egui::Painter,
         screen: Rect,
         s: &mut Settings,
+        panel: &mut SnapshotUi,
+        fov: &mut f32,
         f: &Frame,
         ctl: bool,
         out: &mut Vec<Out>,
@@ -1105,7 +1086,7 @@ impl Viewfinder {
         } else if s.dof.focus == PhotoFocus::Manual {
             aurora_i18n::tr!("photo-vf-area-manual")
         } else if s.viewfinder.area == AfArea::Avatar {
-            aurora_i18n::tr!("photo-vf-area-avatar-eye")
+            aurora_i18n::tr!("photo-vf-area-avatar")
         } else {
             aurora_i18n::tr!("photo-vf-area-point")
         };
@@ -1180,49 +1161,49 @@ impl Viewfinder {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 30.0;
                     let font = bold(ctx, 22.0);
-                    let dial = |ui: &mut egui::Ui, d: Dial, text: &str, dim: bool, tip: &str, me: &mut Viewfinder| {
+                    // each value turns where it is, pressed and dragged or
+                    // the wheel over it; a click underlines it for Alt + wheel
+                    let dial = |ui: &mut egui::Ui, d: Dial, text: &str, dim: bool, tip: &str, current: Dial| {
                         let color = if dim { p.ink.gamma_multiply(0.45) } else { p.ink };
-                        let resp = ui
-                            .vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 3.0;
-                                // the text's middle (22-point figures) on the line
-                                ui.add_space(MIDDLE - 13.3);
-                                let r = text_button(ui, p, text, font.clone(), color, tip);
-                                let (line, _) = ui.allocate_exact_size(Vec2::new(r.rect.width(), 2.0), Sense::hover());
-                                if me.dial == d {
-                                    ui.painter().rect_filled(line, 0.0, p.teal);
-                                }
-                                r
-                            })
-                            .inner;
-                        if resp.clicked() {
-                            me.dial = d;
-                        }
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 3.0;
+                            // the text's middle (22-point figures) on the line
+                            ui.add_space(MIDDLE - 13.3);
+                            let r = value_button(ui, p, text, font.clone(), color, tip);
+                            let (line, _) = ui.allocate_exact_size(Vec2::new(r.rect.width(), 2.0), Sense::hover());
+                            if current == d {
+                                ui.painter().rect_filled(line, 0.0, p.teal);
+                            }
+                            r
+                        })
+                        .inner
                     };
-                    dial(
+                    let resp = dial(
                         ui,
                         Dial::Focal,
                         &format!("{} mm", f.focal_mm.round() as i32),
                         false,
                         aurora_i18n::tr!("photo-vf-focal-tip"),
-                        self,
+                        self.dial,
                     );
+                    self.dial_input(ui, &resp, Dial::Focal, s, panel, fov, f, out);
                     let n = s.dof.f_number;
-                    dial(
+                    let resp = dial(
                         ui,
                         Dial::Aperture,
                         &format!("f/{}", aurora_i18n::number(f64::from(n), if n < 10.0 { 1 } else { 0 })),
                         !s.dof.enabled,
                         aurora_i18n::tr!("photo-vf-aperture-tip"),
-                        self,
+                        self.dial,
                     );
+                    self.dial_input(ui, &resp, Dial::Aperture, s, panel, fov, f, out);
                     // the exposure scale, by thirds
                     let resp = ui
                         .vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 3.0;
                             // the ticks' middle on the line
                             ui.add_space(MIDDLE - 13.0);
-                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(170.0, 36.0), Sense::click());
+                            let (rect, resp) = ui.allocate_exact_size(Vec2::new(170.0, 36.0), Sense::click_and_drag());
                             let painter = ui.painter();
                             let base = rect.left() + 6.0;
                             let bottom = rect.top() + 20.0;
@@ -1271,13 +1252,10 @@ impl Viewfinder {
                             resp
                         })
                         .inner;
-                    if resp
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(aurora_i18n::tr!("photo-vf-exposure-tip"))
-                        .clicked()
-                    {
-                        self.dial = Dial::Exposure;
-                    }
+                    let resp = resp
+                        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+                        .on_hover_text(aurora_i18n::tr!("photo-vf-exposure-tip"));
+                    self.dial_input(ui, &resp, Dial::Exposure, s, panel, fov, f, out);
                     // AE-L: the automatic exposure held where it is, its
                     // frame's middle on the line
                     let (cell, _) = ui.allocate_exact_size(Vec2::new(44.0, MIDDLE + 13.0), Sense::hover());
@@ -1318,9 +1296,37 @@ impl Viewfinder {
                     } else {
                         format!("{} m", vf::distance_text(d))
                     };
-                    dial(ui, Dial::Distance, &text, false, aurora_i18n::tr!("photo-vf-distance-tip"), self);
+                    let resp = dial(
+                        ui,
+                        Dial::Distance,
+                        &text,
+                        false,
+                        aurora_i18n::tr!("photo-vf-distance-tip"),
+                        self.dial,
+                    );
+                    self.dial_input(ui, &resp, Dial::Distance, s, panel, fov, f, out);
                 });
             });
+    }
+
+    /// A value of the bottom bar clicked (underlined: the ring's and Alt +
+    /// wheel's), dragged or turned with the wheel.
+    #[allow(clippy::too_many_arguments)]
+    fn dial_input(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        dial: Dial,
+        s: &mut Settings,
+        panel: &mut SnapshotUi,
+        fov: &mut f32,
+        f: &Frame,
+        out: &mut Vec<Out>,
+    ) {
+        if resp.clicked() {
+            self.dial = dial;
+        }
+        self.turn_dial(ui, resp, dial, 1.0, s, panel, fov, f, out);
     }
 
     /// The dock on the right: everything the mouse needs.
@@ -1363,15 +1369,6 @@ impl Viewfinder {
                         s.viewfinder.pad,
                     ) {
                         s.viewfinder.pad = !s.viewfinder.pad;
-                    }
-                    if dock_button(
-                        ui,
-                        p,
-                        Face::Text(af_label(s.dof.focus)),
-                        &aurora_i18n::tr!("photo-vf-af-mode-tip", key = f.keys.af_mode),
-                        false,
-                    ) {
-                        out.push(Out::CycleAf);
                     }
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
@@ -1545,6 +1542,10 @@ impl Viewfinder {
                                 (
                                     aurora_i18n::tr!("photo-vf-help-alt-ctrl-wheel").to_owned(),
                                     aurora_i18n::tr!("photo-vf-help-alt-ctrl-wheel-text"),
+                                ),
+                                (
+                                    aurora_i18n::tr!("photo-vf-help-ctrl-shift-wheel").to_owned(),
+                                    aurora_i18n::tr!("photo-vf-help-ctrl-shift-wheel-text"),
                                 ),
                                 (
                                     aurora_i18n::tr!("photo-vf-help-digits").to_owned(),
@@ -2042,6 +2043,9 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         }),
     ));
     let first = f.first_person;
+    if !f.first_person_allowed && !first {
+        return v;
+    }
     v.push((
         aurora_i18n::tr!("photo-vf-view"),
         on_off(

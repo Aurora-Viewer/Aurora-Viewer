@@ -224,6 +224,8 @@ struct DemoViewfinder {
     timer: bool,
     ael: bool,
     controls: crate::snapshot::viewfinder::OnScreen,
+    /// The camera tilted 20° clockwise (the level turns the other way).
+    tilt: bool,
 }
 
 /// AURORA_DEMO_SNAPSHOT=inventory…: the photo sent to the inventory.
@@ -1682,6 +1684,7 @@ impl App {
                     } else {
                         crate::snapshot::viewfinder::OnScreen::Always
                     },
+                    tilt: has("tilt"),
                 }
             });
             let style = if kind == "classic" {
@@ -1764,6 +1767,9 @@ impl App {
                 s.viewfinder.pad = v.pad;
                 s.viewfinder.timer = if v.timer { 2 } else { 0 };
                 s.viewfinder.controls = v.controls;
+                if v.tilt {
+                    self.camera.roll = 20f32.to_radians();
+                }
                 let vf = &mut self.snapshots.vf;
                 vf.ae_lock = v.ael;
                 vf.menu = v.menu;
