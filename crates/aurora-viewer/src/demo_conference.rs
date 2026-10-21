@@ -33,7 +33,7 @@ pub fn tick() -> Option<NetEvent> {
         return None;
     }
     SENT.store(n + 1, Ordering::Relaxed);
-    let (from, name) = if n % 2 == 0 {
+    let (from, name) = if n.is_multiple_of(2) {
         (DEMO_TESS, "Tess Touch".to_owned())
     } else {
         (DEMO_FRIEND, aurora_i18n::tr!("demo-orion-example").to_string())
