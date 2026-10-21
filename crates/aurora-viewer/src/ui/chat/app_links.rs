@@ -119,6 +119,9 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
             place = format!("{region} ({},{},{})", pos.x as i32, pos.y as i32, pos.z as i32)
         ),
         AppLink::Blocked(Blocked::WearFolder) => aurora_i18n::tr!("ui-chat-applink-wear-label").to_owned(),
+        // Human-requested fallback: an unsupported URI has no destination
+        // name to resolve. Keep the actual address in the copy-link menu.
+        AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
         _ => unescape(url),
     }
 }
@@ -268,11 +271,14 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
 /// link colour, the command run on a click.
 pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, link: &AppLink, text: &str, size: f32) {
     let k = super::super::colors::get();
-    let behind = super::select::atom_begin(ui);
-    let r = ui.add(egui::Link::new(
-        egui::RichText::new(text).size(size).color(super::super::colors::c(k.chat_slurl)),
-    ));
-    super::select::atom_end(ui, behind, text, r.rect);
+    let r = super::action_marker::link(
+        ui,
+        super::action_marker::Action::app(link),
+        text,
+        size,
+        super::super::colors::c(k.chat_slurl),
+        None,
+    );
     menu(&r, p, world, url, link, text);
     if r.on_hover_text(tooltip(link)).clicked() {
         request(ui.ctx(), CtxAction::AppLink(link.clone()));

@@ -1,5 +1,6 @@
 //! Local chat window (nearby chat + instant messages).
 
+mod action_marker;
 mod app_links;
 pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as take_app_link_wants};
 mod bubbles;
@@ -30,6 +31,8 @@ mod typing;
 mod view;
 mod workspace;
 
+#[cfg(test)]
+mod action_marker_tests;
 #[cfg(test)]
 mod buttons_tests;
 
@@ -386,6 +389,17 @@ enum Link {
     App(String, crate::slapp::AppLink),
 }
 
+impl Link {
+    fn action(&self) -> Option<action_marker::Action> {
+        Some(match self {
+            Self::Url(_) => return None,
+            Self::Agent(_) => action_marker::Action::Profile,
+            Self::Place(_, place) => action_marker::Action::place(place.teleport),
+            Self::App(_, app) => action_marker::Action::app(app),
+        })
+    }
+}
+
 /// A line's text cut into pieces, links replaced by their labels as
 /// Firestorm's chat console does (LLConsole::Paragraph with parse_urls,
 /// indra/llui/llconsole.cpp): places read "Region (x,y,z)", agent links the
@@ -469,11 +483,14 @@ fn place_link(
         ui.add_space(3.0);
     }
     let k = super::colors::get();
-    let behind = select::atom_begin(ui);
-    let r = ui.add(egui::Link::new(
-        RichText::new(&place.label).size(size).color(super::colors::c(k.chat_slurl)),
-    ));
-    select::atom_end(ui, behind, &place.label, r.rect);
+    let r = action_marker::link(
+        ui,
+        action_marker::Action::place(place.teleport),
+        &place.label,
+        size,
+        super::colors::c(k.chat_slurl),
+        None,
+    );
     place_menu(&r, p, u, &place);
     // TooltipTeleportUrl / TooltipSLURL; a place opens its
     // details (LLURLDispatcherImpl::regionHandleCallback,
@@ -567,6 +584,7 @@ struct BubbleJob {
 enum LinkBadge {
     Web(String),
     Rating(u8),
+    Action(action_marker::Action),
 }
 
 /// Side of the sender's picture, for a text size.
@@ -701,7 +719,7 @@ fn line_job(
             badges.push((at, badge));
             at += 1;
         }
-        let n = piece.chars().count();
+        let start = at;
         // links in the link colors, like in the conversation window
         let k = super::colors::get();
         let fmt = match &link {
@@ -715,9 +733,16 @@ fn line_job(
                 ..text_fmt.clone()
             },
         };
+        if let Some(action) = link.as_ref().and_then(Link::action) {
+            badges.push((at, LinkBadge::Action(action)));
+            action_marker::reserve_icon(&mut job, size, std::mem::take(&mut lead));
+            at += 1;
+            lead = 2.0;
+        }
+        let n = piece.chars().count();
         job.append(&piece, std::mem::take(&mut lead), fmt);
         if let Some(link) = link {
-            links.push((at..at + n, link));
+            links.push((start..at + n, link));
         }
         at += n;
     }
@@ -1236,17 +1261,14 @@ pub(crate) fn chat_text_marked(
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
                     let label = format!(" @{} ", world.social.name_of(&id));
-                    let behind = select::atom_begin(ui);
-                    let r = ui.add(
-                        egui::Label::new(
-                            RichText::new(&label)
-                                .size(size)
-                                .color(super::colors::c(k.mention_text))
-                                .background_color(super::colors::c(bg)),
-                        )
-                        .sense(egui::Sense::click()),
+                    let r = action_marker::link(
+                        ui,
+                        action_marker::Action::Profile,
+                        &label,
+                        size,
+                        super::colors::c(k.mention_text),
+                        Some(super::colors::c(bg)),
                     );
-                    select::atom_end(ui, behind, &label, r.rect);
                     name_menu(&r, p, world, id);
                     if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         super::profile::request_open(ui.ctx(), id);
@@ -1278,9 +1300,7 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
 /// opens the profile, the name menu on a right click.
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
     let k = super::colors::get();
-    let behind = select::atom_begin(ui);
-    let r = ui.add(egui::Label::new(RichText::new(text).size(size).color(super::colors::c(k.chat_slurl))).sense(egui::Sense::click()));
-    select::atom_end(ui, behind, text, r.rect);
+    let r = action_marker::link(ui, action_marker::Action::Profile, text, size, super::colors::c(k.chat_slurl), None);
     name_menu(&r, p, world, id);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
@@ -2857,6 +2877,10 @@ fn line_extras(
                 let name = super::bars::maturity_name(access);
                 let radius = super::widgets::inner_radius(ui.visuals());
                 super::widgets::paint_maturity_badge(&faded, p, name, b.shrink(1.0), radius);
+            }
+            LinkBadge::Action(action) => {
+                let k = super::colors::get();
+                action.paint(painter, b, super::colors::c(k.chat_slurl).gamma_multiply(alpha));
             }
         }
     }

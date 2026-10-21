@@ -1540,10 +1540,46 @@ pub fn applinks_scene() -> bool {
     std::env::var_os("AURORA_DEMO_APPLINKS").is_some()
 }
 
+pub fn applinks_actions_scene() -> bool {
+    std::env::var("AURORA_DEMO_APPLINKS").is_ok_and(|mode| mode == "actions")
+}
+
 /// The text of `applinks_scene`; `item` is an item of the demo inventory
 /// (its id and name) for the inventory link.
 pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
     let app = "secondlife:///app";
+    if applinks_actions_scene() {
+        // Identical labels make the action marker carry the distinction;
+        // custom labels must never be able to disguise the actual command.
+        let resident = "Orion Exemple";
+        let mut links: Vec<_> = ["about", "im", "pay", "offerteleport", "requestfriend", "reportAbuse"]
+            .iter()
+            .map(|verb| format!("[{app}/agent/{DEMO_LOUP}/{verb} {resident}]"))
+            .collect();
+        links.extend([
+            format!("[{app}/group/{DEMO_GROUP1}/about Aurora Builders]"),
+            format!("[{app}/parcel/{}/about Aurora Demo]", land::PARCEL_UUID),
+            format!("[{app}/worldmap/Aurora%20Demo/128/128/25 Aurora Demo]"),
+            format!("[{app}/teleport/Aurora%20Demo/128/128/25 Aurora Demo]"),
+            format!("[{app}/inventory/show inventory]"),
+            format!("[{app}/search/people/Orion%20Exemple {resident}]"),
+            format!("[{app}/frobnicate/1 {resident}]"),
+        ]);
+        let mut text = links.join(" · ");
+        // Bare URLs exercise the same path as pasting into the chat input;
+        // surrounding words expose any mismatch in the link's baseline.
+        for url in [
+            format!("{app}/agent/{DEMO_LOUP}/about"),
+            format!("{app}/agent/{DEMO_LOUP}/im"),
+            format!("{app}/agent/{DEMO_LOUP}/pay"),
+            format!("{app}/group/{DEMO_GROUP1}/about"),
+            format!("{app}/frobnicate/1"),
+        ] {
+            text.push('\n');
+            text.push_str(&aurora_i18n::tr!("demo-applinks-pasted", link = url));
+        }
+        return text;
+    }
     let classified = Uuid::from_u128(0x5EA2_C1A5_0000_0000_0000_0000_0000_0001);
     // the region's treasure hunt (its name only) and the experience of
     // AURORA_DEMO_EXPERIENCE (its profile)
