@@ -206,19 +206,27 @@ impl BuildTool {
     }
 
     /// Blinn-Phong material of a face as the panel sees it: the one just
-    /// sent (until the simulator's new material id arrives), else the
+    /// sent (until the simulator's new material is loaded), else the
     /// region's, else none.
-    pub(super) fn face_legacy(&self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
+    pub(super) fn face_legacy(&mut self, env: &Env, world: &World, idx: usize, face: u8, te: &TextureFace) -> Option<LegacyMaterial> {
         let id = world.objects.get(idx)?.full_id;
         if let Some((old, m)) = self.ui.legacy_pending.get(&(id, face))
             && *old == te.material_id
         {
             return m.clone();
         }
-        if te.material_id.is_nil() {
-            return None;
+        let current = if te.material_id.is_nil() {
+            None
+        } else {
+            env.scene.legacy_mats.peek(&te.material_id)
+        };
+        if !te.material_id.is_nil() && current.is_none() {
+            // ObjectUpdate can precede RenderMaterials. Keep the submitted
+            // maps/controls and the focused input while the new ID loads.
+            return self.ui.legacy_pending.get(&(id, face)).and_then(|(_, m)| m.clone());
         }
-        env.scene.legacy_mats.peek(&te.material_id).map(|m| (*m).clone())
+        self.ui.legacy_pending.remove(&(id, face));
+        current.map(|m| (*m).clone())
     }
 
     /// Change the Blinn-Phong material of the selected faces (LLSelectedTEMaterial::

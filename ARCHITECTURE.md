@@ -1096,6 +1096,12 @@ Floating-point spinners in `build/ui/common.rs` retain the active drag value
 until release, so panels that submit only committed edits do not reset it each
 frame. Drafts are used only while their original widget is dragging or releasing;
 numeric transform previews still report their final commit on release.
+Typed float/integer build values commit on Enter or focus loss, with Escape
+canceling the draft; text-only changes never submit unchanged object values.
+The texture panel retains a submitted Blinn-Phong material until the simulator's
+replacement material is loaded, keeping map controls and their input focus stable
+between ObjectUpdate and RenderMaterials. Loaded replacements and explicit
+material removal supersede the pending edit.
 Float/integer build fields and color fields share themed increment/decrement
 buttons; steps respect bounds and disabled permissions and commit once per click.
 After confirmed simulator parent updates, whole-object selection and highlighting

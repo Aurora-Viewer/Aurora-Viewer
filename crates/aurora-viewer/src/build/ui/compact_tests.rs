@@ -916,6 +916,171 @@ impl Inspector {
 }
 
 #[test]
+fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
+    for label in [
+        aurora_i18n::tr!("build-ui-texture-shininess"),
+        aurora_i18n::tr!("common-environment"),
+    ] {
+        for finish in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
+            let mut inspector = Inspector::new();
+            inspector.tool.tab = 3;
+            inspector.tool.edit_mode = EditMode::Face;
+            inspector.tool.faces.insert(inspector.tool.selection[0], vec![0]);
+            let idx = inspector.tool.sel_prims(&inspector.world)[0];
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            let id = object.full_id;
+            let material_id = uuid::Uuid::from_u128(0x7990);
+            Arc::make_mut(object.te.as_mut().unwrap()).faces[0].material_id = material_id;
+            inspector.scene.legacy_mats.insert(
+                material_id,
+                crate::scene::legacy_mat::LegacyMaterial {
+                    specular_map: texture::DEFAULT_SPECULAR,
+                    ..Default::default()
+                },
+            );
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (window, texts) = inspector.show(vec![]);
+            let caption = texts
+                .iter()
+                .filter(|(text, _)| text == label)
+                .max_by(|a, b| a.1.top().total_cmp(&b.1.top()))
+                .unwrap()
+                .1;
+            let field = texts
+                .iter()
+                .find(|(text, rect)| {
+                    aurora_i18n::parse_number(text).is_some()
+                        && (rect.center().y - caption.center().y).abs() < 8.0
+                        && rect.left() > caption.right()
+                })
+                .unwrap()
+                .1;
+            let point = field.center();
+            inspector.show(vec![egui::Event::PointerMoved(point)]);
+            for pressed in [true, false] {
+                inspector.show(vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                }]);
+            }
+            let focus = inspector.ctx.memory(|m| m.focused());
+            assert!(focus.is_some(), "Number entry must have focus");
+            inspector.tool.out.clear();
+            for digit in ["1", "2", "3"] {
+                let (rect, _) = inspector.show(vec![egui::Event::Text(digit.into())]);
+                assert!(
+                    inspector.tool.ui.legacy_pending.is_empty(),
+                    "Typing {label} must not submit a material"
+                );
+                assert_eq!(inspector.ctx.memory(|m| m.focused()), focus);
+                assert!((rect.size() - window.size()).length() < 1.0);
+            }
+            inspector.show(vec![egui::Event::Key {
+                key: finish,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }]);
+            inspector.show(vec![]);
+            if finish == egui::Key::Escape {
+                assert!(inspector.tool.ui.legacy_pending.is_empty());
+                continue;
+            }
+            let material = inspector.tool.ui.legacy_pending[&(id, 0)].1.as_ref().unwrap();
+            if label == aurora_i18n::tr!("common-environment") {
+                assert_eq!((material.specular_exp, material.env_intensity), (51, 123));
+            } else {
+                assert_eq!((material.specular_exp, material.env_intensity), (123, 0));
+            }
+            let (rect, _) = inspector.show(vec![]);
+            assert!((rect.size() - window.size()).length() < 1.0);
+            assert_eq!(
+                inspector
+                    .tool
+                    .out
+                    .iter()
+                    .filter(|command| matches!(command,
+                        aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, .. }) if cap == "RenderMaterials"
+                    ))
+                    .count(),
+                1,
+                "One material submission per completed edit"
+            );
+        }
+    }
+}
+
+#[test]
+fn material_update_keeps_controls_and_focus_until_the_new_material_loads() {
+    let mut inspector = Inspector::new();
+    inspector.tool.tab = 3;
+    inspector.tool.edit_mode = EditMode::Face;
+    inspector.tool.faces.insert(inspector.tool.selection[0], vec![0]);
+    let idx = inspector.tool.sel_prims(&inspector.world)[0];
+    let object = inspector.world.objects.get_mut(idx).unwrap();
+    let id = object.full_id;
+    let old_id = uuid::Uuid::from_u128(0x7990);
+    let new_id = uuid::Uuid::from_u128(0x7991);
+    Arc::make_mut(object.te.as_mut().unwrap()).faces[0].material_id = old_id;
+    let material = crate::scene::legacy_mat::LegacyMaterial {
+        specular_map: texture::DEFAULT_SPECULAR,
+        specular_exp: 123,
+        env_intensity: 45,
+        ..Default::default()
+    };
+    inspector.scene.legacy_mats.insert(old_id, material.clone());
+    inspector.tool.ui.legacy_pending.insert((id, 0), (old_id, Some(material.clone())));
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let (window, texts) = inspector.show(vec![]);
+    let field = texts.iter().find(|(text, _)| text == "123").unwrap().1;
+    let point = field.center();
+    inspector.show(vec![egui::Event::PointerMoved(point)]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }]);
+    }
+    let focus = inspector.ctx.memory(|m| m.focused());
+    assert!(focus.is_some());
+    Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = new_id;
+    for loaded in [false, true] {
+        if loaded {
+            let mut confirmed = material.clone();
+            confirmed.env_intensity = 46;
+            inspector.scene.legacy_mats.insert(new_id, confirmed);
+        }
+        for _ in 0..4 {
+            let (rect, texts) = inspector.show(vec![]);
+            assert!(
+                texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")),
+                "Material controls disappeared during the simulator update (loaded={loaded})"
+            );
+            assert_eq!(inspector.ctx.memory(|m| m.focused()), focus);
+            assert!((rect.size() - window.size()).length() < 1.0);
+            let environment = texts.iter().find(|(text, _)| text == if loaded { "46" } else { "45" }).unwrap().1;
+            assert!(environment.top() > field.top());
+        }
+    }
+    assert!(
+        inspector.tool.ui.legacy_pending.is_empty(),
+        "A loaded server material supersedes the pending edit"
+    );
+    Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = uuid::Uuid::nil();
+    let (_, texts) = inspector.show(vec![]);
+    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+}
+
+#[test]
 fn construction_coordinate_icons_select_one_mode_and_keep_the_right_edge() {
     let mut inspector = Inspector::new();
     let click = |inspector: &mut Inspector, point| {

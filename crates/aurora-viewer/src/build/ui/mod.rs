@@ -169,7 +169,8 @@ pub struct FloaterState {
     pub media_data: HashMap<Uuid, ObjectMediaData>,
     pub media_asked: HashSet<Uuid>,
     /// Blinn-Phong material just sent per (object, face), shown until the
-    /// face's material id changes: (material id when sent, material).
+    /// face's material id changes and its replacement loads (or is cleared):
+    /// (material id when sent, material).
     pub legacy_pending: HashMap<(Uuid, u8), (Uuid, Option<crate::scene::legacy_mat::LegacyMaterial>)>,
     /// "Align planar faces".
     pub planar_align: bool,

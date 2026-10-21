@@ -1128,6 +1128,13 @@ Local / Reference directly, with exactly one highlighted. Choosing Reference
 uses the selection when no grid reference exists; switching sections and
 clicking the active icon retain the mode.
 
+For material number entry, use `faces-ready,object:99620` with `texture:bp`,
+choose the default specular map, then type shininess/environment values one
+digit at a time. Enter or leaving the field applies the whole number; Escape
+cancels it. The inspector must keep its size, controls and focus while the
+simulator's replacement material loads. The native inspector regressions also
+simulate ObjectUpdate arriving before RenderMaterials.
+
 Use `AURORA_DEMO_BUILD=contents-properties,object:118` with the Contents
 section to open a task item in the same properties panel as agent inventory
 (name, picture, owner/creator/date, description, masks and sale). Task items
