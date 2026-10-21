@@ -45,8 +45,8 @@ pub fn events(frame: u64) -> Vec<NetEvent> {
         640 => alert(&[(DEMO_NOVA, 1, 4.2)]),
         760 => alert(&[(DEMO_TESS, 2, 38.0)]),
         880 => alert(&[(DEMO_LOUP, 4, 12.6), (DEMO_LOUP, 5, 9.1)]),
-        // Nova again: her row comes back to the top with the new time;
-        // a type the viewer does not know is left out
+        // the first resident again: that row comes back to the top with
+        // the new time; a type the viewer does not know is left out
         1000 => alert(&[(DEMO_NOVA, 1, 6.0), (DEMO_TESS, 9, 1.0), (DEMO_TESS, 3, 3.3)]),
         _ => Vec::new(),
     }

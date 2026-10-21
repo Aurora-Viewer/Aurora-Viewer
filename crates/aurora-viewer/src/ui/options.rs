@@ -331,6 +331,7 @@ fn group_icon(title: &str) -> Option<&'static str> {
         value if value == aurora_i18n::text("common-teleport-commands") => "map-pin-filled",
         value if value == aurora_i18n::text("common-teleport-2") => "location-filled",
         value if value == aurora_i18n::text("ui-options-region-restart") => "refresh",
+        value if value == aurora_i18n::text("bumps-title") => "bounce-right-filled",
         value if value == aurora_i18n::text("common-camera-and-display-commands") => "camera-filled",
         value if value == aurora_i18n::text("common-windows") => "layout-grid-filled",
         value if value == aurora_i18n::text("ui-options-aurora-appearance") => "paint-filled",
@@ -2400,6 +2401,7 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
             // FSCollisionMessagesInChat, FSReportCollisionMessages and
             // FSReportCollisionMessagesChannel (Legacy Viewer: Preferences ›
             // Notifications › Alerts)
+            scroll_mark(ui, st);
             group(ui, p, aurora_i18n::tr!("bumps-title"), |ui| {
                 c |= row(
                     ui,

@@ -11916,6 +11916,7 @@ impl ApplicationHandler for App {
                     self.options_ui.scroll_to_new = match filter {
                         "new" => 1,
                         "new2" => 2,
+                        "new3" => 3,
                         _ => 0,
                     };
                     self.options_ui.scroll_to_attention = filter == "attention";

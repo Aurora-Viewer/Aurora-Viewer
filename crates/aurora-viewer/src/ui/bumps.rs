@@ -84,7 +84,7 @@ impl BumpsUi {
             WINDOW,
             aurora_i18n::tr!("bumps-title"),
             egui::pos2(300.0, 160.0),
-            Vec2::new(420.0, 240.0),
+            Vec2::new(480.0, 220.0),
         );
         floater.min_size = Vec2::new(300.0, 140.0);
         floater.show(ctx, p, open, |ui| {

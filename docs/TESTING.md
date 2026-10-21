@@ -3050,12 +3050,12 @@ failure. Grid validation and any paid upload are performed by the human.
   the newest toasts that fit.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
-  pushes & hits" window opens at frame 600, Nova bumps the agent at 640,
-  Tess pushes it with a script at 760, Loup hits it with a scripted then a
-  physical object at 880, and at 1000 Nova bumps it again (her row comes
-  back to the top with the new time) while Tess hits it with an object
-  and sends a type the viewer does not know (left out, logged as
-  `collision of unknown type`). `chat` also turns on "Collisions in nearby
+  pushes & hits" window opens at frame 600, a resident bumps the agent at
+  640, a second one pushes it with a script at 760, a third one hits it
+  with a scripted then a physical object at 880, and at 1000 the first one
+  bumps it again (that row comes back to the top with the new time) while
+  the second one hits it with an object and sends a type the viewer does
+  not know (left out, logged as `collision of unknown type`). `chat` also turns on "Collisions in nearby
   chat" for this run (Preferences › Interface is not changed): one line
   per collision, the name a link to the profile. Capture after frame 1000
   with `AURORA_FPS_LIMIT=60`.
@@ -3154,9 +3154,11 @@ failure. Grid validation and any paid upload are performed by the human.
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
-  `<n>:new` and `<n>:new2` open a page on its first or second marked row
+  `<n>:new`, `<n>:new2` and `<n>:new3` open a page on its first, second or
+  third marked row
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
-  version alerts, `1:new2` the group titles, `3:new` the reopened
+  version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
+  group titles, `3:new` the reopened
   conversations, `3:new2` the invitations to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
