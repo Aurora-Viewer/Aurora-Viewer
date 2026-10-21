@@ -2640,6 +2640,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -3224,7 +3225,8 @@ failure. Grid validation and any paid upload are performed by the human.
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
   version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
   group titles, `3:new` the reopened
-  conversations, `3:new2` the invitations to joined groups, `7:new` the music
+  conversations, `3:new2` the ignored conferences, `3:new3` the invitations
+  to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
   0.8, 1.0, 1.4 and 1.0 every 180 frames after frame 600. Capture frames
@@ -3351,6 +3353,16 @@ failure. Grid validation and any paid upload are performed by the human.
   Preferences › Chat › Flash unread conversations turned off: no wash, the
   unread count only. Combine with `AURORA_DEMO_CONV=aurora:group` (or
   `bubbles:group`) so that her conversation is not the one shown.
+
+- **`AURORA_DEMO_CONFERENCE=1|<seconds>`**: every 20 seconds (or every
+  `<seconds>`) a conference invitation arrives, from Tess Touch (not a
+  friend) then from Orion (a friend) in turn, each in a new conference.
+  Settings off: each opens in Conversations › Conferences. With Preferences
+  › Chat › Groups and blocking › Ignore conferences (or Online status › Ad
+  hoc conferences › Ignore all and exit automatically) on, none opens;
+  "Report ignored conferences" adds a nearby chat line naming the inviter,
+  "Except from my friends" lets Orion's through and still ignores Tess's.
+  The log says `ignoring conference (ad-hoc) chat from <name>` for each.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
