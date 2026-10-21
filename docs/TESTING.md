@@ -2587,7 +2587,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
-| `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
+| `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
@@ -3081,7 +3081,7 @@ failure. Grid validation and any paid upload are performed by the human.
   Preferences › Interface › Region restart (alert, shake: the alert / the
   view / none, the channel announcement) and "Reduce animations" change it
   live.
-- **`AURORA_DEMO_TOASTS=1|click|minimized`**: a friend goes offline at
+- **`AURORA_DEMO_TOASTS=1|bell|click|minimized`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
   card, "(2)"), a group IM at 940 (group toasts are forced on for the
@@ -3090,13 +3090,20 @@ failure. Grid validation and any paid upload are performed by the human.
   chat lines.
   The friends announced at login get no toast; their nearby chat line only
   shows with Preferences › Chat › Toasts › "Friends online / offline in
-  nearby chat" (off by default). `1` opens the bell list at frame 1100: only the
-  two conversations are listed, never the presence notices. `click` (window
-  closed) and `minimized` (window minimized at start) click the first IM
-  card at frame 1250: the Conversations window opens or expands, comes to
-  the front on that conversation, and its card leaves the list. Capture
-  with `AURORA_FPS_LIMIT=60`, at `900,1160` for `1` and `1240,1310` for the
-  click modes. Add `AURORA_DEMO_SOUND=1` to hear the existing sounds.
+  nearby chat" (off by default). The window closed, the Conversations
+  button flashes in violet at each IM (eight soft rises over four seconds,
+  started again by the next one), then stays tinted until the window opens. `1` opens the bell
+  list at frame 1100: by default the messages only toasted and nothing is
+  listed (Preferences › Chat › Toasts › "Keep messages under the bell",
+  off). `bell` keeps them under the bell: the two conversations are listed,
+  never the presence notices. `click` (window closed) and `minimized`
+  (window minimized at start: its bar pulses at each IM instead of the
+  button) also keep them, and click the first IM card at frame 1250: the
+  Conversations window opens or expands, comes to the front on that
+  conversation, and its card leaves the list. Capture with
+  `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
+  `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
+  existing sounds.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer

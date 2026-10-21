@@ -114,6 +114,12 @@ pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
+/// Rolls out as a card: what is listed, and a message kept out of the bell
+/// (`ToastPrefs::im_in_bell` off), whose card leaves with its time.
+fn card(n: &Notification) -> bool {
+    !n.transient || matches!(n.data, Data::Message { .. })
+}
+
 /// The count on the bell: what waits in "To do", without the cards still
 /// rolled out (they are counted when they fold in).
 pub fn bell_count(list: &Notifications, c: &CenterUi) -> usize {
@@ -128,7 +134,11 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     let dt = c.last_time.map_or(0.0, |t| (m.now - t).max(0.0));
     c.last_time = Some(m.now);
     // a friend online: its own small toast, never a card nor a count
-    for n in list.list.iter().filter(|n| n.id > c.last_seen && n.transient) {
+    for n in list
+        .list
+        .iter()
+        .filter(|n| n.id > c.last_seen && n.transient && matches!(n.data, Data::Presence { .. }))
+    {
         if !m.hidden {
             c.presence.push(presence::Toast {
                 id: n.id,
@@ -137,7 +147,7 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
             });
         }
     }
-    for n in list.listed().filter(|n| n.id > c.last_seen) {
+    for n in list.list.iter().filter(|n| n.id > c.last_seen && card(n)) {
         if !n.read && !n.quiet && !m.dnd && !m.hidden && !m.open {
             let total = show_seconds(n, message_seconds);
             c.peek.push(Peek {
@@ -157,7 +167,7 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
         c.peek.clear();
     }
     for p in c.peek.iter_mut() {
-        let gone = !list.listed().any(|n| n.id == p.id && !n.read);
+        let gone = !list.list.iter().any(|n| n.id == p.id && !n.read && card(n));
         if p.folding.is_none() {
             if !m.hovered && !p.pinned {
                 p.left -= dt;
@@ -326,9 +336,11 @@ pub fn show(
         },
         env.message_seconds,
     );
-    // a friend's notice leaves the list with its toast
-    let presence = &nui.center.presence;
-    list.list.retain(|n| !n.transient || presence.iter().any(|t| t.id == n.id));
+    // a friend's notice leaves the list with its toast, a message kept out
+    // of the bell with its card
+    let (presence, peek) = (&nui.center.presence, &nui.center.peek);
+    list.list
+        .retain(|n| !n.transient || presence.iter().any(|t| t.id == n.id) || peek.iter().any(|p| p.id == n.id));
     let Some(bell) = nui.bell else {
         return (answers, asks);
     };

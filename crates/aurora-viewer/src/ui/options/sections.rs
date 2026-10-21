@@ -73,9 +73,9 @@ sections! {
     ],
     2 => [font, font_scale],
     TAB_CHAT => [
-        chat_timestamps, show_chat_channel, chat_keep_focus, chat_toast_seconds, toast_friends_online, friends_online_in_chat, presence_position, toast_im, toast_group_im, im_toast_seconds,
+        chat_timestamps, show_chat_channel, chat_keep_focus, chat_toast_seconds, toast_friends_online, friends_online_in_chat, presence_position, toast_im, toast_group_im, ims_in_notification_center, im_toast_seconds,
         flash_on_message, flash_on_object_im, flash_on_script_dialog, system_notifications, system_notifications_when_active,
-        warn_external_links, show_chat, show_contacts_tab, send_typing_state, play_typing_anim, type_during_emote, typing_in_name_tags, typing_chevron, flash_unread_conversations, log_im, log_nearby,
+        warn_external_links, show_chat, show_contacts_tab, send_typing_state, play_typing_anim, type_during_emote, typing_in_name_tags, typing_chevron, flash_unread_conversations, flash_conversations_button, log_im, log_nearby,
         log_show_history, reopen_ims, log_dated_names, autoresponse, mute_all_groups, mute_groups_without_notices,
         report_blocks, show_joined_group_invitations,
     ],

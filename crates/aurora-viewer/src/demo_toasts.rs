@@ -1,12 +1,14 @@
 //! AURORA_DEMO_TOASTS: a friend going offline then online, two messages of
-//! one resident, a group chat message, then the list under the bell and,
-//! with `click` / `minimized`, a click on the resident's entry (the
-//! Conversations window closed / minimized before it).
+//! one resident, a group chat message, then the list under the bell (`1`:
+//! the messages toast only, `bell`: they stay listed) and, with `click` /
+//! `minimized`, a click on the resident's entry (the Conversations window
+//! closed / minimized before it). The Conversations button flashes while
+//! the window is closed, its bar pulses while it is minimized.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;
 
-/// The scenario, if asked: `1`, `click` or `minimized`.
+/// The scenario, if asked: `1`, `bell`, `click` or `minimized`.
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_TOASTS").ok()
 }

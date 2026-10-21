@@ -341,6 +341,10 @@ pub struct ToastPrefs {
     pub im: bool,
     /// Messages of group chats (EnableGroupChatPopups).
     pub group_im: bool,
+    /// A message's toast also stays under the bell until its conversation
+    /// is read. Off by default: the Legacy Viewer's notification well never
+    /// lists IMs, the Conversations window has them (#752).
+    pub im_in_bell: bool,
 }
 
 impl Default for ToastPrefs {
@@ -350,6 +354,7 @@ impl Default for ToastPrefs {
             presence_in_chat: false,
             im: true,
             group_im: false,
+            im_in_bell: false,
         }
     }
 }
@@ -424,7 +429,8 @@ impl Notifications {
     /// A message of a conversation out of sight: it replaces the entry of
     /// that conversation still waiting (a new toast, the count of messages
     /// since it was last read), so that a chatty friend fills one card.
-    pub fn push_message(&mut self, session: Uuid, from: Uuid, title: impl Into<String>, text: impl Into<String>) -> u64 {
+    /// Without `bell` (`ToastPrefs::im_in_bell`) it is a toast only.
+    pub fn push_message(&mut self, session: Uuid, from: Uuid, title: impl Into<String>, text: impl Into<String>, bell: bool) -> u64 {
         let mut count = 1;
         let mut before = None;
         if let Some(i) = self
@@ -439,6 +445,9 @@ impl Notifications {
             }
         }
         let id = self.push(Kind::Message, title, text, Data::Message { session, from, count });
+        if !bell && let Some(n) = self.list.iter_mut().find(|n| n.id == id) {
+            n.transient = true;
+        }
         // the same entry, not one gone to the history
         if let Some(seen) = self.seen.iter_mut().find(|(i, _)| Some(*i) == before) {
             seen.0 = id;
@@ -505,6 +514,11 @@ impl Notifications {
             }
             if entry.outcome != Outcome::Kept && matches!(entry.follow, Follow::Inventory(_)) {
                 entry.follow = Follow::None;
+            }
+            // a message read is in its conversation and its transcript: the
+            // history keeps what has nowhere else to be found (#752)
+            if entry.look == Look::Message {
+                continue;
             }
             gone.push(entry);
         }
