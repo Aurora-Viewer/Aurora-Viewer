@@ -575,18 +575,17 @@ fn the_frame_rate_limits_show_under_their_switches() {
         texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Graphics, 5, Vec::new());
     }
     for (switch, limit) in [
-        (aurora_i18n::tr!("extra-limit-frame-rate"), aurora_i18n::tr!("ui-options-frame-limit")),
+        (
+            aurora_i18n::tr!("extra-limit-frame-rate"),
+            aurora_i18n::tr!("ui-options-frame-limit"),
+        ),
         (
             aurora_i18n::tr!("ui-options-limit-when-unfocused"),
             aurora_i18n::tr!("ui-options-frame-limit-unfocused"),
         ),
     ] {
         let switch = texts.iter().find(|t| t.source == switch).expect("the switch").rect;
-        let limit = texts
-            .iter()
-            .find(|t| t.source == limit)
-            .expect("its limit, shown at once")
-            .rect;
+        let limit = texts.iter().find(|t| t.source == limit).expect("its limit, shown at once").rect;
         assert!(limit.top() > switch.bottom(), "under its switch");
         assert!(
             !texts
