@@ -206,7 +206,9 @@ words joined by `-` add to it: `essential` or `hidden` the display level,
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
 peaking), `point` the Point area, `pad` the camera pad shown, `timer` the
 2 s self-timer, `ael` AE-L on, `hover` or `nocontrols` the on-screen controls
-on hover or hidden (the lens ring and the AF choices show otherwise), `focus`
+on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
+the camera rolled 20° clockwise (the level turns the other way, along the
+horizon), `focus`
 the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
 same then released two frames later (the photo saved to disk; with `timer`
@@ -214,7 +216,8 @@ the log gives `viewfinder: self-timer, 2 s`, then `viewfinder: shutter` two
 seconds after the lock, and the countdown shows at the top). With
 `viewfinder-focus` the log gives `viewfinder: focus asked at <m>` then,
 about 0.36 s later, `viewfinder: locked at <m>`: capture at frame 760 with
-`AURORA_FPS_LIMIT=60` to see the green face box, the distance under it,
+`AURORA_FPS_LIMIT=60` to see the green box on the head, the avatar's name
+over it and the distance under it,
 the zone kept sharp on the scale and the beep's moment; the hunt is
 between frames 702 and 722. The other scenarios below keep the photo
 panel for the run.

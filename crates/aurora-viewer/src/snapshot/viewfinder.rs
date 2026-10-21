@@ -123,6 +123,38 @@ impl OnScreen {
 /// The self-timer's delays (seconds; 0: off).
 pub const TIMERS: [u8; 3] = [0, 2, 10];
 
+/// The tilt's reach either side (degrees): the camera turns upside down.
+pub const ROLL_MAX: f32 = 180.0;
+/// The tilt's detents (degrees) and how far they hold: straight, and a
+/// quarter turn either way.
+const ROLL_DETENTS: [(f32, f32); 3] = [(0.0, 1.2), (-90.0, 2.0), (90.0, 2.0)];
+/// The tilt slider's slope at its middle, as a share of a straight one: a
+/// few degrees stay easy to set, and the ends still reach `ROLL_MAX`.
+const ROLL_FINE: f32 = 0.3;
+
+/// The tilt at `t` of the slider (−1 to 1): finer near the middle, held at
+/// the detents, by half degrees.
+pub fn roll_of_slider(t: f32) -> f32 {
+    let t = t.clamp(-1.0, 1.0);
+    let r = ROLL_MAX * t * (ROLL_FINE + (1.0 - ROLL_FINE) * t.abs());
+    let r = ROLL_DETENTS.iter().find(|(d, hold)| (r - d).abs() < *hold).map_or(r, |(d, _)| *d);
+    (r * 2.0).round() / 2.0
+}
+
+/// Where `roll` sits on the slider (−1 to 1), the inverse of
+/// `roll_of_slider`.
+pub fn slider_of_roll(roll: f32) -> f32 {
+    let x = (roll.abs() / ROLL_MAX).min(1.0);
+    let a = 1.0 - ROLL_FINE;
+    let t = (-ROLL_FINE + (ROLL_FINE * ROLL_FINE + 4.0 * a * x).sqrt()) / (2.0 * a);
+    t.copysign(roll)
+}
+
+/// The tilt after a notch of the wheel (Ctrl + Shift): a degree.
+pub fn step_roll(roll: f32, dir: i32) -> f32 {
+    (roll.round() + dir.signum() as f32).clamp(-ROLL_MAX, ROLL_MAX)
+}
+
 /// The viewfinder's settings kept between sessions (the rest of the photo
 /// is `snapshot::Settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -762,6 +794,29 @@ mod tests {
         // no step from one point to the next as large as a bar's
         assert!(c.windows(2).all(|w| (w[0] - w[1]).abs() < 0.2));
         assert_eq!(histogram_curve(&[]), vec![0.0; CURVE_POINTS]);
+    }
+
+    #[test]
+    fn the_tilt_reaches_a_half_turn_and_stays_fine_near_straight() {
+        assert_eq!(roll_of_slider(1.0), ROLL_MAX);
+        assert_eq!(roll_of_slider(-1.0), -ROLL_MAX);
+        assert_eq!(roll_of_slider(0.0), 0.0);
+        // a tenth of the slider is a few degrees, not eighteen
+        let small = roll_of_slider(0.1);
+        assert!(small > 3.0 && small < 8.0, "{small}");
+        // the detents hold
+        assert_eq!(roll_of_slider(0.004), 0.0);
+        assert_eq!(roll_of_slider(slider_of_roll(91.5)), 90.0);
+        assert_eq!(roll_of_slider(slider_of_roll(-89.0)), -90.0);
+        // the slider's place gives its value back
+        for r in [-180.0, -120.0, -45.0, -6.5, 12.0, 60.0, 135.0, 180.0] {
+            assert!((roll_of_slider(slider_of_roll(r)) - r).abs() <= 0.5, "{r}");
+        }
+        assert_eq!(slider_of_roll(0.0), 0.0);
+        // the wheel: a degree a notch, to the ends
+        assert_eq!(step_roll(0.0, 1), 1.0);
+        assert_eq!(step_roll(-6.5, -1), -8.0);
+        assert_eq!(step_roll(180.0, 1), 180.0);
     }
 
     #[test]

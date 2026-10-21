@@ -2,7 +2,8 @@
 //! not learn the shortcuts (which stay): the lens ring (the value chosen in
 //! the bottom bar as a ruler dragged under a fixed index), the AF mode and
 //! area as choices, the camera pad (turn, slide, a spring-loaded zoom
-//! rocker, the tilt) and the self-timer's countdown.
+//! rocker, the tilt) and the self-timer's countdown. The bottom bar's
+//! values turn like the ring (`turn_dial`).
 
 use super::{Dial, Frame, GAP, Out, Viewfinder, bold, icon, regular, shadow_text};
 use crate::dof::PhotoFocus;
@@ -18,9 +19,6 @@ const RULER: Vec2 = Vec2::new(600.0, 46.0);
 /// A stick of the pad, and how far its puck goes.
 const STICK: f32 = 96.0;
 const STICK_TRAVEL: f32 = 28.0;
-/// The tilt's reach either side (degrees), and its detent at 0.
-pub const ROLL_MAX: f32 = 30.0;
-const ROLL_DETENT: f32 = 1.2;
 /// The focal lengths − and + go to.
 const FOCAL_STOPS: [f32; 6] = [10.0, 24.0, 35.0, 50.0, 85.0, 135.0];
 
@@ -247,6 +245,57 @@ impl Viewfinder {
         }
     }
 
+    /// A value turned by the pointer over `resp`, the lens ring or a value
+    /// of the bottom bar, pressed and dragged at once (`sign` −1 for the
+    /// ruler, which moves under its index; 1 for the bar's value, right for
+    /// more), or the wheel over it a stop a notch; a click at each mark
+    /// crossed. The bar's value turned becomes the ring's.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn turn_dial(
+        &mut self,
+        ui: &egui::Ui,
+        resp: &egui::Response,
+        dial: Dial,
+        sign: f32,
+        s: &mut Settings,
+        panel: &mut SnapshotUi,
+        fov: &mut f32,
+        f: &Frame,
+        out: &mut Vec<Out>,
+    ) {
+        let r = self.ring(dial, s, panel, *fov, f);
+        let x = resp.interact_pointer_pos().map(|p| p.x);
+        if resp.drag_started()
+            && let Some(x) = x
+        {
+            self.dial = dial;
+            self.ring_drag = Some((r.u, x));
+            self.ring_mark = None;
+        }
+        if resp.dragged()
+            && let (Some((u0, x0)), Some(x)) = (self.ring_drag, x)
+        {
+            let u = (u0 + sign * (x - x0) / r.k).clamp(r.min, r.max);
+            self.ring_set(dial, u, s, panel, fov, f);
+            let mark = r.marks.iter().filter(|m| m.0 <= u + 1e-4).count() as i32;
+            if self.ring_mark.is_some_and(|m| m != mark) {
+                out.push(Out::Detent);
+            }
+            self.ring_mark = Some(mark);
+        } else if resp.hovered() {
+            let dy = wheel_notches(ui);
+            if dy != 0.0 {
+                self.ring_step(dial, if dy > 0.0 { 1 } else { -1 }, s, panel, fov, f, out);
+            }
+        }
+        if resp.drag_stopped() {
+            self.ring_drag = None;
+        }
+        if resp.clicked() || resp.drag_stopped() {
+            resp.surrender_focus();
+        }
+    }
+
     /// The lens ring above the bottom bar.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn ring_deck(
@@ -294,54 +343,14 @@ impl Viewfinder {
                     if step_button(ui, p, "minus", minus) {
                         self.ring_step(dial, -1, s, panel, fov, f, out);
                     }
+                    // the ruler moves under the index: dragged right, the
+                    // value comes down
                     let (rect, resp) = ui.allocate_exact_size(RULER, Sense::click_and_drag());
-                    let x = resp.interact_pointer_pos().map(|p| p.x);
-                    if resp.drag_started()
-                        && let Some(x) = x
-                    {
-                        self.ring_drag = Some((r.u, x));
-                        self.ring_mark = None;
-                    }
-                    if resp.dragged()
-                        && let (Some((u0, x0)), Some(x)) = (self.ring_drag, x)
-                    {
-                        let u = (u0 - (x - x0) / r.k).clamp(r.min, r.max);
-                        self.ring_set(dial, u, s, panel, fov, f);
-                        // a click at each mark crossed
-                        let mark = r.marks.iter().filter(|m| m.0 <= u + 1e-4).count() as i32;
-                        if self.ring_mark.is_some_and(|m| m != mark) {
-                            out.push(Out::Detent);
-                        }
-                        self.ring_mark = Some(mark);
-                    }
-                    if resp.drag_stopped() {
-                        self.ring_drag = None;
-                    }
-                    // the wheel over the ring turns it
-                    if resp.hovered() {
-                        // (each notch of the wheel, not egui's smoothed scroll)
-                        let dy: f32 = ui.input(|i| {
-                            i.raw
-                                .events
-                                .iter()
-                                .filter_map(|e| match e {
-                                    egui::Event::MouseWheel { delta, .. } => Some(delta.y),
-                                    _ => None,
-                                })
-                                .sum()
-                        });
-                        if dy != 0.0 {
-                            self.ring_step(dial, if dy > 0.0 { 1 } else { -1 }, s, panel, fov, f, out);
-                        }
-                    }
-                    if resp.clicked() || resp.drag_stopped() {
-                        resp.surrender_focus();
-                    }
-                    let resp = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                    self.turn_dial(ui, &resp, dial, -1.0, s, panel, fov, f, out);
+                    let _ = resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
                     // the ruler drawn from the value after this frame's change
                     let r = self.ring(dial, s, panel, *fov, f);
                     paint_ruler(ui.painter(), ctx, p, rect, &r, dial, s, f, self.af.distance());
-                    let _ = resp;
                     let plus = aurora_i18n::tr!("photo-vf-ring-more");
                     if step_button(ui, p, "plus", plus) {
                         self.ring_step(dial, 1, s, panel, fov, f, out);
@@ -437,24 +446,27 @@ impl Viewfinder {
                         ui.spacing_mut().item_spacing = Vec2::new(14.0, 10.0);
                         ui.vertical(|ui| {
                             ui.set_width(STICK * 2.0 + 14.0);
-                            let modes = [CamMode::Orbit, CamMode::Free, CamMode::First];
-                            let items = [
-                                (
-                                    aurora_i18n::tr!("photo-vf-cam-orbit"),
-                                    mode == CamMode::Orbit,
-                                    aurora_i18n::tr!("photo-vf-cam-orbit-tip"),
-                                ),
-                                (
-                                    aurora_i18n::tr!("photo-vf-cam-free"),
-                                    mode == CamMode::Free,
-                                    aurora_i18n::tr!("photo-vf-cam-free-tip"),
-                                ),
-                                (
-                                    aurora_i18n::tr!("photo-vf-cam-first"),
-                                    mode == CamMode::First,
-                                    aurora_i18n::tr!("photo-vf-cam-first-tip"),
-                                ),
-                            ];
+                            let modes = cam_modes(f.first_person_allowed, mode);
+                            let items: Vec<(&str, bool, &str)> = modes
+                                .iter()
+                                .map(|m| match m {
+                                    CamMode::Orbit => (
+                                        aurora_i18n::tr!("photo-vf-cam-orbit"),
+                                        mode == CamMode::Orbit,
+                                        aurora_i18n::tr!("photo-vf-cam-orbit-tip"),
+                                    ),
+                                    CamMode::Free => (
+                                        aurora_i18n::tr!("photo-vf-cam-free"),
+                                        mode == CamMode::Free,
+                                        aurora_i18n::tr!("photo-vf-cam-free-tip"),
+                                    ),
+                                    CamMode::First => (
+                                        aurora_i18n::tr!("photo-vf-cam-first"),
+                                        mode == CamMode::First,
+                                        aurora_i18n::tr!("photo-vf-cam-first-tip"),
+                                    ),
+                                })
+                                .collect();
                             if let Some(i) = segmented(ui, p, &items, Some(STICK * 2.0 + 14.0)) {
                                 out.push(Out::Camera(modes[i]));
                             }
@@ -572,6 +584,31 @@ impl Viewfinder {
             });
         ctx.request_repaint();
     }
+}
+
+/// The camera pad's choices: the first person view only when Preferences
+/// allow it (Camera › Mouselook › first person view, EnableMouselook), or
+/// while it is on.
+pub fn cam_modes(first_person_allowed: bool, now: CamMode) -> Vec<CamMode> {
+    let mut modes = vec![CamMode::Orbit, CamMode::Free];
+    if first_person_allowed || now == CamMode::First {
+        modes.push(CamMode::First);
+    }
+    modes
+}
+
+/// The wheel's notches this frame (each notch, not egui's smoothed scroll).
+fn wheel_notches(ui: &egui::Ui) -> f32 {
+    ui.input(|i| {
+        i.raw
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::MouseWheel { delta, .. } => Some(delta.y),
+                _ => None,
+            })
+            .sum()
+    })
 }
 
 /// The tilt as written: "+6°", "−2,5°", "0°".
@@ -832,8 +869,9 @@ fn rocker(ui: &mut egui::Ui, p: &Palette, tip: &str) -> f32 {
     v
 }
 
-/// The tilt, ±`ROLL_MAX` with a detent at 0 (a double click puts it back);
-/// the new value when it changed.
+/// The tilt, ±`ROLL_MAX` (finer near the middle, detents at 0 and a
+/// quarter turn; a double click puts it back, the wheel over it a degree a
+/// notch); the new value when it changed.
 fn tilt(ui: &mut egui::Ui, p: &Palette, width: f32, roll: f32) -> Option<f32> {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width.max(60.0), 24.0), Sense::click_and_drag());
     let mut new = None;
@@ -842,13 +880,14 @@ fn tilt(ui: &mut egui::Ui, p: &Palette, width: f32, roll: f32) -> Option<f32> {
     } else if resp.dragged()
         && let Some(pos) = resp.interact_pointer_pos()
     {
-        let mut r = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0) * ROLL_MAX;
-        if r.abs() < ROLL_DETENT {
-            r = 0.0;
-        }
-        let r = (r.clamp(-ROLL_MAX, ROLL_MAX) * 2.0).round() / 2.0;
+        let r = vf::roll_of_slider((pos.x - rect.left()) / rect.width() * 2.0 - 1.0);
         if (r - roll).abs() > 1e-3 {
             new = Some(r);
+        }
+    } else if resp.hovered() {
+        let dy = wheel_notches(ui);
+        if dy != 0.0 {
+            new = Some(vf::step_roll(roll, if dy > 0.0 { 1 } else { -1 }));
         }
     }
     let painter = ui.painter();
@@ -858,12 +897,21 @@ fn tilt(ui: &mut egui::Ui, p: &Palette, width: f32, roll: f32) -> Option<f32> {
         widgets::TRACK_RADIUS,
         p.ink.gamma_multiply(0.2),
     );
+    let half = rect.width() / 2.0;
     painter.line_segment(
         [c - Vec2::new(0.0, 8.0), c + Vec2::new(0.0, 8.0)],
         Stroke::new(1.0, p.ink.gamma_multiply(0.5)),
     );
+    // the quarter turns
+    for side in [-1.0, 1.0] {
+        let x = c.x + vf::slider_of_roll(90.0 * side) * half;
+        painter.line_segment(
+            [Pos2::new(x, c.y - 5.0), Pos2::new(x, c.y + 5.0)],
+            Stroke::new(1.0, p.ink.gamma_multiply(0.35)),
+        );
+    }
     let shown = new.unwrap_or(roll);
-    let x = c.x + shown / ROLL_MAX * rect.width() / 2.0;
+    let x = c.x + vf::slider_of_roll(shown) * half;
     if shown != 0.0 {
         let fill = Rect::from_min_max(Pos2::new(x.min(c.x), c.y - 2.0), Pos2::new(x.max(c.x), c.y + 2.0));
         painter.rect_filled(fill, widgets::TRACK_RADIUS, p.teal);

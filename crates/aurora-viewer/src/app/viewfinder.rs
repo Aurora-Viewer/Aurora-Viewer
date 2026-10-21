@@ -126,21 +126,21 @@ impl App {
             self.snapshots.vf.subject = None;
             if let Some(hit) = answer
                 && self.settings.snapshot.viewfinder.area == AfArea::Avatar
-                && let Some((id, eyes)) = self.vf_avatar_at(hit)
+                && let Some((id, head)) = self.vf_avatar_at(hit)
             {
                 self.snapshots.vf.subject = Some(id);
-                target = dof::distance_along(eye, at, eyes);
+                target = dof::distance_along(eye, at, head);
             }
             log::info!("viewfinder: focus asked at {target:.2} m");
             self.snapshots.vf.af.hunt(target, now);
         }
-        // locked on an avatar: the lens stays on its eye as it (or the
-        // camera) moves, like a camera's eye tracking
+        // locked on an avatar: the lens stays on its head as it (or the
+        // camera) moves, like a camera's subject tracking
         if self.settings.snapshot.dof.focus == PhotoFocus::Click
             && let Some(id) = self.snapshots.vf.subject
         {
-            match self.vf_eye(&id, Instant::now()) {
-                Some((e, _)) => self.snapshots.vf.af.follow(dof::distance_along(eye, at, e), now),
+            match self.vf_head(&id, Instant::now()) {
+                Some(h) => self.snapshots.vf.af.follow(dof::distance_along(eye, at, h), now),
                 None => self.snapshots.vf.subject = None,
             }
         }
@@ -192,7 +192,7 @@ impl App {
     }
 
     /// The avatar whose body holds `hit` (a column from its feet to above
-    /// its head), and the point between its eyes.
+    /// its head), and the point of its head the lens takes (`vf_head`).
     fn vf_avatar_at(&self, hit: glam::Vec3) -> Option<(uuid::Uuid, glam::Vec3)> {
         let now = Instant::now();
         self.world
@@ -202,32 +202,32 @@ impl App {
                 let head = self.scene.head_world(&self.world, &o.full_id, now)?;
                 let across = (hit.truncate() - head.truncate()).length();
                 let inside = across < 0.6 && hit.z > head.z - 1.9 && hit.z < head.z + 0.35;
-                inside.then(|| (across, o.full_id, self.vf_eye(&o.full_id, now).map_or(head, |(e, _)| e)))
+                inside.then_some((across, o.full_id))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, id, eyes)| (id, eyes))
+            .and_then(|(_, id)| Some((id, self.vf_head(&id, now)?)))
     }
 
-    /// What the lens takes on an avatar: its eye nearest the camera when
-    /// the face is turned towards it (eye detection), else its head (seen
-    /// from behind, a camera falls back on the head too); and whether it
-    /// is an eye.
-    fn vf_eye(&self, id: &uuid::Uuid, now: Instant) -> Option<(glam::Vec3, bool)> {
-        let cam = self.camera.position;
-        let head = self.scene.head_world(&self.world, id, now)?;
-        let Some((l, r)) = self.scene.eye_pair_world(&self.world, id, now) else {
-            return Some((self.scene.eyes_world(&self.world, id, now).unwrap_or(head), false));
-        };
-        // the face's direction: from the head's centre (a little above
-        // mHead, behind the eyes) to between the eyes
-        let middle = (l + r) * 0.5;
-        let centre = head + glam::Vec3::Z * (middle.z - head.z).max(0.0);
-        let facing = (middle - centre).normalize_or_zero();
-        let toward = (cam - centre).normalize_or_zero();
-        if facing.dot(toward) < 0.15 {
-            return Some((middle, false));
+    /// What the lens takes on an avatar's head, whichever way its face is
+    /// turned: the side of the head nearest the camera (the face, or the
+    /// back of the head), not the mHead bone, which sits at the base of the
+    /// skull a hand behind the face: at f/1.8 close up, the face would blur.
+    fn vf_head(&self, id: &uuid::Uuid, now: Instant) -> Option<glam::Vec3> {
+        // the head's middle, about where the face box is centred
+        let centre = self.scene.head_world(&self.world, id, now)? + glam::Vec3::Z * 0.09;
+        let toward = (self.camera.position - centre).normalize_or_zero();
+        Some(centre + toward * HEAD_RADIUS)
+    }
+
+    /// The name the AF frame shows over an avatar's head: its display name
+    /// as the name preferences make it, else the name of its object.
+    fn vf_name(&self, id: &uuid::Uuid) -> String {
+        let name = self.world.social.display_name_of(id);
+        if name == "…" {
+            self.world.avatar_name(id).unwrap_or(name)
+        } else {
+            name
         }
-        Some((if l.distance(cam) <= r.distance(cam) { l } else { r }, true))
     }
 
     /// The two beeps of a locked focus (`snapshot::viewfinder::beep_wav`),
@@ -303,8 +303,9 @@ impl App {
         self.photo_action(Action::Take, renderer);
     }
 
-    /// The shutter pressed half way: the focus (AF-S, unless already
-    /// locked).
+    /// The shutter pressed half way: in AF-S the lens focuses again at
+    /// each press, locked before or not (a camera's half press), and the
+    /// beep says when it is sharp.
     fn vf_half_press(&mut self, renderer: &mut Renderer) {
         let v = &self.snapshots.vf;
         if v.countdown.is_some() {
@@ -317,7 +318,7 @@ impl App {
             return;
         }
         self.snapshots.vf.pressed = true;
-        if self.settings.snapshot.dof.focus == PhotoFocus::Click && self.snapshots.vf.af.phase != Phase::Lock {
+        if self.settings.snapshot.dof.focus == PhotoFocus::Click {
             self.vf_focus(renderer);
         }
     }
@@ -369,11 +370,13 @@ impl App {
     }
 
     /// The wheel while the viewfinder shows: alone it zooms the camera as
-    /// outside the viewfinder (Ctrl and Shift keep their camera heights);
-    /// with Alt it drives the underlined value of the bottom bar, with Alt +
-    /// Shift the aperture, with Alt + Ctrl the exposure. True when taken.
+    /// outside the viewfinder (Ctrl or Shift alone keep their camera
+    /// heights); Ctrl + Shift tilts the camera a degree a notch; with Alt it
+    /// drives the underlined value of the bottom bar, with Alt + Shift the
+    /// aperture, with Alt + Ctrl the exposure. True when taken.
     pub(super) fn viewfinder_wheel(&mut self, steps: f32) -> bool {
-        if !self.viewfinder_on() || steps == 0.0 || !self.alt {
+        let tilt = self.ctrl && self.shift && !self.alt;
+        if !self.viewfinder_on() || steps == 0.0 || !(self.alt || tilt) {
             return false;
         }
         let v = &self.snapshots.vf;
@@ -381,6 +384,11 @@ impl App {
             return true;
         }
         let dir = if steps > 0.0 { 1 } else { -1 };
+        if tilt {
+            let roll = vf::step_roll(self.camera.roll.to_degrees(), dir);
+            self.camera.roll = roll.to_radians();
+            return true;
+        }
         let dial = if self.shift {
             Dial::Aperture
         } else if self.ctrl {
@@ -703,14 +711,6 @@ impl App {
             _ => screen.center(),
         };
         let wall = Instant::now();
-        // the eye on screen, when the face is turned towards the camera
-        let eye_at = |app: &App, id: &uuid::Uuid| -> Option<Pos2> {
-            let (e, visible) = app.vf_eye(id, wall)?;
-            if !visible {
-                return None;
-            }
-            projector.project(e).map(|(p, _)| p)
-        };
         let face_of = |app: &App, id: &uuid::Uuid| -> Option<Rect> {
             let head = app.scene.head_world(&app.world, id, wall)?;
             // mHead sits at the base of the skull: the face is above it
@@ -730,7 +730,7 @@ impl App {
                 match face_of(self, &id) {
                     Some(r) => {
                         point = r.center();
-                        face = Some((r, true, eye_at(self, &id)));
+                        face = Some((r, true, self.vf_name(&id)));
                     }
                     None => self.snapshots.vf.subject = None,
                 }
@@ -745,7 +745,7 @@ impl App {
                     .map(|(r, id)| (r.center().distance(point), r, id))
                     .filter(|(d, _, _)| *d < 120.0)
                     .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .map(|(_, r, id)| (r, false, eye_at(self, &id)));
+                    .map(|(_, r, id)| (r, false, self.vf_name(&id)));
             }
         }
         // the zone kept sharp, as the renderer blurs it
@@ -765,6 +765,7 @@ impl App {
         let pitch = dir.z.clamp(-1.0, 1.0).asin().to_degrees();
         let review = self.photo_review();
         let (af_key, menu_key, first_key) = self.vf_keys();
+        let first_allowed = self.settings.camera.enable_mouselook;
         let frame = Frame {
             now,
             photo,
@@ -779,13 +780,14 @@ impl App {
             histogram: renderer.histogram.as_deref(),
             review: review.as_ref().map(|(t, l, k)| (t, l.clone(), k.clone())),
             first_person: self.camera.mouselook(),
+            first_person_allowed: first_allowed,
             base_exposure: self.settings.exposure,
             roll: self.camera.roll.to_degrees(),
             free_camera: self.camera.free().is_some(),
             keys: Keys {
                 menu: &menu_key,
                 af_mode: &af_key,
-                first_person: first_key.as_deref(),
+                first_person: first_key.as_deref().filter(|_| first_allowed),
             },
         };
         // the demo aims at the own avatar's face, then shoots
@@ -831,17 +833,11 @@ impl App {
                     }
                 }
                 Out::Cancel => self.snapshots.vf.pressed = false,
-                Out::CycleAf => self.vf_cycle_af(),
-                Out::ToggleArea => self.vf_toggle_area(),
                 Out::FirstPerson(on) => self.vf_first_person(on),
                 Out::SetAf(focus) => self.vf_set_af(focus),
                 Out::SetArea(area) => self.vf_set_area(area),
                 Out::Camera(mode) => self.vf_camera(mode),
-                Out::Roll(deg) => {
-                    self.camera.roll = deg
-                        .clamp(-crate::ui::viewfinder::ROLL_MAX, crate::ui::viewfinder::ROLL_MAX)
-                        .to_radians()
-                }
+                Out::Roll(deg) => self.camera.roll = deg.clamp(-vf::ROLL_MAX, vf::ROLL_MAX).to_radians(),
                 Out::Detent => {
                     if self.settings.snapshot.viewfinder.beep {
                         self.vf_play(VfSound::Click);
@@ -852,6 +848,9 @@ impl App {
         }
     }
 }
+
+/// About half a head's depth (m): from its middle to the face.
+const HEAD_RADIUS: f32 = 0.09;
 
 /// The viewfinder's sounds (`snapshot::viewfinder`).
 #[derive(Debug, Clone, Copy)]
