@@ -3487,7 +3487,8 @@ impl World {
     /// (`in_sight`: its tab shown in the Conversations window): a toast, and
     /// when asked for an entry under the bell until the conversation is
     /// read, as notify_of_message decides (llimview.cpp) — never in do not
-    /// disturb with Firestorm's toasts, group chats by their own preference.
+    /// disturb with the Legacy Viewer's toasts, group chats by their own
+    /// preference.
     pub fn notify_message(&mut self, m: &ImMessage, in_sight: bool) {
         let prefs = self.notifications.toasts;
         let wanted = match m.kind {
