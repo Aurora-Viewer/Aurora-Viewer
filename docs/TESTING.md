@@ -2587,12 +2587,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
-| `AURORA_DEMO_TOASTS=1\|click\|minimized` | Friend online/offline and IM toasts, unread pill, click on an IM card |
+| `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history` | Notification center: cards unrolling from the bell, burst, paused bell, list and history, Firestorm toasts |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
+| `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
@@ -2998,8 +2999,10 @@ failure. Grid validation and any paid upload are performed by the human.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700
   unrolls from the bell at the right end of the top bar (violet bar of the
-  time left, 6 s for information, 12 s for what waits for an answer), folds
-  back into it around frame 1180 and the red count bounces; Orion comes
+  time left, 6 s for information, 12 s for what waits for an answer) and
+  leaves around frame 1180 (a message toasts only by default: no count;
+  with Preferences › Chat › Toasts › "Keep messages under the bell" it
+  folds into the bell and the red count bounces); Orion comes
   online at 1190 (small toast at the top right by default, once the card
   has folded in; never in the center), a
   teleport offer at 1270 and an inventory offer at 1325 stack under the
@@ -3058,6 +3061,17 @@ failure. Grid validation and any paid upload are performed by the human.
   arrives. Capture with `AURORA_FPS_LIMIT=60` at 800 (and 960 with
   `later`), in `--language en` and `fr`; Preferences › Interface › "Reduce
   animations" leaves the card still.
+- **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
+  sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
+  pushes & hits" window opens at frame 600, a resident bumps the agent at
+  640, a second one pushes it with a script at 760, a third one hits it
+  with a scripted then a physical object at 880, and at 1000 the first one
+  bumps it again (that row comes back to the top with the new time) while
+  the second one hits it with an object and sends a type the viewer does
+  not know (left out, logged as `collision of unknown type`). `chat` also turns on "Collisions in nearby
+  chat" for this run (Preferences › Interface is not changed): one line
+  per collision, the name a link to the profile. Capture after frame 1000
+  with `AURORA_FPS_LIMIT=60`.
 - **`AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>`**: the link
   with the agent's region as the user feels it (`ui/link_health.rs`).
   `stall` makes the demo region silent from that frame for that many
@@ -3092,7 +3106,7 @@ failure. Grid validation and any paid upload are performed by the human.
   Preferences › Interface › Region restart (alert, shake: the alert / the
   view / none, the channel announcement) and "Reduce animations" change it
   live.
-- **`AURORA_DEMO_TOASTS=1|click|minimized`**: a friend goes offline at
+- **`AURORA_DEMO_TOASTS=1|bell|click|minimized`**: a friend goes offline at
   frame 700 and comes back at 760 (two presence toasts, round picture with
   its status dot), two IMs from the same resident arrive at 820 and 880 (one
   card, "(2)"), a group IM at 940 (group toasts are forced on for the
@@ -3101,13 +3115,20 @@ failure. Grid validation and any paid upload are performed by the human.
   chat lines.
   The friends announced at login get no toast; their nearby chat line only
   shows with Preferences › Chat › Toasts › "Friends online / offline in
-  nearby chat" (off by default). `1` opens the bell list at frame 1100: only the
-  two conversations are listed, never the presence notices. `click` (window
-  closed) and `minimized` (window minimized at start) click the first IM
-  card at frame 1250: the Conversations window opens or expands, comes to
-  the front on that conversation, and its card leaves the list. Capture
-  with `AURORA_FPS_LIMIT=60`, at `900,1160` for `1` and `1240,1310` for the
-  click modes. Add `AURORA_DEMO_SOUND=1` to hear the existing sounds.
+  nearby chat" (off by default). The window closed, the Conversations
+  button flashes in violet at each IM (eight soft rises over four seconds,
+  started again by the next one), then stays tinted until the window opens. `1` opens the bell
+  list at frame 1100: by default the messages only toasted and nothing is
+  listed (Preferences › Chat › Toasts › "Keep messages under the bell",
+  off). `bell` keeps them under the bell: the two conversations are listed,
+  never the presence notices. `click` (window closed) and `minimized`
+  (window minimized at start: its bar flashes at each IM instead of the
+  button, then stays tinted while they wait unread) also keep them, and click the first IM card at frame 1250: the
+  Conversations window opens or expands, comes to the front on that
+  conversation, and its card leaves the list. Capture with
+  `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
+  `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
+  existing sounds.
 - **`AURORA_DEMO_ATTENTION=1|front|capture`**: the window goes to the
   taskbar at frame 700, then an IM (760), a mention in nearby chat (820), a
   mention in a group chat (880), an object's message (940), a teleport offer
@@ -3153,9 +3174,11 @@ failure. Grid validation and any paid upload are performed by the human.
   `13:animations` / `13:animations-sync` open Aurora at the bottom with Legacy /
   Synchronized clock selected for avatars and animesh. Combine with
   `AURORA_DEMO_LOGIN=empty` and `--language fr|en` for preference captures.
-  `<n>:new` and `<n>:new2` open a page on its first or second marked row
+  `<n>:new`, `<n>:new2` and `<n>:new3` open a page on its first, second or
+  third marked row
   (`scroll_mark` in `ui/options.rs`): `1:new` the script count and simulator
-  version alerts, `1:new2` the group titles, `3:new` the reopened
+  version alerts, `1:new2` the bumps, pushes & hits options, `1:new3` the
+  group titles, `3:new` the reopened
   conversations, `3:new2` the invitations to joined groups, `7:new` the music
   title and the mute when minimised.
   `2:text-size` opens Fonts and cycles the text-size preference through
@@ -4795,7 +4818,9 @@ What the inventory must show with these scenarios:
     demo preferences are affected.
   - `AURORA_DEMO_PLATE_HOVER=x,y` holds the pointer at x, y (points) for
     the plates only: the plate there shows full ("Expand a plate on hover",
-    on by default), a pill or a far name included; with `,click` the plate
+    on by default), a pill or a far name included, and its surface and
+    border are lighter (#473; the bounce on arrival is over before the
+    capture, try it with the mouse); with `,click` the plate
     is clicked at frame 700. `AURORA_DEMO_PLATE_CLICK=profile|im|tp|menu`
     sets "Click on a plate" for the run (not saved): the pointer turns into
     the hand of a clickable object over another avatar's plate, and the click

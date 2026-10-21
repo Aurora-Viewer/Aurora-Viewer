@@ -18,6 +18,10 @@ const TINT_GLASS: (f32, f32) = (0.52, 0.42);
 const TINT_PLAIN: (f32, f32) = (0.74, 0.62);
 /// Opacity of the light border, and of the far pill's.
 const BORDER: (f32, f32) = (0.14, 0.10);
+/// Under the pointer (#473): how far the surface goes toward the ink, and
+/// the opacity the border gains. Faint: the plate answers, it does not flash.
+const HOVER_LIGHT: f32 = 0.12;
+const HOVER_BORDER: f32 = 0.18;
 /// Brightness kept of the blurred world under the tint. The mockup's tint
 /// alone turns light grey over a white wall or a bright sky, and the grey
 /// lines of text disappear in it.
@@ -125,6 +129,7 @@ struct SurfaceKey {
     halo: Option<Halo>,
     glass: f32,
     far: f32,
+    hover: f32,
     pixels_per_point: f32,
     skin: u64,
 }
@@ -151,6 +156,10 @@ pub(super) struct State {
     pub halo: Option<Halo>,
     /// 1: over the blurred world; 0: tinted only.
     pub glass: f32,
+    /// 1 under the pointer: a lighter surface and border.
+    pub hover: f32,
+    /// Points the surface grows on each side in its bounce (`bounce_grow`).
+    pub grow: f32,
 }
 
 /// A sub line: its text, and the complexity written after a username.
@@ -241,7 +250,10 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     let min = Pos2::new(tag.anchor.x - size.x * 0.5, tag.anchor.y - size.y);
     let rect = Rect::from_min_size(Pos2::new((min.x * ppp).round() / ppp, (min.y * ppp).round() / ppp), size);
     let alpha = tag.fade * if c.blocked { BLOCKED_OPACITY } else { 1.0 };
-    background(env, rect, st, alpha, farness, &mut cache.surface);
+    // the bounce moves the surface alone, on whole pixels too; the plate
+    // keeps its rectangle for the pointer, which does not chase the bounce
+    let grow = (st.grow * ppp).round() / ppp;
+    background(env, rect.expand(grow), st, alpha, farness, &mut cache.surface);
     match from {
         None => contents(env, env.painter, rect, &to, tag, alpha, &mut cache.marks),
         Some((_, from)) => {
@@ -271,6 +283,7 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
         halo: st.halo,
         glass: st.glass,
         far,
+        hover: st.hover,
         pixels_per_point: env.pixels_per_point,
         skin: env.skin,
     };
@@ -282,11 +295,11 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
             color: p.navy.gamma_multiply(0.35),
         };
         let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
-        let plain = p.ink.gamma_multiply(lerp(BORDER, far));
+        let plain = p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover);
         let voice = key.halo.map(|halo| voice_light(p, halo, plain, key.size.y));
         let mut plate = Mesh::default();
         let at_origin = Rect::from_min_size(Pos2::ZERO, rect.size());
-        let fill = env.tint.gamma_multiply(opacity);
+        let fill = env.tint.lerp_to_gamma(p.ink, HOVER_LIGHT * key.hover).gamma_multiply(opacity);
         let ppp = env.pixels_per_point;
         match voice {
             Some(v) => mesh::plate(&mut plate, at_origin, ppp, fill, v.border, &[shadow, v.glow], &[v.ring]),

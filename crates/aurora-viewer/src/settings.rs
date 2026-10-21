@@ -482,6 +482,11 @@ pub struct Settings {
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
     /// Preferences > Chat, on).
     pub flash_unread_conversations: bool,
+    /// The Conversations button flashes when an IM, a group chat or a
+    /// conference message arrives while the window is closed, then stays
+    /// lit until it is opened; minimized, its bar flashes instead
+    /// (FSNotifyIMFlash, on).
+    pub flash_conversations_button: bool,
     /// Flash the taskbar button when a message, an offer or a mention
     /// arrives while the window is not in front (FSFlashOnMessage; on here,
     /// off in the Legacy Viewer: the point of #680 is not to miss them).
@@ -512,6 +517,10 @@ pub struct Settings {
     pub toast_im: bool,
     /// Toast of a group chat message (EnableGroupChatPopups, off).
     pub toast_group_im: bool,
+    /// The message toasts also stay under the bell until their conversation
+    /// is read. Off: the toast only, as the Legacy Viewer's notification
+    /// well never lists IMs (#752).
+    pub ims_in_notification_center: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime, 30).
     pub im_toast_seconds: f32,
     /// Write instant messages, group chats and conferences to text files in
@@ -632,8 +641,12 @@ pub struct Settings {
     pub ground_feet_max_height: f32,
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
+    /// Bumps, pushes and hits told in nearby chat or to scripts
+    /// (Preferences › Interface › Bumps, pushes & hits).
+    pub collisions: crate::world::collisions::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
-    /// stand still (the region restart alert, for now).
+    /// stand still (the region restart alert, the rez effect, the bounce of
+    /// a hovered name plate).
     pub reduce_motion: bool,
     /// Preferences › Accessibility › Colour blindness: the interface's
     /// colours adapted to a colour vision deficiency (`crate::colorblind`),
@@ -1281,6 +1294,7 @@ impl Default for Settings {
             typing_in_name_tags: true,
             typing_chevron: false,
             flash_unread_conversations: true,
+            flash_conversations_button: true,
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,
@@ -1293,6 +1307,7 @@ impl Default for Settings {
             friend_request_prompt: true,
             toast_im: true,
             toast_group_im: false,
+            ims_in_notification_center: false,
             im_toast_seconds: 30.0,
             log_im: true,
             log_nearby: false,
@@ -1337,6 +1352,7 @@ impl Default for Settings {
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
             region_restart: Default::default(),
+            collisions: Default::default(),
             reduce_motion: false,
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,

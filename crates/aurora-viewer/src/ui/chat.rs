@@ -15,6 +15,7 @@ mod header;
 pub mod history;
 mod input_history;
 mod invite_card;
+mod keys;
 mod line_menu;
 mod members;
 mod offer_card;
@@ -145,6 +146,9 @@ pub struct ChatUi {
     /// given every frame by the app; and where each flash stands.
     pub flash_unread: bool,
     flashes: flash::Flashes,
+    /// The Conversations button's flash and the minimized bar's pulse,
+    /// started by the app (Preferences › Chat).
+    pub button_flash: flash::ButtonFlash,
     /// The avatars in chat range and those of them who type, given every
     /// frame by the app (the radar) for the nearby chat.
     pub nearby_count: usize,
@@ -2148,6 +2152,15 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
+    // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`)
+    if *open {
+        let order = if style.workspace() {
+            sidebar::tab_order(world, st)
+        } else {
+            keys::legacy_order(world, st)
+        };
+        keys::handle(ctx, st, &order, &mut actions);
+    }
     let title = match st.selected {
         // the workspace's head names the conversation (the mockup's title)
         _ if style.workspace() => aurora_i18n::tr!("common-conversations").to_owned(),
@@ -2159,6 +2172,7 @@ pub fn show(
     let mut tear_off = false;
     let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
         .attention(conversations_waiting(world))
+        .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
