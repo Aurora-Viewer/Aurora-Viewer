@@ -467,6 +467,8 @@ pub struct App {
     inspect_ui: ui::inspect::InspectUi,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
+    /// "Bumps, pushes & hits" (Help menu).
+    bumps_ui: ui::bumps::BumpsUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
@@ -1011,6 +1013,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             blacklist_ui: Default::default(),
+            bumps_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             buy_land_ui: Default::default(),
@@ -5771,6 +5774,12 @@ impl App {
                 script_threshold: self.settings.script_count_threshold,
                 version: self.settings.sim_version_alert,
             };
+            // AURORA_DEMO_COLLISIONS=chat: the nearby chat lines for this run only
+            self.world.collisions.cfg = if self.demo {
+                crate::demo::collisions::settings(self.settings.collisions)
+            } else {
+                self.settings.collisions
+            };
             // FSDisableNeighbourRegionConnections, lifted while crossing
             let refuse = self.settings.no_neighbour_regions && self.world.agent_inside_main_region();
             if self.neighbours_refused != refuse {
@@ -7546,6 +7555,14 @@ impl App {
         if self.demo && crate::demo::seat_kill::on() {
             for event in crate::demo::seat_kill::events(self.frame_count) {
                 self.world.apply(event);
+            }
+        }
+        if self.demo && crate::demo::collisions::mode().is_some() {
+            for event in crate::demo::collisions::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            if self.frame_count == crate::demo::collisions::OPEN {
+                ui::widgets::open_floater(&self.egui_ctx, ui::bumps::WINDOW, &mut self.panels.bumps);
             }
         }
         if self.demo && crate::demo::presence::position().is_some() {
@@ -11204,6 +11221,7 @@ impl App {
                     }
                 }
                 self.blacklist_window(&ctx, &p);
+                self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)

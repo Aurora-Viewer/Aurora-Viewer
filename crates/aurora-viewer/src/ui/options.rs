@@ -2397,6 +2397,39 @@ fn content(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi,
                     );
                 });
             });
+            // FSCollisionMessagesInChat, FSReportCollisionMessages and
+            // FSReportCollisionMessagesChannel (Legacy Viewer: Preferences ›
+            // Notifications › Alerts)
+            group(ui, p, aurora_i18n::tr!("bumps-title"), |ui| {
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-collisions-in-chat"),
+                    aurora_i18n::tr!("ui-options-collisions-in-chat-help"),
+                    |ui| toggle(ui, p, &mut s.collisions.in_chat),
+                );
+                c |= row(
+                    ui,
+                    p,
+                    aurora_i18n::tr!("ui-options-collisions-report"),
+                    aurora_i18n::tr!("ui-options-collisions-report-help"),
+                    |ui| {
+                        let mut changed = toggle(ui, p, &mut s.collisions.report);
+                        ui.add_enabled_ui(s.collisions.report, |ui| {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut s.collisions.channel)
+                                        .custom_parser(aurora_i18n::parse_number)
+                                        .range(i32::MIN..=i32::MAX)
+                                        .speed(1.0),
+                                )
+                                .on_hover_text(aurora_i18n::tr!("ui-options-collisions-channel"))
+                                .changed();
+                        });
+                        changed
+                    },
+                );
+            });
             // FSConfirmPayments / FSPaymentConfirmationThreshold
             // (panel_preferences_firestorm.xml)
             group(ui, p, aurora_i18n::tr!("ui-options-payments"), |ui| {

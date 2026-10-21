@@ -104,6 +104,9 @@ pub mod place;
 /// Linden trees and grass, near, far or as a forest (AURORA_DEMO_PLANTS).
 #[path = "demo_plants.rs"]
 pub mod plants;
+/// Bumps, pushes and hits, and their window (AURORA_DEMO_COLLISIONS).
+#[path = "demo_collisions.rs"]
+pub mod collisions;
 /// The friends' online / offline toasts at one of their places
 /// (AURORA_DEMO_PRESENCE).
 #[path = "demo_presence.rs"]

@@ -8,6 +8,7 @@ pub mod calling_cards;
 
 pub mod bridge;
 pub mod calls;
+pub mod collisions;
 pub mod chat_log;
 pub mod contact_sets;
 pub mod derender;
@@ -421,6 +422,8 @@ pub struct World {
     pub group_titles: names::GroupTitles,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
+    /// Bumps, pushes and hits (collisions.rs).
+    pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
     /// The account's list of open private conversations (open_ims.rs).
@@ -604,6 +607,7 @@ impl World {
             offline_im_requested: false,
             group_titles: Default::default(),
             region_alerts: Default::default(),
+            collisions: Default::default(),
             fly_after_teleport: false,
             open_ims_path: None,
             reopen_ims: Vec::new(),
@@ -2302,6 +2306,10 @@ impl World {
                         position,
                         flags,
                     })
+            }
+            NetEvent::MeanCollisions(list) => {
+                self.on_mean_collisions(list);
+                None
             }
             NetEvent::Names(list) => {
                 for (id, first, last) in list {

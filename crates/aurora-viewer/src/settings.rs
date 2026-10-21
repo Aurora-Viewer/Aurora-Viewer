@@ -627,6 +627,9 @@ pub struct Settings {
     pub ground_feet_max_height: f32,
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
+    /// Bumps, pushes and hits told in nearby chat or to scripts
+    /// (Preferences › Interface › Bumps, pushes & hits).
+    pub collisions: crate::world::collisions::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
     /// stand still (the region restart alert, for now).
     pub reduce_motion: bool,
@@ -1331,6 +1334,7 @@ impl Default for Settings {
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
             region_restart: Default::default(),
+            collisions: Default::default(),
             reduce_motion: false,
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,

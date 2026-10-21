@@ -8,6 +8,7 @@ pub mod avatar_picker;
 pub mod backdrop;
 pub mod bars;
 pub mod blacklist;
+pub mod bumps;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod buy_currency;
@@ -137,6 +138,8 @@ pub struct Panels {
     pub search: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
+    /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
+    pub bumps: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
     /// with Preferences › Aurora), and on its Movement tab (the movement
     /// window).
@@ -178,6 +181,7 @@ impl Panels {
             places: false,
             search: false,
             asset_blacklist: false,
+            bumps: false,
             camera_controls: false,
             movement_controls: false,
             nav_edit: None,
