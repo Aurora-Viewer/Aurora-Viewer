@@ -334,8 +334,10 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
                         events,
                         ..Default::default()
                     },
+                    // every pass's actions, as the app handles them (a
+                    // pass laid out again has no input of its own)
                     |host| {
-                        actions = ui.show(
+                        actions.extend(ui.show(
                             host.ctx(),
                             &crate::theme::Theme::default().palette(),
                             &mut world,
@@ -343,7 +345,7 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
                             &HashMap::new(),
                             &mut prefs,
                             &mut true,
-                        );
+                        ));
                     },
                 );
                 output.textures_delta.clear();

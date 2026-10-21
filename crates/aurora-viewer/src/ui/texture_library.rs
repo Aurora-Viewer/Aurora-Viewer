@@ -315,9 +315,36 @@ impl LibraryUi {
                 } else {
                     let row_height = 148.0;
                     let rows = entries.len().div_ceil(2);
-                    // the selection and the warnings first, the cards in
-                    // exactly the rest
-                    let mut list = widgets::footer_first(ui, |ui| {
+                    // the cards in exactly the room the selection and the
+                    // warnings leave
+                    let (mut list, foot) = widgets::above_footer(ui);
+                    egui::ScrollArea::vertical()
+                        .id_salt("library_grid")
+                        .max_height(list.available_height())
+                        .show_rows(&mut list, row_height, rows, |ui, visible| {
+                            for row in visible {
+                                ui.horizontal(|ui| {
+                                    for index in entries.iter().skip(row * 2).take(2) {
+                                        let entry = self.catalogue.entries[*index].clone();
+                                        if let Some(action) = self.card(
+                                            ui,
+                                            p,
+                                            world,
+                                            scene,
+                                            images,
+                                            prefs,
+                                            &entry,
+                                            106.0,
+                                            true,
+                                            entries.first() == Some(index),
+                                        ) {
+                                            actions.push(action);
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    foot.show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if let Some(entry) = self
                                 .selected
@@ -350,32 +377,6 @@ impl LibraryUi {
                         });
                         self.warnings(ui, p, world, empty);
                     });
-                    egui::ScrollArea::vertical()
-                        .id_salt("library_grid")
-                        .max_height(list.available_height())
-                        .show_rows(&mut list, row_height, rows, |ui, visible| {
-                            for row in visible {
-                                ui.horizontal(|ui| {
-                                    for index in entries.iter().skip(row * 2).take(2) {
-                                        let entry = self.catalogue.entries[*index].clone();
-                                        if let Some(action) = self.card(
-                                            ui,
-                                            p,
-                                            world,
-                                            scene,
-                                            images,
-                                            prefs,
-                                            &entry,
-                                            106.0,
-                                            true,
-                                            entries.first() == Some(index),
-                                        ) {
-                                            actions.push(action);
-                                        }
-                                    }
-                                });
-                            }
-                        });
                 }
                 if horizontal {
                     self.warnings(ui, p, world, empty);

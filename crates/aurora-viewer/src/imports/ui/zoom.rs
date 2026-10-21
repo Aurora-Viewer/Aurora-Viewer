@@ -35,8 +35,8 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
     );
     window.min_size = Vec2::new(420.0, 360.0);
     window.show(ctx, p, &mut open, |ui| {
-        // the line or the controls under the preview first, the preview in
-        // exactly the rest
+        // the preview in exactly the room the line or the controls under it
+        // leave
         if let Some(slot) = slot.filter(|slot| *slot < 4) {
             let key = match &entry.source {
                 Some(Source::Material { images, .. }) => images[slot].as_ref().map(|image| image.key),
@@ -46,16 +46,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
                 .as_ref()
                 .filter(|(stored, generation, _)| Some(*stored) == key && *generation == entry.preview_generation);
             let pending = entry.material_large_pending[slot];
-            let mut area = widgets::footer_first(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.horizontal(|ui| {
-                        if pending {
-                            ui.spinner();
-                        }
-                        ui.label(map_label(slot));
-                    });
-                });
-            });
+            let (mut area, foot) = widgets::above_footer(ui);
             let square = area.available_size().min_elem();
             area.vertical_centered(|ui| {
                 widgets::picture(
@@ -70,11 +61,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             if preview.is_none() && key.is_some() && !entry.material_large_pending[slot] {
                 actions.push(Action::LargeMap(id, slot));
             }
-        } else {
-            let mut area = widgets::footer_first(ui, |ui| {
-                camera_hint(ui, p);
-                preview_camera_controls(ui, p, &mut entry.view);
+            foot.show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.horizontal(|ui| {
+                        if pending {
+                            ui.spinner();
+                        }
+                        ui.label(map_label(slot));
+                    });
+                });
             });
+        } else {
+            let (mut area, foot) = widgets::above_footer(ui);
             let size = area.available_size();
             if let Some(model) = &entry.model {
                 aurora_render::preview::paint(
@@ -87,6 +85,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             } else {
                 widgets::picture(&mut area, p, None, size, "cube-3d-sphere", "");
             }
+            foot.show(ui, |ui| {
+                camera_hint(ui, p);
+                preview_camera_controls(ui, p, &mut entry.view);
+            });
         }
     });
     if !open || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {

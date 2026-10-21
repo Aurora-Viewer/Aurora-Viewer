@@ -201,7 +201,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         // the buttons at the bottom, from the height they measure (a
         // guessed 28 points grew the window at every frame with a larger
         // text)
-        widgets::footer_first(ui, |ui| {
+        widgets::above_footer(ui).1.show(ui, |ui| {
             ui.horizontal(|ui| {
                 let enabled = !running && b.types.iter().any(|on| *on);
                 accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();

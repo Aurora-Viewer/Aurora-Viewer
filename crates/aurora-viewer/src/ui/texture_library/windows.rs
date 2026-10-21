@@ -234,9 +234,25 @@ impl LibraryUi {
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);
                 let before = window.texture.display;
                 texture_view::toolbar(ui, p, &item, dimensions, &mut window.texture.display, actions);
-                // the description, the buttons and the notes first, the
-                // picture in exactly the rest
-                let mut view = widgets::footer_first(ui, |ui| {
+                // the picture in exactly the room the description, the
+                // buttons and the notes leave
+                let (mut view, foot) = widgets::above_footer(ui);
+                texture_view::picture(&mut view, p, &item, image, dimensions, &window.texture.display);
+                if window.texture.display != before {
+                    prefs.texture_display = window.texture.display;
+                }
+                if window.texture.display.actual_size || window.texture.export.is_some() {
+                    scene.textures.note_usage_fixed(&asset, 16384.0);
+                }
+                scene.textures.note_usage(
+                    &asset,
+                    if window.texture.display.actual_size || window.texture.export.is_some() {
+                        16384.0
+                    } else {
+                        view.available_width().max(view.available_height()) * ctx.pixels_per_point()
+                    },
+                );
+                foot.show(ui, |ui| {
                     let description = window.description.get_or_insert_with(|| item.desc.clone());
                     let response = ui.add_enabled(
                         material_editor::can_edit(world, &item),
@@ -305,21 +321,6 @@ impl LibraryUi {
                         .color(p.muted),
                     );
                 });
-                texture_view::picture(&mut view, p, &item, image, dimensions, &window.texture.display);
-                if window.texture.display != before {
-                    prefs.texture_display = window.texture.display;
-                }
-                if window.texture.display.actual_size || window.texture.export.is_some() {
-                    scene.textures.note_usage_fixed(&asset, 16384.0);
-                }
-                scene.textures.note_usage(
-                    &asset,
-                    if window.texture.display.actual_size || window.texture.export.is_some() {
-                        16384.0
-                    } else {
-                        view.available_width().max(view.available_height()) * ctx.pixels_per_point()
-                    },
-                );
             }
             if material {
                 if let Some(editor) = &mut window.editor {

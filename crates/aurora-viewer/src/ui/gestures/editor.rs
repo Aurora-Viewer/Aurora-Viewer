@@ -137,14 +137,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                 });
                 return;
             };
-            let mut body = widgets::footer_first(ui, |ui| {
-                if editor.saving.is_some() {
-                    ui.label(aurora_i18n::tr!("gesture-saving"));
-                }
-                if !editor.message.is_empty() {
-                    ui.label(RichText::new(&editor.message).color(p.warn));
-                }
-            });
+            let (mut body, foot) = widgets::above_footer(ui);
             body.add_enabled_ui(editor.saving.is_none(), |ui| {
                 egui::Grid::new("gesture_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
                     ui.label(aurora_i18n::tr!("common-description"));
@@ -234,7 +227,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                     })
                 });
                 widgets::section_header(ui, p, "list", aurora_i18n::tr!("gesture-steps"));
-                let mut list = widgets::footer_first(ui, |ui| {
+                let (mut list, foot) = widgets::above_footer(ui);
+                egui::ScrollArea::vertical()
+                    .max_height(list.available_height())
+                    .auto_shrink([false, false])
+                    .show(&mut list, |ui| {
+                        for (index, step) in g.steps.iter().enumerate() {
+                            if ui.selectable_label(editor.step == Some(index), step_label(step)).clicked() {
+                                editor.step = Some(index);
+                            }
+                        }
+                    });
+                foot.show(ui, |ui| {
                     ui.add_enabled_ui(modifiable, |ui| {
                         ui.horizontal(|ui| {
                             let index = editor.step;
@@ -308,16 +312,14 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                         }
                     });
                 });
-                egui::ScrollArea::vertical()
-                    .max_height(list.available_height())
-                    .auto_shrink([false, false])
-                    .show(&mut list, |ui| {
-                        for (index, step) in g.steps.iter().enumerate() {
-                            if ui.selectable_label(editor.step == Some(index), step_label(step)).clicked() {
-                                editor.step = Some(index);
-                            }
-                        }
-                    });
+            });
+            foot.show(ui, |ui| {
+                if editor.saving.is_some() {
+                    ui.label(aurora_i18n::tr!("gesture-saving"));
+                }
+                if !editor.message.is_empty() {
+                    ui.label(RichText::new(&editor.message).color(p.warn));
+                }
             });
         });
         if !open && editor.dirty() {

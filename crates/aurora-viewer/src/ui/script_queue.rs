@@ -19,16 +19,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, queue: &ScriptQueue) -> bool {
         Vec2::new(300.0, 400.0),
     )
     .show(ctx, p, &mut open, |ui| {
-        let mut list = widgets::footer_first(ui, |ui| {
-            ui.add_space(6.0);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let size = Vec2::new(0.0, 26.0);
-                let label = aurora_i18n::tr!("common-close");
-                if widgets::action_button_if(ui, p, "x", label, widgets::ActionKind::Flat, size, queue.done).clicked() {
-                    close = true;
-                }
-            });
-        });
+        let (mut list, foot) = widgets::above_footer(ui);
         egui::ScrollArea::vertical()
             .max_height(list.available_height())
             .auto_shrink([false, false])
@@ -38,6 +29,16 @@ pub fn show(ctx: &egui::Context, p: &Palette, queue: &ScriptQueue) -> bool {
                     ui.add(egui::Label::new(RichText::new(line).size(12.5).color(p.ink)).wrap());
                 }
             });
+        foot.show(ui, |ui| {
+            ui.add_space(6.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let size = Vec2::new(0.0, 26.0);
+                let label = aurora_i18n::tr!("common-close");
+                if widgets::action_button_if(ui, p, "x", label, widgets::ActionKind::Flat, size, queue.done).clicked() {
+                    close = true;
+                }
+            });
+        });
     });
     open && !close
 }

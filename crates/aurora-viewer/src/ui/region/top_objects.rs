@@ -245,7 +245,9 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
         });
         ui.add_space(8.0);
         let rows = report.as_ref().map(|r| sorted(&r.objects, s.top.sort)).unwrap_or_default();
-        let mut list = widgets::footer_first(ui, |ui| {
+        let (mut list, foot) = widgets::above_footer(ui);
+        table(&mut list, p, &mut s.top, &rows, scripts, waiting);
+        foot.show(ui, |ui| {
             ui.add_space(8.0);
             // the actions
             let one = (s.top.selected.len() == 1)
@@ -351,7 +353,6 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
                 });
             });
         });
-        table(&mut list, p, &mut s.top, &rows, scripts, waiting);
     });
     if let Some(target) = kick {
         s.interventions.dialog = Some(Dialog::Kick { target, ban: false });

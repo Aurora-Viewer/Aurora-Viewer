@@ -75,7 +75,7 @@ fn changes(rects: &[egui::Rect]) -> Vec<(usize, egui::Rect)> {
 const SIZES: [egui::Vec2; 2] = [egui::vec2(360.0, 520.0), egui::vec2(300.0, 260.0)];
 
 /// A list over a footer of three rows, the footer's height guessed (the
-/// defect) or laid out first from the bottom up (the fix).
+/// defect) or measured by `above_footer` (the fix).
 fn window(ctx: &egui::Context, p: &Palette, id: &str, guessed: bool) {
     let mut open = true;
     super::Floater::new(id, "Steady", egui::pos2(40.0, 40.0), SIZES[0]).show(ctx, p, &mut open, |ui| {
@@ -89,23 +89,16 @@ fn window(ctx: &egui::Context, p: &Palette, id: &str, guessed: bool) {
             ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
             footer(ui);
         } else {
-            let rest = ui.available_rect_before_wrap();
-            let mut bottom = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rest)
-                    .layout(egui::Layout::bottom_up(egui::Align::Min)),
-            );
-            // bottom-up: the last row first
-            for label in ["Last", "Second", "Third"] {
-                let _ = bottom.button(label);
-            }
-            ui.allocate_rect(rest, egui::Sense::hover());
+            let (mut list, foot) = super::above_footer(ui);
+            let h = list.available_height();
+            list.allocate_exact_size(egui::vec2(list.available_width(), h), egui::Sense::hover());
+            foot.show(ui, footer);
         }
     });
 }
 
 #[test]
-fn a_footer_laid_out_first_keeps_the_window_still() {
+fn a_measured_footer_keeps_the_window_still() {
     assert_window_steady(
         "steady-test-fixed",
         &SIZES,

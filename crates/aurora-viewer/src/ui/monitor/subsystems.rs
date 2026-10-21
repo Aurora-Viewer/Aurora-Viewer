@@ -290,8 +290,8 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         let total = s.attribution.total(*c).map_or("–".into(), |v| format(*c, scale(*c, v)));
         cols.push(Col::new(title, 96.0, true).sort(m.sort == *c).total(total));
     }
-    // the detail first, from its height; the table in exactly the rest
-    let mut table = widgets::footer_first(ui, |ui| detail(ui, p, m, s, cores, out));
+    // the table in exactly the room the detail leaves
+    let (mut table, foot) = widgets::above_footer(ui);
     let frame = egui::Frame::new()
         .fill(p.bar)
         .stroke(egui::Stroke::new(1.0, p.raised))
@@ -323,6 +323,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
                 }
             });
     });
+    foot.show(ui, |ui| detail(ui, p, m, s, cores, out));
 }
 
 /// The table's lines: the parts sorted by the column, each followed by its
