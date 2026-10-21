@@ -3274,7 +3274,7 @@ ui-notifications-more = { $count ->
 }
 ui-notifications-paused-hint = en pause tant que la souris est dessus
 ui-notifications-mark-all-read = Tout marquer lu
-ui-notifications-mark-all-read-tip = Les informations passent dans l'historique ; ce qui attend une réponse reste dans À traiter
+ui-notifications-mark-all-read-tip = Les informations passent dans l'historique ; ce qui attend une réponse reste dans À traiter, marqué lu
 ui-notifications-dnd-banner = Ne pas déranger · les notifications arrivent sans s'afficher
 ui-notifications-dnd-off = Désactiver
 ui-notifications-to-do = À traiter

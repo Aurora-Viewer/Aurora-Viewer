@@ -499,6 +499,14 @@ impl Notifications {
         }
     }
 
+    /// "Mark all read" of Aurora's center: the information leaves for the
+    /// history, what waits for an answer stays in "To do" but read, so that
+    /// the bell's count goes back to zero.
+    pub fn read_all(&mut self) {
+        self.clear_info();
+        self.mark_all_read();
+    }
+
     /// Remove everything that does not wait for an answer.
     pub fn clear_info(&mut self) {
         self.list.retain(|n| n.interactive());
