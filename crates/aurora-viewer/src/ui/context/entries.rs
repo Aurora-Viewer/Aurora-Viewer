@@ -851,13 +851,13 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     ui.separator();
     // Firestorm greys it out when the parcel is not for sale to us; the
     // menu does not know the parcel before it is selected, so the window
-    // says why instead
+    // says why instead (and a notice for a pass)
     ui.item(
         "shopping-cart-filled",
         aurora_i18n::tr!("ui-context-buy-this-land"),
         CtxAction::BuyLand(point),
     );
-    ui.todo("ticket-filled", aurora_i18n::tr!("ui-context-buy-access"));
+    ui.item("ticket-filled", aurora_i18n::tr!("ui-context-buy-access"), CtxAction::BuyPass(point));
     ui.separator();
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item("mountain-filled", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);

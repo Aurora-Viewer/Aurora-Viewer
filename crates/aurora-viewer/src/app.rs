@@ -8466,6 +8466,7 @@ impl App {
             }
             self.demo_buy_currency();
             self.demo_buy_land();
+            self.demo_buy_pass();
             self.demo_pay();
             self.demo_money_tracker();
         }

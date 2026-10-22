@@ -273,10 +273,37 @@ pub(super) fn region_line(v: &View, parcel: &ParcelInfo, point: Vec3) -> (String
     (link, rest)
 }
 
-/// LLPanelLandGeneral::refresh: a pass for someone else's land that sells
-/// them.
-pub(super) fn can_buy_pass(parcel: &ParcelInfo, agent: Uuid) -> bool {
-    parcel.owner_id != agent && parcel.flags & pf::USE_PASS_LIST != 0
+/// Why no pass can be bought on a parcel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NoPass {
+    Own,
+    NotSold,
+    Banned,
+}
+
+/// LLPanelLandGeneral::refresh and LLMenuParcelObserver::changed: a pass
+/// for someone else's land that sells them, unless the last ban line the
+/// agent ran into was a ban (`banned`, isCollisionBanned).
+pub(super) fn pass_refusal(parcel: &ParcelInfo, agent: Uuid, banned: bool) -> Option<NoPass> {
+    if parcel.owner_id == agent {
+        Some(NoPass::Own)
+    } else if parcel.flags & pf::USE_PASS_LIST == 0 {
+        Some(NoPass::NotSold)
+    } else if banned {
+        Some(NoPass::Banned)
+    } else {
+        None
+    }
+}
+
+pub(super) fn can_buy_pass(parcel: &ParcelInfo, agent: Uuid, banned: bool) -> bool {
+    pass_refusal(parcel, agent, banned).is_none()
+}
+
+/// LLViewerParcelMgr::isCollisionBanned: only BA_BANNED, not "not in the
+/// group" nor "not on the list" (which a pass is for).
+pub(super) fn collision_banned(world: &World) -> bool {
+    world.map.collision.as_ref().is_some_and(|c| c.kind == 1)
 }
 
 /// The point of the region the floater talks about, on the ground.
@@ -384,7 +411,7 @@ fn actions(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut
             aurora_i18n::tr!("ui-land-general-buy-a-pass"),
             widgets::ActionKind::Flat,
             size,
-            can_buy_pass(parcel, v.agent),
+            can_buy_pass(parcel, v.agent, collision_banned(world)),
         )
         .on_hover_text(aurora_i18n::tr!("ui-land-general-a-pass-grants-temporary-access-to-this-land"))
         .clicked()
@@ -901,7 +928,7 @@ mod tests {
         // owner
         let v = view(leased(me), me, Vec::new());
         assert!(can_change_picture(&v));
-        assert!(!can_buy_pass(v.parcel.as_deref().unwrap(), me), "no pass for one's own land");
+        assert_eq!(pass_refusal(v.parcel.as_deref().unwrap(), me, false), Some(NoPass::Own), "no pass for one's own land");
         // officer of the owning group with GP_LAND_CHANGE_IDENTITY
         let v = view(leased(group), me, vec![member(powers::LAND_CHANGE_IDENTITY)]);
         assert!(can_change_picture(&v));
@@ -909,6 +936,11 @@ mod tests {
         assert!(!can_change_picture(&view(leased(group), me, vec![member(0)])));
         let v = view(leased(other), me, Vec::new());
         assert!(!can_change_picture(&v));
-        assert!(can_buy_pass(v.parcel.as_deref().unwrap(), me));
+        assert!(can_buy_pass(v.parcel.as_deref().unwrap(), me, false));
+        // isCollisionBanned refuses it; a parcel without passes says so
+        assert_eq!(pass_refusal(v.parcel.as_deref().unwrap(), me, true), Some(NoPass::Banned));
+        let mut closed = leased(other);
+        closed.flags = 0;
+        assert_eq!(pass_refusal(&closed, me, false), Some(NoPass::NotSold));
     }
 }

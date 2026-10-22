@@ -1,7 +1,7 @@
 //! Application bridge for the Buy Land window: which selection it follows
 //! (About Land's or the land tool's, LLViewerParcelMgr's selection in
 //! Firestorm), opening it (LLFloaterBuyLand::buyLand), the website's
-//! answers, and the offline land helper of the demo.
+//! answers, and the offline land helper of the demo (with its pass scenario).
 
 use super::*;
 use crate::world::land::powers;
@@ -141,6 +141,15 @@ impl App {
         self.buy_land_here();
         if crate::demo::land::buy_confirms() {
             self.buy_land_ui.demo_confirm();
+        }
+    }
+
+    /// AURORA_DEMO_BUY_PASS=<mode>: the ground menu's "Buy access" where the
+    /// avatar stands, on the plaza parcel (docs/TESTING.md).
+    pub(super) fn demo_buy_pass(&mut self) {
+        if crate::demo::land::pass_scenario().is_some() {
+            let at = self.world.agent.position;
+            self.on_ctx_action(ui::context::CtxAction::BuyPass(at));
         }
     }
 
