@@ -485,25 +485,51 @@ fn history(cx: &mut Cx) {
 /// and Preferences › Privacy › Autoresponse 1 and 2.
 fn away_and_replies(cx: &mut Cx) {
     use aurora_i18n::tr;
+    // AFKTimeout and QuitAfterSecondsOfAFK both use zero for "never"
+    // (indra/newview/skins/default/xui/en/panel_preferences_general.xml).
+    fn timeout(cx: &mut Cx, label: &str, hint: &str, f: &super::super::cx::F<u32>) {
+        let get = f.get_mut;
+        cx.row(label, hint, f, |ui, s| {
+            ui.spacing_mut().slider_width = super::super::SLIDER_W;
+            ui.add(
+                egui::Slider::new(get(s), 0..=60)
+                    .custom_formatter(|v, _| {
+                        if v == 0.0 {
+                            tr!("ui-options-away-disabled").to_owned()
+                        } else {
+                            format!("{v:.0} min")
+                        }
+                    })
+                    .custom_parser(|text| {
+                        let text = text.trim();
+                        if text.eq_ignore_ascii_case(tr!("ui-options-away-disabled")) {
+                            Some(0.0)
+                        } else {
+                            aurora_i18n::parse_number(text.trim_end_matches("min").trim())
+                        }
+                    })
+                    .trailing_fill(true),
+            )
+            .changed()
+        });
+    }
     cx.group(tr!("ui-options-away"), |cx| {
-        cx.slider(
+        timeout(
+            cx,
             tr!("ui-options-away-after"),
             tr!("ui-options-become-away-after-this-time-without-keyboard-or-mouse"),
             &field!(autoresponse.away_after_minutes),
-            0..=60,
-            " min",
         );
         cx.toggle(
             tr!("ui-options-sit-when-away"),
             tr!("ui-options-sit-when-away-help"),
             &field!(autoresponse.sit_when_away),
         );
-        cx.slider(
+        timeout(
+            cx,
             tr!("ui-options-quit-after-away"),
             tr!("ui-options-quit-after-away-help"),
             &field!(autoresponse.quit_after_away_minutes),
-            0..=60,
-            " min",
         );
     });
     /// A label over a multi-line response.

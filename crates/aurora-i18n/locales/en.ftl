@@ -956,6 +956,7 @@ common-abandon-land = Abandon land
 ui-inventory-dialogs-discard-changes = Discard changes
 common-away = Away
 ui-options-away-after = Away after
+ui-options-away-disabled = Disabled
 ui-options-sit-when-away = Sit when away
 ui-options-sit-when-away-help = The avatar sits on the ground when you become away, and stands up when you come back
 ui-options-quit-after-away = Quit after being away for
