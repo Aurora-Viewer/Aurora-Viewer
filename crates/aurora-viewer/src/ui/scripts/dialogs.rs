@@ -33,6 +33,7 @@ impl Search {
     pub const WINDOW: &str = "script_search";
     const SIZE: Vec2 = Vec2::new(360.0, 185.0);
     const INLINE_FIELD_WIDTH: f32 = 140.0;
+    const INLINE_BUTTON_PADDING: f32 = 4.0;
 
     pub fn inline_width(ui: &egui::Ui) -> f32 {
         let checkbox_width = |label: &str| {
@@ -65,7 +66,7 @@ impl Search {
                         .layout_no_wrap(label.into(), egui::FontId::proportional(12.0), ui.visuals().text_color())
                         .size()
                         .x
-                        + 2.0 * ui.spacing().button_padding.x
+                        + 2.0 * Self::INLINE_BUTTON_PADDING
                 })
                 .sum::<f32>();
         first_row.max(second_row).max(440.0)
@@ -219,6 +220,7 @@ impl Search {
         // feedback stays beside the options, including its full hover text.
         ui.spacing_mut().interact_size.y = row_height;
         ui.spacing_mut().button_padding.y = 1.0;
+        ui.spacing_mut().button_padding.x = Self::INLINE_BUTTON_PADDING;
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
