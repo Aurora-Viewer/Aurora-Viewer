@@ -9,6 +9,14 @@ the standalone window opens the same page; "Copy trace" and "Open report
 folder" give the technical details to paste or attach, after reviewing them
 (the full trace may contain personal paths).
 
+Each crash session folder also holds `public-report.md`: what an automatic
+crash report would publish (version, commit, crash kind, system, GPU, the
+stack as `module+0xoffset` with the modules' PDB identities, the panic
+location inside the sources, recognised warning categories). It never
+contains raw addresses, panic messages, paths or log lines; the
+`<!-- aurora-crash v1 -->` marker at its top is for the repository's crash
+triage.
+
 The issue templates are in `.github/ISSUE_TEMPLATE/`; they set the issue
 type (Bug or Feature); the area labels (`chat`, `ui`, `avatar`…) are added
 during triage. The disabled form below

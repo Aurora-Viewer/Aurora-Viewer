@@ -1504,7 +1504,14 @@ creation date to avoid the reuse of a PID. The watcher is the same
 executable, started in internal mode before any initialisation of the viewer.
 Its working folder is that of the reports, to let the updater replace the
 installation folder after the viewer has stopped. It never relaunches the
-viewer.
+viewer. The native stacks (exception and Rust panic) are written as
+`module+0xoffset` with each module's PDB identity, read from the PE headers
+in memory: the only form that can be symbolized after the process is gone.
+
+`summary.rs` builds the public text of a crash report (`public-report.md` in
+the session folder, written before the window opens): only values of a known
+shape, re-validated from the session files, and the closed log vocabulary of
+`privacy.rs`. The raw traces, panic messages, paths and the log stay local.
 
 `window.rs` reuses Fluent, the Palette, the fonts, the Tabler icons
 and the buttons of the viewer. `software.rs` draws its egui meshes on the

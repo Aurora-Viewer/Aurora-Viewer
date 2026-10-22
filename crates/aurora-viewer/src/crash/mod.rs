@@ -4,9 +4,11 @@
 //! no automatic submission; diagnostics stay in the local session folder.
 
 mod native;
+pub mod privacy;
 // Bug report form (disabled, see main.rs):
 // mod report;
 mod software;
+mod summary;
 mod window;
 
 use std::io::{Read, Write};
@@ -38,6 +40,8 @@ pub struct Record {
     pub theme: crate::theme::Theme,
     pub log_path: PathBuf,
     pub demo: bool,
+    #[serde(default)]
+    pub os: String,
 }
 
 struct Session {
@@ -198,6 +202,12 @@ fn start_inner() -> anyhow::Result<()> {
         theme: crate::ui::skin::recovery_theme(),
         log_path: crate::logging::log_path(),
         demo: std::env::var_os("AURORA_DEMO").is_some(),
+        os: format!(
+            "{} ({}, {})",
+            sysinfo::System::long_os_version().unwrap_or_else(|| std::env::consts::OS.into()),
+            sysinfo::System::kernel_version().unwrap_or_default(),
+            std::env::consts::ARCH
+        ),
     };
     save(&dir, &record)?;
     let panic_file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("panic.txt"))?;
@@ -243,6 +253,8 @@ pub fn panic(info: &std::panic::PanicHookInfo<'_>, trace: &std::backtrace::Backt
     if let Some(session) = SESSION.get() {
         let mut file = &session.panic_file;
         let _ = writeln!(file, "Rust panic: {info}\n{trace}");
+        // A release build has no debug info for the trace above to resolve.
+        native::write_stack(&mut file);
         let _ = file.sync_all();
     }
 }
@@ -331,6 +343,11 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let record = load(dir)?;
+    // What a crash report would publish, kept beside the private files.
+    let summary = summary::build(&record, dir);
+    if let Err(error) = std::fs::write(dir.join("public-report.md"), format!("# {}\n\n{}", summary.title, summary.body)) {
+        let _ = std::fs::write(dir.join("summary-error.txt"), error.to_string());
+    }
     aurora_i18n::select(&record.language, None);
     if let Err(error) = window::show(dir, record) {
         let _ = std::fs::write(dir.join("dialog-error.txt"), format!("{error:#}"));
@@ -389,6 +406,7 @@ mod tests {
             theme: Default::default(),
             log_path: dir.join("viewer.log"),
             demo: true,
+            os: String::new(),
         };
         save(&dir, &record).unwrap();
         record.language = "en".into();
@@ -510,6 +528,7 @@ mod tests {
                 theme: Default::default(),
                 log_path: dir.join("viewer.log"),
                 demo: true,
+                os: String::new(),
             };
             save(&dir, &record).unwrap();
             for marker in markers {
