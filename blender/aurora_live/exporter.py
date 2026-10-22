@@ -49,7 +49,8 @@ def _mesh(source, supported, forward, rest_axes, capture):
     transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ source.matrix_world
     bone_transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ armature.matrix_world
     normal_transform = transform.to_3x3().inverted().transposed()
-    bone_names = {bone.name: str(bone.get("aurora_joint", bone.name)) for bone in armature.data.bones}
+    bone_names = {bone.name: str(bone.get("aurora_joint", bone.name)) for bone in armature.data.bones
+                  if bone.use_deform and not bone.get("aurora_control", False)}
     group_names = {group.index: bone_names[group.name] for group in source.vertex_groups if group.name in bone_names}
     group_bones = {group.index: group.name for group in source.vertex_groups if group.name in bone_names}
     clone = source.copy()

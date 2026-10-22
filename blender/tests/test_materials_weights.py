@@ -129,6 +129,8 @@ class MaterialWeightTests(unittest.TestCase):
                 socket.default_value = original
 
     def test_legacy_separate_rgb_maps_export_the_actual_green_and_blue_channels(self):
+        if not hasattr(bpy.types, "ShaderNodeSeparateRGB"):
+            self.skipTest("Legacy Separate RGB was removed by Blender; Separate Color is tested separately")
         image = self.image("Legacy channels", [0.1, 0.3, 0.9, 1] * 4)
         nodes, links = self.material.node_tree.nodes, self.material.node_tree.links
         split = nodes.new("ShaderNodeSeparateRGB")
@@ -175,6 +177,8 @@ class MaterialWeightTests(unittest.TestCase):
     def test_viewport_material_alpha_and_linked_normal_strength(self):
         self.material.use_nodes = False
         self.material.diffuse_color = (0.1, 0.2, 0.3, 0.4)
+        if self.material.use_nodes:  # Blender 5.2 always uses node materials.
+            self.shader.inputs["Alpha"].default_value = 0.4
         face = self.capture()["meshes"][0]["faces"][0]
         self.assertAlmostEqual(face["color"][3], 0.4)
         self.assertEqual(face["material"]["alpha_mode"], "BLEND")

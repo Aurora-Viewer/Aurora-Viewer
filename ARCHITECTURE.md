@@ -26,6 +26,14 @@ validates all selected objects, then publishes normalized four-bone weights
 without changing the source armature or non-bone groups. `materials.py`
 captures connected Principled PBR inputs, UV maps and bounded embedded images;
 node signatures and texture-paint ticks supplement dependency-graph updates.
+`rigging.py` manages SL/Bento part visibility across collections/layers and
+optional independent hand/foot IK target/pole controls, preserving SL rest
+bones. Pose selection uses `PoseBone` in Blender 5 and `Bone` in older APIs.
+`skinning.py` evaluates unposed donor copies and transfers world-space surface
+or nearest-vertex weights, or cleans existing weights; all targets are
+validated before publishing four normalized deform influences. `tools_ui.py`
+owns the rig/IK/skinning operators and translated sidebar sections. Non-deform
+controls never enter the live joint palette; Blender poses stay local.
 `tracking.py` owns the scene's persistent synchronization list, native UIList,
 add-selection and remove operators. Enabled object pointers drive capture and
 dependency watching; membership polling detects Undo/Redo and scene switches.

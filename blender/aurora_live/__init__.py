@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 5, 0), "blender": (2, 93, 0),
+    "version": (0, 6, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -14,11 +14,11 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter, tracking
+from . import compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, tools_ui
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter, tracking):
+    for _module in (compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, tools_ui):
         importlib.reload(_module)
 Client = client.Client
 
@@ -138,10 +138,22 @@ def _request_capture():
     materials.invalidate()
 
 
+def _weights_changed(context, objects):
+    if _client:
+        tracking.add(context.scene, objects)
+        _request_capture()
+
+
 class AURORA_PG_live(bpy.types.PropertyGroup):
     objects: CollectionProperty(type=tracking.AURORA_PG_sync_object)
     object_index: IntProperty(default=0, min=0)
     rig: PointerProperty(name="Avatar rig", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE")
+    weight_source: PointerProperty(name="Weight source", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "MESH")
+    transfer_method: EnumProperty(name="Weight mapping", items=[
+        ("SURFACE", "Nearest surface", "Interpolate weights on the closest source triangle in world space"),
+        ("VERTEX", "Nearest vertex", "Copy weights from the closest source vertex in world space"),
+    ], default="SURFACE")
+    transfer_distance: FloatProperty(name="Max distance (0 = unlimited)", default=0, min=0, subtype="DISTANCE", unit="LENGTH")
     weight_scope: EnumProperty(name="Auto-weight bones", items=[
         ("BODY", "SL body", "Use the classic body bones; skip overlapping Bento and collision bones"),
         ("ALL", "All deform bones", "Include deform bones except collision volumes and overlapping Bento spine joints"),
@@ -262,10 +274,6 @@ class AURORA_PT_live(bpy.types.Panel):
         box.operator("aurora.create_sl_rig", icon="ADD").with_tshirt = prefs.starter_tshirt
         if context.mode != "OBJECT":
             box.label(text="Switch to Object Mode to create a rig.", icon="INFO")
-        box = layout.box()
-        box.prop(prefs, "rig")
-        box.prop(prefs, "weight_scope")
-        box.operator("aurora.auto_weights", icon="MOD_ARMATURE")
         row = layout.row()
         row.enabled = _client is None
         row.prop(prefs, "port")
@@ -296,7 +304,7 @@ class AURORA_PT_live(bpy.types.Panel):
 
 
 _classes = tracking.CLASSES + (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
-                             AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live)
+                             AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live) + tools_ui.CLASSES
 
 _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
     "Connecting to Aurora…": "Connexion à Aurora…", "Connected to Aurora": "Connecté à Aurora",
@@ -338,6 +346,57 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Include deform bones except collision volumes and overlapping Bento spine joints":
         "Inclure les os de déformation, sauf les volumes de collision et les os de colonne Bento superposés",
     "Automatic weights recalculated": "Poids automatiques recalculés",
+    "Skeleton / Bento / IK": "Squelette / Bento / IK", "Weights / transfer": "Poids / transfert",
+    "Weight source": "Maillage donneur", "Weight mapping": "Correspondance des poids",
+    "Nearest surface": "Surface la plus proche", "Nearest vertex": "Sommet le plus proche",
+    "Interpolate weights on the closest source triangle in world space":
+        "Interpoler les poids sur le triangle donneur le plus proche dans l’espace global",
+    "Copy weights from the closest source vertex in world space":
+        "Copier les poids du sommet donneur le plus proche dans l’espace global",
+    "Max distance (0 = unlimited)": "Distance max. (0 = illimitée)",
+    "Show / hide bones": "Afficher / masquer les os", "All bones": "Tous les os", "Deform bones": "Os de déformation",
+    "In front": "Au premier plan", "Names": "Noms", "Visible parts": "Parties visibles",
+    "Show all": "Tout afficher", "Hide all": "Tout masquer", "Body": "Corps", "Arms": "Bras", "Legs": "Jambes",
+    "Bento fingers": "Doigts Bento", "Bento face / eyes": "Visage / yeux Bento", "Bento wings": "Ailes Bento",
+    "Bento tail": "Queue Bento", "Bento hind limbs": "Membres arrière Bento",
+    "Fitted Mesh volumes": "Volumes Fitted Mesh", "IK controls": "Contrôles IK", "Other bones": "Autres os",
+    "Hand / foot IK": "IK mains / pieds", "Create hand / foot IK controls": "Créer les contrôles IK mains / pieds",
+    "Add eight non-deforming target and pole bones; keep SL rest bones unchanged":
+        "Ajouter huit os de commande sans déformation ; conserver les os SL au repos",
+    "Enable / disable IK": "Activer / désactiver l’IK", "Select IK control": "Sélectionner un contrôle IK",
+    "Snap IK controls to the current pose when enabling; keep the visible pose when disabling":
+        "Aligner les contrôles IK sur la pose à l’activation ; conserver la pose à la désactivation",
+    "Left hand IK": "IK main gauche", "Right hand IK": "IK main droite",
+    "Left foot IK": "IK pied gauche", "Right foot IK": "IK pied droit", "Target": "Cible", "Pole": "Pôle",
+    "IK poses stay in Blender.": "Les poses IK restent dans Blender.",
+    "Aurora animates the rest mesh.": "Aurora anime le maillage au repos.",
+    "Transfer weights from source": "Transférer les poids du donneur",
+    "Replace selected target bone weights from the source mesh, normalized to four influences":
+        "Remplacer les poids des cibles sélectionnées depuis le donneur, normalisés à quatre influences",
+    "Select target meshes; the source stays unchanged.": "Sélectionnez les cibles ; le donneur est préservé.",
+    "Normalize / limit to four weights": "Normaliser / limiter à quatre poids",
+    "Weights normalized to four influences": "Poids normalisés à quatre influences", "Weights transferred": "Poids transférés",
+    "Choose an avatar rig first": "Choisissez d’abord un squelette d’avatar",
+    "Use an editable local armature": "Utilisez une armature locale éditable",
+    "This armature is missing the SL arm or leg chain": "Il manque une chaîne de bras ou de jambe SL dans cette armature",
+    "The IK chain has zero length": "La chaîne IK a une longueur nulle",
+    "Leave Edit Mode before creating IK controls": "Quittez le mode Édition avant de créer les contrôles IK",
+    "The limb already has constraints; use a simple SL rig for Aurora IK":
+        "Ce membre a déjà des contraintes ; utilisez un squelette SL simple pour l’IK Aurora",
+    "An IK control name is already used by another bone": "Un nom de contrôle IK est déjà utilisé par un autre os",
+    "Create Aurora IK controls first": "Créez d’abord les contrôles IK Aurora",
+    "Use Pose Position and leave Edit Mode to switch IK": "Utilisez la position de pose et quittez le mode Édition pour basculer l’IK",
+    "Some vertices have no transferable deform weights; original weights were kept":
+        "Certains sommets n’ont aucun poids de déformation transférable ; les poids précédents sont conservés",
+    "Unlock the target's bone vertex groups before replacing weights":
+        "Déverrouillez les groupes d’os de la cible avant de remplacer les poids",
+    "Select target meshes other than the weight source": "Sélectionnez des maillages cibles distincts du donneur",
+    "Choose a mesh as the weight source": "Choisissez un maillage donneur de poids",
+    "The weight source needs vertices and, for surface transfer, faces":
+        "Le donneur doit avoir des sommets et, pour le transfert de surface, des faces",
+    "No nearby source surface; original weights were kept": "Aucune surface donneuse proche ; les poids précédents sont conservés",
+    "A target vertex exceeds the transfer distance; original weights were kept":
+        "Un sommet cible dépasse la distance de transfert ; les poids précédents sont conservés",
     "No suitable deform bones in the chosen rig": "Aucun os de déformation adapté dans le squelette choisi",
     "Select one or more meshes to recalculate their weights": "Sélectionnez les maillages à repondérer",
     "Choose an avatar rig or select one armature with the meshes": "Choisissez un squelette d’avatar ou sélectionnez une armature avec les maillages",
@@ -375,6 +434,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
 
 def register():
     tracking.on_change = _request_capture
+    tools_ui.on_weights_changed = _weights_changed
     bpy.app.translations.register(__name__, _translations)
     for cls in _classes:
         bpy.utils.register_class(cls)
@@ -386,6 +446,7 @@ def register():
 def unregister():
     _stop()
     tracking.on_change = None
+    tools_ui.on_weights_changed = None
     bpy.app.translations.unregister(__name__)
     for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, _changed), (bpy.app.handlers.load_pre, _load_pre)):
         if callback in handlers:

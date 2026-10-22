@@ -7,6 +7,7 @@ Run with --background --factory-startup --python-exit-code 1 --python this_file
 import os
 from pathlib import Path
 import sys
+import importlib
 import zipfile
 import bpy
 
@@ -31,6 +32,12 @@ else:
     result = bpy.ops.preferences.addon_enable(module=module)
 assert "FINISHED" in result, result
 assert hasattr(bpy.types.Scene, "aurora_live"), "extension was not enabled"
+installed = importlib.import_module(module)
+if extension:
+    # Blender strips bl_info from extension modules; its manifest is authoritative.
+    assert 'version = "0.6.0"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
+else:
+    assert installed.bl_info["version"] == (0, 6, 0)
 assert bpy.ops.aurora.create_sl_rig(with_tshirt=True) == {"FINISHED"}
 shirt = bpy.context.object
 assert len(shirt.find_armature().data.bones) == 159
@@ -43,6 +50,12 @@ assert bpy.ops.aurora.auto_weights() == {"FINISHED"}
 assert not entries[0].enabled
 assert bpy.ops.aurora.live_remove(index=0) == {"FINISHED"}
 assert not entries and shirt.name in bpy.context.scene.objects
+assert bpy.ops.aurora.create_ik() == {"FINISHED"}
+assert len(shirt.find_armature().data.bones) == 167
+assert bpy.ops.aurora.switch_ik(limb="HAND_L", enabled=True) == {"FINISHED"}
+assert bpy.ops.aurora.switch_ik(limb="HAND_L", enabled=False) == {"FINISHED"}
+assert bpy.ops.aurora.bone_visibility(part="FACE", visible=True) == {"FINISHED"}
+assert bpy.ops.aurora.transfer_weights(clean=True) == {"FINISHED"}
 result = bpy.ops.preferences.addon_disable(module=module)
 assert "FINISHED" in result and not hasattr(bpy.types.Scene, "aurora_live"), result
 print("AURORA_BLENDER_INSTALL_OK", flush=True)

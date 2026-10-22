@@ -64,8 +64,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.5.0.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.5.0-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.6.0.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.6.0-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -101,14 +101,50 @@ The starter respects the current **Coordinates** choice and scene unit
 scale. Its proportions are the standard SL rest skeleton, independent of
 your current account's shape. The shirt is sample geometry for testing
 weights and live edits; fit it to your intended body before using it as
-clothing. It includes no avatar body mesh or animation control/IK rig.
+clothing. It includes no avatar body mesh. Optional IK controls can be added
+through the **Skeleton / Bento / IK** section.
+
+## Skeleton visibility and hand/foot IK
+
+Choose **Avatar rig** in **Skeleton / Bento / IK**, or leave it empty to use
+the active armature or the active mesh's rig. **Visible parts** shows separate
+toggles for the body, arms, legs, Bento fingers, face/eyes, wings, tail, hind
+limbs, Fitted Mesh volumes and IK controls. **Show all / Hide all** affect
+every bone. Enabling a part also reveals its containing collections/layers,
+without revealing unrelated hidden parts. These controls work in Edit Mode
+too. **In front**, **Names**, and Blender's rest/pose switch help inspect the
+skeleton. Visibility changes display only; they do not disable deformation.
+
+**Create hand / foot IK controls** adds eight non-deforming target/pole bones
+and four independent two-bone IK chains. The 159 SL deformation bones retain
+their rest matrices and canonical joint names. The controls are optional,
+excluded from live export, and kept in an **Aurora IK** collection (layer 32
+in Blender 2.93–3.x). Creating controls again is idempotent. Use a simple,
+editable SL armature; limbs already constrained by another rigging tool are
+rejected before adding controls.
+
+Enable each hand or foot independently. **Target** selects its control in
+Pose Mode: move it to position the wrist/ankle, rotate it to orient the
+hand/foot. **Pole** selects the elbow/knee direction control. IK does not
+stretch limbs; targets beyond their reach cannot be reached. Enabling snaps
+controls to the current FK pose; disabling bakes the visible limb pose back
+to FK. The straight SL T-pose uses a tiny local pose seed to avoid Blender's
+singular straight-chain solve; the SL rest skeleton stays unchanged. Native
+SL joint gaps can introduce pose differences of about one millimetre during switching.
+Use Pose Position and leave Edit Mode before switching IK.
+
+These controls support fitting and weight inspection in Blender. Aurora
+continues receiving the rest mesh and playing its own avatar animations;
+Blender IK poses and animation playback are not streamed. This is a focused
+set of SL rigging tools, not an Avastar import/export or animation replacement.
 
 ## Automatic weight painting
 
-Select your mesh objects and choose **Avatar rig** in Sidebar → Aurora.
+Select your mesh objects and choose **Avatar rig** in **Skeleton / Bento / IK**.
 The starter selects its newly created rig automatically. Leaving the field
 empty uses each mesh's existing armature, or the single selected armature.
-Click **Recalculate automatic weights** in Object Mode or Weight Paint mode.
+In **Weights / transfer**, click **Recalculate automatic weights** in Object
+Mode or Weight Paint mode.
 This replaces the selected meshes' bone weights using Blender's native heat
 solver, keeps the strongest four influences and normalizes them. Undo restores
 the previous result. An existing Aurora connection immediately tracks these
@@ -128,9 +164,37 @@ leaves any vertex unweighted, no selected source mesh is changed. Check the
 topology and retry, or paint the problematic weights manually. Use editable
 objects with at most one Armature modifier.
 
+## Transfer and normalize weights
+
+In **Weights / transfer**, choose a **Weight source** mesh, then select the
+target meshes. The donor can remain selected; it is excluded from targets.
+**Transfer weights from source** replaces only target bone groups, binds the
+targets to **Avatar rig** (or their existing/donor rig), keeps the strongest
+four weights and normalizes them. **Nearest surface** interpolates weights
+on the closest donor triangle; **Nearest vertex** copies the closest donor
+vertex's weights. Matching uses world coordinates, including object transforms.
+Target matching uses the current shape-key fit, retaining original vertex indices
+and excluding target topology modifiers and armature posing.
+**Max distance** rejects any vertex too far from the source; zero is unlimited.
+
+The donor is evaluated on a disposable copy, with shape keys and geometry
+modifiers but without armature posing. Bone aliases map through `aurora_joint`.
+Bento and Fitted Mesh deform weights are included; non-deforming IK controls
+are excluded. A donor without deform weights, an unweighted target vertex,
+a locked target bone group, or an exceeded distance rejects the entire
+selected batch before publishing any weight changes. Unlock target bone
+groups deliberately before replacing them.
+
+**Normalize / limit to four weights** cleans selected meshes' existing deform
+weights without a donor. Both operations support Undo and preserve non-bone
+mask groups, UVs, shape keys, placement, selection and Weight Paint mode.
+Shared target mesh data becomes independent. The donor stays unchanged.
+Connected target meshes are added to the live list without resuming paused
+entries, and weight changes trigger a new capture.
+
 ## Live materials
 
-Plug-in **0.5.0 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.6.0 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value
@@ -215,6 +279,7 @@ The exporter tests use Blender itself without logging into a grid:
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_starter.py
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_materials_weights.py
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_tracking.py
+& '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_rig_tools.py
 python -m unittest discover -s blender/tests -p 'test_client.py' -v
 ```
 
