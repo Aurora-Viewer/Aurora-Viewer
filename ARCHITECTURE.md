@@ -28,7 +28,9 @@ captures connected Principled PBR inputs, UV maps and bounded embedded images;
 node signatures and texture-paint ticks supplement dependency-graph updates.
 `rigging.py` manages SL/Bento part visibility across collections/layers and
 optional independent hand/foot IK target/pole controls, preserving SL rest
-bones. Pose selection uses `PoseBone` in Blender 5 and `Bone` in older APIs.
+bones. Pose selection and visibility use `PoseBone` in Blender 5 and `Bone`
+in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
+`Bone.hide` affects Edit Mode only, so pose display must not read that flag.
 `skinning.py` evaluates unposed donor copies and transfers world-space surface
 or nearest-vertex weights, or cleans existing weights; all targets are
 validated before publishing four normalized deform influences. `tools_ui.py`

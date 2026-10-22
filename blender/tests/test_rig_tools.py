@@ -110,6 +110,26 @@ class RigToolsTests(unittest.TestCase):
                 rigging.set_ik(bpy.context, self.rig, key, False)
                 self.assertPoseNear(solved, self.pose(key), 0.0001)
 
+    def test_visibility_buttons_change_the_native_pose_hide_flag_repeatedly(self):
+        rigging.setup(bpy.context, self.rig)
+        for obj in bpy.context.selected_objects:
+            obj.select_set(False)
+        self.rig.select_set(True)
+        bpy.context.view_layer.objects.active = self.rig
+        for mode in ("OBJECT", "POSE"):
+            bpy.ops.object.mode_set(mode=mode)
+            for key, _label in rigging.PARTS:
+                with self.subTest(mode=mode, part=key):
+                    members = [b for b in self.rig.data.bones if rigging.part(b) == key]
+                    for _repeat in range(2):
+                        for visible in (True, False):
+                            self.assertEqual(bpy.ops.aurora.bone_visibility(part=key, visible=visible), {"FINISHED"})
+                            for bone in members:
+                                pose_bone = self.rig.pose.bones[bone.name]
+                                native = pose_bone if hasattr(pose_bone, "hide") else bone
+                                self.assertEqual(native.hide, not visible, bone.name)
+                                self.assertEqual(rigging.visible(self.rig, bone), visible, bone.name)
+
     def test_switch_from_bent_fk_pose_and_hidden_control_selection(self):
         rigging.setup(bpy.context, self.rig)
         for key in rigging.LIMBS:

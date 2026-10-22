@@ -52,8 +52,18 @@ def part(bone):
     return "BODY" if name.startswith(("mPelvis", "mTorso", "mChest", "mSpine", "mNeck", "mHead", "mSkull")) else "EXTRA"
 
 
+def _display_state(rig, bone):
+    # Blender 5 stores object/pose visibility per PoseBone; Bone.hide now
+    # controls Edit Mode only. Older Blender keeps pose visibility on Bone.
+    if rig.mode != "EDIT":
+        pose_bone = rig.pose.bones.get(bone.name)
+        if pose_bone is not None and hasattr(pose_bone, "hide"):
+            return pose_bone
+    return bone
+
+
 def visible(rig, bone):
-    if bone.hide:
+    if _display_state(rig, bone).hide:
         return False
     if hasattr(bone, "collections"):
         return not bone.collections or any(getattr(group, "is_visible_effectively", group.is_visible) for group in bone.collections)
@@ -96,9 +106,9 @@ def show(rig, key, enabled):
             rig.data.layers = mask
         # Enabling a shared collection/layer must not reveal unrelated parts.
         for bone in items:
-            bone.hide = not old[bone.name]
+            _display_state(rig, bone).hide = not old[bone.name]
     for bone in targets:
-        bone.hide = not enabled
+        _display_state(rig, bone).hide = not enabled
         if not enabled:
             _select(rig, bone, False)
 

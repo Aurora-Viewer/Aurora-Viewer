@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.6.1.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.6.1-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.6.2.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.6.2-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -127,7 +127,10 @@ limbs, Fitted Mesh volumes and IK controls. **Show all / Hide all** affect
 every bone. Enabling a part also reveals its containing collections/layers,
 without revealing unrelated hidden parts. These controls work in Edit Mode
 too. **In front**, **Names**, and Blender's rest/pose switch help inspect the
-skeleton. Visibility changes display only; they do not disable deformation.
+skeleton. Visibility follows the current mode: Object/Pose uses pose visibility,
+while Edit Mode uses edit-bone visibility. Visibility changes display only;
+they do not disable deformation. Plug-in 0.6.2 corrects Blender 5's separate
+pose hide flag, so showing a part and hiding it again both affect the viewport.
 
 In **IK**, **Create IK controls** adds eight non-deforming target/pole bones
 and four independent two-bone IK chains. The 159 SL deformation bones retain
@@ -208,7 +211,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.6.1 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.6.2 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value
