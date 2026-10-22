@@ -27,7 +27,7 @@ An empty line starts a new paragraph.
 # Aurora Viewer news
 
 ## 2026-10-22 — RLVa, when you want it
-From the next version, Aurora understands RLVa: the restrictions, exceptions and commands that scripted outfits, furniture and experiences rely on. It stays off until you turn it on in Preferences › Protections, and turning it off releases everything at once.
+Since version 0.7.4, Aurora understands RLVa: the restrictions, exceptions and commands that scripted outfits, furniture and experiences rely on. It stays off until you turn it on in Preferences › Protections, and turning it off releases everything at once.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/RLVA.md)
 
 ## 2026-10-22 — Aurora on Linux

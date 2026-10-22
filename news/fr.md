@@ -27,7 +27,7 @@ Une ligne vide commence un nouveau paragraphe.
 # Actualités d'Aurora Viewer
 
 ## 2026-10-22 — RLVa, quand vous le voulez
-À partir de la prochaine version, Aurora comprend RLVa : les restrictions, exceptions et commandes dont se servent les tenues scriptées, les meubles et les expériences. Il reste éteint tant que vous ne l'activez pas dans Préférences › Protections, et l'éteindre libère tout d'un coup.
+Depuis la version 0.7.4, Aurora comprend RLVa : les restrictions, exceptions et commandes dont se servent les tenues scriptées, les meubles et les expériences. Il reste éteint tant que vous ne l'activez pas dans Préférences › Protections, et l'éteindre libère tout d'un coup.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/RLVA.md)
 
 ## 2026-10-22 — Aurora sur Linux
