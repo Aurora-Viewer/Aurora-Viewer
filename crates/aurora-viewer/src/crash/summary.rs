@@ -294,6 +294,7 @@ mod tests {
             log_path: dir.join("PRIVATE_LOG_PATH.log"),
             demo: false,
             os: "Windows 11 Pro (26200, x86_64)".into(),
+            crash_reports: Default::default(),
         };
         (dir, record)
     }

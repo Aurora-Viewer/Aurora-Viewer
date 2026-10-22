@@ -2686,6 +2686,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
+| `AURORA_DEMO_CRASH_SEND=<options>` | Crash report sending with a simulated GitHub |
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
@@ -3657,8 +3658,19 @@ failure. Grid validation and any paid upload are performed by the human.
   viewer runs, its session folder holds a `watching` marker; without it
   the watcher did not start (its error is the first line of the console)
   and no window would follow a crash.
-  The "Send a crash report" button must open GitHub's issue chooser in
-  the browser, like "Report a bug" in the viewer.
+  "Send a crash report" opens the preview of the issue to publish
+  (docs/BUG_REPORTING.md); it is absent when Preferences › Privacy says
+  Never.
+- **`AURORA_DEMO_CRASH_SEND=ask|always|never[,connected][,preview][,authorize][,sent][,fail]`**,
+  with `AURORA_DEMO_CRASH`: the crash window with a simulated GitHub (no
+  network, no credential store). The first word replaces the Preferences
+  choice; `connected` starts with an authorization, `preview` opens on the
+  preview, `authorize` also starts the connection (code `DEMO-1234`, then
+  authorized after three seconds), `sent` shows a report already sent as
+  issue 4242, `fail` makes the creation fail. `always,connected` sends at
+  once and shows "Sending…" then the issue; `always` alone asks to send
+  once to connect. A real authorization and a real issue are only tested
+  by the human, outside the demo.
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: no effect
   while the built-in bug report form is disabled ("Report a bug" opens
   GitHub's issue chooser, see [BUG_REPORTING.md](BUG_REPORTING.md)); what

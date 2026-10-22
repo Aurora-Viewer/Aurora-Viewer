@@ -1686,15 +1686,20 @@ in memory: the only form that can be symbolized after the process is gone.
 the session folder, written before the window opens): only values of a known
 shape, re-validated from the session files, and the closed log vocabulary of
 `privacy.rs`. The raw traces, panic messages, paths and the log stay local.
+`github.rs` publishes that text as a GitHub issue in the tester's name: the
+GitHub App's Device Flow on a worker thread, the authorization in the system
+credential store (`keyring`), refreshed without client secret; the window
+polls it between frames and shows the preview, the connection code and the
+issue (Preferences › Privacy › Crash reports: Ask, Always or Never).
 
 `window.rs` reuses Fluent, the Palette, the fonts, the Tabler icons
 and the buttons of the viewer. `software.rs` draws its egui meshes on the
 CPU and `softbuffer` presents the pixels, without initialising Vulkan or any
 graphics adapter. The loop waits for events between frames.
 
-"Send a crash report" opens GitHub's issue chooser in the browser, like
-"Report a bug" in the viewer. While the built-in form is disabled (see
-`bug_report/` above), `report.rs` stays out of the build. Once enabled, it
+"Send a crash report" opens the preview of `github.rs` above. While the
+built-in bug report form is disabled (see `bug_report/` above), `report.rs`
+stays out of the build. Once enabled, it
 composes the draft from this snapshot and the markers of
 the stopped session, and the button opens the same
 `ui/bug_report.rs` as the viewer, with its checkboxes, its preview and its
