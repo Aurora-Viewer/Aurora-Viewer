@@ -1904,9 +1904,6 @@ impl BuildTool {
             }
             Tool::Land => {
                 self.land.draw(&mut p, world, s);
-                if s.show_parcel_owners {
-                    land::draw_owners(&mut p, world);
-                }
             }
             Tool::Create | Tool::Grab | Tool::Focus => {}
         }

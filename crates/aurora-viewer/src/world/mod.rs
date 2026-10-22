@@ -7,6 +7,7 @@ pub mod blocking;
 pub mod body;
 pub mod calling_cards;
 
+pub mod beacons;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
@@ -2761,7 +2762,7 @@ impl World {
             }
             NetEvent::GroupLand(reply) => {
                 // process_places_reply: only for a group of ours
-                if self.groups.is_member(&reply.group) {
+                if reply.group.is_nil() || self.groups.is_member(&reply.group) {
                     self.group_money.on_land(&reply);
                 } else {
                     log::warn!("PlacesReply for a group we are not in");

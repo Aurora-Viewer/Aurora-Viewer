@@ -114,6 +114,9 @@ pub enum BarAction {
     HideInterface,
     /// World › World tooltips: the three checks, as they are now.
     HoverTips(HoverTipsMenu),
+    WorldOverlays(crate::world::beacons::Overlays),
+    ShowTransparency,
+    OwnedLand,
 }
 
 /// How the islands of Aurora's top bar are set (Preferences › Interface).
@@ -206,6 +209,8 @@ pub struct StatusInfo<'a> {
     pub interface_keys: String,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
+    pub world_overlays: crate::world::beacons::Overlays,
+    pub show_transparency: bool,
 }
 
 /// World › World tooltips: the Legacy Viewer's Show Tips, Show Land
@@ -759,6 +764,53 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         ) {
             *action = BarAction::CreateLandmark;
         }
+        if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
+            *action = BarAction::OwnedLand;
+        }
+        menu::submenu(ui, p, "eye-filled", aurora_i18n::tr!("world-show-more"), true, |ui| {
+            flip_window(
+                ui,
+                p,
+                "radar-filled",
+                aurora_i18n::tr!("beacons-title"),
+                super::beacons::WINDOW,
+                &mut panels.beacons,
+            );
+            let mut overlays = st.world_overlays;
+            let before = overlays;
+            flip(
+                ui,
+                p,
+                "border-all",
+                aurora_i18n::tr!("world-property-lines"),
+                &mut overlays.property_lines,
+                true,
+            );
+            flip(ui, p, "map", aurora_i18n::tr!("world-land-owners"), &mut overlays.land_owners, true);
+            if overlays != before {
+                *action = BarAction::WorldOverlays(overlays);
+            }
+            if menu::check(
+                ui,
+                p,
+                "layers-subtract",
+                aurora_i18n::tr!("common-show-transparency"),
+                st.show_transparency,
+                true,
+            ) {
+                *action = BarAction::ShowTransparency;
+            }
+            if flip(
+                ui,
+                p,
+                "sparkles",
+                aurora_i18n::tr!("world-hide-particles"),
+                &mut overlays.hide_particles,
+                true,
+            ) {
+                *action = BarAction::WorldOverlays(overlays);
+            }
+        });
         menu::submenu(ui, p, "barrier-block-filled", aurora_i18n::tr!("ui-bars-ban-lines"), true, |ui| {
             for (v, icon, label) in [
                 (0u8, "eye-off", aurora_i18n::tr!("ui-bars-hidden")),

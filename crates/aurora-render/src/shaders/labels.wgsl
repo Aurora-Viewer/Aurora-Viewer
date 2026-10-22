@@ -25,7 +25,9 @@ struct VertexOutput {
     @location(0) tex_coord: vec2<f32>,
     // gamma 0-1
     @location(1) color: vec4<f32>,
-    @location(2) @interpolate(flat) depth: f32,
+    // Labels keep a constant depth; world guides interpolate depth along
+    // their projected segment. Their screen-space vertices all have w=1.
+    @location(2) @interpolate(linear) depth: f32,
     @builtin(position) position: vec4<f32>,
 }
 

@@ -752,6 +752,7 @@ struct Pipelines {
     glow_suppress: wgpu::RenderPipeline,
     /// Debug "Show transparency": red and blue translucent faces.
     debug_red: wgpu::RenderPipeline,
+    land_overlay: wgpu::RenderPipeline,
     debug_blue: wgpu::RenderPipeline,
     debug_green: wgpu::RenderPipeline,
     debug_yellow: wgpu::RenderPipeline,
@@ -2139,6 +2140,7 @@ struct Ranges {
     glow: (u64, u32),
     glow_alpha: (u64, u32),
     debug_red: (u64, u32),
+    land_overlay: (u64, u32),
     debug_blue: (u64, u32),
     debug_green: (u64, u32),
     debug_yellow: (u64, u32),
@@ -3035,6 +3037,14 @@ impl Backend {
                 ..base(label, "vs_main", "fs_debug_flat")
             })
         };
+        let land_overlay = pipe(PipeDesc {
+            cull: None,
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            ..base("parcel overlays", "vs_land_overlay", "fs_land_overlay")
+        });
         let debug_red = debug(
             "debug red",
             &[("debug_r", 1.0), ("debug_g", 0.0), ("debug_b", 0.0), ("debug_a", 0.35)],
@@ -3278,6 +3288,7 @@ impl Backend {
             glow_max,
             glow_suppress,
             debug_red,
+            land_overlay,
             debug_blue,
             debug_green,
             debug_yellow,
@@ -5286,6 +5297,7 @@ impl Backend {
         let hud_blend_range = push(cpu, &lists.hud_blend);
         let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
         rg.debug_red = push(cpu, &lists.debug_red);
+        rg.land_overlay = push(cpu, &lists.land_overlay);
         rg.debug_blue = push(cpu, &lists.debug_blue);
         rg.debug_green = push(cpu, &lists.debug_green);
         rg.debug_yellow = push(cpu, &lists.debug_yellow);
@@ -6242,6 +6254,7 @@ impl Backend {
         let rest = |pass: &mut wgpu::RenderPass| {
             blended(pass, blend_pipe, n_depth, bn);
             // debug overlays (before the particles, which rebind vertex buffer 0)
+            draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
             draw(pass, &self.pipelines.debug_red, rg.debug_red);
             draw(pass, &self.pipelines.debug_blue, rg.debug_blue);
             draw(pass, &self.pipelines.debug_green, rg.debug_green);

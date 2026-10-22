@@ -96,9 +96,16 @@ impl GroupMoney {
         self.groups.remove(group);
     }
 
+    /// LLFloaterLandHoldings::onOpen: the null query id selects our parcels.
+    pub fn request_owned_land(&mut self) {
+        self.request_land(Uuid::nil());
+    }
+
     /// requestGroupLandInfo: a new transaction, the list emptied.
     fn request_land(&mut self, group: Uuid) {
-        let transaction = Uuid::new_v4();
+        // LLFloaterLandHoldings::onOpen uses null query and transaction
+        // UUIDs; group panels correlate their replies with a fresh UUID.
+        let transaction = if group.is_nil() { Uuid::nil() } else { Uuid::new_v4() };
         let g = self.groups.entry(group).or_default();
         g.transaction = transaction;
         g.parcels = None;
@@ -264,6 +271,24 @@ mod tests {
             .map(|p| p.name)
             .collect();
         assert_eq!(names, ["Sandbox", "Workshop"]);
+    }
+
+    #[test]
+    fn personal_holdings_use_null_query_ids_and_stay_apart_from_groups() {
+        let mut money = GroupMoney::default();
+        money.request_owned_land();
+        let cmds = sent(&mut money);
+        assert!(matches!(cmds.as_slice(), [NetCommand::GroupLandQuery { group, transaction }] if group.is_nil() && transaction.is_nil()));
+        money.on_land(&GroupLandReply {
+            group: Uuid::nil(),
+            transaction: Uuid::nil(),
+            totals: None,
+            parcels: vec![parcel("Home")],
+        });
+        assert_eq!(money.get(&Uuid::nil()).unwrap().parcels.as_ref().unwrap()[0].name, "Home");
+        assert!(money.get(&G).is_none());
+        money.request_owned_land();
+        assert!(money.get(&Uuid::nil()).unwrap().parcels.is_none());
     }
 
     #[test]

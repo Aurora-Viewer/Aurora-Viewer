@@ -1747,7 +1747,8 @@ pub enum NetCommand {
     /// instant message.
     GroupNoticeRequest(Uuid),
     /// The parcels the group owns (PlacesQuery, DFQ_GROUP_OWNED), answered
-    /// by NetEvent::GroupLand.
+    /// by NetEvent::GroupLand. A nil group requests the agent's personal
+    /// holdings with DFQ_AGENT_OWNED (LLFloaterLandHoldings).
     GroupLandQuery {
         group: Uuid,
         transaction: Uuid,

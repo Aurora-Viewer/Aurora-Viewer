@@ -23,6 +23,10 @@ use std::sync::Arc;
 /// Where the shapes that follow stand in the world; None for nowhere.
 struct At(Option<Vec3>);
 
+/// A guide segment has a different depth at each endpoint. Depth is linear
+/// in screen space; its egui vertices retain that slope across the line.
+struct Along(Vec3, Vec3);
+
 /// What is painted for the world after this call (on the layer of
 /// `ui::hud::world_painter`, before `end_world_labels`) stands at `at`: the
 /// scene hides it wherever it is nearer to the camera than that point. None:
@@ -32,6 +36,70 @@ pub fn world_label_at(ctx: &egui::Context, at: Option<Vec3>) {
         rect: ctx.content_rect(),
         callback: Arc::new(At(at)),
     });
+}
+
+pub fn world_line_at(ctx: &egui::Context, a: Vec3, b: Vec3) {
+    ctx.layer_painter(egui::LayerId::background()).add(egui::PaintCallback {
+        rect: ctx.content_rect(),
+        callback: Arc::new(Along(a, b)),
+    });
+}
+
+fn line_plane(a: Vec3, b: Vec3, view: &LabelView) -> Option<[Vec3; 2]> {
+    let (mut a, mut b) = (view.view_proj * a.extend(1.0), view.view_proj * b.extend(1.0));
+    if !a.is_finite() || !b.is_finite() || (a.w <= 1e-5 && b.w <= 1e-5) {
+        return None;
+    }
+    if a.w < 1e-5 {
+        a = a.lerp(b, (1e-5 - a.w) / (b.w - a.w));
+    }
+    if b.w < 1e-5 {
+        b = b.lerp(a, (1e-5 - b.w) / (a.w - b.w));
+    }
+    let project = |c: glam::Vec4| {
+        Vec3::new(
+            (c.x / c.w * 0.5 + 0.5) * view.size[0] as f32 / view.pixels_per_point,
+            (0.5 - c.y / c.w * 0.5) * view.size[1] as f32 / view.pixels_per_point,
+            c.z / c.w,
+        )
+    };
+    Some([project(a), project(b)])
+}
+
+fn depth_along(line: [Vec3; 2], at: egui::Pos2) -> f32 {
+    let [a, b] = line;
+    let d = b.truncate() - a.truncate();
+    let t = if d.length_squared() > 1e-8 {
+        ((Vec2::new(at.x, at.y) - a.truncate()).dot(d) / d.length_squared()).clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
+    a.z + (b.z - a.z) * t
+}
+
+#[cfg(test)]
+#[test]
+fn beacon_line_depth_tracks_both_ends_and_clips_the_near_plane() {
+    let view = LabelView {
+        view_proj: glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1),
+        pixels_per_point: 1.5,
+        size: [900, 900],
+        jitter: Vec2::ZERO,
+    };
+    let a = Vec3::new(-1.0, 0.0, -2.0);
+    let b = Vec3::new(1.0, 0.0, -10.0);
+    let [pa, pb] = line_plane(a, b, &view).unwrap();
+    assert!((depth_along([pa, pb], egui::pos2(pa.x, pa.y)) - 0.05).abs() < 1e-6);
+    assert!((depth_along([pa, pb], egui::pos2(pb.x, pb.y)) - 0.01).abs() < 1e-6);
+    let mid = (pa + pb) * 0.5;
+    assert!((depth_along([pa, pb], egui::pos2(mid.x, mid.y)) - 0.03).abs() < 1e-6);
+    assert!(
+        line_plane(a, Vec3::new(0.0, 0.0, 1.0), &view)
+            .unwrap()
+            .into_iter()
+            .all(Vec3::is_finite)
+    );
+    assert!(line_plane(Vec3::Z, Vec3::Z * 2.0, &view).is_none());
 }
 
 /// Depth of what is never hidden: nearer than the near plane (reverse-Z).
@@ -99,15 +167,19 @@ fn collect(
     draws: &mut Vec<Draw>,
 ) {
     let mut depth = NEVER_HIDDEN;
+    let mut along = None;
     for p in primitives {
         match &p.primitive {
             Primitive::Callback(c) => {
                 if let Some(At(at)) = c.callback.downcast_ref::<At>() {
+                    along = None;
                     depth = at
                         .map(|at| view.view_proj * at.extend(1.0))
                         // (behind the camera: its label is not on screen)
                         .filter(|clip| clip.w > 1e-6)
                         .map_or(NEVER_HIDDEN, |clip| clip.z / clip.w);
+                } else if let Some(Along(a, b)) = c.callback.downcast_ref::<Along>() {
+                    along = line_plane(*a, *b, view);
                 }
             }
             Primitive::Mesh(mesh) => {
@@ -117,7 +189,7 @@ fn collect(
                         pos: [v.pos.x, v.pos.y],
                         uv: [v.uv.x, v.uv.y],
                         color: v.color.to_array(),
-                        depth,
+                        depth: along.map_or(depth, |line| depth_along(line, v.pos)),
                     }));
                     // The marks keep the labels in meshes of their own.
                     // Here the depth is in the vertices: what follows a mesh
@@ -172,7 +244,7 @@ pub(crate) struct LabelDepth {
 /// where they stand are not its callbacks, and leave no trace.
 pub(crate) fn skip(primitives: &mut [ClippedPrimitive]) {
     for p in primitives {
-        if matches!(&p.primitive, Primitive::Callback(c) if c.callback.is::<At>()) {
+        if matches!(&p.primitive, Primitive::Callback(c) if c.callback.is::<At>() || c.callback.is::<Along>()) {
             // (an empty mesh must have an empty clip, see `collect`)
             p.primitive = Primitive::Mesh(egui::Mesh::default());
             p.clip_rect = egui::Rect::NOTHING;

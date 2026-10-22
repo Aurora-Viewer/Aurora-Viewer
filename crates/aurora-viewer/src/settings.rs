@@ -358,6 +358,8 @@ pub struct Settings {
     /// the moon ("Show Beacon" of the Sun & Moon tab).
     pub sun_beacon: bool,
     pub moon_beacon: bool,
+    pub beacons: crate::world::beacons::Beacons,
+    pub world_overlays: crate::world::beacons::Overlays,
     /// Debug overlays (not saved).
     #[serde(skip)]
     pub debug: DebugView,
@@ -1298,6 +1300,8 @@ impl Default for Settings {
             show_huds: true,
             sun_beacon: false,
             moon_beacon: false,
+            beacons: Default::default(),
+            world_overlays: Default::default(),
             debug: DebugView::default(),
             dev_toolbox: None,
             build: Default::default(),

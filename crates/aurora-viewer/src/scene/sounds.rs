@@ -172,6 +172,26 @@ pub struct SoundManager {
 }
 
 impl SoundManager {
+    /// pipeline.cpp walks every audio source, including sources whose
+    /// object is invisible and triggered sounds without a drawable.
+    pub fn beacon_sources(&self, world: &World, now: Instant) -> Vec<(Option<usize>, Vec3)> {
+        let position = |id: &Uuid| {
+            let idx = world.objects.index_of_uuid(id)?;
+            let (pos, _, hud) = Scene::object_transform(world, idx, now, 0)?;
+            (!hud).then_some((Some(idx), pos))
+        };
+        self.sources
+            .iter()
+            .filter(|(_, source)| source.playing.is_some() || source.pending.is_some())
+            .filter_map(|(id, _)| position(id))
+            .chain(
+                self.triggered
+                    .iter()
+                    .map(|s| s.follow.as_ref().and_then(position).unwrap_or((None, s.pos))),
+            )
+            .collect()
+    }
+
     pub fn new(cache_dir: PathBuf) -> SoundManager {
         let _ = std::fs::create_dir_all(cache_dir.join("sound"));
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -628,6 +648,31 @@ impl SoundManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_beacons_follow_pending_sources_and_drop_stopped_sounds() {
+        let lib = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.apply(crate::demo::beacons::events());
+        let object = world.objects.iter().find(|(_, o)| o.key.local_id == 68203).unwrap().1.full_id;
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.sounds.set_attached(None, object, Uuid::from_u128(1), 0.0, 0);
+        assert_eq!(
+            scene.sounds.beacon_sources(&world, Instant::now()).len(),
+            1,
+            "inaudible and waiting for its asset"
+        );
+        scene.sounds.set_attached(None, object, Uuid::nil(), 0.0, FLAG_STOP);
+        assert!(scene.sounds.beacon_sources(&world, Instant::now()).is_empty());
+        scene.sounds.trigger(Uuid::from_u128(2), Vec3::new(3.0, 4.0, 5.0), None, 1.0);
+        assert_eq!(
+            scene.sounds.beacon_sources(&world, Instant::now()),
+            [(None, Vec3::new(3.0, 4.0, 5.0))]
+        );
+    }
 
     #[test]
     fn distance_and_panning() {

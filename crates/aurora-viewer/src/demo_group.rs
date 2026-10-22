@@ -485,6 +485,19 @@ fn group_land(group: Uuid, transaction: Uuid) -> Vec<NetEvent> {
         sim_name: sim.into(),
         sku: "023".into(),
     };
+    if group.is_nil() {
+        return vec![NetEvent::GroupLand(Box::new(GroupLandReply {
+            group,
+            transaction,
+            totals: None,
+            parcels: vec![parcel(
+                aurora_i18n::tr!("demo-group-land-workshop"),
+                aurora_i18n::tr!("common-aurora-demo"),
+                (256_140.0, 256_130.0),
+                512,
+            )],
+        }))];
+    }
     if group != DEMO_GROUP1 {
         return vec![NetEvent::GroupLand(Box::new(GroupLandReply {
             group,

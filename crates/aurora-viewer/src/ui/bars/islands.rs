@@ -1016,6 +1016,8 @@ mod tests {
             interface_keys: String::new(),
             health: Default::default(),
             hover_tips: Default::default(),
+            world_overlays: Default::default(),
+            show_transparency: false,
         }
     }
 
