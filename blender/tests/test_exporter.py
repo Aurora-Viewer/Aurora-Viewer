@@ -84,6 +84,7 @@ class ExporterTests(unittest.TestCase):
         key = self.mesh.shape_key_add(name="Widen")
         key.data[1].co.x = 0.8
         key.value = 0.5
+        key_count = len(bpy.data.shape_keys)
         solid = self.mesh.modifiers.new("Thickness", "SOLIDIFY")
         solid.thickness = 0.02
         value = self.capture()
@@ -95,6 +96,7 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(self.mesh.mode, "EDIT")
         self.capture()
         self.assertEqual(self.mesh.mode, "EDIT")
+        self.assertEqual(len(bpy.data.shape_keys), key_count, "capture must not leave orphan shape-key data")
 
     def test_weight_edits_units_and_deleted_object(self):
         chest = self.mesh.vertex_groups.new(name="mChest")

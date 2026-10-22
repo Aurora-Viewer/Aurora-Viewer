@@ -6,7 +6,8 @@ and exported to ZIP on a worker, using the shared atomic file writer.
 A dedicated thread validates, normalizes and encodes the latest snapshot;
 `app/blender_live.rs` maintains render-only attachments under
 our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
-or edit/touch target. Normal GPU skinning supplies animations and avatar shape;
+or edit/touch target. Arrival cleanup excludes these private roots from stale
+simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.
 `scene/blender_live.rs` retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the Blender 4.3+
