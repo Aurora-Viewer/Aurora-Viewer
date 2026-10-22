@@ -35,6 +35,7 @@ mod frame_par;
 mod frame_profile;
 mod gestures;
 mod graphics_presets;
+mod grids;
 mod hover_tips;
 mod imports;
 mod interaction;

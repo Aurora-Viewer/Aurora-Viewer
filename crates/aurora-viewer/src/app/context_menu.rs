@@ -538,8 +538,15 @@ impl App {
                     self.panels.world_map = true;
                 }
             }
-            CtxAction::ShowPlaceInfo(region, pos) => self.show_place_profile(crate::world::place_details::Source::Link { region, pos }),
+            CtxAction::ShowPlaceInfo(region, pos) => {
+                if let Some(region) = self.grid_region(&region) {
+                    self.show_place_profile(crate::world::place_details::Source::Link { region, pos });
+                }
+            }
             CtxAction::ShowPlace(region, pos) => {
+                let Some(region) = self.grid_region(&region) else {
+                    return;
+                };
                 self.world.map.track_region(&region, pos);
                 ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             }

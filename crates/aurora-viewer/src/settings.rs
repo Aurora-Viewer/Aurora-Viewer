@@ -415,6 +415,8 @@ pub struct Settings {
     pub remember_password: bool,
     pub grid: GridChoice,
     pub custom_login_uri: String,
+    /// Saved grid metadata, independent of the account catalogue.
+    pub grids: Vec<crate::grids::Grid>,
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
@@ -1327,6 +1329,7 @@ impl Default for Settings {
             remember_password: false,
             grid: GridChoice::SecondLife,
             custom_login_uri: "http://127.0.0.1:9000/".into(),
+            grids: Vec::new(),
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
@@ -1802,6 +1805,7 @@ impl Settings {
     }
 
     fn sanitized(mut self) -> Settings {
+        self.grids.retain_mut(|grid| grid.validate().is_ok());
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2100,6 +2104,7 @@ impl Settings {
             remember_username: old.remember_username,
             grid: old.grid,
             custom_login_uri: old.custom_login_uri,
+            grids: old.grids,
             start_location: old.start_location,
             start_region: old.start_region,
             window_width: old.window_width,

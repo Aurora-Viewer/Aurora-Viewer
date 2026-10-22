@@ -539,7 +539,7 @@ pub(crate) fn overlay<R>(
 }
 
 /// Modal dialogs use the same surface and spacing as regular windows.
-pub struct Modal(egui::Modal, Option<Palette>);
+pub struct Modal(egui::Modal, Option<(Palette, f32)>);
 
 impl Modal {
     pub fn new(id: egui::Id) -> Self {
@@ -553,27 +553,31 @@ impl Modal {
 
     /// Login glass includes the sky and account cards, drawn below the modal.
     pub fn login_surface(mut self, p: &Palette) -> Self {
-        self.1 = Some(*p);
+        self.1 = Some((*p, super::super::aurora_bg::LOGIN_TINT));
         if p.panel_alpha < 255 {
             self.0 = self.0.backdrop_color(Color32::TRANSPARENT);
         }
         self
     }
+
+    /// A denser tint for editors with many fields, keeping the skin's glass.
+    pub fn stronger_tint(mut self) -> Self {
+        if let Some((_, tint)) = &mut self.1 {
+            *tint = 0.78;
+        }
+        self
+    }
+
     pub fn show<T>(self, ctx: &egui::Context, body: impl FnOnce(&mut egui::Ui) -> T) -> egui::ModalResponse<T> {
         // Theme supplies skin colors and radii; per-modal frames remain local.
         let mut frame = egui::Frame::popup(&ctx.global_style())
             .inner_margin(18)
             .corner_radius(ctx.global_style().visuals.window_corner_radius);
-        if let Some(p) = self.1.filter(|p| p.panel_alpha < 255) {
+        if let Some((p, tint)) = self.1.filter(|(p, _)| p.panel_alpha < 255) {
             // The world sampler cannot include egui cards. The existing modal
             // backdrop blurs lower UI layers on the GPU before drawing this frame.
             aurora_render::blurred_backdrop(ctx, self.0.area.layer());
-            frame.fill = Color32::from_rgba_unmultiplied(
-                p.panel.r(),
-                p.panel.g(),
-                p.panel.b(),
-                (f32::from(p.panel_alpha) * super::super::aurora_bg::LOGIN_TINT) as u8,
-            );
+            frame.fill = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), (f32::from(p.panel_alpha) * tint) as u8);
         }
         let mut glass_slot = None;
         let response = self.0.frame(frame).show(ctx, |ui| {

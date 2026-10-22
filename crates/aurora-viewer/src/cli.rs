@@ -37,6 +37,8 @@ pub enum Grid {
     SecondLifeBeta,
     /// Another grid's login URI.
     LoginUri(String),
+    /// A name or nickname from the saved grid catalogue.
+    Named(String),
 }
 
 /// `--login`: the account to log in with as soon as the login screen opens
@@ -155,10 +157,8 @@ fn parse_grid(value: &str) -> Option<Grid> {
         "agni" | "secondlife" | "second life" | "sl" | "main" | "util.agni.lindenlab.com" => Some(Grid::SecondLife),
         "aditi" | "beta" | "secondlife_beta" | "util.aditi.lindenlab.com" => Some(Grid::SecondLifeBeta),
         _ if name.starts_with("http://") || name.starts_with("https://") => parse_login_uri(value),
-        _ => {
-            eprintln!("{}", aurora_i18n::tr!("cli-unknown-grid", grid = value.trim().to_owned()));
-            None
-        }
+        _ if !name.is_empty() => Some(Grid::Named(value.trim().to_owned())),
+        _ => None,
     }
 }
 
@@ -310,12 +310,13 @@ mod tests {
     fn grid_names_and_login_uris() {
         assert_eq!(args(&["--grid", "agni"]).grid, Some(Grid::SecondLife));
         assert_eq!(args(&["--grid=Aditi"]).grid, Some(Grid::SecondLifeBeta));
+        assert_eq!(args(&["--grid", "My Grid"]).grid, Some(Grid::Named("My Grid".into())));
         assert_eq!(args(&["--grid", "util.aditi.lindenlab.com"]).grid, Some(Grid::SecondLifeBeta));
         assert_eq!(
             args(&["--grid", "http://grid.example:8002/"]).grid,
             Some(Grid::LoginUri("http://grid.example:8002/".into()))
         );
-        assert_eq!(args(&["--grid", "nowhere"]).grid, None);
+        assert_eq!(args(&["--grid", "nowhere"]).grid, Some(Grid::Named("nowhere".into())));
         assert_eq!(
             args(&["--loginuri", aurora_net::login::SL_BETA_GRID]).grid,
             Some(Grid::SecondLifeBeta)

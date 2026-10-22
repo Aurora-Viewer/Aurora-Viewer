@@ -4148,7 +4148,9 @@ impl Session<'_> {
         } else if id == MapBlockReply::ID {
             let m: MapBlockReply = pkt.decode()?;
             if let Some((want, request)) = self.pending_named_tp.clone() {
-                let found = m.data.iter().find(|d| field_str(&d.name).to_lowercase() == want);
+                // MapSearchModule::AddFinalBlock repeats the requested name
+                // with access 255: that terminator is never a destination.
+                let found = m.data.iter().find(|d| d.access != 255 && field_str(&d.name).to_lowercase() == want);
                 match found {
                     Some(d) => {
                         self.pending_named_tp = None;
@@ -5239,6 +5241,90 @@ mod event_queue_tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn hypergrid_named_teleport_ignores_the_map_terminator() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        sock.writable().await.expect("viewer socket ready");
+        let simulator = UdpSocket::bind("127.0.0.1:0").await.expect("simulator socket");
+        let main = simulator.local_addr().expect("simulator address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, "127.0.0.1:9".parse().expect("neighbour"));
+        let destination = "gate.example:8002:My Region";
+        let position = Vec3::new(12.0, 34.0, 56.0);
+        for found in [false, true] {
+            let ticket = Uuid::from_u128(100 + u128::from(found));
+            session.on_command(NetCommand::TeleportToRegion {
+                request: ticket,
+                name: destination.into(),
+                position,
+                look_at: Vec3::X,
+            });
+            let mut datagram = [0; 4096];
+            let (len, _) = tokio::time::timeout(Duration::from_secs(2), simulator.recv_from(&mut datagram))
+                .await
+                .expect("map request")
+                .expect("packet");
+            let request: MapNameRequest = parse_packet(&datagram[..len]).expect("datagram").decode().expect("map request");
+            assert_eq!(field_str(&request.name_data.name), destination);
+            assert_eq!(request.agent_data.flags, 2);
+            let mut reply = MapBlockReply::default();
+            reply.agent_data.agent_id = session.agent_id();
+            reply.agent_data.flags = 2;
+            if found {
+                reply.data.push(msgs::map_block_reply::Data {
+                    name: str_field(destination),
+                    x: 100,
+                    y: 200,
+                    access: 13,
+                    ..Default::default()
+                });
+            }
+            reply.data.push(msgs::map_block_reply::Data {
+                name: str_field(destination),
+                access: 255,
+                ..Default::default()
+            });
+            let mut bytes = Vec::new();
+            aurora_msg::build_packet(&reply, 1, true, false, &[], &mut bytes);
+            session.dispatch(main, &parse_packet(&bytes).expect("map reply")).expect("dispatch");
+            assert!(session.pending_named_tp.is_none());
+            let result = received
+                .try_iter()
+                .find_map(|(_, event)| match event {
+                    NetEvent::TeleportRegionResolved { request, result } if request == ticket => Some(result),
+                    _ => None,
+                })
+                .expect("region resolution ticket");
+            assert!(
+                simulator.try_recv_from(&mut datagram).is_err(),
+                "resolution must preserve the viewer's RLVa approval step"
+            );
+            if found {
+                let handle = result.expect("resolved region");
+                assert_eq!(handle, ((100 * 256_u64) << 32) | (200 * 256));
+                session.on_command(NetCommand::TeleportTo {
+                    handle,
+                    position,
+                    look_at: Vec3::X,
+                });
+                let (len, _) = tokio::time::timeout(Duration::from_secs(2), simulator.recv_from(&mut datagram))
+                    .await
+                    .expect("teleport")
+                    .expect("packet");
+                let teleport: TeleportLocationRequest = parse_packet(&datagram[..len]).expect("packet").decode().expect("teleport request");
+                assert_eq!(teleport.info.region_handle, ((100 * 256_u64) << 32) | (200 * 256));
+                assert_eq!(teleport.info.position, position);
+            } else {
+                assert!(
+                    simulator.try_recv_from(&mut datagram).is_err(),
+                    "no teleport to the nonexistent handle zero"
+                );
+                assert!(result.is_err());
+            }
+        }
     }
 
     #[tokio::test]

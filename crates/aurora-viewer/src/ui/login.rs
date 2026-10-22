@@ -524,7 +524,7 @@ pub fn show(
             login_card = card(ui, p, 24, true, |ui| {
                 ui.set_width(card_w - 48.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
-                let enabled = !form.busy;
+                let enabled = !form.busy && !super::grids::is_open(&ctx);
                 ui.add_enabled_ui(enabled, |ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-login-login")).size(18.0).strong().color(p.ink));
                     ui.add_space(6.0);
@@ -581,22 +581,12 @@ pub fn show(
                     // grid and start location side by side
                     ui.columns(2, |cols| {
                         caption(&mut cols[0], p, aurora_i18n::tr!("ui-login-grid"));
-                        egui::ComboBox::from_id_salt("grid")
-                            .width(cols[0].available_width())
-                            .selected_text(match settings.grid {
-                                GridChoice::SecondLife => "Second Life",
-                                GridChoice::SecondLifeBeta => aurora_i18n::tr!("ui-login-aditi-beta"),
-                                GridChoice::Custom => aurora_i18n::tr!("ui-login-other-grid"),
-                            })
-                            .show_ui(&mut cols[0], |ui| {
-                                ui.selectable_value(&mut settings.grid, GridChoice::SecondLife, "Second Life");
-                                ui.selectable_value(
-                                    &mut settings.grid,
-                                    GridChoice::SecondLifeBeta,
-                                    aurora_i18n::tr!("status-second-life-beta-aditi"),
-                                );
-                                ui.selectable_value(&mut settings.grid, GridChoice::Custom, aurora_i18n::tr!("ui-login-other-grid"));
-                            });
+                        let mut uri = settings.login_uri();
+                        super::grids::selector(&mut cols[0], &settings.grids, &mut uri);
+                        settings.grid = crate::login_accounts::grid(&uri);
+                        if settings.grid == GridChoice::Custom && !uri.is_empty() {
+                            settings.custom_login_uri = uri;
+                        }
                         caption(&mut cols[1], p, aurora_i18n::tr!("ui-login-start"));
                         let width = cols[1].available_width();
                         start_menu(
@@ -699,7 +689,7 @@ pub fn show(
                     }
                     let enter =
                         (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (resp.clicked() || enter) && can && !form.busy {
+                    if (resp.clicked() || enter) && can && enabled {
                         action = LoginAction::Login;
                     }
                 });

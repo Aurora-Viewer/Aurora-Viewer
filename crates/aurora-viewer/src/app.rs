@@ -506,6 +506,7 @@ pub struct App {
     worldmap_ui: ui::worldmap::WorldMapUi,
     map_tiles: ui::map_tiles::MapTiles,
     options_ui: ui::options::OptionsUi,
+    grids_ui: ui::grids::Manager,
     audio_ui: ui::audio::AudioUi,
     notif_ui: ui::notifications::NotifUi,
     /// A friendship offer in the middle of the screen (#465).
@@ -1072,6 +1073,7 @@ impl App {
             worldmap_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
             options_ui: Default::default(),
+            grids_ui: Default::default(),
             audio_ui: Default::default(),
             notif_ui: Default::default(),
             friend_prompt: Default::default(),
@@ -2022,12 +2024,23 @@ impl App {
             .filter(|(uri, user, _)| *uri == self.settings.login_uri() && *user == self.settings.username.trim().to_lowercase())
             .map(|(_, _, place)| place);
         // then a SLURL given from outside (LLStartUp::getStartSLURL)
-        let slurl = self.login_form.start_slurl.as_ref().map(|l| StartLocation::Region {
-            name: l.region.clone(),
-            x: l.pos.x.round() as u32,
-            y: l.pos.y.round() as u32,
-            z: l.pos.z.round() as u32,
-        });
+        let slurl = if let Some(l) = self.login_form.start_slurl.as_ref() {
+            let name = match crate::grids::resolve(&self.settings, &l.target()) {
+                Ok(name) => name,
+                Err(error) => {
+                    self.login_form.error = Some(error.text().to_owned());
+                    return;
+                }
+            };
+            Some(StartLocation::Region {
+                name,
+                x: l.pos.x.round() as u32,
+                y: l.pos.y.round() as u32,
+                z: l.pos.z.round() as u32,
+            })
+        } else {
+            None
+        };
         let start = reconnect.or(slurl).unwrap_or_else(|| match self.settings.start_location.as_str() {
             "home" => StartLocation::Home,
             "region" if !self.settings.start_region.trim().is_empty() => StartLocation::Region {
@@ -3971,7 +3984,7 @@ impl App {
                 Follow::Place(link) => {
                     if let Some(l) = crate::slurl::parse(&link) {
                         self.notif_ui.open = false;
-                        ui::context::request(ctx, ui::context::CtxAction::ShowPlace(l.region, l.pos));
+                        ui::context::request(ctx, ui::context::CtxAction::ShowPlace(l.target(), l.pos));
                     }
                 }
                 Follow::Inventory(item) => {
@@ -4507,7 +4520,7 @@ impl App {
             value2 = format!("{:.0}", l.pos.y),
             value3 = format!("{:.0}", l.pos.z)
         ));
-        self.teleport_to_location(l.region, l.pos);
+        self.teleport_to_location(l.target(), l.pos);
     }
 
     /// The box "Do not show again" of a teleport confirmation was ticked and
@@ -4520,7 +4533,20 @@ impl App {
 
     /// Teleport to a position of a region given by name: the current region
     /// directly, others through a map lookup by name.
+    fn grid_region(&mut self, region: &str) -> Option<String> {
+        match crate::grids::resolve(&self.settings, region) {
+            Ok(region) => Some(region),
+            Err(error) => {
+                self.world.system_message(error.text());
+                None
+            }
+        }
+    }
+
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
+        let Some(region) = self.grid_region(&region) else {
+            return;
+        };
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
         let command = if local {
@@ -10032,6 +10058,15 @@ impl App {
             let url = std::env::var("AURORA_DEMO_SEARCH_WEB").ok().filter(|u| !u.trim().is_empty())?;
             return Some(crate::world::search::WebHome { url, identified: false });
         }
+        if let Some(grid) = crate::grids::active(&self.settings) {
+            return grid
+                .search_url(
+                    self.search_ui.web_query(self.settings.classic_search),
+                    aurora_i18n::language(),
+                    self.world.agent_access().preferred,
+                )
+                .map(|url| crate::world::search::WebHome { url, identified: false });
+        }
         crate::world::search::web_home(
             self.search_grid(),
             self.search_ui.web_query(self.settings.classic_search),
@@ -12640,6 +12675,16 @@ impl App {
         // }
         // self.bug_report
         //     .show(&ctx, &p, &self.skin.icons, matches!(self.screen, Screen::World));
+        if self.demo && self.frame_count == 550 && std::env::var_os("AURORA_DEMO_GRIDS").is_some() {
+            self.grids_ui.demo(&mut self.settings);
+        }
+        self.grids_ui.show(
+            &ctx,
+            &p,
+            &mut self.settings,
+            matches!(self.screen, Screen::Login) && !self.login_form.busy || self.demo,
+            self.net.runtime(),
+        );
         a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
         self.ui_parts.lap(Part::UiRest, t);
         a

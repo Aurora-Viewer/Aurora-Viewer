@@ -72,7 +72,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
                 if r.on_hover_text(aurora_i18n::tr!("ui-chat-click-to-teleport-to-this-place"))
                     .clicked()
                 {
-                    request(ui.ctx(), CtxAction::TeleportToPlace(l.location.region.clone(), l.location.pos));
+                    request(ui.ctx(), CtxAction::TeleportToPlace(l.location.target(), l.location.pos));
                 }
             });
         }
@@ -91,7 +91,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
             .clicked()
                 && let Some(l) = &place
             {
-                request(ui.ctx(), CtxAction::ShowPlace(l.location.region.clone(), l.location.pos));
+                request(ui.ctx(), CtxAction::ShowPlace(l.location.target(), l.location.pos));
                 close = true;
             }
             // onClickBlock: disabled once the object is blocked
