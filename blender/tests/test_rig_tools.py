@@ -89,6 +89,104 @@ class RigToolsTests(unittest.TestCase):
         rigging.show(self.rig, "ALL", True)
         self.assertTrue(all(rigging.visible(self.rig, b) for b in self.rig.data.bones))
 
+    def test_classic_back_and_head_are_separate_from_the_folded_bento_spine(self):
+        names = lambda key: {b.name for b in self.rig.data.bones if rigging.part(b) == key}
+        self.assertEqual(names("BACK"), {"mPelvis", "mTorso", "mChest"})
+        self.assertEqual(names("HEAD"), {"mNeck", "mHead", "mSkull"})
+        self.assertEqual(names("SPINE"), {"mSpine1", "mSpine2", "mSpine3", "mSpine4"})
+        self.assertTrue(rigging.part_visible(self.rig, "BACK"))
+        self.assertFalse(rigging.part_visible(self.rig, "SPINE"))
+        self.assertFalse(bpy.context.window_manager.aurora_live_show_advanced_bones)
+        # The XML doubles back over the same segments, rather than dividing
+        # each classic segment into three shorter anatomical vertebrae.
+        for original, reverse, forward in (("mPelvis", "mSpine1", "mSpine2"), ("mTorso", "mSpine3", "mSpine4")):
+            a, b, c = (self.rig.data.bones[name] for name in (original, reverse, forward))
+            self.assertLess((a.head_local - b.tail_local).length, 1e-6)
+            self.assertLess((a.tail_local - b.head_local).length, 1e-6)
+            self.assertLess((a.head_local - c.head_local).length, 1e-6)
+            self.assertEqual(c.parent, b)
+
+    def test_back_resets_existing_full_display_in_object_pose_and_edit_modes(self):
+        for obj in bpy.context.selected_objects:
+            obj.select_set(False)
+        self.rig.select_set(True)
+        bpy.context.view_layer.objects.active = self.rig
+        for mode in ("OBJECT", "POSE", "EDIT"):
+            bpy.ops.object.mode_set(mode=mode)
+            with self.subTest(mode=mode):
+                bpy.ops.aurora.bone_visibility(part="ALL", visible=True)
+                bpy.ops.aurora.bone_visibility(part="BACK", visible=True)
+                for bone in rigging.bones(self.rig):
+                    self.assertEqual(rigging.visible(self.rig, bone), rigging.part(bone) != "SPINE", bone.name)
+                bpy.ops.aurora.bone_visibility(part="SPINE", visible=True)
+                bpy.ops.aurora.bone_visibility(part="BACK", visible=False)
+                for bone in rigging.bones(self.rig):
+                    if mode == "EDIT":
+                        native = bone
+                    else:
+                        pose_bone = self.rig.pose.bones[bone.name]
+                        native = pose_bone if hasattr(pose_bone, "hide") else bone
+                    self.assertEqual(native.hide, rigging.part(bone) in {"BACK", "SPINE"}, bone.name)
+                self.assertEqual(self.rig.mode, mode)
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    def test_advanced_spine_stays_accessible_with_aliases_and_legacy_body_calls(self):
+        self.rig.data.bones["mSpine2"].name = "Custom lumbar joint"
+        self.assertEqual(rigging.part(self.rig.data.bones["Custom lumbar joint"]), "SPINE")
+        for full in ("ALL", "DEFORM"):
+            rigging.show(self.rig, "ALL", False)
+            rigging.show(self.rig, full, True)
+            self.assertTrue(all(rigging.visible(self.rig, b) for b in self.rig.data.bones))
+            rigging.show(self.rig, "BACK", True)
+            self.assertFalse(rigging.part_visible(self.rig, "SPINE"))
+        rigging.show(self.rig, "ALL", False)
+        bpy.ops.aurora.bone_visibility(part="BODY", visible=True)
+        self.assertEqual(sum(rigging.visible(self.rig, b) for b in self.rig.data.bones), 6)
+        self.assertTrue(rigging.part_visible(self.rig, "HEAD"))
+        bpy.ops.aurora.bone_visibility(part="SPINE", visible=True)
+        self.assertEqual(sum(rigging.visible(self.rig, b) for b in self.rig.data.bones), 10)
+        bpy.ops.aurora.bone_visibility(part="BACK", visible=True)
+        self.assertFalse(rigging.part_visible(self.rig, "SPINE"))
+
+    def test_simple_back_preserves_spine_weights_animation_deformation_and_export(self):
+        self.shirt.vertex_groups.clear()
+        for name in sorted(rigging.SPINE):
+            self.shirt.vertex_groups.new(name=name).add(list(range(len(self.shirt.data.vertices))), 0.25, "REPLACE")
+        donor = self.shirt.copy()
+        donor.data = self.shirt.data.copy()
+        bpy.context.collection.objects.link(donor)
+        donor.select_set(False)
+        # Transfer and cleanup must retain hidden spine influences as well.
+        skinning.apply(bpy.context, [self.shirt], self.rig, donor)
+        skinning.apply(bpy.context, [self.shirt], self.rig, clean=True)
+        self.assertEqual(set(self.values(self.shirt)), rigging.SPINE)
+        joint = self.rig.pose.bones["mSpine2"]
+        joint.rotation_mode = "XYZ"
+        joint.rotation_euler.x = 0.3
+        joint.keyframe_insert(data_path="rotation_euler", frame=1)
+        bpy.context.view_layer.update()
+        rest = {b.name: (b.matrix_local.copy(), b.parent.name if b.parent else None, b.use_deform) for b in self.rig.data.bones}
+        weights = [self.values(self.shirt, i) for i in range(len(self.shirt.data.vertices))]
+        action = self.rig.animation_data.action
+        supported = set(rest)
+        snapshot = exporter.snapshot([self.shirt], supported, 1)
+        def evaluated():
+            obj = self.shirt.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            return [v.co.copy() for v in obj.data.vertices]
+        posed = evaluated()
+        selected = list(bpy.context.selected_objects)
+        for key, enabled in (("ALL", True), ("BACK", True), ("SPINE", True), ("BACK", False), ("BACK", True)):
+            bpy.ops.aurora.bone_visibility(part=key, visible=enabled)
+        bpy.context.view_layer.update()
+        self.assertEqual(rest, {b.name: (b.matrix_local.copy(), b.parent.name if b.parent else None, b.use_deform) for b in self.rig.data.bones})
+        self.assertEqual(weights, [self.values(self.shirt, i) for i in range(len(self.shirt.data.vertices))])
+        self.assertEqual(action, self.rig.animation_data.action)
+        self.assertAlmostEqual(joint.rotation_euler.x, 0.3)
+        self.assertEqual(snapshot, exporter.snapshot([self.shirt], supported, 1))
+        self.assertTrue(all((a - b).length < 1e-7 for a, b in zip(posed, evaluated())))
+        self.assertEqual(selected, list(bpy.context.selected_objects))
+        self.assertEqual(self.shirt.find_armature(), self.rig)
+
     def test_each_ik_switch_preserves_fk_and_is_independent(self):
         rigging.setup(bpy.context, self.rig)
         for key in rigging.LIMBS:

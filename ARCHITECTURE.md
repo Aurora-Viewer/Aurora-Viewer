@@ -31,6 +31,12 @@ optional independent hand/foot IK target/pole controls, preserving SL rest
 bones. Pose selection and visibility use `PoseBone` in Blender 5 and `Bone`
 in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
 `Bone.hide` affects Edit Mode only, so pose display must not read that flag.
+The ordinary Back group contains only the classic pelvis/torso/chest and
+resets the four folded Bento spine joints to hidden on both show and hide.
+Head/neck is separate. A collapsed Advanced bones section exposes the four
+spine joints; ALL/DEFORM and the legacy BODY operator remain available.
+Classification follows canonical aliases. This changes no rest matrices,
+parents, deform flags, animation, weights or export membership.
 `skinning.py` evaluates unposed donor copies and transfers world-space surface
 or nearest-vertex weights, or cleans existing weights; all targets are
 validated before publishing four normalized deform influences. `tools_ui.py`

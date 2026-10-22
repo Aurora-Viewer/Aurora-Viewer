@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.6.2.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.6.2-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.7.0.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.7.0-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -122,7 +122,7 @@ through the **IK** category.
 
 Choose **Avatar rig** in **Skeleton**, or leave it empty to use
 the active armature or the active mesh's rig. The category shows separate
-toggles for the body, arms, legs, Bento fingers, face/eyes, wings, tail, hind
+toggles for the back/torso, head/neck, arms, legs, Bento fingers, face/eyes, wings, tail, hind
 limbs, Fitted Mesh volumes and IK controls. **Show all / Hide all** affect
 every bone. Enabling a part also reveals its containing collections/layers,
 without revealing unrelated hidden parts. These controls work in Edit Mode
@@ -131,6 +131,50 @@ skeleton. Visibility follows the current mode: Object/Pose uses pose visibility,
 while Edit Mode uses edit-bone visibility. Visibility changes display only;
 they do not disable deformation. Plug-in 0.6.2 corrects Blender 5's separate
 pose hide flag, so showing a part and hiding it again both affect the viewport.
+
+### Simple back and advanced Bento spine
+
+In plug-in 0.7.0, **Back / torso** shows the three classic bones: `mPelvis`,
+`mTorso` and `mChest`. **Head / neck** has its own toggle. Showing the back
+always hides the four folded spine joints, including on existing rigs that
+previously showed everything. Hiding the back hides those joints too, so no
+overlapping spine bones remain on screen. Other parts keep their visibility.
+
+Expand **Advanced bones → Bento spine** to show `mSpine1` through `mSpine4`
+explicitly. This section starts collapsed. **Show all** and the deform-bone
+operator still expose the complete rig. Existing scripted `BODY` operator
+calls remain supported as classic back plus head/neck.
+
+The apparent three-way split of the lower back is intentional SL geometry.
+The [official skeleton XML](https://raw.githubusercontent.com/secondlife/viewer/develop/indra/newview/character/avatar_skeleton.xml)
+has this parent chain:
+
+```text
+mPelvis → mSpine1 → mSpine2 → mTorso → mSpine3 → mSpine4 → mChest
+```
+
+Reading its rest coordinates shows that `mSpine1` runs back down the pelvis
+segment and `mSpine2` runs up again over the same 8.4 cm span. This produces
+three overlapping Blender bone drawings (`mPelvis` plus those two joints),
+rather than three successive lumbar vertebrae. The same arrangement occurs
+over `mTorso` with `mSpine3` and `mSpine4`.
+
+The [official Bento spine guide](https://wiki.secondlife.com/wiki/Project_Bento_Skeleton_Guide#Spine)
+places two extra joints between pelvis and torso and two between torso and
+chest. They permit more flexible custom models. Their folded neutral layout
+keeps the classic avatar's proportions, as described in the
+[Bento release notes introducing them](https://wiki.secondlife.com/wiki/Release_Notes/Second_Life_Project_Bento/5.0.0.311861).
+Custom rigs can deliberately reposition and animate them.
+[Avastar's display documentation](https://avalab.org/avastar/300/help/n-panel/avastar/rig-display/)
+similarly separates torso visibility from the advanced folded spine.
+
+Aurora changes visibility only: it keeps all 159 deform bones, their parents,
+rest matrices, animation and existing weights. Hidden spine weights still
+transfer, normalize and export. This display action does not unfold or
+reparent joints. Custom joint-position overrides and Blender animation
+streaming remain outside the live bridge's current scope.
+
+### Hand/foot IK
 
 In **IK**, **Create IK controls** adds eight non-deforming target/pole bones
 and four independent two-bone IK chains. The 159 SL deformation bones retain
@@ -211,7 +255,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.6.2 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.7.0 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

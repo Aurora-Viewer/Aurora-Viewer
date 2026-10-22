@@ -27,9 +27,17 @@ def foldout(layout, manager, property_name, title):
 class AURORA_OT_bones(bpy.types.Operator):
     bl_idname = "aurora.bone_visibility"
     bl_label = "Show / hide bones"
+    bl_description = "Show or hide bones without changing the rig or its weights"
     bl_options = {"REGISTER", "UNDO"}
-    part: EnumProperty(items=[(key, label, "") for key, label in rigging.PARTS] +
-                       [("ALL", "All bones", ""), ("DEFORM", "Deform bones", "")])
+    # Stable values retain old redo/operator presets when categories change.
+    part: EnumProperty(items=[(key, label, "", "NONE", number) for key, label, number in (
+        ("BACK", "Back / torso", 13), ("HEAD", "Head / neck", 14),
+        ("BODY", "Body", 0), ("ARMS", "Arms", 1), ("LEGS", "Legs", 2), ("HANDS", "Bento fingers", 3),
+        ("FACE", "Bento face / eyes", 4), ("WINGS", "Bento wings", 5), ("TAIL", "Bento tail", 6),
+        ("HIND", "Bento hind limbs", 7), ("FITTED", "Fitted Mesh volumes", 8), ("IK", "IK controls", 9),
+        ("EXTRA", "Other bones", 10), ("ALL", "All bones", 11), ("DEFORM", "Deform bones", 12),
+        ("SPINE", "Bento spine", 15),
+    )])
     visible: BoolProperty(default=True)
 
     def execute(self, context):
@@ -130,6 +138,8 @@ def draw_rig(layout, context):
         op = row.operator("aurora.bone_visibility", text=label)
         op.part, op.visible = "ALL", enabled
     for key, label in rigging.PARTS:
+        if key == "SPINE":
+            continue
         count = sum(rigging.part(bone) == key for bone in rigging.bones(rig))
         if not count:
             continue
@@ -137,6 +147,17 @@ def draw_rig(layout, context):
         op = layout.operator("aurora.bone_visibility", text=tr(label) + " (" + str(count) + ")",
                           translate=False, icon="HIDE_OFF" if enabled else "HIDE_ON", depress=enabled)
         op.part, op.visible = key, not enabled
+    advanced = foldout(layout, context.window_manager, "aurora_live_show_advanced_bones", "Advanced bones")
+    if advanced:
+        enabled = rigging.part_visible(rig, "SPINE")
+        count = sum(rigging.part(bone) == "SPINE" for bone in rigging.bones(rig))
+        if count:
+            op = advanced.operator("aurora.bone_visibility", text=tr("Bento spine") + " (" + str(count) + ")",
+                                   translate=False, icon="HIDE_OFF" if enabled else "HIDE_ON", depress=enabled)
+            op.part, op.visible = "SPINE", not enabled
+            advanced.label(text="Folded SL spine joints", icon="INFO")
+        else:
+            advanced.label(text="No Bento spine bones in this rig")
 
 
 def draw_ik(layout, context):

@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 6, 2), "blender": (2, 93, 0),
+    "version": (0, 7, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -387,6 +387,11 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Normalize to 4 weights": "Normaliser à 4 poids",
     "Select the target meshes.": "Sélectionnez les maillages cibles.",
     "The source stays unchanged.": "Le donneur est préservé.",
+    "Back / torso": "Dos / torse", "Head / neck": "Tête / cou", "Bento spine": "Colonne Bento",
+    "Advanced bones": "Os avancés", "Folded SL spine joints": "Articulations SL repliées",
+    "No Bento spine bones in this rig": "Ce rig n’a pas d’os de colonne Bento",
+    "Show or hide bones without changing the rig or its weights":
+        "Afficher ou masquer les os sans modifier le squelette ni ses poids",
     "SL body": "Corps SL", "All deform bones": "Tous les os de déformation",
     "Recalculate automatic weights": "Recalculer les poids automatiques",
     "Replace bone weights using Blender's automatic heat solver; Undo restores the previous rig":
@@ -492,6 +497,7 @@ def register():
     bpy.types.WindowManager.aurora_live_tab = EnumProperty(name="Section", items=tools_ui.TABS, default="LIVE", options={"SKIP_SAVE"})
     bpy.types.WindowManager.aurora_live_show_connection = BoolProperty(default=False, options={"SKIP_SAVE"})
     bpy.types.WindowManager.aurora_live_show_starter = BoolProperty(default=False, options={"SKIP_SAVE"})
+    bpy.types.WindowManager.aurora_live_show_advanced_bones = BoolProperty(default=False, options={"SKIP_SAVE"})
     bpy.app.handlers.depsgraph_update_post.append(_changed)
     bpy.app.handlers.load_pre.append(_load_pre)
 
@@ -506,7 +512,7 @@ def unregister():
             handlers.remove(callback)
     if hasattr(bpy.types.Scene, "aurora_live"):
         del bpy.types.Scene.aurora_live
-    for name in ("aurora_live_tab", "aurora_live_show_connection", "aurora_live_show_starter"):
+    for name in ("aurora_live_tab", "aurora_live_show_connection", "aurora_live_show_starter", "aurora_live_show_advanced_bones"):
         if hasattr(bpy.types.WindowManager, name):
             delattr(bpy.types.WindowManager, name)
     for cls in reversed(_classes):

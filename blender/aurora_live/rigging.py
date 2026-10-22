@@ -4,10 +4,12 @@ import bpy
 from mathutils import Matrix, Vector
 
 PARTS = (
-    ("BODY", "Body"), ("ARMS", "Arms"), ("LEGS", "Legs"), ("HANDS", "Bento fingers"),
+    ("BACK", "Back / torso"), ("HEAD", "Head / neck"), ("ARMS", "Arms"), ("LEGS", "Legs"), ("HANDS", "Bento fingers"),
     ("FACE", "Bento face / eyes"), ("WINGS", "Bento wings"), ("TAIL", "Bento tail"),
     ("HIND", "Bento hind limbs"), ("FITTED", "Fitted Mesh volumes"), ("IK", "IK controls"), ("EXTRA", "Other bones"),
+    ("SPINE", "Bento spine"),
 )
+SPINE = frozenset({"mSpine1", "mSpine2", "mSpine3", "mSpine4"})
 LIMBS = {
     "HAND_L": ("Left hand IK", "mShoulderLeft", "mElbowLeft", "mWristLeft"),
     "HAND_R": ("Right hand IK", "mShoulderRight", "mElbowRight", "mWristRight"),
@@ -41,6 +43,8 @@ def part(bone):
         return "IK"
     if bone.get("sl_collision_volume", False) or name.isupper():
         return "FITTED"
+    if name in SPINE:
+        return "SPINE"
     for prefix, result in (("mHand", "HANDS"), ("mFace", "FACE"), ("mEye", "FACE"),
                            ("mWing", "WINGS"), ("mTail", "TAIL"), ("mHind", "HIND")):
         if name.startswith(prefix):
@@ -49,7 +53,14 @@ def part(bone):
         return "ARMS"
     if any(name.startswith("m" + prefix) for prefix in ("Hip", "Knee", "Ankle", "Foot", "Toe")):
         return "LEGS"
-    return "BODY" if name.startswith(("mPelvis", "mTorso", "mChest", "mSpine", "mNeck", "mHead", "mSkull")) else "EXTRA"
+    if name.startswith(("mPelvis", "mTorso", "mChest")):
+        return "BACK"
+    return "HEAD" if name.startswith(("mNeck", "mHead", "mSkull")) else "EXTRA"
+
+
+def _belongs(bone, key):
+    # Retain BODY for existing operator calls, now as the classic back + head.
+    return part(bone) in {"BACK", "HEAD"} if key == "BODY" else part(bone) == key
 
 
 def _display_state(rig, bone):
@@ -71,7 +82,7 @@ def visible(rig, bone):
 
 
 def part_visible(rig, key):
-    return any(visible(rig, bone) for bone in bones(rig) if part(bone) == key)
+    return any(visible(rig, bone) for bone in bones(rig) if _belongs(bone, key))
 
 
 def _select(rig, bone, enabled):
@@ -85,7 +96,7 @@ def _select(rig, bone, enabled):
 def show(rig, key, enabled):
     editable(rig)
     items = list(bones(rig))
-    targets = [bone for bone in items if key == "ALL" or (key == "DEFORM" and bone.use_deform) or part(bone) == key]
+    targets = [bone for bone in items if key == "ALL" or (key == "DEFORM" and bone.use_deform) or _belongs(bone, key)]
     old = {bone.name: visible(rig, bone) for bone in items}
     if enabled:
         if hasattr(rig.data, "collections"):
@@ -111,6 +122,15 @@ def show(rig, key, enabled):
         _display_state(rig, bone).hide = not enabled
         if not enabled:
             _select(rig, bone, False)
+    if key in {"BACK", "BODY"}:
+        # SL's four extended spine joints double back inside the classic
+        # spine. Keep them in the hierarchy and deform palette, but show a
+        # simple back on every ordinary Back display action. Advanced display
+        # can reveal them explicitly afterward; ALL/DEFORM still include them.
+        for bone in items:
+            if part(bone) == "SPINE":
+                _display_state(rig, bone).hide = True
+                _select(rig, bone, False)
 
 
 def control_name(key, pole=False):
