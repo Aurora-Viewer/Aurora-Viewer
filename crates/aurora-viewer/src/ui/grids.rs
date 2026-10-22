@@ -131,7 +131,8 @@ impl Manager {
         let height = (ctx.content_rect().height() - 260.0).clamp(140.0, 390.0);
         let editable = can_edit && self.result.is_none();
         let mut close = false;
-        let response = widgets::Modal::new(egui::Id::new("grid_manager")).login_surface(p).show(ctx, |ui| {
+        let dialog = widgets::Modal::new(egui::Id::new("grid_manager")).login_surface(p).stronger_tint();
+        let response = dialog.show(ctx, |ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.horizontal(|ui| {
