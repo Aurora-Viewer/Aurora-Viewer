@@ -33,11 +33,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=60.0,
                     " s",
                 );
-                cx.toggle(
-                    tr!("ui-options-warn-before-external-links"),
-                    tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
-                    &field!(warn_external_links),
-                );
             });
             cx.group(tr!("ui-options-conversations"), |cx| {
                 cx.toggle(
