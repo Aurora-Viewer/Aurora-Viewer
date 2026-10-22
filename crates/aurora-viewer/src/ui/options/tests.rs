@@ -199,6 +199,7 @@ const BEFORE: &[&str] = &[
     "lookat.lines",
     "lookat.private",
     "lookat.private_local",
+    "lookat.private_point_at",
     "lookat.limit_distance",
     "lookat.max_distance",
     "object_im_filter",

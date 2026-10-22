@@ -22,6 +22,32 @@ fn selected(tool: &BuildTool) -> Vec<u32> {
     tool.selection.iter().map(|key| key.local_id).collect()
 }
 
+#[test]
+fn edit_pointing_tracks_selected_prims_and_clears_on_close_and_for_attachments() {
+    let (mut world, mut tool, mut settings) = seated_fixture(false);
+    let idx = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = family(&world, idx)[1];
+    let now = Instant::now();
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    let t = tool.pointing_target(&world, now).expect("selected object");
+    assert_eq!(t.object, Some(world.objects.get(idx).unwrap().full_id));
+    tool.point_pick = Some((world.objects.get(child).unwrap().key, glam::DVec3::new(0.2, -0.1, 0.3)));
+    let picked = tool.pointing_target(&world, now).expect("picked child");
+    assert_eq!(picked.object, Some(world.objects.get(child).unwrap().full_id));
+    assert_eq!(picked.offset, tool.point_pick.unwrap().1);
+    tool.close(&mut world, &mut settings);
+    assert!(tool.pointing_target(&world, now).is_none());
+    tool.open_build(Tool::Edit);
+    let attachment = world
+        .objects
+        .iter()
+        .find(|(i, _)| select_type(&world, *i) == SelectType::Attachment)
+        .unwrap()
+        .0;
+    tool.click_select(&mut world, &settings, Some(attachment), false);
+    assert!(tool.pointing_target(&world, now).is_none());
+}
+
 pub(super) fn seated_fixture(on_child: bool) -> (World, BuildTool, BuildSettings) {
     let (mut world, tool, settings) = fixture();
     for event in crate::demo::worn::events()

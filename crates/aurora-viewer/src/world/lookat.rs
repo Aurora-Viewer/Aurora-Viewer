@@ -17,7 +17,6 @@ pub const RESPOND: u8 = 4;
 /// the type without a caller (see `cursor_look`).
 pub const HOVER: u8 = 5;
 pub const CONVERSATION: u8 = 6;
-#[allow(dead_code)] // set by selection / editing (not ported yet)
 pub const SELECT: u8 = 7;
 pub const FOCUS: u8 = 8;
 pub const MOUSELOOK: u8 = 9;
@@ -68,6 +67,8 @@ pub struct Settings {
     pub private: bool,
     /// PrivateLocalLookAtTarget: no target at all, our head stays straight.
     pub private_local: bool,
+    /// PrivatePointAtTarget: suppress selection hints and the editing arm.
+    pub private_point_at: bool,
     /// FSLookAtTargetLimitDistance / FSLookAtTargetMaxDistance (m): a
     /// farther target is brought back to this distance from our head.
     pub limit_distance: bool,
@@ -114,6 +115,7 @@ impl Default for Settings {
             lines: false,
             private: false,
             private_local: false,
+            private_point_at: false,
             limit_distance: false,
             max_distance: 1.0,
             head_yaw: 90.0,
@@ -281,7 +283,7 @@ pub struct Own {
 }
 
 impl Own {
-    fn new() -> Own {
+    pub(super) fn new() -> Own {
         Own {
             effect: Uuid::new_v4(),
             target: Target::NONE,
@@ -296,22 +298,31 @@ impl Own {
     /// LLHUDEffectLookAt::setLookAt: a target of the same or a higher
     /// priority replaces the current one; it lasts its type's timeout.
     pub fn set(&mut self, kind: u8, object: Option<Uuid>, offset: DVec3, now: Instant) -> bool {
-        if kind >= NUM || PRIORITY[kind as usize] < PRIORITY[self.target.kind as usize] {
+        self.set_with(kind, object, offset, now, &PRIORITY, &TIMEOUT)
+    }
+
+    pub(super) fn set_point_at(&mut self, kind: u8, object: Option<Uuid>, offset: DVec3, now: Instant) -> bool {
+        let max = f32::MAX / 4.0;
+        self.set_with(kind, object, offset, now, &[0, 1, 2, 3], &[max, max, max, 0.0])
+    }
+
+    fn set_with(&mut self, kind: u8, object: Option<Uuid>, offset: DVec3, now: Instant, priority: &[u8], timeout: &[f32]) -> bool {
+        if !offset.is_finite() || kind as usize >= priority.len() || priority[kind as usize] < priority[self.target.kind as usize] {
             return false;
         }
         let moved = (offset - self.last_sent_offset).length_squared() > 0.05 * 0.05
             && self.last_send.is_none_or(|t| now.duration_since(t).as_secs_f32() > 0.25);
         if kind != self.target.kind || object != self.target.object || moved {
             self.last_sent_offset = offset;
-            self.duration = TIMEOUT[kind as usize];
+            self.duration = timeout[kind as usize];
             self.needs_send = true;
         }
-        self.target = if kind == CLEAR {
+        self.target = if kind as usize == priority.len() - 1 {
             Target::NONE
         } else {
             Target { kind, object, offset }
         };
-        self.kill = (self.duration < MAX_TIMEOUT).then(|| now + Duration::from_secs_f32(self.duration));
+        self.kill = (self.duration < timeout[0]).then(|| now + Duration::from_secs_f32(self.duration));
         true
     }
 

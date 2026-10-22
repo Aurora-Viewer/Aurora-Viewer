@@ -52,6 +52,7 @@ pub mod outfit;
 pub mod parked;
 pub mod place_details;
 pub mod place_snapshots;
+pub mod pointat;
 pub mod profiles;
 pub mod radar;
 pub mod received_items;
@@ -260,6 +261,7 @@ pub struct World {
     pub bodies: HashMap<Uuid, body::Body>,
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
+    pub point_at: pointat::PointAts,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
@@ -546,6 +548,7 @@ impl World {
             water_float: Default::default(),
             bodies: HashMap::new(),
             look_at: lookat::LookAts::default(),
+            point_at: pointat::PointAts::default(),
             object_im_filter: object_im_filter::Settings::default(),
             anti_spam: Default::default(),
             appearance_counter: 1,
@@ -734,6 +737,7 @@ impl World {
     pub(crate) fn forget_gone_look_ats(&mut self) {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -2979,6 +2983,24 @@ impl World {
                     .is_some_and(|o| o.is_avatar());
                 if source != self.agent_id && known {
                     self.look_at.receive(effect, source, target, offset, kind);
+                }
+                None
+            }
+            NetEvent::PointAt {
+                effect,
+                source,
+                target,
+                offset,
+                kind,
+                ..
+            } => {
+                let known = self
+                    .objects
+                    .index_of_uuid(&source)
+                    .and_then(|i| self.objects.get(i))
+                    .is_some_and(|o| o.is_avatar());
+                if source != self.agent_id && known {
+                    self.point_at.receive(effect, source, target, offset, kind);
                 }
                 None
             }
@@ -6103,6 +6125,29 @@ mod motion_tests {
             kind: lookat::CONVERSATION,
             duration: lookat::MAX_TIMEOUT,
         });
+    }
+
+    #[test]
+    fn pointat_accepts_known_remote_avatars_and_cleans_up_on_kill() {
+        let (mut world, avatar, _, here, _) = worn_fixture();
+        let source = other_avatar(&mut world, &avatar, here, 950);
+        let event = NetEvent::PointAt {
+            effect: Uuid::from_u128(999),
+            source,
+            target: world.agent_id,
+            offset: [0.0; 3],
+            kind: pointat::SELECT,
+            duration: f32::MAX / 4.0,
+        };
+        world.apply(event.clone());
+        assert_eq!(world.point_at.remote.len(), 1);
+        world.apply(NetEvent::ObjectsKilled {
+            handle: here,
+            local_ids: vec![950],
+        });
+        assert!(world.point_at.remote.is_empty());
+        world.apply(event);
+        assert!(world.point_at.remote.is_empty(), "an absent source cannot create a motion");
     }
 
     #[test]

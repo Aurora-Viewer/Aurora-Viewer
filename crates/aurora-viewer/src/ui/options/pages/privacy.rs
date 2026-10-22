@@ -171,6 +171,11 @@ pub(super) fn page(cx: &mut Cx) {
             &field!(lookat.private_local),
         );
         cx.toggle(
+            tr!("ui-options-private-point-at"),
+            tr!("ui-options-private-point-at-help"),
+            &field!(lookat.private_point_at),
+        );
+        cx.toggle(
             tr!("ui-options-limit-look-at-distance"),
             tr!("ui-options-more-distant-targets-are-limited-to-this-distance-from"),
             &field!(lookat.limit_distance),

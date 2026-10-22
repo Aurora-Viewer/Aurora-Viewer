@@ -199,6 +199,17 @@ before remapping, following `LLSkinningUtil::getPerVertexSkinMatrix`.
 
 ## Scope
 
+`world/pointat.rs` owns selection/grab hints (ViewerEffect type 15), with
+the Legacy Viewer priorities and offset throttle. `build::pointing_target`
+retains the picked point in the selected prim's frame and excludes worn
+objects. `app/pointing.rs` updates selection look-at and point-at, honoring
+Privacy's `lookat.private_point_at`. Remote hints share object-removal cleanup
+with look-at. `scene/anim/pointing.rs` supplies the editing arm's IK and
+additive gun targeting torso through the ordinary animation priority blender;
+it runs inside the existing parallel pose workers. Neither motion sends
+AgentAnimation requests. `demo_pointing.rs` exercises local/remote hints,
+release, privacy and gun aim offline.
+
 `world/anti_spam.rs` owns session-local counters and source/category blocks,
 following NACLAntiSpamQueue::checkEntry and the incoming message handlers in
 `indra/newview/NACLantispam.cpp`, `llimprocessing.cpp` and `llviewermessage.cpp`.

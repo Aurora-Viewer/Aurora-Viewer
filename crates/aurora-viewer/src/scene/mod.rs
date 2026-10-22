@@ -4541,6 +4541,17 @@ impl Scene {
                 },
             };
             let control = world.objects.get(idx).is_some_and(|o| !o.is_avatar());
+            let point = if owner == world.agent_id {
+                Some(world.point_at.own.target)
+            } else {
+                world.point_at.remote.get(&owner).copied()
+            };
+            let point = point.filter(|t| t.kind != 0).and_then(|t| {
+                let target = self.look_target_pos(world, owner, &t, now)?;
+                let (root, rot, _) = Self::object_transform(world, idx, now, 0)?;
+                let point = rot.inverse() * (target - root);
+                point.is_finite().then_some(point)
+            });
             let mut motions = self.motions.remove(&owner).unwrap_or_else(|| {
                 if control {
                     anim::Controller::for_control_avatar()
@@ -4549,6 +4560,7 @@ impl Scene {
                 }
             });
             motions.control = control;
+            motions.point = point;
             motions.sitting = !control && world.objects.get(idx).is_some_and(|o| o.parent_id != 0);
             let preview = if owner == world.agent_id {
                 world.animation_preview_clock

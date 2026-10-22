@@ -324,6 +324,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
 | `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off |
+| `AURORA_DEMO_POINTING=1\|release\|private\|remote\|remote-release\|aim` | Editing arm and gun targeting, driven by local selection or received point-at effects |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
@@ -606,6 +607,16 @@ when unfocused") is ignored during a screenshot.
     `3000,rigged,menu` and `AURORA_CAPTURE_FRAMES=1100,1460`, the
     screenshots show the menu of an object worn by another avatar then that
     of an object worn by us, the object surrounded by its outline.
+- **`AURORA_DEMO_POINTING`**: at frame 600, select a cube in front of our
+  avatar (`1`), or receive another avatar's target (`remote`). `release`
+  closes Build at 840; `private` enables selection privacy then;
+  `remote-release` receives a clear then. Capture at 760 and 940 to check the
+  arm pointing and its half-second release. `aim` adds a synthetic gun pose
+  to exercise the additive torso targeting motion. No grid assets are used.
+  The fixture disables the demo account's AO and Movelock and closes the
+  inventory so the gesture is visible.
+  `AURORA_DEMO_CLASSIC=1` supplies the remote avatar's appearance. Keep
+  that avatar rendered fully instead of as a complexity silhouette.
 - **`AURORA_DEMO_LOOKAT=1`**: gaze tracking enabled (in memory only) and
   gaze of a remote avatar; the cursor is held on the left of the window,
   moving by a pixel. **`AURORA_DEMO_LOOKAT=own`**: the same with

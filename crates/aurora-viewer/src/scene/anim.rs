@@ -3,6 +3,7 @@
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
 pub(super) mod grounding;
+mod pointing;
 
 use super::default_motions;
 use super::fetch_priority::urgent;
@@ -351,6 +352,9 @@ pub struct Controller {
     /// Look-at point (LookAtPoint): from the head to the target, in the
     /// avatar's root frame; None = look forward.
     pub look: Option<Vec3>,
+    /// PointAtPoint in skeleton space, including the feet-origin offset.
+    pub point: Option<Vec3>,
+    pointing: pointing::Pointing,
     /// The look-at target was cleared: HEAD_ROT stops (eyes keep `look`).
     pub look_cleared: bool,
     procedural: Procedural,
@@ -425,7 +429,11 @@ impl Fade {
             self.change = Some(now);
             self.residual = self.weight;
         }
-        let t = self.change.map(|c| now.duration_since(c).as_secs_f32()).unwrap_or(0.0) / ease;
+        let t = if ease > 0.0 {
+            self.change.map(|c| now.duration_since(c).as_secs_f32()).unwrap_or(0.0) / ease
+        } else {
+            1.0
+        };
         self.weight = if on {
             self.residual + (1.0 - self.residual) * cubic_step(t)
         } else {
@@ -673,6 +681,7 @@ impl Controller {
         pr.noise_start = pr.noise_start.map(|t| t + d);
         self.last_eval = self.last_eval.map(|t| t + d);
         self.placement.resume(d);
+        self.pointing.resume(d);
     }
 
     /// Skeleton-space position of the head as posed last frame.
@@ -696,7 +705,7 @@ impl Controller {
 
     /// Joint states of the default motions for this frame: head and eyes,
     /// breathing and body noise.
-    fn procedural(&mut self, j: &LookJoints<usize>, now: Instant) -> Vec<ProceduralState> {
+    fn procedural(&mut self, rig: &Rig, base: Option<&SkeletonBase>, j: &LookJoints<usize>, now: Instant) -> Vec<ProceduralState> {
         let dt = self.last_eval.map(|t| now.duration_since(t).as_secs_f32()).unwrap_or(0.0).min(1.0);
         self.last_eval = Some(now);
         let mut out = Vec::new();
@@ -797,6 +806,20 @@ impl Controller {
             let t = now.saturating_duration_since(*pr.noise_start.get_or_insert(now)).as_secs_f32();
             out.push((torso, HIGH_PRIORITY, 1.0, default_motions::body_noise(t), true));
         }
+        out.extend(self.pointing.states(
+            rig,
+            pointing::Frame {
+                rotations: &self.rot,
+                position_delta: &self.pos_delta,
+                pelvis: self.pelvis_offset.unwrap_or(Vec3::ZERO),
+                base,
+                point: self.point,
+                look: self.look,
+                aiming: self.aiming,
+            },
+            now,
+            dt,
+        ));
         out
     }
 
@@ -972,7 +995,9 @@ impl Controller {
         // joint states per joint: (priority, weight, rotation, position),
         // highest priority first, newer motions first among equals
         // (LLJointStateBlender::addJointState)
-        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool);
+        // Last flag: this source motion predates the editing arm, which
+        // starts on selection rather than with the default motions.
+        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool, bool);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
         for m in self.motions.iter_mut().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
@@ -999,7 +1024,8 @@ impl Controller {
                 let s = &mut states[j];
                 let at = s.iter().position(|o| prio > o.0).unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (prio, m.weight, rot, pos, false));
+                    let activation = if a.looping { m.continuous_activation } else { m.activation };
+                    s.insert(at, (prio, m.weight, rot, pos, false, self.pointing.animation_is_older(activation)));
                     s.truncate(JOINT_STATES);
                 }
             }
@@ -1012,21 +1038,28 @@ impl Controller {
         } else if self.paused_at.is_some() {
             self.held_procedural.clone()
         } else {
-            let p = self.procedural(&lj, now);
+            let p = self.procedural(rig, base, &lj, now);
             self.held_procedural.clone_from(&p);
             p
         };
         for (j, prio, w, r, additive) in procedural {
             if let Some(s) = states.get_mut(j) {
+                let editing_arm = !additive && prio == HIGH_PRIORITY && self.pointing.arm_joint(j);
                 // the additive motions are blended first
                 // (LLMotionController::updateMotions), so they come before
                 // the regular states of their priority
                 let at = s
                     .iter()
-                    .position(|o| if additive { prio >= o.0 } else { prio > o.0 })
+                    .position(|o| {
+                        if additive {
+                            prio >= o.0
+                        } else {
+                            prio > o.0 || editing_arm && prio == o.0 && o.5
+                        }
+                    })
                     .unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (prio, w, Some(r), None, additive));
+                    s.insert(at, (prio, w, Some(r), None, additive, false));
                     s.truncate(JOINT_STATES);
                 }
             }
@@ -1041,7 +1074,7 @@ impl Controller {
             let mut pos = Vec3::ZERO;
             let mut top = 0.0f32;
             let mut added: Option<Quat> = None;
-            for &(_, w, r, p, additive) in s {
+            for &(_, w, r, p, additive, _) in s {
                 if additive {
                     // LLJointStateBlender::blendJointStates: what the
                     // stronger regular states leave of its weight
@@ -1122,7 +1155,7 @@ impl Controller {
                 rig.names
                     .get(*name)
                     .and_then(|&j| states.get(j))
-                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _)| priority >= 5 && weight > 0.01))
+                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _, _)| priority >= 5 && weight > 0.01))
             })
         };
         let allowed = [
@@ -1236,6 +1269,10 @@ impl Controller {
             if request.is_none_or(|(p, _)| m.anim.max_priority >= p) {
                 request = Some((m.anim.max_priority, m.anim.anim.hand_pose));
             }
+        }
+        // LLEditingMotion requests HAND_POSE_RELAXED_R at priority 3.
+        if self.pointing.editing() && request.is_none_or(|(priority, _)| priority < 3) {
+            request = Some((3, 7));
         }
         self.hands.update(request.map(|r| r.1), now);
         self.live_morphs.extend(self.hands.weights());
