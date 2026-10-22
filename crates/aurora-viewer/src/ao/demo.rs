@@ -120,6 +120,31 @@ pub fn seed_migration(inv: &mut Inventory, owner: Uuid) -> Uuid {
         })
 }
 
+/// The migration fixture plus one Alchemy set in its root folder, built from
+/// the Legacy Viewer set's options, cycles and links.
+pub fn seed_alchemy_migration(inv: &mut Inventory, owner: Uuid) -> Uuid {
+    let selected = seed_migration(inv, owner);
+    let mut source = inventory::Catalog::default();
+    source.refresh_firestorm(inv);
+    let Some(mut set) = source.sets.iter().find(|s| s.default).or(source.sets.first()).cloned() else {
+        return selected;
+    };
+    let root = inv.root;
+    folder(inv, root, Uuid::new_v4(), inventory::ALCHEMY_FOLDER, -1);
+    let mut alchemy = inventory::Catalog::default();
+    alchemy.refresh_source(inv, inventory::Source::Alchemy);
+    set.name = "Alchemy Dance Set".into();
+    set.default = true;
+    // Fixture construction only, as in seed_migration: editable rejects
+    // production writes under the Alchemy root.
+    if let Err(reason) = inventory::create(inv, &alchemy, &set)
+        .and_then(|(change, _)| crate::world::inventory::actions::demo_mutate(inv, owner, change).map(|_| ()))
+    {
+        log::warn!("AO Alchemy fixture: {reason}");
+    }
+    selected
+}
+
 /// Only called for explicit offline AO fixtures. The real writable gate is
 /// shared with production; these placeholder services never reach a client.
 pub fn inventory_services(world: &mut crate::world::World, ready: bool) {
