@@ -753,7 +753,11 @@ impl App {
             // camera's tilt turns: the box holds the face turned with it
             let axis = top - bottom;
             let h = axis.length().clamp(18.0, 400.0);
-            let up = if axis.length() > 0.5 { axis / axis.length() } else { Vec2::new(0.0, -1.0) };
+            let up = if axis.length() > 0.5 {
+                axis / axis.length()
+            } else {
+                Vec2::new(0.0, -1.0)
+            };
             let (w, h) = (h * 0.82, h);
             Some(Rect::from_center_size(
                 top + (bottom - top) * 0.5,
