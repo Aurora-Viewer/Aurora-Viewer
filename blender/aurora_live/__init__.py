@@ -241,7 +241,7 @@ class AURORA_PT_live(bpy.types.Panel):
 _classes = (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_connect, AURORA_OT_disconnect,
             AURORA_OT_selection, AURORA_OT_refresh, AURORA_PT_live)
 
-_translations = {"fr_FR": {("*", key): value for key, value in {
+_translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
     "SL avatar starter": "Avatar SL de départ",
     "Create SL avatar rig": "Créer le squelette d’avatar SL",
     "Create the complete Bento and Fitted Mesh skeleton at the 3D cursor":

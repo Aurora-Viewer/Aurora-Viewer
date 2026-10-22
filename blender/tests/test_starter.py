@@ -158,17 +158,20 @@ class StarterTests(unittest.TestCase):
 
     def test_french_interface_and_translated_new_data_create_the_same_garment(self):
         view = bpy.context.preferences.view
-        before = (view.language, view.use_translate_new_dataname)
+        before = (view.language, view.use_translate_new_dataname, view.use_translate_interface)
         try:
             view.language = "fr_FR"
             view.use_translate_new_dataname = True
+            view.use_translate_interface = True
+            self.assertEqual(bpy.app.translations.pgettext_iface("Create SL avatar rig", "Operator"),
+                             "Créer le squelette d’avatar SL")
             rig, shirt = starter.create(bpy.context)
             self.assertEqual(len(rig.data.bones), 159)
             material = shirt.data.materials[0]
             shader = next(node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED")
             self.assertEqual(tuple(shader.inputs["Base Color"].default_value), tuple(material.diffuse_color))
         finally:
-            view.language, view.use_translate_new_dataname = before
+            view.language, view.use_translate_new_dataname, view.use_translate_interface = before
 
     def test_creating_a_shirt_while_connected_tracks_it_without_opening_another_connection(self):
         with patch.object(aurora_live, "_client", object()), \
